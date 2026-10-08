@@ -2,17 +2,21 @@ name: clued-merge-slot-ci
 
 # Merge Admission v0.1 §7.3, step 3 of §13 (Task 3576d10d; Owner Decisions
 # 4f576896 and 1fb7f6b3): the merge slot follows CI. Each time a CI workflow
-# run completes, every hour and by hand, this reports to Clued the CI state of
-# each open pull request that holds a merge slot
+# run of a pull request completes, and by hand, this reports to Clued the CI
+# state of each open pull request that holds a merge slot
 # (scripts/ci/clued-merge-slot-ci.mjs, clued_work_merge_slot_touch_v1):
-# running keeps the slot 45 minutes, green 30 minutes, failed returns it. The
-# holder no longer renews its claim to keep the slot while CI runs.
+# running keeps the slot 90 minutes, green 30 minutes, failed returns it and
+# fails the head's clued-merge-slot check. The hourly report is a step of
+# clued-work-admission-reverify.yml, which runs anyway, so it costs no extra
+# hosted run. The holder no longer renews its claim to keep the slot.
 #
-# workflow_run and schedule run this file and the script from the default
-# branch, with the clued-admission environment's token (deployment branches
+# workflow_run runs this file and the script from the default branch, with
+# the clued-admission environment's token and App key (deployment branches
 # limited to main). The triggering event is only a signal: the script reads
 # the pull requests, check runs and workflow runs itself and trusts nothing in
-# the event. A pull request cannot change this file for its own run.
+# the event. The job's condition uses the event only to skip runs of push and
+# schedule events, which are never a pull request's head. A pull request
+# cannot change this file for its own run.
 #
 # The workflows below are the CI workflows by name: gitleaks, trivy, the
 # admission check and every gated workflow (scripts/ci/clued-merge-slot-ci.test.mjs
@@ -36,8 +40,6 @@ on:
       - public-mcp-behavior
       - public-mcp-protocol
     types: [completed]
-  schedule:
-    - cron: "41 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -55,6 +57,10 @@ concurrency:
 jobs:
   report:
     name: clued-merge-slot-ci
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.event == 'pull_request' ||
+      github.event.workflow_run.event == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: clued-admission
@@ -68,6 +74,8 @@ jobs:
       - name: Report the CI state of the pull requests holding a merge slot
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
           CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-merge-slot-ci.mjs

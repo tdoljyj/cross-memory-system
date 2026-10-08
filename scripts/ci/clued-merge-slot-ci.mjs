@@ -8,9 +8,11 @@
 //   failed   one of the four CI required checks (gitleaks, trivy and
 //            clued-work-admission from GitHub Actions, clued-admission-verified
 //            from the clued-admission App) finally failed on the head; Clued
-//            returns the slot at once.
+//            returns the slot at once, and a failing clued-merge-slot check is
+//            posted on the head so that auto-merge cannot merge it on a
+//            re-run's green (independent review MAJOR-2).
 //   running  a run of a CI workflow is queued or in progress on the head; the
-//            slot stays 45 minutes after the report.
+//            slot stays 90 minutes after the report.
 //   green    the four checks passed and nothing is running; the slot stays 30
 //            minutes after the report, for the merge.
 // Anything else (checks not posted yet, nothing running) is not reported, and
@@ -26,10 +28,14 @@
 // at the head is byte for byte the default branch's (git blob SHA). The
 // clued-merge-slot check is not counted: it is the slot's result, not CI's.
 //
-// GitHub requests per run: one list of open pull requests, and for each pull
-// request that holds a slot four check-run lists, one run list and, while
-// something runs, one directory listing. A workflow_run event for a head that
-// holds no slot stops after the first.
+// It runs from clued-merge-slot-ci.yml (a CI workflow of a pull request
+// completed) and as a step of the hourly clued-work-admission-reverify run.
+//
+// GitHub requests per run: one list of open pull requests, one commit for
+// each open pull request whose body names no claim, and for each pull request
+// that holds a slot four check-run lists, one run list and, while something
+// runs, one directory listing. A workflow_run event for a head that holds no
+// slot stops there.
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -38,10 +44,12 @@ import { fileURLToPath } from "node:url";
 
 import {
   ADMISSION_APP_ID,
+  MERGE_SLOT_CHECK_NAME,
   cluedRpc,
   githubJson,
   githubPaged,
   parseClaimReference,
+  postAppCheck,
   withTokenHint,
   workflowIsGated,
 } from "./clued-work-admission.mjs";
@@ -61,8 +69,12 @@ export const CI_REQUIRED_CHECKS = Object.freeze([
 // Workflows that count as CI besides the gated ones: those of the required checks
 // that run on the self-hosted runners. clued-work-admission takes seconds.
 export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.yml"]);
-// A required check passes as the ruleset counts it.
+// A required check passes as the ruleset counts it. A final failure returns
+// the slot; cancelled is not one: the admission run of an edited pull request
+// cancels the previous one on the same head, and the next run's check may not
+// exist yet (review NIT).
 const PASSING = new Set(["success", "neutral", "skipped"]);
+const FAILING = new Set(["failure", "timed_out", "action_required", "startup_failure"]);
 const ACTIVE = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
 export const DEFAULT_HARD_CAP_MINUTES = 120;
 
@@ -101,7 +113,7 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows) 
   for (const required of CI_REQUIRED_CHECKS) {
     const check = await newestCheck(fetchImpl, env, repository, headSha, required);
     checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
-    if (check && check.status === "completed" && !PASSING.has(check.conclusion)) {
+    if (check && check.status === "completed" && FAILING.has(check.conclusion)) {
       return { state: "failed", reason: `${required.name} concluded ${check.conclusion}`, checks };
     }
   }
@@ -123,6 +135,8 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows) 
   return { state: "idle", reason: "no CI result yet and no CI run active", checks };
 }
 
+const notDeployed = (response) => response.status === 404 && response.body && response.body.code === "PGRST202";
+
 function rpcError(name, response) {
   if (response.status !== 200 || !response.body || typeof response.body !== "object") return `Clued ${name} returned ${response.detail}`;
   if (response.body.status !== "ok") return `Clued ${name} answered ${response.detail}`;
@@ -134,7 +148,7 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const hardCap = (mode.policy && mode.policy.merge_slot_hard_cap_minutes) || DEFAULT_HARD_CAP_MINUTES;
-  const result = { event: eventName, hard_cap_minutes: hardCap, holders: [], reports: [], skipped: null, errors: [] };
+  const result = { event: eventName, hard_cap_minutes: hardCap, holders: [], reports: [], skipped: null, notices: [], errors: [] };
   if (!(env.CLUED_CONTEXT_READ_TOKEN ?? "").trim()) {
     result.errors.push(withTokenHint("CLUED_CONTEXT_READ_TOKEN is not set."));
     return result;
@@ -144,11 +158,31 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   const pulls = (await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch);
   const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
-  // The scopes the open pull requests name; a slot's pull request names its claim.
-  const scopes = [...new Set(pulls.map((pr) => parseClaimReference(pr.body)).filter(Boolean).map((ref) => ref.scope))].sort();
+  // The scopes the open pull requests name; a slot's pull request names its
+  // claim, in its body or, as admission also reads it, its head commit.
+  const references = [];
+  for (const pr of pulls) {
+    let reference = parseClaimReference(pr.body);
+    if (!reference) {
+      try {
+        const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${pr.head.sha}`);
+        reference = parseClaimReference(commit && commit.commit && commit.commit.message);
+      } catch (error) {
+        // One unreadable commit does not stop the other pull requests' reports.
+        result.errors.push(`#${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (reference) references.push(reference);
+  }
+  const scopes = [...new Set(references.map((ref) => ref.scope))].sort();
   const live = [];
   for (const scope of scopes) {
     const response = await cluedRpc(fetchImpl, env, workspace, HOLDERS_RPC, { scope, repository });
+    // Merged before migration 20261008100000 was applied: nothing to report yet (review MINOR-6).
+    if (notDeployed(response)) {
+      result.notices.push(`${HOLDERS_RPC} is not deployed yet (migration 20261008100000); nothing reported`);
+      return result;
+    }
     const error = rpcError(HOLDERS_RPC, response);
     if (error) { result.errors.push(error); continue; }
     for (const holder of Array.isArray(response.body.holders) ? response.body.holders : []) {
@@ -180,6 +214,16 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
         Object.assign(report, seen.state === "failed"
           ? { returned: Boolean(response.body.returned) }
           : { touched: Boolean(response.body.touched), merge_slot_until: response.body.merge_slot_until ?? null });
+        if (report.returned) {
+          // The head's clued-merge-slot check may still be green: fail it, so a
+          // re-run that turns CI green cannot let auto-merge merge without the slot.
+          const posted = await postAppCheck({ env, fetchImpl, headSha: pr.head.sha, success: false, prNumber: pr.number,
+            name: MERGE_SLOT_CHECK_NAME, title: "Merge slot returned: CI failed",
+            summary: `${seen.reason} on this head, so Clued gave the merge slot back (Merge Admission v0.1 §7.3). `
+              + "Turn auto-merge off and fix the cause; then take the slot again and push, or edit the pull request body, to run this check again." });
+          if (!posted.posted) throw new Error(`the slot was returned but no failing ${MERGE_SLOT_CHECK_NAME} check could be posted: ${posted.error ?? posted.reason}`);
+          report.merge_slot_check_run_id = posted.check_run_id;
+        }
       }
       result.reports.push(report);
     } catch (error) {
@@ -196,6 +240,7 @@ export function renderSummary(result) {
     lines.push(`- slot of claim \`${holder.claim_id}\` on ${holder.bound_pr ?? "no pull request"}${holder.open ? "" : " (not an open pull request into the default branch)"}, until ${holder.merge_slot_until ?? "?"}`);
   }
   if (result.skipped) lines.push("", `Skipped: ${result.skipped}.`);
+  for (const notice of result.notices) lines.push(`- notice: ${notice}`);
   for (const report of result.reports) {
     const outcome = report.ci_state === "idle" ? "not reported"
       : report.ci_state === "failed" ? (report.returned ? "slot returned" : "nothing to return")
@@ -214,6 +259,7 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
   const result = await reportMergeSlots({ env, event, eventName: env.GITHUB_EVENT_NAME ?? "", fetchImpl, workspace: env.GITHUB_WORKSPACE });
   console.log(JSON.stringify(result, null, 2));
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, renderSummary(result));
+  for (const notice of result.notices) console.error(`::notice title=clued-merge-slot-ci::${notice}`);
   if (result.errors.length) {
     for (const error of result.errors) console.error(`::error title=clued-merge-slot-ci::${error}`);
     return 1;

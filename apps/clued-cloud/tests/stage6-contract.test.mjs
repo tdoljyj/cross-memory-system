@@ -108,8 +108,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /Where the `clued-merge-slot-ci` workflow runs, CI keeps the slot for you, so do not renew only to keep it/);
   assert.match(contract, /a CI required check that fails gives the slot back at once/);
   assert.match(contract, /the slot ends `merge_slot_hard_cap_minutes` \(the policy file's, 120 by default\) after you took it/);
-  assert.match(contract, /Without that workflow, renew with the same refs and a new `progress_ref`/);
-  assert.doesNotMatch(contract, /Give the slot back, and turn auto-merge off, as soon as CI fails/);
+  assert.match(contract, /the slot lasts 90 minutes past the latest report/);
+  assert.match(contract, /If it shows no report for your current head while CI runs .* or the workflow does not run, renew with the same refs/);
+  assert.match(contract, /Turn auto-merge off as soon as a CI required check fails or the merge is refused/);
   assert.match(contract, /posts a `clued-merge-slot` check on every head/);
   assert.match(contract, /`migration\.production`: one resource per migration file the run applies/);
   assert.match(contract, /ask for everything the release needs in one call: `clued_owner_request` with `actions`/);

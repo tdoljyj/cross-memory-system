@@ -2,6 +2,7 @@
 // (clued-merge-slot-ci.mjs). No network: fetch is mocked.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -31,7 +32,9 @@ const WORKFLOWS = ciWorkflows(ROOT);
 const GITLEAKS = ".github/workflows/gitleaks.yml";
 const QUALITY = ".github/workflows/clued-cloud-quality-gate.yml";
 
-const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token", ...extra });
+const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
+const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
+  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", ...extra });
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
   ({ number, body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main" } } });
 const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
@@ -45,7 +48,7 @@ function fakeFetch(routes) {
     const route = String(url).replace(/^https:\/\/api\.github\.com/, "");
     const rpc = /\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(route);
     const body = init.body ? JSON.parse(init.body) : null;
-    calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, input: body && body.p_input });
+    calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, method: init.method ?? "GET", input: body && body.p_input, body });
     const key = rpc ? `rpc:${rpc[1]}` : Object.keys(routes).find((prefix) => route.startsWith(prefix));
     if (!key || !(key in routes)) return new Response("not found", { status: 404 });
     const answer = typeof routes[key] === "function" ? routes[key](body && body.p_input) : routes[key];
@@ -87,10 +90,18 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   const expected = [...[...WORKFLOWS.keys()].map((p) => nameOf(path.basename(p))), nameOf("clued-work-admission.yml")];
   assert.deepEqual([...names].sort(), [...new Set(expected)].sort());
   assert.match(text, /types: \[completed\]/);
+  assert.doesNotMatch(text, /schedule:/, "the hourly report is a step of the re-verification run");
+  // Only pull request runs can be a holder's head; the event is used to skip, never to decide.
+  assert.match(text, /github\.event\.workflow_run\.event == 'pull_request' \|\|\n\s+github\.event\.workflow_run\.event == 'pull_request_target'/);
+  assert.match(text, /CLUED_ADMISSION_APP_PRIVATE_KEY: \$\{\{ secrets\.CLUED_ADMISSION_APP_KEY \}\}/);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}/);
   assert.match(text, /environment: clued-admission/);
   assert.match(text, /cancel-in-progress: false/);
-  assert.doesNotMatch(text, /pull_request/, "no pull request trigger: a pull request never runs its own copy");
+  assert.doesNotMatch(text, /^ {2}pull_request(_target)?:/m, "no pull request trigger: a pull request never runs its own copy");
+  // The hourly report runs inside clued-work-admission-reverify, after the re-verification.
+  const reverify = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission-reverify.yml"), "utf8");
+  assert.match(reverify, /- name: Report the CI state of the pull requests holding a merge slot\n {8}if: \$\{\{ !cancelled\(\) \}\}\n[\s\S]*?run: node scripts\/ci\/clued-merge-slot-ci\.mjs\n/);
+  assert.match(reverify, /group: \$\{\{ github\.workflow \}\}-\$\{\{ inputs\.reason == 'state_change' && 'state_change' \|\| 'scheduled' \}\}/);
   assert.deepEqual(workflowFormFindings(text), []);
   assert.deepEqual(gateFindings(text, null), [], "hosted only: no admission gate needed");
 });
@@ -104,11 +115,15 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { trivy: [check("trivy", { conclusion: "failure" }), check("trivy", { id: 11, status: "queued", conclusion: null })] }),
     ...runsRoute(HEAD, [run(".github/workflows/trivy.yml", "queued")]), ...sameAsMain() });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "running");
-  // cancelled and timed_out fail too; neutral and skipped pass.
-  for (const conclusion of ["cancelled", "timed_out", "action_required", "startup_failure"]) {
+  // timed_out and the like fail too; neutral and skipped pass.
+  for (const conclusion of ["timed_out", "action_required", "startup_failure"]) {
     fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion })] }) });
     assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "failed", conclusion);
   }
+  // cancelled is not final: an edit cancels the admission run on the same head before the next one posts (review NIT).
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-work-admission": [check("clued-work-admission", { conclusion: "cancelled" })] }),
+    ...runsRoute(HEAD, []) });
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "skipped" })], trivy: [check("trivy", { conclusion: "neutral" })] }),
     ...runsRoute(HEAD, []) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
@@ -143,6 +158,9 @@ function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_
     [`/repos/${REPO}/pulls?state=open`]: pulls,
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", repository: REPO, holders }),
     [`rpc:${TOUCH_RPC}`]: touch,
+    [`/repos/${REPO}/installation`]: { id: 99 },
+    "/app/installations/99/access_tokens": { token: "ghs_app" },
+    [`/repos/${REPO}/check-runs`]: { id: 5005 },
     ...extra,
   });
 }
@@ -163,13 +181,26 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
   fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   result = await report(fetch);
   assert.equal(fetch.calls.find((call) => call.route === `rpc:${TOUCH_RPC}`).input.ci_state, "green");
-  // failed: no hard cap is sent, and the answer says whether a slot was returned.
+  // failed: no hard cap is sent; a returned slot fails the head's clued-merge-slot check (review MAJOR-2).
   fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) } });
   result = await report(fetch);
   assert.deepEqual(fetch.calls.find((call) => call.route === `rpc:${TOUCH_RPC}`).input,
     { scope: SCOPE, pr_ref: `${REPO}#5`, head_sha: HEAD, ci_state: "failed" });
-  assert.deepEqual([result.reports[0].ci_state, result.reports[0].returned], ["failed", true]);
+  assert.deepEqual([result.reports[0].ci_state, result.reports[0].returned, result.reports[0].merge_slot_check_run_id], ["failed", true, 5005]);
+  const posted = fetch.calls.find((call) => call.method === "POST" && call.route === `/repos/${REPO}/check-runs`).body;
+  assert.deepEqual([posted.name, posted.head_sha, posted.conclusion, posted.external_id, posted.output.title],
+    ["clued-merge-slot", HEAD, "failure", "pr:5:run:9001", "Merge slot returned: CI failed"]);
+  assert.match(posted.output.summary, /^gitleaks concluded failure on this head.*Turn auto-merge off/);
   assert.match(renderSummary(result), /slot returned/);
+  // Nothing returned (already given back): no check is posted.
+  fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) },
+    touch: () => ({ status: "ok", returned: false, merge_slot_returned: [] }) });
+  result = await report(fetch);
+  assert.deepEqual([result.errors, fetch.calls.some((call) => call.method === "POST" && call.route.endsWith("/check-runs"))], [[], false]);
+  // Without the App key a returned slot is an error: its green check would outlive it.
+  fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) } });
+  result = await report(fetch, { env: { CLUED_ADMISSION_APP_ID: "", CLUED_ADMISSION_APP_PRIVATE_KEY: "" } });
+  assert.match(result.errors[0], /^#5: the slot was returned but no failing clued-merge-slot check could be posted/);
   // idle: nothing reported.
   fetch = slotWorld({ extra: { ...checksRoute(HEAD, Object.fromEntries(CI_REQUIRED_CHECKS.map(({ name }) => [name, []]))), ...runsRoute(HEAD, []) } });
   result = await report(fetch);
@@ -177,10 +208,16 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
 });
 
 test("reportMergeSlots: nothing in the event is trusted, and nothing is asked when no slot is held", async () => {
-  // No open pull request names a claim: no Clued call at all.
-  let fetch = slotWorld({ pulls: [pull(5, HEAD, "no trailer")] });
+  // No open pull request names a claim, in its body or head commit: no Clued call at all.
+  let fetch = slotWorld({ pulls: [pull(5, HEAD, "no trailer")], extra: { [`/repos/${REPO}/commits/${HEAD}`]: { commit: { message: "no trailer" } } } });
   let result = await report(fetch);
-  assert.deepEqual([result.holders, fetch.calls.map((call) => call.route)], [[], [`/repos/${REPO}/pulls?state=open&per_page=100&page=1`]]);
+  assert.deepEqual([result.holders, fetch.calls.map((call) => call.route)],
+    [[], [`/repos/${REPO}/pulls?state=open&per_page=100&page=1`, `/repos/${REPO}/commits/${HEAD}`]]);
+  // An unreadable commit is an error for that pull request; the others are still reported.
+  fetch = slotWorld({ pulls: [pull(4, OTHER, "no trailer"), pull(5)], extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
+  result = await report(fetch);
+  assert.deepEqual([result.errors.length, result.reports.map((r) => [r.pr, r.ci_state])], [1, [[5, "green"]]]);
+  assert.match(result.errors[0], /^#4: GitHub API .*returned 404/);
   // No holder: one GitHub call and one Clued call.
   fetch = slotWorld({ holders: [] });
   result = await report(fetch, { eventName: "workflow_run", event: { workflow_run: { head_sha: HEAD } } });
@@ -204,6 +241,22 @@ test("reportMergeSlots: nothing in the event is trusted, and nothing is asked wh
     extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   result = await report(fetch);
   assert.equal(fetch.calls.filter((call) => call.route === `rpc:${TOUCH_RPC}`).length, 1);
+});
+
+test("reportMergeSlots: a claim named only in the head commit counts; a service without the RPC is a notice", async () => {
+  let fetch = slotWorld({ pulls: [pull(5, HEAD, "no trailer in the body")], extra: { ...allGreen(), ...runsRoute(HEAD, []),
+    [`/repos/${REPO}/commits/${HEAD}`]: { sha: HEAD, commit: { message: `step\n\nClued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}` } } } });
+  let result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports.map((r) => r.ci_state)], [[], ["green"]]);
+  assert.deepEqual(fetch.calls.find((call) => call.route === `rpc:${HOLDERS_RPC}`).input, { scope: SCOPE, repository: REPO });
+  // Merged before the migration is applied (review MINOR-6): PostgREST answers 404 PGRST202.
+  fetch = fakeFetch({ [`/repos/${REPO}/pulls?state=open`]: [pull(5)] });
+  const missing = async (url, init) => (String(url).includes(`/rpc/${HOLDERS_RPC}`)
+    ? new Response(JSON.stringify({ code: "PGRST202", message: "Could not find the function" }), { status: 404 })
+    : fetch.fetchImpl(url, init));
+  result = await reportMergeSlots({ env: env(), event: null, eventName: "schedule", fetchImpl: missing, workspace: ROOT });
+  assert.deepEqual([result.errors, result.notices], [[], [`${HOLDERS_RPC} is not deployed yet (migration 20261008100000); nothing reported`]]);
+  assert.match(renderSummary(result), /- notice: clued_work_merge_slot_holders_v1 is not deployed yet/);
 });
 
 test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits 1 on them", async () => {

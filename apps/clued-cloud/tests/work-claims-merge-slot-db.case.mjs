@@ -253,7 +253,8 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual((await view(c1)).trigger_refs, ['merge:other/repo:main', 'task:race']);
 
     // --- Merge Admission step 3 (migration 20261008100000): the slot follows CI. ---
-    assert.equal((await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v.merge_slot_green_seconds, 1800);
+    const slotProfile = (await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v;
+    assert.deepEqual([slotProfile.merge_slot_running_seconds, slotProfile.merge_slot_green_seconds], [5400, 1800]);
     const PR = 'tdoljyj/cross-memory-system#20';
     const HEAD = 'f'.repeat(40);
     const touch = (input) => agent('ci', 'clued_work_merge_slot_touch_v1',
@@ -313,13 +314,14 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       await assert.rejects(() => touch(input), error, JSON.stringify(input));
     }
 
-    // running keeps the slot 45 minutes after the report, whatever the renewal clock says.
+    // running keeps the slot 90 minutes after the report (an hour between reports and a late
+    // scheduled run, review MAJOR-1), whatever the renewal clock says.
     await setSlot(d, 'merge_slot_at', 40);
     assert.ok(minutesLeft((await view(d)).merge_slot_until) < 6, 'the renewal clock alone has 5 minutes left');
     const running = await touch({ ci_state: 'running', hard_cap_minutes: 120 });
     assert.deepEqual([running.status, running.touched, running.claims], ['ok', true, [d.claim_id]], JSON.stringify(running));
     d = await view(d);
-    assert.ok(minutesLeft(d.merge_slot_until) > 44 && minutesLeft(d.merge_slot_until) <= 45, d.merge_slot_until);
+    assert.ok(minutesLeft(d.merge_slot_until) > 89 && minutesLeft(d.merge_slot_until) <= 90, d.merge_slot_until);
     assert.deepEqual([d.merge_slot_ci.ci_state, d.merge_slot_ci.ci_head_sha], ['running', HEAD]);
     assert.ok(Math.abs(Date.parse(d.merge_slot_ci.hard_cap_until) - Date.parse(d.merge_slot_ci.taken_at) - 120 * 60000) < 1000);
     // A repeated report refreshes the clock but writes no new Receipt.
@@ -333,11 +335,21 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     await touch({ ci_state: 'green', hard_cap_minutes: 120 });
     d = await view(d);
     assert.ok(minutesLeft(d.merge_slot_until) > 29 && minutesLeft(d.merge_slot_until) <= 30, d.merge_slot_until);
-    d = committed(await renew('codex', d)).claim;
+    // A later green report for the same head does not move its 30 minutes (review MINOR-3)...
+    await setSlot(d, 'merge_slot_ci_at', 20);
+    await touch({ ci_state: 'green', hard_cap_minutes: 120 });
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 9 && minutesLeft(d.merge_slot_until) <= 10, d.merge_slot_until);
+    // ...a new head's does, and so does running in between.
+    await touch({ ci_state: 'green', hard_cap_minutes: 120, head_sha: '9'.repeat(40) });
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 29, d.merge_slot_until);
+    await touch({ ci_state: 'green', hard_cap_minutes: 120 });
+    d = committed(await renew('codex', await view(d))).claim;
     assert.ok(minutesLeft(d.merge_slot_until) > 44, 'the renewal clock is later now');
     assert.equal(d.merge_slot_ci.ci_state, 'green', 'a renewal of a live slot keeps its CI state');
-    assert.deepEqual((await receipts(d, 'work_claim_merge_slot_touch')).map((m) => [m.ci_state, m.previous_ci_state]),
-      [['running', null], ['green', 'running']]);
+    assert.deepEqual((await receipts(d, 'work_claim_merge_slot_touch')).map((m) => [m.ci_state, m.head_sha, m.previous_ci_state]),
+      [['running', HEAD, null], ['green', HEAD, 'running'], ['green', '9'.repeat(40), 'green'], ['green', HEAD, 'green']]);
 
     // The hard cap ends the slot whatever the clocks say, and a report cannot revive it.
     await setSlot(d, 'merge_slot_taken_at', 110);

@@ -7,9 +7,14 @@
 -- of the pull request that holds the slot (clued_work_merge_slot_touch_v1, from
 -- the clued-merge-slot-ci workflow, which runs default-branch code):
 -- - running: a CI run is queued or in progress on the head; the slot stays for
---   merge_slot_seconds (45 minutes) after the report.
+--   merge_slot_running_seconds (90 minutes) after the report. Reports come
+--   when a CI run completes and at least hourly, and a run's start sends none,
+--   so the window covers an hour between reports with room for a late
+--   scheduled run (independent review MAJOR-1). The hard cap bounds it.
 -- - green: the four CI required checks passed; the slot stays for
---   merge_slot_green_seconds (30 minutes) after the report, for the merge.
+--   merge_slot_green_seconds (30 minutes) after the first green report for
+--   the head, for the merge; later green reports for the same head do not
+--   move it (review MINOR-3).
 -- - failed: one of them finally failed; the slot is returned at once with a
 --   WORK_CLAIM_MERGE_SLOT_RETURNED Receipt (why ci_failed), like a merge or a
 --   close.
@@ -19,7 +24,9 @@
 -- 60 to 180 minutes) after it was taken, so a long CI run cannot keep it for
 -- ever while others wait. A report never revives a slot that has lapsed, and a
 -- renewal that takes a lapsed slot again starts a new slot (new taken time, no
--- CI state). The lease of the claim still bounds the slot.
+-- CI state). So the cap frees the slot for a session that waits for it; a
+-- holder that renews after the cap with nobody waiting takes it again (review
+-- MINOR-2, accepted). The lease of the claim still bounds the slot.
 --
 -- clued_work_merge_slot_holders_v1 lists the live slots of a repository, so
 -- the workflow looks only at the pull requests that hold one.
@@ -42,7 +49,7 @@ alter table clued_private.work_claims_v1
   add constraint work_claims_v1_merge_slot_hard_cap_check
     check (merge_slot_hard_cap_seconds is null or merge_slot_hard_cap_seconds between 3600 and 10800);
 
--- Profile: 20261006180000 plus merge_slot_green_seconds.
+-- Profile: 20261006180000 plus merge_slot_running_seconds and merge_slot_green_seconds.
 create or replace function clued_private.work_claim_profile_v1() returns jsonb
 language sql immutable set search_path='' as $$
   select jsonb_build_object(
@@ -58,6 +65,7 @@ language sql immutable set search_path='' as $$
     'binding_claim_bucket_refill_seconds',900,
     'github_ci_heads_per_task_24h',40,
     'merge_slot_seconds',2700,
+    'merge_slot_running_seconds',5400,
     'merge_slot_green_seconds',1800,
     'continuation_window_seconds',900)
 $$;
@@ -73,7 +81,7 @@ language sql stable set search_path='' as $$
     then least(
       greatest(c.merge_slot_at+make_interval(secs=>(clued_private.work_claim_profile_v1()->>'merge_slot_seconds')::integer),
         case c.merge_slot_ci_state
-          when 'running' then c.merge_slot_ci_at+make_interval(secs=>(clued_private.work_claim_profile_v1()->>'merge_slot_seconds')::integer)
+          when 'running' then c.merge_slot_ci_at+make_interval(secs=>(clued_private.work_claim_profile_v1()->>'merge_slot_running_seconds')::integer)
           when 'green' then c.merge_slot_ci_at+make_interval(secs=>(clued_private.work_claim_profile_v1()->>'merge_slot_green_seconds')::integer)
         end),
       c.merge_slot_taken_at+make_interval(secs=>c.merge_slot_hard_cap_seconds),
@@ -200,8 +208,11 @@ begin
           'ci_state',v_state,'head_sha',v_head,'hard_cap_seconds',v_cap,
           'previous_ci_state',c.merge_slot_ci_state));
     end if;
+    -- A green head's 30 minutes count from its first green report.
     update clued_private.work_claims_v1
-      set merge_slot_ci_state=v_state,merge_slot_ci_head=v_head,merge_slot_ci_at=v_now,
+      set merge_slot_ci_state=v_state,merge_slot_ci_head=v_head,
+        merge_slot_ci_at=case when c.merge_slot_ci_state='green' and v_state='green' and c.merge_slot_ci_head=v_head
+          then c.merge_slot_ci_at else v_now end,
         merge_slot_hard_cap_seconds=v_cap,updated_at=v_now
       where claim_id=c.claim_id returning * into c;
     v_touched:=v_touched||c.claim_id;

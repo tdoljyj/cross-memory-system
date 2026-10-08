@@ -41,15 +41,18 @@ permissions:
   contents: read
   pull-requests: read
 
+# A state_change dispatch has its own group, so a later push or scheduled
+# run never replaces it while it waits (step 3 review MINOR-4).
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ inputs.reason == 'state_change' && 'state_change' || 'scheduled' }}
   cancel-in-progress: false
 
 jobs:
   reverify:
     name: clued-work-admission-reverify
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # state_change judges every open pull request and posts two checks each.
+    timeout-minutes: ${{ inputs.reason == 'state_change' && 30 || 10 }}
     environment: clued-admission
     steps:
       # Re-review 4, m6: the default branch as it is now, so a re-run of an
@@ -71,3 +74,15 @@ jobs:
           CLUED_REVERIFY_REASON: ${{ inputs.reason }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode reverify
+      # Merge Admission step 3: the hourly report of the merge slots' CI state
+      # (scripts/ci/clued-merge-slot-ci.mjs; clued-merge-slot-ci.yml reports when
+      # a CI run completes). In this job it costs no extra hosted run.
+      - name: Report the CI state of the pull requests holding a merge slot
+        if: ${{ !cancelled() }}
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-merge-slot-ci.mjs
