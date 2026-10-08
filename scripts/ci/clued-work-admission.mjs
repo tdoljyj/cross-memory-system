@@ -78,12 +78,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  CORE_PROTECTED_PATHS,
   effectiveProtectedPaths,
   effectiveRules,
   globToRegExp,
   layerOf,
+  loadPolicy,
   modeLabel,
+  POLICY_PATH,
   resolveMode,
 } from "./merge-admission-policy.mjs";
 
@@ -545,6 +546,25 @@ export async function workflowGateFindings(fetchImpl, env, repository, files, he
   return (await workflowFindings(fetchImpl, env, repository, files, headSha, baseSha)).gate;
 }
 
+// Merge Admission v0.1 §3.3, review MAJOR-1: a broken policy file on the
+// default branch judges every pull request as frozen. A pull request that
+// changes the file is refused outright, as the workflow guard refuses a
+// workflow, when its head's file would not load or when it removes the file.
+export async function policyFileFindings(fetchImpl, env, repository, files, headSha) {
+  const findings = [];
+  for (const file of files) {
+    if (file.filename !== POLICY_PATH && file.previous_filename !== POLICY_PATH) continue;
+    if (file.status === "removed" || file.filename !== POLICY_PATH) {
+      findings.push(`policy_file_removed:${POLICY_PATH}`);
+      continue;
+    }
+    const text = await fileAt(fetchImpl, env, repository, POLICY_PATH, headSha);
+    const { errors } = text === null ? { errors: ["missing at the head"] } : loadPolicy(text);
+    if (errors.length) findings.push(`policy_file_invalid:${errors[0]}${errors.length > 1 ? ` (and ${errors.length - 1} more)` : ""}`);
+  }
+  return findings;
+}
+
 // ---------------------------------------------------------------------------
 // Owner review (re-review 7, MAJOR-3; re-review 8, Owner Decision f2bf949a).
 // The main ruleset requires no approving review, so whatever the admission
@@ -569,10 +589,11 @@ export async function workflowGateFindings(fetchImpl, env, repository, files, he
 
 export const OWNER_REVIEW_ACTION = "repo.protected_change";
 export const OWNER_REVIEW_RPC = "clued_owner_grant_admission_door_v1";
-// The protected paths are the merge admission policy's CORE_PROTECTED_PATHS
-// (merge-admission-policy.mjs), together with the policy file and whatever the
-// policy adds (effectiveProtectedPaths); the name stays for the references to it.
-export const PROTECTED_PATHS = CORE_PROTECTED_PATHS;
+// The protected paths: the merge admission policy's CORE_PROTECTED_PATHS
+// (merge-admission-policy.mjs) and the policy file itself. The policy can add
+// more (effectiveProtectedPaths), never remove any; the name stays for the
+// references to it.
+export const PROTECTED_PATHS = Object.freeze(effectiveProtectedPaths(null));
 
 export function ownerReviewEnforced(env) {
   return /^(1|true|on|enabled)$/i.test((env.CLUED_OWNER_REVIEW_ENFORCE ?? "").trim());
@@ -810,10 +831,11 @@ export function plainFinding(finding) {
 }
 
 // Merge Admission v0.1: asked whenever the rules say owner_grant: required. In
-// frozen a pull request outside the protected layer is asked too; its approval
-// is never carried over (frozenLayer), so every head needs its own grant.
+// frozen a pull request outside the protected layer is asked too (frozenLayer
+// names its layer in the Owner's note), and no approval is carried over
+// (carryOver false), so every head needs its own grant.
 async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome, tipCompare,
-  { enforced = ownerReviewEnforced(env), protectedPaths, frozenLayer = null } = {}) {
+  { enforced = ownerReviewEnforced(env), protectedPaths, carryOver = true, frozenLayer = null } = {}) {
   const baseTip = tipCompare ? tipCompare.tip : null;
   const headSha = pr.head.sha;
   const summary = findings.slice(0, 10).map(plainFinding).join(", ") + (findings.length > 10 ? `, and ${findings.length - 10} more` : "");
@@ -824,7 +846,7 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
   }
   // Owner Decision a0d93cd0: the base branch merged into an approved head.
   let source = null;
-  if (!frozenLayer) {
+  if (carryOver) {
     try {
       source = await carriedApprovalSource(fetchImpl, env, repository, headSha, tipCompare, protectedPaths);
     } catch (error) {
@@ -998,8 +1020,11 @@ export function admissionEnforced(env, mode) {
   return mode.state === "frozen" || enforcementEnabled(env);
 }
 
-export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary }) {
-  const mode = resolveMode({ env, workspace });
+// readPolicyFile reads config/merge-admission-policy.json of the workspace;
+// the self-tests pass a fixed table so that they never depend on the
+// repository's copy (review MAJOR-1).
+export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary, readPolicyFile = fs.readFileSync }) {
+  const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const enforced = admissionEnforced(env, mode);
   const outcome = emptyOutcome(eventName, enforced);
   outcome.admission_mode = modeOutcome(mode, env);
@@ -1036,7 +1061,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     outcome.changed_paths = changed.paths;
     const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
     const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
-    const gateFindingsOfPr = workflowResult.gate;
+    const gateFindingsOfPr = [...workflowResult.gate, ...await policyFileFindings(fetchImpl, env, repository, changed.files, pr.head.sha)];
     if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
     const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr);
     const allPaths = [...new Set([...changed.paths, ...tipCompare.paths])].sort();
@@ -1158,8 +1183,16 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         // cannot catch a wrong claim, and rejecting it only forced re-pushes.
         const claimBase = outcome.claim && outcome.claim.base_commit;
         if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
-          const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${claimBase}...${pr.base.sha}`, { allowMissing: true });
-          if (!compare) {
+          let compare;
+          try {
+            compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${claimBase}...${pr.base.sha}`, { allowMissing: true });
+          } catch (error) {
+            if (!claimAdvisory) throw error;
+            outcome.notices.push(`claim_advisory_unverified: the claim's base_commit could not be compared (${error instanceof Error ? error.message : String(error)})`);
+          }
+          if (compare === undefined) {
+            // work_claim: advise and the compare failed: noted above.
+          } else if (!compare) {
             outcome.verdict = "REJECTED";
             outcome.reasons.push(`claim_base_unknown:${claimBase}`);
           } else if (compare.status !== "ahead" && compare.status !== "identical") {
@@ -1182,18 +1215,21 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
     // Merge Admission v0.1 §5.1 up_to_date and owner_grant (WorkClaimAdmission
     // §4.6, re-review 10): the protected layer's, and every layer's in frozen.
     const reviewFindings = ownerFindings.length ? ownerFindings : [`state_frozen:${layer}`];
+    // Review MINOR-1: in frozen every head needs its own grant (§4.2), the
+    // protected layer's too, so no approval is carried over.
+    const frozen = mode.state === "frozen";
     const listedFindings = `${reviewFindings.slice(0, 10).map(plainFinding).join(", ")}${reviewFindings.length > 10 ? `, and ${reviewFindings.length - 10} more` : ""}`;
     if (rules.up_to_date === "check_and_strict" && !tipCompare.upToDate && outcome.verdict === "ADMITTED") {
       if (ownerEnforced) {
         outcome.verdict = "REJECTED";
-        outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${listedFindings})`);
+        outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${listedFindings}${frozen ? "; merge admission is frozen, so the new head needs its own Owner Grant" : ""})`);
       } else {
         outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): the branch would first need ${pr.base.ref} at ${tipCompare.tip}`);
       }
     }
     if (rules.owner_grant === "required" && outcome.verdict === "ADMITTED") {
       await ownerReview(fetchImpl, env, repository, pr, workspace, reviewFindings, outcome, tipCompare,
-        { enforced: ownerEnforced, protectedPaths, frozenLayer: layer === "protected" ? null : layer });
+        { enforced: ownerEnforced, protectedPaths, carryOver: !frozen, frozenLayer: frozen && layer !== "protected" ? layer : null });
     }
     // Re-review 7, m2: the file list was read after the head, so a push in
     // between would pair this head's verdict with another head's files.
@@ -1339,8 +1375,8 @@ export async function appChecksOnHead(fetchImpl, env, repository, headSha, name 
     .sort((a, b) => Number(b.id) - Number(a.id));
 }
 
-export async function reverify({ env, fetchImpl, workspace, now = () => Date.now() }) {
-  const mode = resolveMode({ env, workspace });
+export async function reverify({ env, fetchImpl, workspace, now = () => Date.now(), readPolicyFile = fs.readFileSync }) {
+  const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const result = { enforced: admissionEnforced(env, mode), mode: { state: mode.state, source: mode.source, errors: mode.errors },
     checked: [], blocked: [], errors: [] };
   if (!result.enforced) {
@@ -1367,7 +1403,7 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       // (Owner Decision 2ea795e4).
       const slotGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha, MERGE_SLOT_CHECK_NAME));
       if (!admissionGreen && !slotGreen) continue;
-      const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
+      const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile });
       const label = outcome.admission_mode && outcome.admission_mode.label;
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons,
         ...(label ? { mode: label } : {}),
@@ -1402,7 +1438,9 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
         env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,
         summary: `The re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. `
           + (outcome.reasons.some((reason) => reason.startsWith("protected_change_not_up_to_date:"))
-            ? `Merge ${pr.base.ref} into the branch and push; the approval carries over when the merge leaves the protected changes as they were, otherwise the new head needs its own Owner Grant.`
+            ? (outcome.admission_mode && outcome.admission_mode.state === "frozen"
+              ? `Merge ${pr.base.ref} into the branch and push; merge admission is frozen, so the new head needs its own Owner Grant.`
+              : `Merge ${pr.base.ref} into the branch and push; the approval carries over when the merge leaves the protected changes as they were, otherwise the new head needs its own Owner Grant.`)
             : "Push a commit or edit the pull request once it is admitted again."),
       });
       if (!posted.posted) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}`);
@@ -2153,7 +2191,7 @@ export function mergeSlotOutputs(outcome) {
     `merge_slot_until=${clean(slot && slot.until)}`, `merge_slot_tip=${clean(slot && slot.tip)}`];
 }
 
-export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
+export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch, { readPolicyFile = fs.readFileSync } = {}) {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
   if (!["required", "gate", "reverify", "dispatch-admit", "app-check", "adopt"].includes(mode)) {
@@ -2190,7 +2228,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     return 0;
   }
   if (mode === "reverify") {
-    const result = await reverify({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
+    const result = await reverify({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, readPolicyFile });
     console.log(JSON.stringify(result, null, 2));
     appendFile(env.GITHUB_STEP_SUMMARY, renderReverifySummary(result));
     if (result.errors.length) {
@@ -2208,9 +2246,14 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   try {
     if (mode === "gate") outcome = await gate({ env, event, eventName, fetchImpl });
     else if (mode === "dispatch-admit") outcome = await dispatchAdmit({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
-    else outcome = await evaluate({ env, event, eventName, fetchImpl, workspace: env.GITHUB_WORKSPACE, withSummary: true });
+    else outcome = await evaluate({ env, event, eventName, fetchImpl, workspace: env.GITHUB_WORKSPACE, withSummary: true, readPolicyFile });
   } catch (error) {
-    outcome = emptyOutcome(eventName, enforcementEnabled(env));
+    // Review MINOR-2: an admission run that fails still says in which mode
+    // (frozen overrides CLUED_WORK_ADMISSION_ENFORCE). The gate keeps the
+    // variable's answer until step 2 gives it the state.
+    const admissionMode = mode === "required" ? resolveMode({ env, workspace: env.GITHUB_WORKSPACE, readFile: readPolicyFile }) : null;
+    outcome = emptyOutcome(eventName, admissionMode ? admissionEnforced(env, admissionMode) : enforcementEnabled(env));
+    if (admissionMode) outcome.admission_mode = modeOutcome(admissionMode, env);
     outcome.verdict = "ERROR";
     outcome.error = error instanceof Error ? error.message : String(error);
   }

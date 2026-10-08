@@ -141,6 +141,12 @@ function plain(value) {
 
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const GLOB = /^!?[^\s\u0000-\u001f\u007f]{1,200}$/;
+// Review NIT-3: globToRegExp turns each `*` run into a backtracking group, so a
+// pattern with many of them can make one match take minutes and time the
+// admission job out. Two runs keep a match at most quadratic in the path.
+export const MAX_WILDCARD_RUNS = 2;
+export const MAX_PATTERNS_PER_LAYER = 100;
+const wildcardRuns = (pattern) => (pattern.match(/\*+/g) ?? []).length;
 
 function unknownKeys(object, allowed, where, errors) {
   for (const key of Object.keys(object)) {
@@ -159,9 +165,12 @@ function checkPaths(value, where, errors, { negation, catchAll }) {
     errors.push(`${where}.paths: must be an array`);
     return [];
   }
+  if (paths.length > MAX_PATTERNS_PER_LAYER) errors.push(`${where}.paths: more than ${MAX_PATTERNS_PER_LAYER} patterns`);
   for (const pattern of paths) {
     if (typeof pattern !== "string" || !GLOB.test(pattern) || pattern === "!") {
       errors.push(`${where}.paths: ${plain(pattern)} is not a path pattern`);
+    } else if (wildcardRuns(pattern) > MAX_WILDCARD_RUNS) {
+      errors.push(`${where}.paths: ${plain(pattern)} has more than ${MAX_WILDCARD_RUNS} wildcards`);
     } else if (pattern.startsWith("!") && !negation) {
       // I2: the protected layer can only grow; the fallback layer has no next one.
       errors.push(`${where}.paths: ${plain(pattern)} excludes a path, which this layer cannot`);
@@ -190,7 +199,8 @@ export function loadPolicy(text) {
   const errors = [];
   let doc;
   try {
-    doc = JSON.parse(text);
+    // Review NIT-1: an editor's byte order mark is not a reason to freeze.
+    doc = JSON.parse(String(text).replace(/^﻿/, ""));
   } catch (error) {
     return { policy: null, errors: [`${POLICY_PATH} is not JSON: ${plain(error instanceof Error ? error.message : error)}`] };
   }
@@ -269,12 +279,11 @@ export function readPolicy(workspace, readFile = fs.readFileSync) {
 }
 
 // The Owner's state variable (§4). Unset or empty is normal; anything that is
-// not one of the three states is frozen.
+// not exactly one of the three states (surrounding blanks aside) is frozen.
 export function resolveState(env) {
   const value = String((env && env[STATE_VARIABLE]) ?? "").trim();
   if (!value) return { state: "normal", source: "default" };
-  const lower = value.toLowerCase();
-  if (STATES.includes(lower)) return { state: lower, source: STATE_VARIABLE };
+  if (STATES.includes(value)) return { state: value, source: STATE_VARIABLE };
   return { state: "frozen", source: STATE_VARIABLE, error: `${STATE_VARIABLE}=${plain(value)} is not one of ${STATES.join(", ")}` };
 }
 

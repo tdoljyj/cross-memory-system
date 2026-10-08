@@ -1,7 +1,10 @@
 // Merge Admission v0.1 §6: the invariants of the merge admission policy and
 // the table-driven verdicts of clued-work-admission.mjs under it. No network:
-// GitHub and Clued are a scripted fetch, the policy files temporary
-// directories. Run by the admission job's self-test and by clued-components.
+// GitHub and Clued are a scripted fetch, the policy files fixed tables
+// (merge-admission-policy.fixtures.mjs). Nothing here reads the repository's
+// policy file, so the admission job can run it on the default branch whatever
+// that file says (review MAJOR-1); merge-admission-policy-file.test.mjs checks
+// the file itself on pull request heads.
 
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -9,7 +12,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   BASELINE,
@@ -21,10 +23,10 @@ import {
   layerOf,
   LAYERS,
   loadPolicy,
+  MAX_PATTERNS_PER_LAYER,
   modeLabel,
   POLICY_PATH,
   PROTECTED_BASELINE,
-  readPolicy,
   resolveMode,
   resolveState,
   ROW_COLUMNS,
@@ -34,6 +36,16 @@ import {
   atLeastAsStrict,
 } from "./merge-admission-policy.mjs";
 import {
+  COMPATIBILITY_POLICY_TEXT,
+  DOCS_PATHS,
+  fixedPolicy,
+  LOOSEST_POLICY_TEXT,
+  LOOSEST_ROW,
+  RECOMMENDED_POLICY_TEXT,
+  row,
+} from "./merge-admission-policy.fixtures.mjs";
+import {
+  ADMISSION_APP_ID,
   appCheck,
   evaluate,
   main,
@@ -43,56 +55,25 @@ import {
   renderSummary,
 } from "./clued-work-admission.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const REPO_POLICY_TEXT = fs.readFileSync(path.join(ROOT, POLICY_PATH), "utf8");
-
 // The contract's §3.1 list, written out once more so that a change to the
 // constant is a change to this test too.
 const CONTRACT_CORE = [".github/**", "scripts/ci/**", "scripts/runner/**", "apps/clued-cloud/scripts/**",
   "apps/clued-cloud/package.json", "apps/clued-cloud/package-lock.json", "apps/clued-cloud/wrangler*.jsonc",
   "apps/clued-cloud/app/supabase-public-config.ts", ".gitattributes", "**/.gitattributes", ".gitmodules", ".npmrc", "**/.npmrc"];
 
-const row = (overrides = {}) => ({ work_claim: "enforce", owner_grant: "none", up_to_date: "strict_only", merge_slot: "required",
-  reruns_per_head: 0, auto_merge: "allowed", ...overrides });
-const DOCS_PATHS = ["docs/**", "development/contracts/**/*.md", "development/authority-index/**/*.md", "*.md", "skills/**/*.md",
-  "!skills/clued/references/agent-contract.md"];
-const policyText = ({ normal, efficiency, extra = {}, layers = {} }) => JSON.stringify({
-  schema: "clued.merge-admission-policy/1",
-  version: 1,
-  state_variable: STATE_VARIABLE,
-  merge_slot_hard_cap_minutes: 120,
-  layers: { protected: { paths: [] }, docs: { paths: DOCS_PATHS }, code: { paths: ["**"] }, ...layers },
-  rules: {
-    normal: { protected: BASELINE, ...normal },
-    efficiency: { protected: BASELINE, ...efficiency },
-    frozen: { all_layers_as: "protected", merge_actor: "owner_only", auto_merge: "forbidden" },
-  },
-  ...extra,
-});
-// The recommended table of §5.2 and §5.3, which step 2 puts in the repository.
-const RECOMMENDED_TEXT = policyText({
-  normal: { code: row({ reruns_per_head: 1 }), docs: row({ reruns_per_head: 2 }) },
-  efficiency: { code: row({ work_claim: "advise", merge_slot: "advise", reruns_per_head: 2 }),
-    docs: row({ work_claim: "advise", merge_slot: "advise", reruns_per_head: 2 }) },
-});
-// Every column the file can set at its loosest, in both states.
-const LOOSEST = row({ work_claim: "advise", owner_grant: "none", up_to_date: "strict_only", merge_slot: "advise", reruns_per_head: 3, auto_merge: "allowed" });
-const LOOSEST_TEXT = policyText({ normal: { code: LOOSEST, docs: LOOSEST }, efficiency: { code: LOOSEST, docs: LOOSEST } });
-
-const TABLES = { compat: REPO_POLICY_TEXT, recommended: RECOMMENDED_TEXT, loosest: LOOSEST_TEXT };
+const TABLES = { compat: COMPATIBILITY_POLICY_TEXT, recommended: RECOMMENDED_POLICY_TEXT, loosest: LOOSEST_POLICY_TEXT };
 
 // A path that each glob of CORE_PROTECTED_PATHS matches.
 const sampleOf = (glob) => glob.replace(/\*\*\//g, "a/b/").replace(/\*\*/g, "a/b").replace(/\*/g, "x");
 
 // ---------------------------------------------------------------------------
-// The repository's policy file and the constants.
+// The constants and the fixed tables.
 
-test("policy: the repository's file is valid and is the step 1 compatibility table", () => {
-  const { policy, errors } = loadPolicy(REPO_POLICY_TEXT);
-  assert.deepEqual(errors, []);
+test("policy: the fixed tables load, and the compatibility table is step 1's", () => {
+  for (const [name, text] of Object.entries(TABLES)) assert.deepEqual(loadPolicy(text).errors, [], name);
+  const { policy } = loadPolicy(COMPATIBILITY_POLICY_TEXT);
   assert.equal(policy.merge_slot_hard_cap_minutes, HARD_CAP_DEFAULT_MINUTES);
-  assert.deepEqual([...policy.layers.protected], []);
-  assert.deepEqual([...policy.layers.docs], DOCS_PATHS);
+  assert.deepEqual([...policy.layers.docs], [...DOCS_PATHS]);
   assert.deepEqual([...policy.layers.code], ["**"]);
   // §13 step 1: three layers enforce the claim and require the merge slot, no
   // re-runs, and an Owner Grant and the base tip only for the protected layer.
@@ -100,16 +81,17 @@ test("policy: the repository's file is valid and is the step 1 compatibility tab
     for (const layer of ["code", "docs"]) assert.deepEqual({ ...policy.rules[state][layer] }, row(), `${state}.${layer}`);
   }
   assert.deepEqual({ ...PROTECTED_BASELINE }, { ...row({ owner_grant: "required", up_to_date: "check_and_strict" }), merge_actor: "any" });
-  assert.equal(readPolicy(ROOT).errors.length, 0);
 });
 
-test("policy: CORE_PROTECTED_PATHS is the contract's list, and the admission script's PROTECTED_PATHS is it", () => {
+test("policy: CORE_PROTECTED_PATHS is the contract's list; PROTECTED_PATHS adds the policy file", () => {
   assert.deepEqual([...CORE_PROTECTED_PATHS], CONTRACT_CORE);
   assert.ok(Object.isFrozen(CORE_PROTECTED_PATHS) && Object.isFrozen(PROTECTED_BASELINE) && Object.isFrozen(STRICTNESS));
-  assert.equal(PROTECTED_PATHS, CORE_PROTECTED_PATHS);
   assert.ok(CORE_PROTECTED_PATHS.includes(PUBLIC_CONFIG_SOURCE));
+  assert.deepEqual([...PROTECTED_PATHS], [...CONTRACT_CORE, POLICY_PATH]);
   assert.deepEqual(effectiveProtectedPaths(null), [...CONTRACT_CORE, POLICY_PATH]);
-  assert.ok(globToRegExp("scripts/ci/**").test(POLICY_PATH.replace("config/", "scripts/ci/")));
+  // The policy file is protected because it is named, not by accident of a glob.
+  assert.ok(!CONTRACT_CORE.some((glob) => globToRegExp(glob).test(POLICY_PATH)));
+  assert.equal(layerOf([POLICY_PATH], null), "protected");
 });
 
 // ---------------------------------------------------------------------------
@@ -119,13 +101,9 @@ test("I1: in every state, and when the state or the file is bad, the protected l
   const states = [...STATES, "<unknown>", "<missing file>"];
   for (const [name, text] of Object.entries(TABLES)) {
     for (const requested of states) {
-      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "merge-admission-i1-"));
-      if (requested !== "<missing file>") {
-        fs.mkdirSync(path.join(workspace, "config"));
-        fs.writeFileSync(path.join(workspace, POLICY_PATH), text);
-      }
       const env = { [STATE_VARIABLE]: requested === "<unknown>" ? "relaxed" : requested === "<missing file>" ? "" : requested };
-      const mode = resolveMode({ env, workspace });
+      const readFile = requested === "<missing file>" ? () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); } : () => text;
+      const mode = resolveMode({ env, workspace: "/w", readFile });
       for (const layer of LAYERS) {
         const rules = effectiveRules(mode.policy, mode.state, layer);
         const columns = layer === "protected" || mode.state === "frozen" ? Object.keys(STRICTNESS) : [];
@@ -134,16 +112,15 @@ test("I1: in every state, and when the state or the file is bad, the protected l
         }
       }
       if (requested === "<unknown>" || requested === "<missing file>") assert.equal(mode.state, "frozen", `${name}/${requested}`);
-      fs.rmSync(workspace, { recursive: true, force: true });
     }
   }
 });
 
 test("I1: effectiveRules returns the baseline for the protected layer whatever the file says, and frozen for every layer", () => {
-  const { policy } = loadPolicy(LOOSEST_TEXT);
+  const { policy } = loadPolicy(LOOSEST_POLICY_TEXT);
   for (const state of ["normal", "efficiency"]) {
     assert.equal(effectiveRules(policy, state, "protected"), PROTECTED_BASELINE);
-    assert.deepEqual({ ...effectiveRules(policy, state, "code") }, { ...LOOSEST, merge_actor: "any" });
+    assert.deepEqual({ ...effectiveRules(policy, state, "code") }, { ...LOOSEST_ROW, merge_actor: "any" });
   }
   for (const layer of LAYERS) {
     assert.deepEqual({ ...effectiveRules(policy, "frozen", layer) }, { ...PROTECTED_BASELINE, auto_merge: "forbidden", merge_actor: "owner_only" });
@@ -153,18 +130,19 @@ test("I1: effectiveRules returns the baseline for the protected layer whatever t
   assert.equal(effectiveRules(policy, "normal", "vendor"), PROTECTED_BASELINE);
   assert.equal(effectiveRules(null, "normal", "code").merge_actor, "owner_only");
   // The file may not set the protected layer's rules.
-  const rewritten = JSON.parse(LOOSEST_TEXT);
-  rewritten.rules.normal.protected = LOOSEST;
+  const rewritten = JSON.parse(LOOSEST_POLICY_TEXT);
+  rewritten.rules.normal.protected = LOOSEST_ROW;
   assert.match(loadPolicy(JSON.stringify(rewritten)).errors.join("\n"), /policy\.rules\.normal\.protected: must be "<baseline>"/);
+  assert.equal(BASELINE, "<baseline>");
 });
 
 // ---------------------------------------------------------------------------
 // I2: protected paths can only be added to.
 
 test("I2: every core protected path, the policy file and the policy's additions are protected under any policy", () => {
-  const adversarial = JSON.parse(LOOSEST_TEXT);
+  const adversarial = JSON.parse(LOOSEST_POLICY_TEXT);
   adversarial.layers.docs.paths = [...CONTRACT_CORE, POLICY_PATH, "docs/**"];
-  const policies = { none: null, repository: loadPolicy(REPO_POLICY_TEXT).policy, adversarial: loadPolicy(JSON.stringify(adversarial)).policy };
+  const policies = { none: null, compatibility: loadPolicy(COMPATIBILITY_POLICY_TEXT).policy, adversarial: loadPolicy(JSON.stringify(adversarial)).policy };
   assert.ok(policies.adversarial, "a docs layer that names protected paths is valid, and loses to the protected layer");
   for (const [name, policy] of Object.entries(policies)) {
     for (const glob of CONTRACT_CORE) {
@@ -176,18 +154,18 @@ test("I2: every core protected path, the policy file and the policy's additions 
     assert.equal(layerOf([POLICY_PATH], policy), "protected", `${name}: the policy file`);
   }
   // Additions count; exclusions cannot be written where they would remove one.
-  const added = JSON.parse(REPO_POLICY_TEXT);
+  const added = JSON.parse(COMPATIBILITY_POLICY_TEXT);
   added.layers.protected.paths = ["kernel/**"];
   assert.equal(layerOf(["kernel/x.py"], loadPolicy(JSON.stringify(added)).policy), "protected");
   for (const [where, paths] of [["protected", ["!scripts/ci/**"]], ["code", ["**", "!.github/**"]]]) {
-    const broken = JSON.parse(REPO_POLICY_TEXT);
+    const broken = JSON.parse(COMPATIBILITY_POLICY_TEXT);
     broken.layers[where].paths = paths;
     assert.match(loadPolicy(JSON.stringify(broken)).errors.join("\n"), new RegExp(`policy\\.layers\\.${where}\\.paths: .* excludes a path`), where);
   }
 });
 
 test("layers: docs, the agent contract's exception, root Markdown, mixed pull requests and an unknown compare", () => {
-  const { policy } = loadPolicy(REPO_POLICY_TEXT);
+  const { policy } = loadPolicy(COMPATIBILITY_POLICY_TEXT);
   for (const [paths, layer] of [
     [["docs/a/b.md"], "docs"], [["README.md"], "docs"], [["development/contracts/x/Y.v0.1.md"], "docs"],
     [["development/contracts/x/schema.json"], "code"], [["skills/clued/SKILL.md"], "docs"],
@@ -205,16 +183,16 @@ test("layers: docs, the agent contract's exception, root Markdown, mixed pull re
 // ---------------------------------------------------------------------------
 // I3: fail closed.
 
-test("I3: an unknown state value, a missing, unreadable or malformed policy is frozen", () => {
+test("I3: a state value that is not exactly one of the three, a missing, unreadable or malformed policy is frozen", () => {
   assert.deepEqual(resolveState({}), { state: "normal", source: "default" });
   assert.deepEqual(resolveState({ [STATE_VARIABLE]: "  " }), { state: "normal", source: "default" });
-  for (const value of STATES) assert.deepEqual(resolveState({ [STATE_VARIABLE]: ` ${value.toUpperCase()} ` }), { state: value, source: STATE_VARIABLE });
-  for (const value of ["off", "normal,efficiency", "0", "true", "nörmal"]) {
+  for (const value of STATES) assert.deepEqual(resolveState({ [STATE_VARIABLE]: ` ${value} ` }), { state: value, source: STATE_VARIABLE });
+  for (const value of ["Normal", "EFFICIENCY", "off", "normal,efficiency", "0", "true", "nörmal", "__proto__"]) {
     const resolved = resolveState({ [STATE_VARIABLE]: value });
     assert.equal(resolved.state, "frozen", value);
     assert.match(resolved.error, /is not one of normal, frozen, efficiency/);
   }
-  const base = JSON.parse(REPO_POLICY_TEXT);
+  const base = JSON.parse(COMPATIBILITY_POLICY_TEXT);
   const mutate = (fn) => { const doc = structuredClone(base); fn(doc); return JSON.stringify(doc); };
   const broken = {
     "not json": "{",
@@ -225,8 +203,11 @@ test("I3: an unknown state value, a missing, unreadable or malformed policy is f
     "hard cap below range": mutate((d) => { d.merge_slot_hard_cap_minutes = 30; }),
     "hard cap not an integer": mutate((d) => { d.merge_slot_hard_cap_minutes = 120.5; }),
     "unknown top-level key": mutate((d) => { d.bypass = true; }),
+    "a prototype key": '{"__proto__": {"x": 1}}',
     "unknown layer": mutate((d) => { d.layers.vendor = { paths: [] }; }),
     "a path with whitespace": mutate((d) => { d.layers.docs.paths.push("docs/a b.md"); }),
+    "three wildcards": mutate((d) => { d.layers.docs.paths.push("**/a*/b*.md"); }),
+    "too many patterns": mutate((d) => { d.layers.protected.paths = Array.from({ length: MAX_PATTERNS_PER_LAYER + 1 }, (_, i) => `kernel/${i}/**`); }),
     "no catch-all code layer": mutate((d) => { d.layers.code.paths = ["apps/**"]; }),
     "a missing column": mutate((d) => { delete d.rules.normal.code.merge_slot; }),
     "an unknown column": mutate((d) => { d.rules.normal.docs.reviewers = 0; }),
@@ -245,8 +226,9 @@ test("I3: an unknown state value, a missing, unreadable or malformed policy is f
     assert.equal(mode.state, "frozen", name);
     assert.equal(mode.requested, "efficiency", name);
   }
-  // The hard cap may be left out: 120.
+  // Left out: the hard cap is 120. A byte order mark is not an error (review NIT-1).
   assert.equal(loadPolicy(mutate((d) => { delete d.merge_slot_hard_cap_minutes; })).policy.merge_slot_hard_cap_minutes, 120);
+  assert.deepEqual(loadPolicy(`﻿${COMPATIBILITY_POLICY_TEXT}`).errors, []);
   const missing = resolveMode({ env: {}, workspace: "/w", readFile: () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); } });
   assert.deepEqual([missing.state, missing.errors], ["frozen", [`${POLICY_PATH} cannot be read: ENOENT`]]);
   assert.match(resolveMode({ env: {}, workspace: undefined }).errors[0], /GITHUB_WORKSPACE is not set/);
@@ -264,6 +246,9 @@ const CLUED = "https://clued.test";
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 const TIP = "7".repeat(40);
+const EARLIER = "e".repeat(40);
+const MERGED = "f".repeat(40);
+const MERGE_BASE = "9".repeat(40);
 const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
 const SLOT = "merge:o/r:main";
 const LAYER_FILE = { protected: "scripts/ci/tool.mjs", code: "apps/clued-cloud/worker/x.ts", docs: "docs/notes/x.md" };
@@ -274,58 +259,68 @@ const SCENARIOS = {
   claim_expired: { verdict: "REJECTED", reasons: ["claim_expired"] },
   write_set_not_covering: { verdict: "REJECTED", reasons: ["paths_outside_write_set"] },
   no_grant: { grant: false },
+  // The head only merged main into an earlier head that the Owner approved
+  // (Owner Decision a0d93cd0): no grant on the head itself.
+  grant_carried: { grant: false, carried: true },
   not_up_to_date: { upToDate: false },
   slot_not_held: { slotHeld: false },
   auto_merge_on: { autoMerge: { merge_method: "squash" } },
 };
 
-function scriptFor(layer, scenario) {
-  const s = { trailer: true, verdict: "ADMITTED", reasons: [], upToDate: true, grant: true, slotHeld: true, autoMerge: null, ...scenario };
-  const file = LAYER_FILE[layer];
+const json = (body) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) });
+
+function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
+  const s = { trailer: true, verdict: "ADMITTED", reasons: [], upToDate: true, grant: true, carried: false, slotHeld: true, autoMerge: null, ...scenario };
+  const files = s.files ?? [{ filename: LAYER_FILE[layer], status: "modified" }];
   const calls = [];
-  const pull = { number: 9, body: s.trailer ? `Why\n\nClued-Work-Claim: ${CLAIM}` : "Why", changed_files: 1, auto_merge: s.autoMerge,
+  const pull = { number: 9, body: s.trailer ? `Why\n\nClued-Work-Claim: ${CLAIM}` : "Why", changed_files: files.length, auto_merge: s.autoMerge,
     head: { sha: HEAD, repo: { full_name: "o/r" } }, base: { sha: BASE, ref: "main" } };
-  const claim = { claim_id: CLAIM, task_id: "t-1", status: "ACTIVE", fence: 1, expires_at: "2026-10-08T05:00:00Z", write_set: [file],
+  const claim = { claim_id: CLAIM, task_id: "t-1", status: "ACTIVE", fence: 1, expires_at: "2026-10-08T05:00:00Z", write_set: files.map((f) => f.filename),
     trigger_refs: s.slotHeld ? [SLOT] : [], merge_slot_until: "2026-10-08T03:00:00Z" };
+  const commits = { [HEAD]: s.carried ? [EARLIER, MERGED] : [BASE], [EARLIER]: [BASE] };
   const routes = [
-    ["GET", `${API}/repos/o/r/pulls/9/files`, () => [{ filename: file, status: "modified" }]],
+    ["GET", `${API}/repos/o/r/pulls/9/files`, () => files],
     ["GET", `${API}/repos/o/r/pulls/9`, () => pull],
     ["GET", `${API}/repos/o/r/branches/main`, () => ({ name: "main", commit: { sha: TIP } })],
-    ["GET", `${API}/repos/o/r/compare/${TIP}...${HEAD}`, () => ({ status: s.upToDate ? "ahead" : "diverged", files: [{ filename: file }] })],
-    ["GET", `${API}/repos/o/r/commits/${HEAD}`, () => ({ sha: HEAD, commit: { message: "x" }, parents: [{ sha: BASE }] })],
+    ["GET", `${API}/repos/o/r/compare/${TIP}...${HEAD}`, () => ({ status: s.upToDate ? "ahead" : "diverged", files: files.map((f) => ({ filename: f.filename })) })],
+    ["GET", `${API}/repos/o/r/contents/${POLICY_PATH}`, () => (policyFileAtHead === null ? null : { content: Buffer.from(policyFileAtHead).toString("base64"), encoding: "base64" })],
+    // The carry-over walk (carriedApprovalSource).
+    ["GET", `${API}/repos/o/r/compare/${MERGED}...${TIP}`, () => ({ status: "identical", files: [] })],
+    ["GET", `${API}/repos/o/r/compare/${EARLIER}...${HEAD}`, () => ({ status: "ahead", files: [{ filename: "merged-from-main.txt" }] })],
+    ["GET", `${API}/repos/o/r/compare/${TIP}...${EARLIER}`, () => ({ status: "diverged", files: files.map((f) => ({ filename: f.filename })), merge_base_commit: { sha: MERGE_BASE } })],
+    ["GET", `${API}/repos/o/r/compare/${MERGE_BASE}...${TIP}`, () => ({ status: "ahead", files: [{ filename: "main-only.txt" }] })],
+    ["GET", `${API}/repos/o/r/commits/${EARLIER}/check-runs`, () => ({ check_runs: [{ id: 1, name: "clued-admission-verified", head_sha: EARLIER,
+      status: "completed", conclusion: "success", app: { id: ADMISSION_APP_ID } }] })],
+    ["GET", `${API}/repos/o/r/commits/${HEAD}`, () => ({ sha: HEAD, commit: { message: "x" }, parents: commits[HEAD].map((sha) => ({ sha })) })],
+    ["GET", `${API}/repos/o/r/commits/${EARLIER}`, () => ({ sha: EARLIER, commit: { message: "x" }, parents: commits[EARLIER].map((sha) => ({ sha })) })],
     ["POST", `${CLUED}/rest/v1/rpc/clued_work_verify_v1`, () => ({ status: "ok", verdict: s.verdict, reasons: s.reasons,
-      paths_outside_write_set: s.reasons.includes("paths_outside_write_set") ? [file] : [], verified_at: "2026-10-08T02:30:00Z", claim })],
-    ["POST", `${CLUED}/rest/v1/rpc/clued_owner_grant_admission_door_v1`, () => ({ status: "ok", admitted: s.grant,
-      grant: s.grant ? { grant_id: "g-1" } : null, owner_request: s.grant ? null : { confirm_path: "/owner/confirm/1" } })],
+      paths_outside_write_set: s.reasons.includes("paths_outside_write_set") ? [files[0].filename] : [], verified_at: "2026-10-08T02:30:00Z", claim })],
+    ["POST", `${CLUED}/rest/v1/rpc/clued_owner_grant_admission_door_v1`, (body) => {
+      const granted = body.p_input.resources[0] === `repo:o/r/${EARLIER}` ? s.carried : s.grant;
+      return { status: "ok", admitted: granted, grant: granted ? { grant_id: "g-1" } : null, owner_request: granted ? null : { confirm_path: "/owner/confirm/1" } };
+    }],
   ];
   const fetchImpl = async (url, init = {}) => {
     const method = init.method ?? "GET";
     const target = String(url);
-    calls.push({ method, url: target, body: init.body ? JSON.parse(init.body) : null });
+    const body = init.body ? JSON.parse(init.body) : null;
+    calls.push({ method, url: target, body });
     const route = routes.find(([m, prefix]) => m === method && (target === prefix || target.startsWith(`${prefix}?`)));
     if (!route) return { ok: false, status: 599, headers: { get: () => null }, json: async () => ({}), text: async () => "" };
-    const body = route[2]();
-    return { ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) };
+    const answer = route[2](body);
+    return answer === null ? { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}), text: async () => "" } : json(answer);
   };
   return { pull, fetchImpl, calls };
-}
-
-function workspaceWith(text) {
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "merge-admission-matrix-"));
-  if (text !== null) {
-    fs.mkdirSync(path.join(workspace, "config"));
-    fs.writeFileSync(path.join(workspace, POLICY_PATH), text);
-  }
-  return workspace;
 }
 
 const matrixEnv = (state, extra = {}) => ({ GITHUB_REPOSITORY: "o/r", GITHUB_TOKEN: "ghs_test", GITHUB_API_URL: API, GITHUB_RUN_ID: "9001",
   CLUED_SUPABASE_URL: CLUED, CLUED_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test", CLUED_CONTEXT_READ_TOKEN: "clued_bnd_test",
   CLUED_WORK_ADMISSION_ENFORCE: "true", CLUED_OWNER_REVIEW_ENFORCE: "true", [STATE_VARIABLE]: state, ...extra });
 
-async function judge({ workspace, state, layer, scenario, env = {} }) {
-  const { pull, fetchImpl, calls } = scriptFor(layer, SCENARIOS[scenario]);
-  const outcome = await evaluate({ env: matrixEnv(state, env), event: { pull_request: pull }, eventName: "pull_request", fetchImpl, workspace, withSummary: false });
+async function judge({ table = COMPATIBILITY_POLICY_TEXT, state, layer, scenario, env = {}, readPolicyFile = fixedPolicy(table), policyFileAtHead }) {
+  const { pull, fetchImpl, calls } = scriptFor(layer, typeof scenario === "string" ? SCENARIOS[scenario] : scenario, { policyFileAtHead });
+  const outcome = await evaluate({ env: matrixEnv(state, env), event: { pull_request: pull }, eventName: "pull_request", fetchImpl,
+    workspace: "/w", withSummary: false, readPolicyFile });
   const slot = mergeSlotCheck({ admitted: outcome.admitted, state: outcome.merge_slot ? outcome.merge_slot.state : "unknown",
     ref: SLOT, branch: "main", mode: outcome.admission_mode && outcome.admission_mode.label });
   const cell = outcome.admitted ? (slot.success ? "A+" : "A-") : `R:${(outcome.reasons[0] ?? outcome.verdict ?? "").split(/[:( ]/)[0]}`;
@@ -339,14 +334,15 @@ const all = (value) => CELLS.map(() => value);
 const byLayer = (protectedCell, otherCell, frozenCell) => [protectedCell, otherCell, otherCell, protectedCell, otherCell, otherCell,
   frozenCell, frozenCell, frozenCell];
 
-// Step 1's compatibility table (the repository's file): code and docs judge as
-// before in normal and efficiency alike; frozen judges them as protected.
+// Step 1's compatibility table: code and docs judge as before in normal and
+// efficiency alike; frozen judges every layer as protected, with no carry-over.
 const COMPAT_EXPECTED = {
   ok: all("A+"),
   claim_missing: all(R("claim_trailer_missing")),
   claim_expired: all(R("claim_expired")),
   write_set_not_covering: all(R("paths_outside_write_set")),
   no_grant: byLayer(R("owner_review_required"), "A+", R("owner_review_required")),
+  grant_carried: byLayer("A+", "A+", R("owner_review_required")),
   not_up_to_date: byLayer(R("protected_change_not_up_to_date"), "A+", R("protected_change_not_up_to_date")),
   slot_not_held: all("A-"),
   auto_merge_on: byLayer("A+", "A+", "A-"),
@@ -370,6 +366,7 @@ const LOOSEST_EXPECTED = {
   claim_expired: looseEverywhere(R("claim_expired")),
   write_set_not_covering: looseEverywhere(R("paths_outside_write_set")),
   no_grant: looseEverywhere(R("owner_review_required")),
+  grant_carried: looseEverywhere("A+", R("owner_review_required")),
   not_up_to_date: looseEverywhere(R("protected_change_not_up_to_date")),
   slot_not_held: looseEverywhere("A-"),
   auto_merge_on: looseEverywhere("A+", "A-"),
@@ -379,18 +376,16 @@ const EXPECTED = { compat: COMPAT_EXPECTED, recommended: RECOMMENDED_EXPECTED, l
 const results = {};
 async function matrixOf(table) {
   if (results[table]) return results[table];
-  const workspace = workspaceWith(TABLES[table]);
   const grid = {};
   for (const scenario of Object.keys(SCENARIOS)) {
     grid[scenario] = [];
     for (const cell of CELLS) {
       const [state, layer] = cell.split(".");
-      const { cell: got, outcome } = await judge({ workspace, state, layer, scenario });
+      const { cell: got, outcome } = await judge({ table: TABLES[table], state, layer, scenario });
       assert.deepEqual([outcome.admission_mode.state, outcome.admission_mode.layer], [state, layer], `${table}/${scenario}/${cell}`);
       grid[scenario].push(got);
     }
   }
-  fs.rmSync(workspace, { recursive: true, force: true });
   results[table] = grid;
   return grid;
 }
@@ -398,6 +393,7 @@ async function matrixOf(table) {
 for (const table of Object.keys(TABLES)) {
   test(`matrix (${table} table): every state, layer and scenario gives the fixture's verdict`, async () => {
     const grid = await matrixOf(table);
+    assert.deepEqual(Object.keys(EXPECTED[table]).sort(), Object.keys(SCENARIOS).sort());
     for (const [scenario, expected] of Object.entries(EXPECTED[table])) {
       assert.deepEqual(Object.fromEntries(CELLS.map((cell, i) => [cell, grid[scenario][i]])),
         Object.fromEntries(CELLS.map((cell, i) => [cell, expected[i]])), `${table}/${scenario}`);
@@ -422,72 +418,92 @@ test("conservation (I1 as behavior): the protected layer's verdict is the same i
 // What the matrix's cells mean, one by one.
 
 test("advise: a missing claim is admitted with a notice, Clued is not asked, and the merge slot is not required", async () => {
-  const workspace = workspaceWith(RECOMMENDED_TEXT);
-  const { outcome, calls } = await judge({ workspace, state: "efficiency", layer: "code", scenario: "claim_missing" });
+  const { outcome, calls } = await judge({ table: RECOMMENDED_POLICY_TEXT, state: "efficiency", layer: "code", scenario: "claim_missing" });
   assert.equal(outcome.verdict, "ADMITTED");
   assert.ok(outcome.notices.some((notice) => notice.startsWith("claim_advisory_missing:")));
   assert.equal(calls.some((call) => call.url.endsWith("/clued_work_verify_v1")), false);
   assert.deepEqual([outcome.merge_slot.state, outcome.merge_slot.observed], ["not_required", "missing"]);
   assert.match(mergeSlotCheck({ admitted: true, state: "not_required", mode: outcome.admission_mode.label }).title, /^not_required\(code, efficiency\)$/);
   // A claim that does not admit the pull request: its reasons become notices.
-  const expired = await judge({ workspace, state: "efficiency", layer: "docs", scenario: "claim_expired" });
+  const expired = await judge({ table: RECOMMENDED_POLICY_TEXT, state: "efficiency", layer: "docs", scenario: "claim_expired" });
   assert.deepEqual([expired.outcome.verdict, expired.outcome.claim_verdict, expired.outcome.reasons], ["ADMITTED", "REJECTED", []]);
   assert.ok(expired.outcome.notices.includes("claim_advisory:claim_expired"));
-  fs.rmSync(workspace, { recursive: true, force: true });
 });
 
-test("frozen: a code change needs an Owner Grant on its exact head, never carried over, and auto-merge fails the merge slot", async () => {
-  const workspace = workspaceWith(REPO_POLICY_TEXT);
-  const { outcome, calls } = await judge({ workspace, state: "frozen", layer: "code", scenario: "ok" });
+test("frozen: every head needs its own Owner Grant, never carried over, and auto-merge fails the merge slot", async () => {
+  const { outcome, calls } = await judge({ state: "frozen", layer: "code", scenario: "ok" });
   const door = calls.filter((call) => call.url.endsWith("/clued_owner_grant_admission_door_v1"));
   assert.equal(door.length, 1, "asked once, for the head, with no carry-over lookup");
   assert.deepEqual(door[0].body.p_input.resources, [`repo:o/r/${HEAD}`]);
   assert.match(door[0].body.p_input.note, /merge admission is frozen, so this code-layer change of 1 path\(s\) needs an Owner Grant too/);
   assert.equal(calls.filter((call) => call.url === `${API}/repos/o/r/commits/${HEAD}`).length, 0, "no carry-over walk");
   assert.ok(outcome.notices.some((notice) => notice.startsWith("owner_review_granted:g-1 (state_frozen:code)")));
-  const auto = await judge({ workspace, state: "frozen", layer: "docs", scenario: "auto_merge_on" });
+  // Review MINOR-1: the protected layer's approval does not carry over either.
+  const carried = await judge({ state: "normal", layer: "protected", scenario: "grant_carried" });
+  assert.ok(carried.outcome.notices.some((notice) => notice.startsWith(`owner_review_carried:g-1 from ${EARLIER}`)));
+  const frozenCarried = await judge({ state: "frozen", layer: "protected", scenario: "grant_carried" });
+  assert.equal(frozenCarried.calls.filter((call) => call.url === `${API}/repos/o/r/commits/${HEAD}`).length, 0, "no carry-over walk in frozen");
+  assert.match(frozenCarried.outcome.reasons[0], /^owner_review_required \(protected_path:scripts\/ci\/tool\.mjs\)/);
+  // Review NIT-4: a frozen head that does not contain the tip says a new grant is needed.
+  const behind = await judge({ state: "frozen", layer: "docs", scenario: "not_up_to_date" });
+  assert.match(behind.outcome.reasons[0], /\(merge main into the branch first; state_frozen:docs; merge admission is frozen, so the new head needs its own Owner Grant\)$/);
+  const auto = await judge({ state: "frozen", layer: "docs", scenario: "auto_merge_on" });
   assert.deepEqual([auto.outcome.admitted, auto.outcome.merge_slot.state], [true, "auto_merge_forbidden"]);
   const check = mergeSlotCheck({ admitted: true, state: "auto_merge_forbidden" });
   assert.deepEqual([check.success, check.title], [false, "Auto-merge is not allowed while merge admission is frozen"]);
-  fs.rmSync(workspace, { recursive: true, force: true });
 });
 
 test("fail closed: an unknown state or a broken policy file judges a code change as frozen", async () => {
-  const good = workspaceWith(REPO_POLICY_TEXT);
-  const unknown = await judge({ workspace: good, state: "relaxed", layer: "code", scenario: "no_grant" });
+  const unknown = await judge({ state: "relaxed", layer: "code", scenario: "no_grant" });
   assert.equal(unknown.cell, R("owner_review_required"));
   assert.deepEqual([unknown.outcome.admission_mode.state, unknown.outcome.admission_mode.requested], ["frozen", "frozen"]);
-  const bad = workspaceWith("{");
-  const broken = await judge({ workspace: bad, state: "normal", layer: "docs", scenario: "no_grant" });
+  const broken = await judge({ state: "normal", layer: "docs", scenario: "no_grant", readPolicyFile: () => "{" });
   assert.equal(broken.cell, R("owner_review_required"));
   assert.match(renderSummary(broken.outcome), /fail closed to frozen: config\/merge-admission-policy\.json is not JSON/);
-  const none = workspaceWith(null);
-  assert.equal((await judge({ workspace: none, state: "", layer: "code", scenario: "no_grant" })).cell, R("owner_review_required"));
-  for (const dir of [good, bad, none]) fs.rmSync(dir, { recursive: true, force: true });
+  const none = await judge({ state: "", layer: "code", scenario: "no_grant", readPolicyFile: () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); } });
+  assert.equal(none.cell, R("owner_review_required"));
+});
+
+test("policy file: a pull request whose head's policy would not load, or that removes it, is refused (review MAJOR-1)", async () => {
+  const change = (status, extra = {}) => ({ files: [{ filename: POLICY_PATH, status, ...extra }] });
+  const valid = await judge({ state: "normal", layer: "protected", scenario: change("modified"), policyFileAtHead: RECOMMENDED_POLICY_TEXT });
+  assert.equal(valid.cell, "A+");
+  assert.equal(valid.outcome.admission_mode.layer, "protected");
+  for (const [name, scenario, head, reason] of [
+    ["invalid", change("modified"), "{", /^policy_file_invalid:config\/merge-admission-policy\.json is not JSON/],
+    ["a looser frozen", change("modified"), COMPATIBILITY_POLICY_TEXT.replace('"auto_merge": "forbidden"', '"auto_merge": "allowed"'),
+      /^policy_file_invalid:policy\.rules\.frozen: must be exactly/],
+    ["missing at the head", change("modified"), null, /^policy_file_invalid:missing at the head$/],
+    ["removed", change("removed"), null, /^policy_file_removed:config\/merge-admission-policy\.json$/],
+    ["renamed away", change("renamed", { filename: "config/old-policy.json", previous_filename: POLICY_PATH }), null, /^policy_file_removed:/],
+  ]) {
+    const { outcome, calls } = await judge({ state: "normal", layer: "protected", scenario, policyFileAtHead: head });
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], name);
+    assert.match(outcome.reasons.find((reason) => reason.startsWith("policy_file_")), reason, name);
+    const verify = calls.find((call) => call.url.endsWith("/clued_work_verify_v1"));
+    assert.equal(verify.body.p_input.head_sha, undefined, `${name}: verified read-only, so the claim is not bound`);
+  }
 });
 
 test("the older switches: they keep their meaning in normal and efficiency, and frozen ignores them", async () => {
-  const workspace = workspaceWith(REPO_POLICY_TEXT);
   const off = { CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_OWNER_REVIEW_ENFORCE: "" };
-  const advisory = await judge({ workspace, state: "normal", layer: "protected", scenario: "claim_missing", env: off });
+  const advisory = await judge({ state: "normal", layer: "protected", scenario: "claim_missing", env: off });
   assert.deepEqual([advisory.outcome.admitted, advisory.outcome.verdict, advisory.outcome.enforced], [true, "NOT_ENFORCED", false]);
   assert.deepEqual(advisory.outcome.admission_mode.legacy_advisory, ["CLUED_WORK_ADMISSION_ENFORCE", "CLUED_OWNER_REVIEW_ENFORCE"]);
   assert.match(renderSummary(advisory.outcome), /legacy-advisory\(CLUED_WORK_ADMISSION_ENFORCE\) · legacy-advisory\(CLUED_OWNER_REVIEW_ENFORCE\)/);
-  const noReview = await judge({ workspace, state: "normal", layer: "protected", scenario: "no_grant", env: { CLUED_OWNER_REVIEW_ENFORCE: "" } });
+  const noReview = await judge({ state: "normal", layer: "protected", scenario: "no_grant", env: { CLUED_OWNER_REVIEW_ENFORCE: "" } });
   assert.deepEqual([noReview.cell, noReview.outcome.owner_review.kind], ["A+", "not_asked"]);
-  const frozen = await judge({ workspace, state: "frozen", layer: "protected", scenario: "claim_missing", env: off });
+  const frozen = await judge({ state: "frozen", layer: "protected", scenario: "claim_missing", env: off });
   assert.deepEqual([frozen.cell, frozen.outcome.enforced, frozen.outcome.admission_mode.legacy_advisory], [R("claim_trailer_missing"), true, []]);
-  const frozenReview = await judge({ workspace, state: "frozen", layer: "code", scenario: "no_grant", env: off });
+  const frozenReview = await judge({ state: "frozen", layer: "code", scenario: "no_grant", env: off });
   assert.equal(frozenReview.cell, R("owner_review_required"));
-  fs.rmSync(workspace, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
 // Visibility (§10).
 
 test("visibility: the summary leads with the mode and its rules; the outputs and the App check's title carry the label", async () => {
-  const workspace = workspaceWith(REPO_POLICY_TEXT);
-  const { outcome } = await judge({ workspace, state: "", layer: "docs", scenario: "ok" });
+  const { outcome } = await judge({ state: "", layer: "docs", scenario: "ok" });
   assert.equal(outcome.admission_mode.label, "normal · docs · reruns 0");
   assert.equal(modeLabel("normal", "docs", PROTECTED_BASELINE), "normal · docs · reruns 0");
   const summary = renderSummary(outcome);
@@ -496,13 +512,21 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "merge-admission-main-"));
   const eventPath = path.join(dir, "event.json");
-  const output = path.join(dir, "output");
+  const output = (name) => path.join(dir, name);
   const { pull, fetchImpl } = scriptFor("protected", SCENARIOS.ok);
   fs.writeFileSync(eventPath, JSON.stringify({ pull_request: pull }));
-  const code = await main(["--mode", "required"], { ...matrixEnv("efficiency"), GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: eventPath,
-    GITHUB_WORKSPACE: workspace, GITHUB_OUTPUT: output }, fetchImpl);
+  const base = { GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: eventPath, GITHUB_WORKSPACE: "/w" };
+  const options = { readPolicyFile: fixedPolicy() };
+  let code = await main(["--mode", "required"], { ...matrixEnv("efficiency"), ...base, GITHUB_OUTPUT: output("o1") }, fetchImpl, options);
   assert.equal(code, 0);
-  assert.ok(fs.readFileSync(output, "utf8").split("\n").includes("admission_mode=efficiency · protected · reruns 0"));
+  assert.ok(fs.readFileSync(output("o1"), "utf8").split("\n").includes("admission_mode=efficiency · protected · reruns 0"));
+  // Review MINOR-2: a run that fails still reports its mode; frozen is enforced
+  // whatever CLUED_WORK_ADMISSION_ENFORCE says.
+  code = await main(["--mode", "required"], { ...matrixEnv("frozen", { CLUED_WORK_ADMISSION_ENFORCE: "", GITHUB_TOKEN: "" }), ...base,
+    GITHUB_OUTPUT: output("o2"), GITHUB_STEP_SUMMARY: output("s2") }, fetchImpl, options);
+  assert.equal(code, 1);
+  assert.match(fs.readFileSync(output("o2"), "utf8"), /^enforced=true$/m);
+  assert.match(fs.readFileSync(output("s2"), "utf8"), /\*\*Mode:\*\* `frozen` · source `CLUED_MERGE_ADMISSION_STATE`/);
 
   const posts = [];
   const appFetch = async (url, init = {}) => {
@@ -513,9 +537,10 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
   };
   const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   const pem = privateKey.export({ type: "pkcs8", format: "pem" });
-  await appCheck({ env: { GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: API, GITHUB_RUN_ID: "77", CLUED_ADMISSION_APP_ID: "1", CLUED_ADMISSION_APP_PRIVATE_KEY: pem,
-    ADMISSION_HEAD_SHA: HEAD, ADMISSION_PR_NUMBER: "9", ADMISSION_OUTCOME: "success", ADMISSION_VERDICT: "ADMITTED",
-    ADMISSION_MODE: "normal · code · reruns 0", ADMISSION_MERGE_SLOT: "not_required" }, fetchImpl: appFetch, now: () => 1_800_000_000_000 });
+  const appEnv = { GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: API, GITHUB_RUN_ID: "77", CLUED_ADMISSION_APP_ID: "1", CLUED_ADMISSION_APP_PRIVATE_KEY: pem,
+    ADMISSION_HEAD_SHA: HEAD, ADMISSION_PR_NUMBER: "9" };
+  await appCheck({ env: { ...appEnv, ADMISSION_OUTCOME: "success", ADMISSION_VERDICT: "ADMITTED", ADMISSION_MODE: "normal · code · reruns 0",
+    ADMISSION_MERGE_SLOT: "not_required" }, fetchImpl: appFetch, now: () => 1_800_000_000_000 });
   assert.deepEqual(posts.map((post) => [post.name, post.output.title]), [
     ["clued-admission-verified", "ADMITTED [normal · code · reruns 0]"],
     ["clued-merge-slot", "not_required(code, normal)"],
@@ -523,23 +548,7 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
   // Without a mode (an admission step from before this change, or one that
   // stopped before it), the title is the verdict alone.
   posts.length = 0;
-  await appCheck({ env: { GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: API, GITHUB_RUN_ID: "77", CLUED_ADMISSION_APP_ID: "1", CLUED_ADMISSION_APP_PRIVATE_KEY: pem,
-    ADMISSION_HEAD_SHA: HEAD, ADMISSION_OUTCOME: "failure", ADMISSION_VERDICT: "ERROR" }, fetchImpl: appFetch, now: () => 1_800_000_000_000 });
+  await appCheck({ env: { ...appEnv, ADMISSION_OUTCOME: "failure", ADMISSION_VERDICT: "ERROR" }, fetchImpl: appFetch, now: () => 1_800_000_000_000 });
   assert.equal(posts[0].output.title, "ERROR");
-  for (const target of [dir, workspace]) fs.rmSync(target, { recursive: true, force: true });
-});
-
-test("workflows: the admission and re-verification jobs read the state variable, and the self-tests include this file", () => {
-  const read = (name) => fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
-  const admission = read("clued-work-admission.yml");
-  const admit = admission.slice(admission.indexOf("id: admit"), admission.indexOf("--mode required"));
-  assert.ok(admit.includes(`${STATE_VARIABLE}: \${{ vars.${STATE_VARIABLE} }}`));
-  const post = admission.slice(admission.indexOf("- name: Post the result as the clued-admission App"), admission.indexOf("--mode app-check"));
-  assert.ok(post.includes("ADMISSION_MODE: ${{ steps.admit.outputs.admission_mode }}"));
-  assert.ok(read("clued-work-admission-reverify.yml").includes(`${STATE_VARIABLE}: \${{ vars.${STATE_VARIABLE} }}`));
-  for (const [name, count] of [["clued-work-admission.yml", 1], ["clued-components.yml", 2]]) {
-    const runs = read(name).split("\n").filter((line) => line.includes("node --test scripts/ci/clued-work-admission.test.mjs"));
-    assert.equal(runs.length, count, name);
-    for (const line of runs) assert.ok(line.includes("scripts/ci/merge-admission-policy.test.mjs"), `${name}: ${line.trim()}`);
-  }
+  fs.rmSync(dir, { recursive: true, force: true });
 });

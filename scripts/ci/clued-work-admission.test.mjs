@@ -16,12 +16,12 @@ import {
   DISPATCH_GATED_WORKFLOWS,
   dispatchAdmit,
   dispatchTitle,
-  evaluate,
+  evaluate as evaluateWith,
   gate,
   globToRegExp,
   renderReverifySummary,
-  reverify,
-  main,
+  reverify as reverifyWith,
+  main as mainWith,
   parseClaimReference,
   parseWorkflowTriggers,
   readWorkflowTriggers,
@@ -55,6 +55,14 @@ import {
   mergeSlotOutputs,
   mergeSlotState,
 } from "./clued-work-admission.mjs";
+import { fixedPolicy } from "./merge-admission-policy.fixtures.mjs";
+
+// Merge Admission v0.1 (review MAJOR-1): these self-tests run on the default
+// branch before every admission, so every evaluation here judges against the
+// fixed compatibility table, never the repository's policy file.
+const evaluate = (options) => evaluateWith({ readPolicyFile: fixedPolicy(), ...options });
+const reverify = (options) => reverifyWith({ readPolicyFile: fixedPolicy(), ...options });
+const main = (argv, environment, fetchImpl) => mainWith(argv, environment, fetchImpl, { readPolicyFile: fixedPolicy() });
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
