@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.10",
+      "version": "1.0.11",
       "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "cfdd4747a9c2cad87efda02e9e3708f23076ad9eaef930a43d91ae37678710ef",
+      "content_sha256": "be206a9315f65534996e980a86d722f4f4913f85eef074c820065562df402bd7",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "38",
+      "version": "39",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "skills/clued/references",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "247ad34c3442b6989aba9b5248ae20fc39d7f75e93c050e6b3a3c805743d0d70",
+      "content_sha256": "06185ca79aa7531b117019258d479bb5c5d79b4dca83921e8690292633485adb",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,7 +50,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {

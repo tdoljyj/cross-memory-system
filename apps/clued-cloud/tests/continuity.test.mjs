@@ -7,10 +7,13 @@ const env = {
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
 };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
-const CLUED_COMPONENT_VERSIONS = Object.fromEntries(
-  JSON.parse(readFileSync(new URL("../../../config/clued-components.json", import.meta.url), "utf8"))
-    .components.map((c) => [c.id, String(c.version)]),
-);
+const componentManifest = JSON.parse(readFileSync(new URL("../../../config/clued-components.json", import.meta.url), "utf8"));
+const mcpComponents = componentManifest.components.filter((component) => component.id === "mcp.server");
+assert.equal(mcpComponents.length, 1, "the independent manifest must name one MCP version");
+const EXPECTED_MCP_VERSION = mcpComponents[0].version;
+assert.equal(typeof EXPECTED_MCP_VERSION, "string");
+assert.match(EXPECTED_MCP_VERSION, /^\d+\.\d+\.\d+$/);
+const CLUED_COMPONENT_VERSIONS = Object.fromEntries(componentManifest.components.map((c) => [c.id, String(c.version)]));
 
 test("publishes a continuity health contract", async () => {
   const worker = await loadWorker();
@@ -19,7 +22,7 @@ test("publishes a continuity health contract", async () => {
   assert.deepEqual(await response.json(), {
     status: "ok",
     service: "clued-continuity",
-    version: "0.4.2",
+    version: EXPECTED_MCP_VERSION,
     components: CLUED_COMPONENT_VERSIONS,
     canonicalStore: "supabase",
     mcp: "/mcp",
@@ -62,7 +65,7 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   const initialized = await initialize.json();
   assert.equal(initialized.result.serverInfo.name, "Clued Continuity");
   assert.equal(initialized.result.protocolVersion, "2026-07-28");
-  assert.equal(initialized.result.serverInfo.version, "0.4.2");
+  assert.equal(initialized.result.serverInfo.version, EXPECTED_MCP_VERSION);
   assert.match(initialized.result.instructions, /https:\/\/clued\.test\/clued-agent\.md/);
   assert.match(initialized.result.instructions, /in the same turn, before reporting it done/);
 
@@ -110,7 +113,7 @@ test("publishes a public bootstrap without user context", async () => {
   );
   assert.equal(response.status, 200);
   const result = await response.json();
-  assert.equal(result.kernel_version, "0.4.2");
+  assert.equal(result.kernel_version, EXPECTED_MCP_VERSION);
   assert.equal(result.endpoints.mcp, "https://clued.test/mcp");
   assert.equal(result.lifecycle.required, true);
   assert.equal(result.capabilities.semantic_recall, false);
@@ -145,7 +148,7 @@ test("serves MCP bootstrap without a binding token", async () => {
   );
   assert.equal(response.status, 200);
   const result = await response.json();
-  assert.equal(result.result.structuredContent.kernel_version, "0.4.2");
+  assert.equal(result.result.structuredContent.kernel_version, EXPECTED_MCP_VERSION);
 });
 
 test("publishes OAuth protected resource metadata for MCP clients", async () => {

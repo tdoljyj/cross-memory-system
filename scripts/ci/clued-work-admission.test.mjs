@@ -458,6 +458,46 @@ test("pull_request_target: the PR is read fresh, so an edited body or a re-run s
   assert.ok(!calls.some((c) => c.url.includes("/commits/")), "the trailer was found in the fresh body");
 });
 
+test("pull_request_target (Merge Admission step 2): a pull request merged or closed by the time it is read is not judged and does not pass", async () => {
+  for (const state of ["closed"]) {
+    const { fetchImpl, calls } = fakeFetch({ [FILES]: files, [PULL]: { body: freshPull({ state }) }, [VERIFY]: { body: admittedPayload } });
+    const outcome = await evaluateIn({ env: env(), event: event(), eventName: "pull_request_target", fetchImpl });
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "PR_NOT_OPEN"], state);
+    assert.match(outcome.reasons[0], new RegExp(`pull request #452 is ${state}; nothing to judge`));
+    assert.deepEqual(calls.map((c) => c.url), ["https://api.test/repos/o/r/pulls/452"], "no other call, Clued included");
+  }
+  const { fetchImpl } = fakeFetch({ [FILES]: files, [PULL]: { body: freshPull({ state: "open" }) }, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload } });
+  assert.equal((await evaluateIn({ env: env(), event: event(), eventName: "pull_request_target", fetchImpl })).verdict, "ADMITTED");
+  // main: the run fails (the runner hook admits on run success alone), and the workflow posts no check for it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clued-work-admission-closed-"));
+  const eventPath = path.join(dir, "event.json");
+  fs.writeFileSync(eventPath, JSON.stringify(event()));
+  const code = await main(["--mode", "required"], { ...env(), GITHUB_EVENT_NAME: "pull_request_target", GITHUB_EVENT_PATH: eventPath,
+    GITHUB_WORKSPACE: ROOT, GITHUB_OUTPUT: path.join(dir, "out") }, fakeFetch({ [PULL]: { body: freshPull({ state: "closed" }) } }).fetchImpl);
+  assert.equal(code, 1);
+  assert.match(fs.readFileSync(path.join(dir, "out"), "utf8"), /^verdict=PR_NOT_OPEN$/m);
+  const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
+  assert.ok(workflow.includes("if: ${{ !cancelled() && steps.admit.outputs.verdict != 'PR_NOT_OPEN' }}"));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("gate (Merge Admission step 2, review MAJOR-1): a re-run that is not admitted fails the gate job; attempt 1 does not", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clued-work-admission-gate-exit-"));
+  const eventPath = path.join(dir, "event.json");
+  fs.writeFileSync(eventPath, JSON.stringify(withClaim()));
+  const pull = { [PULL]: { body: { number: 452, state: "open", head: { sha: HEAD }, base: { ref: "main" } } } };
+  const checks = [appCheckRun({ output: { title: "ADMITTED [normal · code · reruns 1]" } })];
+  const base = { ...env({ CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }), GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: path.join(dir, "o") };
+  const run = (extra, script) => main(["--mode", "gate"], { ...base, ...extra }, fakeFetch(script).fetchImpl);
+  assert.equal(await run({ GITHUB_RUN_ATTEMPT: "2" }, { ...checksReturn(checks), ...pull }), 0, "an admitted re-run");
+  assert.equal(await run({ GITHUB_RUN_ATTEMPT: "3" }, { ...checksReturn(checks), ...pull }), 1, "past the allowance: red");
+  assert.equal(await run({ GITHUB_RUN_ATTEMPT: "2" }, { ...checksReturn([appCheckRun({ conclusion: "failure", output: { title: "REJECTED [normal · code · reruns 1]" } })]), ...pull }), 1,
+    "a rejected re-run: red");
+  assert.equal(await run({}, checksReturn([appCheckRun({ conclusion: "failure" })])), 0, "attempt 1 not admitted: the gate succeeds, heavy jobs skip");
+  assert.equal(await run({ GITHUB_RUN_ATTEMPT: "3", CLUED_WORK_ADMISSION_ENFORCE: "" }, { ...checksReturn(checks), ...pull }), 0, "advisory: admitted");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("enforced: a claim bound to another PR is rejected and the binding is reported", async () => {
   const payload = { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_bound_to_other_pr"], bound_pr: "o/r#1",
     claim: { ...admittedPayload.claim, bound_pr: "o/r#1" } };
@@ -1050,7 +1090,7 @@ test("app check: posts the admission result as the App on the evaluated head", a
 test("app check: the admission workflow posts it after the admission step, keys from the environment", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
   assert.match(text, /id: admit\n/);
-  assert.match(text, /if: \$\{\{ !cancelled\(\) \}\}\n[\s\S]*ADMISSION_HEAD_SHA: \$\{\{ steps\.admit\.outputs\.head_sha \|\| github\.event\.pull_request\.head\.sha \}\}[\s\S]*secrets\.CLUED_ADMISSION_APP_KEY[\s\S]*--mode app-check/);
+  assert.match(text, /if: \$\{\{ !cancelled\(\)[^\n]*\}\}\n[\s\S]*ADMISSION_HEAD_SHA: \$\{\{ steps\.admit\.outputs\.head_sha \|\| github\.event\.pull_request\.head\.sha \}\}[\s\S]*secrets\.CLUED_ADMISSION_APP_KEY[\s\S]*--mode app-check/);
   // Re-review 3, N-R4: the admission job checks out the branch as it is now,
   // not the event's base commit that a re-run would replay. Re-review 6, B1:
   // always the default branch, never the pull request's base branch, whose
@@ -1152,7 +1192,10 @@ test("adopt: main exits 1 only on an error and writes a summary", async () => {
 
 test("adopt: the admission workflow runs it for a closed pull request into the default branch, from the default branch", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
-  assert.match(text, /types: \[opened, synchronize, reopened, edited, ready_for_review, closed\]/);
+  // The types the adopt job needs (closed) and that re-judge a pull request; the full
+  // list is pinned on pull request heads (merge-admission-policy-file.test.mjs).
+  const types = /^ {4}types: \[([^\]]*)\]$/m.exec(text);
+  for (const type of ["opened", "synchronize", "reopened", "edited", "closed"]) assert.ok(types && types[1].split(", ").includes(type), type);
   // Re-review 6, B1: both jobs hold the environment's secrets, so both run
   // only for pull requests into the default branch.
   const intoDefault = "github.event.pull_request.base.ref == github.event.repository.default_branch";
@@ -1219,21 +1262,77 @@ test("gate (re-review 3 N-R1, re-review 5 n1): only the admission run of this ev
     fetchImpl: fakeFetch(checksReturn([appCheckRun()])).fetchImpl, sleep: async () => {} }), /GITHUB_RUN_ID is not set/);
 });
 
-test("gate (re-review 3, N-R3): re-runs of pull request and dispatch runs are refused before any lookup", async () => {
+test("gate (re-review 3, N-R3; Merge Admission step 2): a pull request run's re-run is judged again, a dispatch run's is refused", async () => {
   assert.equal(rerunAttempt({}), null);
   assert.equal(rerunAttempt({ GITHUB_RUN_ATTEMPT: "1" }), null);
   assert.equal(rerunAttempt({ GITHUB_RUN_ATTEMPT: "3" }), 3);
-  const { fetchImpl, calls } = fakeFetch(checksReturn([appCheckRun()]));
-  let outcome = await gate({ env: env({ GITHUB_RUN_ATTEMPT: "2" }), event: withClaim(), eventName: "pull_request", fetchImpl, sleep: async () => {} });
-  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "RERUN_REFUSED"]);
-  assert.match(outcome.reasons[0], /run attempt 2: re-runs are not admitted; push a new commit/);
-  assert.equal(calls.length, 0);
-  outcome = await gate({ env: env({ GITHUB_RUN_ATTEMPT: "2", CLUED_WORK_ADMISSION_ENFORCE: "" }), event: withClaim(), eventName: "pull_request",
-    fetchImpl, sleep: async () => {} });
+  const titled = (title, overrides = {}) => appCheckRun({ output: { title }, ...overrides });
+  const current = (overrides = {}) => ({ [PULL]: { body: { number: 452, state: "open", head: { sha: HEAD }, base: { ref: "main" }, ...overrides } } });
+  const rerun = async (attempt, checks, { pull = current(), envOverrides = {}, runs } = {}) => {
+    const script = { ...checksReturn(checks), ...pull, ...(runs ? { [ADMISSION_RUNS]: { body: { workflow_runs: runs } } } : {}) };
+    const { fetchImpl, calls } = fakeFetch(script);
+    const outcome = await gate({ env: env({ GITHUB_RUN_ATTEMPT: String(attempt), CLUED_ADMISSION_GATE_WAIT_SECONDS: "0", ...envOverrides }),
+      event: withClaim(), eventName: "pull_request", fetchImpl, sleep: async () => {} });
+    return { outcome, calls };
+  };
+  // "Re-run all jobs" on the current head within the title's allowance.
+  let { outcome, calls } = await rerun(2, [titled("ADMITTED [normal · code · reruns 1]")]);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_mode.label], [true, "ADMITTED", "normal · code · reruns 1"]);
+  assert.equal(calls[0].url, "https://api.test/repos/o/r/pulls/452", "the current head is read first");
+  ({ outcome } = await rerun(3, [titled("ADMITTED [normal · docs · reruns 2]")]));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
+  // Past the allowance, or a title without one (an admission run from before step 2).
+  for (const [attempt, title, reason] of [[3, "ADMITTED [normal · code · reruns 1]", /run attempt 3: the code layer allows 1 re-run\(s\) per head in normal/],
+    [4, "ADMITTED [normal · docs · reruns 2]", /run attempt 4: the docs layer allows 2/], [2, "ADMITTED", /run attempt 2: the admission check names no re-run allowance/],
+    [2, "ADMITTED [normal · code · reruns 0]", /allows 0 re-run/]]) {
+    ({ outcome } = await rerun(attempt, [titled(title)]));
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "RERUN_REFUSED"], title);
+    assert.match(outcome.reasons[0], reason);
+    assert.match(outcome.reasons[0], /only "Re-run all jobs" of the current head's run/);
+  }
+  // An old head, a closed pull request, or one that cannot be read: refused before any check is read.
+  for (const pull of [current({ head: { sha: "e".repeat(40) } }), current({ state: "closed" }), current({ base: { ref: "release" } }), { [PULL]: { status: 500, body: null } }]) {
+    ({ outcome, calls } = await rerun(2, [titled("ADMITTED [normal · code · reruns 1]")], { pull }));
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "RERUN_REFUSED"]);
+    assert.ok(!calls.some((c) => c.url.includes("/check-runs")), "no check is read for a stale re-run");
+  }
+  // A newer failing check for this pull request (the re-verification) wins over the event's admission.
+  ({ outcome } = await rerun(2, [titled("ADMITTED [normal · code · reruns 1]"),
+    appCheckRun({ id: 9, conclusion: "failure", external_id: "pr:452:run:999", output: { title: "RE-VERIFIED: REJECTED [normal · code · reruns 1]" } })]));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"]);
+  assert.match(outcome.reasons[0], /clued-admission-verified of App .* 9 concluded failure/);
+  // ...and a newer success (an older admission run re-run after a grant) is not shadowed by the event's failure.
+  ({ outcome } = await rerun(2, [titled("REJECTED [normal · code · reruns 1]", { conclusion: "failure" }),
+    appCheckRun({ id: 9, external_id: "pr:452:run:70", output: { title: "ADMITTED [normal · code · reruns 1]" } })]));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
+  // Frozen in the newer check holds whatever the variable says.
+  ({ outcome } = await rerun(2, [titled("ADMITTED [normal · code · reruns 1]"),
+    appCheckRun({ id: 9, conclusion: "failure", external_id: "pr:452:run:999", output: { title: "RE-VERIFIED: REJECTED [frozen · code · reruns 1]" } })],
+  { envOverrides: { CLUED_WORK_ADMISSION_ENFORCE: "" } }));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.enforced], [false, "REJECTED", true]);
+  // The admission run is itself running again: its earlier check does not count.
+  ({ outcome } = await rerun(2, [titled("ADMITTED [normal · code · reruns 1]")], { runs: [admissionTargetRun({ status: "in_progress", conclusion: null })] }));
+  assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
+  // Advisory (the variable unset, same repository): reported, admitted, as before.
+  ({ outcome } = await rerun(3, [titled("ADMITTED [normal · code · reruns 1]")], { envOverrides: { CLUED_WORK_ADMISSION_ENFORCE: "" } }));
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.advisory], [true, "RERUN_REFUSED", true]);
+  // Frozen in the title holds whatever the variable says.
+  ({ outcome } = await rerun(3, [titled("ADMITTED [frozen · code · reruns 1]")], { envOverrides: { CLUED_WORK_ADMISSION_ENFORCE: "" } }));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.enforced], [false, "RERUN_REFUSED", true]);
+  ({ outcome } = await gateRun([titled("REJECTED [frozen · docs · reruns 1]", { conclusion: "failure" })], { CLUED_WORK_ADMISSION_ENFORCE: "" }));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.enforced], [false, "REJECTED", true]);
+  // A branch dispatch run's re-run stays refused.
   ({ outcome } = await dispatchGateWith(admissionRun(), { GITHUB_RUN_ATTEMPT: "2" }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "RERUN_REFUSED"]);
 });
+
+// The first attempt of a gate run against a list of App checks.
+async function gateRun(checks, envOverrides = {}) {
+  const { fetchImpl, calls } = fakeFetch(checksReturn(checks));
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_WAIT_SECONDS: "0", ...envOverrides }), event: withClaim(), eventName: "pull_request",
+    fetchImpl, sleep: async () => {} });
+  return { outcome, calls };
+}
 
 test("gate guard (re-review 3, N-R5): an ungated workflow may not move a job to a self-hosted runner or loosen its timeout", () => {
   const ungated = fs.readFileSync(path.join(ROOT, ".github", "workflows", "trivy.yml"), "utf8");

@@ -29,12 +29,34 @@
 //     have no gate, so they run on main only.)
 // Any workflow file counts, not only the one running: a called (reusable)
 // workflow runs under its caller's name.
-// Re-review 3, N-R3: a re-run (run attempt 2 or later) of a pull request or
-// branch dispatch run is refused. A re-run replays its run's own workflow
-// file, which may be one from before the gates existed, and "re-run failed
-// jobs" keeps the gate's earlier output. Push a new commit instead.
+// Re-runs (run attempt 2 or later; MergeAdmission v0.1 §8, Owner Decisions
+// 77216370 and 1b93760d, replacing re-review 3 N-R3's blanket refusal):
+//   - main's own runs may be re-run, as before. That includes the admission
+//     workflow (pull_request_target), which reads the pull request and main
+//     afresh every time.
+//   - A hand dispatch on another branch may not be re-run: dispatch again.
+//   - A pull request run may be re-run only while the pull request is open,
+//     into main, and its head is still the run's head. Then:
+//       - its admission-gate job starts: the gate judges the re-run itself
+//         (the reruns-per-head count in its admission check's title);
+//       - gitleaks.yml and trivy.yml, required checks without a gate, may be
+//         re-run once (attempt 2);
+//       - every other job starts only when this attempt's admission-gate job
+//         ran again in this attempt and succeeded ("Re-run all jobs"). "Re-run
+//         failed jobs" and a single-job re-run list the earlier gate job in
+//         the new attempt, successful but started before the attempt did; that
+//         start time is what tells them apart (measured on GitHub, Task
+//         745c288f). Exactly one job of the attempt may be named
+//         admission-gate, and it must carry the self-hosted label. A gate job
+//         not started or not completed yet is waited for, up to
+//         CLUED_RUNNER_HOOK_WAIT_SECONDS. See rerunVerdict below.
+//     The rule for a pull request that changes a workflow applies to every
+//     attempt as to the first.
 // Everything else is refused: pushes to other branches, pull requests into
 // other branches, other events.
+//
+// HOOK_VERSION is printed in every ALLOW/REFUSE line, so the Owner can see in
+// a job's "Set up runner" log which copy each runner has.
 //
 // Configuration (runner machine environment, e.g. the runner's .env file):
 //   CLUED_RUNNER_HOOK_REPOSITORY   owner/name this runner serves (required)
@@ -44,13 +66,19 @@
 //                                  a read-only GitHub token (actions and
 //                                  contents: read); used only when no App is set
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
-//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run (480)
+//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run, and
+//                                  separately for a re-run's admission-gate
+//                                  job (480 each). A heavy job of a re-run of a
+//                                  pull request that changes a workflow can
+//                                  wait for both: up to twice this.
 // It needs Node 18 or newer (the runner bundles one under externals/).
 
 import { createSign } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+export const HOOK_VERSION = "merge-admission-step2";
 
 // The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
@@ -189,6 +217,122 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
     .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
+// Re-runs of a pull request run (MergeAdmission v0.1 §8; Owner Decisions
+// 77216370 item 2 and 3, 1b93760d item 2).
+export const GATE_JOB = "admission-gate";
+// Required checks without a gate: one re-run (attempt 2) on the current head.
+export const RERUN_ONCE_WORKFLOWS = [".github/workflows/gitleaks.yml", ".github/workflows/trivy.yml"];
+
+// A run attempt number, or null when it is not one.
+function attemptNumber(value) {
+  const text = String(value ?? "").trim();
+  return /^[1-9][0-9]{0,8}$/.test(text) ? Number(text) : null;
+}
+
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// This attempt's admission-gate job. "Re-run all jobs" runs the gate again,
+// so its start time is no earlier than the attempt's (run_started_at, which
+// changes per attempt; created_at does not). "Re-run failed jobs" and a
+// single-job re-run list the earlier, not re-run gate job in the new attempt,
+// with a new id, a later created_at, conclusion success and this attempt's
+// number, but its started_at stays the earlier attempt's (measured on
+// microsoft/vscode run 37727629063). A list that is not complete, or a time
+// that cannot be read, refuses.
+// The gate is found by its display name, so exactly one job of the attempt
+// may carry it, and that job must run on a self-hosted runner (every gate job
+// does; review MINOR-2): a second job named admission-gate, or one on a hosted
+// runner, refuses.
+// A gate job of this attempt that has not started yet (no started_at) or has
+// not completed is pending: the caller polls again within its bounded wait
+// and refuses at the end of it (review NIT-5).
+async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted) {
+  const body = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`);
+  const jobs = body && Array.isArray(body.jobs) ? body.jobs : null;
+  if (!jobs) return { state: "refused", detail: `attempt ${attempt}'s job list is unavailable` };
+  const total = Number(body.total_count);
+  if (!Number.isInteger(total) || total > jobs.length) {
+    return { state: "refused", detail: `attempt ${attempt} has ${body.total_count ?? "an unknown number of"} jobs and ${jobs.length} were listed` };
+  }
+  const gates = jobs.filter((job) => job && job.name === GATE_JOB);
+  if (gates.length === 0) return { state: "refused", detail: `attempt ${attempt} has no ${GATE_JOB} job` };
+  if (gates.length > 1) {
+    return { state: "refused", detail: `attempt ${attempt} has ${gates.length} jobs named ${GATE_JOB} (${gates.map((job) => job.id).join(", ")}); exactly one is required` };
+  }
+  const gate = gates[0];
+  if (!Array.isArray(gate.labels) || !gate.labels.includes("self-hosted")) {
+    return { state: "refused", detail: `${GATE_JOB} job ${gate.id} does not run on a self-hosted runner (labels ${JSON.stringify(gate.labels ?? null)})` };
+  }
+  if (gate.run_attempt !== undefined && gate.run_attempt !== null && Number(gate.run_attempt) !== attempt) {
+    return { state: "refused", detail: `${GATE_JOB} job ${gate.id} belongs to attempt ${gate.run_attempt}, not ${attempt}` };
+  }
+  const state = `${GATE_JOB} job ${gate.id}: ${gate.status ?? "unknown"}/${gate.conclusion ?? "none"}`;
+  const noStart = gate.started_at === undefined || gate.started_at === null || gate.started_at === "";
+  if (noStart || gate.status !== "completed") return { state: "pending", detail: noStart ? `${state}, not started` : state };
+  const started = Date.parse(gate.started_at);
+  if (!Number.isFinite(started)) return { state: "refused", detail: `${GATE_JOB} job ${gate.id} has an unreadable started_at ${JSON.stringify(gate.started_at)}` };
+  if (started < attemptStarted) {
+    return { state: "refused", detail: `${GATE_JOB} job ${gate.id} started ${gate.started_at}, not in this attempt: it was not re-run` };
+  }
+  if (gate.conclusion !== "success") return { state: "refused", detail: state };
+  return { state: "ok", job: gate };
+}
+
+// Whether a job of attempt `attempt` (2 or later) of this pull request run may
+// start. The workflow-change rule is applied afterwards, as for attempt 1.
+// Every error, and everything that cannot be observed, refuses.
+async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, runId, run, pr, attempt, workflow, limit, sleep }) {
+  const what = `pull request #${pr.number ?? "(none)"}, run attempt ${attempt}`;
+  const refuse = (why) => ({ allow: false, reason: `${what}: ${why}` });
+  if (!/^[1-9][0-9]{0,9}$/.test(String(pr.number ?? ""))) return refuse("the event names no pull request number; re-run refused");
+  if (!/^[0-9a-f]{40}$/.test(String(pr.head.sha ?? ""))) return refuse("the event names no head commit; re-run refused");
+  let current;
+  try {
+    current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
+  } catch (error) {
+    return refuse(`cannot read the pull request (${errorText(error)}); re-run refused`);
+  }
+  if (!current || current.state !== "open") {
+    return refuse(`the pull request is ${current && current.state ? current.state : "unreadable"}; only an open pull request's current head may be re-run`);
+  }
+  if (!current.base || current.base.ref !== defaultBranch) {
+    return refuse(`the pull request now targets ${current.base ? current.base.ref : "(unknown)"}, not ${defaultBranch}; re-run refused`);
+  }
+  if (!current.head || current.head.sha !== pr.head.sha) {
+    return refuse(`${pr.head.sha} is not the pull request's current head (${current.head ? current.head.sha : "unknown"}); `
+      + "an old head's run may not be re-run, re-run the current head's run");
+  }
+  if ((env.GITHUB_JOB ?? "") === GATE_JOB) {
+    return { allow: true, reason: `run attempt ${attempt} on the current head: the ${GATE_JOB} job judges the re-run itself` };
+  }
+  if (RERUN_ONCE_WORKFLOWS.includes(workflow)) {
+    return attempt === 2 ? { allow: true, reason: `run attempt 2 of ${workflow} on the current head (one re-run allowed)` }
+      : refuse(`${workflow} may be re-run once (attempt 2) only`);
+  }
+  const attemptStarted = Date.parse(run && run.run_started_at);
+  if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
+  // A heavy job needs the gate, so a gate job of this attempt still shown as
+  // not started or not completed is the API's lag: wait for it, like for the
+  // admission run below, and refuse at the end of the wait.
+  let seen;
+  for (let waited = 0; ; waited += 10) {
+    try {
+      seen = await gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted);
+    } catch (error) {
+      return refuse(`cannot read attempt ${attempt}'s jobs (${errorText(error)}); re-run refused`);
+    }
+    if (seen.state !== "pending" || waited >= limit) break;
+    await sleep(10_000);
+  }
+  if (seen.state === "ok") {
+    return { allow: true, reason: `run attempt ${attempt} on the current head: ${GATE_JOB} job ${seen.job.id} ran again in this attempt and succeeded` };
+  }
+  return refuse(`no ${GATE_JOB} job that ran again in this attempt and succeeded (${seen.detail}); `
+    + `use "Re-run all jobs", not "Re-run failed jobs" or a single job`);
+}
+
 export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => Date.now() }) {
   const result = { allow: false, reason: "", event: env.GITHUB_EVENT_NAME ?? "", ref: env.GITHUB_REF ?? "", workflow: null };
@@ -230,12 +374,13 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
   if (!/^[0-9]{1,20}$/.test(runId)) throw new Error("GITHUB_RUN_ID is not a run id.");
   const token = await readToken({ env, fetchImpl, readFile, now, repository });
   const run = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}`);
-  const attempt = Math.max(Number(run && run.run_attempt) || 1, Number.parseInt(env.GITHUB_RUN_ATTEMPT ?? "1", 10) || 1);
-  if (attempt > 1) {
-    result.reason = `${event} on ${result.ref}: run attempt ${attempt}; re-runs are refused, push a new commit`;
-    return result;
-  }
   if (event === "workflow_dispatch") {
+    // Re-review 3, N-R3, unchanged: a hand dispatch off main is never re-run.
+    const attempt = Math.max(Number(run && run.run_attempt) || 1, Number.parseInt(env.GITHUB_RUN_ATTEMPT ?? "1", 10) || 1);
+    if (attempt > 1) {
+      result.reason = `${event} on ${result.ref}: run attempt ${attempt}; re-runs are refused, push a new commit`;
+      return result;
+    }
     const file = workflow.slice(".github/workflows/".length);
     if (!DISPATCH_GATED_WORKFLOWS.includes(file)) {
       result.reason = `dispatch of ${workflow} on ${result.ref}: only ${DISPATCH_GATED_WORKFLOWS.join(", ")} may be dispatched on another branch; this one runs on ${defaultBranch} only`;
@@ -255,14 +400,33 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
       result.reason = `pull request into ${pr.base.ref}, not ${defaultBranch}`;
       return result;
     }
+    const waitSeconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
+    const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : 480;
+    // The attempt as the runner and as GitHub see it; both must be readable
+    // and the same.
+    const runnerAttempt = attemptNumber((env.GITHUB_RUN_ATTEMPT ?? "").trim() || "1");
+    const apiAttempt = attemptNumber(run && run.run_attempt);
+    if (runnerAttempt === null || apiAttempt === null || runnerAttempt !== apiAttempt) {
+      result.reason = `pull request #${pr.number}: run attempt ${env.GITHUB_RUN_ATTEMPT ?? "(unset)"} on the runner and `
+        + `${run && run.run_attempt !== undefined ? run.run_attempt : "(none)"} on GitHub do not agree; refused`;
+      return result;
+    }
+    let rerun = "";
+    if (runnerAttempt > 1) {
+      const verdict = await rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, runId, run, pr, attempt: runnerAttempt,
+        workflow, limit, sleep });
+      if (!verdict.allow) {
+        result.reason = verdict.reason;
+        return result;
+      }
+      rerun = `; ${verdict.reason}`;
+    }
     const changed = await changedWorkflows(fetchImpl, token, repository, defaultBranch, pr.head.sha);
     if (changed.length === 0) {
       result.allow = true;
-      result.reason = `pull request #${pr.number} changes no workflow`;
+      result.reason = `pull request #${pr.number} changes no workflow${rerun}`;
       return result;
     }
-    const waitSeconds = Number.parseInt(env.CLUED_RUNNER_HOOK_WAIT_SECONDS ?? "", 10);
-    const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : 480;
     const since = Date.parse(run && run.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
     let found = null;
@@ -274,8 +438,8 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
     result.allow = Boolean(found && found.status === "completed" && found.conclusion === "success");
     const what = [...new Set(changed)].join(", ");
     const seen = !found ? "no admission run" : `admission run ${found.id}: ${found.status}/${found.conclusion ?? "none"}`;
-    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; admission run ${found.id} succeeded`
-      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_WORKFLOW} run on ${pr.head.sha} from this event (created since ${run.created_at} less ${SAME_EVENT_MS / 1000}s; ${seen})`;
+    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; admission run ${found.id} succeeded${rerun}`
+      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_WORKFLOW} run on ${pr.head.sha} from this event (created since ${run.created_at} less ${SAME_EVENT_MS / 1000}s; ${seen})${rerun}`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);
@@ -289,7 +453,7 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
   } catch (error) {
     result = { allow: false, reason: `check failed: ${error instanceof Error ? error.message : String(error)}` };
   }
-  const line = `clued-runner-hook: ${result.allow ? "ALLOW" : enforce ? "REFUSE" : "WOULD REFUSE"} ${result.reason}`;
+  const line = `clued-runner-hook: ${result.allow ? "ALLOW" : enforce ? "REFUSE" : "WOULD REFUSE"} ${result.reason} [hook ${HOOK_VERSION}]`;
   if (result.allow) { console.log(line); return 0; }
   console.log(enforce ? `::error title=Clued runner check::${line}` : `::warning title=Clued runner check (not enforced)::${line}`);
   return enforce ? 1 : 0;

@@ -25,7 +25,8 @@ const toolVersions = JSON.parse(await fs.readFile(path.join(root, 'evals/public-
 const TOOLS = ['clued_integration_install', 'clued_integration_status', 'clued_integration_declare', 'clued_integration_report',
   'clued_integration_identity_update', 'clued_integration_verify', 'clued_integration_revoke'];
 const MODEL_READ_TOOLS = ['clued_model_reference_owner_approval_refs', 'clued_model_dataset_split_owner_anchor_refs',
-  'clued_model_dataset_split_resolve_refs', 'clued_model_dataset_split_verify'];
+  'clued_model_dataset_split_resolve_refs', 'clued_model_dataset_split_verify',
+  'clued_model_dataset_split_prepare_plan', 'clued_model_dataset_split_verify_successor'];
 const MODEL_BOOTSTRAP = 'clued_model_dataset_split_bootstrap_request';
 const ordinaryBaseline = baseline.tools.filter((tool) => !MODEL_READ_TOOLS.includes(tool.name));
 // §12.2: readOnly / destructive / idempotent / openWorld
@@ -96,7 +97,7 @@ const committed = (supplemental = {}) => Response.json({ status: 'committed', re
 
 test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the uniform 32-row matrix holds through the Worker', async () => {
   // Stage C-3 (Decision a109eb63): the frozen production-equivalent baseline is the flag-on list.
-  assert.equal(baseline.tools.length, 40);
+  assert.equal(baseline.tools.length, 42);
   assert.equal(ordinaryBaseline.length, 36);
   for (const value of ['true', '1', 'on', 'enabled']) {
     const env = { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
@@ -133,7 +134,7 @@ test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the 
   assert.deepEqual([count(false, false, true), count(true, false, true), count(false, true, true), count(true, true, true)], [25, 36, 30, 41]);
   assert.deepEqual(toolVersions.feature_flags.production_equivalent,
     { PROJECT_VIEWS_V2: true, P5_TENANT_WRITES: false, CLUED_INTEGRATION_RUNTIME_V1: true,
-      CLUED_MODEL_DOMAIN_SOURCE_V1: true, CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: false, expected_tool_count: 40 });
+      CLUED_MODEL_DOMAIN_SOURCE_V1: true, CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: false, expected_tool_count: 42 });
   const productionSourceOn = { ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false' };
   assert.equal(JSON.stringify(await listTools(productionSourceOn)), JSON.stringify(baseline.tools));
   for (const value of ['true', 'TRUE', '1', 'on', 'enabled', ' true ']) {
