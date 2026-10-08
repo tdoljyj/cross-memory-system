@@ -23,7 +23,7 @@ test("policy file: the repository's file loads, and in step 1 it is the compatib
   // Step 2 replaces the file with the recommended table and this expectation with it.
   assert.deepEqual(JSON.parse(JSON.stringify(loaded.policy)), JSON.parse(JSON.stringify(loadPolicy(COMPATIBILITY_POLICY_TEXT).policy)));
   const text = fs.readFileSync(path.join(ROOT, POLICY_PATH), "utf8");
-  assert.ok(!text.startsWith("﻿"), "no byte order mark");
+  assert.ok(!text.startsWith("\uFEFF"), "no byte order mark");
 });
 
 test("workflows: the admission and re-verification jobs read the state variable; the self-tests are split as intended", () => {

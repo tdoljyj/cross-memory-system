@@ -550,10 +550,14 @@ export async function workflowGateFindings(fetchImpl, env, repository, files, he
 // default branch judges every pull request as frozen. A pull request that
 // changes the file is refused outright, as the workflow guard refuses a
 // workflow, when its head's file would not load or when it removes the file.
+// The head's file is checked with the default branch's loadPolicy, so a new
+// schema is a two-step change: first a loader that accepts it, then the file.
 export async function policyFileFindings(fetchImpl, env, repository, files, headSha) {
   const findings = [];
   for (const file of files) {
     if (file.filename !== POLICY_PATH && file.previous_filename !== POLICY_PATH) continue;
+    // A copy of the file elsewhere leaves it as it is.
+    if (file.status === "copied" && file.filename !== POLICY_PATH) continue;
     if (file.status === "removed" || file.filename !== POLICY_PATH) {
       findings.push(`policy_file_removed:${POLICY_PATH}`);
       continue;

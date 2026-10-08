@@ -207,6 +207,8 @@ test("I3: a state value that is not exactly one of the three, a missing, unreada
     "unknown layer": mutate((d) => { d.layers.vendor = { paths: [] }; }),
     "a path with whitespace": mutate((d) => { d.layers.docs.paths.push("docs/a b.md"); }),
     "three wildcards": mutate((d) => { d.layers.docs.paths.push("**/a*/b*.md"); }),
+    "one long run of stars": mutate((d) => { d.layers.docs.paths.push(`${"*".repeat(24)}b`); }),
+    "three stars": mutate((d) => { d.layers.protected.paths.push("kernel/***"); }),
     "too many patterns": mutate((d) => { d.layers.protected.paths = Array.from({ length: MAX_PATTERNS_PER_LAYER + 1 }, (_, i) => `kernel/${i}/**`); }),
     "no catch-all code layer": mutate((d) => { d.layers.code.paths = ["apps/**"]; }),
     "a missing column": mutate((d) => { delete d.rules.normal.code.merge_slot; }),
@@ -228,7 +230,7 @@ test("I3: a state value that is not exactly one of the three, a missing, unreada
   }
   // Left out: the hard cap is 120. A byte order mark is not an error (review NIT-1).
   assert.equal(loadPolicy(mutate((d) => { delete d.merge_slot_hard_cap_minutes; })).policy.merge_slot_hard_cap_minutes, 120);
-  assert.deepEqual(loadPolicy(`﻿${COMPATIBILITY_POLICY_TEXT}`).errors, []);
+  assert.deepEqual(loadPolicy(`\uFEFF${COMPATIBILITY_POLICY_TEXT}`).errors, []);
   const missing = resolveMode({ env: {}, workspace: "/w", readFile: () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); } });
   assert.deepEqual([missing.state, missing.errors], ["frozen", [`${POLICY_PATH} cannot be read: ENOENT`]]);
   assert.match(resolveMode({ env: {}, workspace: undefined }).errors[0], /GITHUB_WORKSPACE is not set/);
@@ -251,6 +253,7 @@ const MERGED = "f".repeat(40);
 const MERGE_BASE = "9".repeat(40);
 const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
 const SLOT = "merge:o/r:main";
+const CLAIM_BASE = "c".repeat(40);
 const LAYER_FILE = { protected: "scripts/ci/tool.mjs", code: "apps/clued-cloud/worker/x.ts", docs: "docs/notes/x.md" };
 
 const SCENARIOS = {
@@ -276,13 +279,17 @@ function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
   const pull = { number: 9, body: s.trailer ? `Why\n\nClued-Work-Claim: ${CLAIM}` : "Why", changed_files: files.length, auto_merge: s.autoMerge,
     head: { sha: HEAD, repo: { full_name: "o/r" } }, base: { sha: BASE, ref: "main" } };
   const claim = { claim_id: CLAIM, task_id: "t-1", status: "ACTIVE", fence: 1, expires_at: "2026-10-08T05:00:00Z", write_set: files.map((f) => f.filename),
-    trigger_refs: s.slotHeld ? [SLOT] : [], merge_slot_until: "2026-10-08T03:00:00Z" };
+    trigger_refs: s.slotHeld ? [SLOT] : [], merge_slot_until: "2026-10-08T03:00:00Z",
+    ...(s.claimBaseStatus ? { base_commit: CLAIM_BASE } : {}) };
   const commits = { [HEAD]: s.carried ? [EARLIER, MERGED] : [BASE], [EARLIER]: [BASE] };
   const routes = [
     ["GET", `${API}/repos/o/r/pulls/9/files`, () => files],
     ["GET", `${API}/repos/o/r/pulls/9`, () => pull],
     ["GET", `${API}/repos/o/r/branches/main`, () => ({ name: "main", commit: { sha: TIP } })],
     ["GET", `${API}/repos/o/r/compare/${TIP}...${HEAD}`, () => ({ status: s.upToDate ? "ahead" : "diverged", files: files.map((f) => ({ filename: f.filename })) })],
+    // The claim's base_commit against the pull request's base: 200, 404 (unknown) or 500.
+    ["GET", `${API}/repos/o/r/compare/${CLAIM_BASE}...${BASE}`, () => (s.claimBaseStatus === 200 ? { status: "ahead", files: [] }
+      : s.claimBaseStatus === 404 ? null : { failWith: s.claimBaseStatus })],
     ["GET", `${API}/repos/o/r/contents/${POLICY_PATH}`, () => (policyFileAtHead === null ? null : { content: Buffer.from(policyFileAtHead).toString("base64"), encoding: "base64" })],
     // The carry-over walk (carriedApprovalSource).
     ["GET", `${API}/repos/o/r/compare/${MERGED}...${TIP}`, () => ({ status: "identical", files: [] })],
@@ -308,7 +315,11 @@ function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
     const route = routes.find(([m, prefix]) => m === method && (target === prefix || target.startsWith(`${prefix}?`)));
     if (!route) return { ok: false, status: 599, headers: { get: () => null }, json: async () => ({}), text: async () => "" };
     const answer = route[2](body);
-    return answer === null ? { ok: false, status: 404, headers: { get: () => null }, json: async () => ({}), text: async () => "" } : json(answer);
+    if (answer === null || (answer && answer.failWith)) {
+      const status = answer === null ? 404 : answer.failWith;
+      return { ok: false, status, headers: { get: () => null }, json: async () => ({}), text: async () => "" };
+    }
+    return json(answer);
   };
   return { pull, fetchImpl, calls };
 }
@@ -430,6 +441,21 @@ test("advise: a missing claim is admitted with a notice, Clued is not asked, and
   assert.ok(expired.outcome.notices.includes("claim_advisory:claim_expired"));
 });
 
+test("advise: a claim base that cannot be compared is a notice; enforced, it is an error or claim_base_unknown as before", async () => {
+  for (const [state, status, expect] of [
+    ["efficiency", 500, { admitted: true, notice: /^claim_advisory_unverified: the claim's base_commit could not be compared \(GitHub API .* returned 500\)$/ }],
+    ["efficiency", 404, { admitted: true, notice: new RegExp(`^claim_advisory:claim_base_unknown:${CLAIM_BASE}$`) }],
+    ["efficiency", 200, { admitted: true }],
+    ["normal", 404, { admitted: false, reason: new RegExp(`^claim_base_unknown:${CLAIM_BASE}$`) }],
+  ]) {
+    const { outcome } = await judge({ table: RECOMMENDED_POLICY_TEXT, state, layer: "code", scenario: { claimBaseStatus: status } });
+    assert.equal(outcome.admitted, expect.admitted, `${state}/${status}`);
+    if (expect.notice) assert.ok(outcome.notices.some((notice) => expect.notice.test(notice)), `${state}/${status}: ${outcome.notices.join(" | ")}`);
+    if (expect.reason) assert.match(outcome.reasons[0], expect.reason);
+  }
+  await assert.rejects(judge({ table: RECOMMENDED_POLICY_TEXT, state: "normal", layer: "code", scenario: { claimBaseStatus: 500 } }), /returned 500/);
+});
+
 test("frozen: every head needs its own Owner Grant, never carried over, and auto-merge fails the merge slot", async () => {
   const { outcome, calls } = await judge({ state: "frozen", layer: "code", scenario: "ok" });
   const door = calls.filter((call) => call.url.endsWith("/clued_owner_grant_admission_door_v1"));
@@ -469,6 +495,9 @@ test("policy file: a pull request whose head's policy would not load, or that re
   const valid = await judge({ state: "normal", layer: "protected", scenario: change("modified"), policyFileAtHead: RECOMMENDED_POLICY_TEXT });
   assert.equal(valid.cell, "A+");
   assert.equal(valid.outcome.admission_mode.layer, "protected");
+  // A copy of the file elsewhere removes nothing (review 2, NIT).
+  const copied = await judge({ state: "normal", layer: "protected", scenario: change("copied", { filename: "config/copy.json", previous_filename: POLICY_PATH }) });
+  assert.deepEqual([copied.cell, copied.outcome.reasons], ["A+", []]);
   for (const [name, scenario, head, reason] of [
     ["invalid", change("modified"), "{", /^policy_file_invalid:config\/merge-admission-policy\.json is not JSON/],
     ["a looser frozen", change("modified"), COMPATIBILITY_POLICY_TEXT.replace('"auto_merge": "forbidden"', '"auto_merge": "allowed"'),
@@ -476,6 +505,8 @@ test("policy file: a pull request whose head's policy would not load, or that re
     ["missing at the head", change("modified"), null, /^policy_file_invalid:missing at the head$/],
     ["removed", change("removed"), null, /^policy_file_removed:config\/merge-admission-policy\.json$/],
     ["renamed away", change("renamed", { filename: "config/old-policy.json", previous_filename: POLICY_PATH }), null, /^policy_file_removed:/],
+    ["a new schema before its loader", change("modified"), COMPATIBILITY_POLICY_TEXT.replace("merge-admission-policy/1", "merge-admission-policy/2"),
+      /^policy_file_invalid:policy\.schema: must be clued\.merge-admission-policy\/1$/],
   ]) {
     const { outcome, calls } = await judge({ state: "normal", layer: "protected", scenario, policyFileAtHead: head });
     assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"], name);

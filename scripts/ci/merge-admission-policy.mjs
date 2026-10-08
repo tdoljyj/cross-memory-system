@@ -169,7 +169,8 @@ function checkPaths(value, where, errors, { negation, catchAll }) {
   for (const pattern of paths) {
     if (typeof pattern !== "string" || !GLOB.test(pattern) || pattern === "!") {
       errors.push(`${where}.paths: ${plain(pattern)} is not a path pattern`);
-    } else if (wildcardRuns(pattern) > MAX_WILDCARD_RUNS) {
+    } else if (wildcardRuns(pattern) > MAX_WILDCARD_RUNS || /\*{3,}/.test(pattern)) {
+      // A run of three or more stars is several wildcards to globToRegExp.
       errors.push(`${where}.paths: ${plain(pattern)} has more than ${MAX_WILDCARD_RUNS} wildcards`);
     } else if (pattern.startsWith("!") && !negation) {
       // I2: the protected layer can only grow; the fallback layer has no next one.
@@ -200,7 +201,7 @@ export function loadPolicy(text) {
   let doc;
   try {
     // Review NIT-1: an editor's byte order mark is not a reason to freeze.
-    doc = JSON.parse(String(text).replace(/^﻿/, ""));
+    doc = JSON.parse(String(text).replace(/^\uFEFF/, ""));
   } catch (error) {
     return { policy: null, errors: [`${POLICY_PATH} is not JSON: ${plain(error instanceof Error ? error.message : error)}`] };
   }
