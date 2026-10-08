@@ -184,3 +184,18 @@ test("transient reads are retried only when asked, with capped backoff (Task ce5
     assert.throws(() => createGoogleDriveMetadataApi({ get_credential: getCredential, transient_retries: bad }), /transient_retries/);
   }
 });
+
+test("storage step 2: getVersionedAccess reads version and permissions in one request", async () => {
+  const urls = [];
+  const permissions = [{ id: "owner", type: "user", role: "owner" }];
+  const api = createGoogleDriveMetadataApi({ get_credential: getCredential, fetch: async (url) => {
+    urls.push(new URL(url)); return Response.json({ id: "folder", version: "12", permissions, name: "ignored" }); } });
+  assert.deepEqual(await api.getVersionedAccess("folder"), { id: "folder", version: "12", permissions });
+  assert.equal(urls.length, 1);
+  assert.equal(urls[0].searchParams.get("fields"),
+    "id,version,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)");
+  const other = createGoogleDriveMetadataApi({ get_credential: getCredential,
+    fetch: async () => Response.json({ id: "another", version: "12", permissions }) });
+  await assert.rejects(other.getVersionedAccess("folder"), /DRIVE_METADATA_MISMATCH/);
+  await assert.rejects(api.getVersionedAccess("bad id"), TypeError);
+});

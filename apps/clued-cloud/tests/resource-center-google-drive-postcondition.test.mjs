@@ -198,3 +198,33 @@ test("P6.2: a created directory carries its sharing digest only when it equals t
   assert.throws(() => createGoogleDriveCreatePostconditionVerifier({ managed_root: root, root_folder_id: "root",
     root_parent_id: "container", get_file: async () => null, list_children: async () => [], get_sharing: "x" }), TypeError);
 });
+
+test("storage step 2: a created directory carries its access digest only together with its sharing digest", async () => {
+  const { googleDriveAccessDigest, googleDriveSharingDigest } = await import("../../../kernel/host/resource-center-google-drive-sharing.mjs");
+  const sharing = { shared: false, permissionIds: ["owner"] };
+  const permissions = [{ id: "owner", type: "user", role: "owner" }];
+  const parentDigest = googleDriveSharingDigest(sharing);
+  const run = async (options, before = { destination_parent_sharing_digest: parentDigest }) => {
+    const f = fixture({ options: { require_effect_provider_id: true, include_verified_proof: true,
+      get_sharing: async (id) => ({ id, ...sharing }), ...options } });
+    f.request.effect_result.provider_file_id = "topic";
+    Object.assign(f.request.provider_before, before);
+    return (await f.verify(f.request)).verified_proof;
+  };
+  const proof = await run({ get_access: async (id) => ({ id, version: "1", permissions }) });
+  assert.equal(proof.provider_sharing_digest, parentDigest);
+  assert.equal(proof.provider_access_digest, googleDriveAccessDigest({ permissions }));
+  // No access reader, a failed or foreign read, no usable list, or no sharing digest: no access digest.
+  for (const [options, before] of [
+    [{}, undefined],
+    [{ get_access: async () => { throw new Error("DRIVE_METADATA_UNAVAILABLE"); } }, undefined],
+    [{ get_access: async () => ({ id: "track", version: "1", permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, version: "1", permissions: [] }) }, undefined],
+    // A read that saw another version (or none) is not the verified folder's.
+    [{ get_access: async (id) => ({ id, version: "2", permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, version: "1", permissions }) }, { destination_parent_sharing_digest: null }],
+  ]) assert.equal("provider_access_digest" in await run(options, before), false);
+  assert.throws(() => createGoogleDriveCreatePostconditionVerifier({ managed_root: root, root_folder_id: "root",
+    root_parent_id: "container", get_file: async () => null, list_children: async () => [], get_access: "x" }), TypeError);
+});
