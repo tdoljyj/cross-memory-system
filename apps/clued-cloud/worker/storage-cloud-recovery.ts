@@ -134,11 +134,15 @@ export async function createStorageCloudRecovery(config: {
       if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
           d.attempt.operation !== "replace")) throw denied();
       if ("content_ref" in d.mutation && !config.verified) throw denied();
+      // BUG-20261008-002: a create that may be proven absent polls for its file for half the
+      // budget only. Polling for the whole budget left no time for the absence probe and its
+      // settlement, so a create whose file never reached Drive stayed started and fenced its root.
+      const verifyTimeout = operation === "create" && config.absent ? Math.max(1, Math.floor(timeout / 2)) : timeout;
       const verifierConfig = {
         managed_root: String(d.profile.managed_root), root_folder_id: String(d.root_folder_id), root_parent_id: String(d.root_parent_id),
         get_file: (id: string) => metadata.getFile(id, { signal: abort.signal }),
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
-        include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
+        include_verified_proof: !!config.verified, timeout_ms: verifyTimeout, poll_ms: Math.min(1000, verifyTimeout), clock,
       };
       // The descendant refresh (P6.1) reads a few at a time and stops
       // starting reads after a fraction of the budget, leaving the rest of it
