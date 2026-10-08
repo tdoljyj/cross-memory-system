@@ -390,6 +390,20 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
       const listed = (await native.query("select public.clued_storage_owner_manage_v2('{\"action\":\"connections\"}'::jsonb) value")).rows[0].value.connections
         .find(c => c.id === main.done.connection_id);
       assert.equal(listed.root_name, main.name); assert.equal(listed.policy_active, true); assert.equal(listed.refresh_enabled, true);
+      // Storage step 3: directories still matched by version are listed for the Owner.
+      assert.deepEqual(listed.access_digest_missing, { count: 0, directories: [] });
+      const profileRow = (await admin.query("select id,managed_root from clued_private.resource_center_profiles_v1 where id=(select profile_id from clued_private.storage_connections_v1 where id=$1)",
+        [main.done.connection_id])).rows[0];
+      const missing = main.tracks.slice(1).map(track => profileRow.managed_root + "/" + track);
+      await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_missing_at='2026-10-08T00:00:00Z' where profile_id=$1 and path=any($2)",
+        [profileRow.id, missing]);
+      const marked = (await native.query("select public.clued_storage_owner_manage_v2('{\"action\":\"connections\"}'::jsonb) value")).rows[0].value.connections
+        .find(c => c.id === main.done.connection_id).access_digest_missing;
+      assert.equal(marked.count, 2);
+      assert.deepEqual(marked.directories.map(d => d.path), main.tracks.slice(1).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))));
+      assert.ok(marked.directories.every(d => Date.parse(d.since) === Date.parse("2026-10-08T00:00:00Z")));
+      await admin.query("update clued_private.resource_center_artifacts_v1 set access_digest_missing_at=null where profile_id=$1 and path=any($2)",
+        [profileRow.id, missing]);
       const client = await bind();
       const evaluated = (await admin.query("select clued_private.storage_policy_evaluate_v2($1,$2,'create_file',$3) v", [client.token, main.done.connection_id, randomUUID()])).rows[0].v;
       assert.equal(evaluated.policy_id, main.done.policy_id); assert.equal(evaluated.scope_digest, (await admin.query("select scope_digest from clued_private.storage_account_policies_v2 where id=$1", [main.done.policy_id])).rows[0].scope_digest);

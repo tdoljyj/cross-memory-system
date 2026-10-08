@@ -1,5 +1,6 @@
 import { replaceShape } from "./resource-center-google-drive-replace-effect.mjs";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
+import { ancestorChain, walkAncestorChain } from "./resource-center-google-drive-ancestors.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const normalized = (value) => bindResourceCenterMutation({ destination_path: value }).destination_path;
@@ -55,7 +56,12 @@ export function createGoogleDriveReplacePostconditionVerifier({
     const fileId = effect.provider_file_id, name = shape.name;
     const parts = shape.destination.slice(root.length + 1).split("/");
     parts.pop();
+    // Step 3: an identity that names its ancestors is walked by their Drive IDs.
+    const chain = ancestorChain(before, { root, root_folder_id: rootId, root_parent_id: rootParentId },
+      parts.length ? `${root}/${parts.join("/")}` : root);
+    if (chain && chain.at(-1).id !== before.destination_parent_id) fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     async function parentIdentity() {
+      if (chain) return walkAncestorChain(chain, getFile);
       let node = await getFile(rootId);
       folderCheck(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId);
       for (const part of parts) {

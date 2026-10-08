@@ -430,3 +430,18 @@ test("hourly budgets: presets and custom within bounds, one native CAS mutation,
   f.respond(4,{error:"private"},403);await f.settle();
   assert.match(f.text(),/额度设置结果未确认/);assert.match(f.text(),/每小时额度：未读取/);assert.equal(f.calls.length,5,"never resent");
 });
+test("storage step 3: directories still matched by Drive version are listed with a pointer to the directory check",async()=>{
+  const f=fixture();await f.settle();
+  f.respond(0,{connections:[{...active,access_digest_missing:{count:21,directories:[{path:"",since:"2026-10-08T00:00:00Z"},
+    {path:"资料/旧目录",since:"2026-10-08T00:00:00Z"}]}}],worker_execution_enabled:false});await f.settle();
+  assert.match(f.text(),/有 21 个目录还没有记录访问权限摘要/);
+  assert.match(f.text(),/（根目录）/);assert.match(f.text(),/资料\/旧目录/);assert.match(f.text(),/另有 19 个未列出/);
+  assert.match(f.text(),/运行目录检查/);
+  for(const missing of [{count:0,directories:[]},undefined]){
+    const g=fixture();await g.settle();g.respond(0,{connections:[{...active,access_digest_missing:missing}],worker_execution_enabled:false});await g.settle();
+    assert.equal(g.text().includes("访问权限摘要"),false);assert.match(g.text(),/Clued_资料中心/);
+  }
+  // A malformed field is not a connection.
+  const h=fixture();await h.settle();h.respond(0,{connections:[{...active,access_digest_missing:{count:"x",directories:[]}}],worker_execution_enabled:false});await h.settle();
+  assert.equal(h.text().includes("Clued_资料中心"),false);
+});

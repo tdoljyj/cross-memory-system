@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { createResourceCenterOnlineToolHost } from "./resource-center-online-tool-host.mjs";
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
 import { scopeProfile, scopeProfileCovers } from "./resource-center-google-scopes.mjs";
-import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
+import { createGoogleDriveProviderIdentityResolver, ancestorMatchShape } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
 import { createGoogleDriveNativeCreateEffect, contentRefShape, contentSourceShape } from "./resource-center-google-drive-create-effect.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
@@ -84,6 +84,10 @@ const authorityDenialReasons = new Set([
   "delete_authority_required", "restore_name_conflict", "directory_not_empty", "track_forbidden",
   "destination_inside_source", "sharing_differs", "subtree_too_large", "already_registered", "governance_forbidden",
   "internal_error",
+  // Storage step 3: ancestors matched by identity and digest.
+  "ancestors_invalid", "ancestor_set_mismatch", "ancestor_identity_mismatch",
+  ...["root", "parent", "ancestor"].flatMap(prefix => ["access_changed", "access_unavailable", "match_changed",
+    "sharing_changed", "sharing_unavailable", "version_mismatch"].map(reason => `${prefix}_${reason}`)),
 ]);
 const logAuthorityFailure = (phase,stage,errorCode,reason) => {
   // Emit only fixed labels. In particular, never serialize an exception, RPC response or provider identity.
@@ -229,11 +233,21 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           !Number.isFinite(c.expires_at_ms)||c.expires_at_ms-clock()<=60000) fail();
         return c;
       };
+      // Storage step 3: in the verified-result mode a database that describes
+      // the ancestors (load's ancestor_match) has them matched by identity
+      // and digest; otherwise the identity is the legacy one.
+      let ancestorMatch;
+      // Adopt and a directory move keep their legacy identity (§4.2).
+      if(verifiedResultMode && !subtree && !adopt && descriptor.ancestor_match!==undefined){
+        ancestorMatch=ancestorMatchShape(descriptor.ancestor_match,profile.managed_root);
+        if(ancestorMatch===null) fail("CLOUD_DESCRIPTOR_INVALID");
+      }
       const metadata=createGoogleDriveMetadataApi({get_credential:credential,fetch:driveFetch});
       const resolveProvider=createGoogleDriveProviderIdentityResolver({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         get_sharing:metadata.getSharing,
-        ...(subtree ? {get_access:metadata.getAccess} : {}),
+        ...(subtree || ancestorMatch ? {get_access:metadata.getAccess} : {}),
+        ...(ancestorMatch ? {ancestor_match:ancestorMatch} : {}),
         ...(mutation.operation==="restore" ? {restore_source_id:descriptor.untrash_source.provider_file_id} : {})});
       let batched={};
       if(metadataBatch){
