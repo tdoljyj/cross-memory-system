@@ -92,6 +92,9 @@ jobs:
       - name: Verify gate terminal-state and timeout regressions
         run: npm run mcp:gate-receipt:test
       - name: Install dependencies from runner cache
+        # CPU bindings are bundled; protocol checks do not need optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: >-
           timeout --signal=TERM --kill-after=15s 8m
           npm ci --cache "$HOME/.npm" --prefer-offline
@@ -166,6 +169,9 @@ jobs:
       - name: Verify gate terminal-state and timeout regressions
         run: npm run mcp:gate-receipt:test
       - run: npm ci
+        # CPU bindings are bundled; protocol checks do not need optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
       - name: Verify governed Resource Center mutation contract
         run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs
       - name: Start isolated MCP

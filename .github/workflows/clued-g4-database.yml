@@ -96,6 +96,9 @@ jobs:
           # restoring the ~860 MB Actions cache on top of it only adds download time.
 
       - name: Install application dependencies
+        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci --cache "$HOME/.npm" --prefer-offline
 
       - name: Build the application surfaces used by lifecycle tests
@@ -130,16 +133,16 @@ jobs:
           PY
 
       - name: Start isolated Supabase runtime
-        run: npm run db:start
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
 
       - name: Reapply migrations from a clean database
-        run: npm run db:reset
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
 
       - name: Lint public and private database schemas
-        run: npm run db:lint
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
 
       - name: Run Unified Record V2 RLS and transaction tests
-        run: npm run db:test:m1
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local
 
       - name: Run Project Lifecycle Successor v2 database and surface tests
         run: npm run test:project:lifecycle:v2
@@ -156,7 +159,7 @@ jobs:
           # The CLI may return nonzero while pruning unrelated containers on
           # this persistent runner. The gate still requires this run's isolated
           # runtime to be stopped; Docker errors must not be mistaken for clean.
-          npx --yes supabase@2.115.0 stop --no-backup || stop_status=$?
+          npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || stop_status=$?
           running=$(docker ps --format '{{.Names}}') || exit 1
           if grep -Eq '^supabase_.*_clued-g4-${{ github.run_id }}$' <<< "$running"; then
             echo '::error::Isolated Supabase containers remain running'
@@ -198,22 +201,25 @@ jobs:
           cache-dependency-path: apps/clued-cloud/package-lock.json
 
       - name: Install application dependencies
+        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci
 
       - name: Build the application surfaces used by lifecycle tests
         run: npm run build
 
       - name: Start isolated Supabase runtime
-        run: npm run db:start
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
 
       - name: Reapply migrations from a clean database
-        run: npm run db:reset
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
 
       - name: Lint public and private database schemas
-        run: npm run db:lint
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
 
       - name: Run Unified Record V2 RLS and transaction tests
-        run: npm run db:test:m1
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local
 
       - name: Run Project Lifecycle Successor v2 database and surface tests
         run: npm run test:project:lifecycle:v2
@@ -226,4 +232,4 @@ jobs:
 
       - name: Stop isolated Supabase runtime
         if: always()
-        run: npx --yes supabase@2.115.0 stop --no-backup
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup

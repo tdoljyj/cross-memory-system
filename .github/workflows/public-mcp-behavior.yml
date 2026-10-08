@@ -94,8 +94,8 @@ jobs:
       - name: Serialize fixed public MCP ports with other runners on this host
         run: |
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
-      - run: npm run db:start
-      - run: npm run db:reset
+      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
+      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
       - run: npm run mcp:isolated:fixture
       - name: Start isolated MCP
         run: |
@@ -119,8 +119,8 @@ jobs:
               kill "$mcp_pid"
             fi
           fi
-          if npx --yes supabase@2.115.0 status >/dev/null 2>&1; then
-            npx --yes supabase@2.115.0 stop --no-backup
+          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then
+            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
           fi
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" release public-mcp-ports
 
@@ -160,8 +160,8 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - run: npm ci
-      - run: npm run db:start
-      - run: npm run db:reset
+      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
+      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
       - run: npm run mcp:isolated:fixture
       - name: Start isolated MCP
         run: |
@@ -185,6 +185,6 @@ jobs:
               kill "$mcp_pid"
             fi
           fi
-          if npx --yes supabase@2.115.0 status >/dev/null 2>&1; then
-            npx --yes supabase@2.115.0 stop --no-backup
+          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then
+            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
           fi

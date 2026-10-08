@@ -9,6 +9,8 @@
     "PROJECT_VIEWS_V2": "true",
     "P5_TENANT_WRITES": "false",
     "CLUED_INTEGRATION_RUNTIME_V1": "true",
+    "CLUED_MODEL_DOMAIN_SOURCE_V1": "true",
+    "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": "false",
     "CLUED_ALLOWED_ORIGINS": "http://127.0.0.1:8787,http://localhost:8787"
   }
 }

@@ -144,7 +144,7 @@ jobs:
           PY
 
       - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
-        run: npx --yes supabase@2.115.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       - name: Deny loopback proxy ports to the harness isolation guard
         run: |
@@ -189,7 +189,7 @@ jobs:
 
       - name: Stop the local Supabase stack
         if: always()
-        run: npx --yes supabase@2.115.0 stop --no-backup
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
 
   e2e-untrusted-hosted:
     needs: admission-gate
@@ -226,7 +226,7 @@ jobs:
         run: npm ci
 
       - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
-        run: npx --yes supabase@2.115.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       - name: Deny loopback proxy ports to the harness isolation guard
         run: |
@@ -271,4 +271,4 @@ jobs:
 
       - name: Stop the local Supabase stack
         if: always()
-        run: npx --yes supabase@2.115.0 stop --no-backup
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup

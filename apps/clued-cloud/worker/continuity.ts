@@ -1,4 +1,8 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, isModelDomainTool, modelDomainSourceEnabled,
+  modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
+  type ModelDomainFeatureEnv, type ModelDomainToolName } from "./model-domain-tools";
+import { dispatchModelDomainTool, ModelDomainToolDenied } from "./model-domain-dispatch";
 import { contextRpcByTool, contextTools, contextsEnabled, sanitizeContextResult, type ContextFeatureEnv } from "./contexts";
 import { p5RpcByTool, p5TenantWritesEnabled, p5Tools, type P5FeatureEnv } from "./p5";
 import {
@@ -130,7 +134,7 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 type Scope = (typeof ALL_SCOPES)[number];
 
 export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
-  AgentMessageFeatureEnv, IntegrationFeatureEnv {
+  AgentMessageFeatureEnv, IntegrationFeatureEnv, ModelDomainFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -1526,6 +1530,7 @@ const tools = [
   ...ownerRequestTools,
   ...agentMessageTools,
   ...integrationTools,
+  ...modelDomainTools,
 ] as const;
 
 type PublicToolName = (typeof tools)[number]["name"];
@@ -1654,6 +1659,7 @@ export const publicToolPolicies = {
   ...ownerRequestToolPolicies,
   ...agentMessageToolPolicies,
   ...integrationToolPolicies,
+  ...modelDomainToolPolicies,
 } as const satisfies Record<PublicToolName, PublicToolPolicy>;
 
 function publishTool<T extends (typeof tools)[number]>(tool: T) {
@@ -1678,7 +1684,7 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_AGENT_MESSAGES_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1" | "CLUED_INTEGRATION_RUNTIME_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_AGENT_MESSAGES_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1" | "CLUED_INTEGRATION_RUNTIME_V1" | "CLUED_MODEL_DOMAIN_SOURCE_V1" | "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
@@ -1687,6 +1693,9 @@ export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5
     && (tool.name !== OWNER_REQUEST_TOOL || ownerRequestsEnabled(env))
     && (!(tool.name in agentMessageRpcByTool) || agentMessagesEnabled(env))
     && (!isIntegrationTool(tool.name) || integrationRuntimeEnabled(env))
+    && (!isModelDomainTool(tool.name) || (recordsV2Enabled(env) && modelDomainSourceEnabled(env)))
+    && (tool.name !== MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL ||
+      (modelDomainBootstrapRequestEnabled(env) && ownerRequestsEnabled(env)))
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
   return [...existing, ...(storageJobsEnabled(env) ? storageAgentToolsFor(binary) : []), ...(binary ? [storageUploadBeginTool] : []),
@@ -2116,6 +2125,38 @@ async function callOwnerRequest(request: Request, env: ContinuityEnv, args: unkn
   return { content: [{ type: "text", text: JSON.stringify(body) }], structuredContent: body, isError: failed };
 }
 
+// Model Program source integration. This is an exact candidate dispatch call site,
+// independent of rpcByTool: no private alias or arbitrary caller-selected RPC.
+// The source-only fixed Owner-anchor read uses this same Request/Binding chain
+// and returns the ordinary readonly envelope; it never calls submitOwnerRequest.
+async function callModelDomainTool(request: Request, env: ContinuityEnv,
+  name: ModelDomainToolName, args: unknown) {
+  if (!recordsV2Enabled(env) || !modelDomainSourceEnabled(env) ||
+    (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL &&
+      (!modelDomainBootstrapRequestEnabled(env) || !ownerRequestsEnabled(env)))) {
+    throw new HttpError(404, "Unknown Clued continuity tool.");
+  }
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, "Authorize with a Clued Binding Token.");
+  if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Model domain sources require the existing Clued Binding.");
+  const tokenHash = await sha256(token);
+  try {
+    const result = await dispatchModelDomainTool(env, name, args, {
+      rpc: async (rpc, input) => await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+        method: "POST", body: JSON.stringify({ p_token_hash: tokenHash, p_input: input }),
+      }),
+      // The same Request, bearer and environment enter the existing Native
+      // request path. There is no caller token, actor or confirmation proof.
+      submitOwnerRequest: async (input) => await callOwnerRequest(request, env, input),
+    });
+    if (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL) return result;
+    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+  } catch (error) {
+    if (error instanceof ModelDomainToolDenied) throw new HttpError(403, "Model domain source denied or unavailable.");
+    throw error;
+  }
+}
+
 // IntegrationRuntime §12.3: Binding channel only (a clued_bnd_ token, else 403). The RPCs authenticate
 // the token hash themselves. A rule rejection, before or inside the Receipt, renders as one
 // request_rule shape; authorization denials stay HTTP 403; a Receipt-level conflict is retryable.
@@ -2358,6 +2399,7 @@ async function callTool(
   if (typeof name === "string" && name in agentMessageRpcByTool && !agentMessagesEnabled(env)) {
     throw new HttpError(404, "Clued agent messages are disabled.");
   }
+  if (isModelDomainTool(name)) return await callModelDomainTool(request, env, name, args);
   if (name === OWNER_REQUEST_TOOL) {
     if (!ownerRequestsEnabled(env)) throw new HttpError(404, "Clued owner requests are disabled.");
     return await callOwnerRequest(request, env, args);
