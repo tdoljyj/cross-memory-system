@@ -342,7 +342,8 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       // The root is resolved only for a live storage client Binding: a revoked token gets its
       // path back unchanged (the policy denies it), so path refusals cannot confirm a guessed root.
       const clientHash = (await admin.query("select token_hash from public.clued_agent_bindings where id=$1", [client.id])).rows[0].token_hash;
-      const pathsFor = async () => (await admin.query("select clued_private.storage_mutation_paths_v1($1,$2,$3::jsonb) value",
+      // The column holds the verifier; an internal proof stands in for the client's token here.
+      const pathsFor = async () => (await admin.query("select clued_private.storage_mutation_paths_v1(clued_private.credential_internal_proof_v1($1),$2,$3::jsonb) value",
         [clientHash, target.connection, JSON.stringify({ destination_path: relative })])).rows[0].value.destination_path;
       assert.equal(await pathsFor(), full, "a live storage client Binding resolves the root");
       await admin.query("update public.clued_agent_bindings set revoked_at=now() where id=$1", [client.id]);

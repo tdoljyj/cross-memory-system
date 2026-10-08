@@ -161,8 +161,9 @@ test('signed-in sessions read Bindings without token_hash and may only revoke th
     // Function-owner paths are unaffected: the owner role may still change any column.
     await admin.query(`update public.clued_agent_bindings set scopes=array['context:read','audit:read'], revoked_at=null where id=$1`, [live]);
     const resolved = (await admin.query(
-      `select (clued_private.resolve_binding(token_hash,'context:read','global')).id from public.clued_agent_bindings where id=$1`, [second])).rows[0].id;
-    assert.equal(resolved, second, 'resolve_binding still authenticates by token hash');
+      `select (clued_private.resolve_binding(clued_private.credential_internal_proof_v1(token_hash),'context:read','global')).id
+         from public.clued_agent_bindings where id=$1`, [second])).rows[0].id;
+    assert.equal(resolved, second, 'resolve_binding still authenticates (the column holds a verifier since 20261008210000)');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

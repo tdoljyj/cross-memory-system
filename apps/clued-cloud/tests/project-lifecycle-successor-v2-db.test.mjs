@@ -80,6 +80,9 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const priorFrontierResolved = Number(priorFrontierState.resolved);
     await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', migration), 'utf8'));
     await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', currentnessMigration), 'utf8'));
+    // In production these two ran long before 20261008210000_credential_verifier_v1.sql, which rewrites the
+    // functions they create to compare Binding verifiers; replay it here so the order matches.
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', '20261008210000_credential_verifier_v1.sql'), 'utf8'));
 
     await t.test('cutover advances and enqueues the dedicated Frontier currentness revision', async () => {
       const state = (await admin.query(`select h.invalidation_revision,h.resolved_through_revision,

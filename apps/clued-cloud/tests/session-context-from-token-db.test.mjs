@@ -145,10 +145,10 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     // A Binding no longer admitted to its session's context gets the
     // authorization error, not the mismatch.
     const narrowed = await restore(projectContext, otherTokenHash);
-    await admin.query("update public.clued_agent_bindings set context_keys=array['global'] where token_hash=$1", [otherTokenHash]);
+    await admin.query("update public.clued_agent_bindings set context_keys=array['global'] where token_hash=clued_private.credential_verifier_v1($1)", [otherTokenHash]);
     await assert.rejects(checkpoint(narrowed.session_token, narrowed.version, "global", "global", otherTokenHash),
       /binding_not_authorized/);
-    await admin.query("update public.clued_agent_bindings set revoked_at=now() where token_hash=$1", [otherTokenHash]);
+    await admin.query("update public.clued_agent_bindings set revoked_at=now() where token_hash=clued_private.credential_verifier_v1($1)", [otherTokenHash]);
     await assert.rejects(checkpoint(narrowed.session_token, narrowed.version, "global", "global", otherTokenHash),
       /binding_not_authorized/);
 
