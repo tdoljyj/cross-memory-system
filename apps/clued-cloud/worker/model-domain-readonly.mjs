@@ -18,9 +18,9 @@ export const POLICY = Object.freeze({
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const hex = /^[0-9a-f]{64}$/;
 export class DomainReadDenied extends Error { constructor(code) { super(code); this.name = 'DomainReadDenied'; } }
-const require = (yes, code) => { if (!yes) throw new DomainReadDenied(code); };
+const assertContract = (yes, code) => { if (!yes) throw new DomainReadDenied(code); };
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
-const exact = (value, fields, code) => require(object(value) && Object.keys(value).sort().join('|') === [...fields].sort().join('|'), code);
+const exact = (value, fields, code) => assertContract(object(value) && Object.keys(value).sort().join('|') === [...fields].sort().join('|'), code);
 const equal = (a, b) => canonical(a) === canonical(b);
 function canonical(value) {
   if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
@@ -28,20 +28,20 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 export function parseSourceUTC(value) {
-  require(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value), 'TIME_NOT_UTC');
+  assertContract(typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value), 'TIME_NOT_UTC');
   const result = Date.parse(value);
-  require(Number.isFinite(result) && new Date(result).toISOString().slice(0,19) === value.slice(0,19), 'TIME_INVALID');
+  assertContract(Number.isFinite(result) && new Date(result).toISOString().slice(0,19) === value.slice(0,19), 'TIME_INVALID');
   return result;
 }
 const time = parseSourceUTC;
 function reference(value) {
   exact(value, ['id', 'version', 'content_hash'], 'REFERENCE_SHAPE');
-  require(uuid.test(value.id) && Number.isSafeInteger(value.version) && value.version > 0 && hex.test(value.content_hash), 'REFERENCE_INVALID');
+  assertContract(uuid.test(value.id) && Number.isSafeInteger(value.version) && value.version > 0 && hex.test(value.content_hash), 'REFERENCE_INVALID');
 }
 export function validateSourceRequest(input) {
   exact(input, ['permission_record_ref', 'producer_registration_ref', 'recognition_record_ref', 'recognition_receipt_id'], 'CALLER_CONTEXT_OR_UNKNOWN_FIELD');
   for (const key of ['permission_record_ref', 'producer_registration_ref', 'recognition_record_ref']) reference(input[key]);
-  require(uuid.test(input.recognition_receipt_id), 'RECEIPT_REFERENCE_INVALID');
+  assertContract(uuid.test(input.recognition_receipt_id), 'RECEIPT_REFERENCE_INVALID');
   return structuredClone(input);
 }
 const recordResource = ref => `record:${ref.id}@${ref.version}#${ref.content_hash}`;
@@ -51,52 +51,52 @@ function requiredResources(input, kind) {
   return [recordResource(input[kind === 'producer' ? 'producer_registration_ref' : 'permission_record_ref'])];
 }
 function protectedAuthority(value, input, now) {
-  require(object(value) && object(value.auth) && value.auth.currentness === 'CURRENT' && value.auth.revoked_at === null, 'AUTH_SOURCE_UNKNOWN_OR_REVOKED');
+  assertContract(object(value) && object(value.auth) && value.auth.currentness === 'CURRENT' && value.auth.revoked_at === null, 'AUTH_SOURCE_UNKNOWN_OR_REVOKED');
   const auth = value.auth;
-  require(auth.status === 'AUTHENTICATED' && auth.canonical_scope === POLICY.scope && auth.environment === 'NON_PRODUCTION', 'AUTH_SCOPE');
-  require(object(auth.principal) && uuid.test(auth.principal.subject_id) && uuid.test(auth.principal.binding_id), 'AUTH_REAL_PRINCIPAL_REQUIRED');
-  require(now < time(auth.expires_at), 'AUTH_EXPIRED');
-  require(now - time(auth.evaluated_at) >= 0 && now - time(auth.evaluated_at) <= POLICY.maxAgeMs, 'AUTH_STALE');
-  require(Array.isArray(value.issuer_catalog) && POLICY.actions.every(action => value.issuer_catalog.some(row => row.action === action && Array.isArray(row.doors) && row.doors.includes('model-domain'))), 'DOMAIN_ISSUER_NOT_REGISTERED');
-  require(Array.isArray(value.native_grants), 'PROTECTED_GRANTS_UNAVAILABLE');
+  assertContract(auth.status === 'AUTHENTICATED' && auth.canonical_scope === POLICY.scope && auth.environment === 'NON_PRODUCTION', 'AUTH_SCOPE');
+  assertContract(object(auth.principal) && uuid.test(auth.principal.subject_id) && uuid.test(auth.principal.binding_id), 'AUTH_REAL_PRINCIPAL_REQUIRED');
+  assertContract(now < time(auth.expires_at), 'AUTH_EXPIRED');
+  assertContract(now - time(auth.evaluated_at) >= 0 && now - time(auth.evaluated_at) <= POLICY.maxAgeMs, 'AUTH_STALE');
+  assertContract(Array.isArray(value.issuer_catalog) && POLICY.actions.every(action => value.issuer_catalog.some(row => row.action === action && Array.isArray(row.doors) && row.doors.includes('model-domain'))), 'DOMAIN_ISSUER_NOT_REGISTERED');
+  assertContract(Array.isArray(value.native_grants), 'PROTECTED_GRANTS_UNAVAILABLE');
   const selected = [];
   for (const action of POLICY.actions) {
     const rows = value.native_grants.filter(g => g.action === action);
-    require(rows.length === 1, 'INDEPENDENT_NATIVE_GRANT_MISSING_OR_AMBIGUOUS');
+    assertContract(rows.length === 1, 'INDEPENDENT_NATIVE_GRANT_MISSING_OR_AMBIGUOUS');
     const g = rows[0];
-    require(g.storage_source === 'clued_private.owner_grants_v1' && uuid.test(g.id) && uuid.test(g.token_id) && uuid.test(g.receipt_id), 'GRANT_NOT_NATIVE_PROTECTED_SOURCE');
-    require(g.user_id === auth.principal.subject_id && g.grantee_binding_id === auth.principal.binding_id && g.task_id === POLICY.task, 'GRANT_PRINCIPAL_OR_TASK');
-    require(g.revoked_at === null && time(g.granted_at) <= now && now < time(g.expires_at) && time(g.expires_at) - time(g.granted_at) <= POLICY.maxWindowMs, 'GRANT_REVOKED_EXPIRED_OR_WINDOW');
-    require(g.max_uses === null && Number.isSafeInteger(g.uses) && g.uses >= 0, 'READ_GRANT_MUST_BE_TIME_BOUND_NOT_SINGLE_USE_CONSUMPTION');
-    require(Array.isArray(g.resources) && equal([...g.resources].sort(), requiredResources(input, action.endsWith('.producer') ? 'producer' : 'permission')), 'GRANT_RESOURCE_NOT_EXACT');
+    assertContract(g.storage_source === 'clued_private.owner_grants_v1' && uuid.test(g.id) && uuid.test(g.token_id) && uuid.test(g.receipt_id), 'GRANT_NOT_NATIVE_PROTECTED_SOURCE');
+    assertContract(g.user_id === auth.principal.subject_id && g.grantee_binding_id === auth.principal.binding_id && g.task_id === POLICY.task, 'GRANT_PRINCIPAL_OR_TASK');
+    assertContract(g.revoked_at === null && time(g.granted_at) <= now && now < time(g.expires_at) && time(g.expires_at) - time(g.granted_at) <= POLICY.maxWindowMs, 'GRANT_REVOKED_EXPIRED_OR_WINDOW');
+    assertContract(g.max_uses === null && Number.isSafeInteger(g.uses) && g.uses >= 0, 'READ_GRANT_MUST_BE_TIME_BOUND_NOT_SINGLE_USE_CONSUMPTION');
+    assertContract(Array.isArray(g.resources) && equal([...g.resources].sort(), requiredResources(input, action.endsWith('.producer') ? 'producer' : 'permission')), 'GRANT_RESOURCE_NOT_EXACT');
     selected.push({ id: g.id, action: g.action, receipt_id: g.receipt_id, expires_at: g.expires_at, resources: g.resources });
   }
   return { principal: auth.principal, grants: selected };
 }
 function currentRecord(row, ref, type, authority, now) {
-  require(object(row) && row.id === ref.id && row.version === ref.version && row.content_hash === ref.content_hash, 'SERVER_RECORD_VERSION_OR_CANONICAL_HASH');
-  require(row.canonical_scope === POLICY.scope && row.record_currentness === 'CURRENT' && row.lifecycle_status === 'active' && row.record_type === type && row.authority === authority, 'RECORD_SCOPE_CURRENTNESS_OR_AUTHORITY');
-  require(time(row.evaluated_at) <= now && now - time(row.evaluated_at) <= POLICY.maxAgeMs, 'RECORD_STALE');
+  assertContract(object(row) && row.id === ref.id && row.version === ref.version && row.content_hash === ref.content_hash, 'SERVER_RECORD_VERSION_OR_CANONICAL_HASH');
+  assertContract(row.canonical_scope === POLICY.scope && row.record_currentness === 'CURRENT' && row.lifecycle_status === 'active' && row.record_type === type && row.authority === authority, 'RECORD_SCOPE_CURRENTNESS_OR_AUTHORITY');
+  assertContract(time(row.evaluated_at) <= now && now - time(row.evaluated_at) <= POLICY.maxAgeMs, 'RECORD_STALE');
   return row;
 }
 function verifyRows(rows, input, protectedState, now) {
-  require(object(rows), 'CANONICAL_SOURCE_UNAVAILABLE');
+  assertContract(object(rows), 'CANONICAL_SOURCE_UNAVAILABLE');
   const principal = protectedState.principal;
   const permission = currentRecord(rows.permission, input.permission_record_ref, 'decision', 'user_explicit', now);
   const producer = currentRecord(rows.producer, input.producer_registration_ref, 'state', 'user_explicit', now);
   const recognition = currentRecord(rows.recognition, input.recognition_record_ref, 'state', 'observed', now);
   const grant = permission.type_fields?.domain_permission;
-  require(object(grant) && grant.status === 'active' && grant.revoked_at === null && grant.action === 'DatasetSplit.definition.recognize' && grant.effect === 'NON_PRODUCTION_DEFINITION_RECOGNITION_ONLY' && grant.environment === 'NON_PRODUCTION' && grant.canonical_scope === POLICY.scope && equal(grant.subject, POLICY.subject) && equal(grant.principal, principal) && equal(grant.producer_registration_ref, input.producer_registration_ref), 'DOMAIN_RECORD_IS_ONLY_BINDING_NOT_NATIVE_GRANT');
-  require(time(grant.not_before) <= now && now < time(grant.expires_at) && time(grant.expires_at) - time(grant.not_before) <= POLICY.maxWindowMs, 'DOMAIN_BINDING_WINDOW');
-  require(equal(producer.type_fields?.domain_producer, { service: POLICY.service, role: 'EXISTING_MODEL_DOMAIN_AUTHORITY_DELEGATE', domain_owner: 'MODEL PROGRAM', environment: 'NON_PRODUCTION', principal, authority_registry_sha256: POLICY.registry }), 'REGISTERED_PRODUCER_BINDING');
+  assertContract(object(grant) && grant.status === 'active' && grant.revoked_at === null && grant.action === 'DatasetSplit.definition.recognize' && grant.effect === 'NON_PRODUCTION_DEFINITION_RECOGNITION_ONLY' && grant.environment === 'NON_PRODUCTION' && grant.canonical_scope === POLICY.scope && equal(grant.subject, POLICY.subject) && equal(grant.principal, principal) && equal(grant.producer_registration_ref, input.producer_registration_ref), 'DOMAIN_RECORD_IS_ONLY_BINDING_NOT_NATIVE_GRANT');
+  assertContract(time(grant.not_before) <= now && now < time(grant.expires_at) && time(grant.expires_at) - time(grant.not_before) <= POLICY.maxWindowMs, 'DOMAIN_BINDING_WINDOW');
+  assertContract(equal(producer.type_fields?.domain_producer, { service: POLICY.service, role: 'EXISTING_MODEL_DOMAIN_AUTHORITY_DELEGATE', domain_owner: 'MODEL PROGRAM', environment: 'NON_PRODUCTION', principal, authority_registry_sha256: POLICY.registry }), 'REGISTERED_PRODUCER_BINDING');
   const binding = recognition.type_fields?.domain_recognition;
-  require(recognition.type_fields?.state_kind === 'model_dataset_split_domain_recognition' && object(binding) && binding.contract_sha256 === POLICY.contract && equal(binding.subject, POLICY.subject) && equal(binding.permission_record_ref, input.permission_record_ref) && equal(binding.producer_registration_ref, input.producer_registration_ref) && equal(binding.producer, { service: POLICY.service, ...principal }) && binding.effect === 'NON_PRODUCTION_DEFINITION_RECOGNITION_ONLY', 'RECOGNITION_BINDING');
+  assertContract(recognition.type_fields?.state_kind === 'model_dataset_split_domain_recognition' && object(binding) && binding.contract_sha256 === POLICY.contract && equal(binding.subject, POLICY.subject) && equal(binding.permission_record_ref, input.permission_record_ref) && equal(binding.producer_registration_ref, input.producer_registration_ref) && equal(binding.producer, { service: POLICY.service, ...principal }) && binding.effect === 'NON_PRODUCTION_DEFINITION_RECOGNITION_ONLY', 'RECOGNITION_BINDING');
   const receipt = rows.receipt, event = rows.event;
-  require(object(receipt) && receipt.id === input.recognition_receipt_id && recognition.receipt_id === receipt.id && receipt.status === 'committed' && receipt.operation_family === 'record_mutation', 'RECEIPT_COMMITTED_BINDING');
-  require(receipt.user_id === principal.subject_id && receipt.binding_id === principal.binding_id && equal(receipt.target_refs, [{ id: recognition.id, kind: 'record', role: 'primary' }]) && equal(receipt.committed_versions, { [recognition.id]: recognition.version }), 'RECEIPT_ACTOR_TARGET_VERSION');
-  require(Array.isArray(receipt.event_ids) && receipt.event_ids.length === 1 && object(event) && String(event.id) === String(receipt.event_ids[0]) && ['record_created', 'record_updated'].includes(event.canonical_event_type) && event.result === 'success' && event.receipt_id === receipt.id && event.event_scope === POLICY.scope && equal(event.target_refs, receipt.target_refs), 'EVENT_RECEIPT_BINDING');
-  require(Number.isSafeInteger(receipt.canonical_version) && receipt.canonical_version > 0 && event.committed_canonical_version === receipt.canonical_version && event.actor_user_id === principal.subject_id && event.actor_binding_id === principal.binding_id, 'EVENT_ACTOR_OR_CANONICAL_VERSION');
-  for (const view of [receipt, event]) require(time(view.evaluated_at) <= now && now - time(view.evaluated_at) <= POLICY.maxAgeMs, 'TRANSACTION_SOURCE_STALE');
+  assertContract(object(receipt) && receipt.id === input.recognition_receipt_id && recognition.receipt_id === receipt.id && receipt.status === 'committed' && receipt.operation_family === 'record_mutation', 'RECEIPT_COMMITTED_BINDING');
+  assertContract(receipt.user_id === principal.subject_id && receipt.binding_id === principal.binding_id && equal(receipt.target_refs, [{ id: recognition.id, kind: 'record', role: 'primary' }]) && equal(receipt.committed_versions, { [recognition.id]: recognition.version }), 'RECEIPT_ACTOR_TARGET_VERSION');
+  assertContract(Array.isArray(receipt.event_ids) && receipt.event_ids.length === 1 && object(event) && String(event.id) === String(receipt.event_ids[0]) && ['record_created', 'record_updated'].includes(event.canonical_event_type) && event.result === 'success' && event.receipt_id === receipt.id && event.event_scope === POLICY.scope && equal(event.target_refs, receipt.target_refs), 'EVENT_RECEIPT_BINDING');
+  assertContract(Number.isSafeInteger(receipt.canonical_version) && receipt.canonical_version > 0 && event.committed_canonical_version === receipt.canonical_version && event.actor_user_id === principal.subject_id && event.actor_binding_id === principal.binding_id, 'EVENT_ACTOR_OR_CANONICAL_VERSION');
+  for (const view of [receipt, event]) assertContract(time(view.evaluated_at) <= now && now - time(view.evaluated_at) <= POLICY.maxAgeMs, 'TRANSACTION_SOURCE_STALE');
   return { recognition_record_ref: input.recognition_record_ref, recognition_receipt_ref: receipt.id, recognition_event_ref: String(event.id) };
 }
 function stablePrivateRows(rows) {
@@ -104,31 +104,31 @@ function stablePrivateRows(rows) {
   // actor, content, version, currentness, receipt and Event must remain equal.
   exact(rows, ['permission', 'producer', 'recognition', 'receipt', 'event'], 'CANONICAL_BUNDLE_SHAPE');
   return Object.fromEntries(Object.entries(rows).map(([key, row]) => {
-    require(object(row), 'CANONICAL_SOURCE_UNAVAILABLE');
+    assertContract(object(row), 'CANONICAL_SOURCE_UNAVAILABLE');
     const { evaluated_at, ...stable } = row;
     return [key, stable];
   }));
 }
 /** source methods are server-owned closures, not serialized capabilities. */
 export function createM2ServerReadonlyReader(source, clock = () => Date.now()) {
-  require(object(source) && typeof source.readProtectedAuthority === 'function' && typeof source.readCanonicalBundle === 'function', 'REAL_SERVER_SOURCE_REQUIRED');
+  assertContract(object(source) && typeof source.readProtectedAuthority === 'function' && typeof source.readCanonicalBundle === 'function', 'REAL_SERVER_SOURCE_REQUIRED');
   return Object.freeze({ async verify(input) {
     const request = validateSourceRequest(input);
     let last = -Infinity;
-    const sample = () => { const value = clock(); require(Number.isSafeInteger(value) && value >= last, 'CLOCK_REGRESSED_OR_INVALID'); last = value; return value; };
+    const sample = () => { const value = clock(); assertContract(Number.isSafeInteger(value) && value >= last, 'CLOCK_REGRESSED_OR_INVALID'); last = value; return value; };
     const first = structuredClone(await source.readProtectedAuthority(request));
     const auth = protectedAuthority(first, request, sample()); // No canonical reads before this.
     const privateRows = structuredClone(await source.readCanonicalBundle(request));
     verifyRows(privateRows, request, auth, sample());
     const beforeFinalRead = structuredClone(await source.readProtectedAuthority(request));
     const beforeFinalAuth = protectedAuthority(beforeFinalRead, request, sample());
-    require(equal(auth, beforeFinalAuth), 'AUTHORITY_CHANGED_DURING_READ');
+    assertContract(equal(auth, beforeFinalAuth), 'AUTHORITY_CHANGED_DURING_READ');
     const finalRows = structuredClone(await source.readCanonicalBundle(request));
     const final = structuredClone(await source.readProtectedAuthority(request));
     const finalAuth = protectedAuthority(final, request, sample());
-    require(equal(auth, finalAuth), 'AUTHORITY_CHANGED_DURING_READ');
+    assertContract(equal(auth, finalAuth), 'AUTHORITY_CHANGED_DURING_READ');
     const references = verifyRows(finalRows, request, finalAuth, sample());
-    require(equal(stablePrivateRows(privateRows), stablePrivateRows(finalRows)), 'CANONICAL_SOURCE_CHANGED_DURING_READ');
+    assertContract(equal(stablePrivateRows(privateRows), stablePrivateRows(finalRows)), 'CANONICAL_SOURCE_CHANGED_DURING_READ');
     // One acceptance instant checks every deadline. A later row-only sample
     // must not become the verdict time after Native authority has expired.
     const acceptedAt = sample();

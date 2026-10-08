@@ -13,13 +13,13 @@ export const same = (a, b) => {
   if (a && b && typeof a === 'object' && typeof b === 'object') return exact(a, Object.keys(b)) && Object.keys(a).every(k => same(a[k], b[k]));
   return a === b;
 };
-const require = demand;
+const assertContract = demand;
 export const utc = value => {
   const m = typeof value === 'string' && /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d{1,6}))?Z$/.exec(value);
-  require(m, 'EXACT_UTC_TIME_REQUIRED');
+  assertContract(m, 'EXACT_UTC_TIME_REQUIRED');
   const numbers = m.slice(1, 7).map(Number), [y, month, day, h, minute, s] = numbers;
   const n = Date.UTC(y, month - 1, day, h, minute, s, Number((m[7] ?? '').padEnd(3, '0').slice(0, 3)));
   const date = new Date(n);
-  require(Number.isFinite(n) && [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(),
+  assertContract(Number.isFinite(n) && [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), date.getUTCHours(),
     date.getUTCMinutes(), date.getUTCSeconds()].every((v, i) => v === numbers[i]), 'EXACT_UTC_TIME_REQUIRED'); return n;
 };
