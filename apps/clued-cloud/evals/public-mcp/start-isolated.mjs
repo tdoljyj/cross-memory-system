@@ -9,9 +9,13 @@ const secretPath = path.join(here, ".dev.vars.public-mcp");
 
 function reportedPublishableKey() {
   try {
+    const statusArgs = process.platform === "linux" && process.arch === "x64"
+      ? ["--yes", "--package=supabase@2.115.0", "--package=@supabase/cli-linux-x64@2.115.0",
+        "supabase", "status", "--output", "json"]
+      : ["--yes", "supabase@2.115.0", "status", "--output", "json"];
     const output = execFileSync(
       process.platform === "win32" ? "npx.cmd" : "npx",
-      ["--yes", "supabase@2.115.0", "status", "--output", "json"],
+      statusArgs,
       {
         cwd: cloudRoot,
         encoding: "utf8",

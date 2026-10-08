@@ -24,6 +24,10 @@ const toolVersions = JSON.parse(await fs.readFile(path.join(root, 'evals/public-
 
 const TOOLS = ['clued_integration_install', 'clued_integration_status', 'clued_integration_declare', 'clued_integration_report',
   'clued_integration_identity_update', 'clued_integration_verify', 'clued_integration_revoke'];
+const MODEL_READ_TOOLS = ['clued_model_reference_owner_approval_refs', 'clued_model_dataset_split_owner_anchor_refs',
+  'clued_model_dataset_split_resolve_refs', 'clued_model_dataset_split_verify'];
+const MODEL_BOOTSTRAP = 'clued_model_dataset_split_bootstrap_request';
+const ordinaryBaseline = baseline.tools.filter((tool) => !MODEL_READ_TOOLS.includes(tool.name));
 // §12.2: readOnly / destructive / idempotent / openWorld
 const ANNOTATIONS = {
   clued_integration_install: [false, false, true, true],
@@ -90,40 +94,71 @@ function mockFetch(handler) {
 }
 const committed = (supplemental = {}) => Response.json({ status: 'committed', replayed: false, receipt_id: 'receipt-1', supplemental });
 
-test('T-W-1 flag on: tools/list is byte-identical to the frozen baseline; flag off drops exactly the 7 tools; the 8-row matrix holds through the Worker', async () => {
+test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the uniform 32-row matrix holds through the Worker', async () => {
   // Stage C-3 (Decision a109eb63): the frozen production-equivalent baseline is the flag-on list.
-  assert.equal(baseline.tools.length, 36);
+  assert.equal(baseline.tools.length, 40);
+  assert.equal(ordinaryBaseline.length, 36);
   for (const value of ['true', '1', 'on', 'enabled']) {
     const env = { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
-    assert.equal(JSON.stringify(await listTools(env)), JSON.stringify(baseline.tools), `flag ${JSON.stringify(value)}`);
+    assert.equal(JSON.stringify(await listTools(env)), JSON.stringify(ordinaryBaseline), `flag ${JSON.stringify(value)}`);
   }
   // Flag off (the rollback): the baseline without the 7 Integration tools, byte for byte and in order,
   // which is the surface production had before stage C.
-  const flagOff = baseline.tools.filter((tool) => !TOOLS.includes(tool.name));
+  const flagOff = ordinaryBaseline.filter((tool) => !TOOLS.includes(tool.name));
   assert.equal(flagOff.length, 29);
-  assert.equal(baseline.tools.length - flagOff.length, TOOLS.length);
+  assert.equal(ordinaryBaseline.length - flagOff.length, TOOLS.length);
   for (const value of [undefined, 'false', '0', 'off', '', 'yes']) {
     const env = value === undefined ? production : { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
     assert.equal(JSON.stringify(await listTools(env)), JSON.stringify(flagOff), `flag ${JSON.stringify(value)}`);
   }
   const rows = toolVersions.feature_flags.full_matrix;
-  assert.equal(rows.length, 8);
+  assert.equal(rows.length, 32);
   for (const row of rows) {
     const env = { ...assets, PROJECT_VIEWS_V2: String(row.PROJECT_VIEWS_V2), P5_TENANT_WRITES: String(row.P5_TENANT_WRITES),
-      CLUED_INTEGRATION_RUNTIME_V1: String(row.CLUED_INTEGRATION_RUNTIME_V1) };
+      CLUED_INTEGRATION_RUNTIME_V1: String(row.CLUED_INTEGRATION_RUNTIME_V1),
+      CLUED_MODEL_DOMAIN_SOURCE_V1: String(row.CLUED_MODEL_DOMAIN_SOURCE_V1),
+      CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: String(row.CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1) };
     const tools = await listTools(env);
     assert.equal(tools.length, row.expected_tool_count, JSON.stringify(env));
     assert.equal(tools.filter((tool) => TOOLS.includes(tool.name)).length, row.CLUED_INTEGRATION_RUNTIME_V1 ? 7 : 0);
+    assert.deepEqual(tools.filter((tool) => MODEL_READ_TOOLS.includes(tool.name)).map((tool) => tool.name),
+      row.PROJECT_VIEWS_V2 && row.CLUED_MODEL_DOMAIN_SOURCE_V1 ? MODEL_READ_TOOLS : []);
+    assert.equal(tools.some((tool) => tool.name === MODEL_BOOTSTRAP), false, 'uniform matrix never enables OwnerRequests');
   }
   // §12.6 counts, independent of the metadata file
   const count = (v2, p5, on) => rows.find((row) => row.PROJECT_VIEWS_V2 === v2 && row.P5_TENANT_WRITES === p5
-    && row.CLUED_INTEGRATION_RUNTIME_V1 === on).expected_tool_count;
+    && row.CLUED_INTEGRATION_RUNTIME_V1 === on && row.CLUED_MODEL_DOMAIN_SOURCE_V1 === false
+    && row.CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1 === false).expected_tool_count;
   assert.deepEqual([count(false, false, false), count(true, false, false), count(false, true, false), count(true, true, false)], [18, 29, 23, 34]);
   assert.deepEqual([count(false, false, true), count(true, false, true), count(false, true, true), count(true, true, true)], [25, 36, 30, 41]);
   assert.deepEqual(toolVersions.feature_flags.production_equivalent,
-    { PROJECT_VIEWS_V2: true, P5_TENANT_WRITES: false, CLUED_INTEGRATION_RUNTIME_V1: true, expected_tool_count: 36 });
+    { PROJECT_VIEWS_V2: true, P5_TENANT_WRITES: false, CLUED_INTEGRATION_RUNTIME_V1: true,
+      CLUED_MODEL_DOMAIN_SOURCE_V1: true, CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: false, expected_tool_count: 40 });
+  const productionSourceOn = { ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false' };
+  assert.equal(JSON.stringify(await listTools(productionSourceOn)), JSON.stringify(baseline.tools));
   for (const value of ['true', 'TRUE', '1', 'on', 'enabled', ' true ']) {
     assert.equal(integrations.integrationRuntimeEnabled({ CLUED_INTEGRATION_RUNTIME_V1: value }), true, value);
+  }
+});
+
+test('Model bootstrap metadata requires all existing prerequisites; positive request fixture is separate from production and 32 rows', async () => {
+  const requestFixture = { ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true',
+    CLUED_OWNER_REQUESTS_V1: 'true' };
+  const visible = await listTools(requestFixture);
+  assert.equal(visible.length, baseline.tools.length + 2, 'fixture adds the generic Owner request and Model bootstrap request only');
+  assert.deepEqual(visible.filter((tool) => [...MODEL_READ_TOOLS, MODEL_BOOTSTRAP].includes(tool.name)).map((tool) => tool.name),
+    [...MODEL_READ_TOOLS, MODEL_BOOTSTRAP]);
+  assert.equal(visible.filter((tool) => tool.name === 'clued_owner_request').length, 1);
+  const bootstrap = visible.find((tool) => tool.name === MODEL_BOOTSTRAP);
+  assert.deepEqual(bootstrap._meta['clued/requiredScopes'], ['context:read', 'context:write']);
+  assert.deepEqual(bootstrap.annotations, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+  assert.equal(bootstrap._meta['clued/scopeEnforcement'], 'server-side');
+  for (const flag of ['PROJECT_VIEWS_V2', 'CLUED_MODEL_DOMAIN_SOURCE_V1', 'CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1', 'CLUED_OWNER_REQUESTS_V1']) {
+    for (const value of [undefined, 'false']) {
+      const env = { ...requestFixture };
+      if (value === undefined) delete env[flag]; else env[flag] = value;
+      assert.equal((await listTools(env)).some((tool) => tool.name === MODEL_BOOTSTRAP), false, `${flag}=${String(value)}`);
+    }
   }
 });
 

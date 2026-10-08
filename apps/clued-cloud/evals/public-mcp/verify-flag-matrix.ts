@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { publicMcpTools } from "../../worker/continuity";
+import { isModelDomainTool, modelDomainTools, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
+  MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL, MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL,
+  MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL } from "../../worker/model-domain-tools";
 
 const toolVersions = JSON.parse(
   fs.readFileSync(new URL("./tool-versions.json", import.meta.url), "utf8"),
@@ -12,9 +15,16 @@ const baseline = JSON.parse(
 const flags = toolVersions?.feature_flags;
 assert.ok(flags && typeof flags === "object", "tool-versions.json: feature_flags missing");
 assert.ok(Array.isArray(flags.full_matrix), "tool-versions.json: full_matrix missing");
-// Every production flag that changes tools/list is a matrix dimension (IntegrationRuntime §12.6 adds
-// CLUED_INTEGRATION_RUNTIME_V1).
-const FLAGS = ["PROJECT_VIEWS_V2", "P5_TENANT_WRITES", "CLUED_INTEGRATION_RUNTIME_V1"] as const;
+// All rows retain identical defaults for flags outside these five dimensions.
+// In particular OwnerRequests is OFF: BOOTSTRAP alone cannot open its existing
+// prerequisite. Its positive/negative dependency cases are separate Worker tests.
+const FLAGS = ["PROJECT_VIEWS_V2", "P5_TENANT_WRITES", "CLUED_INTEGRATION_RUNTIME_V1",
+  "CLUED_MODEL_DOMAIN_SOURCE_V1", "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1"] as const;
+const READ_MODEL_TOOLS = [MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL, MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL,
+  MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL];
+const modelOutputSchema = { type: "object",
+  description: "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+  additionalProperties: true };
 assert.equal(flags.full_matrix.length, 2 ** FLAGS.length,
   `tool-versions.json: full_matrix must contain exactly ${2 ** FLAGS.length} flag combinations`);
 
@@ -67,6 +77,28 @@ const results = flags.full_matrix.map((item: Record<(typeof FLAGS)[number], bool
     item.expected_tool_count,
     `runtime tool count disagrees with tool-versions.json for ${JSON.stringify(env)}`,
   );
+  const independentCount = 18 + (item.PROJECT_VIEWS_V2 ? 11 : 0) + (item.P5_TENANT_WRITES ? 5 : 0)
+    + (item.CLUED_INTEGRATION_RUNTIME_V1 ? 7 : 0)
+    + (item.PROJECT_VIEWS_V2 && item.CLUED_MODEL_DOMAIN_SOURCE_V1 ? 4 : 0);
+  assert.equal(tools.length, independentCount, "five-flag count differs from independent legacy plus four-readonly counts");
+  const modelTools = tools.filter((tool) => isModelDomainTool(tool.name));
+  assert.deepEqual(modelTools.map((tool) => tool.name),
+    item.PROJECT_VIEWS_V2 && item.CLUED_MODEL_DOMAIN_SOURCE_V1 ? READ_MODEL_TOOLS : [],
+    "Model readonly tools require both existing Records and source flags");
+  assert.equal(tools.some((tool) => tool.name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL), false,
+    "all 32 uniform rows leave the existing OwnerRequests prerequisite OFF");
+  for (const tool of modelTools) {
+    const descriptor = modelDomainTools.find((candidate) => candidate.name === tool.name);
+    assert.ok(descriptor, "Model tool must have an existing registered descriptor");
+    assert.deepEqual(tool.inputSchema, descriptor.inputSchema, `${tool.name}: exact registered input schema`);
+    assert.equal(tool.inputSchema.type, "object");
+    assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name}: caller fields remain closed`);
+    assert.deepEqual(tool.outputSchema, modelOutputSchema, `${tool.name}: existing public structured result schema`);
+    assert.deepEqual(tool.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    assert.deepEqual(tool._meta["clued/requiredScopes"], ["context:read"]);
+    assert.equal(tool._meta["clued/scopeEnforcement"], "server-side");
+    assert.match(tool.description, /Required Clued scope: context:read/);
+  }
   if (key(item as unknown as Record<string, unknown>) === productionKey) {
     assert.deepEqual(tools, baseline.tools, "production-equivalent flag case differs from frozen baseline");
   }
@@ -75,5 +107,12 @@ const results = flags.full_matrix.map((item: Record<(typeof FLAGS)[number], bool
     tool_count: tools.length,
   };
 });
+
+const productionOff = publicMcpTools({ PROJECT_VIEWS_V2: "true", P5_TENANT_WRITES: "false",
+  CLUED_INTEGRATION_RUNTIME_V1: "true", CLUED_MODEL_DOMAIN_SOURCE_V1: "false",
+  CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: "false" });
+assert.equal(productionOff.length, 36, "the ordinary source-OFF baseline remains 36 tools");
+assert.equal(JSON.stringify(productionOff), JSON.stringify(baseline.tools.filter((tool: { name: string }) => !isModelDomainTool(tool.name))),
+  "filtering the four production readonly additions must preserve every ordinary tool byte and order");
 
 console.log(JSON.stringify({ status: "PASS", matrix: results, metadata_bound: true }));

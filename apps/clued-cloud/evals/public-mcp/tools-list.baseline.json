@@ -2697,6 +2697,504 @@
         ],
         "clued/scopeEnforcement": "server-side"
       }
+    },
+    {
+      "name": "clued_model_reference_owner_approval_refs",
+      "description": "Read only a new exact Owner experiment-approval Decision/Receipt/Event chain in fixed Project0597 and Task1502 for PC M1_FIXED_REFERENCE QUALIFICATION. This same authorized Binding is admitted with context:read before Canonical rows. Recomputes the full M1 server hash, Currentness, private Actor and exact request/operation/window/budget semantics. Returns exactly 16 actor-free/body-free verified reference/status fields; no opaque Host source_ref, Actor DTO, record body or token. This read never issues an ExperimentProfile, grants model permission, consumes an attempt, invokes Native or writes Canonical data. Host integration uses a distinct actor-free bridge and is not compatible with the old raw-Actor reader protocol. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "approval_binding": {
+            "type": "object",
+            "properties": {
+              "allowed_operations": {
+                "type": "array",
+                "const": [
+                  "LOCAL_FIXED_M1_REFERENCE_QUALIFICATION_INFERENCE",
+                  "SAVE_ACTUAL_QUALIFICATION_OUTPUTS",
+                  "DETERMINISTIC_SCORING_REPLAY_OF_SAVED_ACTUAL_OUTPUTS"
+                ]
+              },
+              "budget": {
+                "type": "object",
+                "properties": {
+                  "currency": {
+                    "type": "string",
+                    "const": "USD"
+                  },
+                  "currency_exponent": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  },
+                  "currency_profile_digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "const": 1
+                  },
+                  "max_compute": {
+                    "type": "object",
+                    "properties": {
+                      "device_class": {
+                        "type": "string",
+                        "const": "PC"
+                      },
+                      "max_compute_bytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "device_class",
+                      "max_compute_bytes"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "max_concurrency": {
+                    "type": "integer",
+                    "const": 1
+                  },
+                  "max_cost_minor_units": {
+                    "type": "integer",
+                    "const": 0
+                  },
+                  "max_input_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_input_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_output_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_output_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_parallel_experiments": {
+                    "type": "integer",
+                    "const": 1
+                  },
+                  "max_requests": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_response_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_storage_bytes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_total_tokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "max_wall_time": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "provider_deadline_at": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"
+                  }
+                },
+                "required": [
+                  "currency",
+                  "currency_exponent",
+                  "currency_profile_digest",
+                  "max_attempts",
+                  "max_compute",
+                  "max_concurrency",
+                  "max_cost_minor_units",
+                  "max_input_bytes",
+                  "max_input_tokens",
+                  "max_output_bytes",
+                  "max_output_tokens",
+                  "max_parallel_experiments",
+                  "max_requests",
+                  "max_response_bytes",
+                  "max_storage_bytes",
+                  "max_total_tokens",
+                  "max_wall_time",
+                  "provider_deadline_at"
+                ],
+                "additionalProperties": false
+              },
+              "candidate_role": {
+                "type": "string",
+                "const": "M2_REFERENCE_BASELINE"
+              },
+              "canonical_scope": {
+                "type": "string",
+                "const": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+              },
+              "confirmation_origin": {
+                "type": "string",
+                "const": "OWNER_CURRENT_CONVERSATION_EXACT_REQUEST"
+              },
+              "host_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "kind": {
+                "type": "string",
+                "const": "M2_REFERENCE_QUALIFICATION_PROFILE_EXACT_APPROVAL"
+              },
+              "materializer_code_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "output_target_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "parent_boundary": {
+                "type": "string",
+                "const": "QUALIFICATION"
+              },
+              "profile_id": {
+                "type": "string",
+                "pattern": "^M2-REFERENCE-QUALIFICATION-PC-[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
+              },
+              "prohibited_operations": {
+                "type": "array",
+                "const": [
+                  "WEIGHT_LEARNING",
+                  "TRAINING",
+                  "MODEL_SELECTION_OR_TUNING",
+                  "QUALIFICATION_FEEDBACK_TO_SELECTION",
+                  "FINAL_HOLDOUT",
+                  "PROTECTED48",
+                  "PUBLIC_OR_SYNTHETIC_GENERATION",
+                  "OLD_M1_T0_T1_PROFILE_REUSE",
+                  "INSTALLATION",
+                  "VM",
+                  "PRODUCTION",
+                  "RELEASE"
+                ]
+              },
+              "purpose_id": {
+                "type": "string",
+                "const": "qualification"
+              },
+              "request_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "source_stage": {
+                "type": "string",
+                "const": "M1_FIXED_REFERENCE"
+              },
+              "task_id": {
+                "type": "string",
+                "const": "1502fd80-8ff8-4adc-b4f5-da6d462f4f8a"
+              },
+              "template_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "window": {
+                "type": "object",
+                "properties": {
+                  "not_before": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"
+                  },
+                  "stop_at": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?Z$"
+                  }
+                },
+                "required": [
+                  "not_before",
+                  "stop_at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "allowed_operations",
+              "budget",
+              "candidate_role",
+              "canonical_scope",
+              "confirmation_origin",
+              "host_ref",
+              "kind",
+              "materializer_code_sha256",
+              "output_target_ref",
+              "parent_boundary",
+              "profile_id",
+              "prohibited_operations",
+              "purpose_id",
+              "request_sha256",
+              "source_stage",
+              "task_id",
+              "template_sha256",
+              "window"
+            ],
+            "additionalProperties": false
+          },
+          "receipt_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
+          },
+          "record_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "request_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "approval_binding",
+          "receipt_id",
+          "record_ref",
+          "request_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_model_dataset_split_owner_anchor_refs",
+      "description": "Read only the two fixed Owner Decision anchor references in the fixed Model Program Project through this same authorized Binding. Returns exact id/version/full Record server content hash and projection-only markers. No caller selector, actor, raw Record or authority proof is accepted. This call never submits an Owner request, grants permission or invokes a Canonical/M1 writer; it does not resolve historical hash semantics or issue M2 qualification. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "const": "clued.model-owner-anchor-refs/1"
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_model_dataset_split_resolve_refs",
+      "description": "Resolve only three existing DatasetSplit projection references in the fixed Model Program Project. Returns id/version/server content hash, with no domain permission, actor, record body or M2 verdict. The same authorized Binding is verified by the server. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "permission_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "producer_registration_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "recognition_record_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "permission_record_id",
+          "producer_registration_id",
+          "recognition_record_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_model_dataset_split_verify",
+      "description": "Verify existing DatasetSplit source references in the fixed Model Program Project. Requires separately registered Native verify/recognize/producer grants for this same Binding and Task before Canonical reads. Returns only minimal recognition references; it does not issue domain authority, M2 acceptance or training permission. This legacy projection reader does not validate the successor actor-free M1 templates. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "permission_record_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "producer_registration_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "recognition_record_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "recognition_receipt_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "permission_record_ref",
+          "producer_registration_ref",
+          "recognition_record_ref",
+          "recognition_receipt_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
     }
   ]
 }
