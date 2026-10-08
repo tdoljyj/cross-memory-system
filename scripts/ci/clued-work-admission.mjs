@@ -1416,6 +1416,8 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       const slotGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha, MERGE_SLOT_CHECK_NAME));
       if (!admissionGreen && !slotGreen) continue;
       const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile });
+      // Closed between the list and the fresh read: nothing to re-verify.
+      if (outcome.verdict === "PR_NOT_OPEN") continue;
       const label = outcome.admission_mode && outcome.admission_mode.label;
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons,
         ...(label ? { mode: label } : {}),
@@ -1601,6 +1603,7 @@ async function currentHeadOf(fetchImpl, env, pr) {
   }
   if (!now || now.state !== "open") return `pull request #${pr.number} is ${now && now.state ? now.state : "unreadable"}`;
   if (!now.head || now.head.sha !== pr.head.sha) return `${pr.head.sha} is no longer the head of #${pr.number} (now ${now.head && now.head.sha})`;
+  if (!now.base || now.base.ref !== pr.base.ref) return `#${pr.number} now targets ${now.base && now.base.ref}, not ${pr.base.ref}`;
   return null;
 }
 
@@ -1657,7 +1660,13 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       if (settled || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
-    const run = found.check;
+    // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
+    // check for this pull request on this head decides, whichever admission
+    // run (or re-verification) posted it: every later check is a later
+    // judgement of the same head.
+    const newer = attempt && found.check && found.newestForPr && found.newestForPr.status === "completed"
+      && Number(found.newestForPr.id) > Number(found.check.id) ? found.newestForPr : null;
+    const run = newer ?? found.check;
     if (run) {
       outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null,
         workflow_run_id: found.run.id, source: what };
@@ -1668,7 +1677,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     } else if (!run || run.status !== "completed") {
       outcome.verdict = "ADMISSION_PENDING";
       outcome.reasons.push(`${what}: run ${found.run.id} ${run ? `check ${run.id} still ${run.status}` : "has posted no check"} after ${limit}s`);
-    } else if (attempt && found.run.status !== "completed") {
+    } else if (attempt && !newer && found.run.status !== "completed") {
       outcome.verdict = "ADMISSION_PENDING";
       outcome.reasons.push(`${what}: run ${found.run.id} is running again (${found.run.status}) after ${limit}s; its check ${run.id} is from an earlier attempt`);
     } else if (run.conclusion === "success") {
@@ -1683,7 +1692,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     // whatever CLUED_WORK_ADMISSION_ENFORCE says (§4).
     const label = run && run.status === "completed" ? parseModeLabel(run.output && run.output.title) : null;
     if (label) {
-      outcome.admission_mode = { state: label.state, layer: label.layer, reruns_per_head: label.reruns_per_head,
+      outcome.admission_mode = { state: label.state, layer: label.layer, reruns_per_head: label.reruns_per_head, source: "admission check title",
         label: `${label.state} · ${label.layer} · reruns ${label.reruns_per_head}` };
       if (label.state === "frozen" && !enforced) {
         enforced = true;
@@ -1693,17 +1702,10 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     }
     if (attempt && outcome.admitted) {
       const allowed = label ? label.reruns_per_head : 0;
-      const newest = found.newestForPr;
       if (attempt > 1 + allowed) {
         outcome.admitted = false;
         outcome.verdict = "RERUN_REFUSED";
         outcome.reasons.push(`run attempt ${attempt}: ${label ? `the ${label.layer} layer allows ${allowed} re-run(s) per head in ${label.state}` : "the admission check names no re-run allowance"}; ${PR_RERUN_HOWTO}`);
-      } else if (newest && Number(newest.id) !== Number(run.id) && newest.status === "completed" && newest.conclusion !== "success") {
-        // A later check on this head for this pull request (the hourly
-        // re-verification, or a switch to frozen) failed: a re-run follows it.
-        outcome.admitted = false;
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push(`run attempt ${attempt}: the newer ${APP_CHECK_NAME} check ${newest.id} for #${pr.number} concluded ${newest.conclusion}`);
       }
     }
   } catch (error) {
@@ -2346,10 +2348,22 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     console.error(`::error title=clued-work-admission::${withTokenHint(outcome.error)}`);
     return 1;
   }
+  if (outcome.verdict === "PR_NOT_OPEN") {
+    console.error(`::notice title=clued-work-admission::${outcome.reasons.join("; ")}`);
+    return 0;
+  }
   if (!outcome.admitted) {
     const text = withTokenHint(`${outcome.verdict}: ${outcome.reasons.join("; ")}`);
     if (mode === "required" || mode === "dispatch-admit") {
       console.error(`::error title=clued-work-admission::${text}`);
+      return 1;
+    }
+    // Merge Admission step 2 (review MAJOR-1): on attempt 1 a gate that does
+    // not admit succeeds and its heavy jobs are skipped (the admission check
+    // already shows why). A re-run that is not admitted fails instead, so the
+    // run is red and skipped heavy jobs never look like a pass.
+    if (mode === "gate" && rerunAttempt(env) && outcome.enforced) {
+      console.error(`::error title=admission-gate::${text}; this re-run did not run the heavy jobs.`);
       return 1;
     }
     console.error(`::warning title=admission-gate::${text}; heavy jobs are skipped.`);

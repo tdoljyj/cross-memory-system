@@ -106,7 +106,8 @@ jobs:
       # a pull request's own workflow cannot post this check and the main
       # ruleset can require it by App. Posts nothing until the App is set up.
       - name: Post the result as the clued-admission App
-        if: ${{ !cancelled() }}
+        # Merge Admission step 2: a pull request found closed is not judged and gets no check.
+        if: ${{ !cancelled() && steps.admit.outputs.verdict != 'PR_NOT_OPEN' }}
         env:
           # Re-review 3, N-R6: when the admission step fails before it names
           # the head, the failure is still posted on the event's head, so an

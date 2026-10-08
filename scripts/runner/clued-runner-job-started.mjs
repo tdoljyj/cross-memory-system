@@ -46,7 +46,10 @@
 //         failed jobs" and a single-job re-run list the earlier gate job in
 //         the new attempt, successful but started before the attempt did; that
 //         start time is what tells them apart (measured on GitHub, Task
-//         745c288f). See rerunVerdict below.
+//         745c288f). Exactly one job of the attempt may be named
+//         admission-gate, and it must carry the self-hosted label. A gate job
+//         not started or not completed yet is waited for, up to
+//         CLUED_RUNNER_HOOK_WAIT_SECONDS. See rerunVerdict below.
 //     The rule for a pull request that changes a workflow applies to every
 //     attempt as to the first.
 // Everything else is refused: pushes to other branches, pull requests into
@@ -63,7 +66,11 @@
 //                                  a read-only GitHub token (actions and
 //                                  contents: read); used only when no App is set
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
-//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run (480)
+//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run, and
+//                                  separately for a re-run's admission-gate
+//                                  job (480 each). A heavy job of a re-run of a
+//                                  pull request that changes a workflow can
+//                                  wait for both: up to twice this.
 // It needs Node 18 or newer (the runner bundles one under externals/).
 
 import { createSign } from "node:crypto";
@@ -230,9 +237,17 @@ function errorText(error) {
 // so its start time is no earlier than the attempt's (run_started_at, which
 // changes per attempt; created_at does not). "Re-run failed jobs" and a
 // single-job re-run list the earlier, not re-run gate job in the new attempt,
-// with conclusion success and this attempt's number, but its started_at stays
-// the earlier attempt's (measured on microsoft/vscode run 37727629063). A list
-// that is not complete, or a time that cannot be read, refuses.
+// with a new id, a later created_at, conclusion success and this attempt's
+// number, but its started_at stays the earlier attempt's (measured on
+// microsoft/vscode run 37727629063). A list that is not complete, or a time
+// that cannot be read, refuses.
+// The gate is found by its display name, so exactly one job of the attempt
+// may carry it, and that job must run on a self-hosted runner (every gate job
+// does; review MINOR-2): a second job named admission-gate, or one on a hosted
+// runner, refuses.
+// A gate job of this attempt that has not started yet (no started_at) or has
+// not completed is pending: the caller polls again within its bounded wait
+// and refuses at the end of it (review NIT-5).
 async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted) {
   const body = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`);
   const jobs = body && Array.isArray(body.jobs) ? body.jobs : null;
@@ -243,16 +258,26 @@ async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attem
   }
   const gates = jobs.filter((job) => job && job.name === GATE_JOB);
   if (gates.length === 0) return { state: "refused", detail: `attempt ${attempt} has no ${GATE_JOB} job` };
-  const fresh = gates.filter((job) => Date.parse(job.started_at) >= attemptStarted
-    && (job.run_attempt === undefined || job.run_attempt === null || Number(job.run_attempt) === attempt));
-  const passed = fresh.find((job) => job.status === "completed" && job.conclusion === "success");
-  if (passed) return { state: "ok", job: passed };
-  const pending = fresh.find((job) => job.status !== "completed");
-  if (pending) return { state: "pending", detail: `${GATE_JOB} job ${pending.id}: ${pending.status ?? "unknown"}/${pending.conclusion ?? "none"}` };
-  if (fresh.length > 0) return { state: "refused", detail: `${GATE_JOB} job ${fresh[0].id}: ${fresh[0].status}/${fresh[0].conclusion ?? "none"}` };
-  const earlier = gates[0];
-  return { state: "refused",
-    detail: `${GATE_JOB} job ${earlier.id} started ${earlier.started_at || "(no time)"}, not in this attempt: it was not re-run` };
+  if (gates.length > 1) {
+    return { state: "refused", detail: `attempt ${attempt} has ${gates.length} jobs named ${GATE_JOB} (${gates.map((job) => job.id).join(", ")}); exactly one is required` };
+  }
+  const gate = gates[0];
+  if (!Array.isArray(gate.labels) || !gate.labels.includes("self-hosted")) {
+    return { state: "refused", detail: `${GATE_JOB} job ${gate.id} does not run on a self-hosted runner (labels ${JSON.stringify(gate.labels ?? null)})` };
+  }
+  if (gate.run_attempt !== undefined && gate.run_attempt !== null && Number(gate.run_attempt) !== attempt) {
+    return { state: "refused", detail: `${GATE_JOB} job ${gate.id} belongs to attempt ${gate.run_attempt}, not ${attempt}` };
+  }
+  const state = `${GATE_JOB} job ${gate.id}: ${gate.status ?? "unknown"}/${gate.conclusion ?? "none"}`;
+  const noStart = gate.started_at === undefined || gate.started_at === null || gate.started_at === "";
+  if (noStart || gate.status !== "completed") return { state: "pending", detail: noStart ? `${state}, not started` : state };
+  const started = Date.parse(gate.started_at);
+  if (!Number.isFinite(started)) return { state: "refused", detail: `${GATE_JOB} job ${gate.id} has an unreadable started_at ${JSON.stringify(gate.started_at)}` };
+  if (started < attemptStarted) {
+    return { state: "refused", detail: `${GATE_JOB} job ${gate.id} started ${gate.started_at}, not in this attempt: it was not re-run` };
+  }
+  if (gate.conclusion !== "success") return { state: "refused", detail: state };
+  return { state: "ok", job: gate };
 }
 
 // Whether a job of attempt `attempt` (2 or later) of this pull request run may
@@ -288,8 +313,9 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
   }
   const attemptStarted = Date.parse(run && run.run_started_at);
   if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
-  // A heavy job needs the gate, so a fresh gate job still shown as running is
-  // the API's lag: wait for it, like for the admission run below.
+  // A heavy job needs the gate, so a gate job of this attempt still shown as
+  // not started or not completed is the API's lag: wait for it, like for the
+  // admission run below, and refuse at the end of the wait.
   let seen;
   for (let waited = 0; ; waited += 10) {
     try {

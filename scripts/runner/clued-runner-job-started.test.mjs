@@ -175,10 +175,11 @@ const RUN_STARTED = "2026-10-04T06:00:00Z";
 const rerunOf = (n, overrides = {}) => thisRun({ run_attempt: n, run_started_at: RUN_STARTED, ...overrides });
 const pull = (overrides = {}) => ({ body: { number: 9, state: "open", base: { ref: "main" }, head: { sha: HEAD }, ...overrides } });
 // This attempt's gate job ("Re-run all jobs" ran it again), and the job being started.
+const SELF_HOSTED = ["self-hosted", "Windows", "X64"];
 const gateJob = (overrides = {}) => ({ id: 77, name: "admission-gate", status: "completed", conclusion: "success", run_attempt: 2,
-  started_at: "2026-10-04T06:00:04Z", ...overrides });
+  started_at: "2026-10-04T06:00:04Z", labels: SELF_HOSTED, ...overrides });
 const heavyJob = (overrides = {}) => ({ id: 78, name: "trusted-self-hosted", status: "in_progress", conclusion: null, run_attempt: 2,
-  started_at: "2026-10-04T06:01:00Z", ...overrides });
+  started_at: "2026-10-04T06:01:00Z", labels: SELF_HOSTED, ...overrides });
 const jobsOf = (...jobs) => ({ body: { total_count: jobs.length, jobs } });
 const HEAVY = { GITHUB_JOB: "trusted-self-hosted" };
 const GATE = { GITHUB_JOB: "admission-gate" };
@@ -252,10 +253,10 @@ test("runner hook (Decision 77216370): \"Re-run failed jobs\" and single-job re-
   assert.match(result.reason, /attempt 2 has 101 jobs and 2 were listed/);
   await refused("total_count missing", {}, { [JOBS(2)]: { body: { jobs: [gateJob(), heavyJob()] } } });
   await refused("jobs missing", {}, { [JOBS(2)]: { body: { total_count: 0 } } });
-  // Times that cannot be read refuse.
-  for (const started_at of [undefined, null, "", "yesterday"]) {
-    await refused(`gate started_at ${started_at}`, {}, { [JOBS(2)]: jobsOf(gateJob({ started_at }), heavyJob()) });
-  }
+  // A start time that cannot be read refuses at once.
+  ({ result, sleeps } = await refused("gate started_at unreadable", {}, { [JOBS(2)]: jobsOf(gateJob({ started_at: "yesterday" }), heavyJob()) }));
+  assert.match(result.reason, /admission-gate job 77 has an unreadable started_at "yesterday"/);
+  assert.equal(sleeps.length, 0);
   for (const run_started_at of [undefined, null, "", "soon"]) {
     let calls;
     ({ result, calls } = await refused(`run_started_at ${run_started_at}`, {}, { [RUN]: rerunOf(2, { run_started_at }) }));
@@ -263,13 +264,75 @@ test("runner hook (Decision 77216370): \"Re-run failed jobs\" and single-job re-
     assert.deepEqual(urls(calls), [RUN, PULLS], "the jobs are not read without the attempt's start");
   }
   // A gate job of another attempt does not count.
-  await refused("gate of attempt 1", {}, { [JOBS(2)]: jobsOf(gateJob({ run_attempt: 1 }), heavyJob()) });
+  ({ result } = await refused("gate of attempt 1", {}, { [JOBS(2)]: jobsOf(gateJob({ run_attempt: 1 }), heavyJob()) }));
+  assert.match(result.reason, /admission-gate job 77 belongs to attempt 1, not 2/);
   // The jobs cannot be read: refused, not thrown.
   for (const status of [403, 404, 500]) {
     ({ result } = await refused(`jobs ${status}`, {}, { [JOBS(2)]: { status, body: null } }));
     assert.match(result.reason, new RegExp(`cannot read attempt 2's jobs \\(GitHub .*/attempts/2/jobs\\?per_page=100 returned ${status}\\)`));
   }
   await refused("jobs transport error", {}, { [JOBS(2)]: () => { throw new Error("socket hang up"); } });
+});
+
+test("runner hook (review item 3): the measured \"Re-run failed jobs\" shape is refused", async () => {
+  // Measured on GitHub: in the new attempt the not re-run gate job is listed
+  // with a new id, a later created_at and this attempt's number, successful,
+  // but its started_at is the earlier attempt's, before run_started_at.
+  const listed = gateJob({ id: 9101, run_attempt: 2, status: "completed", conclusion: "success",
+    created_at: "2026-10-04T06:00:02Z", started_at: "2026-10-04T05:00:04Z", completed_at: "2026-10-04T05:00:30Z" });
+  const { result, calls, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(listed, heavyJob({ id: 9102, created_at: "2026-10-04T06:00:02Z" })) });
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /^pull request #9, run attempt 2: no admission-gate job that ran again in this attempt and succeeded \(admission-gate job 9101 started 2026-10-04T05:00:04Z, not in this attempt: it was not re-run\)/);
+  assert.deepEqual(sleeps, [], "refused at once, not waited for");
+  assert.equal(calls.some((c) => c.url.startsWith(COMPARE)), false);
+});
+
+test("runner hook (review MINOR-2): exactly one self-hosted job named admission-gate", async () => {
+  // A second job with the gate's display name (another workflow's job, or one
+  // a called workflow adds) cannot stand in, even when one of them passed.
+  let { result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob(), gateJob({ id: 79 }), heavyJob()) });
+  assert.equal(result.allow, false, "duplicate gate");
+  assert.match(result.reason, /attempt 2 has 2 jobs named admission-gate \(77, 79\); exactly one is required/);
+  assert.deepEqual(sleeps, []);
+  ({ result } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob({ conclusion: "failure" }), gateJob({ id: 79 }), heavyJob()) }));
+  assert.equal(result.allow, false, "duplicate gate, one failed");
+  // Every gate job runs on a self-hosted runner: one without that label is refused.
+  for (const labels of [["ubuntu-latest"], [], undefined, null, "self-hosted"]) {
+    ({ result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob({ labels }), heavyJob()) }));
+    assert.equal(result.allow, false, `labels ${JSON.stringify(labels)}`);
+    assert.match(result.reason, /admission-gate job 77 does not run on a self-hosted runner/);
+    assert.deepEqual(sleeps, []);
+  }
+});
+
+test("runner hook (review NIT-5): a gate job of this attempt not started or not completed yet is waited for", async () => {
+  // Queued without a start time, then running, then done: allowed after polling.
+  let polls = 0;
+  let { result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: () => {
+    polls += 1;
+    const stage = polls === 1 ? { status: "queued", conclusion: null, started_at: null }
+      : polls === 2 ? { status: "in_progress", conclusion: null } : {};
+    return jobsOf(gateJob(stage), heavyJob());
+  } });
+  assert.deepEqual([result.allow, polls, sleeps], [true, 3, [10_000, 10_000]]);
+  // Completed but with no start time yet (the API's lag): pending too.
+  polls = 0;
+  ({ result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: () => {
+    polls += 1;
+    return jobsOf(gateJob(polls === 1 ? { started_at: "" } : {}), heavyJob());
+  } }));
+  assert.deepEqual([result.allow, polls, sleeps.length], [true, 2, 1]);
+  // Still without a start time at the end of the wait: refused then, not at once.
+  for (const started_at of [undefined, null, ""]) {
+    ({ result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob({ started_at }), heavyJob()) }));
+    assert.equal(result.allow, false, `started_at ${started_at}`);
+    assert.equal(sleeps.length, 2, "waited CLUED_RUNNER_HOOK_WAIT_SECONDS");
+    assert.match(result.reason, /admission-gate job 77: completed\/success, not started\); use "Re-run all jobs"/);
+  }
+  ({ result, sleeps } = await rerun(2, { ...HEAVY, CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" },
+    { [JOBS(2)]: jobsOf(gateJob({ status: "waiting", conclusion: null, started_at: null }), heavyJob()) }));
+  assert.deepEqual([result.allow, sleeps.length], [false, 0]);
+  assert.match(result.reason, /admission-gate job 77: waiting\/none, not started/);
 });
 
 test("runner hook (Decision 77216370): a re-run of an old head, a closed or a retargeted pull request is refused", async () => {
