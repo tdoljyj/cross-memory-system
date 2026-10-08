@@ -134,12 +134,14 @@ T1 不依赖 T2/T3：即使只有 Worker 能调用，读到哈希的人只要再
 | C3 Supabase secret key（`service_role`） | Worker 改用 `sb_secret_` | 最省事 | `service_role` 绕过 RLS，且本项目已把它从几乎所有函数收回；Worker 密钥一旦泄露即等于整个库，**否决** |
 | C4 Worker 直连 Postgres（Hyperdrive + 登录角色） | 不经 PostgREST | 完全不暴露 Data API | 改动 131 个调用点与连接管理，超出本审计范围，**否决** |
 
-推荐 C1，前提是 §8 第 3 步核实 Worker JWT 可以由 Owner 安全签发与轮换；核实不通过则用 C2。
+推荐 C1：§6.4 的核实表明 Owner 可以导入专用私钥签发并独立轮换 Worker JWT；Owner 若不愿在控制台导入密钥，则用 C2。
 
 ### 6.2 C1 细节
 
 - 角色：`clued_worker_gateway`，NOLOGIN，`grant clued_worker_gateway to authenticator`，`statement_timeout` 与 `anon` 一致或略长（由迁移设定）。
-- 凭据：Worker 机密 `CLUED_DB_GATEWAY_TOKEN`，`role` 声明为 `clued_worker_gateway`，有效期一年（`exp`），由 Owner 在本机签发后写入 Cloudflare 机密，不进仓库、不进 Clued 记录。轮换：先签新凭据写入机密并发布 Worker，再在项目侧让旧凭据失效（HS256 下需要轮换项目 JWT 密钥，会让所有用户会话重新登录，这一点是 C1 的主要运维代价，需在第 3 步写清）。
+- 凭据：Worker 机密 `CLUED_DB_GATEWAY_TOKEN`，`role` 声明为 `clued_worker_gateway`，有效期一年（`exp`），不进仓库、不进 Clued 记录。
+- 签发（第 3 步核实结论，见 §6.4）：Owner 在本机用 `supabase gen signing-key --algorithm ES256` 生成一把专用私钥，在项目「JWT signing keys」页导入为新密钥并放在只验证、不签发的状态（Previously used），**不点 Rotate**，这样 Supabase Auth 继续用现有密钥给用户签会话；再用这把私钥在本机签 Worker JWT（头部 `alg: ES256`、`kid` 为该密钥）写入 Cloudflare 机密。私钥导入 Supabase 后不可再导出；Owner 本机另存一份用于签发，不进仓库、不进 Cloudflare、不进 Clued。
+- 轮换：导入一把新的只验证密钥、签新凭据、发布 Worker、确认流量切换后吊销旧密钥。只影响 Worker 凭据，不影响用户会话。吊销后各组件的密钥缓存最多约 20 分钟才失效，紧急吊销时同时收回该角色的函数授权。
 - Worker 改动：`supabaseRequest` 在没有 `userToken` 时用 `CLUED_DB_GATEWAY_TOKEN` 作 `Authorization`，`apikey` 仍是 publishable key；`delegated-oauth.ts` 的 `bindingRpc` 与两个存储后台文件同样处理。人类会话转发不变。
 - 过渡：第 4 步先把这些函数**同时**授予 `anon` 与新角色并发布 Worker；确认生产流量全部带新凭据后（Worker 日志与 Supabase API 日志按角色统计），第 5 步再收回 `anon`。
 - G6：见 §5。
@@ -152,9 +154,14 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 - 2026-10-08 的集合：`clued_owner_grant_admission_door_v1`、`clued_owner_grant_door_consume_v1`、`clued_work_verify_v1`、`clued_work_claim_adopt_v1`、`clued_work_merge_slot_return_v1`、`clued_work_claims_active_v1`，加上 MergeAdmission 第 3 步（PR #631，Task `3576d10d`）新增的 `clued_work_merge_slot_touch_v1`、`clued_work_merge_slot_holders_v1`。MergeAdmission 第 4、5 步（Task `38e0c90d`、`91039d74`）若再加 CI 调用的 RPC，按同一规则进入白名单。
 - 其中 Worker 也在用的（如 `clued_work_verify_v1`、`clued_work_claims_active_v1`）同时授予 Worker 角色。白名单的来源规则写进迁移注释与 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md)。
 
----
+### 6.4 第 3 步核实结论（2026-10-08，只读）
 
-## 6.4 与 MergeAdmission 的关系（避免重复与冲突）
+- 生产项目已改用 JWT 签名密钥体系：近 24 小时与 10-01 全天的请求日志里，所有用户会话 JWT 都是 `ES256`、同一 `kid`（`c86f0e85-…`），签发方为项目 Auth。即用户会话由 Supabase 托管的非对称私钥签发，私钥不可导出。
+- 所以 Owner 无法拿项目现有密钥签 Worker JWT，但可以按 Supabase 文档「How to create (mint) JWTs」导入自己生成的私钥（§6.2）。导入的密钥只用于验证 Worker 凭据，轮换不牵动用户会话——这消除了原先担心的「轮换要让所有用户重新登录」。
+- P5 网关凭据 `CLUED_P5_GATEWAY_TOKEN`：两段日志窗口里都没有 `clued_p5_gateway` 角色的请求，它的签名方式与有效期查不到（Worker 机密不可读）。若它由旧的 HS256 共享密钥签发，一旦旧密钥被吊销 P5 路径就会失效；这与本文无关，只作提示。
+- 结论：C1 可行，推荐 C1；需要 Owner 在控制台做一次导入密钥的操作（Agent 做不了）。
+
+### 6.5 与 MergeAdmission 的关系（避免重复与冲突）
 
 [MergeAdmission.v0.1.md](../execution-admission/MergeAdmission.v0.1.md) 的 §13 各步（Task `ada1334c` 下，第 2 步 Task `745c288f`（部署验收 Task `fb97ebd5`）、第 3 步 Task `3576d10d`、第 4 步 Task `38e0c90d`、第 5 步 Task `91039d74`）与本文改的是同一批 CI 门口与 `clued_work_*` 函数周边，分工如下：
 
@@ -205,7 +212,7 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 ## 10. 需要 Owner 决定
 
 1. 是否接受设计 A（只存校验值、调用方不改），以及 7 天备份表。
-2. Worker 角色选 C1 还是 C2，等第 3 步结论后再定。
+2. Worker 角色选 C1 还是 C2：第 3 步结论见 §6.4，推荐 C1。
 3. §6.3 的 anon 白名单规则（由 CI 与钩子源码推出，不写死名单）是否可以。
 4. 第 1 步是否先单独上线。
 
