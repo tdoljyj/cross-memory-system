@@ -1,5 +1,6 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
+import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 import { bytesToBase64Url } from "./storage-base64";
 import { isStorageScopeProfile, scopeProfile, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
 import { StorageGoogleConnectionError } from "./storage-google-oauth";
@@ -31,6 +32,7 @@ const id = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fileId = /^[A-Za-z0-9_-]{1,160}$/;
 const FOLDER = "application/vnd.google-apps.folder";
 const DRIVE = "https://www.googleapis.com/drive/v3/files";
+const PERMISSIONS = "permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)";
 const MAX_DEPTH = 32;
 type RecordValue = Record<string, unknown>;
 
@@ -141,11 +143,11 @@ export async function createStorageGoogleOnboard(configuration: {
         request(`${DRIVE}/${encodeURIComponent(file)}?fields=${encodeURIComponent(fields)}&supportsAllDrives=false`, { headers }, reason, true),
       list: async (q: string, reason: string) => {
         const result = await request(`${DRIVE}?${new URLSearchParams({ q, spaces: "drive", pageSize: "10", corpora: "user",
-          fields: "files(id,name,mimeType,parents,trashed,version,appProperties)" })}`, { headers }, reason);
+          fields: `files(id,name,mimeType,parents,trashed,version,appProperties,${PERMISSIONS})` })}`, { headers }, reason);
         if (!Array.isArray(result.files)) refuse(reason);
         return result.files as RecordValue[];
       },
-      create: (body: RecordValue) => request(`${DRIVE}?fields=${encodeURIComponent("id,name,mimeType,parents,trashed,version")}`,
+      create: (body: RecordValue) => request(`${DRIVE}?fields=${encodeURIComponent(`id,name,mimeType,parents,trashed,version,${PERMISSIONS}`)}`,
         { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body) }, "onboard_effect_unconfirmed"),
     };
   }
@@ -153,7 +155,10 @@ export async function createStorageGoogleOnboard(configuration: {
   const folder = (raw: RecordValue, reason: string) => {
     if (!fileId.test(String(raw.id)) || raw.mimeType !== FOLDER || raw.trashed !== false || !/^[0-9]{1,40}$/.test(String(raw.version)) ||
       !Array.isArray(raw.parents) || raw.parents.length !== 1 || !fileId.test(String(raw.parents[0]))) refuse(reason);
-    return { id: String(raw.id), version: String(raw.version), parents: [String((raw.parents as unknown[])[0])] };
+    // Storage step 2 (Task e2eb07d1): the folder's access digest from the same
+    // read as its version; null when Drive returned no usable permission list.
+    return { id: String(raw.id), version: String(raw.version), parents: [String((raw.parents as unknown[])[0])],
+      access_digest: googleDriveAccessDigest(raw) as string | null };
   };
   // Parent chain up to My Drive (≤ 32 levels): [parent, grandparent, ...].
   async function ancestors(api: Drive, start: string): Promise<string[]> {
@@ -177,7 +182,7 @@ export async function createStorageGoogleOnboard(configuration: {
     try {
       const object = folder(raw, "onboard_effect_unconfirmed");
       const recorded = await rpc({ action: "effect_result", onboard_attempt_id: attempt, run_token, role, provider_file_id: object.id,
-        version: object.version, parents: object.parents, created: true });
+        version: object.version, parents: object.parents, created: true, access_digest: object.access_digest });
       if (recorded.status !== "recorded" || (recorded.effect as RecordValue | undefined)?.provider_file_id !== object.id) refuse("onboard_effect_ambiguous");
       return object;
     } catch (error) {
@@ -194,7 +199,7 @@ export async function createStorageGoogleOnboard(configuration: {
 
   async function run(s: Staged, token: string): Promise<OnboardResult> {
     const api = drive(token), attempt = s.onboard_attempt_id, run_token = s.run_token;
-    let root: { id: string; version: string; parents: string[] };
+    let root: { id: string; version: string; parents: string[]; access_digest: string | null };
     if (s.root.mode === "new") {
       const recorded = s.effects.root as RecordValue | undefined;
       root = await effect(s, "root", await api.list(marker(attempt, "root"), "onboard_effect_unconfirmed"), () => api.create({
@@ -203,7 +208,7 @@ export async function createStorageGoogleOnboard(configuration: {
     } else {
       // m-b: the picked folder, read with the server credential.
       const meta = await api.get(String(s.root.folder_id),
-        "id,name,mimeType,trashed,driveId,ownedByMe,parents,isAppAuthorized,capabilities(canAddChildren),version");
+        `id,name,mimeType,trashed,driveId,ownedByMe,parents,isAppAuthorized,capabilities(canAddChildren),version,${PERMISSIONS}`);
       if (meta.id !== s.root.folder_id || meta.mimeType !== FOLDER) refuse("root_not_folder");
       if (meta.trashed !== false) refuse("root_trashed");
       if (meta.driveId) refuse("root_shared_drive");
@@ -214,7 +219,7 @@ export async function createStorageGoogleOnboard(configuration: {
       if (meta.name !== s.root.name) refuse("root_name_changed");
       root = folder(meta, "root_metadata_unavailable");
       await rpc({ action: "effect_result", onboard_attempt_id: attempt, run_token, role: "root", provider_file_id: root.id, version: root.version,
-        parents: root.parents, created: false });
+        parents: root.parents, created: false, access_digest: root.access_digest });
     }
     // Overlap: the root equals, is inside, or contains an active root of this Google account.
     const chain = await ancestors(api, root.parents[0]);

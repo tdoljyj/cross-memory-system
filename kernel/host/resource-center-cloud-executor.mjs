@@ -394,14 +394,14 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         include_verified_proof:verifiedResultMode,clock};
       const verify=adopt ? createGoogleDriveAdoptPostconditionVerifier({...verifierConfig,get_ownership:metadata.getOwnership,
-          get_sharing:metadata.getSharing})
+          get_sharing:metadata.getSharing,get_access:metadata.getAccess})
         : subtree ? createGoogleDriveDirectoryMovePostconditionVerifier({...verifierConfig,get_sharing:metadata.getSharing,
           get_access:metadata.getAccess,...(batched.get_files ? {get_files:batched.get_files} : {})})
         : destructive ? createGoogleDriveDestructivePostconditionVerifier({...verifierConfig,has_children:metadata.hasChildren})
         : replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true,
-          get_sharing:metadata.getSharing});
+          get_sharing:metadata.getSharing,get_access:metadata.getAccess});
       const proofContract=adopt ? "clued.storage-adopt-verified/1"
         : subtree ? "clued.storage-directory-move-verified/1"
         : destructive ? DESTRUCTIVE_PROOF_CONTRACTS[mutation.operation]

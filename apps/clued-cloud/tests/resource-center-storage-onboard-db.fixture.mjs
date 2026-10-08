@@ -73,17 +73,21 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
     return { claimed, staged, credential };
   };
   const ids = new Map();
+  const ROOT_ACCESS = "c".repeat(64), TRACK_ACCESS = "d".repeat(64);
   const driveId = role => { if (!ids.has(role)) ids.set(role, `drv-${randomUUID()}`); return ids.get(role); };
   const effects = async (attempt, { rootId, parent = "my-drive-root", picked = false } = {}) => {
     const root = rootId ?? driveId(attempt.onboard_attempt_id + ":root");
     if (!picked) await onboard({ action: "effect_intent", onboard_attempt_id: attempt.onboard_attempt_id, role: "root" });
+    // Storage step 2: the root and the first track report an access digest;
+    // the other tracks report none (null or absent), as an older Worker does.
     await onboard({ action: "effect_result", onboard_attempt_id: attempt.onboard_attempt_id, role: "root", provider_file_id: root,
-      version: "3", parents: [parent], created: !picked });
-    for (const track of attempt.tracks) {
+      version: "3", parents: [parent], created: !picked, access_digest: ROOT_ACCESS });
+    for (const [index, track] of attempt.tracks.entries()) {
       const role = "track:" + track;
       await onboard({ action: "effect_intent", onboard_attempt_id: attempt.onboard_attempt_id, role });
       await onboard({ action: "effect_result", onboard_attempt_id: attempt.onboard_attempt_id, role,
-        provider_file_id: driveId(attempt.onboard_attempt_id + ":" + role), version: "1", parents: [root], created: true });
+        provider_file_id: driveId(attempt.onboard_attempt_id + ":" + role), version: "1", parents: [root], created: true,
+        ...(index === 0 ? { access_digest: TRACK_ACCESS } : index === 1 ? { access_digest: null } : {}) });
     }
     return { root, parent };
   };
@@ -264,6 +268,10 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
       const again = await onboard({ action: "effect_intent", onboard_attempt_id: main.onboard_attempt_id, role: "root" });
       assert.deepEqual(again.effect, first.effect, "a replayed intent keeps the original intent");
       await assert.rejects(onboard({ action: "effect_intent", onboard_attempt_id: main.onboard_attempt_id, role: "track:unknown" }), /storage_onboard_input_invalid/);
+      // Storage step 2: an access digest is 64 lowercase hex or null.
+      for (const access_digest of ["not-hex", "C".repeat(64), 1, {}])
+        await assert.rejects(onboard({ action: "effect_result", onboard_attempt_id: main.onboard_attempt_id, role: "root",
+          provider_file_id: "x2", version: "1", parents: ["p"], created: true, access_digest }), /storage_onboard_input_invalid/);
       // Another session cannot drive this attempt.
       await assert.rejects(onboard({ action: "effect_intent", onboard_attempt_id: main.onboard_attempt_id, role: "root" }, other), /storage_onboard_denied/);
       main.ids = await effects(main);
@@ -334,6 +342,12 @@ export async function testStorageOnboard(t, admin, server, user, decision) {
       const artifacts = (await admin.query("select path,provider_file_id,provider_file_version,governance_class,target_kind,delete_authority from clued_private.resource_center_artifacts_v1 where profile_id=$1 order by path", [done.profile_id])).rows;
       assert.deepEqual(artifacts[0], { path: profile.managed_root, provider_file_id: main.ids.root, provider_file_version: "3", governance_class: "governance", target_kind: "directory", delete_authority: false });
       assert.ok(artifacts.slice(1).every(a => a.governance_class === "ordinary" && a.target_kind === "directory" && !a.delete_authority));
+      // Storage step 2: each folder is registered with the access digest its effect reported, if any.
+      const access = new Map((await admin.query("select path,provider_access_digest from clued_private.resource_center_artifacts_v1 where profile_id=$1",
+        [done.profile_id])).rows.map(r => [r.path, r.provider_access_digest]));
+      assert.equal(access.get(profile.managed_root), ROOT_ACCESS);
+      assert.equal(access.get(profile.managed_root + "/" + main.tracks[0]), TRACK_ACCESS);
+      for (const track of main.tracks.slice(1)) assert.equal(access.get(profile.managed_root + "/" + track), null);
       const connection = (await admin.query("select * from clued_private.storage_connections_v1 where id=$1", [done.connection_id])).rows[0];
       assert.equal(connection.state, "active"); assert.equal(connection.provider_subject, "onboard-subject"); assert.equal(connection.oauth_client_id, oauthClient);
       assert.equal(connection.credential_version, "1"); assert.deepEqual(connection.credential_envelope, main.credential);
