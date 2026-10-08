@@ -3195,6 +3195,138 @@
         ],
         "clued/scopeEnforcement": "server-side"
       }
+    },
+    {
+      "name": "clued_model_dataset_split_prepare_plan",
+      "description": "Prepare one uncommitted, unauthorized DatasetSplit bootstrap plan proposal inside this same authenticated Request/Binding. Reads only the two fixed Owner anchors through the protected source RPC, then generates three proposed target IDs and exact plan bytes/hash. Accepts no caller refs, actor, transport, scope, grant or clock. Each call generates a distinct proposal; save and reuse its returned bytes rather than call again for a retry. No Native request, permission, Canonical/M1 write, SQL installation, DomainAuthority or M2 verdict is issued. An immutable reviewed Git binding and a separate exact Native approval remain required before any write. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
+    },
+    {
+      "name": "clued_model_dataset_split_verify_successor",
+      "description": "Verify existing actor-free DatasetSplit M1 projection references using this same Binding and Task through a separate successor source RPC. Requires the separately registered Native verify/recognize/producer grants before Canonical reads. Verifies private real M1 Actor/Receipt/Event chains and fixed Owner anchors server-side; returns only minimal recognition references. No legacy fallback, private Actor, record body, domain authority, DataGate, M2 acceptance or training permission is returned. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "permission_record_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "producer_registration_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "recognition_record_ref": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "content_hash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "id",
+              "version",
+              "content_hash"
+            ],
+            "additionalProperties": false
+          },
+          "recognition_receipt_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "permission_record_ref",
+          "producer_registration_ref",
+          "recognition_record_ref",
+          "recognition_receipt_id"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
     }
   ]
 }
