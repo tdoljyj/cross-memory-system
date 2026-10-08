@@ -14,7 +14,7 @@
       "CLUED_INTEGRATION_RUNTIME_V1": true,
       "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
       "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-      "expected_tool_count": 40
+      "expected_tool_count": 42
     },
     "full_matrix": [
       {
@@ -167,7 +167,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": false,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 33
+        "expected_tool_count": 35
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -175,7 +175,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": false,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 33
+        "expected_tool_count": 35
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -199,7 +199,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 40
+        "expected_tool_count": 42
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -207,39 +207,39 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 42
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 34
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 34
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
         "expected_tool_count": 40
       },
       {
         "PROJECT_VIEWS_V2": true,
         "P5_TENANT_WRITES": true,
         "CLUED_INTEGRATION_RUNTIME_V1": false,
-        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
-        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 34
-      },
-      {
-        "PROJECT_VIEWS_V2": true,
-        "P5_TENANT_WRITES": true,
-        "CLUED_INTEGRATION_RUNTIME_V1": false,
-        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
-        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 34
-      },
-      {
-        "PROJECT_VIEWS_V2": true,
-        "P5_TENANT_WRITES": true,
-        "CLUED_INTEGRATION_RUNTIME_V1": false,
-        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
-        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 38
-      },
-      {
-        "PROJECT_VIEWS_V2": true,
-        "P5_TENANT_WRITES": true,
-        "CLUED_INTEGRATION_RUNTIME_V1": false,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 38
+        "expected_tool_count": 40
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -263,7 +263,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 45
+        "expected_tool_count": 47
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -271,7 +271,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 45
+        "expected_tool_count": 47
       }
     ]
   }

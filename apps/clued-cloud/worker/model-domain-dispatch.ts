@@ -3,7 +3,10 @@ import { readOwnerAnchorsWithExistingBindingRpc } from "./model-domain-owner-anc
 import { resolveWithExistingBindingRpc } from "./model-domain-ref-resolver.mjs";
 import { verifyWithExistingBindingRpc, type ExistingBindingRpc } from "./model-domain-rpc-source.mjs";
 import { prepareNativeBootstrapRequest } from "./model-domain-native-bootstrap-request.mjs";
+import { prepareExactPlanWithExistingBindingRpc } from "./model-domain-plan-preparation.mjs";
+import { verifySuccessorWithExistingBindingRpc } from "./model-domain-successor-rpc-source.mjs";
 import { MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL, MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL, MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
+  MODEL_DOMAIN_PLAN_PREPARATION_TOOL, MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL,
   modelDomainSourceEnabled, modelDomainBootstrapRequestEnabled, type ModelDomainFeatureEnv,
   type ModelDomainToolName } from "./model-domain-tools";
 
@@ -28,6 +31,8 @@ export async function dispatchModelDomainTool(env: ModelDomainFeatureEnv, name: 
     if (name === MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL) return await readOwnerAnchorsWithExistingBindingRpc(transport.rpc, input);
     if (name === MODEL_DOMAIN_REFS_TOOL) return await resolveWithExistingBindingRpc(transport.rpc, input);
     if (name === MODEL_DOMAIN_VERIFY_TOOL) return await verifyWithExistingBindingRpc(transport.rpc, input);
+    if (name === MODEL_DOMAIN_PLAN_PREPARATION_TOOL) return await prepareExactPlanWithExistingBindingRpc(transport.rpc, input);
+    if (name === MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL) return await verifySuccessorWithExistingBindingRpc(transport.rpc, input);
     if (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL) {
       const prepared = await prepareNativeBootstrapRequest(transport.rpc, input);
       // This is a real Owner-request submission if installed and invoked. Its

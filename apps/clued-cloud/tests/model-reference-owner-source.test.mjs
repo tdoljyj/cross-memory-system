@@ -84,8 +84,8 @@ test('schema is closed on four selectors, exact18 approval and exact18 budget, p
   assert(!['actor', 'source_ref', 'content'].some(k => k in ownerApprovalOutputSchema.properties));
 });
 test('five known tools include four source-only reads while Bootstrap remains separate', () => {
-  assert.equal(modelDomainTools.length, 5); assert.equal(isModelDomainTool(MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL), true);
+  assert.equal(modelDomainTools.length, 7); assert.equal(isModelDomainTool(MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL), true);
   assert.deepEqual(modelDomainToolPolicies[MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL].scopes, ['context:read']);
   assert.equal(modelDomainToolPolicies[MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL].readOnlyHint, true);
-  assert.equal(modelDomainTools.filter(t => modelDomainToolPolicies[t.name].readOnlyHint).length, 4);
+  assert.equal(modelDomainTools.filter(t => modelDomainToolPolicies[t.name].readOnlyHint).length, 6);
 });
