@@ -560,6 +560,12 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       assert.equal(await listed(), false, "waits for its backoff");
       await admin.query("update clued_private.storage_recovery_backoff_v1 set next_at=clock_timestamp()-interval '1 second' where job_id=$1", [job.reference.job_id]);
       assert.equal(await listed(), true); assert.deepEqual(await backoff(), { attempts: 2, waiting: true });
+      // Storage step 1 (Task ce5c725e): however often it was listed, the next wait is at most 10 minutes plus 30 s of jitter.
+      await admin.query("update clued_private.storage_recovery_backoff_v1 set attempts=9,next_at=clock_timestamp()-interval '1 second' where job_id=$1", [job.reference.job_id]);
+      assert.equal(await listed(), true);
+      const wait = Number((await admin.query("select extract(epoch from next_at-clock_timestamp()) s from clued_private.storage_recovery_backoff_v1 where job_id=$1",
+        [job.reference.job_id])).rows[0].s);
+      assert.ok(wait > 590 && wait <= 630, `capped wait ${wait}`);
       assert.equal((await scheduled({ action: "load", ...job.reference })).status, "recovery_only");
 
       // 4. The ordinary refresh is skipped and counted while the root is fenced.
@@ -770,6 +776,12 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       await admin.query("update clued_private.storage_jobs_v1 set redispatch_at=clock_timestamp()-interval '3 minutes' where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
       assert.equal(listed(await sweep(due), queued), true);
       assert.equal((await counts(queued)).attempts, 2);
+      // Storage step 1 (Task ce5c725e): after many listings the next one is at most 10 minutes later.
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_attempts=9,redispatch_at=clock_timestamp()-interval '9 minutes' where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
+      assert.equal(listed(await sweep(due), queued), false, "not before 10 minutes");
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_at=clock_timestamp()-interval '10 minutes 5 seconds' where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
+      assert.equal(listed(await sweep(due), queued), true, "listed again after 10 minutes, not 60");
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_attempts=2,redispatch_at=clock_timestamp() where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
       // A listed job runs through the ordinary load, which still sees it queued.
       assert.equal((await cloud({ action: "load", ...queued.reference })).status, "queued");
 

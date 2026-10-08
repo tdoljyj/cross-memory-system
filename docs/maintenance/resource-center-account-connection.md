@@ -1122,6 +1122,30 @@ Two of the five binary creates so far failed this way.
   binary job's object until settlement; the Worker alone lets recovery settle a
   stuck create.
 
+### Retry waits are capped at 10 minutes (storage step 1)
+
+Clued Task `ce5c725e`, Decision `56d61a92`, migration
+`20261008080000_storage_backoff_cap_v1.sql`, module
+`kernel/host/resource-center-google-drive-metadata.mjs`. This is the first step
+of the storage concurrency design (Task `10826ce2`), done ahead of the rest.
+
+- **Scheduled recovery.** A job past its first 10 minutes is listed again after
+  2, 4, 8, then 10 minutes, plus up to 30 seconds of random jitter. It used to
+  double up to 60 minutes, so a stuck job that had become provable could wait
+  an hour (BUG-20261008-002 was next due at 06:27Z after a 05:27Z listing).
+- **Queued redispatch.** A queued job is listed again after 2, 4, 8, then 10
+  minutes instead of up to 60.
+- **Drive reads during recovery.** `createGoogleDriveMetadataApi` takes
+  `transient_retries` (0 to 3, default 0). With it, a read that gets 429, a 5xx,
+  a 403 whose reason is `userRateLimitExceeded` or `rateLimitExceeded`, its own
+  timeout or a transport failure is retried after `min(2^n s + up to 1 s,
+  32 s)`. A permission 403, a 404, a 400, the caller's abort and a subrequest
+  limit are never retried. Scheduled recovery uses 2 retries inside its
+  10-second budget; the executor and the tool host keep 0, so the admission
+  window of a running job is unchanged.
+- **Release order.** Either order works: the migration only changes waits, and
+  the Worker change only adds retries to recovery reads.
+
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,
