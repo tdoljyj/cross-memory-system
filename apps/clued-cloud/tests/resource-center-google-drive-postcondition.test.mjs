@@ -211,16 +211,19 @@ test("storage step 2: a created directory carries its access digest only togethe
     Object.assign(f.request.provider_before, before);
     return (await f.verify(f.request)).verified_proof;
   };
-  const proof = await run({ get_access: async (id) => ({ id, permissions }) });
+  const proof = await run({ get_access: async (id) => ({ id, version: "1", permissions }) });
   assert.equal(proof.provider_sharing_digest, parentDigest);
   assert.equal(proof.provider_access_digest, googleDriveAccessDigest({ permissions }));
   // No access reader, a failed or foreign read, no usable list, or no sharing digest: no access digest.
   for (const [options, before] of [
     [{}, undefined],
     [{ get_access: async () => { throw new Error("DRIVE_METADATA_UNAVAILABLE"); } }, undefined],
-    [{ get_access: async () => ({ id: "track", permissions }) }, undefined],
-    [{ get_access: async (id) => ({ id, permissions: [] }) }, undefined],
-    [{ get_access: async (id) => ({ id, permissions }) }, { destination_parent_sharing_digest: null }],
+    [{ get_access: async () => ({ id: "track", version: "1", permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, version: "1", permissions: [] }) }, undefined],
+    // A read that saw another version (or none) is not the verified folder's.
+    [{ get_access: async (id) => ({ id, version: "2", permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, version: "1", permissions }) }, { destination_parent_sharing_digest: null }],
   ]) assert.equal("provider_access_digest" in await run(options, before), false);
   assert.throws(() => createGoogleDriveCreatePostconditionVerifier({ managed_root: root, root_folder_id: "root",
     root_parent_id: "container", get_file: async () => null, list_children: async () => [], get_access: "x" }), TypeError);

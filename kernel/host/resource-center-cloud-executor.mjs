@@ -401,7 +401,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         : replace ? createGoogleDriveReplacePostconditionVerifier({...verifierConfig,get_revision:metadata.getRevision})
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({...verifierConfig,require_effect_provider_id:true,
-          get_sharing:metadata.getSharing,get_access:metadata.getAccess});
+          get_sharing:metadata.getSharing,get_access:metadata.getVersionedAccess});
       const proofContract=adopt ? "clued.storage-adopt-verified/1"
         : subtree ? "clued.storage-directory-move-verified/1"
         : destructive ? DESTRUCTIVE_PROOF_CONTRACTS[mutation.operation]

@@ -39,7 +39,7 @@ async function fixture({ drive = {}, token = {}, load = {}, directories } = {}) 
     const url = new URL(String(input));
     if (url.origin === "https://www.googleapis.com") {
       driveUrls.push(url);
-      if (drive.fail) return new Response("{}", { status: 403 });
+      if (drive.status) return new Response("{}", { status: drive.status });
       return Response.json({ id: "folder", version: "7", permissions: PERMISSIONS, ...drive.body });
     }
     assert.equal(url.pathname, "/rest/v1/rpc/clued_storage_access_digest_backfill_v1");
@@ -54,7 +54,7 @@ async function fixture({ drive = {}, token = {}, load = {}, directories } = {}) 
       credential_envelope: envelope, provider_file_id: "folder", registered_version: "7", row_version: 2,
       execution_permitted: false, ...load });
     if (input2.action === "commit") return Response.json({ status: "committed", artifact_id: artifact,
-      outcome: input2.observed_version === "7" && input2.access_digest ? "recorded" : "missing", execution_permitted: false });
+      outcome: input2.found && input2.observed_version === "7" && input2.access_digest ? "recorded" : "missing", execution_permitted: false });
     throw new Error("unexpected rpc");
   };
   const env = { ...FLAGS, CLUED_STORAGE_VAULT_KEYS: JSON.stringify(vaultConfig) };
@@ -77,20 +77,20 @@ test("a directory at its registered version gets the digest from one Drive read"
     "id,version,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)");
   assert.deepEqual(f.calls.map(call => call.action), ["due", "load", "commit"]);
   assert.deepEqual(f.calls[2], { action: "commit", connection_id: f.connection, artifact_id: f.artifact, row_version: 2,
-    registered_version: "7", observed_version: "7", access_digest: googleDriveAccessDigest({ permissions: PERMISSIONS }) });
+    registered_version: "7", found: true, observed_version: "7", access_digest: googleDriveAccessDigest({ permissions: PERMISSIONS }) });
 });
 
-test("a changed version, a failed read or no usable permission list commits as missing", async () => {
-  for (const [drive, observed, digest] of [
-    [{ body: { version: "8" } }, "8", googleDriveAccessDigest({ permissions: PERMISSIONS })],
-    [{ fail: true }, null, null],
-    [{ body: { permissions: [] } }, "7", null],
-    [{ body: { id: "another" } }, null, null],
+test("a changed version, a folder Drive no longer shows or no usable permission list commits as missing", async () => {
+  for (const [drive, found, observed, digest] of [
+    [{ body: { version: "8" } }, true, "8", googleDriveAccessDigest({ permissions: PERMISSIONS })],
+    [{ status: 404 }, false, null, null],
+    [{ body: { permissions: [] } }, true, "7", null],
   ]) {
     const f = await fixture({ drive });
     assert.deepEqual(await runStorageAccessDigestBackfillScheduled(f.env, { fetch: f.fetch }), { status: "ok", recorded: 0, missing: 1, skipped: 0 });
     const commit = f.calls.at(-1);
     assert.equal(commit.action, "commit");
+    assert.equal(commit.found, found);
     assert.equal(commit.observed_version, observed);
     assert.equal(commit.access_digest, digest);
   }
@@ -110,4 +110,12 @@ test("an expiring credential, an unexpected descriptor or a malformed listing re
   assert.deepEqual(await runStorageAccessDigestBackfillScheduled(malformed.env, { fetch: malformed.fetch }), { status: "unavailable" });
   const none = await fixture({ directories: [] });
   assert.deepEqual(await runStorageAccessDigestBackfillScheduled(none.env, { fetch: none.fetch }), { status: "ok", recorded: 0, missing: 0, skipped: 0 });
+});
+
+test("a transient, credential or foreign answer commits nothing", async () => {
+  for (const drive of [{ status: 401 }, { status: 403 }, { status: 500 }, { body: { id: "another" } }, { body: { version: "x" } }]) {
+    const f = await fixture({ drive });
+    assert.deepEqual(await runStorageAccessDigestBackfillScheduled(f.env, { fetch: f.fetch }), { status: "ok", recorded: 0, missing: 0, skipped: 1 });
+    assert.deepEqual(f.calls.map(call => call.action), ["due", "load"], JSON.stringify(drive));
+  }
 });

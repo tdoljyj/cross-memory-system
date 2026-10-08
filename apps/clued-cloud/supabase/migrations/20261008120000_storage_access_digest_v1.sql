@@ -24,16 +24,29 @@
 --   approved artifact_update may write it.
 -- * Backfill (clued_storage_access_digest_backfill_v1): a directory with
 --   neither digest gets its access digest only when one Drive read returns
---   the registered version; any other outcome marks it missing. Equal
+--   the registered version; another version, a folder Drive no longer shows
+--   (404) or no usable permission list marks it missing. A transient failure
+--   commits nothing; access_digest_attempted_at puts the directory behind
+--   the others for 30 minutes so one failing connection cannot starve them. Equal
 --   versions prove only "unchanged since the registry last recorded this
 --   version", which is exactly the baseline version matching protects today.
 -- * Each existing function is changed by an anchored patch with an exact hit
 --   count. Every new input is optional, so the old Worker keeps working
 --   between this migration and the release.
 
+-- The verified record compares whole registry rows (to_jsonb) at settlement;
+-- new columns change every row, so no verified job may be waiting to settle.
+do $guard$
+begin
+  if exists(select 1 from clued_private.resource_center_mutations_v1
+    where state in ('started','uncertain') and verified_result_v2 is not null) then
+    raise exception 'storage_access_digest_verified_job_unsettled' using errcode='55000'; end if;
+end $guard$;
+
 alter table clued_private.resource_center_artifacts_v1
   add column provider_access_digest text,
   add column access_digest_missing_at timestamptz,
+  add column access_digest_attempted_at timestamptz,
   add constraint resource_center_artifacts_v1_access_digest_check check (provider_access_digest is null
     or (provider_access_digest ~ '^[0-9a-f]{64}$' and target_kind='directory')),
   add constraint resource_center_artifacts_v1_access_missing_check check (access_digest_missing_at is null
@@ -183,6 +196,7 @@ end $migration$;
 create function public.clued_storage_access_digest_backfill_v1(p_issuer_hash text,p_input jsonb) returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare app clued_private.storage_oauth_apps_v1; c clued_private.storage_connections_v1;
+  policy clued_private.storage_account_policies_v2;
   p clued_private.resource_center_profiles_v1; a clued_private.resource_center_artifacts_v1;
   u uuid; op text:=p_input->>'action'; listed jsonb; r public.clued_audit_receipts; req jsonb; refs jsonb; ev text;
   outcome text; uuid_re text:='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
@@ -204,6 +218,7 @@ begin
       join clued_private.storage_connections_v1 c0 on c0.profile_id=p0.id and c0.owner_id=a0.user_id
       where a0.state='active' and a0.target_kind='directory' and a0.provider_sharing_digest is null
         and a0.provider_access_digest is null and a0.access_digest_missing_at is null
+        and coalesce(a0.access_digest_attempted_at<clock_timestamp()-interval '30 minutes',true)
         and c0.oauth_client_id=app.oauth_client_id and c0.provider='google-drive' and c0.revoked_at is null
         and c0.auth_mode='account_policy' and c0.state='active'
         and clued_private.storage_envelope_valid_v1(c0.credential_envelope)
@@ -213,7 +228,7 @@ begin
         and not exists(select 1 from clued_private.storage_root_denies_v2 d0 where d0.owner_id=a0.user_id
           and d0.provider=c0.provider and d0.provider_subject=c0.provider_subject and d0.root_folder_id=p0.root_folder_id
           and d0.lineage_id is null and d0.denied)
-      order by a0.created_at,a0.id limit 5
+      order by a0.access_digest_attempted_at nulls first,a0.created_at,a0.id limit 5
     ) q;
     return jsonb_build_object('status','ok','directories',listed);
   end if;
@@ -223,7 +238,10 @@ begin
     if p_input is distinct from jsonb_build_object('action','load','connection_id',p_input->>'connection_id',
       'artifact_id',p_input->>'artifact_id') then
       raise exception 'storage_access_digest_backfill_denied' using errcode='42501'; end if;
-  elsif (p_input-array['action','connection_id','artifact_id','row_version','registered_version','observed_version','access_digest'])<>'{}'::jsonb
+  elsif (p_input-array['action','connection_id','artifact_id','row_version','registered_version','observed_version','access_digest','found'])<>'{}'::jsonb
+    or jsonb_typeof(p_input->'found') is distinct from 'boolean'
+    or ((p_input->>'found')::boolean and p_input->'observed_version'='null'::jsonb)
+    or (not (p_input->>'found')::boolean and (p_input->'observed_version'<>'null'::jsonb or p_input->'access_digest'<>'null'::jsonb))
     or jsonb_typeof(p_input->'row_version') is distinct from 'number'
     or coalesce(p_input->>'registered_version','') !~ '^[0-9]{1,40}$'
     or not (p_input ? 'observed_version') or not (p_input ? 'access_digest')
@@ -237,18 +255,28 @@ begin
   if p.id is null then raise exception 'storage_access_digest_backfill_denied' using errcode='42501'; end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(u::text||':'||p.root_folder_id,0));
   perform clued_private.storage_root_quiet_v1(u,p.root_folder_id);
+  perform clued_private.authorization_account_v12(u);
   select * into c from clued_private.storage_connections_v1 where id=(p_input->>'connection_id')::uuid and owner_id=u for share;
+  select * into policy from clued_private.storage_account_policies_v2
+    where id=c.account_policy_id and owner_id=u and connection_id=c.id for share;
   select * into p from clued_private.resource_center_profiles_v1 where id=c.profile_id and user_id=u for share;
   select * into a from clued_private.resource_center_artifacts_v1
     where id=(p_input->>'artifact_id')::uuid and user_id=u and profile_id=p.id for update;
   if c.provider<>'google-drive' or c.oauth_client_id is distinct from app.oauth_client_id or c.revoked_at is not null
     or c.auth_mode<>'account_policy' or c.state<>'active' or not clued_private.storage_envelope_valid_v1(c.credential_envelope)
-    or p.state<>'active' or a.id is null or a.state<>'active' or a.target_kind<>'directory'
+    or policy.id is null or policy.state<>'active' or policy.revoked_at is not null
+    or coalesce(policy.expires_at<=clock_timestamp(),false) or p.state<>'active' or p.version<>c.profile_version
+    or not clued_private.resource_center_decision_current_v1(u,p.project_id,c.source_decision_id)
+    or not clued_private.resource_center_decision_current_v1(u,p.project_id,policy.source_decision_id)
+    or not clued_private.resource_center_decision_current_v1(u,p.project_id,p.source_decision_id)
+    or a.id is null or a.state<>'active' or a.target_kind<>'directory'
     or a.provider_sharing_digest is not null or a.provider_access_digest is not null or a.access_digest_missing_at is not null
     or exists(select 1 from clued_private.storage_root_denies_v2 d where d.owner_id=u and d.provider=c.provider
       and d.provider_subject=c.provider_subject and d.root_folder_id=p.root_folder_id and d.lineage_id is null and d.denied) then
     raise exception 'storage_access_digest_backfill_denied' using errcode='42501'; end if;
   if op='load' then
+    -- Behind the others for 30 minutes; not a registry change (no version bump).
+    update clued_private.resource_center_artifacts_v1 set access_digest_attempted_at=clock_timestamp() where id=a.id;
     return jsonb_build_object('status','read_only','owner_id',u,'connection_id',c.id,'artifact_id',a.id,
       'provider','google-drive','provider_subject',c.provider_subject,'oauth_client_id',c.oauth_client_id,
       'credential_version',c.credential_version,'credential_envelope',c.credential_envelope,
@@ -262,7 +290,7 @@ begin
     then 'recorded' else 'missing' end;
   req:=jsonb_build_object('idempotency_key','storage-access-digest-backfill:'||a.id::text||':'||a.version::text,
     'artifact_id',a.id,'path',a.path,'provider_file_id',a.provider_file_id,'registered_version',a.provider_file_version,
-    'observed_version',p_input->'observed_version','access_digest',p_input->'access_digest','outcome',outcome);
+    'found',p_input->'found','observed_version',p_input->'observed_version','access_digest',p_input->'access_digest','outcome',outcome);
   r:=clued_private.m1_begin_receipt(u,null,'storage_access_digest_backfill',req,clued_private.m1_sha256(req));
   if r.status<>'pending' then raise exception 'storage_access_digest_backfill_conflict' using errcode='40001'; end if;
   update clued_private.resource_center_artifacts_v1 set

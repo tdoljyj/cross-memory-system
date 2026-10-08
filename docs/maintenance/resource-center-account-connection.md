@@ -1175,19 +1175,31 @@ This step only collects the digest; no matching rule changes until step 3
   - Backfill: every minute `clued_storage_access_digest_backfill_v1` lists up
     to five directories with neither digest and no missing mark, under an
     active connection with a valid credential, a quiet root and no root deny.
-    The Worker reads `id,version,permissions(...)` in one request. The commit,
-    under the root lock and with CAS on the row version and registered
-    version, stores the digest only when that version is the registered one;
-    otherwise (version changed, failed read, no usable permission list) it
-    marks the directory missing. Receipt `storage_access_digest_backfill`.
+    `load` applies the scheduled-recovery checks (account, active unexpired
+    policy, current Decisions, profile version) and stamps
+    `access_digest_attempted_at`, which keeps the directory out of the list
+    for 30 minutes. The Worker reads `id,version,permissions(...)` in one
+    request. The commit, under the root lock and with CAS on the row version
+    and registered version, stores the digest only when that version is the
+    registered one; another version, a 404 or no usable permission list marks
+    the directory missing. A transient or credential failure (429, 5xx, 401,
+    403, timeout) commits nothing, so the directory is tried again later.
+    Receipt `storage_access_digest_backfill`.
     Equal versions prove only that the folder is unchanged since the registry
     last recorded that version, the same baseline version matching uses today.
 - **Missing digests.** A directory marked missing is matched by version as
   before. To give it a digest, run the directory check and record the
   observed `provider_access_digest` with `artifact_update`.
-- **Release order.** Migration first: the new Worker sends `access_digest` at
-  onboarding, which the old database refuses. The migration alone changes
-  nothing a running Worker relies on; every new input is optional.
+- **Release order.** Migration first. The new Worker sends inputs the old
+  database refuses: `access_digest` at onboarding, `provider_access_digest`
+  in a directory create or adopt proof (refused with `storage_verified_mismatch`
+  after Drive was written, leaving the job uncertain) and in a directory check
+  observation. The migration alone changes nothing a running Worker relies
+  on; every new input is optional.
+- **Before the migration.** It refuses to run while any storage journal is
+  verified but not settled (`storage_access_digest_verified_job_unsettled`):
+  the verified record compares whole registry rows, which the new columns
+  change. Let such jobs settle first.
 
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 

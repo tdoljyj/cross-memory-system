@@ -7,11 +7,12 @@
  * to five such directories under quiet, undenied roots. For each it loads the
  * connection's credential, reads the folder's version and permissions in one
  * Drive request, and commits the outcome. The database stores the digest only
- * when that version is the registered one and the row is unchanged; any other
- * outcome, including a failed read, marks the directory as missing a digest,
- * which leaves it matched by version as today. Read only: no Drive write, and
- * an expiring credential is skipped (not refreshed) until the ordinary
- * refresh renews it.
+ * when that version is the registered one and the row is unchanged; another
+ * version, a 404 or no usable permission list marks the directory as missing a
+ * digest, which leaves it matched by version as today. A transient or
+ * credential failure commits nothing and the directory waits 30 minutes
+ * behind the others. Read only: no Drive write, and an expiring credential is
+ * skipped (not refreshed) until the ordinary refresh renews it.
  */
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
@@ -112,24 +113,37 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
           token.access_token.length < 16 || scopeProfile(token.scope) === null ||
           !Number.isFinite(token.expires_at_ms) || Number(token.expires_at_ms) - clock() <= 60000) { skipped++; continue; }
       const accessToken = token.access_token;
+      let lastStatus = 0;
       const metadata = createGoogleDriveMetadataApi({
         get_credential: async () => {
           if (Number(token.expires_at_ms) - clock() <= 60000) throw new Error("storage_access_digest_credential_expiring");
           return { access_token: accessToken, scope: token.scope };
         },
-        fetch: driveFetch, transient_retries: 2,
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+          const response = await driveFetch(input, init);
+          lastStatus = response.status;
+          return response;
+        },
+        transient_retries: 2,
       });
-      let observedVersion: string | null = null, digest: string | null = null;
+      // Only an answer about the folder settles it: its version and
+      // permissions, or 404 (Drive no longer shows it to this account). A
+      // transient or credential failure commits nothing; the directory comes
+      // back after the others.
+      let found: boolean, observedVersion: string | null = null, digest: string | null = null;
       try {
         const read = await metadata.getVersionedAccess(String(d.provider_file_id), { signal: AbortSignal.timeout(15000) });
-        if (read?.id === d.provider_file_id && typeof read.version === "string" && VERSION.test(read.version)) {
-          observedVersion = read.version;
-          const computed = googleDriveAccessDigest(read);
-          digest = typeof computed === "string" ? computed : null;
-        }
-      } catch { observedVersion = null; digest = null; }
+        if (read?.id !== d.provider_file_id || typeof read.version !== "string" || !VERSION.test(read.version)) { skipped++; continue; }
+        found = true;
+        observedVersion = read.version;
+        const computed = googleDriveAccessDigest(read);
+        digest = typeof computed === "string" ? computed : null;
+      } catch {
+        if (lastStatus !== 404) { skipped++; continue; }
+        found = false;
+      }
       const committed = await rpc({ ...reference, action: "commit", row_version: d.row_version,
-        registered_version: d.registered_version, observed_version: observedVersion, access_digest: digest });
+        registered_version: d.registered_version, found, observed_version: observedVersion, access_digest: digest });
       if (committed.status !== "committed" || committed.artifact_id !== reference.artifact_id) { skipped++; continue; }
       if (committed.outcome === "recorded") recorded++; else missing++;
     } catch { skipped++; }

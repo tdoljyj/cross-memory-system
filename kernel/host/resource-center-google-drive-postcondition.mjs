@@ -15,8 +15,10 @@ const fail = (code) => { throw new Error(code); };
  * it) carries that digest in its proof (provider_sharing_digest), so it is
  * registered matched by sharing rather than by its Drive version. Any other
  * outcome, or a failed read, leaves the digest out: version matching, as before.
- * Storage step 2 (Task e2eb07d1): with get_access as well, such a directory
- * also carries the access digest it was observed with (provider_access_digest).
+ * Storage step 2 (Task e2eb07d1): with get_access as well (a read returning
+ * id, version and permissions together), such a directory also carries the
+ * access digest it was observed with (provider_access_digest), only when that
+ * read saw the verified version.
  * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, get_sharing?: Function, get_access?: Function, require_effect_provider_id?: boolean, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
  */
 export function createGoogleDriveCreatePostconditionVerifier({
@@ -157,7 +159,7 @@ export function createGoogleDriveCreatePostconditionVerifier({
         if (sharingDigest && typeof getAccess === "function") {
           try {
             const access = await getAccess(file.id);
-            accessDigest = access?.id === file.id ? googleDriveAccessDigest(access) : null;
+            accessDigest = access?.id === file.id && access.version === file.version ? googleDriveAccessDigest(access) : null;
           } catch { accessDigest = null; }
         }
         // This is emitted only after the complete metadata/content/ancestor and

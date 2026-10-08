@@ -390,6 +390,19 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal(Number((await artifactById(track.id)).version), Number(trackAfter.version));
     });
 
+    await t.test("storage step 2: a folder that already has a sharing digest gets only its access digest from a move, once", async () => {
+      const { target, client, storage, topic, folder } = await tree();
+      await recordSharing(target, topic);
+      const shared = await artifactById(topic.id);
+      assert.equal(shared.provider_sharing_digest, googleDriveSharingDigest(PRIVATE)); assert.equal(shared.provider_access_digest, null);
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
+      const after = await artifactById(topic.id);
+      assert.equal(after.provider_sharing_digest, shared.provider_sharing_digest);
+      assert.equal(after.provider_access_digest, googleDriveAccessDigest({ permissions: OWNER_ONLY }));
+      assert.equal(Number(after.version), Number(shared.version) + 1);
+    });
+
     await t.test("P6.2: a folder whose Drive version moved on since it was registered gets no digest from a move", async () => {
       const { target, client, storage, trackPath, topic, folder } = await tree();
       const track = await artifact(target, trackPath);
@@ -488,9 +501,18 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal(loaded.status, "read_only"); assert.equal(loaded.execution_permitted, false);
       assert.equal(loaded.provider_file_id, target.rootId); assert.equal(loaded.registered_version, root.provider_file_version);
       assert.equal(loaded.row_version, Number(root.version)); assert.deepEqual(loaded.credential_envelope, envelope);
+      // Loading puts it behind the others without changing the row's version.
+      const attempted = await artifactById(root.id);
+      assert.notEqual(attempted.access_digest_attempted_at, null); assert.equal(Number(attempted.version), Number(root.version));
+      assert.deepEqual(await mine(), [track.id]);
       const access = googleDriveAccessDigest({ permissions: OWNER_ONLY });
-      const commit = (row, observed, digest, version = Number(row.version)) => backfill({ action: "commit", connection_id: target.connection,
-        artifact_id: row.id, row_version: version, registered_version: row.provider_file_version, observed_version: observed, access_digest: digest });
+      const commit = (row, observed, digest, version = Number(row.version), found = observed !== null) => backfill({ action: "commit",
+        connection_id: target.connection, artifact_id: row.id, row_version: version, registered_version: row.provider_file_version,
+        found, observed_version: observed, access_digest: digest });
+      // found is required and must agree with the observation.
+      await assert.rejects(backfill({ action: "commit", connection_id: target.connection, artifact_id: root.id, row_version: Number(root.version),
+        registered_version: root.provider_file_version, observed_version: root.provider_file_version, access_digest: null }), /backfill_denied/);
+      await assert.rejects(commit(root, root.provider_file_version, null, Number(root.version), false), /backfill_denied/);
       // A stale row version or a malformed outcome changes nothing.
       await assert.rejects(commit(root, root.provider_file_version, access, Number(root.version) - 1), /backfill_conflict/);
       await assert.rejects(commit(root, root.provider_file_version, "not-hex"), /backfill_denied/);
@@ -508,7 +530,13 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal(missing.outcome, "missing");
       const trackAfter = await artifactById(track.id);
       assert.equal(trackAfter.provider_access_digest, null); assert.notEqual(trackAfter.access_digest_missing_at, null);
-      // Neither is listed or loadable again.
+      // A folder Drive no longer shows (404) is marked missing too.
+      const gone = await artifactById((await register({ action: "artifact_register", profile_id: target.profile,
+        path: `${target.root}/${TRACK}/gone`, provider_file_id: `st-gone-${randomUUID()}`, provider_file_version: "1",
+        target_kind: "directory", governance_class: "ordinary", delete_authority: false })).target_refs.find(ref => ref.role === "primary").id);
+      assert.equal((await commit(gone, null, null)).outcome, "missing");
+      assert.notEqual((await artifactById(gone.id)).access_digest_missing_at, null);
+      // None is listed or loadable again.
       assert.deepEqual(await mine(), []);
       await assert.rejects(backfill({ action: "load", connection_id: target.connection, artifact_id: track.id }), /backfill_denied/);
       // An Owner approved update writes a digest and clears the missing mark.

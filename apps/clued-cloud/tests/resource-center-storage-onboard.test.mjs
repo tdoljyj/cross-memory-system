@@ -62,7 +62,7 @@ function drive(options = {}) {
       await options.beforeCreate?.(body);
       if (options.createFailure?.(body)) return new Response("{}", { status: 500 });
       const file = { id: `created-${++next}`, name: body.name, mimeType: body.mimeType, parents: body.parents ?? ["my-drive"], trashed: false,
-        version: "1", appProperties: body.appProperties };
+        version: "1", appProperties: body.appProperties, ...(options.permissions ? { permissions: structuredClone(options.permissions) } : {}) };
       files.set(file.id, file);
       return Response.json(file);
     }
@@ -434,4 +434,25 @@ test("an ambiguous result for a created folder keeps that folder as an orphan", 
   const reason = await reasonOf(bad.complete(await g.claim(begun), "fixture-code", g.db.attempts.get(begun.onboard_attempt_id).state_hash));
   assert.equal(reason, "onboard_effect_unconfirmed");
   assert.deepEqual(g.db.attempts.get(begun.onboard_attempt_id).strays, [{ role: "root", provider_file_id: "created-1" }]);
+});
+
+test("storage step 2: each folder's access digest comes from the same read as its version", async () => {
+  const { googleDriveAccessDigest } = await import("../../../kernel/host/resource-center-google-drive-sharing.mjs");
+  const permissions = [{ id: "owner-permission", type: "user", role: "owner" }];
+  const f = await fixture({ drive: { permissions } });
+  await (await f.run()).complete();
+  const results = f.db.calls.filter(c => c.action === "effect_result");
+  assert.equal(results.length, 4);
+  for (const result of results) assert.equal(result.access_digest, googleDriveAccessDigest({ permissions }), result.role);
+  for (const call of f.google.creates()) assert.match(call.url.searchParams.get("fields"), /,version,permissions\(id,type,role,domain,allowFileDiscovery,expirationTime,deleted\)$/);
+  // Without a usable permission list (Drive omits it) the digest is null.
+  const bare = await fixture();
+  await (await bare.run()).complete();
+  assert.ok(bare.db.calls.filter(c => c.action === "effect_result").every(c => c.access_digest === null));
+  // A picked root reports its own.
+  const picked = await fixture({ drive: { files: [pickedFolder({ permissions })] } });
+  await (await picked.run(pick)).complete();
+  const root = picked.db.calls.find(c => c.action === "effect_result" && c.role === "root");
+  assert.equal(root.access_digest, googleDriveAccessDigest({ permissions }));
+  assert.match(picked.google.calls.find(c => c.url.pathname === "/drive/v3/files/picked").url.searchParams.get("fields"), /,version,permissions\(/);
 });
