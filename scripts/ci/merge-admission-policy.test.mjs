@@ -25,6 +25,7 @@ import {
   loadPolicy,
   MAX_PATTERNS_PER_LAYER,
   modeLabel,
+  parseModeLabel,
   POLICY_PATH,
   PROTECTED_BASELINE,
   resolveMode,
@@ -80,7 +81,7 @@ test("policy: the fixed tables load, and the compatibility table is step 1's", (
   for (const state of ["normal", "efficiency"]) {
     for (const layer of ["code", "docs"]) assert.deepEqual({ ...policy.rules[state][layer] }, row(), `${state}.${layer}`);
   }
-  assert.deepEqual({ ...PROTECTED_BASELINE }, { ...row({ owner_grant: "required", up_to_date: "check_and_strict" }), merge_actor: "any" });
+  assert.deepEqual({ ...PROTECTED_BASELINE }, { ...row({ owner_grant: "required", up_to_date: "check_and_strict", reruns_per_head: 1 }), merge_actor: "any" });
 });
 
 test("policy: CORE_PROTECTED_PATHS is the contract's list; PROTECTED_PATHS adds the policy file", () => {
@@ -533,10 +534,29 @@ test("the older switches: they keep their meaning in normal and efficiency, and 
 // ---------------------------------------------------------------------------
 // Visibility (§10).
 
+test("parseModeLabel: the gate reads back exactly the labels the admission run writes, and nothing else", () => {
+  for (const state of STATES) {
+    for (const layer of LAYERS) {
+      for (const reruns of STRICTNESS.reruns_per_head) {
+        const label = modeLabel(state, layer, row({ reruns_per_head: reruns }));
+        for (const verdict of ["ADMITTED", "REJECTED", "RE-VERIFIED: REJECTED"]) {
+          assert.deepEqual(parseModeLabel(`${verdict} [${label}]`), { state, layer, reruns_per_head: reruns }, `${verdict} [${label}]`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(parseModeLabel("ADMITTED [normal · code · reruns 1]  "), { state: "normal", layer: "code", reruns_per_head: 1 });
+  for (const title of [null, undefined, "", "ADMITTED", "ERROR", "ADMITTED [normal · code · reruns 4]", "ADMITTED [normal · vendor · reruns 1]",
+    "ADMITTED [relaxed · code · reruns 1]", "ADMITTED [normal - code - reruns 1]", "ADMITTED [normal · code · reruns 1] trailing",
+    "ADMITTED [normal · code · reruns -1]", "ADMITTED (normal · code · reruns 1)", "ADMITTED [Normal · code · reruns 1]"]) {
+    assert.equal(parseModeLabel(title), null, String(title));
+  }
+});
+
 test("visibility: the summary leads with the mode and its rules; the outputs and the App check's title carry the label", async () => {
   const { outcome } = await judge({ state: "", layer: "docs", scenario: "ok" });
   assert.equal(outcome.admission_mode.label, "normal · docs · reruns 0");
-  assert.equal(modeLabel("normal", "docs", PROTECTED_BASELINE), "normal · docs · reruns 0");
+  assert.equal(modeLabel("normal", "docs", row()), "normal · docs · reruns 0");
   const summary = renderSummary(outcome);
   assert.match(summary, /^## clued-work-admission\n\n\*\*Mode:\*\* `normal` · layer `docs` · source `default` · policy v1\n\*\*Verdict:\*\* `ADMITTED`/);
   assert.match(summary, /\| work_claim \| owner_grant \| up_to_date \| merge_slot \| reruns_per_head \| auto_merge \| merge_actor \|\n\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|\n\| enforce \| none \| strict_only \| required \| 0 \| allowed \| any \|/);
@@ -550,7 +570,7 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
   const options = { readPolicyFile: fixedPolicy() };
   let code = await main(["--mode", "required"], { ...matrixEnv("efficiency"), ...base, GITHUB_OUTPUT: output("o1") }, fetchImpl, options);
   assert.equal(code, 0);
-  assert.ok(fs.readFileSync(output("o1"), "utf8").split("\n").includes("admission_mode=efficiency · protected · reruns 0"));
+  assert.ok(fs.readFileSync(output("o1"), "utf8").split("\n").includes("admission_mode=efficiency · protected · reruns 1"));
   // Review MINOR-2: a run that fails still reports its mode; frozen is enforced
   // whatever CLUED_WORK_ADMISSION_ENFORCE says.
   code = await main(["--mode", "required"], { ...matrixEnv("frozen", { CLUED_WORK_ADMISSION_ENFORCE: "", GITHUB_TOKEN: "" }), ...base,

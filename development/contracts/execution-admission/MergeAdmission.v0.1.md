@@ -257,6 +257,9 @@
 
 1. 允许的是 **「Re-run all jobs」**，对 `pull_request` / `pull_request_target` 运行，且该运行的 `head_sha` 等于 PR **当前** head，`run_attempt == 2`（`reruns_per_head: 1`）或 ≤ `1 + reruns_per_head`。gate（`rerunAttempt()`）据此放行并在重跑里重新读 App check，所以 Owner 授权后的重跑能让此前被跳过的加闸任务运行——这取代「授权后关闭再重开 PR」。重跑按**每个 workflow 运行**计：一个 head 上最多 10 个加闸运行，可能要各点一次，不像关闭重开一次解决；执行器（§13 第 5 步）可代点。
 2. **「Re-run failed jobs」仍拒绝**：它沿用 gate 上一次的输出，不重新判定（复审 3 N-R3、复审 5 n2）。gate 自己拦不住它（成功过的 gate job 在这种重跑里不再运行），所以 runner 开工前检查是唯一执行者，其放行条件写明为：`GITHUB_RUN_ATTEMPT ≥ 2` 时，`GET /repos/{o}/{r}/actions/runs/{run_id}/attempts/{n}/jobs` 里必须存在**同一 attempt** 的 `admission-gate` job 且 `conclusion=success`（证明 gate 在本次 attempt 重新判定过），否则拒绝；只看 `GITHUB_RUN_ATTEMPT == 2` 会把「Re-run failed jobs」一起放进来。
+
+   **更正（2026-10-08，Owner Decision `77216370`）**：上面「同一 attempt 的 `admission-gate` job 且 `conclusion=success`」分不出「Re-run failed jobs」：GitHub 在新 attempt 的 job 列表里照样列出上一次没有重跑的 gate job，结论为 `success`（在 microsoft/vscode 运行 37727629063 上实测）。所以 runner 开工前检查还要求该 gate job 的 `started_at` 不早于运行的 `run_started_at`（每个 attempt 各自更新），观察不到（job 列表不完整、时间读不到）即拒绝。同一 Decision 允许 `gitleaks`、`trivy`（没有 gate 的必需检查）在打开的 PR 的当前 head 上重跑一次（attempt ≤ 2）。Decision `1b93760d` 取代 `610eeaaa`。
+
 3. 旧 head（不是 PR 当前 head）的重跑仍拒绝；第 `2 + reruns_per_head` 次起拒绝。runner 开工前检查需要 Owner 在每台 runner 上更新钩子脚本（Decision `f303f861`）。
 4. 准入运行（`pull_request_target`，默认分支代码）的重跑不受次数限制：它每次都重新读 PR 与 main 当前代码，没有「沿用旧输出」的问题。
 
@@ -286,7 +289,7 @@
 - §4.4「合并位」：由 §7 取代（接受并实施后）。合并引用 `merge:<owner>/<name>:<branch>` 作为队列项的键保留，`merge_slot_until` 语义改为「按 §7.3 计算的时效」。
 - 合同 `agent-contract.md` §1.7：接受后随实施改写合并位段落（取位 = 入队；不再每 10 分钟重试；不再每 30 分钟为保位续期；拿到队列头后打开 auto-merge；重跑规则），并缩短。合同节奏与 §1.7 压缩属 Task `ada1334c` 的另一项，不在本文。
 - 加闸 workflow 的 `admission-gate`：不变，只在 `rerunAttempt()` 按 App check 标题里的 `reruns_per_head` 放行。
-- `CONTRIBUTING.md`「Work claims」「Protected paths and Owner grants」：接受后按分层与状态改写；`.github/pull_request_template.md` 不变。
+- `CONTRIBUTING.md`「Work claims」「Protected paths and Owner grants」：接受后按分层与状态改写；`.github/pull_request_template.md` 只把受保护路径的指引改为 `CORE_PROTECTED_PATHS` 加策略文件（第 2 步）。
 - runner 开工前检查（`scripts/runner/`）：同上。
 - Dependabot：层按路径（多为受保护层）；Owner 流程不变。
 
@@ -334,7 +337,7 @@
 | --- | --- | --- | --- | --- |
 | 0 | 本文 Draft → Accepted；ADR 接受；Clued Decision 指向 Drive 报告文件 ID 与仓库 commit | 无 | 接受 | `ada1334c`（已完成：Decision `d130195e`） |
 | 1 | `scripts/ci/merge-admission-policy.mjs` + `config/merge-admission-policy.json` + 表驱动测试；`clued-work-admission.mjs` 改为读策略；摘要与 App check 标题打印模式；**默认表先用「兼容表」**：三层 `work_claim: enforce`、`merge_slot: required`、`reruns_per_head: 0`、`auto_merge: allowed`（仓库设置仍关着，所以不生效）；`owner_grant: required` 与 `up_to_date: check_and_strict` 只对受保护层，`code` / `docs` 为 `none` / `strict_only`；今天的其他行为原样保留且不在表里：文件列表截断判 REJECTED（`changed_files_truncated`），服务未报 `merge_slot_until` 时 `clued-merge-slot` 以 `not_reported` 通过，fork PR 的 gate 一律按强制跟随 App check，workflow 守卫（`workflow_gate:*`）在所有状态、所有层无条件生效。行为与今天完全一致 | 无（只多了可见性） | 批准受保护 PR；设 `CLUED_MERGE_ADMISSION_STATE=normal`（或不设） | `2c7c7430` |
-| 2 | 默认表换成 §5.2 推荐表；gate 按 App check 标题里的 `reruns_per_head` 放行，runner 开工前检查沿用现有路径（读准入运行的结论与同一 attempt 的 `admission-gate` job），不读 check 标题、不需要 `checks: read`；准入 workflow 的 `pull_request_target` 类型加 `auto_merge_enabled` / `auto_merge_disabled`；合同 §1.7 对应段落改写；`ci-usage-report.mjs` | 重跑一次放行；App check 标题带模式；auto-merge 可用（Owner 打开仓库设置后） | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） | `745c288f` |
+| 2 | 默认表换成 §5.2 推荐表；gate 按 App check 标题里的 `reruns_per_head` 放行，runner 开工前检查沿用现有路径（读准入运行的结论与同一 attempt 的 `admission-gate` job），不读 check 标题、不需要 `checks: read`；准入 workflow 的 `pull_request_target` 类型加 `auto_merge_enabled` / `auto_merge_disabled`；合同 §1.7 对应段落改写，并在本步作为 agent-contract v39 发布（Owner 对每周合同节奏的一次性豁免，Decision `77216370`）；`ci-usage-report.mjs` 移出本步，归 Task `f70546e5` | 重跑一次放行；App check 标题带模式；auto-merge 可用（Owner 打开仓库设置后） | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） | `745c288f` |
 | 3 | 位时效绑 CI：迁移 `clued_work_merge_slot_touch_v1`（ci-admission Binding）；准入 workflow 加 `workflow_run: completed` 触发的秒级 job 上报 CI 状态；复核 `reason=state_change` 模式 | 持位不再需要续期；CI 失败自动出队 | 迁移、Worker 发布各自授权 | `3576d10d` |
 | 4 | 队列：`clued_work_renew` 带合并引用改为入队返回位置；`clued-merge-slot` 只认队列头；resume 返回 `merge_queue` | 等待不再轮询（入队一次即可，位置由检查与 resume 可见） | 迁移、Worker 发布 | `38e0c90d` |
 | 5 | 执行器（可选）：clued-admission App 增加 `contents: write`、`pull_requests: write`；默认分支上的执行器 job 为队列头做「并入 main」与打开 auto-merge。用 App 安装令牌而不是 `GITHUB_TOKEN`：GitHub 不为 `GITHUB_TOKEN` 的推送创建新的 workflow 运行，用它并入 main 不会触发 CI | Agent 在入队后无事可做 | 批准 App 权限扩展（扩大了 `clued-admission` environment 里私钥的能力范围） | `91039d74` |
@@ -363,6 +366,6 @@
 ## 15. 引用
 
 - 现行实现：`scripts/ci/clued-work-admission.mjs`（`PROTECTED_PATHS`、`evaluate`、`ownerReview`、`carriedApprovalSource`、`baseTipCompare`、`mergeSlotState`、`mergeSlotCheck`、`reverify`、`gate`、`rerunAttempt`、`appCheck`）、`.github/workflows/clued-work-admission.yml`、`clued-work-admission-reverify.yml`、迁移 `20261006120000_work_claims_merge_slot.sql`（`20261006180000_work_claims_continuation.sql` 只作认领续接的背景，不在本文范围）。
-- 合同：`skills/clued/references/agent-contract.md` v38 §1.7；`development/contracts/repository/GitConnectorWriteContract.v0.1.md`；`CONTRIBUTING.md`。
+- 合同：`skills/clued/references/agent-contract.md` §1.7（v38，第 2 步改写为 v39）；`development/contracts/repository/GitConnectorWriteContract.v0.1.md`；`CONTRIBUTING.md`。
 - GitHub 文档：Managing a merge queue（merge group、CI 失败移出、与「Require branches to be up to date」等价）；Automatically merging a pull request（可用范围、自动关闭条件）；Available rules for rulesets（`strict`）；Re-running workflows and jobs（重跑沿用原 `GITHUB_SHA` 与 workflow 文件）；Update a pull request branch（App 需要 head 仓库的 contents 写权限）。
 - 他山之石：Mergify（speculative checks / batch、免费至 5 个私有仓库用户、`$21`/seat）、Trunk Merge Queue（impacted targets 并行队列、乐观合并、二分、免费至 5 committers）、Bors-ng（已停止维护，指向 GitHub merge queue）、Zuul（dependent pipeline、推测执行、失败减半窗口）。具体链接在研究报告附录。

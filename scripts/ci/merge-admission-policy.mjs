@@ -23,11 +23,10 @@
 //   I4  the required checks and their sources do not change with the policy;
 //   I5  GitHub's strict "up to date" rule is not the policy's to turn off.
 //
-// Step 1 of the migration (§13): the repository's policy file is the
-// compatibility table, under which every pull request is judged exactly as
-// before. The policy is read from the default branch's checkout only (the
-// admission run's), so a pull request that edits it does not change its own
-// verdict.
+// Since step 2 of the migration (§13) the repository's policy file is the
+// recommended table (§5.2, §5.3). The policy is read from the default
+// branch's checkout only (the admission run's), so a pull request that edits
+// it does not change its own verdict.
 //
 // No dependencies: Node 20+ fs and path only.
 
@@ -85,15 +84,14 @@ export const STRICTNESS = Object.freeze({
 // The columns a policy row names; merge_actor is only frozen's.
 export const ROW_COLUMNS = Object.freeze(["work_claim", "owner_grant", "up_to_date", "merge_slot", "reruns_per_head", "auto_merge"]);
 
-// The protected layer's rules in every state (§5.2, I1). Step 1 keeps
-// reruns_per_head at 0, today's "no re-runs"; step 2 raises it to 1 together
-// with the gate that honors it.
+// The protected layer's rules in every state (§5.2, I1). One "Re-run all
+// jobs" per head (§8, step 2): the gate reads it from the check title.
 export const PROTECTED_BASELINE = Object.freeze({
   work_claim: "enforce",
   owner_grant: "required",
   up_to_date: "check_and_strict",
   merge_slot: "required",
-  reruns_per_head: 0,
+  reruns_per_head: 1,
   auto_merge: "allowed",
   merge_actor: "any",
 });
@@ -350,4 +348,13 @@ export function effectiveRules(policy, state, layer) {
 // How a check title shows the mode (§10): "normal · code · reruns 0".
 export function modeLabel(state, layer, rules) {
   return `${state} · ${layer} · reruns ${rules.reruns_per_head}`;
+}
+
+// The mode back out of a check title ("ADMITTED [normal · code · reruns 1]"),
+// for the gate, which does not read the policy (§10). Anything else is null:
+// the gate then allows no re-run and keeps the variable's enforcement.
+const LABEL = /\[(normal|efficiency|frozen) · (protected|code|docs) · reruns ([0-3])\]\s*$/;
+export function parseModeLabel(title) {
+  const match = LABEL.exec(String(title ?? ""));
+  return match ? { state: match[1], layer: match[2], reruns_per_head: Number(match[3]) } : null;
 }

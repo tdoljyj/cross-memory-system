@@ -25,8 +25,9 @@
 - flag changes: none
 
 <!-- Required: the claim this pull request runs under (agent contract §1.7). Keep the Scope line only
-     for a non-Global Task and delete it otherwise. A change to a protected path (PROTECTED_PATHS in
-     scripts/ci/clued-work-admission.mjs; see CONTRIBUTING.md, "Protected paths and Owner grants")
-     needs an Owner grant for the exact head commit. -->
+     for a non-Global Task and delete it otherwise. A change to a protected path (CORE_PROTECTED_PATHS
+     in scripts/ci/merge-admission-policy.mjs, plus config/merge-admission-policy.json and the paths it
+     adds; see CONTRIBUTING.md, "Protected paths and Owner grants") needs an Owner grant for the exact
+     head commit. -->
 Clued-Work-Claim: <claim_id>
 Clued-Work-Scope: project:<canonical_project_id>
