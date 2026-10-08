@@ -1,10 +1,10 @@
 # ADR-EA-001：合并准入采用「路径分级 × 全局状态」策略表，保留 GitHub strict，用 Clued 合并队列 + GitHub auto-merge 取代 Agent 轮询合并位
 
-> 状态：**Proposed（草案，待 Owner 接受）**
+> 状态：**Accepted（Owner 2026-10-08 接受，Decision `d130195e`；接受的内容为 commit `33d858b1`）**
 > 日期：2026-10-08
 > 范围：`tdoljyj/cross-memory-system` 发往 `main` 的 pull request 的准入、合并串行化与模式切换。
-> 决策对象：[MergeAdmission.v0.1.md](MergeAdmission.v0.1.md)（规范草案）。研究报告与数据在 Google Drive 资料中心 `10_E_工程与平台/CI基础设施/`，文件 ID 记在 Clued Note。
-> 来源：Owner Decision `8e767ed8`（先研究写方案；模式切换形态）、`f303f861`（P0-1 四项）、Task `ada1334c`。
+> 决策对象：[MergeAdmission.v0.1.md](MergeAdmission.v0.1.md)（规范，Accepted）。研究报告与数据在 Google Drive 资料中心 `10_E_工程与平台/CI基础设施/`（报告 v0.1 候选 r2，文件 ID `1ETCsBd1ol9f_lIMNbxn1z7ph7H8JYUxJ`，SHA-256 `63a2b6d1bb9980e9ca07fc78ebd996a4c7ddad77a4ef0fa50e44a476aa2d8903`；三轮独立复审记录文件 ID `14TuVeFBnzebmJR7ErXYuj5lxxcQYIpi0`，SHA-256 `a1e575ed126dd36aaedb71ca6182033bf11fa1397daa447569ae1922a48c7228`；Clued Note `7bea039d`）。
+> 来源：Owner Decision `8e767ed8`（先研究写方案；模式切换形态）、`f303f861`（P0-1 四项；按本 ADR 修订后由 `610eeaaa` 替换）、Task `ada1334c`；接受：Decision `d130195e`。
 > 放置说明：仓库没有统一的 ADR 目录（现有 ADR 分散在 `docs/clued-two-level-views/`、`docs/history/`、`docs/r3-gate*/`），本 ADR 与它所解释的合同放在同一目录，便于同一个 PR 评审；Owner 可在接受时指定搬移。
 
 ## 1. 背景
@@ -55,5 +55,5 @@
 ## 6. 关联
 
 - 合同：[MergeAdmission.v0.1.md](MergeAdmission.v0.1.md)、[WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)、[GenericWorkClaim.v0.1.md](GenericWorkClaim.v0.1.md)、[GitConnectorWriteContract.v0.1.md](../repository/GitConnectorWriteContract.v0.1.md)。
-- Clued：Decision `8e767ed8`、`f303f861`、`22c20e14`（准入自检死锁只用临时放行解锁）、Task `ada1334c`。
+- Clued：Decision `8e767ed8`、`f303f861` → `610eeaaa`、`22c20e14`（准入自检死锁只用临时放行解锁）、`d130195e`（接受）、Task `ada1334c`；实施 Task 见 MergeAdmission §13 表。
 - 代码：`scripts/ci/clued-work-admission.mjs`、`.github/workflows/clued-work-admission*.yml`、迁移 `20261006120000_work_claims_merge_slot.sql`。

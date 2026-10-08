@@ -1,8 +1,8 @@
 # Merge Admission v0.1：合并到 main 的准入、合并队列与模式切换
 
-状态：**Draft（草案，未被 Owner 接受）。** 本文件不授予任何实施、准入脚本改动、规则集改动、合同版本、生产迁移或 Worker 发布的权限；接受后每一步实施仍由 Owner 单独授权，每步一个 PR。与 [WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（认领、准入检查、Owner 复核、合并位的现行实现）并列：本文规定「合并到 main 要保证什么」以及如何按路径分层和全局状态执行；v0.1 现行实现中与本文不同的部分，在本文接受并实施后由对应小节取代，接受前以现行实现为准。
+状态：**Accepted（Owner 2026-10-08 接受，Decision `d130195e`；接受的规范内容为 commit `33d858b1`，此后的接受提交只改状态行、来源与 Task ID）。** 接受只认可方案，本文件不授予任何实施、准入脚本改动、规则集改动、合同版本、生产迁移或 Worker 发布的权限；每一步实施仍由 Owner 单独授权，每步一个 PR。与 [WorkClaimAdmission.v0.1.md](WorkClaimAdmission.v0.1.md)（认领、准入检查、Owner 复核、合并位的现行实现）并列：本文规定「合并到 main 要保证什么」以及如何按路径分层和全局状态执行；v0.1 现行实现中与本文不同的部分，在 §13 对应步骤实施后由对应小节取代，实施前以现行实现为准。
 日期：2026-10-08
-来源：Owner Decision `8e767ed8`（先研究写方案再实施；模式切换形态「路径分级 × 全局状态」）、Decision `f303f861`（P0-1 治理精简四项）、Task `ada1334c`（审计度量与摩擦排序）；研究报告与数据见 Google Drive 资料中心 `10_E_工程与平台/CI基础设施/`（文件 ID 记在 Clued Note 中）；选择理由见 [ADR-EA-001-MergeAdmissionPolicy.md](ADR-EA-001-MergeAdmissionPolicy.md)。
+来源：Owner Decision `8e767ed8`（先研究写方案再实施；模式切换形态「路径分级 × 全局状态」）、Decision `f303f861`（P0-1 治理精简四项；按本文修订后由 `610eeaaa` 替换）、Task `ada1334c`（审计度量与摩擦排序）、Decision `d130195e`（Owner 接受本文）；研究报告与数据见 Google Drive 资料中心 `10_E_工程与平台/CI基础设施/`（报告 v0.1 候选 r2，文件 ID `1ETCsBd1ol9f_lIMNbxn1z7ph7H8JYUxJ`，SHA-256 `63a2b6d1bb9980e9ca07fc78ebd996a4c7ddad77a4ef0fa50e44a476aa2d8903`；三轮独立复审记录文件 ID `14TuVeFBnzebmJR7ErXYuj5lxxcQYIpi0`，SHA-256 `a1e575ed126dd36aaedb71ca6182033bf11fa1397daa447569ae1922a48c7228`；Clued Note `7bea039d`）；选择理由见 [ADR-EA-001-MergeAdmissionPolicy.md](ADR-EA-001-MergeAdmissionPolicy.md)。
 对照基线：main `0b11b095`（2026-10-08），`main write policy (#292)` 规则集 `24182890`（五个必需检查，`strict_required_status_checks_policy=true`，0 审批，bypass 为空），仓库变量 `CLUED_WORK_ADMISSION_ENFORCE=true`、`CLUED_OWNER_REVIEW_ENFORCE=true`，仓库设置 `allow_auto_merge=false`。
 
 ---
@@ -247,7 +247,7 @@
 
 ### 7.6 v0.2 评估项：批量与二分
 
-不在 v0.1 做（Decision `8e767ed8`：批量测试与失败二分放后期评估）。进入评估的条件（§12 的度量给出）：队列深度 p95 ≥ 3，或最后一轮 CI 时长中位 ≥ 20 分钟。做法候选：执行器把队列头后面 k 个不含受保护路径、`write_set` 两两不相交的项并成一个临时分支 `merge-group/<id>`（像 GitHub 的 `gh-readonly-queue/*`）跑一次 CI，通过则按序合并全部，失败则对半分。前提是执行器已有 App 写权限（§13 第 5 步）。
+不在 v0.1 做（Decision `8e767ed8`：批量测试与失败二分放后期评估）。进入评估的条件（§12 的度量给出）：队列深度 p95 ≥ 3，或最后一轮 CI 时长中位 ≥ 20 分钟。做法候选：执行器把队列头后面 k 个不含受保护路径、`write_set` 两两不相交的项并成一个临时分支 `merge-group/<id>`（像 GitHub 的 `gh-readonly-queue/*`）跑一次 CI，通过则按序合并全部，失败则对半分。前提是执行器已有 App 写权限（§13 第 5 步）。评估项：Task `7f205c71`。
 
 ---
 
@@ -313,32 +313,32 @@
 | `unclaimed_admitted` | `efficiency` 下缺认领仍被准入的 head 数（§5.3） |
 | `api_requests_by_pool` | 每仓库 `GITHUB_TOKEN` 池的请求数，按 gate 轮询、准入、复核、度量自身分组 |
 
-基线取 2026-10-01 至 10-08（研究报告 §4）；目标值由 Owner 在接受时定，建议：每个合并 PR 的自托管分钟中位 ↓30%，自托管排队 p95 < 5 分钟，`wasted_final_rounds` ≈ 0（`normal`）。
+基线取 2026-10-01 至 10-08（研究报告 §4）；目标值由 Owner 在接受时定，建议：每个合并 PR 的自托管分钟中位 ↓30%，自托管排队 p95 < 5 分钟，`wasted_final_rounds` ≈ 0（`normal`）。实施：Task `f70546e5`。
 
 ### 12.2 削减项（各一个 PR；先按 n=3 样本的量级初排，§12.1 全量度量后再排）
 
-| 编号 | 项 | 依据 | 预期 |
-| --- | --- | --- | --- |
-| R1 | `admission-gate` job 占用自托管槽位等 App check（最多 480 秒），10 个加闸 workflow（多数有路径过滤，`clued-cloud-quality` 无）每个触发的运行各一个 | gate 分钟与排队数据 | 把等待上限按准入运行的实际时长（约 1–2 分钟）下调；或把 gate 改回托管 runner（需 Owner 撤回 Decision `f86179b3`）；或合并为一个 gate workflow 由 `workflow_run` 触发重任务 |
-| R2 | `clued-cloud-quality` 无路径过滤，文档 PR 也跑 `npm ci`+lint+build+test | 按层分组的自托管分钟 | job 内按改动路径判断，无 `apps/clued-cloud/**` 改动时跳过重步骤、仍以同一 check 名成功 |
-| R3 | `gitleaks`、`trivy` 在自托管、25 分钟超时、每个 head 都跑 | 两者的分钟与排队 | 评估改回托管 runner 或缓存 trivy 数据库；它们是必需检查，不能加路径过滤 |
-| R4 | 最后一轮被插队白跑 | `wasted_final_rounds` | §7 的队列 |
-| R5 | 同 head 重复运行 | `cancel-in-progress` 覆盖情况 | 已覆盖多数 PR workflow；补齐缺的 |
-| R6 | `npm ci` 8 分钟超时（#578） | 失败原因 | runner 本机 npm 缓存已在用；度量命中率后决定是否预热 |
+| 编号 | 项 | 依据 | 预期 | Task |
+| --- | --- | --- | --- | --- |
+| R1 | `admission-gate` job 占用自托管槽位等 App check（最多 480 秒），10 个加闸 workflow（多数有路径过滤，`clued-cloud-quality` 无）每个触发的运行各一个 | gate 分钟与排队数据 | 把等待上限按准入运行的实际时长（约 1–2 分钟）下调；或把 gate 改回托管 runner（需 Owner 撤回 Decision `f86179b3`）；或合并为一个 gate workflow 由 `workflow_run` 触发重任务 | `f52ca0dd` |
+| R2 | `clued-cloud-quality` 无路径过滤，文档 PR 也跑 `npm ci`+lint+build+test | 按层分组的自托管分钟 | job 内按改动路径判断，无 `apps/clued-cloud/**` 改动时跳过重步骤、仍以同一 check 名成功 | `77e4b00f` |
+| R3 | `gitleaks`、`trivy` 在自托管、25 分钟超时、每个 head 都跑 | 两者的分钟与排队 | 评估改回托管 runner 或缓存 trivy 数据库；它们是必需检查，不能加路径过滤 | `c9a8d57b` |
+| R4 | 最后一轮被插队白跑 | `wasted_final_rounds` | §7 的队列 | 第 3、4 步（`3576d10d`、`38e0c90d`） |
+| R5 | 同 head 重复运行 | `cancel-in-progress` 覆盖情况 | 已覆盖多数 PR workflow；补齐缺的 | `c2a3853f` |
+| R6 | `npm ci` 8 分钟超时（#578） | 失败原因 | runner 本机 npm 缓存已在用；度量命中率后决定是否预热 | `513b73ec` |
 
 ---
 
 ## 13. 迁移路径（每步一个 PR，每步 Owner 单独批准；步骤之间可按度量调整顺序）
 
-| 步 | 内容 | 行为变化 | 需要 Owner 做的 |
-| --- | --- | --- | --- |
-| 0 | 本文 Draft → Accepted；ADR 接受；Clued Decision 指向 Drive 报告文件 ID 与仓库 commit | 无 | 接受 |
-| 1 | `scripts/ci/merge-admission-policy.mjs` + `config/merge-admission-policy.json` + 表驱动测试；`clued-work-admission.mjs` 改为读策略；摘要与 App check 标题打印模式；**默认表先用「兼容表」**：三层 `work_claim: enforce`、`merge_slot: required`、`reruns_per_head: 0`、`auto_merge: allowed`（仓库设置仍关着，所以不生效）；`owner_grant: required` 与 `up_to_date: check_and_strict` 只对受保护层，`code` / `docs` 为 `none` / `strict_only`；今天的其他行为原样保留且不在表里：文件列表截断判 REJECTED（`changed_files_truncated`），服务未报 `merge_slot_until` 时 `clued-merge-slot` 以 `not_reported` 通过，fork PR 的 gate 一律按强制跟随 App check，workflow 守卫（`workflow_gate:*`）在所有状态、所有层无条件生效。行为与今天完全一致 | 无（只多了可见性） | 批准受保护 PR；设 `CLUED_MERGE_ADMISSION_STATE=normal`（或不设） |
-| 2 | 默认表换成 §5.2 推荐表；gate 按 App check 标题里的 `reruns_per_head` 放行，runner 开工前检查沿用现有路径（读准入运行的结论与同一 attempt 的 `admission-gate` job），不读 check 标题、不需要 `checks: read`；准入 workflow 的 `pull_request_target` 类型加 `auto_merge_enabled` / `auto_merge_disabled`；合同 §1.7 对应段落改写；`ci-usage-report.mjs` | 重跑一次放行；App check 标题带模式；auto-merge 可用（Owner 打开仓库设置后） | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） |
-| 3 | 位时效绑 CI：迁移 `clued_work_merge_slot_touch_v1`（ci-admission Binding）；准入 workflow 加 `workflow_run: completed` 触发的秒级 job 上报 CI 状态；复核 `reason=state_change` 模式 | 持位不再需要续期；CI 失败自动出队 | 迁移、Worker 发布各自授权 |
-| 4 | 队列：`clued_work_renew` 带合并引用改为入队返回位置；`clued-merge-slot` 只认队列头；resume 返回 `merge_queue` | 等待不再轮询（入队一次即可，位置由检查与 resume 可见） | 迁移、Worker 发布 |
-| 5 | 执行器（可选）：clued-admission App 增加 `contents: write`、`pull_requests: write`；默认分支上的执行器 job 为队列头做「并入 main」与打开 auto-merge。用 App 安装令牌而不是 `GITHUB_TOKEN`：GitHub 不为 `GITHUB_TOKEN` 的推送创建新的 workflow 运行，用它并入 main 不会触发 CI | Agent 在入队后无事可做 | 批准 App 权限扩展（扩大了 `clued-admission` environment 里私钥的能力范围） |
-| 6 | 删除 `CLUED_WORK_ADMISSION_ENFORCE` 与 `CLUED_OWNER_REVIEW_ENFORCE` 的读取与 advisory 分支（v0.2） | 不再有「提示模式」；回滚手段改为 `frozen` 与规则集的 Owner 紧急步骤（GitConnectorWriteContract「Emergency or recovery」） | 删除两个变量 |
+| 步 | 内容 | 行为变化 | 需要 Owner 做的 | Task |
+| --- | --- | --- | --- | --- |
+| 0 | 本文 Draft → Accepted；ADR 接受；Clued Decision 指向 Drive 报告文件 ID 与仓库 commit | 无 | 接受 | `ada1334c`（已完成：Decision `d130195e`） |
+| 1 | `scripts/ci/merge-admission-policy.mjs` + `config/merge-admission-policy.json` + 表驱动测试；`clued-work-admission.mjs` 改为读策略；摘要与 App check 标题打印模式；**默认表先用「兼容表」**：三层 `work_claim: enforce`、`merge_slot: required`、`reruns_per_head: 0`、`auto_merge: allowed`（仓库设置仍关着，所以不生效）；`owner_grant: required` 与 `up_to_date: check_and_strict` 只对受保护层，`code` / `docs` 为 `none` / `strict_only`；今天的其他行为原样保留且不在表里：文件列表截断判 REJECTED（`changed_files_truncated`），服务未报 `merge_slot_until` 时 `clued-merge-slot` 以 `not_reported` 通过，fork PR 的 gate 一律按强制跟随 App check，workflow 守卫（`workflow_gate:*`）在所有状态、所有层无条件生效。行为与今天完全一致 | 无（只多了可见性） | 批准受保护 PR；设 `CLUED_MERGE_ADMISSION_STATE=normal`（或不设） | `2c7c7430` |
+| 2 | 默认表换成 §5.2 推荐表；gate 按 App check 标题里的 `reruns_per_head` 放行，runner 开工前检查沿用现有路径（读准入运行的结论与同一 attempt 的 `admission-gate` job），不读 check 标题、不需要 `checks: read`；准入 workflow 的 `pull_request_target` 类型加 `auto_merge_enabled` / `auto_merge_disabled`；合同 §1.7 对应段落改写；`ci-usage-report.mjs` | 重跑一次放行；App check 标题带模式；auto-merge 可用（Owner 打开仓库设置后） | 在每台 runner 更新钩子；打开仓库 `Allow auto-merge`；发布 Worker（合同） | `745c288f` |
+| 3 | 位时效绑 CI：迁移 `clued_work_merge_slot_touch_v1`（ci-admission Binding）；准入 workflow 加 `workflow_run: completed` 触发的秒级 job 上报 CI 状态；复核 `reason=state_change` 模式 | 持位不再需要续期；CI 失败自动出队 | 迁移、Worker 发布各自授权 | `3576d10d` |
+| 4 | 队列：`clued_work_renew` 带合并引用改为入队返回位置；`clued-merge-slot` 只认队列头；resume 返回 `merge_queue` | 等待不再轮询（入队一次即可，位置由检查与 resume 可见） | 迁移、Worker 发布 | `38e0c90d` |
+| 5 | 执行器（可选）：clued-admission App 增加 `contents: write`、`pull_requests: write`；默认分支上的执行器 job 为队列头做「并入 main」与打开 auto-merge。用 App 安装令牌而不是 `GITHUB_TOKEN`：GitHub 不为 `GITHUB_TOKEN` 的推送创建新的 workflow 运行，用它并入 main 不会触发 CI | Agent 在入队后无事可做 | 批准 App 权限扩展（扩大了 `clued-admission` environment 里私钥的能力范围） | `91039d74` |
+| 6 | 删除 `CLUED_WORK_ADMISSION_ENFORCE` 与 `CLUED_OWNER_REVIEW_ENFORCE` 的读取与 advisory 分支（v0.2） | 不再有「提示模式」；回滚手段改为 `frozen` 与规则集的 Owner 紧急步骤（GitConnectorWriteContract「Emergency or recovery」） | 删除两个变量 | `958f8ed7` |
 
 **两个 ENFORCE 变量在第 1–5 步期间的处理**：继续读取，各自保留今天的语义（`CLUED_WORK_ADMISSION_ENFORCE` 不为 `true` 时认领与合并位只提示；`CLUED_OWNER_REVIEW_ENFORCE` 不为 `true` 时不调门口、只在摘要提示），脚本打印 `mode: legacy-advisory(<哪个变量>)`。优先级：`frozen` 高于两个 kill switch——状态为 `frozen` 时忽略它们，三层仍按受保护基线判定；它们只在 `normal` / `efficiency` 下生效。它们不是三个状态之一、不受 I1 保护（提示模式本来就放松受保护层），§14 把它们列为 I1 之外的放宽开关，只保留到第 6 步；在此之前不得用它们代替 `frozen`。`CLUED_RELEASE_GRANT_ENFORCE` 不在本文范围。
 
