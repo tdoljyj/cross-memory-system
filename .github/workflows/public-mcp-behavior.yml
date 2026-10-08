@@ -36,6 +36,7 @@ jobs:
       actions: read
       checks: read
       contents: read
+      pull-requests: read
     outputs:
       admitted: ${{ steps.gate.outputs.admitted }}
       enforced: ${{ steps.gate.outputs.enforced }}
