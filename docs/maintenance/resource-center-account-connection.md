@@ -1146,6 +1146,61 @@ of the storage concurrency design (Task `10826ce2`), done ahead of the rest.
 - **Release order.** Either order works: the migration only changes waits, and
   the Worker change only adds retries to recovery reads.
 
+### Directory access digests (storage step 2)
+
+Clued Task `e2eb07d1`, Decision `94fc26b4`, migration
+`20261008120000_storage_access_digest_v1.sql`, Worker
+`apps/clued-cloud/worker/storage-access-digest-backfill.ts`. Design:
+`development/contracts/storage/StorageFineGrainedConcurrency.v0.1.md` §4.1.
+This step only collects the digest; no matching rule changes until step 3
+(Task `469700eb`).
+
+- **What it is.** `resource_center_artifacts_v1.provider_access_digest` is
+  `googleDriveAccessDigest`: every permission with its grantee kind, role,
+  domain, discoverability and expiry. Unlike `provider_sharing_digest` it
+  changes when only a role changes. `access_digest_missing_at` marks a
+  directory whose digest could not be established; it stays matched by version.
+- **Where it comes from.**
+  - Onboarding: the root and every track, from the same Drive read that
+    recorded their version (`effect_result` `access_digest`).
+  - Directory create and adopt: the verifier reads the folder's permissions
+    and the proof carries `provider_access_digest`, only together with the
+    sharing digest the existing rule already checks.
+  - Directory move: the settlement records it on the source and destination
+    folders still at the version the provider identity saw (in the same update
+    as their sharing digest) and on the moved directory.
+  - The directory check reports it per directory; an Owner approved
+    `artifact_update` with `provider_access_digest` stores it and clears the
+    missing mark.
+  - Backfill: every minute `clued_storage_access_digest_backfill_v1` lists up
+    to five directories with neither digest and no missing mark, under an
+    active connection with a valid credential, a quiet root and no root deny.
+    `load` applies the scheduled-recovery checks (account, active unexpired
+    policy, current Decisions, profile version) and stamps
+    `access_digest_attempted_at`, which keeps the directory out of the list
+    for 30 minutes. The Worker reads `id,version,permissions(...)` in one
+    request. The commit, under the root lock and with CAS on the row version
+    and registered version, stores the digest only when that version is the
+    registered one; another version, a 404 or no usable permission list marks
+    the directory missing. A transient or credential failure (429, 5xx, 401,
+    403, timeout) commits nothing, so the directory is tried again later.
+    Receipt `storage_access_digest_backfill`.
+    Equal versions prove only that the folder is unchanged since the registry
+    last recorded that version, the same baseline version matching uses today.
+- **Missing digests.** A directory marked missing is matched by version as
+  before. To give it a digest, run the directory check and record the
+  observed `provider_access_digest` with `artifact_update`.
+- **Release order.** Migration first. The new Worker sends inputs the old
+  database refuses: `access_digest` at onboarding, `provider_access_digest`
+  in a directory create or adopt proof (refused with `storage_verified_mismatch`
+  after Drive was written, leaving the job uncertain) and in a directory check
+  observation. The migration alone changes nothing a running Worker relies
+  on; every new input is optional.
+- **Before the migration.** It refuses to run while any storage journal is
+  verified but not settled (`storage_access_digest_verified_job_unsettled`):
+  the verified record compares whole registry rows, which the new columns
+  change. Let such jobs settle first.
+
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,

@@ -1,5 +1,5 @@
 import { adoptShape, adoptItemAllowed, adoptProviderBefore } from "./resource-center-google-drive-adopt-effect.mjs";
-import { googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
@@ -12,16 +12,20 @@ const fail = (code) => { throw new Error(code); };
  * Drive version the authority saw (read twice), owned by this account, not a
  * shortcut and, for a directory, with exactly its folder's sharing state.
  * Anything else leaves the item unregistered; nothing in Drive changed.
- * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, get_ownership: Function, get_sharing: Function, include_verified_proof?: boolean}} config
+ * Storage step 2 (Task e2eb07d1): with get_access, an adopted directory also
+ * carries the access digest it was observed with (provider_access_digest); a
+ * failed read only leaves it out.
+ * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, get_ownership: Function, get_sharing: Function, get_access?: Function, include_verified_proof?: boolean}} config
  */
 export function createGoogleDriveAdoptPostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
-  get_file: getFile, list_children: listChildren, get_ownership: getOwnership, get_sharing: getSharing,
+  get_file: getFile, list_children: listChildren, get_ownership: getOwnership, get_sharing: getSharing, get_access: getAccess,
   include_verified_proof: includeVerifiedProof = false,
 } = {}) {
   const root = normalized(managedRoot);
   if (!root || !rootId || !rootParentId || typeof getFile !== "function" || typeof listChildren !== "function" ||
-    typeof getOwnership !== "function" || typeof getSharing !== "function" || typeof includeVerifiedProof !== "boolean") {
+    typeof getOwnership !== "function" || typeof getSharing !== "function" || typeof includeVerifiedProof !== "boolean" ||
+    (getAccess !== undefined && typeof getAccess !== "function")) {
     throw new TypeError("Pinned Drive identity and a metadata API are required.");
   }
   const folderCheck = (file, id, name, parent) => {
@@ -71,6 +75,13 @@ export function createGoogleDriveAdoptPostconditionVerifier({
       digest = await sharing(shape.source_file_id);
       if (digest === null || digest !== before.source_sharing_digest || await sharing(node.id) !== digest) fail("DRIVE_POSTCONDITION_SHARING_CHANGED");
     }
+    let accessDigest = null;
+    if (shape.directory && includeVerifiedProof && typeof getAccess === "function") {
+      try {
+        const access = await getAccess(shape.source_file_id);
+        accessDigest = access?.id === shape.source_file_id ? googleDriveAccessDigest(access) : null;
+      } catch { accessDigest = null; }
+    }
     // Stable across two reads (the listing too).
     if (listed[0].version !== undefined && listed[0].version !== before.source_file_version) fail("DRIVE_POSTCONDITION_VERSION_CHANGED");
     await observe();
@@ -81,7 +92,8 @@ export function createGoogleDriveAdoptPostconditionVerifier({
       target_kind: shape.target_kind, provider_before: structuredClone(before),
       checks: Object.freeze({ identity: true, ancestors: true, stable_state: true, unique_name: true, owned_by_me: true,
         not_shortcut: true, ...(shape.directory ? { sharing_matches_parent: true } : {}) }),
-      ...(shape.directory ? { provider_sharing_digest: digest } : {}) });
+      ...(shape.directory ? { provider_sharing_digest: digest } : {}),
+      ...(accessDigest ? { provider_access_digest: accessDigest } : {}) });
     return Object.freeze({ ...postcondition, verified_proof: verifiedProof });
   };
 }

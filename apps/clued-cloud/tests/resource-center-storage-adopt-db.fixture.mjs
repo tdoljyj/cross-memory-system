@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
-import { googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const CLOUD = "public.clued_storage_cloud_worker_router_v2";
@@ -283,6 +283,8 @@ export async function testStorageAdopt(t, admin, server, user, decision) {
       assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
       const row = await artifact(target, `${folder.path}/handmade`);
       assert.equal(row.target_kind, "directory"); assert.equal(row.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+      // Storage step 2: with the access digest it was observed with.
+      assert.equal(row.provider_access_digest, googleDriveAccessDigest({ permissions: OWNER_ONLY }));
       // Its Drive version advances as children arrive; it is matched by sharing.
       await createFile(target, client, storage, `${row.path}/note.md`);
       storage.files.get(dirId).version = "9";

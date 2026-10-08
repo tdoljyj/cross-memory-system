@@ -174,6 +174,22 @@ export function createGoogleDriveMetadataApi({
     return { id: result.id, permissions: result.permissions };
   }
 
+  // Version and every permission from one response (storage step 2 access
+  // digest backfill): the digest is stored only when this version equals the
+  // registered one, so both must describe the same state of the folder.
+  async function getVersionedAccess(id, {signal} = {}) {
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) {
+      throw new TypeError("Invalid Drive file ID.");
+    }
+    const url = new URL(`${DRIVE_API}/${encodeURIComponent(id)}`);
+    url.searchParams.set("fields", "id,version,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)");
+    url.searchParams.set("supportsAllDrives", "true");
+    signal?.throwIfAborted();
+    const result = await read(url.href, await credential(false), signal);
+    if (!result || result.id !== id) throw new Error("DRIVE_METADATA_MISMATCH");
+    return { id: result.id, version: result.version, permissions: result.permissions };
+  }
+
   // Ownership and trash capabilities of one file (P5 trash/untrash, §3.4 item 6).
   // Read separately so every other metadata object keeps its existing shape.
   async function getOwnership(id, {signal} = {}) {
@@ -341,7 +357,7 @@ export function createGoogleDriveMetadataApi({
     return result.files.length > 0 || (typeof result.nextPageToken === "string" && result.nextPageToken.length > 0);
   }
 
-  return Object.freeze({ getFile, getSharing, getAccess, getOwnership, getAppAuthorization, hasChildren, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
+  return Object.freeze({ getFile, getSharing, getAccess, getVersionedAccess, getOwnership, getAppAuthorization, hasChildren, getRevision, countKeptRevisions, downloadRevision, listChildren: (input, {signal} = {}) => list(input, false, signal),
     listFolder: (parentId, {signal, app_authorized: appAuthorized = false} = {}) => {
       if (typeof appAuthorized !== "boolean") throw new TypeError("app_authorized must be boolean.");
       return list({ parent_id: parentId }, true, signal, appAuthorized);

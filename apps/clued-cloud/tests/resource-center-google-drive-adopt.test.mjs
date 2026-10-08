@@ -165,3 +165,24 @@ test("the verifier refuses a changed version, owner, name, ancestor or a directo
   await assert.rejects(verifierFor(d)({ profile, mutation: f.request.mutation, provider_before: f.provider, effect_result: effect }),
     /DRIVE_POSTCONDITION_REQUEST_MISMATCH/);
 });
+
+test("storage step 2: with an access reader, an adopted directory also carries its access digest", async () => {
+  const { googleDriveAccessDigest } = await import("../../../kernel/host/resource-center-google-drive-sharing.mjs");
+  const permissions = [{ id: "owner-permission", type: "user", role: "owner" }];
+  const verify = async (mutation, getAccess) => {
+    const f = await effectFixture(mutation);
+    const effect = await f.effect(f.request);
+    const base = { managed_root: ROOT, root_folder_id: "root", root_parent_id: "container", get_file: f.d.getFile,
+      list_children: f.d.listChildren, get_ownership: f.d.getOwnership, get_sharing: f.d.getSharing, include_verified_proof: true };
+    return (await createGoogleDriveAdoptPostconditionVerifier({ ...base, ...(getAccess ? { get_access: getAccess } : {}) })({
+      profile, mutation: f.request.mutation, provider_before: f.provider, effect_result: effect })).verified_proof;
+  };
+  const proof = await verify(dirMutation, async (id) => ({ id, permissions }));
+  assert.equal(proof.provider_access_digest, googleDriveAccessDigest({ permissions }));
+  assert.equal(proof.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+  // A file, no reader, a failed or foreign read: no access digest, and the adopt still verifies.
+  assert.equal("provider_access_digest" in await verify(fileMutation, async (id) => ({ id, permissions })), false);
+  assert.equal("provider_access_digest" in await verify(dirMutation), false);
+  assert.equal("provider_access_digest" in await verify(dirMutation, async () => { throw new Error("DRIVE_METADATA_UNAVAILABLE"); }), false);
+  assert.equal("provider_access_digest" in await verify(dirMutation, async () => ({ id: "track", permissions })), false);
+});

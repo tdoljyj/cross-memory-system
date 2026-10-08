@@ -70,7 +70,8 @@ async function fixture(options={}) {
       return {files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??(options.boundaryIncomplete && calls.length>=5)??false};
     }
     const result=structuredClone(files.find(f=>f.id===u.pathname.split("/").at(-1)));
-    if(u.searchParams.get("fields")==="id,shared,permissionIds")return {id:result.id,shared:false,permissionIds:["owner-"+result.id]};
+    if(u.searchParams.get("fields")==="id,shared,permissionIds,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)")
+      return {id:result.id,shared:false,permissionIds:["owner-"+result.id],permissions:[{id:"owner-"+result.id,type:"user",role:"owner"}]};
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
     if(options.boundaryDrift && calls.length>=9 && result.id==='root')result.version='2';
     return result;
@@ -105,6 +106,8 @@ test("server directory observation uses pinned secret, fixed GET-only batches an
   // One more batch reads each registered directory's sharing state.
   assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,10);
   for(const directory of f.rpcs[1].observation.directories)assert.match(directory.provider_sharing_digest,/^[0-9a-f]{64}$/);
+  // Storage step 2: and, from the same read, its access digest.
+  for(const directory of f.rpcs[1].observation.directories)assert.match(directory.provider_access_digest,/^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
   assert.equal(JSON.stringify(result).includes("credential"),false);
 });
