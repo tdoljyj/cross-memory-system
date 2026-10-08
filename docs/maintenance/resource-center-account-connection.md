@@ -1081,6 +1081,47 @@ same requests submitted after the root settled ran within 90 seconds.
   the new Worker against the old database logs `storage_queued_sweep_unavailable`
   every minute until the migration is applied.
 
+### A binary create keeps its staged object until it is settled (BUG-20261008-002)
+
+Clued Task `5c18ed64`, migration
+`20261008030000_storage_staging_retain_until_settled_v1.sql`, Worker module
+`apps/clued-cloud/worker/storage-cloud-recovery.ts`.
+On 2026-10-08 the binary create `a1f3c2d4-5e6b-4a7c-9d8e-20261008b001`
+(59728-byte zip) started at 03:11:04Z and recorded its provider attempt at
+03:11:07.65Z; the minute staging sweep deleted its staged object at
+03:11:07.99Z, while the effect was streaming it to Drive. The file never
+reached Drive, the journal stayed `started` and fenced `Clued_资料中心`, and
+later submits were refused with `storage_root_busy`. Production showed the same
+race once before: the create of 2026-10-07 09:06Z lost its object 2 seconds
+before its attempt and was settled `PROVIDER_EFFECT_ABSENT` only at 16:44Z.
+Two of the five binary creates so far failed this way.
+
+- **The staged object stays until the job is settled.**
+  `clued_private.storage_staging_deletable_v1` let the sweep delete a consumed
+  object as soon as its job had an intent, but the intent is created when the
+  executor starts and a binary create streams the object only after recording
+  its attempt. A consumed object is now deletable only when its job was settled
+  before any reservation (`dispatch_outcome`) or its intent is `committed` or
+  `cancelled`; `storage_staging_purgeable_v1` (the 7-day row purge) follows the
+  same rule. `rejected` and `expired` rows are unchanged.
+- **Scheduled recovery can prove the create absent.** Recovery first runs the
+  create postcondition verifier, which polls for the file. When the registered
+  folders are unchanged it polled for the whole 10-second budget, so the
+  absence probe and `clued_storage_recovery_absent_v1` never ran and the job
+  was listed again with backoff forever. (On 2026-10-07 the root folder had
+  changed, the verifier failed at once, and the probe settled that job.) For a
+  create, the verifier now polls for half the budget; the rest is left for the
+  probe and the settlement. Every other check is unchanged: a file that exists,
+  is tagged with the intent, or cannot be read is never settled as absent.
+- **The job of 2026-10-08.** Once the Worker is released, the next listing of
+  `...b001` proves it absent and settles it `cancelled` with
+  `PROVIDER_EFFECT_ABSENT`; the root is then quiet again and new submits run.
+  The staged object is already gone, so the same request is submitted again
+  under a new `job_id` with a new upload.
+- **Release order.** Either order works. The migration alone keeps every new
+  binary job's object until settlement; the Worker alone lets recovery settle a
+  stuck create.
+
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,
