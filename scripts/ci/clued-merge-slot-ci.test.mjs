@@ -34,7 +34,7 @@ const QUALITY = ".github/workflows/clued-cloud-quality-gate.yml";
 
 const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
-  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", ...extra });
+  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", CLUED_WORK_ADMISSION_ENFORCE: "true", ...extra });
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
   ({ number, body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main" } } });
 const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
@@ -135,15 +135,19 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY)]),
     ...listing(HEAD, [{ path: QUALITY, sha: "f".repeat(40) }]) });
   state = await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS);
-  assert.equal(state.state, "green", "an edited workflow's run is not CI activity");
+  // ...nor green while it still runs (confirmation review MINOR-C): not reported.
+  assert.deepEqual([state.state, state.reason], ["idle", `only runs that are not counted are active: ${QUALITY} in_progress`]);
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY)]), ...sameAsMain() });
   state = await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS);
   assert.deepEqual([state.state, state.reason], ["running", `${QUALITY} in_progress`]);
-  // A workflow the pull request adds, a push run, another head's run and a finished run are not counted.
-  fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(".github/workflows/pr-added.yml"), run(QUALITY, "in_progress", { event: "push" }),
+  // A workflow the pull request adds keeps nothing alive and holds green back.
+  fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(".github/workflows/pr-added.yml")]) });
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
+  assert.ok(!fetch.calls.some((call) => call.route.includes("/contents/")), "no listing when nothing counted runs");
+  // A push run, another head's run and a finished run are not this pull request's CI.
+  fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY, "in_progress", { event: "push" }),
     run(QUALITY, "in_progress", { head_sha: OTHER }), run(QUALITY, "completed")]) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
-  assert.ok(!fetch.calls.some((call) => call.route.includes("/contents/")), "no listing when nothing counted runs");
   // A required check not posted yet, with nothing running: not reported.
   fetch = fakeFetch({ ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "clued-work-admission": [check("clued-work-admission")],
     "clued-admission-verified": [] }),
@@ -192,11 +196,28 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
     ["clued-merge-slot", HEAD, "failure", "pr:5:run:9001", "Merge slot returned: CI failed"]);
   assert.match(posted.output.summary, /^gitleaks concluded failure on this head.*Turn auto-merge off/);
   assert.match(renderSummary(result), /slot returned/);
-  // Nothing returned (already given back): no check is posted.
-  fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) },
-    touch: () => ({ status: "ok", returned: false, merge_slot_returned: [] }) });
+  // Nothing returned (already given back) and the newest slot check already failed: no check is posted.
+  const slotCheck = (conclusion) => ({ id: 30, name: "clued-merge-slot", head_sha: HEAD, status: "completed", conclusion, app: { id: ADMISSION_APP_ID } });
+  const failedCi = { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) };
+  const notReturned = () => ({ status: "ok", returned: false, merge_slot_returned: [] });
+  fetch = slotWorld({ extra: { ...failedCi, ...checksRoute(HEAD, { "clued-merge-slot": [slotCheck("failure")] }) }, touch: notReturned });
   result = await report(fetch);
   assert.deepEqual([result.errors, fetch.calls.some((call) => call.method === "POST" && call.route.endsWith("/check-runs"))], [[], false]);
+  // ...but a green one left by a run that could not post is failed now (confirmation review NIT-2).
+  fetch = slotWorld({ extra: { ...failedCi, ...checksRoute(HEAD, { "clued-merge-slot": [slotCheck("success")] }) }, touch: notReturned });
+  result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports[0].merge_slot_check_run_id], [[], 5005]);
+  // Where the policy does not require the slot, the check is not failed (confirmation review MINOR-B).
+  for (const extraEnv of [{ CLUED_MERGE_ADMISSION_STATE: "efficiency" }, { CLUED_WORK_ADMISSION_ENFORCE: "" }]) {
+    fetch = slotWorld({ extra: failedCi });
+    result = await report(fetch, { env: extraEnv });
+    assert.deepEqual([result.reports[0].returned, fetch.calls.some((call) => call.method === "POST" && call.route.endsWith("/check-runs"))],
+      [true, false], JSON.stringify(extraEnv));
+  }
+  // Frozen requires it whatever the switch says.
+  fetch = slotWorld({ extra: failedCi });
+  result = await report(fetch, { env: { CLUED_MERGE_ADMISSION_STATE: "frozen", CLUED_WORK_ADMISSION_ENFORCE: "" } });
+  assert.equal(result.reports[0].merge_slot_check_run_id, 5005);
   // Without the App key a returned slot is an error: its green check would outlive it.
   fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) } });
   result = await report(fetch, { env: { CLUED_ADMISSION_APP_ID: "", CLUED_ADMISSION_APP_PRIVATE_KEY: "" } });
@@ -222,11 +243,10 @@ test("reportMergeSlots: nothing in the event is trusted, and nothing is asked wh
   fetch = slotWorld({ holders: [] });
   result = await report(fetch, { eventName: "workflow_run", event: { workflow_run: { head_sha: HEAD } } });
   assert.deepEqual(fetch.calls.map((call) => call.route), [`/repos/${REPO}/pulls?state=open&per_page=100&page=1`, `rpc:${HOLDERS_RPC}`]);
-  // A workflow_run for another head: skipped after the slot lookup.
+  // A workflow_run for another head still reports every slot: concurrency may have dropped the holder's own run (confirmation review MINOR-A).
   fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   result = await report(fetch, { eventName: "workflow_run", event: { workflow_run: { head_sha: OTHER, conclusion: "failure", pull_requests: [{ number: 5 }] } } });
-  assert.equal(result.skipped, "the event's head holds no merge slot");
-  assert.equal(fetch.calls.length, 2);
+  assert.deepEqual([result.skipped, result.reports.map((r) => [r.pr, r.ci_state])], [null, [[5, "green"]]]);
   // A workflow_run for the holder's head: the state is read from the API, not the event's conclusion.
   fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   result = await report(fetch, { eventName: "workflow_run", event: { workflow_run: { head_sha: HEAD, conclusion: "failure" } } });

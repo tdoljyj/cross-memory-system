@@ -2,8 +2,9 @@
 // Merge Admission v0.1 §7.3, step 3 of §13 (Task 3576d10d; Owner Decisions
 // 4f576896 and 1fb7f6b3): the merge slot follows CI. The clued-merge-slot-ci
 // workflow runs this on the default branch, with the CI admission Binding's
-// token, whenever a CI workflow run completes, every hour and by hand. It
-// reports the CI state of each open pull request that holds a merge slot:
+// token, whenever a CI workflow run of a pull request completes and by hand;
+// the hourly re-verification runs it too. It reports the CI state of each
+// open pull request that holds a merge slot:
 //
 //   failed   one of the four CI required checks (gitleaks, trivy and
 //            clued-work-admission from GitHub Actions, clued-admission-verified
@@ -13,10 +14,12 @@
 //            re-run's green (independent review MAJOR-2).
 //   running  a run of a CI workflow is queued or in progress on the head; the
 //            slot stays 90 minutes after the report.
-//   green    the four checks passed and nothing is running; the slot stays 30
-//            minutes after the report, for the merge.
-// Anything else (checks not posted yet, nothing running) is not reported, and
-// the slot keeps its clocks (clued_work_merge_slot_touch_v1).
+//   green    the four checks passed and no run of the head's pull request is
+//            active, counted or not; the slot stays 30 minutes after the
+//            head's first green report, for the merge.
+// Anything else (checks not posted yet, nothing running, or only runs of
+// workflows the pull request changed) is not reported, and the slot keeps its
+// clocks (clued_work_merge_slot_touch_v1).
 //
 // Nothing in the triggering event is trusted (§7.3, re-review 2 N3c): a
 // workflow_run event also fires for workflows a pull request adds or edits,
@@ -34,8 +37,9 @@
 // GitHub requests per run: one list of open pull requests, one commit for
 // each open pull request whose body names no claim, and for each pull request
 // that holds a slot four check-run lists, one run list and, while something
-// runs, one directory listing. A workflow_run event for a head that holds no
-// slot stops there.
+// runs, one directory listing. Every run looks at every slot, whichever pull
+// request's run completed: concurrency keeps one run pending and drops the
+// others, so a run must not skip a holder (confirmation review MINOR-A).
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -45,6 +49,8 @@ import { fileURLToPath } from "node:url";
 import {
   ADMISSION_APP_ID,
   MERGE_SLOT_CHECK_NAME,
+  admissionEnforced,
+  appChecksOnHead,
   cluedRpc,
   githubJson,
   githubPaged,
@@ -118,10 +124,10 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows) 
     }
   }
   const runs = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${headSha}&per_page=100`);
-  const active = (Array.isArray(runs && runs.workflow_runs) ? runs.workflow_runs : [])
+  const anyActive = (Array.isArray(runs && runs.workflow_runs) ? runs.workflow_runs : [])
     .filter((run) => run && run.head_sha === headSha && run.event === "pull_request" && ACTIVE.has(run.status))
-    .map((run) => ({ id: run.id, path: String(run.path ?? "").replace(/@.*$/, ""), status: run.status }))
-    .filter((run) => workflows.has(run.path));
+    .map((run) => ({ id: run.id, path: String(run.path ?? "").replace(/@.*$/, ""), status: run.status }));
+  const active = anyActive.filter((run) => workflows.has(run.path));
   if (active.length) {
     // Counted only while the head's copy of the workflow is the default branch's.
     const listing = await githubJson(fetchImpl, env, `/repos/${repository}/contents/.github/workflows?ref=${headSha}`);
@@ -129,10 +135,21 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows) 
     const same = active.filter((run) => atHead.get(run.path) === workflows.get(run.path));
     if (same.length) return { state: "running", reason: same.map((run) => `${run.path} ${run.status}`).join(", "), checks };
   }
+  // A run that is not counted (a workflow the pull request added or changed)
+  // keeps nothing alive, but it is CI the pull request still waits for: not
+  // green yet (confirmation review MINOR-C).
+  if (anyActive.length) {
+    return { state: "idle", reason: `only runs that are not counted are active: ${anyActive.map((run) => `${run.path} ${run.status}`).join(", ")}`, checks };
+  }
   if (checks.every((check) => check.status === "completed" && PASSING.has(check.conclusion))) {
     return { state: "green", reason: "the four CI required checks passed", checks };
   }
   return { state: "idle", reason: "no CI result yet and no CI run active", checks };
+}
+
+async function newestSlotCheckGreen(fetchImpl, env, repository, headSha) {
+  const [newest] = await appChecksOnHead(fetchImpl, env, repository, headSha, MERGE_SLOT_CHECK_NAME);
+  return Boolean(newest) && newest.status === "completed" && newest.conclusion === "success";
 }
 
 const notDeployed = (response) => response.status === 404 && response.body && response.body.code === "PGRST202";
@@ -193,12 +210,10 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
       if (pr && !live.some((entry) => entry.pr === pr)) live.push({ scope, pr });
     }
   }
-  // The event names a head; a run for a head that holds no slot changes nothing.
-  const signal = eventName === "workflow_run" && event && event.workflow_run ? String(event.workflow_run.head_sha ?? "") : "";
-  if (signal && !live.some((holder) => holder.pr.head.sha === signal)) {
-    result.skipped = "the event's head holds no merge slot";
-    return result;
-  }
+  // The slot check is failed only where the policy requires the slot: in
+  // efficiency it only advises it for code and docs, and while admission is
+  // advisory the check is not enforced (confirmation review MINOR-B).
+  const slotRequired = admissionEnforced(env, mode) && mode.state !== "efficiency";
   for (const { pr, scope } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {
@@ -214,9 +229,13 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
         Object.assign(report, seen.state === "failed"
           ? { returned: Boolean(response.body.returned) }
           : { touched: Boolean(response.body.touched), merge_slot_until: response.body.merge_slot_until ?? null });
-        if (report.returned) {
-          // The head's clued-merge-slot check may still be green: fail it, so a
-          // re-run that turns CI green cannot let auto-merge merge without the slot.
+        // The head's clued-merge-slot check may still be green: fail it, so a
+        // re-run that turns CI green cannot let auto-merge merge without the
+        // slot. Also when an earlier run returned the slot but could not post
+        // (confirmation review NIT-2): the newest App check is still green then.
+        const stale = seen.state === "failed" && slotRequired
+          && (report.returned || await newestSlotCheckGreen(fetchImpl, env, repository, pr.head.sha));
+        if (stale) {
           const posted = await postAppCheck({ env, fetchImpl, headSha: pr.head.sha, success: false, prNumber: pr.number,
             name: MERGE_SLOT_CHECK_NAME, title: "Merge slot returned: CI failed",
             summary: `${seen.reason} on this head, so Clued gave the merge slot back (Merge Admission v0.1 §7.3). `

@@ -230,11 +230,11 @@
 **实施说明（2026-10-08，第 3 步，Task `3576d10d`，Owner Decision `4f576896`、`1fb7f6b3`；已按独立复审修正）**：第 4 步（队列）之前，位仍是互斥的触发引用，第 3 步只换它的时钟。落地时与上文的差别如下，均不放松 §2 的保证：
 - 上报在两处运行：独立的 `.github/workflows/clued-merge-slot-ci.yml`（Owner 选择，不放进准入 workflow，避免与 PR 事件的并发组互相取消）在 CI workflow 的 `workflow_run: completed` 与 `workflow_dispatch` 时运行，只处理 `pull_request` / `pull_request_target` 事件的运行（事件只用来跳过，不用来判定）；每小时一次的上报是 `clued-work-admission-reverify.yml` 里的一个步骤（定时、push 到 main、手动），不多占托管运行。
 - 运行开始不产生事件，两次上报之间可能隔一小时，所以 `running` 保位 90 分钟（不是 45 分钟），由硬上限兜住。
-- head → PR 不用 `commits/{sha}/pulls`：job 先读打开的 PR 列表，从 PR 正文（没有时从 head 提交）的认领尾注取作用域，再用新 RPC `clued_work_merge_slot_holders_v1(scope, repository)` 向 Clued 取持位者，只看持位 PR 的当前 head。事件里的 head 只用来在「这个 head 不持位」时提前结束。
-- `running` 除加闸 workflow 外，也算 `gitleaks.yml`、`trivy.yml` 的运行（同样要求 head 处文件与默认分支 blob SHA 相同）；只认 `pull_request` 事件的运行。改了这些 workflow 文件的 PR 不会被报 `running`，合同要求此时照旧续期。判定顺序：四个 CI 类必需检查任一最新一条最终失败（`failure`、`timed_out`、`action_required`、`startup_failure`；`cancelled` 不算，编辑 PR 会取消同一 head 上的准入运行）→ `failed`；否则有计入的运行在排队或进行 → `running`；否则四个都通过 → `green`；其余不上报。
+- head → PR 不用 `commits/{sha}/pulls`：job 先读打开的 PR 列表，从 PR 正文（没有时从 head 提交）的认领尾注取作用域，再用新 RPC `clued_work_merge_slot_holders_v1(scope, repository)` 向 Clued 取持位者，只看持位 PR 的当前 head。事件内容一律不用：并发组只留一个待运行的上报、丢掉其余，所以每次上报都看所有持位 PR（确认复审 MINOR-A）。
+- `running` 除加闸 workflow 外，也算 `gitleaks.yml`、`trivy.yml` 的运行（同样要求 head 处文件与默认分支 blob SHA 相同）；只认 `pull_request` 事件的运行。改了这些 workflow 文件的 PR 不会被报 `running`，合同要求此时照旧续期。判定顺序：四个 CI 类必需检查任一最新一条最终失败（`failure`、`timed_out`、`action_required`、`startup_failure`；`cancelled` 不算，编辑 PR 会取消同一 head 上的准入运行）→ `failed`；否则有计入的运行在排队或进行 → `running`；否则只要该 PR 的 head 上还有未计入的运行（PR 新增或改过的 workflow）→ 不上报（不算 `green`，确认复审 MINOR-C）；否则四个都通过 → `green`；其余不上报。
 - `green` 的 30 分钟从该 head 第一次 `green` 上报起算，不另查 `clued-merge-slot` 是否已绿，也不查 head 是否含 tip：持位者本来就在取位后才并入 main。续期仍刷新 45 分钟时钟，位在两个时钟中较晚者失效；硬上限从取位起算（取位 = 带合并引用签发、新加合并引用、或位已失效时带合并引用续期），每次上报带上策略文件的 `merge_slot_hard_cap_minutes`，到点即失效，上报不能复活已失效的位。硬上限只为正在等位的会话腾出位：位空着时，原持有者续期就会像新取位一样再取到（复审 MINOR-2，接受）。
-- `failed` 立即还位，回执 `WORK_CLAIM_MERGE_SLOT_RETURNED(why=ci_failed)`，并在该 head 上发一条失败的 `clued-merge-slot` App check，免得重跑转绿后 auto-merge 在没有位时合并（复审 MAJOR-2）；`running` / `green` 在状态或 head 变化时写 `WORK_CLAIM_MERGE_SLOT_TOUCHED`。认领视图增加 `merge_slot_ci`（取位时间、硬上限、最近一次上报）。
-- 合同 §1.7 随本步发 agent-contract v40（Owner 在 Decision `1fb7f6b3` 选择，再次豁免每周一版）：有上报的仓库不再为保位续期；看不到对当前 head 的上报时照旧续期；任一 CI 类必需检查失败即关掉 auto-merge。
+- `failed` 立即还位，回执 `WORK_CLAIM_MERGE_SLOT_RETURNED(why=ci_failed)`，并在该 head 上发一条失败的 `clued-merge-slot` App check，免得重跑转绿后 auto-merge 在没有位时合并（复审 MAJOR-2）；只在策略要求合并位时发（`efficiency` 与提示模式不发，确认复审 MINOR-B），之前没发成、最新一条仍绿时下次补发（确认复审 NIT-2）；`running` / `green` 在状态或 head 变化时写 `WORK_CLAIM_MERGE_SLOT_TOUCHED`。认领视图增加 `merge_slot_ci`（取位时间、硬上限、最近一次上报）。
+- 合同 §1.7 随本步发 agent-contract v40（Owner 在 Decision `1fb7f6b3` 选择，再次豁免每周一版）：有上报的仓库不再为保位续期；看不到对当前 head 的上报、或 CI 仍在跑而 `merge_slot_until` 不到 10 分钟时照旧续期；任一 CI 类必需检查失败即关掉 auto-merge。
 - 上线顺序：先应用迁移，再合并（迁移未应用时上报只记 notice，不报错），最后发布 Worker 对外服务 v40。
 
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
