@@ -63,8 +63,8 @@
 //   CLUED_RUNNER_HOOK_APP_ID       id of the hook's own read-only GitHub App
 //   CLUED_RUNNER_HOOK_APP_KEY_FILE file holding that App's private key (PEM)
 //   CLUED_RUNNER_HOOK_TOKEN_FILE   older alternative to the App: a file holding
-//                                  a read-only GitHub token (actions and
-//                                  contents: read); used only when no App is set
+//                                  a read-only GitHub token (actions, contents
+//                                  and pull requests: read); used only when no App is set
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
 //   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run, and
 //                                  separately for a re-run's admission-gate
@@ -78,7 +78,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "merge-admission-step2";
+export const HOOK_VERSION = "merge-admission-step2-pr-read";
 
 // The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
@@ -106,9 +106,9 @@ async function github(fetchImpl, token, url, { allowMissing = false, method = "G
 // the App's rate limit. On 2026-10-07 an Agent's script spent the Owner
 // account's hourly limit, which the hook's personal token shared, and every
 // pull request job was refused. The App's key mints a one-hour installation
-// token for this repository only, with actions and contents read whatever
-// else the App may hold. Every job can read the key (the hook runs as the
-// runner's account), so the clued-admission App, which posts the admission
+// token for this repository only, with actions, contents and pull requests
+// read whatever else the App may hold. Every job can read the key (the hook
+// runs as the runner's account), so the clued-admission App, which posts the admission
 // checks, must never be the one configured here: its id is refused.
 // The same id as ADMISSION_APP_ID in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
@@ -141,7 +141,7 @@ async function readToken({ env, fetchImpl, readFile, now, repository }) {
     const installation = await github(fetchImpl, jwt, `/repos/${repository}/installation`);
     if (!installation || !/^[0-9]{1,20}$/.test(String(installation.id))) throw new Error(`App ${appId} has no installation on ${repository}.`);
     const minted = await github(fetchImpl, jwt, `/app/installations/${installation.id}/access_tokens`, { method: "POST", expect: 201,
-      body: { repositories: [repository.split("/")[1]], permissions: { actions: "read", contents: "read" } } });
+      body: { repositories: [repository.split("/")[1]], permissions: { actions: "read", contents: "read", pull_requests: "read" } } });
     if (!minted || typeof minted.token !== "string" || !minted.token) throw new Error(`App ${appId} returned no installation token.`);
     return minted.token;
   }
