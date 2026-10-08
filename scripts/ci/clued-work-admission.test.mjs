@@ -468,13 +468,13 @@ test("pull_request_target (Merge Admission step 2): a pull request merged or clo
   }
   const { fetchImpl } = fakeFetch({ [FILES]: files, [PULL]: { body: freshPull({ state: "open" }) }, [COMPARE]: { body: { status: "ahead" } }, [VERIFY]: { body: admittedPayload } });
   assert.equal((await evaluateIn({ env: env(), event: event(), eventName: "pull_request_target", fetchImpl })).verdict, "ADMITTED");
-  // main: not a failure, and the workflow posts no check for it.
+  // main: the run fails (the runner hook admits on run success alone), and the workflow posts no check for it.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clued-work-admission-closed-"));
   const eventPath = path.join(dir, "event.json");
   fs.writeFileSync(eventPath, JSON.stringify(event()));
   const code = await main(["--mode", "required"], { ...env(), GITHUB_EVENT_NAME: "pull_request_target", GITHUB_EVENT_PATH: eventPath,
     GITHUB_WORKSPACE: ROOT, GITHUB_OUTPUT: path.join(dir, "out") }, fakeFetch({ [PULL]: { body: freshPull({ state: "closed" }) } }).fetchImpl);
-  assert.equal(code, 0);
+  assert.equal(code, 1);
   assert.match(fs.readFileSync(path.join(dir, "out"), "utf8"), /^verdict=PR_NOT_OPEN$/m);
   const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission.yml"), "utf8");
   assert.ok(workflow.includes("if: ${{ !cancelled() && steps.admit.outputs.verdict != 'PR_NOT_OPEN' }}"));

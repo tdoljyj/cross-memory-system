@@ -1664,6 +1664,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
     // judgement of the same head.
+    // (postAppCheck only ever posts completed checks, so an unfinished newer
+    // one does not occur.)
     const newer = attempt && found.check && found.newestForPr && found.newestForPr.status === "completed"
       && Number(found.newestForPr.id) > Number(found.check.id) ? found.newestForPr : null;
     const run = newer ?? found.check;
@@ -2348,9 +2350,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     console.error(`::error title=clued-work-admission::${withTokenHint(outcome.error)}`);
     return 1;
   }
+  // PR_NOT_OPEN: the workflow posts no check for it, but the run still fails:
+  // the runner hook admits a workflow-changing pull request's jobs on the
+  // admission run's success alone (confirmation review MAJOR-N1).
   if (outcome.verdict === "PR_NOT_OPEN") {
-    console.error(`::notice title=clued-work-admission::${outcome.reasons.join("; ")}`);
-    return 0;
+    console.error(`::error title=clued-work-admission::${outcome.reasons.join("; ")}`);
+    return 1;
   }
   if (!outcome.admitted) {
     const text = withTokenHint(`${outcome.verdict}: ${outcome.reasons.join("; ")}`);
