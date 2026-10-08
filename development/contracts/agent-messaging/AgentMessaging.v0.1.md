@@ -1,6 +1,6 @@
 # Agent Messaging v0.1：Agent 之间通过 Clued 对话
 
-状态：**第 1 步已合入并上线（PR #576，迁移与 Worker 已发布，`CLUED_AGENT_MESSAGES_V1` 已打开）。第 2 步（本 PR）：Agent 合同 v35、Clued Skill 1.0.7、收件提醒 hook、存储写冲突附 `coordinate`。** 本文不授予迁移、发布、合并或权限变更。
+状态：**第 1 步已合入并上线（PR #576，迁移与 Worker 已发布，`CLUED_AGENT_MESSAGES_V1` 已打开）。第 2 步已合入（PR #581）：Agent 合同 v35、Clued Skill 1.0.7、收件提醒 hook、存储写冲突附 `coordinate`。§7 账号级总开关第 1 步（本 PR）：迁移、Worker 与 `/agent-messages` 页面。** 本文不授予迁移、发布、合并或权限变更。
 
 日期：2026-10-06
 Owner 决定：Decision `24077bba`（专用消息通道；先做与 claim `3c2518c0` 不重叠的部分），Decision `471eb27a`（第 2 步加收件提醒 hook）。
@@ -76,3 +76,21 @@ Worker（`apps/clued-cloud/worker/agent-messages.ts`，开关 `CLUED_AGENT_MESSA
 2. 生产迁移 `20261006090000_agent_messages_v1.sql`（`migration.production`）与 Worker 发布（`release.production`），Owner 在 Clued 页面批准。
 3. Owner 打开 `CLUED_AGENT_MESSAGES_V1`。在此之前工具不出现，resume 不变。
 4. 第 2 步：不改迁移；合入后 Worker 发布（`release.production`），新合同经 `/clued-agent.md` 提供。
+
+## 7. 账号级总开关
+
+Owner 决定 `2bacda7a`（2026-10-08）：Agent 消息由一个账号级开关控制，默认开启，只有用户本人能在 Clued 页面切换。此前只有记录在 Clued 里的长期授权约束 `5c852d8c` 说明"不用逐条确认"，新账号没有这条记录。
+
+**第 1 步**（Task `17a8649b`，本 PR）：
+
+- 迁移 `apps/clued-cloud/supabase/migrations/20261008190000_agent_messages_switch_v1.sql`：
+  - `clued_private.agent_message_settings_v1` 每账号一行；没有行即开启，新账号不用设置。
+  - `clued_agent_messages_setting_v1` 读取、`clued_agent_messages_setting_set_v1` 切换（`{enabled, base_version}`，页面显示的版本不是当前版本时答 `agent_messages_setting_version_conflict`）。两者只认本人直接登录的账号会话（`authorization_owner_v12`），Binding、委托 OAuth 登录和 MCP 工具都调不到；切换还要求登录带会话 ID。每次真正的切换留一条回执（`AGENT_MESSAGES_ENABLED` / `AGENT_MESSAGES_DISABLED`），与原值相同则什么也不写。
+  - 关闭时 `clued_agent_message_send_v1` 对新消息和回复答 `agent_messages_disabled`，附 `how_to`：告诉 Owner 要找谁、为什么，不绕过。判断放在幂等重放之后、账号锁之内，所以关闭前已提交的发送重放仍返回原消息。读收件不受影响。
+  - `clued_agent_inbox_summary_v1` 带 `agent_messages_enabled`。
+- Worker（`worker/agent-messages.ts`）：resume 和续租折入的 `agent_inbox` 带 `messages_enabled`；关闭时附 `messages_disabled_notice`。
+- 页面 `/agent-messages`：显示当前状态和是否默认，一个按钮切换；首页导航加入口。
+
+**第 2 步**（Task `613fad7e`）：合同 v40 写明开关开启时收发协调消息不询问 Owner、§4 错误表加 `agent_messages_disabled`；Clued Skill 同步；`.claude/settings.json` 放行两个消息工具。拆出来是因为合同改版要改 `config/clued-components.json`，第 1 步开工时它在另一条认领的写集里。
+
+**上线**：生产迁移 `20261008190000_agent_messages_switch_v1.sql`（`migration.production`）和 Worker 发布（`release.production`）由 Owner 在 Clued 页面批准。迁移先于 Worker 上线也安全：Worker 读不到 `agent_messages_enabled` 时按开启处理。

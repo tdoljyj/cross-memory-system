@@ -120,8 +120,14 @@ export function withAgentMessageNotice(name: string, result: unknown): unknown {
 const INBOX_HOW_TO =
   "Read with clued_agent_inbox and answer each request with clued_agent_message_send reply_to (release, an expected release time, or a narrower write_set).";
 
+// The account's switch (migration 20261008190000; Owner Decision 2bacda7a):
+// only the Owner turns it, on the Clued page, and it is on by default.
+export const AGENT_MESSAGES_DISABLED_NOTICE =
+  "The Owner has turned off Agent messages for this account: clued_agent_message_send answers agent_messages_disabled. You can still read your inbox. Tell the Owner in one line who you need and what for, instead of writing to them; do not ask the Owner to turn messages back on.";
+
 // The summary as agent_inbox. A failed summary read never fails the call it is
-// folded into: the fields say so.
+// folded into: the fields say so. A summary without the switch (a database
+// before 20261008190000) is the default, on.
 export function withAgentInbox(result: unknown, summary: unknown): unknown {
   const record = plainObject(result);
   if (!record || record.error) return result;
@@ -129,14 +135,17 @@ export function withAgentInbox(result: unknown, summary: unknown): unknown {
   if (!body || body.status !== "ok") return { ...record, agent_inbox: null, agent_inbox_unavailable: true };
   const unread = typeof body.unread_count === "number" ? body.unread_count : 0;
   const open = typeof body.open_request_count === "number" ? body.open_request_count : 0;
+  const messagesEnabled = body.agent_messages_enabled !== false;
   return {
     ...record,
     agent_inbox: {
+      messages_enabled: messagesEnabled,
       unread_count: unread,
       open_request_count: open,
       awaiting_reply_count: typeof body.awaiting_reply_count === "number" ? body.awaiting_reply_count : 0,
       latest_unread: Array.isArray(body.latest_unread) ? body.latest_unread : [],
       ...(unread > 0 || open > 0 ? { how_to: INBOX_HOW_TO, notice: AGENT_MESSAGE_NOTICE } : {}),
+      ...(messagesEnabled ? {} : { messages_disabled_notice: AGENT_MESSAGES_DISABLED_NOTICE }),
     },
   };
 }

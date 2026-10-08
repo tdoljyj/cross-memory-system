@@ -145,6 +145,19 @@ test('a rejection is a structured result, not a transport error', async () => {
     assert.equal(result.isError, false);
     assert.deepEqual(result.structuredContent, rejection);
   } finally { restore(); }
+
+  // The account's switch is off: the refusal and its how_to reach the Agent.
+  const disabled = { status: 'rejected', error_code: 'agent_messages_disabled',
+    how_to: 'The Owner has turned off Agent messages for this account. Tell the Owner in one line who you needed and what for.' };
+  const second = mockFetch(() => Response.json(disabled));
+  try {
+    const response = await worker.fetch(mcp(bindingToken, 'clued_agent_message_send', {
+      to: { claim_id: CLAIM }, subject: 's', body: 'b', idempotency_key: 'switched-off',
+    }), enabled, ctx);
+    const result = (await response.json()).result;
+    assert.equal(result.isError, false);
+    assert.deepEqual(result.structuredContent, disabled);
+  } finally { second.restore(); }
 });
 
 test('resume folds in agent_inbox for this session; a failed summary is reported, not thrown', async () => {
@@ -181,7 +194,21 @@ test('resume folds in agent_inbox for this session; a failed summary is reported
       ? { status: 'ok', unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [] } : resume));
     try {
       const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
-      assert.deepEqual(result.agent_inbox, { unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [] });
+      assert.deepEqual(result.agent_inbox, { messages_enabled: true, unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [] });
+    } finally { restore(); }
+  }
+
+  // The Owner turned the account's switch off (migration 20261008190000): the
+  // fold-in says so and tells the Agent to go to the Owner instead.
+  {
+    const { restore } = mockFetch((call) => Response.json(isSummary(call)
+      ? { status: 'ok', unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [], agent_messages_enabled: false }
+      : resume));
+    try {
+      const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
+      assert.equal(result.agent_inbox.messages_enabled, false);
+      assert.match(result.agent_inbox.messages_disabled_notice, /agent_messages_disabled/);
+      assert.match(result.agent_inbox.messages_disabled_notice, /do not ask the Owner to turn messages back on/);
     } finally { restore(); }
   }
 
