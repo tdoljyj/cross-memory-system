@@ -106,6 +106,23 @@ test('create goes to clued_owner_request_v1 with the Binding hash and returns an
   } finally { restore(); }
 });
 
+test('a request the auto-approval switch approved comes back decided, with its grant and no confirm_url (OwnerCredential §12)', async () => {
+  const worker = await loadContinuityWorker();
+  const grant = { grant_id: '44444444-4444-4444-8444-444444444444', expires_at: '2026-10-04T00:00:00Z', max_uses: 1,
+    uses: 0, revoked: false, any_agent: false, auto_approved: true };
+  const { restore } = mockFetch(() => Response.json({
+    status: 'committed', replayed: false, receipt_id: 'r-1', request: { ...publicRequest('approved_once'), grant },
+  }));
+  try {
+    const result = (await (await worker.fetch(mcp(bindingToken, TOOL, { action: 'release.production',
+      resources: ['repo:tdoljyj/cross-memory-system/abc'], idempotency_key: 'auto-approved-1' }), enabled, ctx)).json()).result;
+    assert.equal(result.isError, false);
+    assert.equal(result.structuredContent.request.status, 'approved_once');
+    assert.equal(result.structuredContent.request.grant.auto_approved, true);
+    assert.equal(result.structuredContent.request.confirm_url, undefined);
+  } finally { restore(); }
+});
+
 test('actions creates one bundle through clued_owner_request_bundle_v1 (PermissionSimplification §3.3)', async () => {
   const worker = await loadContinuityWorker();
   const MEMBER = '44444444-4444-4444-8444-444444444444';
