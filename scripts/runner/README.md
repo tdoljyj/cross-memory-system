@@ -22,9 +22,33 @@ A job starts only when its run is one of the following:
 
 Everything else is refused before any step runs: pushes to other branches, pull requests into other branches, and other events.
 
-**Re-runs.** A re-run of a pull request or branch dispatch run (run attempt 2 or later) is refused, including "Re-run failed jobs". A re-run replays its run's own workflow file and event, which may come from before the gates existed. Push a new commit instead. `main`'s own runs may be re-run.
-
 While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning.
+
+## Re-runs
+
+MergeAdmission v0.1 §8, Owner Decisions `77216370` and `1b93760d`. A re-run is run attempt 2 or later. It replays its run's own event and workflow files.
+
+- **`main`'s own runs** (push, schedule, `workflow_run`, `pull_request_target`, a manual dispatch on `main`) may be re-run, as before. That includes the admission workflow (`clued-work-admission.yml`). It runs `main`'s code and reads the pull request and `main` afresh every time, so it may be re-run without limit.
+- **A manual dispatch on another branch** is never re-run. Dispatch again.
+- **A pull request run** may be re-run only while the pull request is open, still into `main`, and its head is still the run's head (the hook reads the pull request from GitHub; any error refuses). Then:
+  - The **`admission-gate` job** starts. The gate decides whether this attempt is within the policy's re-runs per head (the `reruns <n>` in the `clued-admission-verified` check's title).
+  - **`gitleaks.yml` and `trivy.yml`** (required checks without a gate) may be re-run once: attempt 2 only.
+  - **Every other job** starts only when this attempt's `admission-gate` job ran again and succeeded. "Re-run all jobs" does that. "Re-run failed jobs" and re-running a single job do not run a successful gate again: GitHub lists the earlier gate job in the new attempt, successful, but with the earlier attempt's start time. The hook therefore requires a gate job named exactly `admission-gate`, completed with success, that started no earlier than the attempt did (the run's `run_started_at`). A job list that GitHub does not return complete, or a time it cannot read, refuses.
+  - A pull request that changes a workflow still needs a successful admission run of its event, on every attempt, exactly as for the first one. The newest admission run on the head decides, so after an Owner grant the run of the pull request body edit counts.
+  - The run attempt the runner reports (`GITHUB_RUN_ATTEMPT`) and the one GitHub reports for the run must agree; otherwise the job is refused.
+- **A refused re-run still uses up its attempt number.** The next re-run of the same run is one attempt later.
+- **Never re-run an old head's run.** It is refused anyway, and its concurrency group can cancel the current head's run before any job starts.
+
+**After an Owner grant for a protected change:** edit the pull request body, which runs admission again, and wait until `clued-admission-verified` is green on the head. Then use "Re-run all jobs" once on each gated workflow run of that head (and on `gitleaks` / `trivy` if they were refused). Until every runner has this version of the check (see below), a re-run refused at "Set up runner" means a runner still has the old one: fall back to closing and reopening the pull request once.
+
+## Updating the check
+
+The installed copy does not follow the repository. To update it:
+
+1. After the change is merged, copy only `clued-runner-job-started.mjs` from that merged `main` commit to every runner, over the installed copy (the directory of Install step 2 below). The wrappers (`.sh`, `.ps1`), the App key and the `.env` lines stay as they are. The runner starts the script afresh for every job, so no restart is needed.
+2. Confirm each runner's version: every `ALLOW` / `REFUSE` line ends with `[hook <version>]` (this version: `merge-admission-step2`). The runner heartbeat (`clued-ci-runner-heartbeat`, every 15 minutes on `main`) shows it in each runner's "Set up runner" section.
+
+A runner not yet updated refuses every re-run of a pull request run. That is safe; fall back to closing and reopening the pull request.
 
 ## Install (once per runner machine, by the Owner)
 
@@ -59,7 +83,7 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
    On Windows, the hook line points to `C:\ProgramData\CluedRunnerHook\clued-runner-job-started.ps1`, the node line points to `externals\node20\bin\node.exe`, and the key line to `C:\ProgramData\CluedRunnerHook\app.pem`.
 
    A runner installed before the App reads a token file instead (`CLUED_RUNNER_HOOK_TOKEN_FILE`). The hook uses it only when no App is configured. When moving a runner to the App, replace that line with the two App lines, then delete the token file and revoke the token.
-4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`.
+4. **Check the output.** Watch one pull request run and one push to `main`. Each job log starts with a "Set up runner" section that shows `clued-runner-hook: ALLOW ...` or `WOULD REFUSE ...`, ending with the hook's version (`[hook merge-admission-step2]`).
 5. **Turn on enforcement.** Set `CLUED_RUNNER_HOOK_ENFORCE=true` and restart the runner.
 6. **Make the setting unreachable from jobs.** Every job runs as the runner's service account, including the ungated short checks that run a pull request's own code. On a standard install that account owns the runner directory and its `.env`, so a job can delete the hook line or set `CLUED_RUNNER_HOOK_ENFORCE=false`, and the next listener restart (a self-update, a service restart, a reboot) turns the check off for every later job (re-review 7, MAJOR-4). Do one of the following:
    - **Ephemeral runners (the only hard guarantee).** Register each runner with `--ephemeral` (or a just-in-time config) on a machine or VM that is reset after one job. A job then cannot leave anything behind for the next one.
@@ -78,5 +102,8 @@ While `CLUED_RUNNER_HOOK_ENFORCE` is not `true`, the check only prints a warning
   - The ungated short checks run anyway, even for a pull request no claim covers. These are the self-hosted workflows without an `admission-gate` job, for example `model-program-*`, `mps03-native-agent`, `multitrack-governance-projection`, `node-profile-policy`, `runner-budget-policy`, `gitleaks` and `trivy`; also `memory-publication-gate` (`pull_request_target`, once per pull request event into `main` that touches `memory/` or the snapshots, `main`'s verifier) and `public-mcp-gate-receipt` (`workflow_run`, `main`'s code), which runs each time `public-mcp-protocol`, `public-mcp-behavior`, `gitleaks` or `trivy` completes for a pull request run of the Owner's account, up to four times per push, with no claim.
   - Each of their self-hosted jobs has a timeout of 25 minutes or less, except `model-program-m0`. That file's hash is pinned in the frozen M0 manifest, so it keeps GitHub's 6-hour default. (`clued-integration-runtime-nightly` has 75 minutes, but runs on `main` only.)
   - The admission check refuses a pull request that adds a self-hosted job to an ungated workflow, moves a hosted job to a self-hosted runner, drops or raises a self-hosted job's timeout, or adds or changes its `strategy` (a matrix).
+- **Re-runs on GitHub-hosted jobs.** The check runs only on self-hosted runners. A hosted job of a gated workflow (for example the `untrusted-hosted` jobs) runs in "Re-run failed jobs" on the gate's earlier output, and gitleaks or trivy jobs on hosted runners re-run without a count.
+- **The API's lag of a few seconds.** The check reads the pull request's head and the attempt's jobs from GitHub's API, which can trail a push or a job's end by a few seconds. A re-run of the old head started just after a push can pass the current-head test in that window. A fresh gate job still shown as running is waited for (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`).
+- **Cancelling by re-running an old head.** A re-run of an old head's run joins its concurrency group when it is queued, before any job starts, and can cancel the current head's run. The check refuses the old run's jobs but cannot undo the cancel.
 - **Draft pull requests.** The hourly re-verification skips drafts, so a draft's admission is not re-checked after its claim ends. A draft's runs still need an admission run of their own event.
 - **`main`'s own runs.** Anyone who can dispatch workflows can start `main`'s workflows (for example `clued-integration-runtime-nightly.yml`). They run `main`'s code and are not metered. `main`'s code is not reviewed by a person: the ruleset requires no approval, and Agents merge their own pull requests once the checks pass. Admission asks the Owner (an Owner Grant on the exact head commit) for every change to the paths listed in WorkClaimAdmission §4.6: all of `.github/`, `scripts/ci/`, this directory, the release scripts and their dependencies, `.gitattributes` and `.gitmodules`, read both from the pull request and against `main`'s current tip; such a pull request must contain that tip. A change to other code that a job runs (the Worker and app source, other scripts) reaches `main` without the Owner, and so does everything until the Owner sets `CLUED_OWNER_REVIEW_ENFORCE=true`.

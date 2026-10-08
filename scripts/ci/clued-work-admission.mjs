@@ -84,6 +84,7 @@ import {
   layerOf,
   loadPolicy,
   modeLabel,
+  parseModeLabel,
   POLICY_PATH,
   resolveMode,
 } from "./merge-admission-policy.mjs";
@@ -1049,6 +1050,13 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
+  // Merge Admission step 2: auto_merge_disabled can arrive for a pull request
+  // that was just merged or closed. It is not judged, and nothing passes.
+  if (typeof pr.state === "string" && pr.state !== "open") {
+    outcome.verdict = "PR_NOT_OPEN";
+    outcome.reasons.push(`pull request #${pr.number} is ${plainFinding(pr.state)}; nothing to judge`);
+    return outcome;
+  }
 
   // Advisory mode must never fail the job for a reason unrelated to the PR:
   // whatever goes wrong below is reported and the PR is admitted.
@@ -1538,8 +1546,11 @@ export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, s
   }
   if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
   const body = await response.json();
-  // The newest App check of each admission run, with the pull request it names.
+  // The newest App check of each admission run, with the pull request it names,
+  // and the newest naming this pull request from any run (re-verification
+  // included), which a re-run also has to pass (Merge Admission step 2).
   const posted = new Map();
+  let newestForPr = null;
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== APP_CHECK_NAME || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== ADMISSION_APP_ID) continue;
@@ -1547,6 +1558,7 @@ export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, s
     if (!match) continue;
     const prior = posted.get(match[2]);
     if (!prior || Number(check.id) > Number(prior.check.id)) posted.set(match[2], { check, pr: Number(match[1]) });
+    if (Number(match[1]) === Number(prNumber) && (!newestForPr || Number(check.id) > Number(newestForPr.id))) newestForPr = check;
   }
   const runs = (await githubJson(fetchImpl, env,
     `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`)).workflow_runs ?? [];
@@ -1557,21 +1569,40 @@ export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, s
   for (const run of fresh) {
     const entry = posted.get(String(run.id));
     if (entry && entry.pr !== Number(prNumber)) continue;
-    return { run, check: entry ? entry.check : null };
+    return { run, check: entry ? entry.check : null, newestForPr };
   }
-  return { run: null, check: null };
+  return { run: null, check: null, newestForPr };
 }
 
 // Re-review 3, N-R3: a re-run replays the run's own workflow file and event,
 // so one of a run from before the gates existed has no gate, and "re-run
 // failed jobs" keeps the gate's earlier output. The gate refuses re-runs of
-// pull request and branch dispatch runs; push a new commit instead (the
-// runner check refuses them before any job, including "re-run failed jobs").
+// branch dispatch runs; push a new commit instead.
+// Merge Admission v0.1 §8 (step 2, Owner Decisions 77216370, 1b93760d): a
+// pull request run's "Re-run all jobs" runs this gate again, which admits it
+// only on the pull request's current head and only while the attempt is at
+// most 1 + the reruns_per_head in the admission check's title. "Re-run failed
+// jobs" does not run the gate again; the runner check refuses its heavy jobs.
 export function rerunAttempt(env) {
   const attempt = Number.parseInt(String(env.GITHUB_RUN_ATTEMPT ?? "1"), 10);
   return Number.isInteger(attempt) && attempt > 1 ? attempt : null;
 }
 const RERUN_HOWTO = "re-runs are not admitted; push a new commit";
+const PR_RERUN_HOWTO = "only \"Re-run all jobs\" of the current head's run, as many times as the clued-admission-verified title allows; push a new commit otherwise";
+
+// The pull request as it is now, for a re-run (the event payload is the
+// original one). GitHub lets a token with contents: read read it.
+async function currentHeadOf(fetchImpl, env, pr) {
+  let now;
+  try {
+    now = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/pulls/${pr.number}`);
+  } catch (error) {
+    return `pull request #${pr.number} could not be read (${error instanceof Error ? error.message : String(error)})`;
+  }
+  if (!now || now.state !== "open") return `pull request #${pr.number} is ${now && now.state ? now.state : "unreadable"}`;
+  if (!now.head || now.head.sha !== pr.head.sha) return `${pr.head.sha} is no longer the head of #${pr.number} (now ${now.head && now.head.sha})`;
+  return null;
+}
 
 export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
   let enforced = enforcementEnabled(env);
@@ -1605,9 +1636,12 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);
     if (attempt) {
-      outcome.verdict = "RERUN_REFUSED";
-      outcome.reasons.push(`run attempt ${attempt}: ${RERUN_HOWTO}`);
-      throw Object.assign(new Error("refused"), { refused: true });
+      const stale = await currentHeadOf(fetchImpl, env, pr);
+      if (stale) {
+        outcome.verdict = "RERUN_REFUSED";
+        outcome.reasons.push(`run attempt ${attempt}: ${stale}; ${PR_RERUN_HOWTO}`);
+        throw Object.assign(new Error("refused"), { refused: true });
+      }
     }
     if (!/^[0-9]{1,20}$/.test(String(env.GITHUB_RUN_ID ?? ""))) throw new Error("GITHUB_RUN_ID is not set.");
     const self = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`);
@@ -1617,7 +1651,10 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
     for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
       found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
-      if ((found.check && found.check.status === "completed") || waited >= limit) break;
+      // On a re-run the admission run may itself be running again under its
+      // old id, with its previous attempt's check posted: wait for it to end.
+      const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
+      if (settled || waited >= limit) break;
       await sleep(GATE_POLL_SECONDS * 1000);
     }
     const run = found.check;
@@ -1631,12 +1668,43 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     } else if (!run || run.status !== "completed") {
       outcome.verdict = "ADMISSION_PENDING";
       outcome.reasons.push(`${what}: run ${found.run.id} ${run ? `check ${run.id} still ${run.status}` : "has posted no check"} after ${limit}s`);
+    } else if (attempt && found.run.status !== "completed") {
+      outcome.verdict = "ADMISSION_PENDING";
+      outcome.reasons.push(`${what}: run ${found.run.id} is running again (${found.run.status}) after ${limit}s; its check ${run.id} is from an earlier attempt`);
     } else if (run.conclusion === "success") {
       outcome.verdict = "ADMITTED";
       outcome.admitted = true;
     } else {
       outcome.verdict = "REJECTED";
       outcome.reasons.push(`${what} ${run.id} concluded ${run.conclusion}`);
+    }
+    // Merge Admission v0.1 §10: the gate does not read the policy; it reads
+    // the mode main's admission run put in the check's title. Frozen holds
+    // whatever CLUED_WORK_ADMISSION_ENFORCE says (§4).
+    const label = run && run.status === "completed" ? parseModeLabel(run.output && run.output.title) : null;
+    if (label) {
+      outcome.admission_mode = { state: label.state, layer: label.layer, reruns_per_head: label.reruns_per_head,
+        label: `${label.state} · ${label.layer} · reruns ${label.reruns_per_head}` };
+      if (label.state === "frozen" && !enforced) {
+        enforced = true;
+        outcome.enforced = true;
+        outcome.notices.push("merge admission is frozen: following the admission check whatever this run sees of CLUED_WORK_ADMISSION_ENFORCE");
+      }
+    }
+    if (attempt && outcome.admitted) {
+      const allowed = label ? label.reruns_per_head : 0;
+      const newest = found.newestForPr;
+      if (attempt > 1 + allowed) {
+        outcome.admitted = false;
+        outcome.verdict = "RERUN_REFUSED";
+        outcome.reasons.push(`run attempt ${attempt}: ${label ? `the ${label.layer} layer allows ${allowed} re-run(s) per head in ${label.state}` : "the admission check names no re-run allowance"}; ${PR_RERUN_HOWTO}`);
+      } else if (newest && Number(newest.id) !== Number(run.id) && newest.status === "completed" && newest.conclusion !== "success") {
+        // A later check on this head for this pull request (the hourly
+        // re-verification, or a switch to frozen) failed: a re-run follows it.
+        outcome.admitted = false;
+        outcome.verdict = "REJECTED";
+        outcome.reasons.push(`run attempt ${attempt}: the newer ${APP_CHECK_NAME} check ${newest.id} for #${pr.number} concluded ${newest.conclusion}`);
+      }
     }
   } catch (error) {
     if (!(error && error.refused)) {

@@ -44,7 +44,9 @@ name: clued-work-admission
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited, ready_for_review, closed]
+    # Merge Admission v0.1 §4.2 (step 2): turning auto-merge on or off
+    # re-judges the pull request, so frozen's "auto-merge forbidden" holds at once.
+    types: [opened, synchronize, reopened, edited, ready_for_review, closed, auto_merge_enabled, auto_merge_disabled]
 
 permissions:
   actions: read
@@ -68,6 +70,7 @@ jobs:
     # the runner check refuse the others (no admission check).
     if: >-
       github.event.action != 'closed' &&
+      github.event.pull_request.state == 'open' &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 5

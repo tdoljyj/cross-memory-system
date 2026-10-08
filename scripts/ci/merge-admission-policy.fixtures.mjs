@@ -33,11 +33,12 @@ export const policyText = ({ normal, efficiency, extra = {}, layers = {} }) => J
 // §13 step 1: code and docs judge as before in normal and efficiency alike.
 export const COMPATIBILITY_POLICY_TEXT = policyText({ normal: { code: row(), docs: row() }, efficiency: { code: row(), docs: row() } });
 
-// §5.2 and §5.3, which step 2 puts in the repository.
+// §5.2 and §5.3, which step 2 puts in the repository as policy version 2.
 export const RECOMMENDED_POLICY_TEXT = policyText({
   normal: { code: row({ reruns_per_head: 1 }), docs: row({ reruns_per_head: 2 }) },
   efficiency: { code: row({ work_claim: "advise", merge_slot: "advise", reruns_per_head: 2 }),
     docs: row({ work_claim: "advise", merge_slot: "advise", reruns_per_head: 2 }) },
+  extra: { version: 2 },
 });
 
 // Every column the file can set at its loosest, in both states.
