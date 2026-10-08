@@ -1,0 +1,25 @@
+{
+  "schema": "clued.merge-admission-policy/1",
+  "version": 1,
+  "about": "Merge admission policy (development/contracts/execution-admission/MergeAdmission.v0.1.md, Owner Decision d130195e). Read by scripts/ci/clued-work-admission.mjs from the default branch only. Step 1 compatibility table: every layer and state judges exactly as before this file existed; step 2 replaces it with the recommended table (§5.2, §5.3). The protected layer's rules are the code constant PROTECTED_BASELINE, never this file; the state is the Owner's repository variable CLUED_MERGE_ADMISSION_STATE (unset: normal). A malformed file judges every pull request as frozen.",
+  "state_variable": "CLUED_MERGE_ADMISSION_STATE",
+  "merge_slot_hard_cap_minutes": 120,
+  "layers": {
+    "protected": { "paths": [] },
+    "docs": { "paths": ["docs/**", "development/contracts/**/*.md", "development/authority-index/**/*.md", "*.md", "skills/**/*.md", "!skills/clued/references/agent-contract.md"] },
+    "code": { "paths": ["**"] }
+  },
+  "rules": {
+    "normal": {
+      "protected": "<baseline>",
+      "code": { "work_claim": "enforce", "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "required", "reruns_per_head": 0, "auto_merge": "allowed" },
+      "docs": { "work_claim": "enforce", "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "required", "reruns_per_head": 0, "auto_merge": "allowed" }
+    },
+    "efficiency": {
+      "protected": "<baseline>",
+      "code": { "work_claim": "enforce", "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "required", "reruns_per_head": 0, "auto_merge": "allowed" },
+      "docs": { "work_claim": "enforce", "owner_grant": "none", "up_to_date": "strict_only", "merge_slot": "required", "reruns_per_head": 0, "auto_merge": "allowed" }
+    },
+    "frozen": { "all_layers_as": "protected", "merge_actor": "owner_only", "auto_merge": "forbidden" }
+  }
+}

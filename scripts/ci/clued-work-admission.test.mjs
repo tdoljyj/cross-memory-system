@@ -16,12 +16,12 @@ import {
   DISPATCH_GATED_WORKFLOWS,
   dispatchAdmit,
   dispatchTitle,
-  evaluate,
+  evaluate as evaluateWith,
   gate,
   globToRegExp,
   renderReverifySummary,
-  reverify,
-  main,
+  reverify as reverifyWith,
+  main as mainWith,
   parseClaimReference,
   parseWorkflowTriggers,
   readWorkflowTriggers,
@@ -55,6 +55,14 @@ import {
   mergeSlotOutputs,
   mergeSlotState,
 } from "./clued-work-admission.mjs";
+import { fixedPolicy } from "./merge-admission-policy.fixtures.mjs";
+
+// Merge Admission v0.1 (review MAJOR-1): these self-tests run on the default
+// branch before every admission, so every evaluation here judges against the
+// fixed compatibility table, never the repository's policy file.
+const evaluate = (options) => evaluateWith({ readPolicyFile: fixedPolicy(), ...options });
+const reverify = (options) => reverifyWith({ readPolicyFile: fixedPolicy(), ...options });
+const main = (argv, environment, fetchImpl) => mainWith(argv, environment, fetchImpl, { readPolicyFile: fixedPolicy() });
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLAIM = "0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
@@ -536,7 +544,10 @@ test("reverify: a pull request whose green App check outlived its claim gets a f
   const posts = calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs"));
   assert.deepEqual(posts.map((c) => [c.body.head_sha, c.body.conclusion, c.body.external_id]),
     [[sha("d"), "failure", "pr:452:run:9001"], [sha("7"), "failure", "pr:458:run:9001"]]);
-  assert.match(posts[0].body.output.title, /RE-VERIFIED: REJECTED/);
+  // Merge Admission v0.1 §10: the title names the mode the head was judged in.
+  assert.equal(posts[0].body.output.title, "RE-VERIFIED: REJECTED [normal · code · reruns 0]");
+  assert.deepEqual(result.checked.map((c) => c.mode), ["normal · code · reruns 0", "normal · code · reruns 0", "normal · code · reruns 0"]);
+  assert.match(renderReverifySummary(result), /^## clued-work-admission re-verification\n\n\*\*Mode:\*\* `normal` · source `default`\n/);
   assert.ok(!calls.some((c) => c.url.includes("/pulls/455")), "drafts are skipped");
   assert.ok(!calls.some((c) => c.url.includes("/pulls/457")), "pull requests into other branches are skipped");
   assert.ok(!calls.some((c) => c.url.includes("/pulls/454")), "a head whose newest check failed is not evaluated");
@@ -545,6 +556,11 @@ test("reverify: a pull request whose green App check outlived its claim gets a f
   const advisory = await reverify({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "" }), fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
   assert.match(advisory.skipped, /advisory/);
   assert.match(renderReverifySummary(advisory), /Skipped/);
+  // Merge Admission v0.1 §4: frozen ignores the switch; without the App key
+  // that is an error, not a quiet skip.
+  const frozen = await reverify({ env: env({ CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_MERGE_ADMISSION_STATE: "frozen" }), fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
+  assert.deepEqual([frozen.skipped, frozen.enforced, frozen.mode.state], [undefined, true, "frozen"]);
+  assert.match(frozen.errors[0].error, /App is not configured/);
 });
 
 test("reverify (re-review 8): without the App key it reads nothing and fails", async () => {
