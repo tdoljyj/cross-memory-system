@@ -57,5 +57,7 @@ jobs:
           CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           # Re-review 7, MAJOR-3: protected changes need an Owner Grant on the head.
           CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
+          # Merge Admission v0.1 §4: judged in the same state as the check.
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode reverify
