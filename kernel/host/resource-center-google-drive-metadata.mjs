@@ -17,14 +17,34 @@ const SUBREQUEST_LIMIT_HINT = "Too many subrequests by single Worker invocation.
 const subrequestLimit = (error) => error instanceof Error &&
   (SUBREQUEST_LIMIT_MESSAGE.test(error.message) || error.message === SUBREQUEST_LIMIT_HINT);
 
+class TransientReadError extends Error {}
+const RATE_LIMIT_REASONS = new Set(["userRateLimitExceeded", "rateLimitExceeded"]);
+async function rateLimited(response) {
+  try {
+    const body = await response.json();
+    return Array.isArray(body?.error?.errors) && body.error.errors.some((item) => RATE_LIMIT_REASONS.has(item?.reason));
+  } catch { return false; }
+}
+function abortableSleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error("DRIVE_METADATA_ABORTED")); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(timer); reject(new Error("DRIVE_METADATA_ABORTED")); };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
-/** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean}} config */
+/** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean, transient_retries?: number, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>, random?: () => number}} config */
 export function createGoogleDriveMetadataApi({
   get_access_token: getAccessToken,
   get_credential: getCredential,
   fetch: fetchImpl = globalThis.fetch,
   timeout_ms: timeoutMs = 5000,
   authorization_details: authorizationDetails = false,
+  transient_retries: transientRetries = 0,
+  sleep = abortableSleep,
+  random = Math.random,
 } = {}) {
   if ((typeof getAccessToken !== "function" && typeof getCredential !== "function") ||
     (getAccessToken !== undefined && getCredential !== undefined) || typeof fetchImpl !== "function") {
@@ -34,6 +54,10 @@ export function createGoogleDriveMetadataApi({
     throw new TypeError("timeout_ms must be 1..10000.");
   }
   if (typeof authorizationDetails !== "boolean") throw new TypeError("authorization_details must be boolean.");
+  if (!Number.isInteger(transientRetries) || transientRetries < 0 || transientRetries > 3 ||
+    typeof sleep !== "function" || typeof random !== "function") {
+    throw new TypeError("transient_retries must be 0..3.");
+  }
   const fields = FIELDS + (authorizationDetails ? ",isAppAuthorized,capabilities(canAddChildren)" : "");
 
   async function credential(requireNamespace) {
@@ -51,7 +75,26 @@ export function createGoogleDriveMetadataApi({
     return token;
   }
 
+  // Storage step 1 (Task ce5c725e): a read is idempotent, so a rate limit
+  // (429, or 403 with a rate-limit reason), a 5xx or a transport failure is
+  // retried up to transient_retries times, waiting min(2^n s + up to 1 s, 32 s)
+  // as Google's Drive error guide recommends. Off by default; an abort, a
+  // subrequest limit or any other status is never retried.
   async function read(url, token, signal) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await readOnce(url, token, signal);
+      } catch (error) {
+        if (attempt >= transientRetries || !(error instanceof TransientReadError)) {
+          throw error instanceof TransientReadError ? new Error(error.message) : error;
+        }
+      }
+      await sleep(Math.min(2 ** attempt * 1000 + Math.floor(random() * 1000), 32_000), signal);
+      signal?.throwIfAborted();
+    }
+  }
+
+  async function readOnce(url, token, signal) {
     signal?.throwIfAborted();
     let response;
     try {
@@ -63,13 +106,22 @@ export function createGoogleDriveMetadataApi({
       });
     } catch (error) {
       // Keep provider text out of post-write diagnostics while preserving the transport category.
-      if (error?.name === "TimeoutError") throw new Error("DRIVE_METADATA_TIMEOUT");
+      // Only this request's own timeout is transient; the caller's abort never is.
+      if (error?.name === "TimeoutError") {
+        if (signal?.aborted) throw new Error("DRIVE_METADATA_TIMEOUT");
+        throw new TransientReadError("DRIVE_METADATA_TIMEOUT");
+      }
       if (error?.name === "AbortError" || signal?.aborted) throw new Error("DRIVE_METADATA_ABORTED");
       if (subrequestLimit(error)) throw new Error("DRIVE_METADATA_SUBREQUEST_LIMIT");
-      throw new Error("DRIVE_METADATA_REQUEST_FAILED");
+      throw new TransientReadError("DRIVE_METADATA_REQUEST_FAILED");
     }
     signal?.throwIfAborted();
-    if (!response.ok) throw new Error("DRIVE_METADATA_UNAVAILABLE");
+    if (!response.ok) {
+      if (response.status === 429 || response.status >= 500 || (response.status === 403 && await rateLimited(response))) {
+        throw new TransientReadError("DRIVE_METADATA_UNAVAILABLE");
+      }
+      throw new Error("DRIVE_METADATA_UNAVAILABLE");
+    }
     try {
       return await response.json();
     } catch (error) {
