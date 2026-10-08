@@ -95,11 +95,16 @@ const results = flags.full_matrix.map((item: Record<(typeof FLAGS)[number], bool
     assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name}: caller fields remain closed`);
     assert.deepEqual(tool.outputSchema, modelOutputSchema, `${tool.name}: existing public structured result schema`);
     assert.deepEqual(tool.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
-    assert.deepEqual(tool._meta["clued/requiredScopes"], ["context:read"]);
-    assert.equal(tool._meta["clued/scopeEnforcement"], "server-side");
+    assert.ok("_meta" in tool && typeof tool._meta === "object" && tool._meta !== null
+      && !Array.isArray(tool._meta), `${tool.name}: public metadata object is required`);
+    const meta = tool._meta;
+    assert.ok("clued/requiredScopes" in meta, `${tool.name}: required scopes metadata is missing`);
+    assert.deepEqual(meta["clued/requiredScopes"], ["context:read"]);
+    assert.ok("clued/scopeEnforcement" in meta, `${tool.name}: scope enforcement metadata is missing`);
+    assert.equal(meta["clued/scopeEnforcement"], "server-side");
     assert.match(tool.description, /Required Clued scope: context:read/);
   }
-  if (key(item as unknown as Record<string, unknown>) === productionKey) {
+  if (key(item) === productionKey) {
     assert.deepEqual(tools, baseline.tools, "production-equivalent flag case differs from frozen baseline");
   }
   return {

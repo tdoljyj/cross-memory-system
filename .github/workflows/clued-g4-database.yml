@@ -96,6 +96,9 @@ jobs:
           # restoring the ~860 MB Actions cache on top of it only adds download time.
 
       - name: Install application dependencies
+        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci --cache "$HOME/.npm" --prefer-offline
 
       - name: Build the application surfaces used by lifecycle tests
@@ -198,6 +201,9 @@ jobs:
           cache-dependency-path: apps/clued-cloud/package-lock.json
 
       - name: Install application dependencies
+        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci
 
       - name: Build the application surfaces used by lifecycle tests
