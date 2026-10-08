@@ -43,7 +43,10 @@ if(process.env.CLUED_QUALIFICATION_RUNTIME_CHILD!=='1') {
         init.signal.addEventListener('abort',()=>{aborted=true;reject(init.signal.reason);},{once:true});
       }))});
       let timeout=false;
-      try{await createGoogleDriveDirectoryProbe({trusted_layout:layout,get_file:hanging.getFile,list_folder:hanging.listFolder,timeout_ms:10})();}
+      // Long enough that the first read reaches the hanging fetch before the
+      // deadline even on a busy runner: with 10 ms the probe could expire
+      // while the credential was still awaited, and the abort never reached it.
+      try{await createGoogleDriveDirectoryProbe({trusted_layout:layout,get_file:hanging.getFile,list_folder:hanging.listFolder,timeout_ms:1000})();}
       catch(error){timeout=error.message==='DRIVE_QUALIFICATION_OBSERVATION_EXPIRED';}
       const vaultConfig={current_key_id:'fixture',keys:{fixture:btoa(String.fromCharCode(...new Uint8Array(32).fill(7))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'')}};
       const vault=await createStorageCredentialVault(vaultConfig);

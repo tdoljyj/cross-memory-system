@@ -8,7 +8,14 @@ type Connection = {
   id: string; version: number; provider: string; state: string; auth_mode: string;
   root_name: string; policy_active: boolean; actions: string[];
   refresh_enabled: boolean; database_execution_enabled: boolean; profile_current: boolean;
+  // Storage step 3: directories still matched by Drive version (older servers omit it).
+  access_digest_missing?: DigestMissing;
 };
+type DigestMissing = { count: number; directories: { path: string; since: string }[] };
+function isDigestMissing(value: unknown): value is DigestMissing {
+  return isObject(value) && Number.isSafeInteger(value.count) && Number(value.count) >= 0 && Array.isArray(value.directories)
+    && value.directories.length <= 20 && value.directories.every(d => isObject(d) && typeof d.path === "string" && typeof d.since === "string");
+}
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
   overwrite: "覆盖文件内容", destructive: "移入回收站、从回收站恢复", modify_subtree: "移动整个文件夹",
@@ -24,7 +31,8 @@ function isConnection(value: unknown): value is Connection {
     && typeof value.auth_mode === "string" && typeof value.root_name === "string"
     && typeof value.policy_active === "boolean" && typeof value.refresh_enabled === "boolean"
     && typeof value.database_execution_enabled === "boolean" && typeof value.profile_current === "boolean"
-    && Array.isArray(value.actions) && value.actions.every(action => typeof action === "string" && Object.hasOwn(actionName, action));
+    && Array.isArray(value.actions) && value.actions.every(action => typeof action === "string" && Object.hasOwn(actionName, action))
+    && (value.access_digest_missing === undefined || isDigestMissing(value.access_digest_missing));
 }
 // A refused request keeps only a fixed reason label from our own allowlist.
 class RequestFailure extends Error { reason?: string; }
@@ -601,6 +609,14 @@ export default function StorageConnections() {
         <p>账号允许的操作：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}</p>
         <p role="status" className="my-2">{available ? "存储执行入口已开启；每项操作仍须通过当前目录、客户端和单次任务准入。" : "当前文件操作不可用或暂停；连接状态不代表写入已启用。"}</p>
         <p className="my-2 text-sm">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
+        {c.access_digest_missing && c.access_digest_missing.count > 0 && <div role="status" className="my-2 text-sm">
+          <p>有 {c.access_digest_missing.count} 个目录还没有记录访问权限摘要，仍按 Google Drive 版本核对：这些目录里出现其他变化时，其下进行中的文件操作会失败。
+            请到<Link href="/storage/admin">存储管理</Link>运行目录检查，为它们记录摘要。</p>
+          <ul className="list-disc pl-6">{c.access_digest_missing.directories.map(d =>
+            <li key={d.path}>{d.path || "（根目录）"}</li>)}</ul>
+          {c.access_digest_missing.count > c.access_digest_missing.directories.length &&
+            <p>另有 {c.access_digest_missing.count - c.access_digest_missing.directories.length} 个未列出。</p>}
+        </div>}
         {c.state === "awaiting_provider" && <label className="my-2 block">
           <input type="checkbox" disabled={busy} checked={defaultRefresh} onChange={event => setDefaultRefresh(event.target.checked)} />
           连接后开启后台续签</label>}
