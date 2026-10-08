@@ -1,0 +1,56 @@
+{
+  "schema": "clued.model-dataset-split-bootstrap-exact/1",
+  "canonical_scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+  "task_id": "1502fd80-8ff8-4adc-b4f5-da6d462f4f8a",
+  "contract_sha256": "d8599ca8148f63a7893133ad3b13426edab25f3f48bc5291b1fb7c038a04754f",
+  "authority_registry_sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc",
+  "max_uses": 1,
+  "max_window_seconds": 3600,
+  "subject": {
+    "definition_id": "clued.model-program.DatasetSplit",
+    "version": "v0.1",
+    "definition_sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77",
+    "instance_schema_sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"
+  },
+  "mutation_roles": [
+    {
+      "role": "producer",
+      "operation": "create",
+      "record_type": "state",
+      "authority": "user_explicit",
+      "identity_not_persisted": true
+    },
+    {
+      "role": "permission",
+      "operation": "create",
+      "record_type": "decision",
+      "authority": "user_explicit",
+      "identity_not_persisted": true
+    },
+    {
+      "role": "recognition",
+      "operation": "create",
+      "record_type": "state",
+      "authority": "observed",
+      "identity_not_persisted": true
+    }
+  ],
+  "targets": {
+    "producer_record_id": "36f0b1f1-3352-4a0a-abab-011b39164143",
+    "permission_record_id": "adfb0f98-c415-42a5-944c-c5fc91af0fc6",
+    "recognition_record_id": "1f443b83-e612-4bec-84ea-b5f2e0e22eb5"
+  },
+  "owner_anchor_refs": {
+    "owner_adoption_server_ref": {
+      "id": "b8c1d482-9eb4-4bc5-8dd1-372b0d55174e",
+      "version": 1,
+      "content_hash": "b58db4fe2cc81c123f078aeff789fcc9fe971902321ffd36a9e3ebaa1af477eb"
+    },
+    "final_recognizer_server_ref": {
+      "id": "46b0ff1c-f608-4ff9-89b9-dc90a61ce70f",
+      "version": 1,
+      "content_hash": "74fb324321a23eaa4dbc7194b9ec9964a9e1d59d1ef12e6c6f3c7dfce6b91329"
+    }
+  },
+  "idempotency_key": "model-bootstrap-1b397478-b792-4d73-864b-cee9af714052"
+}
