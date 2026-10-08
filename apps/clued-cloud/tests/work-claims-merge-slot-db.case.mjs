@@ -13,7 +13,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 // held by one live claim at a time, lapses 45 minutes after it was last taken
 // or refreshed, cannot be revived by its old holder once another session took
 // it, and is returned when its pull request is merged or closed. Merge
-// Admission step 3 (migration 20261008100000, Task 3576d10d): CI reports keep
+// Admission step 3 (migration 20261009010000, Task 3576d10d): CI reports keep
 // it (running 45 minutes, green 30), a CI failure returns it, a hard cap ends
 // it, and the admission mode goes into the verify Receipts. Imported by
 // work-claims-reject-receipts-db.test.mjs, so it runs with npm run test:work:claims.
@@ -252,7 +252,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9' })).merge_slot_returned, [c1.claim_id]);
     assert.deepEqual((await view(c1)).trigger_refs, ['merge:other/repo:main', 'task:race']);
 
-    // --- Merge Admission step 3 (migration 20261008100000): the slot follows CI. ---
+    // --- Merge Admission step 3 (migration 20261009010000): the slot follows CI. ---
     const slotProfile = (await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v;
     assert.deepEqual([slotProfile.merge_slot_running_seconds, slotProfile.merge_slot_green_seconds], [5400, 1800]);
     const PR = 'tdoljyj/cross-memory-system#20';

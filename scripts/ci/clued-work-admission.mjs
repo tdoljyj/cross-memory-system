@@ -1151,7 +1151,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
           pr_ref: outcome.pr_ref,
           // Merge Admission v0.1 §10 (step 3): the Receipts of the binding and
           // of a newly admitted head name the mode it was judged in. A service
-          // before migration 20261008100000 ignores the key.
+          // before migration 20261009010000 ignores the key.
           admission_mode: { state: mode.state, layer, reruns_per_head: rules.reruns_per_head },
         }, workspace);
       } catch (error) {

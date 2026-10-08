@@ -275,7 +275,7 @@ test("reportMergeSlots: a claim named only in the head commit counts; a service 
     ? new Response(JSON.stringify({ code: "PGRST202", message: "Could not find the function" }), { status: 404 })
     : fetch.fetchImpl(url, init));
   result = await reportMergeSlots({ env: env(), event: null, eventName: "schedule", fetchImpl: missing, workspace: ROOT });
-  assert.deepEqual([result.errors, result.notices], [[], [`${HOLDERS_RPC} is not deployed yet (migration 20261008100000); nothing reported`]]);
+  assert.deepEqual([result.errors, result.notices], [[], [`${HOLDERS_RPC} is not deployed yet (migration 20261009010000); nothing reported`]]);
   assert.match(renderSummary(result), /- notice: clued_work_merge_slot_holders_v1 is not deployed yet/);
 });
 

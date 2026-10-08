@@ -195,9 +195,9 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   const live = [];
   for (const scope of scopes) {
     const response = await cluedRpc(fetchImpl, env, workspace, HOLDERS_RPC, { scope, repository });
-    // Merged before migration 20261008100000 was applied: nothing to report yet (review MINOR-6).
+    // Merged before migration 20261009010000 was applied: nothing to report yet (review MINOR-6).
     if (notDeployed(response)) {
-      result.notices.push(`${HOLDERS_RPC} is not deployed yet (migration 20261008100000); nothing reported`);
+      result.notices.push(`${HOLDERS_RPC} is not deployed yet (migration 20261009010000); nothing reported`);
       return result;
     }
     const error = rpcError(HOLDERS_RPC, response);
