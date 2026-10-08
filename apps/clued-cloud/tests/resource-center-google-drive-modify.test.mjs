@@ -193,3 +193,25 @@ test("scope profiles: rename accepts legacy and normal grants and refuses every 
     assert.equal(f.events.includes("patch"), false, String(scope));
   }
 });
+
+test("step 3: with ancestors the verifier walks the folders by Drive ID", async () => {
+  const ancestors = [{ path: ROOT, id: "root", parent_id: "container", match: "access", value: "a".repeat(64) },
+    { path: TRACK, id: "track", parent_id: "root", match: "version", value: "1" }];
+  const newBefore = { ...before(), root_folder_version: null, ancestors };
+  // A same-named folder next to the track no longer makes the chain ambiguous;
+  // folder versions are not pinned, even when matched by version.
+  const d = drive(); Object.assign(d.files.get("file"), { name: "b.txt", version: "8" });
+  d.files.set("twin", folder("twin", "20_P_产品与体验", "root")); d.files.get("track").version = "4";
+  const result = await verifier(d)({ profile, mutation: renameMutation, provider_before: newBefore, effect_result: effectResult(renameMutation, "8") });
+  assert.equal(result.verified_proof.provider_before.ancestors.length, 2);
+  await assert.rejects(verifier(d)({ profile, mutation: renameMutation, provider_before: before(), effect_result: effectResult(renameMutation, "8") }),
+    /DRIVE_POSTCONDITION_PARENT_AMBIGUOUS/);
+  // A moved or renamed ancestor fails; a chain that does not reach the destination folder is a request mismatch.
+  for (const change of [files => { files.get("track").parents = ["elsewhere"]; }, files => { files.get("track").name = "renamed"; }]) {
+    const changed = drive(); Object.assign(changed.files.get("file"), { name: "b.txt" }); change(changed.files);
+    await assert.rejects(verifier(changed)({ profile, mutation: renameMutation, provider_before: newBefore, effect_result: effectResult(renameMutation, "8") }),
+      /DRIVE_POSTCONDITION_ANCESTOR_CHANGED/);
+  }
+  await assert.rejects(verifier(drive())({ profile, mutation: moveMutation, provider_before: { ...newBefore, destination_parent_id: "topic" },
+    effect_result: effectResult(moveMutation, "8") }), /DRIVE_POSTCONDITION_REQUEST_MISMATCH/);
+});
