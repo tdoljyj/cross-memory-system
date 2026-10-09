@@ -2,6 +2,7 @@
 // No network: fetch is mocked, and no GitHub request is ever made.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -11,7 +12,10 @@ import {
   CACHE_FILE,
   CACHE_SCHEMA,
   NOT_MEASURED,
+  APP_REQUEST_CAP,
+  MEASURE_PERMISSIONS,
   REQUEST_CAP,
+  TIME_BUDGET_MS,
   budgetedFetch,
   cachedJobs,
   collectUsage,
@@ -59,7 +63,7 @@ function fakeGitHub({ runs = [], pulls = [], jobs = {}, remaining = () => 4000, 
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
     const route = String(url).replace(/^https:\/\/api\.github\.com/, "");
-    calls.push({ route, headers: init.headers });
+    calls.push({ route, headers: init.headers, body: init.body });
     const n = calls.length;
     const headers = { "content-type": "application/json", "x-ratelimit-remaining": String(remaining(n)), "x-ratelimit-limit": "1000" };
     const special = answer(route, n, headers);
@@ -220,6 +224,93 @@ test("requests: authenticated with the token, the window's date, jobs of every a
   assert.equal(github.calls[0].headers.authorization, "Bearer t");
 });
 
+// The measurement App (Owner Decision 00b71629): GET installation and POST
+// access_tokens answered by `app`, everything else by the GitHub of runs.
+const APP_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
+const APP_ENV = { CLUED_MEASURE_APP_ID: "4242", CLUED_MEASURE_APP_KEY: APP_KEY };
+const withApp = ({ installation = 200, minted = 201 } = {}) => (route, n, headers) => {
+  if (route === `/repos/${REPO}/installation`) {
+    return new Response(JSON.stringify(installation === 200 ? { id: 77 } : { message: "Not Found" }), { status: installation, headers });
+  }
+  if (route === "/app/installations/77/access_tokens") {
+    return new Response(JSON.stringify(minted === 201 ? { token: "app-token" } : { message: "denied" }), { status: minted, headers });
+  }
+  return null;
+};
+
+test("measurement App: its read-only installation token reads everything, with the larger cap and outside the GITHUB_TOKEN pool", async () => {
+  const runs = Array.from({ length: 250 }, (_, i) => run(i + 1));
+  const jobs = Object.fromEntries(runs.map((r) => [r.id, [job(r.id * 10)]]));
+  const github = fakeGitHub({ runs, jobs, pulls: [pr(1)], answer: withApp() });
+  const { code, report, memory } = await runMain(github, memoryFs(), APP_ENV);
+  assert.equal(code, 0);
+  const [installation, minted, ...reads] = github.calls;
+  assert.equal(installation.route, `/repos/${REPO}/installation`);
+  assert.match(installation.headers.authorization, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/, "signed with the App's JWT");
+  assert.equal(minted.route, "/app/installations/77/access_tokens");
+  assert.deepEqual(JSON.parse(minted.body), { repositories: ["cross-memory-system"], permissions: MEASURE_PERMISSIONS });
+  assert.deepEqual(Object.values(MEASURE_PERMISSIONS), ["read", "read", "read", "read", "read"]);
+  assert.ok(reads.every((call) => call.headers.authorization === "Bearer app-token"), "never the GITHUB_TOKEN");
+  assert.equal(reads.length, 3 + 1 + 250);
+  assert.deepEqual([report.coverage.runs_with_jobs, report.coverage.partial], [250, false]);
+  assert.deepEqual([report.metrics.api_requests.token_source, report.metrics.api_requests.cap, report.metrics.api_requests.used],
+    ["app", APP_REQUEST_CAP, 254]);
+  assert.match(report.metrics.api_requests.not_measured.by_pool, /App's quota is its own/);
+  assert.match(memory.files.get(ENV.GITHUB_STEP_SUMMARY), /254 of 2000 \(measurement App\)/);
+});
+
+test("measurement App: not configured, not installed or refused falls back to the GITHUB_TOKEN with its cap and says why", async () => {
+  for (const [name, env, answer, reason] of [
+    ["not configured", {}, () => null, /not configured/],
+    ["half configured", { CLUED_MEASURE_APP_ID: "4242" }, () => null, /not configured/],
+    ["not installed", APP_ENV, withApp({ installation: 404 }), /not installed .* or not authenticated .*returned 404/],
+    ["not authenticated", APP_ENV, withApp({ installation: 401 }), /or not authenticated .*returned 401/],
+    ["refused", APP_ENV, withApp({ minted: 422 }), /token was refused .*returned 422/],
+    // Review MINOR-2: a key that cannot sign, or a failing request, falls back too.
+    ["malformed key", { ...APP_ENV, CLUED_MEASURE_APP_KEY: "-----BEGIN RSA PRIVATE KEY-----\\nnot a key\\n-----END RSA PRIVATE KEY-----" },
+      () => null, /could not be minted \(\w+: /],
+    ["network error", APP_ENV, (route) => { if (route.includes("installation")) throw new TypeError("fetch failed"); return null; },
+      /could not be minted \(TypeError: fetch failed\)/],
+  ]) {
+    const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)], answer });
+    const notices = [];
+    const memory = { ...memoryFs(), logError: (line) => notices.push(line) };
+    const { code, report } = await runMain(github, memory, env);
+    assert.equal(code, 0, name);
+    assert.ok(github.calls.filter((call) => !call.route.includes("installation")).every((call) => call.headers.authorization === "Bearer t"), name);
+    assert.deepEqual([report.metrics.api_requests.token_source, report.metrics.api_requests.cap], ["github_token", REQUEST_CAP], name);
+    assert.ok(notices.some((line) => /^::notice title=clued-ci-usage-report::reading with the GITHUB_TOKEN \(cap 200\)/.test(line) && reason.test(line)), name);
+    assert.ok(notices.every((line) => !line.includes("PRIVATE KEY") && !line.includes(APP_KEY.slice(40, 80))), `${name}: no key material`);
+  }
+  const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)] });
+  const errors = [];
+  const { code } = await runMain(github, { ...memoryFs(), logError: (line) => errors.push(line) }, { GITHUB_TOKEN: "" });
+  assert.equal(code, 1, "no App and no GITHUB_TOKEN is an error");
+  assert.match(errors.join("\n"), /GITHUB_TOKEN is not set, and the measurement App is not configured/);
+  assert.equal(github.calls.length, 0);
+});
+
+test("time budget (review MINOR-3): after 15 minutes the run stops, keeps what it read and saves the cache", async () => {
+  const runs = Array.from({ length: 30 }, (_, i) => run(i + 1));
+  const jobs = Object.fromEntries(runs.map((r) => [r.id, [job(r.id * 10)]]));
+  const github = fakeGitHub({ runs, jobs, pulls: [pr(1)] });
+  // Each request takes one minute of the clock.
+  const clock = () => github.calls.length * 60 * 1000;
+  const memory = { ...memoryFs(), clock };
+  const { code, report } = await runMain(github, memory);
+  assert.equal(code, 0);
+  assert.equal(github.calls.length, TIME_BUDGET_MS / 60000);
+  assert.deepEqual([report.metrics.api_requests.stopped, report.coverage.partial, report.coverage.runs_with_jobs], ["time_budget", true, 13]);
+  assert.equal(Object.keys(JSON.parse(memory.files.get(CACHE)).runs).length, 13);
+});
+
+test("measurement App: the installation token is masked in the log", async () => {
+  const lines = [];
+  const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)], answer: withApp() });
+  await runMain(github, { ...memoryFs(), log: (line) => lines.push(line) }, APP_ENV);
+  assert.equal(lines[0], "::add-mask::app-token");
+});
+
 test("cache: a completed run's jobs are fetched once; running runs are not cached; a re-run is read again", async () => {
   const memory = memoryFs();
   const jobs = { 1: [job(1)], 2: [job(2)], 3: [job(3)] };
@@ -364,7 +455,7 @@ test("collectUsage: a run whose job pages are cut short is neither counted nor c
   assert.equal(enough.jobsByRun.get(1).length, 150);
 });
 
-test("the workflow: weekly and by hand, hosted, read-only, no environment or secret, default-branch code", () => {
+test("the workflow: weekly and by hand, hosted, read-only, the measurement App's secrets only, default-branch code", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-ci-usage-report.yml"), "utf8");
   assert.ok(!text.includes("\r"), "LF line endings");
   assert.match(text, /^on:\n {2}schedule:\n {4}- cron: "23 3 \* \* 0"\n {2}workflow_dispatch:\n {4}inputs:\n {6}days:\n/m);
@@ -375,13 +466,14 @@ test("the workflow: weekly and by hand, hosted, read-only, no environment or sec
   assert.deepEqual(permissions[1].trim().split("\n").map((line) => line.trim()).sort(),
     ["actions: read", "checks: read", "contents: read", "issues: read", "pull-requests: read"]);
   assert.doesNotMatch(text, /:\s*write\b/);
-  assert.doesNotMatch(text, /^\s*environment:/m);
-  assert.doesNotMatch(text, /secrets\./);
+  // Owner Decision 00b71629: the App's ID and key, from the clued-admission environment, and no other secret.
+  assert.deepEqual([...text.matchAll(/^\s*environment: (.+)$/gm)].map((match) => match[1]), ["clued-admission"]);
+  assert.deepEqual([...text.matchAll(/secrets\.(\w+)/g)].map((match) => match[1]), ["CLUED_MEASURE_APP_ID", "CLUED_MEASURE_APP_KEY"]);
   assert.match(text, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
   assert.deepEqual([...text.matchAll(/runs-on: (.+)/g)].map((match) => match[1]), ["ubuntu-latest"]);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n {10}persist-credentials: false/);
   assert.match(text, /concurrency:\n {2}group: \$\{\{ github\.workflow \}\}\n {2}cancel-in-progress: false/);
-  assert.match(text, /timeout-minutes: 10/);
+  assert.match(text, /timeout-minutes: 20/);
   // Every action is pinned to a full commit SHA.
   const uses = [...text.matchAll(/uses: (\S+)/g)].map((match) => match[1]);
   assert.deepEqual(uses.map((u) => u.split("@")[0]), ["actions/checkout", "actions/cache", "actions/upload-artifact"]);
