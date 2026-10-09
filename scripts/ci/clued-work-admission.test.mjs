@@ -1580,7 +1580,8 @@ test("owner review: the workflows on main that hold an environment are exactly t
     if (workflowHasEnvironment(text)) holders.push(file);
     assert.deepEqual(ownerReviewFindings(text, text).filter((f) => f !== "environment_workflow_changed"), [], file);
   }
-  assert.deepEqual(holders, ["clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
+  // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
+  assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
     "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });

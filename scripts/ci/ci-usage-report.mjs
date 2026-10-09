@@ -1,22 +1,31 @@
 #!/usr/bin/env node
 // Merge Admission v0.1 §12.1 (Task f70546e5): CI usage measurement, version 1.
 // The clued-ci-usage-report workflow runs this weekly and by hand on a hosted
-// runner, from the default branch, with the workflow's read-only GITHUB_TOKEN.
+// runner, from the default branch. It reads GitHub with an installation token
+// of the measurement-only read-only GitHub App when the clued-admission
+// environment holds its ID and key (§12.1, Owner Decision 00b71629), and with
+// the workflow's read-only GITHUB_TOKEN otherwise.
 // It reads the workflow runs, their jobs and the merged pull requests of a
 // window (7 days by default, at most 14) and writes ci-usage-report.json and a
 // step summary: where the self-hosted minutes go, how long jobs queue, how
 // many runs and heads a merged pull request takes, and what is not measured
 // yet and why.
 //
-// The GITHUB_TOKEN pool (1,000 requests an hour) is shared by the whole
-// repository: the admission gates poll it, admission and re-verification use
-// it. On 2026-10-07 an uncontrolled collector spent an account's whole hourly
-// quota and a pull request's runner check was refused with 403. So:
+// The GITHUB_TOKEN pool is shared by the whole repository: the admission
+// gates poll it, admission and re-verification use it. The App has a quota of
+// its own (5,000 requests an hour) that nothing else spends. On 2026-10-07 an
+// uncontrolled collector spent an account's whole hourly quota and a pull
+// request's runner check was refused with 403. So:
 //
-//   - every request counts against a hard cap of 200 a run, pages included;
+//   - every request counts against a hard cap a run, pages included: 2,000
+//     with the App token (a week has about 1,000 runs), 200 with the
+//     GITHUB_TOKEN (the first report, run 37894585499, reached job details for
+//     187 of 994 runs that way);
 //   - before each batch of 20 requests the last response's
 //     x-ratelimit-remaining is read, and below 600 the run stops;
 //   - a rate-limited response stops the run too; nothing is retried;
+//   - after 15 minutes the run stops too, so it ends inside the job's
+//     timeout and still saves its cache and report;
 //   - stopping early is not an error: the report says how many runs got job
 //     details out of how many were listed, and labels the metrics partial;
 //   - jobs of completed runs are cached by run id (and attempt) in
@@ -35,7 +44,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { appJwt } from "./clued-work-admission.mjs";
+
 export const REQUEST_CAP = 200;
+export const APP_REQUEST_CAP = 2000;
+// Inside the job's 20-minute timeout, with room for setup, the self-test and
+// saving the cache (review MINOR-3).
+export const TIME_BUDGET_MS = 15 * 60 * 1000;
+// The installation token asks for these and nothing more (§12.1).
+export const MEASURE_PERMISSIONS = Object.freeze({ actions: "read", checks: "read", contents: "read", issues: "read", pull_requests: "read" });
 export const BATCH_SIZE = 20;
 export const RATE_LIMIT_FLOOR = 600;
 export const DEFAULT_DAYS = 7;
@@ -127,8 +144,9 @@ const statusOf = (complete) => (complete ? "measured" : "partial");
 
 // --- The budgeted fetch: every GitHub request of a run goes through it.
 
-export function createBudget({ cap = REQUEST_CAP, batchSize = BATCH_SIZE, floor = RATE_LIMIT_FLOOR } = {}) {
-  return { cap, batchSize, floor, used: 0, remaining: null, limit: null, reset: null, stopped: null };
+export function createBudget({ cap = REQUEST_CAP, batchSize = BATCH_SIZE, floor = RATE_LIMIT_FLOOR, source = "github_token",
+  deadline = null, clock = Date.now } = {}) {
+  return { cap, batchSize, floor, source, deadline, clock, used: 0, remaining: null, limit: null, reset: null, stopped: null };
 }
 
 const headerNumber = (headers, name) => {
@@ -145,12 +163,16 @@ export function isRateLimited(response) {
 
 // request(route) -> { ok: true, body }, or { ok: false, stopped } when the
 // budget or the rate limit stops the run. Any other non-OK answer throws.
-export function budgetedFetch(fetchImpl, env, budget) {
+export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   return async function request(route) {
     if (budget.stopped) return { ok: false, stopped: budget.stopped };
     if (budget.used >= budget.cap) {
       budget.stopped = "request_cap";
+      return { ok: false, stopped: budget.stopped };
+    }
+    if (budget.deadline !== null && budget.clock() >= budget.deadline) {
+      budget.stopped = "time_budget";
       return { ok: false, stopped: budget.stopped };
     }
     // Before each batch: the remaining quota the last response reported.
@@ -162,7 +184,7 @@ export function budgetedFetch(fetchImpl, env, budget) {
     const response = await fetchImpl(`${base}${route}`, {
       headers: {
         accept: "application/vnd.github+json",
-        authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        authorization: `Bearer ${token}`,
         "x-github-api-version": "2022-11-28",
         "user-agent": "clued-ci-usage-report",
       },
@@ -178,6 +200,56 @@ export function budgetedFetch(fetchImpl, env, budget) {
     if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
     return { ok: true, body: await response.json() };
   };
+}
+
+// The token the measurement reads with: the App's installation token when the
+// App is configured and grants it, otherwise the GITHUB_TOKEN with the reason,
+// also when the key cannot sign or a request fails (review MINOR-2). The two
+// App requests are outside the budget: they are signed with the App's JWT and
+// spend no token pool.
+export async function measureToken({ env, fetchImpl, now = () => Date.now() }) {
+  const appId = (env.CLUED_MEASURE_APP_ID ?? "").trim();
+  const key = (env.CLUED_MEASURE_APP_KEY ?? "").trim();
+  const fallback = (reason) => ({ token: env.GITHUB_TOKEN || null, source: "github_token", reason });
+  if (!appId || !key) return fallback("the measurement App is not configured (CLUED_MEASURE_APP_ID / CLUED_MEASURE_APP_KEY)");
+  try {
+    return await mintMeasureToken({ env, fetchImpl, now, appId, key, fallback });
+  } catch (error) {
+    // The message of a signing or network error, never the key itself.
+    const name = error instanceof Error ? error.name : "Error";
+    return fallback(`the measurement App token could not be minted (${name}: ${error instanceof Error ? error.message : String(error)})`);
+  }
+}
+
+async function mintMeasureToken({ env, fetchImpl, now, appId, key, fallback }) {
+  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  const repository = env.GITHUB_REPOSITORY;
+  const jwt = appJwt(appId, key, Math.floor(now() / 1000));
+  const call = async (method, route, body) => {
+    const response = await fetchImpl(`${base}${route}`, {
+      method,
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${jwt}`,
+        "x-github-api-version": "2022-11-28",
+        "user-agent": "clued-ci-usage-report",
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    let parsed = null;
+    try { parsed = await response.json(); } catch { parsed = null; }
+    return { status: response.status, body: parsed };
+  };
+  const installation = await call("GET", `/repos/${repository}/installation`);
+  if (installation.status !== 200 || !installation.body || !installation.body.id) {
+    return fallback(`the measurement App is not installed on ${repository} or not authenticated (GET installation returned ${installation.status})`);
+  }
+  const minted = await call("POST", `/app/installations/${installation.body.id}/access_tokens`,
+    { repositories: [repository.split("/")[1]], permissions: MEASURE_PERMISSIONS });
+  if (minted.status === 201 && minted.body && minted.body.token) return { token: minted.body.token, source: "app", reason: null };
+  return fallback(`the measurement App token was refused (POST access_tokens returned ${minted.status}; `
+    + "it needs read access to actions, checks, contents, issues and pull requests)");
 }
 
 // The pages of a list until a short page, until `done(chunk)`, or until the
@@ -356,9 +428,11 @@ export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budge
   };
   for (const [name, reason] of Object.entries(NOT_MEASURED)) metrics[name] = { status: "not_measured", value: null, reason };
   metrics.api_requests = {
-    status: "measured", used: budget.used, cap: budget.cap, remaining_seen: budget.remaining, limit_seen: budget.limit,
-    stopped: budget.stopped, by_pool: null,
-    not_measured: { by_pool: "the other users of the GITHUB_TOKEN pool (gate polling, admission, re-verification) are not counted here" },
+    status: "measured", token_source: budget.source, used: budget.used, cap: budget.cap, remaining_seen: budget.remaining,
+    limit_seen: budget.limit, stopped: budget.stopped, by_pool: null,
+    not_measured: { by_pool: budget.source === "app"
+      ? "the measurement App's quota is its own; the GITHUB_TOKEN pool was not used"
+      : "the other users of the GITHUB_TOKEN pool (gate polling, admission, re-verification) are not counted here" },
   };
   return metrics;
 }
@@ -400,7 +474,8 @@ export function renderSummary(report) {
   lines.push(`| gate_queue_minutes | ${metrics.gate_queue_minutes.status} | ${dist(metrics.gate_queue_minutes, " min")} |`);
   lines.push(`| time_to_merge_minutes | ${metrics.time_to_merge_minutes.status} | ${dist(metrics.time_to_merge_minutes, " min")} |`);
   for (const name of Object.keys(NOT_MEASURED)) lines.push(`| ${name} | not_measured | – |`);
-  lines.push(`| api_requests | ${metrics.api_requests.status} | ${metrics.api_requests.used} of ${metrics.api_requests.cap}; remaining ${show(metrics.api_requests.remaining_seen)} |`);
+  const pool = metrics.api_requests.token_source === "app" ? "measurement App" : "GITHUB_TOKEN";
+  lines.push(`| api_requests | ${metrics.api_requests.status} | ${metrics.api_requests.used} of ${metrics.api_requests.cap} (${pool}); remaining ${show(metrics.api_requests.remaining_seen)} |`);
   const byWorkflow = Object.entries(metrics.self_hosted_minutes.by_workflow);
   if (byWorkflow.length) {
     lines.push("", "Self-hosted minutes by workflow:", "", "| Workflow | Minutes |", "| --- | --- |");
@@ -415,19 +490,25 @@ export function renderSummary(report) {
 
 export async function main(env = process.env, fetchImpl = globalThis.fetch, {
   now = new Date(), readFile = fs.readFileSync, writeFile = fs.writeFileSync, mkdir = fs.mkdirSync,
-  appendFile = fs.appendFileSync, log = console.log, logError = console.error,
+  appendFile = fs.appendFileSync, log = console.log, logError = console.error, clock = Date.now,
 } = {}) {
   const repository = env.GITHUB_REPOSITORY;
   const workspace = env.GITHUB_WORKSPACE || process.cwd();
   const cacheDir = env.CI_USAGE_CACHE_DIR || path.join(workspace, CACHE_DIR);
   let cache = null;
   try {
-    if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     if (!repository) throw new Error("GITHUB_REPOSITORY is not set.");
     const window = windowOf(now, parseDays(env.CI_USAGE_DAYS));
+    const access = await measureToken({ env, fetchImpl, now: () => now.getTime() });
+    if (!access.token) throw new Error(`GITHUB_TOKEN is not set, and ${access.reason}.`);
+    if (access.source === "app") log(`::add-mask::${access.token}`);
+    if (access.reason) logError(`::notice title=clued-ci-usage-report::reading with the GITHUB_TOKEN (cap ${REQUEST_CAP}): ${access.reason}`);
     cache = pruneCache(loadCache(cacheDir, repository, readFile), now);
-    const budget = createBudget();
-    const request = budgetedFetch(fetchImpl, env, budget);
+    const deadline = clock() + TIME_BUDGET_MS;
+    const budget = access.source === "app"
+      ? createBudget({ cap: APP_REQUEST_CAP, source: "app", deadline, clock })
+      : createBudget({ deadline, clock });
+    const request = budgetedFetch(fetchImpl, env, budget, access.token);
     const collected = await collectUsage({ request, repository, window, cache });
     const report = buildReport({ repository, window, collected, budget, now });
     writeFile(env.CI_USAGE_REPORT_PATH || path.join(workspace, REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`);
