@@ -442,18 +442,19 @@ export function jobTimeout(job) {
   return match && value.split("\n").slice(1).every((line) => /^\s*(#.*)?$/.test(line)) ? Number(match[1]) : null;
 }
 
-// A job counts as GitHub-hosted only when its runs-on is one literal
-// ubuntu-*, windows-* or macos-* label and it neither calls a reusable
-// workflow nor merges YAML anchors; anything else may reach a self-hosted
-// runner, so it is treated as one.
+// A job counts as GitHub-hosted with one literal ubuntu-*, windows-* or
+// macos-* label, or the exact state_change choice between two fixed hosted
+// labels below. It must neither call a reusable workflow nor merge YAML
+// anchors. Every other expression may reach a self-hosted runner.
 const HOSTED_LABEL = /^(ubuntu|windows|macos)-[A-Za-z0-9.-]+$/;
+const HOSTED_STATE_CHANGE_RUNNER = "${{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}";
 export function jobIsHosted(job) {
   if (job.lines.some((line) => /^ {4}uses:/.test(line) || /^\s*<<\s*:/.test(line))) return false;
   const value = jobField(job, "runs-on");
   if (value === null) return false;
   const text = value.replace(/(^|\s)#.*$/gm, "").trim();
   if (text.includes("\n")) return false;
-  return HOSTED_LABEL.test(unquote(text));
+  return HOSTED_LABEL.test(unquote(text)) || text === HOSTED_STATE_CHANGE_RUNNER;
 }
 
 // Findings for one workflow at the PR head; baseText is its base-branch
