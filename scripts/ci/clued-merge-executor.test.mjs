@@ -292,14 +292,15 @@ test("a refused update (head moved, conflict) is a notice, not an error", async 
   assert.match(result.notices[0], /#5: update_branch was refused: merge conflict/);
 });
 
-test("the workflow runs default-branch code after the slot report, on main push and by hand, read-only, in the admission environment", () => {
+test("the independent executor workflow runs default-branch code on main push and by hand, read-only, in the admission environment", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-merge-executor.yml"), "utf8");
-  assert.match(text, /on:\n  # [^\n]*\n  push:\n    branches: \[main\]\n  workflow_run:\n    workflows:\n      - clued-merge-slot-ci\n    types: \[completed\]\n  workflow_dispatch:\n/);
+  assert.match(text, /on:\n  # [^\n]*\n  push:\n    branches: \[main\]\n  workflow_dispatch:\n/);
+  assert.doesNotMatch(text, /^  workflow_run:/m, "slot reports execute inline, without another hosted run");
   assert.doesNotMatch(text, /^  schedule:/m, "executor recovery is event driven, not another hourly hosted run");
   assert.doesNotMatch(text, /pull_request/);
   assert.match(text, /permissions:\n  actions: read\n  checks: read\n  contents: read\n  pull-requests: read\n\n/);
   assert.doesNotMatch(text, /^\s+[a-z-]+: write$/m);
-  assert.match(text, /if: github\.event_name != 'workflow_run' \|\| github\.event\.workflow_run\.conclusion != 'skipped'\n    runs-on: ubuntu-slim\n    timeout-minutes: 5\n    environment: clued-admission\n/);
+  assert.match(text, /name: clued-merge-executor\n    runs-on: ubuntu-slim\n    timeout-minutes: 10\n    environment: clued-admission\n/);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false/);
   assert.doesNotMatch(text, /_ENFORCE/);
 });

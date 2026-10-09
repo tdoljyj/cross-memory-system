@@ -106,6 +106,30 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   assert.deepEqual(gateFindings(text, null), [], "hosted only: no admission gate needed");
 });
 
+test("both pending entry points report CI before the executor last in the same trusted job", () => {
+  for (const file of ["clued-merge-executor.yml", "clued-merge-slot-ci.yml"]) {
+    const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", file), "utf8");
+    assert.match(text, /runs-on: ubuntu-slim\n    timeout-minutes: 10\n    environment: clued-admission\n/);
+    assert.match(text, /run: node --test scripts\/ci\/clued-merge-slot-ci\.test\.mjs scripts\/ci\/clued-merge-executor\.test\.mjs/);
+    const report = /- name: Report the CI state of the pull requests holding a merge slot\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-slot-ci\.mjs\n/.exec(text);
+    const execute = /- name: Bring the default branch into the queue head, turn on auto-merge or merge it\n {8}timeout-minutes: 5\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-executor\.mjs\n?$/.exec(text);
+    assert.ok(report && execute, "both steps use the same job; executor is last with default success condition");
+    assert.ok(report.index < execute.index, "the slot state is reported before acting on the queue");
+    assert.equal(execute[1], report[1], "same main-only App/token/state trust envelope");
+    assert.equal((text.match(/run: node scripts\/ci\/clued-merge-executor\.mjs/g) ?? []).length, 1);
+    assert.doesNotMatch(text, /continue-on-error:|if:.*always\(\)/, "failed or cancelled reporting must not authorize execution");
+  }
+});
+
+test("both executor entry points share one repository-wide job lock without cancelling running work", () => {
+  for (const file of ["clued-merge-executor.yml", "clued-merge-slot-ci.yml"]) {
+    const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", file), "utf8");
+    assert.doesNotMatch(text, /^concurrency:/m, "no nested workflow lock");
+    assert.match(text, /    concurrency:\n      group: clued-merge-executor\n      cancel-in-progress: false\n/);
+    assert.equal((text.match(/group:/g) ?? []).length, 1, "one shared job lock, no separate queue mutation group");
+  }
+});
+
 test("ciStateOf: failed wins, then running (default-branch workflows only), then green", async () => {
   // A required check that finally failed.
   let fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { trivy: [check("trivy", { conclusion: "failure" })] }) });

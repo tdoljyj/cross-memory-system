@@ -12,9 +12,12 @@ name: clued-merge-executor
 # the clued-admission App and needs Contents: write and Pull requests: write;
 # until the Owner grants them it only reports. It does nothing in frozen.
 #
-# It runs after each clued-merge-slot-ci run (which runs when a pull
-# request's CI run completes), on each push to main, and by hand. Missed
-# completion events recover on a later main push or explicit coordination.
+# This workflow runs on each push to main and by hand. It first reports CI
+# state, so either entry point can safely replace the other's pending job.
+# The slot report calls the same executor script as its final step, without
+# starting another
+# workflow. Missed completion events recover on a later main push or explicit
+# coordination.
 # Every trigger runs this file and the script from the default branch, with
 # the clued-admission environment's token and App key (deployment branches
 # limited to main); a pull request cannot change them for its own run. The
@@ -25,10 +28,6 @@ on:
   # A merge moves the default branch; the next queue head is then behind (confirmation review MINOR-a).
   push:
     branches: [main]
-  workflow_run:
-    workflows:
-      - clued-merge-slot-ci
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -37,19 +36,17 @@ permissions:
   contents: read
   pull-requests: read
 
-# One run at a time; a pending run reads the state as it is then.
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
-
 jobs:
   execute:
     name: clued-merge-executor
-    # A slot report skipped for a push or schedule run changed nothing (review MINOR-5).
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-slim
-    timeout-minutes: 5
+    timeout-minutes: 10
     environment: clued-admission
+    # Serialize both executor entry points across workflows; pending work reads
+    # the current queue when it starts. Never cancel an executor already running.
+    concurrency:
+      group: clued-merge-executor
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -58,9 +55,18 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-      - name: Self-test the executor (no network, mocked fetch)
-        run: node --test scripts/ci/clued-merge-executor.test.mjs
+      - name: Self-test the merge slot report and executor (no network, mocked fetch)
+        run: node --test scripts/ci/clued-merge-slot-ci.test.mjs scripts/ci/clued-merge-executor.test.mjs
+      - name: Report the CI state of the pull requests holding a merge slot
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-merge-slot-ci.mjs
       - name: Bring the default branch into the queue head, turn on auto-merge or merge it
+        timeout-minutes: 5
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
