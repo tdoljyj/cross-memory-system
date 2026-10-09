@@ -265,6 +265,47 @@ commit;
 notify pgrst, 'reload schema';
 ```
 
+## Legacy audit Bindings, 2026-10-09
+
+`clued_private.authorization_assert_entry_v12` lets a Binding without a
+`clued_private.authorizations_v12` row through. Three live production
+Bindings had no such row (checked 2026-10-09):
+
+| Binding | What | Last used | Now |
+| --- | --- | --- | --- |
+| `c0cc5abf` | OAuth "Clued A03 read-only audit", `context:read` on `system:projects` | never | revoked |
+| `b3603c56` | OAuth "Clued A03 read-only audit (port 6400)", same grant | 2026-08-29 | revoked |
+| `05effaa9` | Projection Builder, `context:read` on `*` | in use | kept |
+
+Migration `20261009040000_revoke_legacy_audit_bindings_v1.sql` revokes the
+first two (Owner Decision `29bff239`). It only touches a row that still has
+the same id, vendor and name, is live and has no v12 authorization, and it
+writes one `clued_private.authorization_audit_v12` row per revocation
+(operation `legacy_binding_revoke`). A second run changes nothing.
+
+Check after applying:
+
+```sql
+select id, revoked_at from public.clued_agent_bindings
+ where revoked_at is null
+   and not exists (select 1 from clued_private.authorizations_v12 a where a.binding_id = id);
+-- one row: 05effaa9-966d-43ad-904b-1f3426394410
+```
+
+Rollback, only if one of them turns out to be needed (reissue through the v12
+flow is the better fix):
+
+```sql
+update public.clued_agent_bindings set revoked_at = null
+ where id in ('c0cc5abf-68f5-4a97-9a14-ab9379c854c0', 'b3603c56-0649-47ca-91e3-d1e8e06588c4');
+```
+
+The Projection Builder cannot get a v12 authorization:
+`clued_private.projection_refresh_builder_binding` refuses a Builder Binding
+that has one. Closing the fallback (step 7b) therefore keeps a narrow
+exception for Bindings with an active `projection_builder_grants` row, read
+on scope `global` only.
+
 ## Left for later
 
 - **Issuer hashes are still the credential; G6 trusts `__transport_source_commit`.**
@@ -277,8 +318,13 @@ notify pgrst, 'reload schema';
 - **MTPE test schemas.** `mtpe_m0_test` (four functions executable by `PUBLIC`)
   and `mtpe_m0_work` remain in production. Export them and drop them; no API role
   has USAGE on them, so this is latent.
-- **Leaked-password protection.** A Supabase Auth dashboard setting; the Owner
-  turns it on.
+- **Leaked-password protection.** A Supabase Auth dashboard setting that needs
+  the Pro plan; the organization is on the free plan, so it stays off until an
+  upgrade (Owner Decision `c4bc1ebe`).
+- **Close the v12 fallback (step 7b).** Make `authorization_assert_entry_v12`
+  refuse a Binding without a v12 authorization, except the Projection Builder
+  as above, and move the 73 database tests that insert raw Bindings to Bindings
+  with a v12 authorization.
 - **Contract text.** IntegrationRuntime v0.1.8 §5.13 still says
   `anon, authenticated` for the Binding path.
 - **Kept functions.** Move the tests in the table above to the successors, then

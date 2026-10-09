@@ -122,7 +122,13 @@ Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`
 
 ### 4.6 「无 v12 授权记录即放行」（后续一步）
 
-`authorization_assert_entry_v12` 在找不到 `authorizations_v12` 记录时直接返回（注释写的是「Existing non-migrated raw bindings keep their explicit existing grant」）。生产 62 个 Binding 中 17 个没有 v12 授权记录，其中 3 个仍有效：两个 2026-08-29 的旧 OAuth 审计 Binding（`c0cc5abf`、`b3603c56`，旧 OAuth 路径已一律拒绝，应已不可用）与 Projection Builder（`05effaa9`，`context:read`，`*`，Worker 机密 `CLUED_PROJECTION_BUILDER_TOKEN` 在用）。第 1 步之后已登录会话再也插不进新的这类行，但这条放行规则本身仍在。关闭它：先给 Projection Builder 补 v12 授权记录与条目、确认并撤销两个旧 OAuth 审计 Binding，再把 `if not found then return` 改为拒绝。见 §8 第 7 步。
+`authorization_assert_entry_v12` 在找不到 `authorizations_v12` 记录时直接返回（注释写的是「Existing non-migrated raw bindings keep their explicit existing grant」）。生产 62 个 Binding 中 17 个没有 v12 授权记录，其中 3 个仍有效：两个 2026-08-29 的旧 OAuth 审计 Binding（`c0cc5abf`、`b3603c56`，旧 OAuth 路径已一律拒绝，应已不可用）与 Projection Builder（`05effaa9`，`context:read`，`*`，Worker 机密 `CLUED_PROJECTION_BUILDER_TOKEN` 在用）。第 1 步之后已登录会话再也插不进新的这类行，但这条放行规则本身仍在。关闭它分两个 PR（Owner 2026-10-09 Decision `29bff239`，见 §8 第 7 步）。
+
+2026-10-09 生产只读核实修正了原计划：
+
+- 两个旧 OAuth 审计 Binding 自 2026-08-29 起未再使用，可以直接撤销。
+- Projection Builder 在用（`projection_refresh_attempts` 已成功 5870 次），而 `clued_private.projection_refresh_builder_binding` 明确要求 Builder Binding **没有** `authorizations_v12` 记录（Builder 的权限来自 `projection_builder_grants`，不受委托授权限制）。所以 Decision `29bff239` 不给 Projection Builder 补 v12 授权（补了会打断投影刷新）。改为：放行规则只留给持有有效 `projection_builder_grants` 的 Binding，并且只放行 `scope` `global` 的只读；其余找不到记录一律拒绝。
+- 仓库中 73 个数据库测试直接插入没有 v12 记录的 Binding，靠这条放行通过；关闭它要同时把这些测试改成带 v12 授权的 Binding。
 
 
 ### 4.7 第 2 步的实现方式（Decision `2ec964af`，取代 §4.1、§4.2 的相应细节）
@@ -220,7 +226,9 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 4. **Worker 角色上线（过渡）**：建角色、给 Worker 用的函数加授新角色（`anon` 暂留）、Worker 改带新凭据并发布；按角色统计确认生产调用全部切换。需要 `migration.production` 与 `release.production` 授权。归属 Task `9a4d6d2c`。
 5. **收回 anon**：Worker 用的函数收回 `anon`，只留 §6.3 白名单；G6 门加角色断言；数据库测试固定 anon 集合等于白名单；更新 database-security.md 的预期数字。归属 Task `9a4d6d2c`。
 6. **合同文字**：IntegrationRuntime v0.1.8 是冻结文件，§5.13（grant `anon, authenticated` → Worker 角色）与 §10.1、§11（存储形式）改动经 ERRATA 记录并需 Owner Decision；同步 HeadlessBindingIssuance「令牌能用在哪里」、WorkClaimAdmission §4.6、OwnerCredential §9、StorageNormalUse §6.2 的措辞。归属 Task `9a4d6d2c`。
-7. **关闭「无 v12 授权记录即放行」**（§4.6）：给 Projection Builder 补 v12 授权、撤销两个旧 OAuth 审计 Binding，再让 `authorization_assert_entry_v12` 找不到记录时拒绝；需要 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`。
+7. **关闭「无 v12 授权记录即放行」**（§4.6），分两个 PR，各需 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`、`5f60b7ba`、`29bff239`。
+   - **7a**：迁移 `20261009040000_revoke_legacy_audit_bindings_v1.sql` 撤销 `c0cc5abf`、`b3603c56`（只撤销仍与核实时一致的行），每次撤销记入 `authorization_audit_v12`（operation `legacy_binding_revoke`）。不改测试。
+   - **7b**：`authorization_assert_entry_v12` 找不到记录时拒绝，只为持有有效 `projection_builder_grants` 的 Binding 保留 `scope` `global` 只读的例外；73 个直接插入 Binding 的数据库测试改用共用工具建带 v12 授权的 Binding，动手前与占用这些文件的会话协调。
 
 第 1、2 步与第 3–5 步互不依赖，可以并行；第 6 步跟随第 2、5 步；第 7 步在第 1 步之后任何时候都可以做。
 
