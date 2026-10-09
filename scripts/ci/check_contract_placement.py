@@ -74,6 +74,8 @@ def components(tree: dict[str, Blob]) -> dict[str, dict]:
             raise ValueError("component identity missing")
         if component["id"] in result:
             raise ValueError("duplicate component identity")
+        if component.get("kind") in {"skill", "contract"} and "root" not in component:
+            raise ValueError("Skill and contract components require a root")
         if "root" in component:
             normalized_root(component["root"])
         result[component["id"]] = component
@@ -147,7 +149,15 @@ def check_placement(base: dict[str, Blob], head: dict[str, Blob], *,
             notices.append(f"pending-split: {LEGACY} and exact synchronized plugin copy")
     skill_roots = [normalized_root(c["root"]) for c in head_manifest.values()
                    if c.get("kind") == "skill" and "root" in c]
+    for root in skill_roots:
+        if root in head or not any(path.startswith(root + "/") for path in head):
+            failures.append(f"manifest: Skill root must identify a populated directory: {root}")
     for path, blob in head.items():
+        # An opaque node can hide an entire Skill package, including a declared custom root.
+        if blob.mode not in REGULAR and (path.split("/")[0] in {"skills", "integrations"} or
+                                        any(under(root, path) for root in skill_roots)):
+            failures.append(f"rule 1: opaque Skill boundary cannot be scanned: {path}")
+            continue
         if not (skill_path(path) or any(under(path, root) for root in skill_roots)):
             continue
         if path in exceptions:
@@ -159,7 +169,7 @@ def check_placement(base: dict[str, Blob], head: dict[str, Blob], *,
         if path.rsplit("/", 1)[-1] == "agent-contract.md" or MARKER.search(text):
             failures.append(f"rule 1: contract packaged in Skill: {path}")
         # The rule covers instruction/reference files, not the admitted legacy contract.
-        if path.endswith(".md") and any(pattern.search(text) for pattern in PIN_PATTERNS):
+        if any(pattern.search(text) for pattern in PIN_PATTERNS):
             failures.append(f"rule 3: contract version pinned in Skill: {path}")
     for identity, component in head_manifest.items():
         if component.get("kind") != "contract":
@@ -206,7 +216,8 @@ def git_tree(root: Path, revision: str) -> dict[str, Blob]:
         mode, kind, oid = metadata.decode("ascii").split()
         path = path_bytes.decode("utf-8")
         # All Skill bytes are read independently of editable manifest globs.
-        if not (skill_path(path) or path in {MANIFEST, NEW}):
+        if not (skill_path(path) or path in {MANIFEST, NEW} or
+                (mode not in REGULAR and path.split("/")[0] in {"skills", "integrations"})):
             continue
         data = subprocess.run(["git", "cat-file", "blob", oid], cwd=root,
                               check=True, capture_output=True).stdout if kind == "blob" else b""
@@ -218,7 +229,7 @@ def git_tree(root: Path, revision: str) -> dict[str, Blob]:
             continue
         metadata, path_bytes = entry.split(b"\t", 1)
         path = path_bytes.decode("utf-8")
-        if path in result or not any(under(path, root_path) for root_path in roots):
+        if path in result or not any(under(path, root_path) or under(root_path, path) for root_path in roots):
             continue
         mode, kind, oid = metadata.decode("ascii").split()
         data = subprocess.run(["git", "cat-file", "blob", oid], cwd=root,

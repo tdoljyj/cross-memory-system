@@ -5,6 +5,8 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location("contract_placement", Path(__file__).with_name("check_contract_placement.py"))
@@ -116,6 +118,11 @@ class PlacementTests(unittest.TestCase):
                 head["skills/clued/references/engineering.md"] = blob(value)
                 self.assertEqual(self.check(legacy(), head)[0], [])
 
+    def test_non_markdown_skill_reference_pin_fails(self):
+        head = legacy()
+        head["skills/clued/references/version-policy.txt"] = blob("Use contract v42.")
+        self.assertTrue(any("rule 3" in failure for failure in self.check(legacy(), head)[0]))
+
     def test_manifest_identity_cannot_enable_exemption(self):
         for field, value in (("kind", "skill"), ("root", "skills/clued"), ("files", ["*.md"]),
                              ("files", ["agent-contract.md", "hidden.md"])):
@@ -143,6 +150,50 @@ class PlacementTests(unittest.TestCase):
         change_manifest(head, lambda m: m["components"].append({"id": "skill.other", "kind": "skill", "root": "custom/package"}))
         head["custom/package/agent-contract.md"] = blob("copied contract")
         self.assertTrue(any("rule 1" in failure for failure in self.check(legacy(), head)[0]))
+
+    def test_missing_or_unpopulated_custom_skill_root_fails(self):
+        for component in ({"id": "skill.other", "kind": "skill"},
+                          {"id": "skill.other", "kind": "skill", "root": "empty/package"}):
+            with self.subTest(component=component):
+                head = legacy()
+                change_manifest(head, lambda m: m["components"].append(component))
+                self.assertTrue(self.check(legacy(), head)[0])
+
+    def test_opaque_custom_and_plugin_ancestors_fail(self):
+        for mode in ("120000", "160000"):
+            for path in ("custom", "integrations/claude-code/clued"):
+                with self.subTest(mode=mode, path=path):
+                    head = split(legacy())
+                    change_manifest(head, lambda m: m["components"].append({"id": "skill.other", "kind": "skill", "root": "custom/package"}))
+                    head[path] = blob("outside", mode)
+                    self.assertTrue(any("opaque" in failure for failure in self.check(split(legacy()), head)[0]))
+
+    def test_git_object_reader_retains_opaque_ancestors(self):
+        # Build real Git objects without filesystem symlinks, so Windows tests exercise the same boundary.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            def git(*args, data=None):
+                return subprocess.run(["git", *args], cwd=root, input=data, check=True,
+                                      capture_output=True).stdout.decode().strip()
+            original = legacy()
+            change_manifest(original, lambda m: m["components"].append({"id": "skill.other", "kind": "skill", "root": "custom/package"}))
+            for path, item in original.items():
+                oid = git("hash-object", "-w", "--stdin", data=item.data)
+                git("update-index", "--add", "--cacheinfo", item.mode, oid, path)
+            link_oid = git("hash-object", "-w", "--stdin", data=b"outside/package")
+            git("update-index", "--add", "--cacheinfo", "120000", link_oid, "custom")
+            tree = git("write-tree")
+            # Use explicit local author identity; no external settings or hooks participate.
+            commit = git("-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "commit-tree", tree, data=b"fixture\n")
+            snapshot = checker.git_tree(root, commit)
+            self.assertEqual(snapshot["custom"].mode, "120000")
+            self.assertTrue(any("opaque" in failure for failure in self.check(legacy(), snapshot)[0]))
+            git("update-index", "--cacheinfo", "160000", commit, "custom")
+            linked_commit = git("-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "commit-tree", git("write-tree"), data=b"gitlink fixture\n")
+            snapshot = checker.git_tree(root, linked_commit)
+            self.assertEqual(snapshot["custom"].mode, "160000")
+            self.assertTrue(any("opaque" in failure for failure in self.check(legacy(), snapshot)[0]))
 
     def test_invalid_or_escape_root_fails(self):
         for value in ("../skills", "/skills", "skills/../elsewhere", "skills\\other", None):
