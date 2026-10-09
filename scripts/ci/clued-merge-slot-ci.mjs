@@ -8,7 +8,11 @@
 //
 //   failed   one of the four CI required checks (gitleaks, trivy and
 //            clued-work-admission from GitHub Actions, clued-admission-verified
-//            from the clued-admission App) finally failed on the head; Clued
+//            from the clued-admission App) finally failed on the head after
+//            the claim got the slot (step 4: a failure from before, such as
+//            the admission of a head that fell behind while the claim waited
+//            in the merge queue, leaves the holder the slot to bring the
+//            default branch in and push; it holds green back); Clued
 //            returns the slot at once, and a failing clued-merge-slot check is
 //            posted on the head so that auto-merge cannot merge it on a
 //            re-run's green (independent review MAJOR-2).
@@ -113,13 +117,21 @@ async function newestCheck(fetchImpl, env, repository, headSha, { name, app_id: 
     .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
 }
 
-// failed, running, green, or idle (not reported), with what was seen.
-export async function ciStateOf(fetchImpl, env, repository, headSha, workflows) {
+// failed, running, green, or idle (not reported), with what was seen. A
+// failure that completed before slotSince (when the claim got the slot, ms)
+// is not reported.
+export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null) {
   const checks = [];
+  let before = null;
   for (const required of CI_REQUIRED_CHECKS) {
     const check = await newestCheck(fetchImpl, env, repository, headSha, required);
     checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
     if (check && check.status === "completed" && FAILING.has(check.conclusion)) {
+      const completed = Date.parse(check.completed_at ?? "");
+      if (Number.isFinite(slotSince) && Number.isFinite(completed) && completed < slotSince) {
+        before ??= `${required.name} concluded ${check.conclusion} before the slot was taken`;
+        continue;
+      }
       return { state: "failed", reason: `${required.name} concluded ${check.conclusion}`, checks };
     }
   }
@@ -141,6 +153,7 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows) 
   if (anyActive.length) {
     return { state: "idle", reason: `only runs that are not counted are active: ${anyActive.map((run) => `${run.path} ${run.status}`).join(", ")}`, checks };
   }
+  if (before) return { state: "idle", reason: before, checks };
   if (checks.every((check) => check.status === "completed" && PASSING.has(check.conclusion))) {
     return { state: "green", reason: "the four CI required checks passed", checks };
   }
@@ -207,17 +220,18 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
       result.holders.push({ scope, claim_id: holder.claim_id, bound_pr: holder.bound_pr ?? null, open: Boolean(pr),
         merge_slot_until: holder.merge_slot_until ?? null });
       // Two claims bound to one pull request are reported once: the report is per pull request.
-      if (pr && !live.some((entry) => entry.pr === pr)) live.push({ scope, pr });
+      const since = Date.parse(holder.merge_slot_ci && holder.merge_slot_ci.taken_at || "");
+      if (pr && !live.some((entry) => entry.pr === pr)) live.push({ scope, pr, since: Number.isFinite(since) ? since : null });
     }
   }
   // The slot check is failed only where the policy requires the slot: in
   // efficiency it only advises it for code and docs, and while admission is
   // advisory the check is not enforced (confirmation review MINOR-B).
   const slotRequired = admissionEnforced(env, mode) && mode.state !== "efficiency";
-  for (const { pr, scope } of live) {
+  for (const { pr, scope, since } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {
-      const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows);
+      const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
       const report = { pr: pr.number, head_sha: pr.head.sha, ci_state: seen.state, reason: seen.reason };
       if (seen.state !== "idle") {
         const response = await cluedRpc(fetchImpl, env, workspace, TOUCH_RPC, {

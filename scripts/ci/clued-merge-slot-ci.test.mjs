@@ -156,6 +156,29 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   assert.deepEqual([state.state, state.checks.find((c) => c.name === "clued-admission-verified").status], ["idle", "missing"]);
 });
 
+test("ciStateOf: a failure from before the slot was taken is not reported and holds green back (step 4)", async () => {
+  const SINCE = Date.parse("2026-10-09T05:00:00Z");
+  const old = check("clued-admission-verified", { conclusion: "failure", completed_at: "2026-10-09T04:59:00Z" });
+  let fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [old] }), ...runsRoute(HEAD, []) });
+  let state = await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE);
+  assert.deepEqual([state.state, state.reason], ["idle", "clued-admission-verified concluded failure before the slot was taken"]);
+  // Without the time the slot was taken, or a failure after it, it is failed as before.
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "failed");
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [{ ...old, completed_at: "2026-10-09T05:01:00Z" }] }) });
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "failed");
+  // A counted run still reports running, so the holder keeps the slot while CI runs on its new head.
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [old] }),
+    ...runsRoute(HEAD, [run(GITLEAKS)]), ...sameAsMain() });
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "running");
+  // reportMergeSlots passes the slot's taken_at from Clued.
+  fetch = slotWorld({ holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_slot_until: "2026-10-09T05:45:00Z",
+    merge_slot_ci: { taken_at: "2026-10-09T05:00:00Z" } }],
+  extra: { ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [old] }), ...runsRoute(HEAD, []) } });
+  const result = await report(fetch);
+  assert.deepEqual([result.errors, result.reports[0].ci_state, fetch.calls.some((call) => call.route === `rpc:${TOUCH_RPC}`)],
+    [[], "idle", false]);
+});
+
 function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_slot_until: "2026-10-08T12:00:00Z" }], pulls = [pull(5)], extra = {},
   touch = (input) => ({ status: "ok", touched: true, claims: [CLAIM], merge_slot_until: "2026-10-08T12:45:00Z", ci_state: input.ci_state, returned: input.ci_state === "failed" }) } = {}) {
   return fakeFetch({

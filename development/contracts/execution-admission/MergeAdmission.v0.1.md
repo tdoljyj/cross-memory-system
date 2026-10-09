@@ -237,6 +237,15 @@
 - 合同 §1.7 随本步发 agent-contract v40（Owner 在 Decision `1fb7f6b3` 选择，再次豁免每周一版）：有上报的仓库不再为保位续期；看不到对当前 head 的上报、或 CI 仍在跑而 `merge_slot_until` 不到 10 分钟时照旧续期；任一 CI 类必需检查失败即关掉 auto-merge。
 - 上线顺序：先应用迁移，再合并（迁移未应用时上报只记 notice，不报错），最后发布 Worker 对外服务 v40。
 
+**实施说明（2026-10-09，第 4 步，Task `38e0c90d`，Owner Decision `661f8c36`、`b4a19a1f`）**：迁移 `20261009080000_work_claims_merge_queue_v1` 把合并位改成队列。落地时与上文的差别如下，均不放松 §2 的保证：
+- 队列项就是带合并引用的认领本身，不另建表：入队时间记在认领的 `merge_queued_at`（带合并引用签发、新加合并引用、或位已失效 / 已出队时带合并引用续期）。`layer`、`state_at_enqueue` 不入队：准入在每个 head 上照常判定，队列只决定谁持位。队列每次读取时按入队顺序现算，没有后台任务。
+- `work_claim_conflicts` 不再把合并引用算作冲突；签发与续期都成功，认领视图多一个 `merge_queue`：每条合并引用一项，含本认领的 `state`（`head`、`waiting`、`lapsed`、`out`）、`position`、队列头与排在前面的项。只有队列头持位：`merge_slot_until`、`merge_slot_ci`、`clued_work_merge_slot_holders_v1`、`clued_work_merge_slot_touch_v1` 与 `clued-merge-slot` 检查都只看队列头，所以第 3 步的上报与检查不改即按队列工作。
+- 队列头的位从它成为队列头起算（入队时，或前一项离开 / 失效时），沿用第 3 步的时钟：续期 45 分钟（成为队列头之前的续期按成为队列头的时刻计，新队列头至少有 45 分钟）、`running` 90 分钟、`green` 30 分钟、硬上限从成为队列头起算、不超过认领租约；成为队列头之前的 CI 上报不计。等待中的项没有时钟，续期只保租约、不改位置。
+- 出队：合并、关闭、CI 失败（三者都去掉认领的合并引用）、持有者续期去掉引用或释放认领、认领过期、位失效。队列头或已失效的项离开时，Clued 在私有表 `work_claim_merge_queue_v1` 按账号与合并引用记下离开时刻与它的入队位置；排在它之前、仍带引用的已失效项从此为 `out`，不会因为后面的项离开而「复活」，下一项的位从离开时刻起算。`lapsed` 或 `out` 的项带引用续期即重新排到队尾。
+- 上报（`clued-merge-slot-ci.mjs`）不再把成为队列头之前就已失败的必需检查报成 `failed`：等待期间 main 前进，旧 head 的准入检查会失败，队列头需要这个位来并入 main 并推送（2026-10-09 #650 的退位即此情形，Note `ffc74d6d`）。这样的失败让该 head 不报 `green`；新 head 的 CI 照常上报。成为队列头之后的失败照旧立即还位并出队。
+- 合同 §1.7 随本步发 agent-contract v42（#653 已用 v41；Owner 在 Decision `b4a19a1f` 同意随第 4 步发版）：合并引用排队、不冲突；先并入 main 并推送再入队；等待时约每 30 分钟续期保租约、不为合并做任何事；成为队列头后如 main 已前进再并入。同时写入 runner 钩子 `merge-admission-ungated-rerun` 的重跑规则（§8 第 5 项）。
+- 上线顺序：先应用迁移（v40/v41 的 Worker 与 Skill 读到 `merge_queue` 只是多一个字段；旧合同的 Agent 不会再收到合并位冲突，按旧文字会以为已持位，所以紧接着发布 Worker v42），再合并，最后发布 Worker 对外服务 v42。
+
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
 
 **结论：可以，且推荐；前提是 Owner 在仓库设置里打开 `Allow auto-merge`（现为关闭）。** GitHub 文档：auto-merge 在公开仓库对 Free 可用，对私有仓库在 GitHub Pro、Team、Enterprise 可用。本仓库是个人账号私有仓库，账号计划从 Agent 侧 API 读不到（令牌无 `user` scope）；它已对私有仓库启用了规则集与分支保护，通常意味着 Pro 及以上，Owner 打开设置时 GitHub 界面会直接显示该选项是否可用，以此为准。
@@ -272,6 +281,7 @@
 
 3. 旧 head（不是 PR 当前 head）的重跑仍拒绝；第 `2 + reruns_per_head` 次起拒绝。runner 开工前检查需要 Owner 在每台 runner 上更新钩子脚本（Decision `f303f861`）。
 4. 准入运行（`pull_request_target`，默认分支代码）的重跑不受次数限制：它每次都重新读 PR 与 main 当前代码，没有「沿用旧输出」的问题。
+5. **没有 gate 的自托管短检查**（例如 `runner-budget-policy`）可以在 PR 当前 head 上用「Re-run all jobs」重跑一次（attempt 2）。runner 钩子 `merge-admission-ungated-rerun`（Task `26cced7e`，Owner Decision `661f8c36`，2026-10-09 起七台 runner 已装）放行的条件：本 attempt 没有 `admission-gate` job、该 workflow 文件在运行提交处与 main 的 blob 相同、main 的副本里不出现 `admission-gate` 字样、每个 job 都有不超过 30 的字面 `timeout-minutes`。
 
 ---
 

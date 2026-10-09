@@ -16,7 +16,10 @@ import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 // it, and is returned when its pull request is merged or closed. Merge
 // Admission step 3 (migration 20261009010000, Task 3576d10d): CI reports keep
 // it (running 45 minutes, green 30), a CI failure returns it, a hard cap ends
-// it, and the admission mode goes into the verify Receipts. Imported by
+// it, and the admission mode goes into the verify Receipts. Merge Admission
+// step 4 (migration 20261009080000, Task 38e0c90d): the slot is a FIFO queue;
+// a merge ref never conflicts, the head holds the slot, and the next entry
+// becomes head when it leaves or lapses. Imported by
 // work-claims-reject-receipts-db.test.mjs, so it runs with npm run test:work:claims.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -114,45 +117,68 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       { scope: 'global', claim_id: c.claim_id })).claim;
     const slotAt = async (c) => (await admin.query(
       'select merge_slot_at from clued_private.work_claims_v1 where claim_id=$1', [c.claim_id])).rows[0].merge_slot_at;
-    const age = (c, minutes) => admin.query(`update clued_private.work_claims_v1
-      set merge_slot_at=clock_timestamp()-make_interval(mins=>$2) where claim_id=$1`, [c.claim_id, minutes]);
+    // Moves every slot and queue time of the account back, as if the minutes had passed (leases stay).
+    const age = async (minutes) => {
+      await admin.query(`update clued_private.work_claims_v1 set
+        merge_slot_at=merge_slot_at-make_interval(mins=>$2),merge_queued_at=merge_queued_at-make_interval(mins=>$2),
+        merge_slot_taken_at=merge_slot_taken_at-make_interval(mins=>$2),merge_slot_ci_at=merge_slot_ci_at-make_interval(mins=>$2)
+        where user_id=$1`, [userId, minutes]);
+      await admin.query(`update clued_private.work_claim_merge_queue_v1 set
+        head_left_at=head_left_at-make_interval(mins=>$2),left_queued_at=left_queued_at-make_interval(mins=>$2)
+        where user_id=$1`, [userId, minutes]);
+    };
+    // Makes the head's slot have started the minutes ago.
+    const startedAgo = async (c, minutes) => {
+      await admin.query(`update clued_private.work_claims_v1 set merge_queued_at=clock_timestamp()-make_interval(mins=>$2)
+        where claim_id=$1`, [c.claim_id, minutes]);
+      // Whoever left before it left earlier still.
+      await admin.query(`update clued_private.work_claim_merge_queue_v1
+        set head_left_at=least(head_left_at,clock_timestamp()-make_interval(mins=>$2)),
+          left_queued_at=least(left_queued_at,clock_timestamp()-make_interval(mins=>$2+1)) where user_id=$1`, [userId, minutes]);
+    };
+    const queue = (c) => c.merge_queue?.[0];
     const minutesLeft = (until) => (Date.parse(until) - Date.now()) / 60000;
 
     // The profile names the slot clock.
     assert.equal((await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v.merge_slot_seconds, 2700);
 
-    // --- One holder at a time. ---
+    // --- One head at a time; the others wait in the queue (step 4). ---
     let a = await claim('claude', 'A: pull request one');
     let b = await claim('codex', 'B: pull request two');
-    assert.equal(a.merge_slot_until, null, 'no merge ref, no slot');
+    assert.deepEqual([a.merge_slot_until, a.merge_queue], [null, null], 'no merge ref, no slot');
     a = committed(await renew('claude', a, { trigger_refs: ['task:a', SLOT] })).claim;
     assert.ok(minutesLeft(a.merge_slot_until) > 44 && minutesLeft(a.merge_slot_until) <= 45, a.merge_slot_until);
-    // Another session, whatever the case of the ref, waits.
-    for (const ref of [SLOT, 'MERGE:tdoljyj/Cross-Memory-System:MAIN']) {
-      const refused = rejected(await renew('codex', b, { trigger_refs: [ref] }), 'work_claim_conflict');
-      const conflict = refused.conflicts.find((row) => row.claim_id === a.claim_id);
-      assert.deepEqual(conflict.overlap.trigger_refs, [SLOT]);
-      assert.equal(conflict.merge_slot_until, a.merge_slot_until);
-    }
-    // Refused renewals use nothing.
-    assert.equal((await view(b)).renewals, b.renewals);
-    // A new claim that asks for the slot waits too.
-    rejected(await agent('codex', 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(),
-      task_id: await createTask('C: new claim'), write_set: ['merge-slot/c'], trigger_refs: [SLOT] }), 'work_claim_conflict');
-    // Another branch's slot is another slot.
+    assert.deepEqual([queue(a).ref, queue(a).state, queue(a).position, queue(a).length, queue(a).head.claim_id, queue(a).ahead],
+      [SLOT, 'head', 1, 1, a.claim_id, []]);
+    // Another session joins behind it, whatever the case of the ref.
+    b = committed(await renew('codex', b, { trigger_refs: ['MERGE:tdoljyj/Cross-Memory-System:MAIN'] })).claim;
+    assert.equal(b.merge_slot_until, null, 'a waiting claim holds no slot');
+    assert.deepEqual([queue(b).state, queue(b).position, queue(b).length, queue(b).ahead.map((row) => row.claim_id),
+      queue(b).head.claim_id], ['waiting', 2, 2, [a.claim_id], a.claim_id]);
+    // A new claim with the ref joins too, and a waiting renewal keeps its place.
+    let c0 = await claim('codex', 'C: new claim', { trigger_refs: [SLOT] });
+    assert.deepEqual([queue(c0).state, queue(c0).position, c0.merge_slot_until], ['waiting', 3, null]);
+    b = committed(await renew('codex', b)).claim;
+    assert.deepEqual([queue(b).state, queue(b).position], ['waiting', 2]);
+    assert.deepEqual([queue(await view(a)).state, queue(await view(a)).length], ['head', 3]);
+    // Dropping the ref leaves the queue.
+    c0 = committed(await renew('codex', c0, { trigger_refs: [] })).claim;
+    assert.equal(c0.merge_queue, null);
+    // Another branch's slot is another queue.
     b = committed(await renew('codex', b, { trigger_refs: ['merge:tdoljyj/cross-memory-system:release'] })).claim;
     assert.ok(b.merge_slot_until);
+    assert.equal(queue(await view(a)).length, 1);
     b = committed(await renew('codex', b, { trigger_refs: [] })).claim;
     assert.equal(b.merge_slot_until, null);
     assert.equal(await slotAt(b), null, 'without a merge ref there is no clock');
 
     // --- A renewal refreshes the slot; other writes do not. ---
-    await age(a, 30);
+    await age(30);
     const before = await slotAt(a);
     a = committed(await renew('claude', a)).claim;
     assert.ok(await slotAt(a) > before, 'a renewal that keeps the ref refreshes the clock');
     assert.ok(minutesLeft(a.merge_slot_until) > 44);
-    await age(a, 10);
+    await age(10);
     const aged = await slotAt(a);
     const bound = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: a.claim_id,
       head_sha: 'a'.repeat(40), base_sha: 'b'.repeat(40), pr_ref: 'tdoljyj/cross-memory-system#5' });
@@ -161,18 +187,24 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual(await slotAt(a), aged, 'binding the pull request does not refresh the slot');
     a = (await view(a));
 
-    // --- It lapses after 45 minutes, and the old holder cannot take it back. ---
-    await age(a, 46);
-    a = await view(a);
-    assert.equal(a.merge_slot_until, null, 'a lapsed slot is shown as not held');
-    assert.deepEqual(a.trigger_refs, [SLOT, 'task:a'], 'the ref stays until the holder drops it');
+    // --- It lapses after 45 minutes; the next entry becomes head, and the old holder joins at the back. ---
     b = committed(await renew('codex', b, { trigger_refs: [SLOT] })).claim;
-    assert.ok(minutesLeft(b.merge_slot_until) > 44, 'B takes the lapsed slot');
-    const revived = rejected(await renew('claude', a), 'work_claim_conflict');
-    assert.deepEqual(revived.conflicts.map((row) => row.claim_id), [b.claim_id]);
-    assert.equal(await slotAt(a) < await slotAt(b), true, 'the refused renewal did not refresh A');
+    assert.equal(queue(b).state, 'waiting');
+    await age(46);
+    a = await view(a);
+    assert.deepEqual([a.merge_slot_until, queue(a).state], [null, 'lapsed'], 'a lapsed slot is shown as not held');
+    assert.deepEqual(a.trigger_refs, [SLOT, 'task:a'], 'the ref stays until the holder drops it');
+    b = await view(b);
+    assert.equal(queue(b).state, 'head');
+    const bLeft = minutesLeft(b.merge_slot_until);
+    assert.ok(bLeft > 30 && bLeft < 35, `B became head when A lapsed 11 minutes ago: ${bLeft}`);
+    a = committed(await renew('claude', a)).claim;
+    assert.deepEqual([queue(a).state, queue(a).position, queue(a).ahead.map((row) => row.claim_id), a.merge_slot_until],
+      ['waiting', 2, [b.claim_id], null], 'A joins again at the back');
+    b = await view(b);
+    assert.ok(Math.abs(minutesLeft(b.merge_slot_until) - bLeft) < 1, 'A joining again does not move the start B got');
     a = committed(await renew('claude', a, { trigger_refs: ['task:a'] })).claim;
-    assert.equal(a.merge_slot_until, null);
+    assert.equal(a.merge_queue, null);
 
     // --- A merge returns the slot of the claims bound to the pull request. ---
     const boundB = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: b.claim_id,
@@ -211,7 +243,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
 
     // --- A released claim frees its slot at once. ---
     let c = await claim('codex', 'C: takes and releases', { trigger_refs: [SLOT] });
-    assert.ok(c.merge_slot_until, 'a claim issued with the ref takes the slot');
+    assert.ok(c.merge_slot_until, 'a claim issued with the ref into an empty queue takes the slot');
     committed(await agent('codex', 'clued_work_release_v1',
       { scope: 'global', claim_id: c.claim_id, fence: c.fence, outcome: 'completed' }));
     c = await view(c);
@@ -235,15 +267,12 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual([c1.copy_index, c2.copy_index], [1, 2], 'siblings with the same paths and refs do not conflict');
     c1 = committed(await renew('claude', c1, { trigger_refs: ['task:race', SLOT] })).claim;
     assert.ok(c1.merge_slot_until);
-    const sibling = rejected(await renew('claude', c2, { trigger_refs: ['task:race', SLOT] }), 'work_claim_conflict');
-    assert.deepEqual(sibling.conflicts.map((row) => [row.claim_id, row.overlap.same_task, row.overlap.paths, row.overlap.trigger_refs]),
-      [[c1.claim_id, false, [], [SLOT]]], 'only the live slot conflicts between copies');
-    c2 = committed(await renew('claude', c2)).claim;
+    c2 = committed(await renew('claude', c2, { trigger_refs: ['task:race', SLOT] })).claim;
+    assert.deepEqual([c2.merge_slot_until, queue(c2).state, queue(c2).ahead.map((row) => row.claim_id)],
+      [null, 'waiting', [c1.claim_id]], 'a sibling copy queues behind the holder copy');
     c1 = committed(await renew('claude', c1)).claim;
     assert.ok(c1.merge_slot_until, 'the holder copy refreshes its slot');
-    // A copy issued while a sibling holds the slot waits for it.
-    rejected(await agent('claude', 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(), task_id: raceTask,
-      write_set: ['merge-slot/race/**'], trigger_refs: [SLOT], holder_session_ref: 'race-3' }), 'work_claim_conflict');
+    c2 = committed(await renew('claude', c2, { trigger_refs: ['task:race'] })).claim;
 
     // --- The return drops only the pull request's own repository's slots. ---
     c1 = committed(await renew('claude', c1, { trigger_refs: ['task:race', SLOT, 'merge:other/repo:main'] })).claim;
@@ -318,12 +347,13 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
 
     // running keeps the slot 90 minutes after the report (an hour between reports and a late
     // scheduled run, review MAJOR-1), whatever the renewal clock says.
-    await setSlot(d, 'merge_slot_at', 40);
+    await age(40);
     assert.ok(minutesLeft((await view(d)).merge_slot_until) < 6, 'the renewal clock alone has 5 minutes left');
     const running = await touch({ ci_state: 'running', hard_cap_minutes: 120 });
     assert.deepEqual([running.status, running.touched, running.claims], ['ok', true, [d.claim_id]], JSON.stringify(running));
     d = await view(d);
-    assert.ok(minutesLeft(d.merge_slot_until) > 89 && minutesLeft(d.merge_slot_until) <= 90, d.merge_slot_until);
+    // 90 minutes from the report, but the slot started 40 minutes ago, so the 120-minute cap ends it first.
+    assert.ok(minutesLeft(d.merge_slot_until) > 79 && minutesLeft(d.merge_slot_until) <= 80, d.merge_slot_until);
     assert.deepEqual([d.merge_slot_ci.ci_state, d.merge_slot_ci.ci_head_sha], ['running', HEAD]);
     assert.ok(Math.abs(Date.parse(d.merge_slot_ci.hard_cap_until) - Date.parse(d.merge_slot_ci.taken_at) - 120 * 60000) < 1000);
     // A repeated report refreshes the clock but writes no new Receipt.
@@ -354,25 +384,27 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       [['running', HEAD, null], ['green', HEAD, 'running'], ['green', '9'.repeat(40), 'green'], ['green', HEAD, 'green']]);
 
     // The hard cap ends the slot whatever the clocks say, and a report cannot revive it.
-    await setSlot(d, 'merge_slot_taken_at', 110);
+    await startedAgo(d, 110);
     await touch({ ci_state: 'running', hard_cap_minutes: 120 });
     d = await view(d);
     assert.ok(minutesLeft(d.merge_slot_until) > 9 && minutesLeft(d.merge_slot_until) <= 10, d.merge_slot_until);
-    await setSlot(d, 'merge_slot_taken_at', 121);
+    await startedAgo(d, 121);
     d = await view(d);
     assert.equal(d.merge_slot_until, null, 'past the hard cap the slot has lapsed');
     assert.deepEqual((await holders()).holders, []);
     const late = await touch({ ci_state: 'running', hard_cap_minutes: 120 });
     assert.deepEqual([late.touched, late.reason], [false, 'no_live_slot_for_pr']);
     assert.equal((await view(d)).merge_slot_until, null);
-    // Someone else may take it now; the old holder may take it again only while it is free, as a new slot.
+    // The next entry takes it now; the old holder joins again behind, and gets a new slot when its turn comes.
     let e = await claim('claude', 'E: waits for the slot');
     e = committed(await renew('claude', e, { trigger_refs: [SLOT] })).claim;
     assert.ok(e.merge_slot_until, 'E takes the slot D lost to the hard cap');
-    rejected(await renew('codex', d), 'work_claim_conflict');
-    e = committed(await renew('claude', e, { trigger_refs: [] })).claim;
     d = committed(await renew('codex', await view(d))).claim;
-    assert.ok(minutesLeft(d.merge_slot_until) > 44);
+    assert.deepEqual([d.merge_slot_until, queue(d).state, queue(d).ahead.map((row) => row.claim_id)],
+      [null, 'waiting', [e.claim_id]], 'D joins again behind E');
+    e = committed(await renew('claude', e, { trigger_refs: [] })).claim;
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 44, 'D is head again once E leaves');
     assert.deepEqual([d.merge_slot_ci.ci_state, d.merge_slot_ci.hard_cap_until], [null, null], 'taken again: a new slot');
     assert.ok(Date.now() - Date.parse(d.merge_slot_ci.taken_at) < 60000);
     // Another pull request's report does nothing to it.
@@ -390,6 +422,37 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       ['WORK_CLAIM_MERGE_SLOT_RETURNED', 'ci_failed', HEAD, [SLOT]]);
     assert.equal((await touch({ ci_state: 'failed', hard_cap_minutes: 120 })).returned, false, 'nothing more to return');
     await assert.rejects(() => touch({ ci_state: 'failed', hard_cap_minutes: 200 }), /work_claim_merge_slot_hard_cap_invalid/);
+
+    // --- An entry whose slot lapsed stays out when the head behind it leaves: no revival. ---
+    let q1 = await claim('claude', 'Q1', { trigger_refs: [SLOT], holder_session_ref: 'queue-1' });
+    let q2 = await claim('codex', 'Q2', { trigger_refs: [SLOT], holder_session_ref: 'queue-2' });
+    let q3 = await claim('codex', 'Q3', { trigger_refs: [SLOT], holder_session_ref: 'queue-3' });
+    assert.deepEqual([q1, q2, q3].map((x) => queue(x).state), ['head', 'waiting', 'waiting']);
+    await age(46);
+    [q1, q2, q3] = [await view(q1), await view(q2), await view(q3)];
+    assert.deepEqual([q1, q2, q3].map((x) => queue(x).state), ['lapsed', 'head', 'waiting']);
+    assert.deepEqual(queue(q3).ahead.map((row) => row.claim_id), [q2.claim_id], 'a lapsed entry is not ahead of anyone');
+    q2 = committed(await renew('codex', q2, { trigger_refs: [] })).claim;
+    [q1, q3] = [await view(q1), await view(q3)];
+    assert.deepEqual([queue(q1).state, q1.merge_slot_until, queue(q3).state], ['out', null, 'head']);
+    assert.ok(minutesLeft(q3.merge_slot_until) > 44, 'Q3 starts when Q2 left');
+    // The entry that was out joins again at the back; a released head hands over too.
+    q1 = committed(await renew('claude', q1)).claim;
+    assert.deepEqual([queue(q1).state, queue(q1).position], ['waiting', 2]);
+    committed(await agent('codex', 'clued_work_release_v1',
+      { scope: 'global', claim_id: q3.claim_id, fence: q3.fence, outcome: 'completed' }));
+    q1 = await view(q1);
+    assert.deepEqual([queue(q1).state, queue(q1).position, queue(q1).length], ['head', 1, 1]);
+    assert.ok(minutesLeft(q1.merge_slot_until) > 44);
+    q1 = committed(await renew('claude', q1, { trigger_refs: [] })).claim;
+    // The leaving is recorded per account and merge ref, out of reach of the API roles.
+    const left = (await admin.query(`select merge_ref,left_claim_id from clued_private.work_claim_merge_queue_v1
+      where user_id=$1`, [userId])).rows;
+    assert.equal(left.find((row) => row.merge_ref === SLOT).left_claim_id, q1.claim_id);
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      assert.equal((await admin.query(`select has_table_privilege($1,'clued_private.work_claim_merge_queue_v1','select') v`,
+        [role])).rows[0].v, false, role);
+    }
 
     // Once the Owner marks the CI admission Binding, only it may report or list.
     const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
@@ -419,7 +482,8 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       await can('service_role', 'public.clued_work_merge_slot_return_v1(text,jsonb)')], [true, false, false]);
     for (const role of ['anon', 'authenticated', 'service_role']) {
       for (const fn of ['work_claim_merge_refs_v1', 'work_claim_merge_slot_until_v1', 'work_claim_merge_slot_live_v1',
-        'work_claim_merge_slot_stamp_v1', 'work_claim_merge_slot_return_core_v1']) {
+        'work_claim_merge_slot_stamp_v1', 'work_claim_merge_slot_return_core_v1', 'work_claim_merge_slot_until_from_v1',
+        'work_claim_merge_queue_v1', 'work_claim_merge_queue_view_v1', 'work_claim_merge_slot_ci_view_v1']) {
         const allowed = (await admin.query(`select bool_or(has_function_privilege($1,p.oid,'execute')) v
           from pg_proc p join pg_namespace n on n.oid=p.pronamespace
           where n.nspname='clued_private' and p.proname=$2`, [role, fn])).rows[0].v;
