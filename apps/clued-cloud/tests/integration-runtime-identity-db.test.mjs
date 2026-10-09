@@ -975,11 +975,14 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         assert.equal(opened.error_code ?? opened.status, 'identity_dimension_evidence_unverified');
       }
       // identity_update never accepts a provider connection id
-      const ok = await install(await oauthBinding(user, { client: `reg2-${uid()}` }), { host: 'test.complete' });
+      const installer = await oauthBinding(user, { client: `reg2-${uid()}` });
+      const ok = await install(installer, { host: 'test.complete' });
       const id = ok.supplemental.integration_id;
-      const cur = (await admin.query(`select b.token_hash from clued_private.integration_connections_v1 c join public.clued_agent_bindings b
-        on b.id = c.binding_id where c.integration_id = $1 and c.link_status = 'CURRENT'`, [id])).rows[0].token_hash;
-      const r = await rpc(admin, 'clued_integration_identity_update_v1', cur, { idempotency_key: key(), integration_id: id,
+      // The column holds the verifier, so the call presents the installing Binding's own proof.
+      const cur = (await admin.query(`select b.id from clued_private.integration_connections_v1 c join public.clued_agent_bindings b
+        on b.id = c.binding_id where c.integration_id = $1 and c.link_status = 'CURRENT'`, [id])).rows[0].id;
+      assert.equal(cur, installer.id, 'the CURRENT connection is the installing Binding');
+      const r = await rpc(admin, 'clued_integration_identity_update_v1', installer, { idempotency_key: key(), integration_id: id,
         base_version: (await integration(id)).version, provider_connection_id: sha('x') });
       assert.equal(r.error_code, 'invalid_identity_update');
     });

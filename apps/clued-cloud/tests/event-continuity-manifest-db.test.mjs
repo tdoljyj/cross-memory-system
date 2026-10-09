@@ -219,7 +219,7 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
     await admin.query('update public.clued_audit_receipts set binding_id=null where id=$1', [approval.receipt]);
     await assert.rejects(() => run(manifest, dry.manifest_digest, approval.id, approval.receipt, true),
       /continuity_manifest_approval_invalid/);
-    const approvalBinding = (await admin.query('select id from public.clued_agent_bindings where token_hash=$1', [token])).rows[0].id;
+    const approvalBinding = (await admin.query('select id from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)', [token])).rows[0].id;
     await admin.query('update public.clued_audit_receipts set binding_id=$1 where id=$2', [approvalBinding, approval.receipt]);
     // A project-scope Decision cannot approve global Events.
     await admin.query('update public.clued_memories set canonical_scope=$1 where id=$2', [projectScope, approval.id]);

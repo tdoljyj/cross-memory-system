@@ -324,7 +324,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     assert.equal(bypass.status, 'committed', 'E2E-11 OPEN_BY_OD-5: a Binding user_explicit write still commits');
     assert.equal(await confirmed(bypassRecord, 1), false);
     // E2E-13 (b): deleting the Binding nulls the Receipt binding_id; still false.
-    await admin.query('delete from public.clued_agent_bindings where token_hash=$1', [tokenDoomed]);
+    await admin.query('delete from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)', [tokenDoomed]);
     assert.equal((await receipt(bypass.receipt_id)).binding_id, null);
     assert.equal(await confirmed(bypassRecord, 1), false, 'a null binding_id alone never counts');
 

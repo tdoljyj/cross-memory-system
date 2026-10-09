@@ -191,7 +191,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       from public.clued_agent_bindings b,public.clued_memories m where b.id=$1 and m.id=$2`,[readBinding,ownerLikeId])).rows[0].value;
     await t.test('Owner M1 chain preserves historical writer Binding across current same-owner readers',async()=>{
       const historical=await ownerChain();assert.equal(historical.receipt.id,ownerReceipt);assert.equal(historical.event.actor_binding_ref,bindingId);
-      const reader=(await admin.query('select id from public.clued_agent_bindings where token_hash=$1',[otherToken])).rows[0].id;
+      const reader=(await admin.query("select id from public.clued_agent_bindings where user_id=$1 and agent_name='Other DB fixture'",[userId])).rows[0].id;
       assert.notEqual(reader,bindingId);assert.deepEqual(await ownerChain(reader),historical);
     });
     await fault('Owner helper direct anon execution denied',async()=>{},()=>roleCall('anon','select clued_private.model_domain_owner_chain_successor(null,null)'),/42501/);

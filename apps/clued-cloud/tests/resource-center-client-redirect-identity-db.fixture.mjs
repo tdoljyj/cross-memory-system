@@ -131,7 +131,8 @@ export async function testStorageClientRedirectIdentity(t, admin, server, user, 
       // A root-relative write path resolves for the inherited client too (production clients are
       // linked this way, with no reviewed link row), so it is canonicalized before the digest.
       const hashOf = async id => (await admin.query("select token_hash from public.clued_agent_bindings where id=$1", [id])).rows[0].token_hash;
-      const paths = async id => (await admin.query("select clued_private.storage_mutation_paths_v1($1,$2,$3::jsonb) value",
+      // The column holds the verifier; an internal proof stands in for the client's token here.
+      const paths = async id => (await admin.query("select clued_private.storage_mutation_paths_v1(clued_private.credential_internal_proof_v1($1),$2,$3::jsonb) value",
         [await hashOf(id), connection, JSON.stringify({ destination_path: "90_x/a.md" })])).rows[0].value.destination_path;
       assert.equal(await paths(reconnect.id), `${root}/90_x/a.md`, "an inherited client resolves the managed root");
       assert.equal(await paths(anchor.id), `${root}/90_x/a.md`, "the reviewed anchor resolves the managed root");
