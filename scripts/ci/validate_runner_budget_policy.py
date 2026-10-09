@@ -45,6 +45,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-merge-slot-ci.yml": (
         "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes; default-branch code only, seconds of work, no install, no pull request trigger."
     ),
+    "clued-ci-usage-report.yml": (
+        "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 200-request budget; default-branch code only, no install, no secret, no pull request trigger, and it must not take the self-hosted capacity it measures."
+    ),
     "clued-release-tags.yml": (
         "Release tagging (Task 6dfd7560): creates the VERSION and release/<date>-r<run> tags after a VERSION change on main or a successful production deploy; default-branch code only, no install, no pull request trigger."
     ),
