@@ -375,8 +375,10 @@ offline operator's explicit stage/activate calls. These invoker-only operations 
 even if an accidental EXECUTE grant appears. Retired generations cannot be reactivated by these operations.
 
 The issuer resolver uses the domain-separated verifier formula but deliberately ignores the transaction-local
-Binding internal-proof map. Public callers cannot present a stored verifier or historical identity; the
-identity-only implementations are private and retain the original business guards. Requests/new registrations
+Binding internal-proof map. Public callers cannot authenticate with a stored verifier. The original legacy
+proof remains usable only through its active, unexpired cutover credential; after that generation is retired
+or expires, retained identity/history alone cannot authenticate. The identity-only implementations are private
+and retain the original business guards. Requests/new registrations
 use digest `/3` over UUID identity; historical `/2` digests, registrations, request links, Receipts and persisted
 verification JSON are not rewritten. New verification `/3` and default-refresh request hashes bind UUID/kind/
 credential generation without an issuer credential value.
@@ -387,19 +389,24 @@ retain it while that migration remains replayable. The seven-day backup/rollback
 to historical step 2a. A repeated step 2a rewrite over newer issuer identity bodies is not a supported rollback.
 Repair issuer cutovers forward, preserving retired keys and historical evidence. The detailed independent
 authorization/storage rotation runbook is in `apps/clued-cloud/docs/connection-authorization-rollout.md`.
+The 24-hour legacy credential limit starts with the first 2b migration and is independent of C1's minimum
+24-hour observation after successful gateway cutover. The resolver checks expiry after its credential and
+issuer SHARE locks; it does not enforce commit-time expiry after every later business lock wait.
 
 Database tests explicitly use `allowTestIssuerCredentials` from `tests/issuer-credentials-fixture.mjs` for
 synthetic issuer rows created after migration. Its test-only trigger is absent from production migrations and
 Worker code; `issuer-credentials-guard.test.mjs` verifies this separation. Tests of an older migration stop at
 their own historical boundary rather than changing the production migration to accommodate their fixtures.
 
-- **Issuer hashes are still the credential; G6 trusts `__transport_source_commit`.**
+- **Issuer credential separation and G6 hardening await their production gates.**
   Designed in
   [DatabaseCallerAuthentication.v0.1](../../development/contracts/database-access/DatabaseCallerAuthentication.v0.1.md)
   (Task `9a4d6d2c`, Owner Decision `1427642f`). Bindings and Resource Center
-  tokens are done (above). Issuer columns are step 2b. After that, the Worker
-  moves to its own database role, which also closes the G6 claim. Each step is
-  its own PR and Owner approval.
+  tokens are done (above). Step 2b separates issuer identity and credentials;
+  C1 develops in parallel. C1 phase 1 moves the Worker to its own database role
+  and retains the old grants and G6 body. G6 hardening and grant withdrawal belong
+  to phase 2 after at least 24 hours of successful production observation. Each
+  production migration, secret configuration, release and withdrawal has its own gate.
 - **MTPE test schemas.** `mtpe_m0_test` (four functions executable by `PUBLIC`)
   and `mtpe_m0_work` remain in production. Export them and drop them; no API role
   has USAGE on them, so this is latent.

@@ -13,12 +13,14 @@ Migration `20261009070001_issuer_identity_credentials_v1.sql`, authorized for im
 rotation require the production release gate. The storage issuer's existing PK/FKs continue to identify the
 same OAuth app, attempts, delegations and jobs; ordinary key rotation retires a credential, not that identity.
 Every public hash/secret entry authenticates the active verifier before the private business body runs.
-No public endpoint accepts an identity or a verifier instead of a proof.
+No public endpoint accepts a stored verifier instead of a proof. The original legacy proof remains usable
+through its active cutover credential for at most 24 hours after the first migration; retaining its identity
+after retirement or expiry does not preserve authentication.
 
 Existing persisted `clued.storage-persisted-verification/2` JSON, its digest and its immutable Receipt remain
 unchanged. A currently authenticated new key can inspect/settle that same issuer's historical result through
 the fixed identity check; all existing job, provider-attempt, authority snapshot, version and Receipt checks
-still apply. No historical credential grants a fresh operation. New verification uses `/3`, with `issuer_id`,
+still apply. A retired or expired historical credential grants no fresh operation. New verification uses `/3`, with `issuer_id`,
 `issuer_kind` and the credential generation captured by the resolver; it contains no issuer proof, verifier or
 legacy `issuer_hash` field. The generation is audit provenance and does not bypass current authentication.
 
@@ -33,6 +35,10 @@ historical verified-result recovery, then immediately retire the previous genera
 the old raw secret and proof, and continued operation of pre-existing Bindings/registrations. The detailed
 two-key sequence is in `apps/clued-cloud/docs/connection-authorization-rollout.md`. Never revoke/re-register
 the app or renew its standing delegation merely to rotate its key.
+This 2b cutover limit is independent of C1's minimum 24-hour observation after gateway cutover. The resolver
+rechecks expiry after credential and issuer SHARE locks, rather than before commit after every later business
+lock wait. Production migration, Worker secret configuration and release retain their exact authorization
+gates; C1's independent ES256 signing key is a separate Owner import.
 
 The authenticated Supabase Canonical service remains the only policy authority.
 `storage_connections_v1` pins an existing profile, owner and current Decision;

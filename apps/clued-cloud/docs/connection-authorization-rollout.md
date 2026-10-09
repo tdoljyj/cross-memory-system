@@ -47,6 +47,13 @@ The first application gives existing issuers one legacy credential generation wi
 window. It is a backstop, not a grace period after successful rotation: retire the old generation immediately
 after validating its replacement. Reapplication does not extend or revive it. New issuer provisioning creates
 identity only; the offline database operator must explicitly stage and activate a separately generated verifier.
+The legacy proof remains usable only while that initial credential generation is active and unexpired;
+retirement or expiry removes its authentication capability even though its historical identity bytes remain.
+This maximum 24-hour cutover window is independent of C1's minimum 24-hour observation after successful
+gateway cutover. The resolver checks the wall clock after acquiring credential and issuer SHARE locks;
+retirement waits for admitted transactions to release those locks. This is not a commit-time expiry check
+after every later business lock wait. C1's observation and withdrawal order is defined in
+DatabaseCallerAuthentication.v0.1 §6.2.
 `issuer_function_sources_v1` is the versioned implementation source needed for deterministic reapplication;
 it contains function definitions, not credential material or a seven-day rollback backup.
 
@@ -64,7 +71,10 @@ store; compute its proof and `cv1:` verifier there. Pass only the verifier to th
 approval/replay/revoke for authorization, or refresh/onboard/queued recovery for storage. Then immediately call
 `issuer_credential_retire_v1(issuer_uuid, previous_generation)` and prove the old credential is refused.
 Do not proceed to the second key until the first key's positive and negative checks pass. Never set the issuer
-identity row's `revoked_at` for ordinary key rotation: that would invalidate its existing authorizations.
+underlying issuer row's `revoked_at` in `authorization_issuers_v12` or `storage_oauth_apps_v1` for ordinary key
+rotation: that would invalidate its existing authorizations. The UUID identity table has no `revoked_at`.
+Each migration, Worker secret update and release needs its own exact production authorization. C1's
+Owner-imported independent ES256 signing key is separate from both issuer secrets.
 
 If verification fails, stop that key's cutover. Keep the new generation and the bounded old generation's
 observed state, diagnose once, and repair forward. Do not reactivate a retired generation, recover a proof
