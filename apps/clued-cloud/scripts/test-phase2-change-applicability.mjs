@@ -38,9 +38,11 @@ for (const scenario of [
   assert.equal(response.headers.has('www-authenticate'), false);
   const { result } = await response.json();
   assert.equal(result.isError, false);
-  assert.equal(result.structuredContent.authentication.oauth.authorization_server, scenario.issuer);
-  assert.equal(result.structuredContent.authentication.oauth.consent_path, origin + '/oauth/consent');
-  assert.deepEqual(result.structuredContent.authentication.scopes, ['context:read', 'context:write', 'audit:read']);
+  const metadata = JSON.parse(result.content[0].text);
+  assert.equal(metadata.authentication.oauth.authorization_server, scenario.issuer);
+  assert.equal(metadata.authentication.oauth.consent_path, origin + '/oauth/consent');
+  assert.deepEqual(metadata.authentication.scopes, ['context:read', 'context:write', 'audit:read']);
+  assert.equal(result.structuredContent.authentication, undefined);
   assert.equal(fetch.mock.callCount(), 0);
 });
 
@@ -64,7 +66,7 @@ test('CA02 account REST resource denial is 403 without an OAuth challenge', asyn
     paths.push(route);
     assert.equal(options.headers.get('authorization'), 'Bearer fixture-account-jwt');
     if (route === '/auth/v1/user') return Response.json({ id: 'fixture-account' });
-    assert.equal(route, '/rest/v1/rpc/clued_user_project_list');
+    assert.equal(route, '/rest/v1/rpc/clued_user_project_list_v2');
     return Response.json({ code: '42501', message: 'resource_action_not_authorized' }, { status: 401 });
   });
   const response = await handle(projectRequest(), env);
@@ -74,7 +76,7 @@ test('CA02 account REST resource denial is 403 without an OAuth challenge', asyn
   assert.equal(body.error, 'resource_action_not_authorized');
   assert.equal(body.details.code, '42501');
   assert.equal('projects' in body, false);
-  assert.deepEqual(paths, ['/auth/v1/user', '/rest/v1/rpc/clued_user_project_list']);
+  assert.deepEqual(paths, ['/auth/v1/user', '/rest/v1/rpc/clued_user_project_list_v2']);
 });
 
 test('CA02 account REST invalid JWT stays 401 and never calls project RPC', async t => {

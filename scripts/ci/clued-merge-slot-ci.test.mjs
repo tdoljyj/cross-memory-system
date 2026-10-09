@@ -149,11 +149,28 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
     run(QUALITY, "in_progress", { head_sha: OTHER }), run(QUALITY, "completed")]) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
   // A required check not posted yet, with nothing running: not reported.
-  fetch = fakeFetch({ ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "clued-work-admission": [check("clued-work-admission")],
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "clued-work-admission": [check("clued-work-admission")],
     "clued-admission-verified": [] }),
     ...runsRoute(HEAD, []) });
   state = await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS);
   assert.deepEqual([state.state, state.checks.find((c) => c.name === "clued-admission-verified").status], ["idle", "missing"]);
+});
+
+test("contract-placement is an always-run hosted required check, and failures return the merge slot", async () => {
+  assert.ok(CI_REQUIRED_CHECKS.some(({ name, app_id }) => name === "contract-placement" && app_id === 15368));
+  const text = fs.readFileSync(path.join(ROOT, ".github/workflows/contract-placement.yml"), "utf8");
+  assert.match(text, /^ {4}name: contract-placement$/m);
+  assert.match(text, /^ {4}runs-on: ubuntu-latest$/m);
+  assert.doesNotMatch(text, /^\s*(?:if|needs|paths|paths-ignore):/m);
+  assert.deepEqual(workflowFormFindings(text), []);
+  assert.deepEqual(gateFindings(text, null), []);
+  const fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, {
+    "contract-placement": [check("contract-placement", { conclusion: "failure" })],
+  }) });
+  const state = await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS);
+  assert.deepEqual([state.state, state.reason], ["failed", "contract-placement concluded failure"]);
+  const missing = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "contract-placement": [] }), ...runsRoute(HEAD, []) });
+  assert.equal((await ciStateOf(missing.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
 });
 
 test("ciStateOf: a failure from before the slot was taken is not reported and holds green back (step 4)", async () => {

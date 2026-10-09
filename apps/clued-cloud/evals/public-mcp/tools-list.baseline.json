@@ -2,10 +2,16 @@
   "tools": [
     {
       "name": "clued_agent_bootstrap",
-      "description": "Read the public, vendor-neutral Clued Continuity connection and lifecycle contract. This call never returns user context or credentials. Public metadata call; no authenticated Clued scope is required.",
+      "description": "Read public Clued connection metadata and the full Clued Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials. Public metadata call; no authenticated Clued scope is required.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "part": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Contract part to read, starting at 1; omit to read the full contract or its first part. Read all reported parts in order."
+          }
+        },
         "additionalProperties": false
       },
       "outputSchema": {
