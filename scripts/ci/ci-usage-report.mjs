@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Merge Admission v0.1 §12.1 (Task f70546e5): CI usage measurement, version 1.
-// The clued-ci-usage-report workflow runs this weekly and by hand on a hosted
+// The clued-ci-usage-report workflow runs this daily and by hand on a hosted
 // runner, from the default branch. It reads GitHub with an installation token
 // of the measurement-only read-only GitHub App when the clued-admission
 // environment holds its ID and key (§12.1, Owner Decision 00b71629), and with
@@ -39,8 +39,12 @@
 // closed pull requests until the first one updated before the window (one per
 // 100), and one jobs list (filter=all, every attempt) for each completed run
 // that is not cached yet. GitHub returns at most 1,000 runs for a created
-// filter, so a window that reaches that many is listed again day by day, and a
-// day that reaches it marks the list cut short. New runs arriving while the
+// filter, so a window that reaches that many is listed again day by day, a day
+// that reaches it again in 6-hour windows, and a 6-hour window that reaches it
+// marks the list cut short. About 1,000 runs a day (run 37964426548 listed
+// 7,302 in 7 days) is more job lists than one run can read in its time
+// budget, so the workflow runs daily and the cache fills up over the days
+// (Owner Decision 5ca9ecc5). New runs arriving while the
 // list is paged shift its pages, so runs are counted once by id (run
 // 37959346703 listed 12 runs twice).
 
@@ -284,6 +288,15 @@ export function daysOf(window) {
   return days;
 }
 
+// A day's four 6-hour created ranges, in GitHub's range syntax.
+export function quartersOf(day) {
+  return [0, 6, 12, 18].map((hour) => {
+    const from = String(hour).padStart(2, "0");
+    const to = String(hour + 5).padStart(2, "0");
+    return `${day}T${from}:00:00Z..${day}T${to}:59:59Z`;
+  });
+}
+
 // The window's runs, once each by id. complete is false when the budget
 // stopped the list or a single day reached GitHub's 1,000-run limit.
 export async function listRuns(request, repository, window) {
@@ -295,9 +308,18 @@ export async function listRuns(request, repository, window) {
   const dayCapped = [];
   for (const day of daysOf(window)) {
     const listed = await fetchPaged(request, route(day), "workflow_runs", { maxItems: RUN_LIST_CAP });
-    items.push(...listed.items);
-    if (listed.capped) dayCapped.push(day);
-    if (!listed.complete) return { items: once(items), complete: false, by_day: true, day_capped: dayCapped };
+    if (!listed.complete) return { items: once([...items, ...listed.items]), complete: false, by_day: true, day_capped: dayCapped };
+    if (!listed.capped) {
+      items.push(...listed.items);
+      continue;
+    }
+    // A day over the limit: its four 6-hour windows (Owner Decision 5ca9ecc5).
+    for (const quarter of quartersOf(day)) {
+      const part = await fetchPaged(request, route(quarter), "workflow_runs", { maxItems: RUN_LIST_CAP });
+      items.push(...part.items);
+      if (part.capped) dayCapped.push(quarter);
+      if (!part.complete) return { items: once(items), complete: false, by_day: true, day_capped: dayCapped };
+    }
   }
   return { items: once(items), complete: dayCapped.length === 0, by_day: true, day_capped: dayCapped };
 }
