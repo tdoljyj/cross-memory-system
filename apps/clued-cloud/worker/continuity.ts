@@ -1,7 +1,8 @@
 import { projectRpcByTool, projectTools } from "./projects";
-import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, isModelDomainTool, modelDomainSourceEnabled,
+import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
   type ModelDomainFeatureEnv, type ModelDomainToolName } from "./model-domain-tools";
+import { BootstrapCompletionUnknown, BootstrapExecutionDenied, BootstrapInputDenied, BootstrapReadinessDenied } from "./model-domain-bootstrap-source.mjs";
 import { dispatchModelDomainTool, ModelDomainToolDenied } from "./model-domain-dispatch";
 import { contextRpcByTool, contextTools, contextsEnabled, sanitizeContextResult, type ContextFeatureEnv } from "./contexts";
 import { p5RpcByTool, p5TenantWritesEnabled, p5Tools, type P5FeatureEnv } from "./p5";
@@ -1694,7 +1695,7 @@ export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5
     && (!(tool.name in agentMessageRpcByTool) || agentMessagesEnabled(env))
     && (!isIntegrationTool(tool.name) || integrationRuntimeEnabled(env))
     && (!isModelDomainTool(tool.name) || (recordsV2Enabled(env) && modelDomainSourceEnabled(env)))
-    && (tool.name !== MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL ||
+    && ((tool.name !== MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL && tool.name !== MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL) ||
       (modelDomainBootstrapRequestEnabled(env) && ownerRequestsEnabled(env)))
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
@@ -2132,7 +2133,7 @@ async function callOwnerRequest(request: Request, env: ContinuityEnv, args: unkn
 async function callModelDomainTool(request: Request, env: ContinuityEnv,
   name: ModelDomainToolName, args: unknown) {
   if (!recordsV2Enabled(env) || !modelDomainSourceEnabled(env) ||
-    (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL &&
+    ((name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL) &&
       (!modelDomainBootstrapRequestEnabled(env) || !ownerRequestsEnabled(env)))) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
@@ -2142,9 +2143,26 @@ async function callModelDomainTool(request: Request, env: ContinuityEnv,
   const tokenHash = await sha256(token);
   try {
     const result = await dispatchModelDomainTool(env, name, args, {
-      rpc: async (rpc, input) => await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
-        method: "POST", body: JSON.stringify({ p_token_hash: tokenHash, p_input: input }),
-      }),
+      rpc: async (rpc, input) => {
+        try {
+          return await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+            method: "POST", body: JSON.stringify({ p_token_hash: tokenHash, p_input: input }),
+          });
+        } catch (error) {
+          // A known SQL exception from this exact owned PostgREST invocation
+          // proves the database transaction rolled back. A bare HTTP status,
+          // network error or 5xx response cannot establish completion.
+          const details = error instanceof HttpError && error.details &&
+            typeof error.details === "object" && !Array.isArray(error.details)
+            ? error.details as Record<string, unknown> : null;
+          if (rpc === "clued_model_dataset_split_bootstrap_commit_candidate" &&
+            error instanceof HttpError && error.status >= 400 && error.status < 500 &&
+            (details?.code === "42501" || details?.code === "22023")) {
+            throw new BootstrapExecutionDenied();
+          }
+          throw error;
+        }
+      },
       // The same Request, bearer and environment enter the existing Native
       // request path. There is no caller token, actor or confirmation proof.
       submitOwnerRequest: async (input) => await callOwnerRequest(request, env, input),
@@ -2152,6 +2170,18 @@ async function callModelDomainTool(request: Request, env: ContinuityEnv,
     if (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL) return result;
     return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
   } catch (error) {
+    if (error instanceof BootstrapExecutionDenied) {
+      const result = { status: "rejected", error_code: "BOOTSTRAP_DATABASE_TRANSACTION_REJECTED",
+        completion_unknown: false, retry_allowed: false };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+    if (error instanceof BootstrapCompletionUnknown) {
+      const result = { status: "unknown", error_code: "BOOTSTRAP_COMPLETION_UNVERIFIED",
+        completion_unknown: true, retry_allowed: false };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+    if (error instanceof BootstrapInputDenied) throw new HttpError(400, "Exact DatasetSplit bootstrap input required.");
+    if (error instanceof BootstrapReadinessDenied) throw new HttpError(403, "DatasetSplit bootstrap readiness denied or unavailable.");
     if (error instanceof ModelDomainToolDenied) throw new HttpError(403, "Model domain source denied or unavailable.");
     throw error;
   }

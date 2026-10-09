@@ -14,11 +14,13 @@ export const MODEL_DOMAIN_VERIFY_TOOL = "clued_model_dataset_split_verify";
 export const MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL = "clued_model_dataset_split_bootstrap_request";
 export const MODEL_DOMAIN_PLAN_PREPARATION_TOOL = "clued_model_dataset_split_prepare_plan";
 export const MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL = "clued_model_dataset_split_verify_successor";
+export const MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL = "clued_model_dataset_split_bootstrap_readiness";
+export const MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL = "clued_model_dataset_split_bootstrap_commit";
 export type ModelDomainToolName = typeof MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL | typeof MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL | typeof MODEL_DOMAIN_REFS_TOOL | typeof MODEL_DOMAIN_VERIFY_TOOL |
-  typeof MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL | typeof MODEL_DOMAIN_PLAN_PREPARATION_TOOL | typeof MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL;
+  typeof MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL | typeof MODEL_DOMAIN_PLAN_PREPARATION_TOOL | typeof MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL | typeof MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL | typeof MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL;
 
 export function isModelDomainTool(name: unknown): name is ModelDomainToolName {
-  return name === MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL || name === MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL || name === MODEL_DOMAIN_REFS_TOOL || name === MODEL_DOMAIN_VERIFY_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL || name === MODEL_DOMAIN_PLAN_PREPARATION_TOOL || name === MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL;
+  return name === MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL || name === MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL || name === MODEL_DOMAIN_REFS_TOOL || name === MODEL_DOMAIN_VERIFY_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL || name === MODEL_DOMAIN_PLAN_PREPARATION_TOOL || name === MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL;
 }
 export function modelDomainSourceEnabled(env: ModelDomainFeatureEnv) {
   return env.CLUED_MODEL_DOMAIN_SOURCE_V1 === "true";
@@ -69,14 +71,31 @@ export const modelDomainTools = [
   },
   {
     name: MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
-    description: "Create only a Native Owner approval request for a proposed non-production DatasetSplit bootstrap. Resolves the two fixed Owner Decision anchors using this same Binding and sends their actual server hashes, three exact proposed target IDs and immutable Git plan reference through the existing clued_owner_request entry. Returns that entry's confirm_url; the Owner must approve in Native. This call never invokes M1 or creates Canonical records. The atomic writer remains separately uninstalled and unavailable.",
+    description: "Create only a Native Owner approval request for a proposed non-production DatasetSplit bootstrap. Resolves the two fixed Owner Decision anchors using this same Binding and sends their actual server hashes, three exact proposed target IDs and immutable Git plan reference through the existing clued_owner_request entry. Returns that entry's confirm_url; the Owner must approve in Native. This call never invokes M1 or creates Canonical records. Actual M1 execution requires the separate installed, Native-gated atomic commit tool; this request tool never writes projections.",
     inputSchema: { type: "object", properties: { producer_record_id: uuid, permission_record_id: uuid, recognition_record_id: uuid,
       idempotency_key: { type: "string", minLength: 8, maxLength: 100 }, immutable_plan_resource: { type: "string",
         pattern: "^repo:tdoljyj/cross-memory-system/[0-9a-f]{40}/development/contracts/model-program/stage-admission/[A-Za-z0-9_.-]+\\.json$" } },
       required: ["producer_record_id", "permission_record_id", "recognition_record_id", "idempotency_key", "immutable_plan_resource"], additionalProperties: false },
   },
+  {
+    name: MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL,
+    description: "Read only the installed immutable DatasetSplit plan and two fixed Owner source chains through this same Binding. Recomputes complete server Record hashes and verifies private M1 Receipt/Event chains; returns minimal references and readiness only. Accepts no selector, Actor, scope, grant, proof or clock. It grants no bootstrap, DomainAuthority, DataGate, M2 or training permission.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL,
+    description: "Create only the three fixed non-production DatasetSplit M1 definition projections in one database transaction. Requires a separately approved exact Native single-use bootstrap grant, installed immutable plan, current same-Binding Task claim/fence and all three declared Record targets. Verifies fixed Owner chains and preserves private Actor data. No Kernel DomainAuthority, DataGate, M2 or model/training permission is issued. Completion uncertainty must be inspected with the original receipts and target IDs; never automatically retry or regenerate a plan.",
+    inputSchema: { type: "object", properties: { owner_adoption_server_ref: canonicalRef, final_recognizer_server_ref: canonicalRef,
+      producer_record_id: uuid, permission_record_id: uuid, recognition_record_id: uuid,
+      idempotency_key: { type: "string", minLength: 8, maxLength: 100 }, immutable_plan_resource: { type: "string",
+        pattern: "^repo:tdoljyj/cross-memory-system/[0-9a-f]{40}/development/contracts/model-program/stage-admission/[A-Za-z0-9_.-]+\\.json$" } },
+      required: ["owner_adoption_server_ref", "final_recognizer_server_ref", "producer_record_id", "permission_record_id",
+        "recognition_record_id", "idempotency_key", "immutable_plan_resource"], additionalProperties: false },
+  },
 ] as const;
 export const modelDomainToolPolicies = {
+  [MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  [MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL]: { scopes: ["context:read", "context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   [MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   [MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   [MODEL_DOMAIN_REFS_TOOL]: { scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
