@@ -639,6 +639,17 @@ test("reverify reason=state_change (Merge Admission step 3): every open pull req
   assert.match(workflow, /CLUED_REVERIFY_REASON: \$\{\{ inputs\.reason \}\}/);
 });
 
+test("reverify workflow: slim migration is admitted and retains the longer hosted state-change mode", () => {
+  const workflow = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-work-admission-reverify.yml"), "utf8");
+  const runner = "${{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}";
+  const job = workflowJobs(workflow).find((j) => j.name === "reverify");
+  assert.equal(jobIsHosted(job), true, "the deployed guard must recognize the actual workflow as hosted");
+  assert.deepEqual(gateFindings(workflow, workflow.replace(runner, "ubuntu-latest")), [], "the migration must stay compatible with the trusted main guard");
+  assert.match(workflow, /^    runs-on: \$\{\{ inputs\.reason == 'state_change' && 'ubuntu-latest' \|\| 'ubuntu-slim' \}\}$/m);
+  assert.match(workflow, /^    timeout-minutes: \$\{\{ inputs\.reason == 'state_change' && 30 \|\| 10 \}\}$/m);
+  assert.match(workflow, /cron: "17 \* \* \* \*"/, "hourly revocation re-check stays in place");
+});
+
 test("reverify (re-review 8): without the App key it reads nothing and fails", async () => {
   const { fetchImpl, calls } = reverifyScript([freshPull()], () => []);
   const result = await reverify({ env: env(), fetchImpl, workspace: ROOT });
