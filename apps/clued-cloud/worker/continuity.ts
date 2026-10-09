@@ -2513,10 +2513,9 @@ function withAuthorityCapture(name: string, value: unknown): unknown {
   return { ...record, authority_capture_completeness: authorityCaptureUnknown };
 }
 
-// Work Claim Admission v0.1 §4.2: a resume carries the contract version the
-// Worker serves and this user's live work claims, so a compliant Agent sees a
-// conflict at its first Clued call. Only when CLUED_WORK_CLAIMS_V1 is on; a
-// failed claims read is reported in the result, never thrown into the resume.
+// Work Claim Admission v0.1 §4.2: contract version/hash are returned on every
+// successful resume. Only the live-claims read is gated by CLUED_WORK_CLAIMS_V1;
+// its failure is reported in the result, never thrown into the resume.
 async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope: string) {
   const token = bearerToken(request);
   if (!token) throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
