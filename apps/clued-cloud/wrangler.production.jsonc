@@ -3,7 +3,7 @@
   "name": "clued-cloud",
   "vars": {
     "CLUED_MODEL_DOMAIN_SOURCE_V1": "true",
-    "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": "false"
+    "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": "true"
   },
   "main": "./dist/server/index.js",
   "build": {
