@@ -250,7 +250,7 @@
 - 只为默认分支队列的队列头做事（`clued_work_merge_slot_holders_v1` 自第 4 步起只列队列头，并按 `merge:<owner>/<name>:<default>` 过滤）；只处理同仓库、非草稿、指向默认分支的打开 PR。
 - head 落后默认分支时，用 GitHub「update branch」把默认分支并入（合并提交，`expected_head_sha` 绑定读到的 head）；只并入默认分支的 head 保留 Owner 授权（Decision `a0d93cd0`），App 的推送会触发 CI（`GITHUB_TOKEN` 的推送不会）。冲突或 head 已变时 GitHub 拒绝，执行器只记 notice，由持有者处理。受保护层的 PR 不代为并入：默认分支若改了它也改的受保护文件，合并提交需要新的 Owner 授权，由持有者处理（复审 MINOR-4）。
 - auto-merge 只在 PR **为这个 head 选择加入**时打开：正文有一行 `Clued-Auto-Merge: <40 位 head SHA>`（Agent 在该 head 的合并获批后写），且当前 head 就是它，或它是当前 head 的祖先、并且自它以来改过的每个文件都与默认分支上的版本逐字节相同（不在 head 对 tip 的差异里；任一差异达 300 个文件即视为不覆盖）。所以批准后只有来自默认分支的改动；手工解决冲突或改过内容的合并提交都需要新的一行（确认复审 MAJOR）。行与 head 不符而 auto-merge 已开时，执行器把它关掉（复审 MAJOR-2）。另需 head 含默认分支 tip、本 PR 的 `clued-admission-verified`（`external_id` 指向本 PR）为通过且标题带模式、策略对该状态与层允许 auto-merge（受保护层仅在 Owner 复核强制时）、head 上没有最终失败的 CI 类必需检查、auto-merge 尚未打开。auto-merge 在 CI 结束前就打开，由 GitHub 等五个必需检查（§7.4）：GitHub 对已经可以合并的 PR 拒绝打开 auto-merge（"clean status"，复审 MAJOR-1），执行器把这种情况（以及只因非必需检查失败的 "unstable status"）记为 `mergeable_now`，由持有者合并：检查都已通过之后才写这一行的 Agent 应自己合并。用 GraphQL `enablePullRequestAutoMerge`（`MERGE`，`expectedHeadOid`）。没有这一行时 Agent 照旧自己合并，执行器也不动别人打开的 auto-merge：Owner 现行的「合并前先问」不因执行器而被绕过。
-- 执行器自己从不合并、从不推默认分支（规则集禁止，App 不在 bypass 名单）；`frozen` 下什么都不做，连队列都不读。只处理正文写明认领的 PR（合并提交不带尾注，复审 MINOR-3）；因推送或定时而跳过的 slot 报告不触发执行器（复审 MINOR-5）。
+- 执行器自己从不合并、从不推默认分支（规则集禁止，App 不在 bypass 名单）；`frozen` 时立即返回，不查询队列。只处理正文写明认领的 PR（合并提交不带尾注，复审 MINOR-3）；因推送或定时而跳过的 slot 报告不触发执行器（复审 MINOR-5）。
 - 需要 App 的 Contents: write 与 Pull requests: write。Owner 授予之前，令牌请求被拒（422），执行器只记 notice、什么都不改（Owner 选择先写代码、上线前再加权限）。
 - 合同 §1.7 本步不改（避开 Task `af536fcc` 正在搬动的合同文件）：Agent 自己并入 main、自己合并仍然有效；执行器只是先替它做。等合同搬出 Skill 包后再写入「入队后可交给执行器」与 `Clued-Auto-Merge: <head SHA>` 行。
 

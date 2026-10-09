@@ -48,6 +48,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-merge-executor.yml": (
         "Merge Admission step 5: the executor brings the default branch into the merge queue head and turns on auto-merge as the clued-admission App, after each slot report and hourly; default-branch code only, seconds of work, no install, no pull request trigger."
     ),
+    "contract-placement.yml": (
+        "Owner Decision 6a66d2fd: unfiltered required placement and actual public-bootstrap budget check on ubuntu-latest; no secrets or application dependency tree, no self-hosted PR execution, five-minute timeout."
+    ),
     "clued-ci-usage-report.yml": (
         "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 200-request budget; default-branch code only, no install, no secret, no pull request trigger, and it must not take the self-hosted capacity it measures."
     ),
