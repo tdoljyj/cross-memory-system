@@ -802,8 +802,9 @@ test("workflows: only base-branch jobs in the clued-admission environment get th
     // before the rename gets no token and no App key.
     assert.doesNotMatch(text, /secrets\.(CLUED_CONTEXT_READ_TOKEN|CLUED_ADMISSION_APP_PRIVATE_KEY)\b/, file);
   }
-  // Merge Admission step 3: clued-merge-slot-ci reports CI states with the same token.
-  assert.deepEqual(holders.sort(), ["clued-merge-slot-ci.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
+  // Merge Admission step 3: clued-merge-slot-ci reports CI states with the same token; step 5:
+  // clued-merge-executor reads the queue heads with it.
+  assert.deepEqual(holders.sort(), ["clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
   const admission = fs.readFileSync(path.join(dir, "clued-work-admission.yml"), "utf8");
   assert.doesNotMatch(admission, /^ {2}pull_request:/m, "no pull_request trigger: PR-edited copies never run");
   assert.match(admission, /^ {2}pull_request_target:$/m);
@@ -962,7 +963,8 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
 test("gate guard: the exact PR-read version is registered before workflow rollout; other changes are refused", () => {
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest], "only the two exact gate versions");
+  const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest], "only the three exact gate versions");
   for (const name of GATED_FILES) {
     const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     // Exercise both bootstrap phases, before and after the workflow PR.
@@ -990,6 +992,22 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
       assert.notEqual(changed, withPrRead, `${name}: ${label} fixture changed`);
       assert.deepEqual(gateFindings(changed, legacy), ["admission_gate_changed"], `${name}: ${label}`);
     }
+  }
+});
+
+test("gate guard (Merge Admission step 6): the gate without the CLUED_WORK_ADMISSION_ENFORCE line is registered before the workflows drop it", () => {
+  const line = "          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}\n";
+  for (const name of GATED_FILES) {
+    const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
+    const dropped = current.replace(line, "");
+    assert.notEqual(dropped, current, `${name}: fixture drops the line`);
+    assert.deepEqual(gateFindings(dropped, current), [], `${name}: only the variable line is dropped`);
+    const gateJob = workflowJobs(dropped).find((job) => job.name === "admission-gate");
+    assert.equal(sha256Hex(gateJob.lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
+    // Dropping the token or swapping in another variable is still a changed gate.
+    assert.deepEqual(gateFindings(dropped.replace("          GITHUB_TOKEN: ${{ github.token }}\n", ""), current), ["admission_gate_changed"], name);
+    assert.deepEqual(gateFindings(current.replace(line, "          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}\n"), current),
+      ["admission_gate_changed"], name);
   }
 });
 
@@ -1563,7 +1581,7 @@ test("owner review: the workflows on main that hold an environment are exactly t
     assert.deepEqual(ownerReviewFindings(text, text).filter((f) => f !== "environment_workflow_changed"), [], file);
   }
   assert.deepEqual(holders, ["clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-integration-runtime-config.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });
 
