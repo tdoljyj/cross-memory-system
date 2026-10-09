@@ -6,7 +6,9 @@ name: clued-merge-executor
 # whose claim heads the default branch's merge queue it brings the default
 # branch in when the head is behind, and turns on auto-merge once the head is
 # up to date, admitted and opted in for that head ("Clued-Auto-Merge: <head
-# sha>" in the body); GitHub then waits for the required checks. It acts as
+# sha>" in the body); GitHub then waits for the required checks. When GitHub
+# can already merge it and every CI workflow ran and passed on that head, the
+# executor merges it itself (Task ff476b06). It acts as
 # the clued-admission App and needs Contents: write and Pull requests: write;
 # until the Owner grants them it only reports. It does nothing in frozen.
 #
@@ -59,7 +61,7 @@ jobs:
           node-version: "22"
       - name: Self-test the executor (no network, mocked fetch)
         run: node --test scripts/ci/clued-merge-executor.test.mjs
-      - name: Bring the default branch into the queue head and turn on auto-merge
+      - name: Bring the default branch into the queue head, turn on auto-merge or merge it
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
