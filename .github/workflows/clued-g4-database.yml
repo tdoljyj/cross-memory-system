@@ -34,8 +34,8 @@ jobs:
   # Clued admits this pull request. The gate does not call Clued and gets no
   # Clued token (this job runs PR code): it waits for the trusted
   # pull_request_target run of clued-work-admission.yml on this head and reads
-  # its result. Until the Owner sets the repository variable
-  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits. A hand
+  # its result, always enforced (Merge Admission step 6 retired the advisory
+  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand
   # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
   # push events are admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
   admission-gate:
@@ -61,7 +61,6 @@ jobs:
           node-version: 24.19.0
       - id: gate
         env:
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 

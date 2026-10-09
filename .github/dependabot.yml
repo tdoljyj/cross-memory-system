@@ -7,11 +7,11 @@
 # "increase": a pin is raised, never widened to a range.
 #
 # A Dependabot pull request carries no Clued work claim and changes protected
-# paths (package.json, package-lock.json, .github/workflows/**). While the
-# repository variable CLUED_WORK_ADMISSION_ENFORCE is unset the
-# clued-work-admission check is advisory and admits it; once it is on, the
-# check admits it only after the Owner does what CONTRIBUTING.md
-# ("Dependabot pull requests") describes.
+# paths (package.json, package-lock.json, .github/workflows/**), so the
+# clued-work-admission check admits it only after the Owner does what
+# CONTRIBUTING.md ("Dependabot pull requests") describes. (Until Merge
+# Admission step 6, 2026-10-09, an unset repository variable
+# CLUED_WORK_ADMISSION_ENFORCE made the check advisory; it is no longer read.)
 version: 2
 updates:
   - package-ecosystem: npm
