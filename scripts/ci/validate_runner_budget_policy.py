@@ -43,10 +43,10 @@ HOSTED_ONLY_ALLOWLIST = {
         "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no application dependency install, no pull request trigger."
     ),
     "clued-merge-slot-ci.yml": (
-        "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
+        "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes, then executes the merge queue head in the same trusted job; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
     ),
     "clued-merge-executor.yml": (
-        "Merge Admission step 5: the executor brings the default branch into the merge queue head and turns on auto-merge or merges it as the clued-admission App, after each slot report, on main push and by hand; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
+        "Merge Admission step 5: the independent workflow reports CI before bringing the default branch into the merge queue head and turning on auto-merge or merging it as the clued-admission App, on main push and by hand; the slot report invokes the same executor script inline under the shared job lock; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
     ),
     "contract-placement.yml": (
         "Owner Decision 6a66d2fd: unfiltered required placement and actual public-bootstrap budget check on ubuntu-latest; no secrets or application dependency tree, no self-hosted PR execution, five-minute timeout."

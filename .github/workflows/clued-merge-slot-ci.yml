@@ -9,6 +9,10 @@ name: clued-merge-slot-ci
 # fails the head's clued-merge-slot check. The hourly report is a step of
 # clued-work-admission-reverify.yml, which runs anyway, so it costs no extra
 # hosted run. The holder no longer renews its claim to keep the slot.
+# The final step calls the executor in this same job, after a successful
+# report. No second workflow is started; skipped or failed reports cannot
+# execute it. The executor still reads the queue and exact-head authorization
+# itself. Ten minutes preserves the two former five-minute job budgets.
 #
 # workflow_run runs this file and the script from the default branch, with
 # the clued-admission environment's token and App key (deployment branches
@@ -49,13 +53,6 @@ permissions:
   contents: read
   pull-requests: read
 
-# One report at a time; a burst of completions leaves one pending run, which
-# reads the state as it is then. Every run reports every slot, whichever pull
-# request's run completed, so a dropped pending run loses nothing.
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
-
 jobs:
   report:
     name: clued-merge-slot-ci
@@ -64,8 +61,14 @@ jobs:
       github.event.workflow_run.event == 'pull_request' ||
       github.event.workflow_run.event == 'pull_request_target'
     runs-on: ubuntu-slim
-    timeout-minutes: 5
+    timeout-minutes: 10
     environment: clued-admission
+    # Share the independent executor's lock: the two entry points cannot mutate
+    # the queue concurrently. A burst leaves one pending job; it reads all slots
+    # and the current queue when it starts. Never cancel running queue work.
+    concurrency:
+      group: clued-merge-executor
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -74,8 +77,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-      - name: Self-test the merge slot report (no network, mocked fetch)
-        run: node --test scripts/ci/clued-merge-slot-ci.test.mjs
+      - name: Self-test the merge slot report and executor (no network, mocked fetch)
+        run: node --test scripts/ci/clued-merge-slot-ci.test.mjs scripts/ci/clued-merge-executor.test.mjs
       - name: Report the CI state of the pull requests holding a merge slot
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
@@ -84,3 +87,12 @@ jobs:
           CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-merge-slot-ci.mjs
+      - name: Bring the default branch into the queue head, turn on auto-merge or merge it
+        timeout-minutes: 5
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-merge-executor.mjs
