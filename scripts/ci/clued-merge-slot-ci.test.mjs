@@ -34,7 +34,7 @@ const QUALITY = ".github/workflows/clued-cloud-quality-gate.yml";
 
 const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
-  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", CLUED_WORK_ADMISSION_ENFORCE: "true", ...extra });
+  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", ...extra });
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
   ({ number, body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main" } } });
 const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
@@ -250,17 +250,17 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
   fetch = slotWorld({ extra: { ...failedCi, ...checksRoute(HEAD, { "clued-merge-slot": [slotCheck("success")] }) }, touch: notReturned });
   result = await report(fetch);
   assert.deepEqual([result.errors, result.reports[0].merge_slot_check_run_id], [[], 5005]);
-  // Where the policy does not require the slot, the check is not failed (confirmation review MINOR-B).
-  for (const extraEnv of [{ CLUED_MERGE_ADMISSION_STATE: "efficiency" }, { CLUED_WORK_ADMISSION_ENFORCE: "" }]) {
+  // Where the policy does not require the slot (efficiency), the check is not failed (confirmation review MINOR-B).
+  fetch = slotWorld({ extra: failedCi });
+  result = await report(fetch, { env: { CLUED_MERGE_ADMISSION_STATE: "efficiency" } });
+  assert.deepEqual([result.reports[0].returned, fetch.calls.some((call) => call.method === "POST" && call.route.endsWith("/check-runs"))],
+    [true, false]);
+  // Frozen requires it; since step 6 the retired switch changes nothing either way.
+  for (const extraEnv of [{ CLUED_MERGE_ADMISSION_STATE: "frozen" }, { CLUED_WORK_ADMISSION_ENFORCE: "" }, { CLUED_WORK_ADMISSION_ENFORCE: "false" }]) {
     fetch = slotWorld({ extra: failedCi });
     result = await report(fetch, { env: extraEnv });
-    assert.deepEqual([result.reports[0].returned, fetch.calls.some((call) => call.method === "POST" && call.route.endsWith("/check-runs"))],
-      [true, false], JSON.stringify(extraEnv));
+    assert.equal(result.reports[0].merge_slot_check_run_id, 5005, JSON.stringify(extraEnv));
   }
-  // Frozen requires it whatever the switch says.
-  fetch = slotWorld({ extra: failedCi });
-  result = await report(fetch, { env: { CLUED_MERGE_ADMISSION_STATE: "frozen", CLUED_WORK_ADMISSION_ENFORCE: "" } });
-  assert.equal(result.reports[0].merge_slot_check_run_id, 5005);
   // Without the App key a returned slot is an error: its green check would outlive it.
   fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) } });
   result = await report(fetch, { env: { CLUED_ADMISSION_APP_ID: "", CLUED_ADMISSION_APP_PRIVATE_KEY: "" } });

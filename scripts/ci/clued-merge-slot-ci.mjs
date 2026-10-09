@@ -53,7 +53,6 @@ import { fileURLToPath } from "node:url";
 import {
   ADMISSION_APP_ID,
   MERGE_SLOT_CHECK_NAME,
-  admissionEnforced,
   appChecksOnHead,
   cluedRpc,
   githubJson,
@@ -229,9 +228,9 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
     }
   }
   // The slot check is failed only where the policy requires the slot: in
-  // efficiency it only advises it for code and docs, and while admission is
-  // advisory the check is not enforced (confirmation review MINOR-B).
-  const slotRequired = admissionEnforced(env, mode) && mode.state !== "efficiency";
+  // efficiency it only advises it for code and docs (confirmation review
+  // MINOR-B). Admission is always enforced since Merge Admission step 6.
+  const slotRequired = mode.state !== "efficiency";
   for (const { pr, scope, since } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {

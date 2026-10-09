@@ -36,10 +36,9 @@ name: clued-work-admission
 # a check identity a PR workflow cannot use (a GitHub App, or required
 # workflows), which is an Owner setting outside the repository.
 #
-# Enforcement is the Owner's repository variable
-# CLUED_WORK_ADMISSION_ENFORCE=true; until then the check is advisory. Once
-# enforced, a missing claim, a REJECTED verdict, a missing RPC, a refused token
-# or a transport error all fail closed. Hosted runner on purpose: seconds of
+# The check is always enforced (Merge Admission step 6 retired the advisory
+# switch CLUED_WORK_ADMISSION_ENFORCE): a missing claim, a REJECTED verdict, a
+# missing RPC, a refused token or a transport error all fail closed. Hosted runner on purpose: seconds of
 # work, no application dependency install, no self-hosted capacity.
 
 on:
@@ -95,9 +94,6 @@ jobs:
         id: admit
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
-          # Re-review 7, MAJOR-3: protected changes need an Owner Grant on the head.
-          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
           # Merge Admission v0.1 §4: the Owner's global state (normal when
           # unset, efficiency, frozen; any other value is frozen). The rules
           # come from config/merge-admission-policy.json of this checkout.

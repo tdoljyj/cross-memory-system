@@ -233,7 +233,7 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
   - 没有授权就复用或新建这个 Binding 的待确认请求（建议 1 次、24 小时），附上 PR、受保护路径数与 compare 链接作为说明（`agent_note`，确认页标为「准入检查说明」，复审 9），准入判 REJECTED 并给出确认链接。
   - 复审 9 起（合同 v30 §1.7）：Agent 先推送，由准入检查开请求，说明里有 PR 与 compare 链接；只有门口写的请求（回执 `origin: ci-admission`）在确认页标为「准入检查说明」，其余仍是 Agent 说明（未核实）。`repo.protected_change` 不能打包，确认页只给精确提交一个选项（迁移 `20261005140000_owner_review_hardening.sql`）。强制开关打开前不调用门口。
   - 只有标了 `ci-admission` 的 Binding 能调，Owner 标出之前谁都不能用（复审 10 MAJOR-3，与其他角色「未标出时谁都能做」不同），只需 `context:read`。Agent 不能用 `clued_owner_request` 开这个动作的请求（`owner_request_action_door_only`）；确认步骤只接受请求本身的提交。PR 必须包含 base 分支当前 tip（复审 10），所以在合并时 main 没有前进的前提下，授权的提交就是合并结果；main ruleset 打开「要求分支最新」后这个前提才由 GitHub 保证（WorkClaimAdmission §4.7）。
-- 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs`（由 `owner-grants-release-door-db.test.mjs` 引入运行）、`scripts/ci/clued-work-admission.test.mjs`。Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示。
+- 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs`（由 `owner-grants-release-door-db.test.mjs` 引入运行）、`scripts/ci/clued-work-admission.test.mjs`。起初 Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示；Merge Admission 第 6 步（2026-10-09）起不再读取该变量，始终拦截，回退手段为 `frozen` 与 main ruleset 的 Owner 应急步骤。
 
 ---
 
@@ -262,9 +262,9 @@ Clued 维护一张"受信宿主公钥"表，由 Owner 在 Native 页面登记。
 
 - 没有门口的动作，例如 Agent 直接调用的外部工具，或本机命令。
 - Agent 绕过发布 workflow、直接用有写权限的数据库连接修改生产。需要 Owner 把该连接设为只读才能堵上（§6.1）。
-- Agent 合并改动发布门口本身的 PR（复审 7 MAJOR-3）：ruleset 不要求审批，合并后的 workflow 就是下一次发布运行的 workflow，删掉授权步骤即不再需要授权。§6.3 的 Owner 复核在准入时拦下这类 PR，但要 Owner 打开 `CLUED_OWNER_REVIEW_ENFORCE`；发布脚本加载的应用源码不在保护路径内（WorkClaimAdmission §4.7）。
+- Agent 合并改动发布门口本身的 PR（复审 7 MAJOR-3）：ruleset 不要求审批，合并后的 workflow 就是下一次发布运行的 workflow，删掉授权步骤即不再需要授权。§6.3 的 Owner 复核在准入时拦下这类 PR（Merge Admission 第 6 步起始终生效，此前要 Owner 打开 `CLUED_OWNER_REVIEW_ENFORCE`）；发布脚本加载的应用源码不在保护路径内（WorkClaimAdmission §4.7）。
 - Owner 复核的门口与授权表在 Clued 数据库里，Agent 若有生产数据库写权限，就能改掉它们（复审 9，见 WorkClaimAdmission §4.7）。
-- 持有仓库管理权限的凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份时，能改 `CLUED_RELEASE_GRANT_ENFORCE`、`CLUED_OWNER_REVIEW_ENFORCE`、environment 与 ruleset，所有授权检查都可被关掉。
+- 持有仓库管理权限的凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份时，能改 `CLUED_RELEASE_GRANT_ENFORCE`（Merge Admission 第 6 步之前还有 `CLUED_OWNER_REVIEW_ENFORCE`）、environment 与 ruleset，所有授权检查都可被关掉。
 - Owner 自己在确认页上批准了不该批准的事。系统生成的主体能减少误导，但无法替 Owner 判断。
 - 授权期内的滥用：在授权覆盖的范围和时长内，Agent 的每次使用都会放行。授权越宽，风险越大，所以默认 4 小时、最长 7 天，并且可以随时撤销。
 - 对话弹窗与 `user_explicit` 记录：仍只是 Agent 的声明（§1.2）。

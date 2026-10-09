@@ -327,7 +327,7 @@ function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
 
 const matrixEnv = (state, extra = {}) => ({ GITHUB_REPOSITORY: "o/r", GITHUB_TOKEN: "ghs_test", GITHUB_API_URL: API, GITHUB_RUN_ID: "9001",
   CLUED_SUPABASE_URL: CLUED, CLUED_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test", CLUED_CONTEXT_READ_TOKEN: "clued_bnd_test",
-  CLUED_WORK_ADMISSION_ENFORCE: "true", CLUED_OWNER_REVIEW_ENFORCE: "true", [STATE_VARIABLE]: state, ...extra });
+  [STATE_VARIABLE]: state, ...extra });
 
 async function judge({ table = COMPATIBILITY_POLICY_TEXT, state, layer, scenario, env = {}, readPolicyFile = fixedPolicy(table), policyFileAtHead }) {
   const { pull, fetchImpl, calls } = scriptFor(layer, typeof scenario === "string" ? SCENARIOS[scenario] : scenario, { policyFileAtHead });
@@ -517,18 +517,30 @@ test("policy file: a pull request whose head's policy would not load, or that re
   }
 });
 
-test("the older switches: they keep their meaning in normal and efficiency, and frozen ignores them", async () => {
+test("the retired switches (Merge Admission step 6): CLUED_WORK_ADMISSION_ENFORCE and CLUED_OWNER_REVIEW_ENFORCE change nothing in any state", async () => {
+  // Only the policy advises (efficiency, code and docs); the two repository
+  // variables are no longer read, whether unset, "false" or "true".
+  for (const off of [{ CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_OWNER_REVIEW_ENFORCE: "" },
+    { CLUED_WORK_ADMISSION_ENFORCE: "false", CLUED_OWNER_REVIEW_ENFORCE: "false" },
+    { CLUED_WORK_ADMISSION_ENFORCE: "true", CLUED_OWNER_REVIEW_ENFORCE: "true" }]) {
+    for (const state of STATES) {
+      for (const layer of LAYERS) {
+        for (const scenario of ["claim_missing", "no_grant", "not_up_to_date", "slot_not_held"]) {
+          const plain = await judge({ state, layer, scenario });
+          const retired = await judge({ state, layer, scenario, env: off });
+          const where = `${JSON.stringify(off)} ${state}.${layer} ${scenario}`;
+          assert.deepEqual([retired.cell, retired.outcome.enforced, retired.outcome.advisory], [plain.cell, true, undefined], where);
+          assert.equal(retired.outcome.admission_mode.legacy_advisory, undefined, where);
+          assert.ok(!/legacy-advisory|advisory \(|NOT_ENFORCED/.test(renderSummary(retired.outcome)), where);
+        }
+      }
+    }
+  }
   const off = { CLUED_WORK_ADMISSION_ENFORCE: "", CLUED_OWNER_REVIEW_ENFORCE: "" };
-  const advisory = await judge({ state: "normal", layer: "protected", scenario: "claim_missing", env: off });
-  assert.deepEqual([advisory.outcome.admitted, advisory.outcome.verdict, advisory.outcome.enforced], [true, "NOT_ENFORCED", false]);
-  assert.deepEqual(advisory.outcome.admission_mode.legacy_advisory, ["CLUED_WORK_ADMISSION_ENFORCE", "CLUED_OWNER_REVIEW_ENFORCE"]);
-  assert.match(renderSummary(advisory.outcome), /legacy-advisory\(CLUED_WORK_ADMISSION_ENFORCE\) · legacy-advisory\(CLUED_OWNER_REVIEW_ENFORCE\)/);
-  const noReview = await judge({ state: "normal", layer: "protected", scenario: "no_grant", env: { CLUED_OWNER_REVIEW_ENFORCE: "" } });
-  assert.deepEqual([noReview.cell, noReview.outcome.owner_review.kind], ["A+", "not_asked"]);
-  const frozen = await judge({ state: "frozen", layer: "protected", scenario: "claim_missing", env: off });
-  assert.deepEqual([frozen.cell, frozen.outcome.enforced, frozen.outcome.admission_mode.legacy_advisory], [R("claim_trailer_missing"), true, []]);
-  const frozenReview = await judge({ state: "frozen", layer: "code", scenario: "no_grant", env: off });
-  assert.equal(frozenReview.cell, R("owner_review_required"));
+  const claim = await judge({ state: "normal", layer: "protected", scenario: "claim_missing", env: off });
+  assert.deepEqual([claim.cell, claim.outcome.verdict], [R("claim_trailer_missing"), "REJECTED"]);
+  const review = await judge({ state: "normal", layer: "protected", scenario: "no_grant", env: off });
+  assert.deepEqual([review.cell, review.outcome.owner_review.kind], [R("owner_review_required"), "pending"]);
 });
 
 // ---------------------------------------------------------------------------

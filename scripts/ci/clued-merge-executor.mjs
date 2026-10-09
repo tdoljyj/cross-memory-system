@@ -28,7 +28,8 @@
 //               - the head's clued-admission-verified check, posted for this
 //                 pull request, admitted it and the policy allows auto-merge
 //                 for its state and layer (never in frozen; a protected
-//                 layer only while Owner review is enforced, review MINOR-1),
+//                 layer is under Owner review, which is always enforced since
+//                 Merge Admission step 6, review MINOR-1),
 //               - no CI required check has finally failed on the head,
 //               - auto-merge is not on already.
 //               When the line names another head and auto-merge is on, the
@@ -57,7 +58,6 @@ import {
   cluedRpc,
   githubJson,
   githubPaged,
-  ownerReviewEnforced,
   parseClaimReference,
   withTokenHint,
 } from "./clued-work-admission.mjs";
@@ -167,9 +167,6 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, work
   if (!opted) return { action: "none", reason: "the pull request did not opt in to auto-merge (Clued-Auto-Merge: <head sha>)" };
   if (!covered) return { action: "none", reason: `the opt-in names ${opted.slice(0, 12)}, not this head or a merge of the default branch into it` };
   if (!admission.admitted || !admission.mode) return { action: "none", reason: "the head's clued-admission-verified check for this pull request has not admitted it" };
-  if (layer === "protected" && !ownerReviewEnforced(env)) {
-    return { action: "none", reason: "Owner review is not enforced, so a protected-layer pull request is not auto-merged" };
-  }
   // The executor's own state wins over the title's: a switch to frozen applies at once.
   const rules = effectiveRules(policy, state, layer);
   if (rules.auto_merge !== "allowed") return { action: "none", reason: `auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer` };
