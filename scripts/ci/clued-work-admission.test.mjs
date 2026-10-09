@@ -1060,7 +1060,47 @@ test("gate guard: new workflows with self-hosted jobs need the gate; new hosted 
   assert.deepEqual(gateFindings(comment, null), []);
 });
 
-test("gate guard (re-review N4): YAML the line reader cannot follow is refused, and only literal hosted labels count as hosted", () => {
+test("gate guard: the exact state_change expression stays hosted without weakening other expressions", () => {
+  const hosted = "name: x\non: pull_request\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n";
+  const expression = "${{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}";
+  const withRunner = (runner) => hosted.replace("ubuntu-latest", runner);
+  for (const runner of [expression, `${expression} # fixed hosted branches`]) {
+    const text = withRunner(runner);
+    assert.equal(jobIsHosted(workflowJobs(text)[0]), true, runner);
+    assert.deepEqual(gateFindings(text, null), [], runner);
+    assert.deepEqual(gateFindings(text, hosted), [], runner);
+  }
+  const unsafe = [
+    expression.replace("'ubuntu-latest'", "'self-hosted'"),
+    expression.replace("'ubuntu-slim'", "'self-hosted'"),
+    expression.replace("'ubuntu-latest'", "''"),
+    expression.replace("'ubuntu-slim'", "''"),
+    expression.replace("'ubuntu-latest'", "inputs.runner"),
+    expression.replace("'ubuntu-slim'", "matrix.os"),
+    expression.replace("'ubuntu-slim'", "vars.runner"),
+    expression.replace(" }}", " || inputs.runner }}"),
+    expression.replace(" || 'ubuntu-slim'", ""),
+    expression.replace("state_change", "other"),
+    expression.replace("ubuntu-latest", "ubuntu-24.04"),
+    expression.replace(" && ", " &&\n      "),
+    `${expression}#not-a-comment`,
+    `"${expression}"`,
+  ];
+  for (const runner of unsafe) {
+    const text = withRunner(runner);
+    assert.equal(jobIsHosted(workflowJobs(text)[0]), false, runner);
+    assert.deepEqual(gateFindings(text, null), ["admission_gate_missing"], runner);
+    assert.deepEqual(gateFindings(text, hosted), ["self_hosted_job_switched_ungated:build"], runner);
+  }
+  for (const extra of ["    uses: ./.github/workflows/heavy.yml\n", "    <<: *heavy\n"]) {
+    const text = withRunner(expression).replace("    steps:", `${extra}    steps:`);
+    assert.equal(jobIsHosted(workflowJobs(text)[0]), false, extra);
+    assert.deepEqual(gateFindings(text, null), ["admission_gate_missing"], extra);
+    assert.deepEqual(gateFindings(text, hosted), ["self_hosted_job_switched_ungated:build"], extra);
+  }
+});
+
+test("gate guard (re-review N4): YAML the line reader cannot follow is refused, and other expressions do not count as hosted", () => {
   const hosted = "name: x\non: pull_request\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n";
   const cases = [
     [`${g4}\n  "evil":\n    runs-on: [self-hosted, Linux]\n    steps:\n      - run: x\n`, /workflow_not_canonical:job_line/],
