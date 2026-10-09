@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import {DOMAIN_POLICY as P} from '../worker/model-domain-policy.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Original Task 1502fd80. Real isolated PostgreSQL; no service/production URI.
 // Candidate state is NOT_RUN until this file really executes in admitted CI.
@@ -93,6 +94,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       try { await admin.query(entry.sql); }
       catch (e) { throw new Error('Migration ' + entry.name + ': ' + e.message, { cause: e }); }
     }
+    await allowRawTestBindings(admin);
     const userId = uuid(), otherUser = uuid(), token = hash(), otherToken = hash();
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'model-fixture@example.invalid',now()),($2,'other-fixture@example.invalid',now())", [userId, otherUser]);
     const bindingId = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)

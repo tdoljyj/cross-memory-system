@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Permission simplification step 4 (migration 20261004210000_authorization_roles;
 // PermissionSimplification.v0.1 §3.1, Decision b32fc5b9, Task 0756c748):
@@ -61,6 +62,7 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const owner = uuid();
     const other = uuid();

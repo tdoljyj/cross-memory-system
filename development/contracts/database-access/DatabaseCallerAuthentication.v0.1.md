@@ -130,6 +130,13 @@ Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`
 - Projection Builder 在用（`projection_refresh_attempts` 已成功 5870 次），而 `clued_private.projection_refresh_builder_binding` 明确要求 Builder Binding **没有** `authorizations_v12` 记录（Builder 的权限来自 `projection_builder_grants`，不受委托授权限制）。所以 Decision `29bff239` 不给 Projection Builder 补 v12 授权（补了会打断投影刷新）。改为：放行规则只留给持有有效 `projection_builder_grants` 的 Binding，并且只放行 `scope` `global` 的只读；其余找不到记录一律拒绝。
 - 仓库中 73 个数据库测试直接插入没有 v12 记录的 Binding，靠这条放行通过；关闭它要同时把这些测试改成带 v12 授权的 Binding。
 
+7b 的实现（Decision `d0458559`，取代上面「改成带 v12 授权的 Binding」与「持有 `projection_builder_grants`」两处细节）：
+
+- 迁移 `20261009050000_close_v12_raw_binding_fallback_v1.sql` 新建 `clued_private.raw_binding_grants_v1`（`binding_id`、`context_key`、`actions`、`reason`），只有数据库所有者能写。`authorization_assert_entry_v12` 找不到 v12 授权时，只在这张表列出该 Binding、动作在 `actions` 内、且 `scope` 与 `context_key` 相同时放行，其余一律 `resource_action_not_authorized`。
+- 迁移只写一行：Projection Builder（`05effaa9`），`global`，`read`。它的三个刷新 RPC 只调用 `resolve_binding(…, 'context:read', 'global')`。用这张表而不是 `projection_builder_grants`，是因为后者按投影键授权，不表达「能读哪个 scope」。
+- 数据库测试大多用 `context_keys = '*'` 的 Binding 跨多个 context 调用，而 v12 条目必须逐个列出 context，所以测试不改成 v12 授权。测试在应用完迁移后调用 `tests/raw-binding-grants-fixture.mjs` 的 `allowRawTestBindings`：它只在测试库里装一个触发器，给没有 v12 授权的 Binding 写一行 `context_key` 为空（任意资源）的授权，行为与本迁移之前相同。`context_key` 为空的行只由测试写；生产行都写明一个 scope。
+- `tests/raw-binding-grants-guard.test.mjs` 要求每个直接插入 Binding 的测试调用该工具、自己写授权行，或用 `raw-binding-grants:` 注释说明为何不需要（例如只应用本迁移之前的迁移）；并检查该触发器不出现在迁移和 Worker 里。
+
 
 ### 4.7 第 2 步的实现方式（Decision `2ec964af`，取代 §4.1、§4.2 的相应细节）
 
@@ -228,7 +235,7 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 6. **合同文字**：IntegrationRuntime v0.1.8 是冻结文件，§5.13（grant `anon, authenticated` → Worker 角色）与 §10.1、§11（存储形式）改动经 ERRATA 记录并需 Owner Decision；同步 HeadlessBindingIssuance「令牌能用在哪里」、WorkClaimAdmission §4.6、OwnerCredential §9、StorageNormalUse §6.2 的措辞。归属 Task `9a4d6d2c`。
 7. **关闭「无 v12 授权记录即放行」**（§4.6），分两个 PR，各需 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`、`5f60b7ba`、`29bff239`。
    - **7a**：迁移 `20261009040000_revoke_legacy_audit_bindings_v1.sql` 撤销 `c0cc5abf`、`b3603c56`（只撤销仍与核实时一致的行），每次撤销记入 `authorization_audit_v12`（operation `legacy_binding_revoke`）。不改测试。
-   - **7b**：`authorization_assert_entry_v12` 找不到记录时拒绝，只为持有有效 `projection_builder_grants` 的 Binding 保留 `scope` `global` 只读的例外；73 个直接插入 Binding 的数据库测试改用共用工具建带 v12 授权的 Binding，动手前与占用这些文件的会话协调。
+   - **7b**：迁移 `20261009050000_close_v12_raw_binding_fallback_v1.sql`：`authorization_assert_entry_v12` 找不到 v12 授权时，只按 `clued_private.raw_binding_grants_v1` 放行，迁移只给 Projection Builder 一行（`global` 只读）。直接插入 Binding 的数据库测试改为调用共用工具 `allowRawTestBindings`，guard 测试防止新增测试漏掉。实现细节见 §4.6，依据 Decision `d0458559`。
 
 第 1、2 步与第 3–5 步互不依赖，可以并行；第 6 步跟随第 2、5 步；第 7 步在第 1 步之后任何时候都可以做。
 

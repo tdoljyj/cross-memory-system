@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
+// raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migrationDir = path.join(root, 'supabase/migrations');
 const coreName = '20260922092355_bug_20260922_002_currentness_core.sql';

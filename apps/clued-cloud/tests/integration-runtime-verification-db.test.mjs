@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2c Integration Runtime PR-3 (IntegrationRuntime v0.1.8 §14.1): A / B verification, READY profiles,
 // integration_ready_project_v1 and its Receipt, declare / report / fact_set. Proves G-A8 (T-A8-1…4), the
@@ -187,6 +188,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     // the §5.13 target grants: the stage C grant migration itself (§13.0), then the later migrations
     await apply(GRANTS);
     for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+    await allowRawTestBindings(admin);
 
     // ---- fixtures ----------------------------------------------------------------------------
     const newUser = async () => {

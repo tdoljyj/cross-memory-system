@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Information Flow M0-D slice S3 (contract M0DCloseout.v0.1 sections 4.3,
 // 5.1, 6.3, 7): promotion, candidate_promotions, native_write_markers and the
@@ -148,6 +149,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     assert.equal((await native('clued_user_record_mutate', preS3Input)).status, 'committed');
     await apply(S3_MIGRATION);
     for (const name of migrations.slice(s3Index + 1)) await apply(name);
+    await allowRawTestBindings(admin);
     assert.equal(await confirmed(preS3Record, 1), false, 'pre-S3 Native writes are not backfilled');
     const preS3Replay = await native('clued_user_record_mutate', preS3Input);
     assert.equal(preS3Replay.replayed, true);

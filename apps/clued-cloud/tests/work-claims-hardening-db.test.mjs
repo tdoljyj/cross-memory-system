@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Work Claim Admission v0.1, step 7 review fixes (migration
 // 20261002050000_work_claims_admission_hardening): glob-against-glob conflicts
@@ -59,6 +60,7 @@ test('work claims hardening: glob/glob overlap and pull request binding',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     // --- Glob intersection, pairwise. Overlap must be found whenever one
     // path can match both; disjoint pairs stay disjoint. ---

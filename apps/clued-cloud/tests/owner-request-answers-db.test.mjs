@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
+// raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
+
 // The Owner's answer reaches the Agent (migration
 // 20261009020000_owner_request_answers_v1; OwnerCredential.v0.1.md §13, Owner
 // Decision 973e1b5b, Task d5bd604e). Once the Owner decides a request, it is an

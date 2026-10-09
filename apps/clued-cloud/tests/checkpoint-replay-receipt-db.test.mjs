@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
+// raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
+
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const migration='20260908102500_clued_checkpoint_replay_receipt.sql';
 const uuid=()=>crypto.randomUUID(),hash=()=>crypto.randomBytes(32).toString('hex');

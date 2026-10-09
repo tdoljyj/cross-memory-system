@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Re-review 7, MAJOR-3 (migration 20261005120000_owner_grants_admission_door;
 // OwnerCredential.v0.1.md §6.3): the admission check asks for an Owner Grant
@@ -62,6 +63,7 @@ test('owner grants: the admission door admits a protected commit once per grant 
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

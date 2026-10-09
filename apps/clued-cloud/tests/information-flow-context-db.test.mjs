@@ -11,6 +11,7 @@ import { Tiktoken } from 'js-tiktoken/lite';
 import o200kBase from 'js-tiktoken/ranks/o200k_base';
 import { serialize } from '../../../scripts/phase2-qualification/minimum-context-compiler/compiler.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Information Flow M0-D slice S4 (contract M0DCloseout.v0.1 sections 6.1-6.3,
 // 7, 8 gates M0D-B01 and M0D-B04): Context Policy acceptance, the service
@@ -108,6 +109,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

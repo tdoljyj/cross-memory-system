@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // BUG-20261002-001: the NOW_CONFLICT check of a project task must not resolve
 // the effective project of Global tasks, whose project_id is null.
@@ -52,6 +53,7 @@ test("project now-task writes ignore Global now tasks and still detect real conf
     for (const name of (await fs.readdir(path.join(root, "supabase/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const token = hash();

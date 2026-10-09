@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Generic Work Claim v0.1, rollout step 1 (migration
 // 20261002210000_work_claims_resource_kinds; GenericWorkClaim.v0.1.md §2):
@@ -56,6 +57,7 @@ test('work claims: typed resources, registered kinds and per-kind overlap',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     // --- Normalization. ---
     const normalize = async (entries) => (await admin.query(

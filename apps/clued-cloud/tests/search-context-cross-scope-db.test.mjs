@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2a-2 (Cross-Host v0.2.6 §21.1 CC-1, CC-3): a default search covers every
 // readable scope and matches reworded (including Chinese) queries.
@@ -51,6 +52,7 @@ test('context search covers readable scopes and non-literal queries', { timeout:
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
     for (const fn of ['search_terms_v1(text)', 'search_min_score_v1(text[])',
       'search_score_v1(text,text,text[])', 'search_scope_allowed_v1(text,text,text,text[])']) {
       for (const role of ['anon', 'authenticated', 'service_role']) {
