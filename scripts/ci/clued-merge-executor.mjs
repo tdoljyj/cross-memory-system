@@ -36,12 +36,20 @@
 //               executor turns it off. Without a line it leaves auto-merge
 //               alone: the Agent merges as before.
 //   mergeable   GitHub refuses auto-merge on a pull request that can merge
-//               now ("clean status", or "unstable status" when only a check
-//               that is not required failed). Under the same conditions the
-//               executor then merges it itself (merge commit, sha bound to
-//               the head it read); the ruleset still requires every required
-//               check. The opt-in line is the merge approval, so nobody has
-//               to click merge (Owner, Task ff476b06).
+//               now ("clean status"). Under the same conditions, and only when
+//               the newest pull_request run of every CI workflow on the head
+//               succeeded with no job skipped (GitHub counts a skipped gated
+//               job as passing, and none of the gated workflows is required by
+//               the ruleset; review MAJOR-1), the executor merges it itself
+//               (merge commit, sha bound to the head it read); the ruleset
+//               still requires every required check. The opt-in line is the
+//               merge approval, so nobody has to click merge (Owner, Task
+//               ff476b06). "unstable status" (a check that is not required
+//               failed or is pending) is never merged. A merge the executor
+//               does is a material outcome its holder records in Clued on its
+//               next resume. The state is read when the job starts: a switch
+//               to frozen during a run of at most five minutes does not stop
+//               a merge already decided (review MINOR-1).
 //   otherwise   nothing: the pull request has a conflict the holder must
 //               resolve, or CI failed (clued-merge-slot-ci returns the slot).
 //
@@ -148,6 +156,30 @@ async function admissionOf(fetchImpl, env, repository, headSha, prNumber) {
     return { admitted: false, mode: null };
   }
   return { admitted: true, mode: parseModeLabel(newest.output && newest.output.title) };
+}
+
+// Every CI workflow's newest pull_request run on the head: completed, success,
+// no job skipped (the gate skips the gated jobs until admission; review MAJOR-1).
+export async function gatedCiOf(fetchImpl, env, repository, headSha, workflows) {
+  const listed = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${headSha}&event=pull_request&per_page=100`);
+  const newest = new Map();
+  for (const run of Array.isArray(listed && listed.workflow_runs) ? listed.workflow_runs : []) {
+    if (!run || run.head_sha !== headSha || run.event !== "pull_request") continue;
+    const file = String(run.path ?? "").replace(/@.*$/, "");
+    if (!workflows.has(file)) continue;
+    const seen = newest.get(file);
+    if (!seen || Number(run.id) > Number(seen.id)) newest.set(file, run);
+  }
+  if (!newest.size) return { passed: false, reason: "no CI workflow ran on this head" };
+  for (const [file, run] of [...newest].sort(([a], [b]) => a.localeCompare(b))) {
+    if (run.status !== "completed" || run.conclusion !== "success") {
+      return { passed: false, reason: `${file} is ${run.status}${run.conclusion ? ` (${run.conclusion})` : ""}` };
+    }
+    const jobs = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+    const skipped = (Array.isArray(jobs && jobs.jobs) ? jobs.jobs : []).filter((job) => job && job.conclusion === "skipped").map((job) => job.name);
+    if (skipped.length) return { passed: false, reason: `${file} skipped ${skipped.join(", ")}` };
+  }
+  return { passed: true, reason: `${newest.size} CI workflow run(s) succeeded on this head` };
 }
 
 const ENABLE_AUTO_MERGE = "mutation($id: ID!, $oid: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $oid}) { pullRequest { number autoMergeRequest { enabledAt } } } }";
@@ -270,22 +302,37 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       entry.status = response.status;
       const errors = response.body && Array.isArray(response.body.errors) ? response.body.errors : [];
       if (response.status !== 200 || errors.length) entry.error = errors.map((e) => e && e.message).filter(Boolean).join("; ") || `HTTP ${response.status}`;
-      // GitHub refuses auto-merge on a pull request that can merge now: "clean status", or
-      // "unstable status" when only a check that is not required failed. The plan's conditions
-      // hold, so the executor merges it, bound to the head it read (Task ff476b06).
+      // GitHub refuses auto-merge on a pull request that can merge now. On "clean status" the
+      // plan's conditions hold, so the executor merges it, bound to the head it read, once every
+      // CI workflow ran and passed on it (Task ff476b06; review MAJOR-1). "unstable status" (a
+      // check that is not required failed or is pending) is left to its holder.
       if (enable && entry.error && /(clean|unstable) status/i.test(entry.error)) {
+        const unstable = /unstable status/i.test(entry.error);
         delete entry.error;
-        const merged = await appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/merge`, token,
-          { merge_method: "merge", sha: plan.pr.head.sha });
-        entry.merge_status = merged.status;
-        if (merged.status === 200 && merged.body && merged.body.merged === true) {
-          entry.result = "merged";
-          entry.merge_commit = merged.body.sha ?? null;
-          result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; the executor merged it (${String(entry.merge_commit).slice(0, 12)})`);
+        entry.result = "mergeable_now";
+        let gated = { passed: false, reason: "a check that is not required failed or is still pending (unstable status)" };
+        if (!unstable) {
+          try {
+            gated = await gatedCiOf(fetchImpl, env, repository, plan.pr.head.sha, workflows);
+          } catch (error) {
+            gated = { passed: false, reason: `the CI runs could not be read: ${error instanceof Error ? error.message : String(error)}` };
+          }
+        }
+        if (!gated.passed) {
+          result.notices.push(`#${plan.pr.number}: already mergeable, but not merged: ${gated.reason}`);
         } else {
-          // 405: not mergeable after all (a required check, the ruleset); 409: the head moved.
-          entry.result = "mergeable_now";
-          entry.error = `merge refused: ${merged.body && merged.body.message ? String(merged.body.message) : `HTTP ${merged.status}`}`;
+          const merged = await appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/merge`, token,
+            { merge_method: "merge", sha: plan.pr.head.sha });
+          entry.merge_status = merged.status;
+          if (merged.status === 200 && merged.body && merged.body.merged === true) {
+            entry.result = "merged";
+            entry.merge_commit = merged.body.sha ?? null;
+            result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; the executor merged it (${String(entry.merge_commit).slice(0, 12)})`);
+          } else {
+            // 405: not mergeable after all (a required check, the ruleset); 409: the head moved.
+            if (merged.status !== 405 && merged.status !== 409) entry.result = "merge_refused";
+            entry.error = `merge refused: ${merged.body && merged.body.message ? String(merged.body.message) : `HTTP ${merged.status}`}`;
+          }
         }
       }
     }
@@ -299,7 +346,7 @@ export function renderSummary(result) {
   const lines = ["## clued-merge-executor", "", `State \`${result.state}\``, ""];
   if (!result.heads.length) lines.push("No open pull request heads a merge queue.");
   for (const action of result.actions) {
-    lines.push(`- #${action.pr} \`${String(action.head_sha).slice(0, 12)}\`: **${action.action}**${action.wanted ? ` (wanted ${action.wanted})` : ""}: ${action.reason}${action.error ? `; refused: ${action.error}` : ""}`);
+    lines.push(`- #${action.pr} \`${String(action.head_sha).slice(0, 12)}\`: **${action.result ?? action.action}**${action.wanted ? ` (wanted ${action.wanted})` : ""}: ${action.reason}${action.error ? `; refused: ${action.error}` : ""}`);
   }
   for (const notice of result.notices) lines.push(`- notice: ${notice}`);
   for (const error of result.errors) lines.push(`- error: ${error}`);

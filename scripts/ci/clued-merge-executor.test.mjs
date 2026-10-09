@@ -157,27 +157,61 @@ test("auto-merge on with an opt-in for another head is turned off (review MAJOR-
   assert.deepEqual([writes(manual), (await run(manual)).actions[0].reason], [[], "auto-merge is already on"]);
 });
 
-test("a pull request GitHub can already merge is merged by the executor, bound to its head (Task ff476b06)", async () => {
-  for (const status of ["clean", "unstable"]) {
-    const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: `Pull request Pull request is in ${status} status` }] },
-      [`PUT /repos/${REPO}/pulls/5/merge`]: { __status: 200, body: { merged: true, sha: "c".repeat(40), message: "Pull Request successfully merged" } } } });
+// CI runs on the head: the newest pull_request run of a gated workflow, and its jobs (review MAJOR-1).
+const GATED = ".github/workflows/clued-components.yml";
+const ciRuns = ({ conclusion = "success", status = "completed", jobs = [["admission-gate", "success"], ["components", "success"]] } = {}) => ({
+  [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [
+    { id: 600, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status: "completed", conclusion: "failure" },
+    { id: 700, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status, conclusion: status === "completed" ? conclusion : null },
+  ] },
+  [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: jobs.map(([name, c]) => ({ name, conclusion: c })) },
+});
+const mergeable = (status) => ({ "POST /graphql": { data: null, errors: [{ message: `Pull request Pull request is in ${status} status` }] } });
+const MERGE = `PUT /repos/${REPO}/pulls/5/merge`;
+const mergeCall = (fetch) => writes(fetch).find((call) => call.method === "PUT" && call.route === `/repos/${REPO}/pulls/5/merge`);
+
+test("a clean, opted-in head whose CI all ran and passed is merged by the executor, bound to its head (Task ff476b06)", async () => {
+  const fetch = world({ extra: { ...mergeable("clean"), ...ciRuns(),
+    [MERGE]: { __status: 200, body: { merged: true, sha: "c".repeat(40), message: "Pull Request successfully merged" } } } });
+  const result = await run(fetch);
+  assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].merge_status, result.actions[0].merge_commit, result.actions[0].error],
+    [[], "merged", 200, "c".repeat(40), undefined]);
+  const merge = mergeCall(fetch);
+  assert.deepEqual([merge.body, merge.authorization], [{ merge_method: "merge", sha: HEAD }, "Bearer ghs_exec"]);
+  assert.ok(fetch.calls.some((call) => call.route === `/repos/${REPO}/actions/runs/700/jobs?filter=latest&per_page=100`), "the newest run's jobs");
+  assert.match(result.notices[0], /already mergeable, so GitHub does not take auto-merge; the executor merged it/);
+  assert.match(renderSummary(result), /\*\*merged\*\*/);
+});
+
+test("review MAJOR-1: clean but with skipped gated jobs, a red or running CI run, no CI run, or unstable: not merged", async () => {
+  for (const [name, extra, reason] of [
+    ["gated jobs skipped", { ...mergeable("clean"), ...ciRuns({ jobs: [["admission-gate", "success"], ["components", "skipped"]] }) },
+      /\.github\/workflows\/clued-components\.yml skipped components/],
+    ["CI run failed", { ...mergeable("clean"), ...ciRuns({ conclusion: "failure" }) }, /clued-components\.yml is completed \(failure\)/],
+    ["CI run still running", { ...mergeable("clean"), ...ciRuns({ status: "in_progress" }),
+      [`/repos/${REPO}/contents/.github/workflows?ref=${HEAD}`]: [] }, /clued-components\.yml is in_progress/],
+    ["no CI run", mergeable("clean"), /no CI workflow ran on this head/],
+    ["unstable", { ...mergeable("unstable"), ...ciRuns() }, /not required failed or is still pending \(unstable status\)/],
+  ]) {
+    const fetch = world({ extra });
     const result = await run(fetch);
-    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].merge_status, result.actions[0].merge_commit, result.actions[0].error],
-      [[], "merged", 200, "c".repeat(40), undefined], status);
-    const merge = writes(fetch).find((call) => call.method === "PUT" && call.route === `/repos/${REPO}/pulls/5/merge`);
-    assert.deepEqual(merge.body, { merge_method: "merge", sha: HEAD }, status);
-    assert.match(result.notices[0], /already mergeable, so GitHub does not take auto-merge; the executor merged it/);
+    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error, mergeCall(fetch)], [[], "mergeable_now", undefined, undefined], name);
+    assert.match(result.notices[0], new RegExp(`already mergeable, but not merged: .*${reason.source}`), name);
   }
-  // GitHub refuses the merge (a required check, or the head moved): reported, nothing else written.
-  for (const [code, message] of [[405, "Required status check \"trivy\" is expected."], [409, "Head branch was modified. Review and try the merge again."]]) {
-    const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Pull request Pull request is in clean status" }] },
-      [`PUT /repos/${REPO}/pulls/5/merge`]: { __status: code, body: { message } } } });
+});
+
+test("GitHub refuses the merge: 405 and 409 stay mergeable_now with the reason; any other answer is merge_refused", async () => {
+  for (const [code, message, expected] of [[405, 'Required status check "trivy" is expected.', "mergeable_now"],
+    [409, "Head branch was modified. Review and try the merge again.", "mergeable_now"], [403, "Resource not accessible by integration", "merge_refused"]]) {
+    const fetch = world({ extra: { ...mergeable("clean"), ...ciRuns(), [MERGE]: { __status: code, body: { message } } } });
     const result = await run(fetch);
-    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].merge_status], [[], "mergeable_now", code], String(code));
-    assert.equal(result.actions[0].error, `merge refused: ${message}`);
+    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].merge_status, result.actions[0].error],
+      [[], expected, code, `merge refused: ${message}`], String(code));
     assert.match(result.notices[0], /enable_auto_merge was refused: merge refused/);
   }
-  // Any other GraphQL error is a refusal notice.
+});
+
+test("any other GraphQL error is a refusal notice", async () => {
   const other = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Resource not accessible by integration" }] } } });
   const refused = await run(other);
   assert.deepEqual([refused.errors, refused.actions[0].error], [[], "Resource not accessible by integration"]);
@@ -202,7 +236,7 @@ test("nothing is written unless every condition holds", async () => {
   }
 });
 
-test("a protected-layer pull request is auto-merged; Owner review is always enforced (Merge Admission step 6)", async () => {
+test("a protected-layer pull request gets auto-merge like any other; Owner review is always enforced (Merge Admission step 6)", async () => {
   const protectedCheck = { extra: checksRoute({ "clued-admission-verified": [verified({ output: { title: "ADMITTED [normal · protected · reruns 0]" } })] }) };
   for (const retired of [undefined, "", "false"]) {
     const fetch = world(protectedCheck);
