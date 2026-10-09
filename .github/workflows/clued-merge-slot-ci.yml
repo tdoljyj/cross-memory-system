@@ -63,7 +63,7 @@ jobs:
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.event == 'pull_request' ||
       github.event.workflow_run.event == 'pull_request_target'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     environment: clued-admission
     steps:
@@ -71,6 +71,9 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
       - name: Self-test the merge slot report (no network, mocked fetch)
         run: node --test scripts/ci/clued-merge-slot-ci.test.mjs
       - name: Report the CI state of the pull requests holding a merge slot

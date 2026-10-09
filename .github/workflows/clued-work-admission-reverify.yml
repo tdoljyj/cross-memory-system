@@ -50,6 +50,8 @@ concurrency:
 jobs:
   reverify:
     name: clued-work-admission-reverify
+    # Keep the literal hosted label until the trusted admission guard accepts
+    # the exact latest/slim expression; arbitrary expressions remain fail-closed.
     runs-on: ubuntu-latest
     # state_change judges every open pull request and posts two checks each.
     timeout-minutes: ${{ inputs.reason == 'state_change' && 30 || 10 }}
@@ -61,6 +63,9 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
       - name: Re-verify open pull requests with a passing admission check
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
