@@ -14,7 +14,7 @@ run-name: admit ${{ inputs.workflow }} ${{ inputs.ref }} ${{ inputs.claim_id }}
 #
 # The Clued token comes from the `clued-admission` environment, whose
 # deployment branches are limited to main; the job also refuses any other ref.
-# Default-branch code only, hosted runner, no install.
+# Default-branch code only, hosted runner, no application dependency install.
 
 on:
   workflow_dispatch:
@@ -48,7 +48,7 @@ jobs:
   admit:
     name: clued-work-admission-dispatch
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     environment: clued-admission
     steps:
@@ -58,6 +58,9 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
       - name: Verify the work claim with Clued
         env:
           ADMIT_WORKFLOW: ${{ inputs.workflow }}
@@ -66,6 +69,5 @@ jobs:
           ADMIT_SCOPE: ${{ inputs.scope }}
           CLUED_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode dispatch-admit

@@ -6,7 +6,7 @@ import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 const worker = await loadContinuityWorker();
 const origin = "https://clued.example.invalid";
 const issuer = "fixture-policy-transition-issuer-" + "x".repeat(32);
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_POLICY_TRANSITION_V2: "true",
   CLUED_STORAGE_CONNECTOR_ISSUER: issuer,
   SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
@@ -21,7 +21,7 @@ test("policy transition transport is disabled until released and rejects Binding
   const original = globalThis.fetch; let calls = 0;
   globalThis.fetch = async () => { calls++; throw new Error("must not fetch"); };
   try {
-    assert.equal((await worker.fetch(request({ action: "describe", manifest_id: manifestId }), {
+    assert.equal((await worker.fetch(request({ action: "describe", manifest_id: manifestId }), { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
       ...env, CLUED_STORAGE_POLICY_TRANSITION_V2: "false",
     })).status, 404);
     assert.equal((await worker.fetch(request({ action: "describe", manifest_id: manifestId }, "clued_bnd_" + "a".repeat(64)), env)).status, 401);

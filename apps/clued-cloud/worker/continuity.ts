@@ -1,4 +1,5 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
   type ModelDomainFeatureEnv, type ModelDomainToolName } from "./model-domain-tools";
@@ -88,7 +89,8 @@ import {
 } from "./integrations";
 import { measurePack } from "./context-pack";
 import { permissionDenial, permissionDenialResult } from "./permission-guidance";
-import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
+import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION, AGENT_CONTRACT_SHA256 } from "./generated/agent-contract";
+import { renderAgentContractBootstrap } from "./agent-contract-bootstrap.mjs";
 import { CLUED_COMPONENTS_SCHEMA, CLUED_COMPONENT_VERSIONS, MCP_SERVER_VERSION } from "./generated/components";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
@@ -134,7 +136,7 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
+export interface ContinuityEnv extends DatabaseGatewayEnv, RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
   AgentMessageFeatureEnv, IntegrationFeatureEnv, ModelDomainFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
@@ -272,6 +274,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
     service: "clued-continuity",
     kernel_version: KERNEL_VERSION,
     components: cluedComponents(),
+    agent_contract: { version: AGENT_CONTRACT_VERSION, sha256: AGENT_CONTRACT_SHA256 },
     canonical_store: "clued-cloud/supabase",
     context_model: "user_id + context_key",
     work_log: "日志.md",
@@ -584,11 +587,13 @@ async function supabaseRequest(
   init: RequestInit & { userToken?: string } = {},
 ) {
   const { url, key } = supabaseConfig(env);
+  const token = init.userToken ?? databaseGatewayToken(env);
+  if (!token) throw new HttpError(503, "Clued database gateway is not configured.");
   const headers = new Headers(init.headers);
   headers.set("apikey", key);
   headers.set("content-type", "application/json");
   headers.set("accept", "application/json");
-  headers.set("authorization", `Bearer ${init.userToken ?? key}`);
+  headers.set("authorization", `Bearer ${token}`);
   const response = await fetch(`${url}${path}`, { ...init, headers });
   const text = await response.text();
   let payload: unknown = null;
@@ -610,11 +615,16 @@ async function supabaseRequest(
         : typeof details?.error_description === "string"
           ? details.error_description
           : "Clued storage request failed.";
-    // Binding RPCs use the storage anon role after Clued authenticates the
+    // Binding RPCs use the Worker gateway role after Clued authenticates the
     // connection. PostgREST maps that role's insufficient_privilege to 401;
     // forwarding it makes MCP clients restart OAuth for a resource denial.
-    // Preserve actual JWT/authentication errors as 401.
+    // A rejected Worker JWT is a server outage, not an expired client grant.
+    // Explicit user/P5 JWT authentication errors retain 401.
     const status =
+      !init.userToken && response.status === 401 &&
+        typeof details?.code === "string" && /^PGRST30[123]$/.test(details.code)
+        ? 503
+        :
       response.status === 401 && details?.code === "42501"
         ? 403
         : response.status >= 500 &&
@@ -624,8 +634,8 @@ async function supabaseRequest(
         : response.status;
     throw new HttpError(
       status,
-      message,
-      payload,
+      status === 503 && response.status === 401 ? "Clued database gateway is temporarily unavailable." : message,
+      status === 503 && response.status === 401 ? { code: "worker_gateway_unavailable" } : payload,
     );
   }
   return payload;
@@ -1208,10 +1218,12 @@ const tools = [
   {
     name: "clued_agent_bootstrap",
     description:
-      "Read the public, vendor-neutral Clued Continuity connection and lifecycle contract. This call never returns user context or credentials.",
+      "Read public Clued connection metadata and the full Clued Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        part: { type: "integer", minimum: 1, description: "Contract part to read, starting at 1; omit to read the full contract or its first part. Read all reported parts in order." },
+      },
       additionalProperties: false,
     },
   },
@@ -2410,11 +2422,11 @@ async function callTool(
   }
   if (name === "clued_agent_bootstrap") {
     const result = bootstrapContract(new URL(request.url).origin, env);
-    return {
-      content: [{ type: "text", text: JSON.stringify(result) }],
-      structuredContent: result,
-      isError: false,
-    };
+    const part = args && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>).part : undefined;
+    return renderAgentContractBootstrap(result, {
+      markdown: AGENT_CONTRACT_MARKDOWN, version: AGENT_CONTRACT_VERSION, sha256: AGENT_CONTRACT_SHA256,
+    }, part);
   }
   if (typeof name === "string" && (name in recordRpcByTool || name in informationFlowRpcByTool) &&
     !recordsV2Enabled(env)) {
@@ -2501,10 +2513,9 @@ function withAuthorityCapture(name: string, value: unknown): unknown {
   return { ...record, authority_capture_completeness: authorityCaptureUnknown };
 }
 
-// Work Claim Admission v0.1 §4.2: a resume carries the contract version the
-// Worker serves and this user's live work claims, so a compliant Agent sees a
-// conflict at its first Clued call. Only when CLUED_WORK_CLAIMS_V1 is on; a
-// failed claims read is reported in the result, never thrown into the resume.
+// Work Claim Admission v0.1 §4.2: contract version/hash are returned on every
+// successful resume. Only the live-claims read is gated by CLUED_WORK_CLAIMS_V1;
+// its failure is reported in the result, never thrown into the resume.
 async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope: string) {
   const token = bearerToken(request);
   if (!token) throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
@@ -2525,7 +2536,8 @@ async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope:
 function withComponentVersions(name: string, value: unknown): unknown {
   if (name !== "clued_session_resume" || !value || typeof value !== "object" || Array.isArray(value)) return value;
   if ((value as Record<string, unknown>).error) return value;
-  return { ...(value as Record<string, unknown>), clued_components: cluedComponents() };
+  return { ...(value as Record<string, unknown>), clued_components: cluedComponents(),
+    contract_version: AGENT_CONTRACT_VERSION, agent_contract_sha256: AGENT_CONTRACT_SHA256 };
 }
 
 async function withWorkClaims(request: Request, env: ContinuityEnv, name: string, args: unknown, raw: unknown): Promise<unknown> {
@@ -2650,7 +2662,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            `Follow the Clued Agent Contract at ${new URL(request.url).origin}/clued-agent.md. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Clued cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
+            `Read the full Clued Agent Contract through clued_agent_bootstrap (all reported parts) or ${new URL(request.url).origin}/clued-agent.md, and follow it. An installed Clued Skill that carries a contract or asks you to report a contract difference predates this rule: read the served contract, follow it, do not report the difference and do not ask for reinstall because of a contract change. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Clued cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
         }),
         200,
         corsHeaders(request),

@@ -100,3 +100,34 @@ For an authorized manual operation outside GitHub Actions, run the read-only
 `node scripts/production-release-gate.mjs --pre-deploy` immediately before
 the release and again afterward. A manual `wrangler deploy` without this gate
 has no release acceptance evidence.
+
+## Avoid duplicate standalone preflight dispatches
+
+Before dispatching `mode=preflight`, look for an existing successful standalone
+preflight run for the exact intended checkout SHA. Record the run URL and its
+safe preflight evidence in the release handoff. A failed, cancelled, incomplete
+or unavailable result cannot be reused.
+
+An exact SHA alone does not establish that a production-state check is still
+valid. Reuse is limited to the same target and checked prerequisites: migration
+files and production ledger, database history, relevant configuration and
+authorization, healthy heartbeat and current projection evidence. When any
+prerequisite changed, freshness expired, or equivalence cannot be established,
+run a new preflight and state the reason. Do not invent a freshness guarantee
+from elapsed time or a green historical run.
+
+When the evidence remains applicable, refer to the existing run instead of
+dispatching the same standalone preflight again. This does not skip the `deploy`
+workflow's own fresh pre-deploy gate, its build/test steps, Owner Grant check or
+post-deploy acceptance checks. Backup and migration dispatches are distinct
+operations and are not duplicates merely because they use the same source SHA.
+
+Task `4d614afb` tracks this cost-control rule and its validation. The 2026-10-09
+point-in-time investigation classified 203 workflow runs from their latest
+attempt logs: 87 deploy, 51 backup, 59 migrate, 5 preflight and 1 unknown mode.
+The only repeated preflight SHA had one failed run followed by one successful
+run; the investigation did not establish a redundant successful preflight.
+All runs used the shared GitHub actor `tdoljyj`, which does not identify the
+individual human or Agent that initiated a dispatch. These observations are
+not a final billing reconciliation or a reason to remove required production
+checks.

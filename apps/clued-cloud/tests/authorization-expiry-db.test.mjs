@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -55,8 +56,10 @@ test('OAuth approval accepts lifetimes up to 365 days and refuses longer ones', 
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
 
+    await allowTestIssuerCredentials(admin);
+
     const definition = (await admin.query(`select pg_get_functiondef(
-      'public.clued_authorization_approve_v12(text,uuid,bigint,jsonb,text,timestamptz)'::regprocedure) body`)).rows[0].body;
+      'clued_private.ii_pub_clued_authorization_approve_v12(text,uuid,bigint,jsonb,text,timestamptz)'::regprocedure) body`)).rows[0].body;
     assert.match(definition, /p_expires_at>clock_timestamp\(\)\+interval '365 days'/);
     assert.doesNotMatch(definition, /interval '30 days'/);
     assert.match(definition, /authorization_context_grant_v13/, 'the v13 context-grant adapter is kept');

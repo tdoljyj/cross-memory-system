@@ -34,22 +34,28 @@ HOSTED_ONLY_ALLOWLIST = {
         "The lightweight monitor must remain independent of the self-hosted pool so it can detect complete Windows/Linux capability-pool loss."
     ),
     "clued-work-admission.yml": (
-        "Work Claim Admission L0a: an unfiltered required check that makes one Clued call per pull request and must not wait on self-hosted capacity; it runs base-branch code only (pull_request_target), installs nothing and executes no PR code."
+        "Work Claim Admission L0a: an unfiltered required check that makes one Clued call per pull request and must not wait on self-hosted capacity; it runs base-branch code only (pull_request_target), installs no application dependencies and executes no PR code."
     ),
     "clued-work-admission-dispatch.yml": (
-        "Work Claim Admission hand-dispatch check: verifies a claim before a heavy workflow is dispatched; default-branch code only, one Clued call, no install, no pull request trigger."
+        "Work Claim Admission hand-dispatch check: verifies a claim before a heavy workflow is dispatched; default-branch code only, one Clued call, no application dependency install, no pull request trigger."
     ),
     "clued-work-admission-reverify.yml": (
-        "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no install, no pull request trigger."
+        "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no application dependency install, no pull request trigger."
     ),
     "clued-merge-slot-ci.yml": (
-        "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes; default-branch code only, seconds of work, no install, no pull request trigger."
+        "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
+    ),
+    "clued-merge-executor.yml": (
+        "Merge Admission step 5: the executor brings the default branch into the merge queue head and turns on auto-merge as the clued-admission App, after each slot report and hourly; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
+    ),
+    "contract-placement.yml": (
+        "Owner Decision 6a66d2fd: unfiltered required placement and actual public-bootstrap budget check on ubuntu-latest; no secrets or application dependency tree, no self-hosted PR execution, five-minute timeout."
     ),
     "clued-ci-usage-report.yml": (
-        "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 200-request budget; default-branch code only, no install, no secret, no pull request trigger, and it must not take the self-hosted capacity it measures."
+        "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 200-request budget; default-branch code only, no application dependency install, no secret, no pull request trigger, and it must not take the self-hosted capacity it measures."
     ),
     "clued-release-tags.yml": (
-        "Release tagging (Task 6dfd7560): creates the VERSION and release/<date>-r<run> tags after a VERSION change on main or a successful production deploy; default-branch code only, no install, no pull request trigger."
+        "Release tagging (Task 6dfd7560): creates the VERSION and release/<date>-r<run> tags after a VERSION change on main or a successful production deploy; default-branch code only, no application dependency install, no pull request trigger."
     ),
     "phase2-naming-surface-inventory.yml": (
         "Frozen historical exact-byte inventory workflow; modifying its execution contract would invalidate bound evidence."
@@ -65,7 +71,7 @@ CONCURRENCY_EXEMPTIONS = {
     ),
 }
 
-HOSTED_RE = re.compile(r"\b(?:ubuntu|windows|macos)-(?:latest|[0-9][A-Za-z0-9._-]*)\b", re.I)
+HOSTED_RE = re.compile(r"\b(?:ubuntu|windows|macos)-(?:latest|slim|[0-9][A-Za-z0-9._-]*)\b", re.I)
 SELF_HOSTED_RE = re.compile(r"\bself-hosted\b", re.I)
 PR_TRIGGER_RE = re.compile(r"(?m)^\s*pull_request(?:_target)?\s*:")
 CONCURRENCY_RE = re.compile(r"(?m)^concurrency\s*:")

@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -18,6 +19,7 @@ const TRACK = "20_P_产品与体验";
 // cloud executor (verified-result mode) against disposable PostgreSQL and an
 // in-memory Drive. Never Google, never a disk.
 export async function testStorageModifyExecution(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `modify-exec-${randomUUID()}`, resource = "https://modify-exec.invalid/mcp";

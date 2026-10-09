@@ -7,7 +7,7 @@ import {
   presentCluedRecord,
 } from "../app/record-presentation.ts";
 
-const baseEnv = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+const baseEnv = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const projectId = "11111111-1111-4111-8111-111111111111";
 const recordId = "22222222-2222-4222-8222-222222222222";

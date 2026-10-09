@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build, stop } from 'esbuild';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 // Real OAuth library -> application transport -> real migrated PostgreSQL.
 // Identity and HTTP plumbing are local fixtures, not a live Supabase/ChatGPT login.
@@ -48,21 +49,30 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     await db.query("insert into auth.users values($1,'fixture@example.invalid',now()),($2,'developer@example.invalid',now())", [U, V]);
     await db.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Integration project','integration project',$3)", [P, U, 'project:' + P]);
     const issuer = crypto.randomBytes(32).toString('hex');
+    await allowTestIssuerCredentials(db);
     await db.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'Integration fixture')", [hash(issuer), resource]);
-    const human = server.getPgClient(), anon = server.getPgClient(), invited = server.getPgClient();
-    for (const connection of [human, anon, invited]) { connections.push(connection); await connection.connect(); }
-    await human.query('set role authenticated'); await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [U, JSON.stringify({ sub: U })]); await anon.query('set role anon');
+    const human = server.getPgClient(), gateway = server.getPgClient(), invited = server.getPgClient();
+    for (const connection of [human, gateway, invited]) { connections.push(connection); await connection.connect(); }
+    await human.query('set role authenticated'); await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [U, JSON.stringify({ sub: U })]);
     await invited.query('set role authenticated'); await invited.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [V, JSON.stringify({ sub: V })]);
+    // The full migration set above supplies the actual C1 role and exact RPC grants.
+    // Enter it through authenticator, as PostgREST does, without superuser privileges.
+    await gateway.query('set session authorization authenticator; set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
+    assert.deepEqual((await gateway.query('select session_user, current_user')).rows[0],
+      { session_user: 'authenticator', current_user: 'clued_worker_gateway' });
     const context = (await human.query("select public.clued_development_owner_v14($1) value", [{ op: 'context_create', name: 'Integration development', project_id: P, environment: 'test', idempotency_key: crypto.randomUUID() }])).rows[0].value.result.id;
-    const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin, CLUED_AUTHORIZATION_ISSUER_TOKEN: issuer, SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key', PROJECT_VIEWS_V2: 'true', CLUED_DEVELOPMENT_CONTEXT_V14: 'true' };
+    const gatewayToken = 'synthetic-authorization-e2e-worker-gateway';
+    const env = { CLUED_DB_GATEWAY_TOKEN: gatewayToken, OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin, CLUED_AUTHORIZATION_ISSUER_TOKEN: issuer, SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key', PROJECT_VIEWS_V2: 'true', CLUED_DEVELOPMENT_CONTEXT_V14: 'true' };
     globalThis.fetch = async (url, options = {}) => {
       const parsed = new URL(url); assert.equal(parsed.origin, 'https://db.invalid');
       const headers = new Headers(options.headers); const isOwner = headers.get('Authorization') === 'Bearer fixture-human'; const isInvited = headers.get('Authorization') === 'Bearer fixture-developer'; const isHuman = isOwner || isInvited;
       if (parsed.pathname === '/auth/v1/user') return Response.json(isHuman ? { id: isOwner ? U : V, email: isOwner ? 'fixture@example.invalid' : 'developer@example.invalid' } : { error: 'unauthorized' }, { status: isHuman ? 200 : 401 });
+      if (!isHuman && headers.get('Authorization') !== 'Bearer ' + gatewayToken) return Response.json({ code: 'PGRST301', message: 'invalid JWT' }, { status: 401 });
       const name = parsed.pathname.split('/').at(-1); assert.match(name, /^clued_[a-z0-9_]+$/);
       const values = JSON.parse(options.body || '{}'), keys = Object.keys(values); assert.ok(keys.every(key => /^p_[a-z0-9_]+$/.test(key)));
       try {
-        const result = await (isOwner ? human : isInvited ? invited : anon).query('select public.' + name + '(' + keys.map((key, index) => key + ' => $' + (index + 1)).join(',') + ') value', keys.map(key => typeof values[key] === 'object' && values[key] !== null ? JSON.stringify(values[key]) : values[key]));
+        const result = await (isOwner ? human : isInvited ? invited : gateway).query('select public.' + name + '(' + keys.map((key, index) => key + ' => $' + (index + 1)).join(',') + ') value', keys.map(key => typeof values[key] === 'object' && values[key] !== null ? JSON.stringify(values[key]) : values[key]));
         return Response.json(result.rows[0].value);
       } catch (error) { return Response.json({ message: error.message, code: error.code }, { status: error.code === '40001' ? 409 : error.code === '42501' || error.code === '28000' ? 403 : 400 }); }
     };

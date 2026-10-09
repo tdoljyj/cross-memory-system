@@ -21,7 +21,7 @@ const { runStorageQueuedSweepScheduled } = await bundle("../worker/storage-queue
 const { createStorageCloudWorker } = await bundle("../worker/storage-cloud-executor.ts");
 
 const issuer = randomBytes(32).toString("base64url");
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_JOBS_V1: "true", CLUED_STORAGE_JOBS_V2: "true", CLUED_STORAGE_GOOGLE_V1: "true",
   CLUED_STORAGE_EXECUTOR_V1: "true", CLUED_STORAGE_CONNECTOR_ISSUER: issuer,
   SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
@@ -45,12 +45,21 @@ test("the queued sweep is off with any storage flag off and fails closed without
   assert.equal(calls, 0); assert.equal(runs, 0);
 });
 
+test("a missing gateway dispatches nothing and never falls back to the publishable key", async () => {
+  let calls = 0, runs = 0;
+  await withFetch(async () => { calls++; assert.fail("unexpected database request"); }, async () => {
+    for (const value of [undefined, "", " \n "])
+      assert.deepEqual(await runStorageQueuedSweepScheduled({ ...env, CLUED_DB_GATEWAY_TOKEN: value }, { runJob: async () => { runs++; } }), { status: "unavailable" });
+  });
+  assert.equal(calls, 0); assert.equal(runs, 0);
+});
+
 test("the sweep calls only the fixed RPC with the issuer; dispatch is asked for only with the executor switch", async () => {
   const bodies = []; let reply = { status: "ok", settled: 1, jobs: [], root_busy: 2 };
   await withFetch(async (url, init) => {
     assert.equal(String(url), env.SUPABASE_URL + "/rest/v1/rpc/clued_storage_queued_sweep_v1");
     const headers = new Headers(init.headers);
-    assert.equal(headers.get("authorization"), "Bearer fixture-public-key"); assert.equal(headers.get("apikey"), "fixture-public-key");
+    assert.equal(headers.get("authorization"), "Bearer test-worker-gateway"); assert.equal(headers.get("apikey"), "fixture-public-key");
     assert.equal(init.redirect, "manual"); assert.equal(init.method, "POST");
     bodies.push(JSON.parse(init.body));
     return Response.json(reply);
@@ -121,7 +130,7 @@ const token = "clued_bnd_" + "a".repeat(40);
 const ref = job(1);
 const status = (state, extra = {}) => ({ ...ref, status: state, request_digest: "a".repeat(64), intent_id: null,
   receipt_id: "30000000-0000-4000-8000-000000000001", execution_permitted: false, ...extra });
-const toolEnv = { CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_JOBS_V1: "true", SUPABASE_URL: env.SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
+const toolEnv = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_JOBS_V1: "true", SUPABASE_URL: env.SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
 const call = async (name, args, ctx) => (await (await worker.fetch(new Request("https://clued.example.invalid/mcp", { method: "POST",
   headers: { "content-type": "application/json", origin: "https://clued.example.invalid", authorization: "Bearer " + token },
   body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) }), toolEnv, ctx)).json()).result;

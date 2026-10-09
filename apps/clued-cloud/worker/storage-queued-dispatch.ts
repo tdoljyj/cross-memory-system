@@ -13,8 +13,9 @@
  * that already started only answers its status at load.
  */
 import { resolveSupabasePublicConfig } from "../app/supabase-public-config";
+import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 
-export interface StorageQueuedSweepEnv {
+export interface StorageQueuedSweepEnv extends DatabaseGatewayEnv {
   CLUED_STORAGE_ACCOUNT_V1?: string;
   CLUED_STORAGE_JOBS_V1?: string;
   CLUED_STORAGE_JOBS_V2?: string;
@@ -47,7 +48,8 @@ export async function runStorageQueuedSweepScheduled(env: StorageQueuedSweepEnv,
   if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_JOBS_V1 !== "true" ||
       env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_JOBS_V2 !== "true") return { status: "disabled" };
   const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
-  if (!issuer || issuer.length < 32) return { status: "unavailable" };
+  const gatewayToken = databaseGatewayToken(env);
+  if (!issuer || issuer.length < 32 || !gatewayToken) return { status: "unavailable" };
   const dispatch = env.CLUED_STORAGE_EXECUTOR_V1 === "true";
   let result: Record<string, unknown>;
   try {
@@ -56,7 +58,7 @@ export async function runStorageQueuedSweepScheduled(env: StorageQueuedSweepEnv,
     const key = env.SUPABASE_PUBLISHABLE_KEY ?? defaults.key;
     const response = await fetch(`${url}/rest/v1/rpc/clued_storage_queued_sweep_v1`, {
       method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
-      headers: { apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json" },
+      headers: { apikey: key, authorization: `Bearer ${gatewayToken}`, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: { action: "due", dispatch } }),
     });
     if (!response.ok) return { status: "unavailable" };

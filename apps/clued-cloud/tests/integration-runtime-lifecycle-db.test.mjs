@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -205,6 +206,7 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     // every later migration, in production order
     for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     await t.test('T-S-2 after the security hygiene migration: the Binding path is anon only', async () => {
       const rows = await executors();

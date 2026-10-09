@@ -111,7 +111,7 @@
 
 ### 4.1 切换边界
 
-1. **只由 Owner 切**，通过仓库变量（与 `CLUED_WORK_ADMISSION_ENFORCE` 同一做法：Settings → Variables）。Agent 不得改这个变量，不得请求 Owner 改它来放过自己的 PR（与 GitConnectorWriteContract「An Agent never disables the ruleset…」同一精神）。Agent 用 Owner 身份能改它，是 WorkClaimAdmission §4.7 已写明的信任前提，本文不改变。
+1. **只由 Owner 切**，通过仓库变量（Settings → Variables）。Agent 不得改这个变量，不得请求 Owner 改它来放过自己的 PR（与 GitConnectorWriteContract「An Agent never disables the ruleset…」同一精神）。Agent 用 Owner 身份能改它，是 WorkClaimAdmission §4.7 已写明的信任前提，本文不改变。
 2. **每次切换写一条 Clued Decision**（`user_explicit`）：切到什么、为什么、预计持续多久、切回的条件。切回也写。Decision 由 Owner 口述、任一在场 Agent 记录，或 Owner 自己在 Clued 页面写。
 3. **切换后立即重判所有打开的 PR**：Owner 在默认分支 `workflow_dispatch` 复核 workflow（`clued-work-admission-reverify.yml`），输入 `reason=state_change`；由 Agent 代劳时按合同 §1.7 先认领切换所对应的 Task（dispatch 是启动 CI）。复核在这个模式下对**每个**打开、非草稿、发往 main 的 PR 重新判定，并在其 head 上发一条新的 App check（成功或失败都发，与现行「只发失败」不同，见 §10）。每小时的定时复核兜底。边界：复核发出的 check 的 `external_id` 指向复核运行，加闸 workflow 的 gate 只认本事件准入运行的 check，所以切到更宽松状态后某个 head 若因此由红转绿，它的加闸重任务在该 head 上并未运行过；对普通层与文档层这是 §2 接受的（main 的 push CI 兜底），受保护层的判定不随状态变所以不会出现。gate 绑定本事件的准入运行，复核开始发成功 check 不重开复审 3 N-R1。
 4. **GitHub 规则集的必需检查列表不随状态变**：始终是 `gitleaks`、`trivy`、`clued-work-admission`、`clued-admission-verified`、`clued-merge-slot`。状态只改检查内部的判定：例如 `clued-merge-slot` 在不需要合并位的层 / 状态下以 `not_required(<layer>, <state>)` 通过，与现行 `not_needed` 直接通过同一做法；`clued-admission-verified` 在认领为 `advise` 的层下，缺认领时仍成功，摘要写 `claim_advisory_missing`。
@@ -246,6 +246,14 @@
 - 合同 §1.7 随本步发 agent-contract v42（#653 已用 v41；Owner 在 Decision `b4a19a1f` 同意随第 4 步发版）：合并引用排队、不冲突；先并入 main 并推送再入队；等待时约每小时续期一次保租约（租约 2 小时，续期上限 12 次）、不为合并做任何事；成为队列头后如 main 已前进再并入。同时写入 runner 钩子 `merge-admission-ungated-rerun` 的重跑规则（§8 第 5 项）。
 - 上线顺序：先应用迁移（v40/v41 的 Worker 与 Skill 读到 `merge_queue` 只是多一个字段；旧合同的 Agent 不会再收到合并位冲突，按旧文字会以为已持位，所以紧接着发布 Worker v42），再合并，最后发布 Worker 对外服务 v42。
 
+**实施说明（2026-10-09，第 5 步，Task `91039d74`，Owner Decision `661f8c36`、`5aa668e3`）**：执行器是独立的 `.github/workflows/clued-merge-executor.yml` 与 `scripts/ci/clued-merge-executor.mjs`，在每次 `clued-merge-slot-ci` 运行完成后（`workflow_run`）、每次推送 main 后（下一个队列头此时落后）、每小时与手动运行，只跑默认分支代码，用 clued-admission 环境的令牌与 App 私钥。与上文的差别如下，均不放松 §2 的保证：
+- 只为默认分支队列的队列头做事（`clued_work_merge_slot_holders_v1` 自第 4 步起只列队列头，并按 `merge:<owner>/<name>:<default>` 过滤）；只处理同仓库、非草稿、指向默认分支的打开 PR。
+- head 落后默认分支时，用 GitHub「update branch」把默认分支并入（合并提交，`expected_head_sha` 绑定读到的 head）；只并入默认分支的 head 保留 Owner 授权（Decision `a0d93cd0`），App 的推送会触发 CI（`GITHUB_TOKEN` 的推送不会）。冲突或 head 已变时 GitHub 拒绝，执行器只记 notice，由持有者处理。受保护层的 PR 不代为并入：默认分支若改了它也改的受保护文件，合并提交需要新的 Owner 授权，由持有者处理（复审 MINOR-4）。
+- auto-merge 只在 PR **为这个 head 选择加入**时打开：正文有一行 `Clued-Auto-Merge: <40 位 head SHA>`（Agent 在该 head 的合并获批后写），且当前 head 就是它，或它是当前 head 的祖先、并且自它以来改过的每个文件都与默认分支上的版本逐字节相同（不在 head 对 tip 的差异里；任一差异达 300 个文件即视为不覆盖）。所以批准后只有来自默认分支的改动；手工解决冲突或改过内容的合并提交都需要新的一行（确认复审 MAJOR）。行与 head 不符而 auto-merge 已开时，执行器把它关掉（复审 MAJOR-2）。另需 head 含默认分支 tip、本 PR 的 `clued-admission-verified`（`external_id` 指向本 PR）为通过且标题带模式、策略对该状态与层允许 auto-merge（受保护层仅在 Owner 复核强制时）、head 上没有最终失败的 CI 类必需检查、auto-merge 尚未打开。auto-merge 在 CI 结束前就打开，由 GitHub 等五个必需检查（§7.4）：GitHub 对已经可以合并的 PR 拒绝打开 auto-merge（"clean status"，复审 MAJOR-1），执行器把这种情况（以及只因非必需检查失败的 "unstable status"）记为 `mergeable_now`，由持有者合并：检查都已通过之后才写这一行的 Agent 应自己合并。用 GraphQL `enablePullRequestAutoMerge`（`MERGE`，`expectedHeadOid`）。没有这一行时 Agent 照旧自己合并，执行器也不动别人打开的 auto-merge：Owner 现行的「合并前先问」不因执行器而被绕过。
+- 执行器自己从不合并、从不推默认分支（规则集禁止，App 不在 bypass 名单）；`frozen` 时立即返回，不查询队列。只处理正文写明认领的 PR（合并提交不带尾注，复审 MINOR-3）；因推送或定时而跳过的 slot 报告不触发执行器（复审 MINOR-5）。
+- 需要 App 的 Contents: write 与 Pull requests: write。Owner 授予之前，令牌请求被拒（422），执行器只记 notice、什么都不改（Owner 选择先写代码、上线前再加权限）。
+- 合同 §1.7 本步不改（避开 Task `af536fcc` 正在搬动的合同文件）：Agent 自己并入 main、自己合并仍然有效；执行器只是先替它做。等合同搬出 Skill 包后再写入「入队后可交给执行器」与 `Clued-Auto-Merge: <head SHA>` 行。
+
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
 
 **结论：可以，且推荐；前提是 Owner 在仓库设置里打开 `Allow auto-merge`（现为关闭）。** GitHub 文档：auto-merge 在公开仓库对 Free 可用，对私有仓库在 GitHub Pro、Team、Enterprise 可用。本仓库是个人账号私有仓库，账号计划从 Agent 侧 API 读不到（令牌无 `user` scope）；它已对私有仓库启用了规则集与分支保护，通常意味着 Pro 及以上，Owner 打开设置时 GitHub 界面会直接显示该选项是否可用，以此为准。
@@ -363,7 +371,9 @@
 | 5 | 执行器（可选）：clued-admission App 增加 `contents: write`、`pull_requests: write`；默认分支上的执行器 job 为队列头做「并入 main」与打开 auto-merge。用 App 安装令牌而不是 `GITHUB_TOKEN`：GitHub 不为 `GITHUB_TOKEN` 的推送创建新的 workflow 运行，用它并入 main 不会触发 CI | Agent 在入队后无事可做 | 批准 App 权限扩展（扩大了 `clued-admission` environment 里私钥的能力范围） | `91039d74` |
 | 6 | 删除 `CLUED_WORK_ADMISSION_ENFORCE` 与 `CLUED_OWNER_REVIEW_ENFORCE` 的读取与 advisory 分支（v0.2） | 不再有「提示模式」；回滚手段改为 `frozen` 与规则集的 Owner 紧急步骤（GitConnectorWriteContract「Emergency or recovery」） | 删除两个变量 | `958f8ed7` |
 
-**两个 ENFORCE 变量在第 1–5 步期间的处理**：继续读取，各自保留今天的语义（`CLUED_WORK_ADMISSION_ENFORCE` 不为 `true` 时认领与合并位只提示；`CLUED_OWNER_REVIEW_ENFORCE` 不为 `true` 时不调门口、只在摘要提示），脚本打印 `mode: legacy-advisory(<哪个变量>)`。优先级：`frozen` 高于两个 kill switch——状态为 `frozen` 时忽略它们，三层仍按受保护基线判定；它们只在 `normal` / `efficiency` 下生效。它们不是三个状态之一、不受 I1 保护（提示模式本来就放松受保护层），§14 把它们列为 I1 之外的放宽开关，只保留到第 6 步；在此之前不得用它们代替 `frozen`。`CLUED_RELEASE_GRANT_ENFORCE` 不在本文范围。
+**实施说明（2026-10-09，第 6 步，Task `958f8ed7`）**：分两个 PR。6a（#665）先在门禁守卫里登记去掉 `CLUED_WORK_ADMISSION_ENFORCE` 一行后的 `admission-gate` 摘要；6b 删除两个变量的全部读取、`NOT_ENFORCED` 结论与 `legacy-advisory` 提示，十个加闸 workflow 与准入、复核、派发、合并位上报、执行器 workflow 都不再传这两个变量。认领、合并位、Owner 授权从此始终强制，只有策略本身写明「提示」的地方（`efficiency` 下的普通层与文档层）仍只提示；回滚手段是 `frozen` 与规则集的 Owner 紧急步骤。合并后 Owner 删除这两个仓库变量。
+
+**两个 ENFORCE 变量在第 1–5 步期间的处理（历史）**：继续读取，各自保留今天的语义（`CLUED_WORK_ADMISSION_ENFORCE` 不为 `true` 时认领与合并位只提示；`CLUED_OWNER_REVIEW_ENFORCE` 不为 `true` 时不调门口、只在摘要提示），脚本打印 `mode: legacy-advisory(<哪个变量>)`。优先级：`frozen` 高于两个 kill switch——状态为 `frozen` 时忽略它们，三层仍按受保护基线判定；它们只在 `normal` / `efficiency` 下生效。它们不是三个状态之一、不受 I1 保护（提示模式本来就放松受保护层），§14 把它们列为 I1 之外的放宽开关，只保留到第 6 步；在此之前不得用它们代替 `frozen`。`CLUED_RELEASE_GRANT_ENFORCE` 不在本文范围。
 
 **回滚**：第 1 步是纯重构，回滚即 revert；第 2 步回滚是把策略文件换回兼容表（一个受保护 PR）或设 `frozen`；第 3–5 步的迁移只增不改，回滚 Worker 即可；执行器 App 权限可随时在 GitHub 收回。
 

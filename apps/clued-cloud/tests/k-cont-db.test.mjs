@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -51,6 +52,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     const userId = uuid();
     const tokenHash = hash();

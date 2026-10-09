@@ -6,6 +6,7 @@
 // module is out of date.
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 
 const source = new URL("../../../skills/clued/references/agent-contract.md", import.meta.url);
 const target = new URL("../worker/generated/agent-contract.ts", import.meta.url);
@@ -13,7 +14,7 @@ const componentsSource = new URL("../../../config/clued-components.json", import
 const componentsTarget = new URL("../worker/generated/components.ts", import.meta.url);
 
 export async function renderAgentContractModule() {
-  const text = await readFile(source, "utf8");
+  const text = (await readFile(source, "utf8")).replace(/\r\n/g, "\n");
   const match = /^Contract version: (\d+)$/m.exec(text);
   if (!match) throw new Error("agent-contract.md has no 'Contract version: N' line");
   return [
@@ -21,6 +22,7 @@ export async function renderAgentContractModule() {
     "// skills/clued/references/agent-contract.md. Do not edit by hand.",
     `export const AGENT_CONTRACT_MARKDOWN = ${JSON.stringify(text)};`,
     `export const AGENT_CONTRACT_VERSION = ${Number(match[1])};`,
+    `export const AGENT_CONTRACT_SHA256 = ${JSON.stringify(createHash("sha256").update(text, "utf8").digest("hex"))};`,
     "",
   ].join("\n");
 }

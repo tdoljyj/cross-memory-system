@@ -6,7 +6,7 @@
 // the hourly re-verification runs it too. It reports the CI state of each
 // open pull request that holds a merge slot:
 //
-//   failed   one of the four CI required checks (gitleaks, trivy and
+//   failed   a CI required check (gitleaks, trivy, contract-placement and
 //            clued-work-admission from GitHub Actions, clued-admission-verified
 //            from the clued-admission App) finally failed on the head after
 //            the claim got the slot (step 4: an admission check that failed
@@ -18,7 +18,7 @@
 //            re-run's green (independent review MAJOR-2).
 //   running  a run of a CI workflow is queued or in progress on the head; the
 //            slot stays 90 minutes after the report.
-//   green    the four checks passed and no run of the head's pull request is
+//   green    all required checks passed and no run of the head's pull request is
 //            active, counted or not; the slot stays 30 minutes after the
 //            head's first green report, for the merge.
 // Anything else (checks not posted yet, nothing running, or only runs of
@@ -40,7 +40,7 @@
 //
 // GitHub requests per run: one list of open pull requests, one commit for
 // each open pull request whose body names no claim, and for each pull request
-// that holds a slot four check-run lists, one run list and, while something
+// that holds a slot one check-run list per required check, one run list and, while something
 // runs, one directory listing. Every run looks at every slot, whichever pull
 // request's run completed: concurrency keeps one run pending and drops the
 // others, so a run must not skip a holder (confirmation review MINOR-A).
@@ -53,7 +53,6 @@ import { fileURLToPath } from "node:url";
 import {
   ADMISSION_APP_ID,
   MERGE_SLOT_CHECK_NAME,
-  admissionEnforced,
   appChecksOnHead,
   cluedRpc,
   githubJson,
@@ -68,17 +67,18 @@ import { resolveMode } from "./merge-admission-policy.mjs";
 export const TOUCH_RPC = "clued_work_merge_slot_touch_v1";
 export const HOLDERS_RPC = "clued_work_merge_slot_holders_v1";
 export const ACTIONS_APP_ID = 15368;
-// The four CI required checks of the main ruleset, by (name, app id).
+// All CI required checks of the main ruleset, by (name, app id).
 // clued-merge-slot is required too, but it is the slot's own result.
 export const CI_REQUIRED_CHECKS = Object.freeze([
   Object.freeze({ name: "gitleaks", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "trivy", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "clued-work-admission", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "clued-admission-verified", app_id: ADMISSION_APP_ID }),
+  Object.freeze({ name: "contract-placement", app_id: ACTIONS_APP_ID }),
 ]);
 // Workflows that count as CI besides the gated ones: those of the required checks
 // that run on the self-hosted runners. clued-work-admission takes seconds.
-export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.yml"]);
+export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.yml", "contract-placement.yml"]);
 // A required check passes as the ruleset counts it. A final failure returns
 // the slot; cancelled is not one: the admission run of an edited pull request
 // cancels the previous one on the same head, and the next run's check may not
@@ -158,7 +158,7 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
   }
   if (before) return { state: "idle", reason: before, checks };
   if (checks.every((check) => check.status === "completed" && PASSING.has(check.conclusion))) {
-    return { state: "green", reason: "the four CI required checks passed", checks };
+    return { state: "green", reason: "all CI required checks passed", checks };
   }
   return { state: "idle", reason: "no CI result yet and no CI run active", checks };
 }
@@ -228,9 +228,9 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
     }
   }
   // The slot check is failed only where the policy requires the slot: in
-  // efficiency it only advises it for code and docs, and while admission is
-  // advisory the check is not enforced (confirmation review MINOR-B).
-  const slotRequired = admissionEnforced(env, mode) && mode.state !== "efficiency";
+  // efficiency it only advises it for code and docs (confirmation review
+  // MINOR-B). Admission is always enforced since Merge Admission step 6.
+  const slotRequired = mode.state !== "efficiency";
   for (const { pr, scope, since } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {

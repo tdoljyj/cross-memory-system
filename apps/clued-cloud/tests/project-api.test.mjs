@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 
-const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const projectId = "11111111-1111-4111-8111-111111111111";
 const targetId = "22222222-2222-4222-8222-222222222222";

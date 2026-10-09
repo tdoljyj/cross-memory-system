@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -9,6 +10,7 @@ const DISCLOSURE = "clued.storage-read-disclosure/1";
 // StorageFullCapability.v0.1 P1 read level. Synthetic, disposable PostgreSQL
 // only; setup facts model the already-tested registration/transition contracts.
 export async function testStorageRead(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `storage-read-${randomUUID()}`, resource = "https://storage-read.invalid/mcp";

@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -51,6 +52,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
     const anon = server.getPgClient();
     clients.push(anon);
     await anon.connect();

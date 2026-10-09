@@ -1,7 +1,9 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
 export async function testDirectoryProbe(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const session = randomUUID(), issuer = createHash("sha256").update(randomUUID()).digest("hex");
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
   const native = server.getPgClient(); await native.connect();
