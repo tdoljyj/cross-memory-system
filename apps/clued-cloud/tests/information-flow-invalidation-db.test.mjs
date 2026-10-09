@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -199,6 +200,7 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
     await apply(S5_MIGRATION);
     for (const name of migrations.slice(s5Index + 1)) await apply(name);
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     // Backfill: live lineage for K0, backfill_source_changed for K0b.
     assert.deepEqual((await lineage(k0)).map((row) => [row.source_record_id, row.source_version, row.lineage_stale,

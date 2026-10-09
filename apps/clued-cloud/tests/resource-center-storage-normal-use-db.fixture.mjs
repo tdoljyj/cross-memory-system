@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
@@ -12,6 +13,7 @@ const READ_DISCLOSURE = "clued.storage-read-disclosure/1";
 // set_classes not downgrading normal/1, and the content-search admission.
 // Synthetic, disposable PostgreSQL only.
 export async function testStorageNormalUse(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   // The Worker calls claim/complete through clued_storage_oauth_callback_v2 with
   // the issuer SECRET; the database hashes it to this issuer hash.
   const clients = [], session = randomUUID(), issuerSecret = randomBytes(32).toString("hex"), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());

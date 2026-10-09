@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -8,6 +9,7 @@ const ACTIONS = ["create_file", "create_topic", "inspect"];
 // foundation intentionally has no activation API: direct seed SQL below models
 // already-reviewed facts in this disposable database, never a deployment path.
 export async function testAccountPolicy(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const session = randomUUID(), issuer = hash(randomUUID());
   const resource = "https://account-policy.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;

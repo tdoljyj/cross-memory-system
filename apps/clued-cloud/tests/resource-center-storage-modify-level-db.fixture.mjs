@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -12,6 +13,7 @@ const WRITE = "public.clued_storage_write_access_v1", MODIFY_DISCLOSURE = "clued
 // level, the policy replacement it performs, and the read access migration.
 // Synthetic, disposable PostgreSQL only.
 export async function testStorageModifyLevel(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], session = randomUUID(), issuer = sha(randomUUID()), clientIssuer = sha(randomUUID());
   const oauthClient = `modify-level-${randomUUID()}`, resource = "https://modify-level.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;

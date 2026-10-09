@@ -6,6 +6,34 @@ Candidate successor under existing Storage Task
 
 ## Authority and custody
 
+### Stable storage issuer and key rotation (step 2b candidate)
+
+Migration `20261009070001_issuer_identity_credentials_v1.sql`, authorized for implementation by Owner Decision
+`818a9b05`, separates fixed issuer identity from credential generation. Its production application and secret
+rotation require the production release gate. The storage issuer's existing PK/FKs continue to identify the
+same OAuth app, attempts, delegations and jobs; ordinary key rotation retires a credential, not that identity.
+Every public hash/secret entry authenticates the active verifier before the private business body runs.
+No public endpoint accepts an identity or a verifier instead of a proof.
+
+Existing persisted `clued.storage-persisted-verification/2` JSON, its digest and its immutable Receipt remain
+unchanged. A currently authenticated new key can inspect/settle that same issuer's historical result through
+the fixed identity check; all existing job, provider-attempt, authority snapshot, version and Receipt checks
+still apply. No historical credential grants a fresh operation. New verification uses `/3`, with `issuer_id`,
+`issuer_kind` and the credential generation captured by the resolver; it contains no issuer proof, verifier or
+legacy `issuer_hash` field. The generation is audit provenance and does not bypass current authentication.
+
+New default-refresh consent and onboard activation requests also use UUID identity, kind and credential
+generation. Their M1 received-payload and request hashes bind that input. Historical Receipt bytes are
+preserved; refresh-delegation FK keys remain fixed identity values. Consumers use the delegation and current
+policy/issuer checks, not a credential recovered from a Receipt.
+
+For `CLUED_STORAGE_CONNECTOR_ISSUER`, stage/activate a separately generated verifier through the offline
+operator, update the Worker secret, validate refresh, native raw-secret onboarding, new proof RPCs and
+historical verified-result recovery, then immediately retire the previous generation. Validate rejection of
+the old raw secret and proof, and continued operation of pre-existing Bindings/registrations. The detailed
+two-key sequence is in `apps/clued-cloud/docs/connection-authorization-rollout.md`. Never revoke/re-register
+the app or renew its standing delegation merely to rotate its key.
+
 The authenticated Supabase Canonical service remains the only policy authority.
 `storage_connections_v1` pins an existing profile, owner and current Decision;
 it is a resource registration, not another account/identity store.

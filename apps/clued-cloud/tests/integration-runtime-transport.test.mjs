@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build, stop } from 'esbuild';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 // S2c Integration Runtime PR-5 (IntegrationRuntime v0.1.8 §13.5 T-A11-4b (a)(d)): the real Host-disconnect
 // path. The pinned OAuth provider (worker/delegated-oauth.ts) and the continuity Worker run in process over
@@ -105,6 +106,7 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowTestIssuerCredentials(admin);
     // the loop above includes the stage C grant migration, so the §5.13 target grants are the real ones
     for (const rpc of BINDING_RPCS) {
       const { rows } = await admin.query(`select has_function_privilege('anon', $1::regprocedure, 'execute') ok`, [`public.${rpc}(text, jsonb)`]);

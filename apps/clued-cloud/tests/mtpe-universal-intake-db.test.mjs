@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -53,6 +54,7 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     const userId = uuid();
     const hostAToken = hash();

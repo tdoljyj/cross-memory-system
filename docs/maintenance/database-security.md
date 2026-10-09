@@ -360,6 +360,39 @@ test inserts Bindings without it.
 
 ## Left for later
 
+### Issuer credential separation candidate, 2026-10-09
+
+P0-4 step 2b has an implementation candidate in `20261009070001_issuer_identity_credentials_v1.sql`
+(Owner Decision `818a9b05`). This is a revision of the original all-issuer-columns-to-cv1 design: existing
+64-hex PK/FK and historical digest/Receipt values remain fixed identity/history, while actual authentication
+uses `issuer_credentials_v1.verifier` and active credential generation. Do not report all issuer columns as
+converted to cv1, or report production closure before deployment and both key rotations are verified.
+
+Existing issuers receive only one bounded legacy cutover generation; it expires at most 24 hours after the
+first migration application and must be retired immediately after successful replacement verification.
+Permanent issuer insert triggers create identity, never credentials. New issuer credentials require the
+offline operator's explicit stage/activate calls. These invoker-only operations remain denied to API roles
+even if an accidental EXECUTE grant appears. Retired generations cannot be reactivated by these operations.
+
+The issuer resolver uses the domain-separated verifier formula but deliberately ignores the transaction-local
+Binding internal-proof map. Public callers cannot present a stored verifier or historical identity; the
+identity-only implementations are private and retain the original business guards. Requests/new registrations
+use digest `/3` over UUID identity; historical `/2` digests, registrations, request links, Receipts and persisted
+verification JSON are not rewritten. New verification `/3` and default-refresh request hashes bind UUID/kind/
+credential generation without an issuer credential value.
+
+There is no rollback that restores issuer proofs as credentials. `issuer_function_sources_v1` is necessary
+versioned implementation source for deterministic migration reapplication, not a seven-day credential backup;
+retain it while that migration remains replayable. The seven-day backup/rollback section above applies only
+to historical step 2a. A repeated step 2a rewrite over newer issuer identity bodies is not a supported rollback.
+Repair issuer cutovers forward, preserving retired keys and historical evidence. The detailed independent
+authorization/storage rotation runbook is in `apps/clued-cloud/docs/connection-authorization-rollout.md`.
+
+Database tests explicitly use `allowTestIssuerCredentials` from `tests/issuer-credentials-fixture.mjs` for
+synthetic issuer rows created after migration. Its test-only trigger is absent from production migrations and
+Worker code; `issuer-credentials-guard.test.mjs` verifies this separation. Tests of an older migration stop at
+their own historical boundary rather than changing the production migration to accommodate their fixtures.
+
 - **Issuer hashes are still the credential; G6 trusts `__transport_source_commit`.**
   Designed in
   [DatabaseCallerAuthentication.v0.1](../../development/contracts/database-access/DatabaseCallerAuthentication.v0.1.md)

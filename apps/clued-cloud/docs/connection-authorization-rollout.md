@@ -28,6 +28,49 @@ the production-installed migration shape require an isolated upgrade check.
 
 ## Ownership and identity
 
+### Issuer credential successor (P0-4 step 2b, implementation candidate)
+
+Owner Decision `818a9b05-4115-4143-8874-da7bdf6f9c4b` selects identity/credential separation, a new
+registration digest version, and independent rotation of the two issuer keys. Migration
+`20261009070001_issuer_identity_credentials_v1.sql` is the implementation candidate, not evidence of production application.
+
+`issuer_identities_v1` assigns a stable UUID to each existing authorization/storage issuer. Existing 64-hex
+`token_hash`/`issuer_hash` PKs and FKs remain historical identity keys; they are not converted to cv1 and must not
+be described as current credentials after cutover. Every old issuer-hash RPC authenticates through a dedicated
+deterministic verifier resolver before reaching the existing private identity-only business implementation.
+Raw-secret RPCs hash their secret and use the same resolver. Binding transaction-local internal proofs are not
+issuer proofs. Existing RPC names, parameters and grants remain; private identity entries have no API grants.
+The wrappers preserve the existing entry's denial vocabulary (including `authorization_issuer_required`);
+the private resolver reports `issuer_credential_required`.
+
+The first application gives existing issuers one legacy credential generation with a 24-hour maximum cutover
+window. It is a backstop, not a grace period after successful rotation: retire the old generation immediately
+after validating its replacement. Reapplication does not extend or revive it. New issuer provisioning creates
+identity only; the offline database operator must explicitly stage and activate a separately generated verifier.
+`issuer_function_sources_v1` is the versioned implementation source needed for deterministic reapplication;
+it contains function definitions, not credential material or a seven-day rollback backup.
+
+Requests present at migration keep their `/2` registration digest byte for byte. New requests use
+`clued.storage-client-registration/3` with `issuer_id`; the private immutable request-version sidecar selects
+the formula. Existing registrations and request links remain untouched. Redirect identity is computed on both
+sides using `clued.storage-client-redirect-identity/2` and the stable UUID, retaining exact resource, scopes,
+HTTPS redirect and ambiguity checks. A new DCR request can still inherit the one qualified old lineage.
+
+Rotate `CLUED_AUTHORIZATION_ISSUER_TOKEN` first, then `CLUED_STORAGE_CONNECTOR_ISSUER`, each as a separate
+operation under the applicable production approval. Generate a fresh random secret in the approved secret
+store; compute its proof and `cv1:` verifier there. Pass only the verifier to the offline operator's
+`issuer_credential_stage_v1(issuer_uuid, verifier)`, keep its returned generation, and call
+`issuer_credential_activate_v1(issuer_uuid, generation)`. Update the matching Worker secret; verify prepare,
+approval/replay/revoke for authorization, or refresh/onboard/queued recovery for storage. Then immediately call
+`issuer_credential_retire_v1(issuer_uuid, previous_generation)` and prove the old credential is refused.
+Do not proceed to the second key until the first key's positive and negative checks pass. Never set the issuer
+identity row's `revoked_at` for ordinary key rotation: that would invalidate its existing authorizations.
+
+If verification fails, stop that key's cutover. Keep the new generation and the bounded old generation's
+observed state, diagnose once, and repair forward. Do not reactivate a retired generation, recover a proof
+from historical receipts, or return to direct identity-as-proof authentication. Record exact generations,
+Worker deployment and rejection evidence through Clued without storing either secret or proof.
+
 `skills/clued/SKILL.md` is the single maintained entry, with operation-specific
 references. It grants no privileges. A human retains their existing Supabase
 identity. Each independently consented OAuth grant has its own Clued Binding,

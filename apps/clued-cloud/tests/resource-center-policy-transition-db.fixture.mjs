@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -10,6 +11,7 @@ const NATIVE = "public.clued_storage_policy_transition_v2";
 // real connections or issue a provider request. Reviewed client identity seeds
 // reuse the foundation schema; qualification is tested in its separate fixture.
 export async function testStoragePolicyTransition(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], sessionId = randomUUID(), issuer = hash(randomUUID()), oauthClient = `transition-${randomUUID()}`;
   const clientIssuer = hash(randomUUID()), resource = "https://policy-transition.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;

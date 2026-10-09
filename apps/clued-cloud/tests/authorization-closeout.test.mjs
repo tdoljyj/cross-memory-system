@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const key = () => crypto.randomUUID();
@@ -34,6 +35,7 @@ test('Authorization closeout: new resources and interrupted multi-step work', { 
     await admin.query("create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;create table auth.users(id uuid primary key,email text);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations'))).filter(name => name.endsWith('.sql') && !name.includes('p5_')).sort();
     for (const name of migrations) await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+    await allowTestIssuerCredentials(admin);
     await admin.query('insert into auth.users values($1,$2)', [user, 'closeout@example.invalid']);
     await admin.query('insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,$3)', [issuer, resource, 'Local closeout']);
     async function client(role, subject = null) {
