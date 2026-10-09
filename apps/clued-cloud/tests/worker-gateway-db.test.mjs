@@ -33,7 +33,7 @@ const priorGrants = `select p.oid::regprocedure::text signature, p.proowner::reg
 
 test('Worker gateway is additive, least privileged, and still requires a live Binding', { timeout: 600000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-worker-gateway-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: hex(),
+  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'supabase_admin', password: hex(),
     port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
@@ -41,7 +41,8 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
   try {
     await server.initialise(); await server.start();
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
-    await admin.query(`create role anon nologin; create role authenticated nologin;
+    await admin.query(`create role postgres nologin superuser createrole inherit;
+      create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
       grant anon,authenticated to authenticator;
       create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
@@ -51,29 +52,53 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
       create function auth.jwt() returns jsonb language sql stable as
         $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
+      alter database postgres owner to postgres;
+      alter schema auth owner to postgres; alter schema extensions owner to postgres;
+      alter table auth.users owner to postgres;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    const migrator = server.getPgClient(); clients.push(migrator); await migrator.connect();
+    await migrator.query('set session authorization postgres');
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort();
     const sql = await fs.readFile(path.join(root, 'supabase/migrations', MIGRATION), 'utf8');
     const signatures = [...sql.matchAll(/'(public\.clued_[a-z0-9_]+\([^']*\))'/g)].map(m => m[1]);
     assert.ok(signatures.length > 70, 'all serving Worker branches are in scope');
     assert.equal(new Set(signatures).size, signatures.length);
     for (const name of migrations.filter(n => n < MIGRATION)) {
-      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      try { await migrator.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     const before = (await admin.query(priorGrants)).rows;
-    await admin.query(sql);
+    // Supabase's migration role is CREATEROLE but not a superuser. Historical
+    // migrations use the old fixture setup; create and replay this candidate with
+    // the real role attributes so PostgreSQL itself emits the management edge.
+    await admin.query('alter role postgres nosuperuser');
+    assert.deepEqual((await migrator.query(`select current_user,session_user,rolsuper,rolcreaterole,rolinherit
+      from pg_roles where rolname=current_user`)).rows[0],
+      { current_user: 'postgres', session_user: 'postgres', rolsuper: false, rolcreaterole: true, rolinherit: true });
+    await migrator.query(sql);
     await allowRawTestBindings(admin);
+
+    await t.test('a non-superuser migration creator gets only the bootstrap administrative edge', async () => {
+      assert.deepEqual((await admin.query(`select member::regrole::text member,grantor::regrole::text grantor,
+        admin_option,inherit_option,set_option from pg_auth_members
+        where roleid=$1::regrole order by member`, [role])).rows,
+      [
+        { member: 'authenticator', grantor: 'postgres', admin_option: false, inherit_option: false, set_option: true },
+        { member: 'postgres', grantor: 'supabase_admin', admin_option: true, inherit_option: false, set_option: false },
+      ]);
+      assert.equal((await admin.query(`select oid from pg_roles where rolname='supabase_admin'`)).rows[0].oid, 10);
+      await assert.rejects(migrator.query(`set role ${role}`), error => error.code === '42501');
+    });
 
     await t.test('prior callers, definer bodies and G6 compatibility are unchanged', async () => {
       assert.deepEqual((await admin.query(priorGrants)).rows, before);
       assert.equal((await admin.query(`select has_function_privilege('anon',
         'public.clued_mcp_currentness_g6_gate(text,jsonb)','EXECUTE') allowed`)).rows[0].allowed, true);
       // The production workflow wraps each file in plpgsql EXECUTE; replay must preserve grants too.
-      await admin.query(`create function pg_temp.apply_gateway(s text) returns void language plpgsql
+      await migrator.query(`create function pg_temp.apply_gateway(s text) returns void language plpgsql
         as $apply$ begin execute s; end $apply$`);
-      await admin.query('select pg_temp.apply_gateway($1)', [sql]);
+      await migrator.query('select pg_temp.apply_gateway($1)', [sql]);
       assert.deepEqual((await admin.query(priorGrants)).rows, before);
     });
 
@@ -109,17 +134,31 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         [`grant execute on function public.clued_authorization_status_v12(text) to ${role} with grant option`, `revoke grant option for execute on function public.clued_authorization_status_v12(text) from ${role}`],
         [`create role unexpected_gateway_holder nologin; grant ${role} to unexpected_gateway_holder`, `revoke ${role} from unexpected_gateway_holder; drop role unexpected_gateway_holder`],
         [`grant ${role} to authenticator with admin option`, `revoke admin option for ${role} from authenticator`],
+        [`grant ${role} to authenticator with inherit true`, `grant ${role} to authenticator with inherit false`],
+        [`grant ${role} to authenticator with set false`, `grant ${role} to authenticator with set true`],
+        [`grant ${role} to postgres with inherit true`, `grant ${role} to postgres with inherit false`],
+        [`grant ${role} to postgres with set true`, `grant ${role} to postgres with set false`],
+        // Removing the creator's ADMIN blocks ALTER ROLE before the boundary check.
+        [`grant ${role} to postgres with admin false`, `grant ${role} to postgres with admin true`,
+          error => error.code === '42501' && error.message === 'permission denied to alter role'],
+        // Inject catalog drift only in this disposable cluster: PostgreSQL itself
+        // refuses a creator granting ADMIN back to itself, so GRANT cannot build
+        // this otherwise exact edge with a substituted grantor.
+        [`update pg_auth_members set grantor='postgres'::regrole
+          where roleid='${role}'::regrole and member='postgres'::regrole and grantor=10`,
+          `update pg_auth_members set grantor=10
+          where roleid='${role}'::regrole and member='postgres'::regrole and grantor='postgres'::regrole`],
         [`grant authenticated to ${role}`, `revoke authenticated from ${role}`],
         [`alter role ${role} bypassrls`, `alter role ${role} nobypassrls`],
         [`create sequence public.test_worker_gateway_sequence; grant usage on sequence public.test_worker_gateway_sequence to ${role}`, `drop sequence public.test_worker_gateway_sequence`],
         [`create table public.test_worker_gateway_owned(id integer); alter table public.test_worker_gateway_owned owner to ${role}`, `drop table public.test_worker_gateway_owned`],
       ];
-      for (const [widen, repair] of cases) {
+      for (const [widen, repair, refuses = rejected] of cases) {
         await admin.query(widen);
-        try { await assert.rejects(admin.query('select pg_temp.apply_gateway($1)', [sql]), rejected, widen); }
+        try { await assert.rejects(migrator.query('select pg_temp.apply_gateway($1)', [sql]), refuses, widen); }
         finally { await admin.query(repair); }
       }
-      await admin.query('select pg_temp.apply_gateway($1)', [sql]);
+      await migrator.query('select pg_temp.apply_gateway($1)', [sql]);
     });
 
     await t.test('the reviewed grant list covers live source call sites and no Native-only RPC', async () => {
@@ -166,7 +205,7 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
     });
 
     await t.test('a test-only G6 candidate distinguishes the request role from the definer owner', async () => {
-      await admin.query(`create function public.test_worker_gateway_role_probe() returns jsonb
+      await migrator.query(`create function public.test_worker_gateway_role_probe() returns jsonb
         language plpgsql security definer set search_path='' as $probe$
         begin
           if current_setting('role',true) is distinct from 'clued_worker_gateway'

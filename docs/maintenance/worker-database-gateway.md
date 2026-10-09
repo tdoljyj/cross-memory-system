@@ -9,8 +9,13 @@ Production migration and release use the existing exact-resource Owner doors.
 
 `20261009070002_worker_gateway_transition_v1.sql` adds the NOLOGIN,
 non-superuser, non-BYPASSRLS `clued_worker_gateway` role and its explicit RPC
-EXECUTE grants. Only `authenticator` receives membership. The gateway receives
-no direct table privileges, private-schema USAGE or function ownership.
+EXECUTE grants. `authenticator` receives `SET` membership without `ADMIN` or
+`INHERIT`. PostgreSQL also automatically grants a non-superuser `postgres`
+creator an administrative membership from the bootstrap superuser (OID 10):
+`ADMIN true`, `INHERIT false`, `SET false`. The migration accepts only this exact
+management relationship and rejects changed options, other holders or grantors.
+The gateway receives no membership in another role, direct table privileges,
+private-schema USAGE or function ownership.
 Existing `anon`, user-session and P5 paths retain their grants at this stage.
 The G6 role guard and removal of `anon` belong to stage 2.
 

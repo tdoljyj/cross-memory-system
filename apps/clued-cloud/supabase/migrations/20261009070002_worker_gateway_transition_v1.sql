@@ -118,9 +118,15 @@ begin
 
   -- An existing role is accepted only if the entire boundary is still qualified.
   -- Unexpected privileges are refused, never silently removed on replay.
+  -- PostgreSQL grants a non-superuser CREATEROLE creator an administrative-only
+  -- membership, issued by the bootstrap superuser (fixed catalog OID 10).
+  -- Accept only that exact postgres management edge; it cannot inherit or SET ROLE.
   if exists(select 1 from pg_catalog.pg_auth_members m
       where m.roleid='clued_worker_gateway'::regrole
-        and (m.member<>'authenticator'::regrole or m.admin_option or m.inherit_option or not m.set_option))
+        and not ((m.member='authenticator'::regrole and not m.admin_option
+          and not m.inherit_option and m.set_option)
+          or (m.member='postgres'::regrole and m.grantor=10 and m.admin_option
+            and not m.inherit_option and not m.set_option)))
     or pg_catalog.has_schema_privilege('clued_worker_gateway','public','CREATE')
     or exists(select 1 from pg_catalog.pg_namespace n
       where n.nspname not in ('public','information_schema') and n.nspname !~ '^pg_'

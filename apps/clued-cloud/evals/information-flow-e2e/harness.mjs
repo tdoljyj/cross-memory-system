@@ -9,12 +9,14 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { label, redact, sha256, targetTemplate } from './evidence.mjs';
+import { assertLocalGatewayConfig } from '../public-mcp/gateway-token.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 export class WorkerHost {
-  constructor({ bundleDir, persistDir, gatewayOrigin, publishableKey, guardLedger, env }) {
-    this.config = { bundleDir, persistDir, gatewayOrigin, publishableKey, compatibilityDate: '2026-08-23',
+  constructor({ bundleDir, persistDir, gatewayOrigin, publishableKey, gatewayToken, guardLedger, env }) {
+    assertLocalGatewayConfig({ gatewayOrigin, gatewayToken });
+    this.config = { bundleDir, persistDir, gatewayOrigin, publishableKey, gatewayToken, compatibilityDate: '2026-08-23',
       compatibilityFlags: ['nodejs_compat'], allowedOrigins: '' };
     this.guardLedger = guardLedger;
     this.env = env;
