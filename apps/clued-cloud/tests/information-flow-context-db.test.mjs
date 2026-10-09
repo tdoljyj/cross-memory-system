@@ -956,7 +956,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       const doomedId = uuid();
       assert.equal((await agent(tokenDoomed, 'clued_record_mutate', noteInput(doomedId, 'Doomed agent write',
         { scope: p13 }))).status, 'committed');
-      await admin.query('delete from public.clued_agent_bindings where token_hash=$1', [tokenDoomed]);
+      await admin.query('delete from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)', [tokenDoomed]);
       for (const id of [maintenanceId, doomedId]) {
         assert.equal(await confirmed(id, 1), false);
         assert.equal((await writer(id, 1)).writer_principal, 'unknown', id);

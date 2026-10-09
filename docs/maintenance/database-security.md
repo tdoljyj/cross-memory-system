@@ -169,15 +169,111 @@ grant select on table public.clued_continuity_sessions to authenticated;
 notify pgrst, 'reload schema';
 ```
 
+## Credential verifiers, 2026-10-08
+
+Migration `20261008210000_credential_verifier_v1.sql` (P0-4 step 2a, Owner
+Decisions `1427642f` and `2ec964af`). Binding and Resource Center credential
+columns used to hold the value callers present, `sha256(token)`. Anyone who
+read a row could call as that Binding. The columns now hold a verifier,
+`'cv1:' || sha256('clued.credential-verifier.v1:' || proof)`:
+
+| Column | Table |
+|---|---|
+| `token_hash` | `public.clued_agent_bindings`, `clued_private.resource_center_bindings_v1`, `resource_center_writer_bindings_v1`, `resource_center_renewals_v1` |
+| `old_token_hash`, `old_reader_hash`, `old_writer_hash`, and the hashes in `request` | `clued_private.resource_center_rotations_v1` |
+| `authority_token_hash` | `clued_private.resource_center_mutations_v1` |
+
+- `clued_private.credential_verifier_v1(proof)` computes the verifier. Every
+  comparison with a caller's proof goes through it. Any other input gets
+  `'cv0:'`, which matches nothing.
+- The trigger `credential_verifier_normalize_v1` on each table turns a written
+  proof into its verifier and leaves a verifier alone. Functions and fixtures
+  that write credentials do not change, and each column's check constraint only
+  accepts `^cv1:[0-9a-f]{64}$`.
+- A function that passes a stored credential to a function expecting a proof
+  passes `clued_private.credential_internal_proof_v1(stored)` instead. That is a
+  random proof which maps back to the verifier only until the transaction ends
+  (setting `clued.credential_internal_v1`). This covers `clued_oauth_call`, the
+  storage cloud workers and the Resource Center write journal.
+- The migration ends with a guard: no function compares one of these columns
+  with a raw parameter. `apps/clued-cloud/tests/credential-verifier-db.test.mjs`
+  repeats that guard, also checks that no function passes a stored value on as
+  a proof, and checks that a second run changes nothing.
+
+Issuer columns (`authorization_issuers_v12`, `authorization_requests_v12`,
+`storage_*.issuer_hash`) are step 2b; see
+[DatabaseCallerAuthentication.v0.1 §4.7](../../development/contracts/database-access/DatabaseCallerAuthentication.v0.1.md).
+
+Production check after applying (read-only): a live Binding still works
+through the Worker. Calling `clued_work_claims_active_v1` with that Binding's
+stored `token_hash` as `p_token_hash` must be refused.
+
+The old values are kept in `clued_private.credential_proof_backup_v1`, and the
+rewritten function definitions in `clued_private.credential_function_backup_v1`.
+Both are kept until `delete_after` (seven days); the `pg_cron` job
+`clued-credential-backup-purge` then deletes them. Rollback works only while the
+backup exists. Credentials issued after the migration were stored as verifiers
+only, so rollback leaves them unusable; reissue them.
+
+```sql
+begin;
+do $rollback$
+declare
+  f record;
+  t record;
+  c text;
+begin
+  for f in select definition from clued_private.credential_function_backup_v1 loop
+    execute f.definition;
+  end loop;
+  alter table public.clued_agent_bindings disable trigger information_flow_manifest_binding_change;
+  alter table clued_private.resource_center_mutations_v1 disable trigger resource_center_verified_immutable_v2;
+  alter table clued_private.resource_center_mutations_v1 disable trigger storage_refresh_mutation_fence_v1;
+  for t in select * from (values
+      ('public', 'clued_agent_bindings', array['token_hash'], array['id']),
+      ('clued_private', 'resource_center_bindings_v1', array['token_hash'], array['id']),
+      ('clued_private', 'resource_center_writer_bindings_v1', array['token_hash'], array['id']),
+      ('clued_private', 'resource_center_renewals_v1', array['token_hash'], array['id']),
+      ('clued_private', 'resource_center_rotations_v1', array['old_token_hash', 'old_reader_hash', 'old_writer_hash'],
+        array['grant_id', 'generation']),
+      ('clued_private', 'resource_center_mutations_v1', array['authority_token_hash'], array['id'])
+    ) v(schema_name, table_name, cols, keys) loop
+    execute format('drop trigger if exists credential_verifier_normalize_v1 on %I.%I', t.schema_name, t.table_name);
+    foreach c in array t.cols || case when t.table_name = 'resource_center_rotations_v1' then array['request'] else array[]::text[] end loop
+      execute format('alter table %I.%I drop constraint if exists %I', t.schema_name, t.table_name, t.table_name || '_' || c || '_check');
+      execute format('update %I.%I x set %I = k.old_value%s from clued_private.credential_proof_backup_v1 k
+          where k.table_name = %L and k.column_name = %L and k.row_key = jsonb_build_object(%s)',
+        t.schema_name, t.table_name, c, case when c = 'request' then '::jsonb' else '' end, t.table_name, c,
+        (select string_agg(format('%L, x.%I', key, key), ', ') from unnest(t.keys) key));
+    end loop;
+  end loop;
+  -- The four columns that had a format check get it back; NOT VALID skips rows issued after the migration.
+  alter table public.clued_agent_bindings add constraint clued_agent_bindings_token_hash_check
+    check (token_hash ~ '^[0-9a-f]{64}$') not valid;
+  alter table clued_private.resource_center_bindings_v1 add constraint resource_center_bindings_v1_token_hash_check
+    check (token_hash ~ '^[0-9a-f]{64}$') not valid;
+  alter table clued_private.resource_center_writer_bindings_v1 add constraint resource_center_writer_bindings_v1_token_hash_check
+    check (token_hash ~ '^[0-9a-f]{64}$') not valid;
+  alter table clued_private.resource_center_renewals_v1 add constraint resource_center_renewals_v1_token_hash_check
+    check (token_hash ~ '^[0-9a-f]{64}$') not valid;
+  alter table public.clued_agent_bindings enable trigger information_flow_manifest_binding_change;
+  alter table clued_private.resource_center_mutations_v1 enable trigger resource_center_verified_immutable_v2;
+  alter table clued_private.resource_center_mutations_v1 enable trigger storage_refresh_mutation_fence_v1;
+end
+$rollback$;
+commit;
+notify pgrst, 'reload schema';
+```
+
 ## Left for later
 
-- **Stored hash is the credential; G6 trusts `__transport_source_commit`.**
+- **Issuer hashes are still the credential; G6 trusts `__transport_source_commit`.**
   Designed in
   [DatabaseCallerAuthentication.v0.1](../../development/contracts/database-access/DatabaseCallerAuthentication.v0.1.md)
-  (Task `9a4d6d2c`, Owner Decision `1427642f`): the database stores a verifier,
-  `sha256` of what callers send, so a leaked column is useless and no caller
-  changes; the Worker moves to its own database role, which also closes the G6
-  claim. Each step is its own PR and Owner approval.
+  (Task `9a4d6d2c`, Owner Decision `1427642f`). Bindings and Resource Center
+  tokens are done (above). Issuer columns are step 2b. After that, the Worker
+  moves to its own database role, which also closes the G6 claim. Each step is
+  its own PR and Owner approval.
 - **MTPE test schemas.** `mtpe_m0_test` (four functions executable by `PUBLIC`)
   and `mtpe_m0_work` remain in production. Export them and drop them; no API role
   has USAGE on them, so this is latent.

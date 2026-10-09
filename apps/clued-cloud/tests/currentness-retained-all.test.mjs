@@ -444,7 +444,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       });
       assert.equal(admitted.admission_eligible, true);
       await admin.query(`update public.clued_agent_bindings set revoked_at=now()
-        where token_hash=$1`, [lowToken]);
+        where token_hash=clued_private.credential_verifier_v1($1)`, [lowToken]);
       await assert.rejects(() => lowRpc('clued_mcp_commit_checkpoint', {
         ...hiddenInput, coverage: { ...hiddenInput.coverage, event_ids: [] },
         idempotency_key: uuid(),
@@ -1273,11 +1273,11 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         (user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'synthetic','Restricted Frontier',$2,array['context:read'],array['global'])`, [f.userId, restricted]);
       await admin.query(`update public.clued_agent_bindings set scopes=array['context:read','context:write']
-        where token_hash=$1`, [restricted]);
+        where token_hash=clued_private.credential_verifier_v1($1)`, [restricted]);
       await admin.query(`insert into clued_private.projection_builder_grants
         (binding_id,user_id,target_scope,projection_key,granted_by)
         select id,user_id,'global','global.priority_frontier','synthetic-negative'
-        from public.clued_agent_bindings where token_hash=$1`, [restricted]);
+        from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)`, [restricted]);
       await assert.rejects(async () => anon.query('select public.clued_mcp_projection_rebuild($1,$2)',
         [restricted, await rebuildInput()]), /frontier_source_coverage_not_authorized/);
       const readRestricted = async () => (await anon.query('select public.clued_mcp_restore($1,$2) value',
