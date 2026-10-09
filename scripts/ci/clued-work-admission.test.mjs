@@ -49,6 +49,8 @@ import {
   workflowHasEnvironment,
   workflowSecrets,
   OWNER_REVIEW_RPC,
+  DOOR_RETRY_DELAYS_MS,
+  ownerReviewDoor,
   MERGE_SLOT_CHECK_NAME,
   MERGE_SLOT_RETURN_RPC,
   mergeSlotCheck,
@@ -1682,6 +1684,31 @@ test("owner review (re-review 10, MINOR-1): the note's path names are plain and 
   assert.match(note, /^o\/r#452 @ aaaaaaaaaaaa: 12 protected path\(s\) changed, see https:\/\/github\.com\/o\/r\/compare\//);
   assert.ok(!note.includes("<b>") && !note.includes("—"), note);
   assert.match(note, /, and 2 more\)$/);
+});
+
+test("owner review door (Task 2b2359da): a statement timeout (57014) is retried twice at most; other errors are not", async () => {
+  const DOOR = `POST ${PUBLIC.url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
+  const timeout = { status: 500, body: { code: "57014", message: "canceling statement due to statement timeout" } };
+  const granted = { body: { status: "ok", admitted: true, grant: { grant_id: "g1" } } };
+  const sequence = (...answers) => { let n = 0; return () => answers[Math.min(n++, answers.length - 1)]; };
+  const ask = async (responder) => {
+    const { fetchImpl, calls } = fakeFetch({ [DOOR]: responder });
+    const waits = [];
+    const result = await ownerReviewDoor(fetchImpl, env(), "o/r", HEAD, ROOT, null, { sleep: async (ms) => { waits.push(ms); } });
+    return { result, doorCalls: calls.filter((c) => c.url.endsWith(OWNER_REVIEW_RPC)).length, waits };
+  };
+  let { result, doorCalls, waits } = await ask(sequence(timeout, timeout, granted));
+  assert.deepEqual([result.kind, doorCalls, waits], ["granted", 3, [...DOOR_RETRY_DELAYS_MS]]);
+  ({ result, doorCalls, waits } = await ask(sequence(timeout)));
+  assert.deepEqual([result.kind, doorCalls, waits], ["transient", 3, [...DOOR_RETRY_DELAYS_MS]]);
+  assert.match(result.detail, /57014/);
+  // Any other server error is not retried: it stays transient at once.
+  ({ result, doorCalls, waits } = await ask(sequence({ status: 500, body: { code: "XX000", message: "boom" } })));
+  assert.deepEqual([result.kind, doorCalls, waits], ["transient", 1, []]);
+  ({ result, doorCalls } = await ask(sequence({ status: 503, body: null })));
+  assert.deepEqual([result.kind, doorCalls], ["transient", 1]);
+  ({ result, doorCalls } = await ask(sequence(granted)));
+  assert.deepEqual([result.kind, doorCalls], ["granted", 1]);
 });
 
 test("owner review (re-review 9, MINOR-2): checkout attributes, submodules and npm configuration are protected", () => {
