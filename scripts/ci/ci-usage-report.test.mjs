@@ -38,6 +38,7 @@ import {
   runsOfPull,
   sumBy,
   daysOf,
+  quartersOf,
   windowOf,
 } from "./ci-usage-report.mjs";
 import { gateFindings, workflowFormFindings } from "./clued-work-admission.mjs";
@@ -76,7 +77,10 @@ function fakeGitHub({ runs = [], pulls = [], jobs = {}, remaining = () => 4000, 
     if (route.startsWith(`/repos/${REPO}/actions/runs?created=`)) {
       // Like GitHub: ">=date" lists at most 1,000 runs; "date" lists that day's runs, also at most 1,000.
       const created = new URL(`https://x${route}`).searchParams.get("created");
-      const matching = created.startsWith(">=") ? runs : runs.filter((r) => r.created_at.startsWith(created));
+      const range = /^(\S+)\.\.(\S+)$/.exec(created);
+      const matching = created.startsWith(">=") ? runs
+        : range ? runs.filter((r) => r.created_at >= range[1] && r.created_at <= range[2])
+          : runs.filter((r) => r.created_at.startsWith(created));
       body = { total_count: matching.length, workflow_runs: page > 10 ? [] : slice(matching) };
     }
     else if (route.startsWith(`/repos/${REPO}/pulls?state=closed`)) body = slice(pulls);
@@ -344,13 +348,22 @@ test("run list: a window over GitHub's 1,000-run limit is listed day by day; a d
     daysOf(WINDOW));
   assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_by_day, report.coverage.run_list_complete, report.coverage.run_list_days_capped],
     [1200, true, true, []]);
-  // 1,100 runs on one day: that day is cut short at 1,000 and the report says so.
+  // 1,100 runs on one day: that day is listed again in 6-hour windows, each under the limit (Owner Decision 5ca9ecc5).
+  assert.deepEqual(quartersOf("2026-10-05"), ["2026-10-05T00:00:00Z..2026-10-05T05:59:59Z", "2026-10-05T06:00:00Z..2026-10-05T11:59:59Z",
+    "2026-10-05T12:00:00Z..2026-10-05T17:59:59Z", "2026-10-05T18:00:00Z..2026-10-05T23:59:59Z"]);
+  const spread = (day, from, count) => Array.from({ length: count }, (_, i) => run(from + i,
+    { created_at: `${day}T${String((i % 4) * 6 + 1).padStart(2, "0")}:00:00Z` }));
+  runs = spread("2026-10-05", 1, 1100);
+  github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
+  ({ report } = await runMain(github, memoryFs(), APP_ENV));
+  assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_complete, report.coverage.run_list_days_capped], [1100, true, []]);
+  // 1,100 runs in one 6-hour window: that window is cut short at 1,000 and the report says so.
   runs = on("2026-10-05", 1, 1100);
   github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
   ({ report } = await runMain(github, memoryFs(), APP_ENV));
   assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_complete, report.coverage.run_list_days_capped, report.coverage.partial],
-    [1000, false, ["2026-10-05"], true]);
-  assert.match(renderSummary(report), /run list cut short \(over GitHub's 1,000-run limit on 2026-10-05\)/);
+    [1000, false, ["2026-10-05T06:00:00Z..2026-10-05T11:59:59Z"], true]);
+  assert.match(renderSummary(report), /run list cut short \(over GitHub's 1,000-run limit on 2026-10-05T06:00:00Z\.\.2026-10-05T11:59:59Z\)/);
 });
 
 test("cache: a completed run's jobs are fetched once; running runs are not cached; a re-run is read again", async () => {
@@ -497,10 +510,10 @@ test("collectUsage: a run whose job pages are cut short is neither counted nor c
   assert.equal(enough.jobsByRun.get(1).length, 150);
 });
 
-test("the workflow: weekly and by hand, hosted, read-only, the measurement App's secrets only, default-branch code", () => {
+test("the workflow: daily and by hand, hosted, read-only, the measurement App's secrets only, default-branch code", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-ci-usage-report.yml"), "utf8");
   assert.ok(!text.includes("\r"), "LF line endings");
-  assert.match(text, /^on:\n {2}schedule:\n {4}- cron: "23 3 \* \* 0"\n {2}workflow_dispatch:\n {4}inputs:\n {6}days:\n/m);
+  assert.match(text, /^on:\n {2}schedule:\n {4}- cron: "23 3 \* \* \*"\n {2}workflow_dispatch:\n {4}inputs:\n {6}days:\n/m);
   assert.match(text, / {8}default: 7\n/);
   assert.doesNotMatch(text, /^ {2}(pull_request(_target)?|push|workflow_run):/m, "no pull request, push or workflow_run trigger");
   const permissions = /^permissions:\n((?: {2}.+\n)+)/m.exec(text);

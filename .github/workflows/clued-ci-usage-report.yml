@@ -19,14 +19,16 @@ name: clued-ci-usage-report
 # admission and re-verification, and stops at 200. Either way it stops when
 # the remaining quota is below 600, never retries, and caches each completed
 # run's jobs in .ci-usage-cache/ so a run is read once. The schedule is a
-# quiet hour (Sunday 03:23 UTC).
+# quiet hour (03:23 UTC), daily: about 1,000 runs a day is more job lists
+# than one run reads in its time budget, so the cache fills up over the days
+# (Owner Decision 5ca9ecc5).
 #
 # Hosted runner, default-branch code, no pull request trigger: a pull request
 # never runs its own copy, and the measurement takes no self-hosted capacity.
 
 on:
   schedule:
-    - cron: "23 3 * * 0"
+    - cron: "23 3 * * *"
   workflow_dispatch:
     inputs:
       days:
