@@ -102,23 +102,39 @@ jobs:
           --fetch-retries=2 --fetch-timeout=30000
       - name: Verify governed Resource Center mutation contract
         run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs
-      - name: Serialize fixed public MCP ports with other runners on this host
+      - name: Allocate a protocol-only loopback port
         run: |
-          "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
+          rm -f "$RUNNER_TEMP/public-mcp.pid"
+          node --input-type=module <<'NODE'
+          import net from 'node:net';
+          import fs from 'node:fs';
+          const server = net.createServer();
+          await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+          const port = server.address().port;
+          await new Promise((resolve) => server.close(resolve));
+          fs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\n`);
+          NODE
       - name: Start isolated MCP
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp
-          npx wrangler dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --port 8787 --local --show-interactive-dev-session false --log-level error &
+          setsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port "$MCP_ISOLATED_PORT" --inspector-port 0 --define "__CLUED_BUILD_SHA__:\"$GITHUB_SHA\"" --local --show-interactive-dev-session false --log-level error &
           echo $! > "$RUNNER_TEMP/public-mcp.pid"
           for attempt in $(seq 1 30); do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:8787/.well-known/clued-continuity; then exit 0; fi
+            kill -0 "$(cat "$RUNNER_TEMP/public-mcp.pid")" 2>/dev/null || exit 1
+            if node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });
+          assert.equal(response.status, 200);
+          assert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);
+          NODE
+            then exit 0; fi
             sleep 1
           done
           exit 1
       - name: Inspector strict schema validation
         run: >-
           npx mcp-inspector --cli
-          --server-url http://127.0.0.1:8787/mcp
+          --server-url "$MCP_ISOLATED_URL"
           --transport http
           --header "Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})"
           --method tools/list
@@ -132,12 +148,9 @@ jobs:
         run: |
           if [ -f "$RUNNER_TEMP/public-mcp.pid" ]; then
             mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
-            if kill -0 "$mcp_pid" 2>/dev/null; then
-              kill "$mcp_pid"
-            fi
+            kill -- "-$mcp_pid" 2>/dev/null || true
           fi
           rm -f evals/public-mcp/.dev.vars.public-mcp
-          "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" release public-mcp-ports
 
   untrusted-hosted:
     name: >-
@@ -175,20 +188,39 @@ jobs:
           ONNXRUNTIME_NODE_INSTALL: 'skip'
       - name: Verify governed Resource Center mutation contract
         run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs
-      - name: Start isolated MCP
+      - name: Allocate a protocol-only loopback port
+        run: |
+          rm -f "$RUNNER_TEMP/public-mcp.pid"
+          node --input-type=module <<'NODE'
+          import net from 'node:net';
+          import fs from 'node:fs';
+          const server = net.createServer();
+          await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+          const port = server.address().port;
+          await new Promise((resolve) => server.close(resolve));
+          fs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\n`);
+          NODE
+      - name: Start the allocated protocol instance
         run: |
           printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp
-          npx wrangler dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --port 8787 --local --show-interactive-dev-session false --log-level error &
+          setsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port "$MCP_ISOLATED_PORT" --inspector-port 0 --define "__CLUED_BUILD_SHA__:\"$GITHUB_SHA\"" --local --show-interactive-dev-session false --log-level error &
           echo $! > "$RUNNER_TEMP/public-mcp.pid"
           for attempt in $(seq 1 30); do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:8787/.well-known/clued-continuity; then exit 0; fi
+            kill -0 "$(cat "$RUNNER_TEMP/public-mcp.pid")" 2>/dev/null || exit 1
+            if node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });
+          assert.equal(response.status, 200);
+          assert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);
+          NODE
+            then exit 0; fi
             sleep 1
           done
           exit 1
       - name: Inspector strict schema validation
         run: >-
           npx mcp-inspector --cli
-          --server-url http://127.0.0.1:8787/mcp
+          --server-url "$MCP_ISOLATED_URL"
           --transport http
           --header "Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})"
           --method tools/list
@@ -202,8 +234,6 @@ jobs:
         run: |
           if [ -f "$RUNNER_TEMP/public-mcp.pid" ]; then
             mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
-            if kill -0 "$mcp_pid" 2>/dev/null; then
-              kill "$mcp_pid"
-            fi
+            kill -- "-$mcp_pid" 2>/dev/null || true
           fi
           rm -f evals/public-mcp/.dev.vars.public-mcp
