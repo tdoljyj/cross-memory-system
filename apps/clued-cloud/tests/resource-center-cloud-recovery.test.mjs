@@ -147,7 +147,7 @@ test('native recovery HTTP accepts only original IDs, preserves native JWT plus 
   const {loadContinuityWorker}=await import('./worker-continuity-loader.mjs'),worker=await loadContinuityWorker();
   const f=await setup({token:{expires_at_ms:Date.now()+3600000}}),issuer='synthetic-recovery-issuer-'.repeat(3);
   const origin='https://clued.example.invalid';
-  const env={CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_JOBS_V1:'false',CLUED_STORAGE_EXECUTOR_V1:'false',
+  const env={ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_JOBS_V1:'false',CLUED_STORAGE_EXECUTOR_V1:'false',
     CLUED_STORAGE_CONNECTOR_ISSUER:issuer,CLUED_STORAGE_GOOGLE_CLIENT_ID:f.config.client_id,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(f.config.vault),
     SUPABASE_URL:'https://db.example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture-public'};
   const request=(body,token='native-fixture',method='POST',site=origin)=>new Request(origin+'/v1/storage/recovery',{
@@ -177,7 +177,7 @@ test('native recovery HTTP accepts only original IDs, preserves native JWT plus 
       {profile:{}},{finish:{}},{credential_version:1},{owner_id:f.d.owner_id},{issuer:'caller'}])
       assert.equal((await worker.fetch(request({...input,...extra}),env)).status,403);
     assert.equal(rpcs.length,0);assert.equal(f.gets.length,0);
-    const inspected=await worker.fetch(request({...ref,action:'inspect'}),{...env,CLUED_STORAGE_VAULT_KEYS:undefined});
+    const inspected=await worker.fetch(request({...ref,action:'inspect'}),{ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",...env,CLUED_STORAGE_VAULT_KEYS:undefined});
     assert.equal(inspected.status,200);assert.equal(inspected.headers.get('cache-control'),'no-store');
     const data=await inspected.json();assert.equal(Object.keys(data).length,7);assert.equal(data.private_secret,undefined);
     assert.deepEqual(rpcs,[{...ref,action:'recovery_inspect'}]);assert.equal(f.gets.length,0);
@@ -198,7 +198,7 @@ test('account-policy recovery uses native Owner preflight, read-only descriptor 
   const {loadContinuityWorker}=await import('./worker-continuity-loader.mjs'),worker=await loadContinuityWorker();
   const f=await setup({token:{expires_at_ms:Date.now()+3600000}}),issuer='synthetic-account-recovery-issuer-'.repeat(3);
   const origin='https://clued.example.invalid',ref=f.base.reference,before=globalThis.fetch,calls=[];
-  const env={CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_JOBS_V2:'true',
+  const env={ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_JOBS_V2:'true',
     CLUED_STORAGE_EXECUTOR_V1:'false',CLUED_STORAGE_CONNECTOR_ISSUER:issuer,
     CLUED_STORAGE_GOOGLE_CLIENT_ID:f.config.client_id,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(f.config.vault),
     SUPABASE_URL:'https://db.example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture-public'};
@@ -208,7 +208,7 @@ test('account-policy recovery uses native Owner preflight, read-only descriptor 
       assert.equal(init.redirect,'manual');assert.ok(init.signal);
       const body=JSON.parse(init.body),rpc=String(url).split('/').pop();calls.push({rpc,action:body.p_input.action});
       assert.equal(new Headers(init.headers).get('authorization'),
-        'Bearer '+(rpc==='clued_storage_cloud_worker_router_v2'?'fixture-public':'native-fixture'));
+        'Bearer '+(rpc==='clued_storage_cloud_worker_router_v2'?'test-worker-gateway':'native-fixture'));
       if(rpc==='clued_storage_native_recovery_v1'){
         assert.equal(body.p_input.action,'recovery_inspect');
         return Response.json({...ref,status:'started',request_digest:'a'.repeat(64),intent_id:ids.intent,
@@ -254,7 +254,7 @@ test('Owner recovery start and callback inspect use the secret-bound account-pol
   const descriptor={owner_id:owner,connection_id:connection,connection_version:1,credential_version:2,
     provider_subject:'fixture-subject',oauth_client_id:client,redirect_uri:redirect,
     root_folder_id:'fixture-root',root_parent_id:'fixture-parent',recovery_binding:'e'.repeat(64),provider_scope_profile:'legacy'};
-  const env={CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_CONNECTOR_ISSUER:issuer,
+  const env={ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",CLUED_STORAGE_ACCOUNT_V1:'true',CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_CONNECTOR_ISSUER:issuer,
     CLUED_STORAGE_GOOGLE_CLIENT_ID:client,CLUED_STORAGE_GOOGLE_CLIENT_SECRET:'fixture-google-secret-very-long',
     CLUED_STORAGE_GOOGLE_REDIRECT_URI:redirect,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(vault),
     SUPABASE_URL:'https://db.example.invalid',SUPABASE_PUBLISHABLE_KEY:'fixture-public'};

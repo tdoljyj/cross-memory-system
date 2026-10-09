@@ -2,7 +2,7 @@
 // E2E-08 phase B: a new process with a new Worker host (empty persist
 // directory, no storage bindings), a new GoTrue session and a new MCP
 // initialize. Expectations come only from phaseA.json (--expect). Secrets
-// (the synthetic password and the Binding token) arrive over the IPC channel
+// (the synthetic password, Binding token and local gateway JWT) arrive over the IPC channel
 // from the orchestrator and are never written to disk.
 
 import fs from 'node:fs';
@@ -33,11 +33,12 @@ try {
     [h.observer.identity.system_identifier, h.observer.identity.database_oid]);
   const persistDir = path.join(work, 'persist');
   h.worker = new WorkerHost({ bundleDir: secrets.bundleDir, persistDir, gatewayOrigin: secrets.apiUrl,
-    publishableKey: secrets.publishableKey, guardLedger: secrets.workerGuardLedger, env: childEnv() });
+    publishableKey: secrets.publishableKey, gatewayToken: secrets.gatewayToken,
+    guardLedger: secrets.workerGuardLedger, env: childEnv() });
   await h.worker.start();
   out.w2_pid = h.worker.child.pid;
   r.check('08.B.no_storage_bindings', 'W2 has only text variable bindings (no KV, cache or storage)',
-    ['CLUED_ALLOWED_ORIGINS', 'P5_TENANT_WRITES', 'PROJECT_VIEWS_V2', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_URL'],
+    ['CLUED_ALLOWED_ORIGINS', 'CLUED_DB_GATEWAY_TOKEN', 'P5_TENANT_WRITES', 'PROJECT_VIEWS_V2', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_URL'],
     h.worker.ready.binding_names);
   const U = new AccountPrincipal('U', secrets.apiUrl, secrets.publishableKey, secrets.email);
   U.password = secrets.password;

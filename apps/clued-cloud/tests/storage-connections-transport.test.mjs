@@ -10,8 +10,8 @@ const origin = "https://clued.example.invalid";
 const token = "clued_bnd_" + "s".repeat(40);
 const sha = value => createHash("sha256").update(value).digest("hex");
 const CONNECTION = "20000000-0000-4000-8000-0000000000c1", PROJECT = "30000000-0000-4000-8000-0000000000c1";
-const base = { CLUED_STORAGE_ACCOUNT_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
-const reads = { CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_READ_V1: "true" }, writes = { CLUED_STORAGE_JOBS_V1: "true" };
+const base = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
+const reads = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_READ_V1: "true" }, writes = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_JOBS_V1: "true" };
 const entry = { connection_id: CONNECTION, name: "Clued_资料中心", managed_root: "G:/我的云端硬盘/Clued_资料中心", project_id: PROJECT,
   tracks: ["10_E_工程与平台", "20_P_产品与体验"], inspect: true, write_levels: ["create_file", "create_topic", "modify"], read: ["read", "read_content"], normal_use: true };
 const answer = { contract: "clued.storage-connections/1", connections: [entry], complete: true };

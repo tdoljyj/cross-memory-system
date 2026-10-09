@@ -6,7 +6,7 @@ import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 const worker = await loadContinuityWorker();
 const issuer = randomBytes(32).toString("base64url");
 const reference = { connection_id: randomUUID(), job_id: randomUUID() };
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_JOBS_V2: "true",
   CLUED_STORAGE_EXECUTOR_V1: "true",
   SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
@@ -37,7 +37,7 @@ test("scheduled recovery uses the fixed issuer, bounded references and the origi
   globalThis.fetch = async (url, init) => {
     assert.ok(["/rest/v1/rpc/clued_storage_scheduled_recovery_v2",
       "/rest/v1/rpc/clued_storage_cloud_worker_router_v2"].some(path => String(url) === env.SUPABASE_URL + path));
-    assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-public-key");
+    assert.equal(new Headers(init.headers).get("authorization"), "Bearer test-worker-gateway");
     assert.equal(init.redirect, "manual");
     const input = JSON.parse(init.body);
     calls.push(input.p_input);

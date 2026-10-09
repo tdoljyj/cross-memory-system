@@ -5,7 +5,7 @@ import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 const worker = await loadContinuityWorker();
 const origin = 'https://clued.example.invalid';
 const token = 'clued_bnd_' + 'a'.repeat(40);
-const env = { CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_JOBS_V1: 'true',
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_JOBS_V1: 'true',
   SUPABASE_URL: 'https://db.example.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key' };
 const ref = { connection_id: '20000000-0000-4000-8000-000000000001', job_id: '10000000-0000-4000-8000-000000000001' };
 const mutation = { operation: 'create', target_kind: 'file', destination_path: 'G:/My Drive/Clued_资料中心/track/topic/example.md', content: 'fixture' };
@@ -18,7 +18,7 @@ const call = (name, args, config = env, ctx, bearer = token) => worker.fetch(rpc
 const submit = (args = { ...ref, mutation }, config = env, ctx, bearer = token) => call('clued_storage_submit', args, config, ctx, bearer);
 
 test('discovery and guessed calls require both existing account/jobs flags; no private tools', async () => {
-  for (const flags of [{}, { CLUED_STORAGE_ACCOUNT_V1: 'true' }, { CLUED_STORAGE_JOBS_V1: 'true' }, env]) {
+  for (const flags of [{}, { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: 'true' }, { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_JOBS_V1: 'true' }, env]) {
     const result = await (await worker.fetch(rpc('tools/list', {}), flags)).json();
     const tools = result.result.tools.filter(x => x.name.startsWith('clued_storage_'));
     assert.equal(tools.length, flags === env ? 4 : 0);
@@ -97,7 +97,7 @@ test('same existing jobs RPC hashes Binding, uses anon, whitelists response and 
     assert.equal(JSON.stringify(reply).includes('private'), false);
     assert.equal(calls[0].url, env.SUPABASE_URL + '/rest/v1/rpc/clued_storage_jobs_v1');
     assert.deepEqual(calls[0].body, { p_token_hash: createHash('sha256').update(token).digest('hex'), p_input: { ...ref, mutation, action: 'submit' } });
-    assert.equal(calls[0].headers.get('authorization'), 'Bearer fixture-public-key');
+    assert.equal(calls[0].headers.get('authorization'), 'Bearer test-worker-gateway');
   } finally { globalThis.fetch = before; }
 });
 
