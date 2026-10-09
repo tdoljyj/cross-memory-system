@@ -94,7 +94,7 @@ test('source OFF rejects both new routes before effects; plan branch never submi
     await assert.rejects(dispatchModelDomainTool({}, name, {}, { rpc: async () => { effects++; }, submitOwnerRequest: async () => { effects++; } }));
   }
   assert.equal(effects, 0);
-  const out = await dispatchModelDomainTool({ CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false' },
+  const out = await dispatchModelDomainTool({ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false' },
     MODEL_DOMAIN_PLAN_PREPARATION_TOOL, {}, { rpc: async () => anchors(), submitOwnerRequest: async () => { throw new Error('forbidden'); } });
   assert.equal(out.actual_execution, 'NONE');
 });
@@ -123,7 +123,7 @@ test('actual Worker call captures one current Binding, exposes a proposal and ne
     calls.push(target.pathname);
     return Response.json(anchors());
   };
-  const env = { PROJECT_VIEWS_V2: 'true', CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false',
+  const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", PROJECT_VIEWS_V2: 'true', CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false',
     ASSETS: { fetch: async () => new Response('', { status: 404 }) } };
   const request = bearer => new Request('https://clued.test/mcp', { method: 'POST', headers: {
     'content-type': 'application/json', ...(bearer ? { authorization: 'Bearer ' + bearer } : {}) },

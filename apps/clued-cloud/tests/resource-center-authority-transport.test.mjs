@@ -31,7 +31,7 @@ const request = {
 };
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const envelope = { request, request_sha256: digest(request) };
-const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
 function authorityRequest(credential, body = envelope) {

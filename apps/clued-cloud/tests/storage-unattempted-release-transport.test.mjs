@@ -7,7 +7,7 @@ import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 // that never recorded a provider attempt. Database only, never the executor gate.
 const worker = await loadContinuityWorker();
 const issuer = randomBytes(32).toString("base64url");
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_JOBS_V2: "true",
   SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
   CLUED_STORAGE_CONNECTOR_ISSUER: issuer,
@@ -32,7 +32,7 @@ test("the unattempted release calls only the fixed RPC with the issuer, with or 
   let reply = { status: "ok", released: 1 };
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), env.SUPABASE_URL + "/rest/v1/rpc/clued_storage_release_unattempted_v1");
-    assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-public-key");
+    assert.equal(new Headers(init.headers).get("authorization"), "Bearer test-worker-gateway");
     assert.equal(init.redirect, "manual");
     const body = JSON.parse(init.body);
     calls.push(body);

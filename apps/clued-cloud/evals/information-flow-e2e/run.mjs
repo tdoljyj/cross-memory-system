@@ -19,6 +19,7 @@ import { normalizedDigest, redact, sha256, writeJson } from './evidence.mjs';
 import { Recorder, WorkerHost } from './harness.mjs';
 import { AccountPrincipal, mintBinding, newBindingToken } from './principals.mjs';
 import * as stack from './stack.mjs';
+import { createLocalGatewayToken } from '../public-mcp/gateway-token.mjs';
 import { environmentScan, bundleScan, runtimeVersions, codeBinding } from './preflight.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -88,6 +89,7 @@ async function startWorker() {
   hostSeq += 1;
   const persistDir = path.join(work, `persist-${hostSeq}`);
   const host = new WorkerHost({ bundleDir, persistDir, gatewayOrigin: status.apiUrl, publishableKey: status.publishableKey,
+    gatewayToken: createLocalGatewayToken(status),
     guardLedger: path.join(guardDir, `worker-host-${hostSeq}.json`), env });
   await host.start();
   h.worker = host;
@@ -268,6 +270,7 @@ if (state && phaseA) {
     child.on('message', (message) => { received = message; });
     child.on('exit', (code) => resolve({ code, received }));
     child.send({ apiUrl: status.apiUrl, publishableKey: status.publishableKey, dbUrl: status.dbUrl,
+      gatewayToken: createLocalGatewayToken(stack.status()),
       dbIdentity: state.dbIdentity, bridgeCidrs, email: ctx.U.email, password: ctx.U.password, userId: ctx.U.userId,
       bindingRaw: ctx.B_main.raw, bundleDir: path.join(work, 'bundle'),
       workerGuardLedger: path.join(guardDir, 'worker-host-phase-b.json') });

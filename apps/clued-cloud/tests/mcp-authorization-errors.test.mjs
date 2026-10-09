@@ -11,7 +11,7 @@ await build({ entryPoints: ['worker/continuity.ts'], outdir: directory, bundle: 
   platform: 'node', format: 'esm', outExtension: { '.js': '.mjs' } });
 stop();
 const { handleContinuityRequest: handle } = await import(pathToFileURL(path.join(directory, 'continuity.mjs')));
-const env = { SUPABASE_URL: 'https://storage.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key' };
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", SUPABASE_URL: 'https://storage.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key' };
 const request = token => new Request('https://clued.example/mcp', {
   method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_project_list', arguments: { limit: 10 } } }),
@@ -295,7 +295,7 @@ test('record transport preserves message-only 422, authentication, authorization
     assert.equal(missingToken.status, 401);
     for (const [upstreamStatus, details, expectedStatus] of [
       [422, { message: 'plain validation error' }, 422],
-      [401, { code: 'PGRST301', message: 'JWT expired' }, 401],
+      [401, { code: 'PGRST301', message: 'JWT expired' }, 503],
       [401, { code: '42501', message: 'record_not_authorized' }, 403],
       [500, { message: 'server error' }, 500],
     ]) {

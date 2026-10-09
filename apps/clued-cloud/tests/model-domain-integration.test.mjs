@@ -36,7 +36,7 @@ test('feature OFF rejects every model-domain branch before any RPC or Owner-requ
 });
 test('bootstrap request remains independently OFF when readonly sources are enabled', async () => {
   let effects = 0;
-  await assert.rejects(dispatchModelDomainTool({ CLUED_MODEL_DOMAIN_SOURCE_V1: 'true' }, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
+  await assert.rejects(dispatchModelDomainTool({ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_MODEL_DOMAIN_SOURCE_V1: 'true' }, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
     bootstrapInput, { rpc: async () => { effects++; }, submitOwnerRequest: async () => { effects++; } }));
   assert.equal(effects, 0);
 });
@@ -50,7 +50,7 @@ test('registered candidate input schemas expose no client identity, grants, proo
 test('caller actor or authority proof is rejected before source RPC or submission', async () => {
   for (const [name, input] of [[MODEL_DOMAIN_REFS_TOOL, selectors], [MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, bootstrapInput]]) {
     let effects = 0;
-    await assert.rejects(dispatchModelDomainTool({ CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true' },
+    await assert.rejects(dispatchModelDomainTool({ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true' },
       name, { ...input, actor_user_id: id(90) }, { rpc: async () => { effects++; }, submitOwnerRequest: async () => { effects++; } }));
     assert.equal(effects, 0);
   }
@@ -58,7 +58,7 @@ test('caller actor or authority proof is rejected before source RPC or submissio
 test('bootstrap uses fixed protected anchor RPC then existing Owner entry and returns actual request result', async () => {
   const calls = [];
   const existingRequestResult = { structuredContent: { status: 'pending', request: { id: id(70), confirm_url: 'https://clued.example/confirm/' + id(70) } }, isError: false };
-  const out = await dispatchModelDomainTool({ CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true' },
+  const out = await dispatchModelDomainTool({ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true' },
     MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, bootstrapInput, {
       rpc: async (name, input) => { calls.push(name);
         if(name==='clued_model_dataset_split_owner_anchor_refs_candidate'){assert.deepEqual(input,{schema:'clued.model-owner-anchor-refs/1'});return anchorOutput();}
@@ -82,7 +82,7 @@ test('bootstrap uses fixed protected anchor RPC then existing Owner entry and re
 });
 test('private actor or raw Owner row in anchor response fails before Native request effect', async () => {
   let submissions = 0;
-  await assert.rejects(dispatchModelDomainTool({ CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true' },
+  await assert.rejects(dispatchModelDomainTool({ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true' },
     MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, bootstrapInput, { rpc: async () => ({ ...anchorOutput(), actor_user_id: id(90) }),
       submitOwnerRequest: async () => { submissions++; } }));
   assert.equal(submissions, 0);
@@ -101,7 +101,7 @@ test('exact integration candidate captures one Request/Binding and never imports
 });
 
 test('commit remains OFF independently of source reads before any effect',async()=>{
- let calls=0;await assert.rejects(dispatchModelDomainTool({CLUED_MODEL_DOMAIN_SOURCE_V1:'true'},MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL,{},{
+ let calls=0;await assert.rejects(dispatchModelDomainTool({ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",CLUED_MODEL_DOMAIN_SOURCE_V1:'true'},MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL,{},{
  rpc:async()=>{calls++;},submitOwnerRequest:async()=>{calls++;}}));assert.equal(calls,0);
 });
 test('Worker completion uncertainty stays a structured error and never success-shaped',()=>{

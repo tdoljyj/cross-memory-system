@@ -386,9 +386,17 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     // ---- Worker transport over this database (E2E-06 / E2E-07, contract 5.2 and 7).
     // The real Worker handler runs; only the PostgREST hop is replaced by a shim
     // that executes each RPC as the role PostgREST would use: an account JWT
-    // as `authenticated` with its claims, anything else as `anon`.
+    // as `authenticated` with its claims, the synthetic Worker credential as
+    // the real `clued_worker_gateway` role. Unknown Authorization fails closed.
     const worker = await loadContinuityWorker();
+    const gatewayToken = 'synthetic-information-flow-worker-gateway';
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await gateway.query('set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
     const workerEnv = { PROJECT_VIEWS_V2: 'true', SUPABASE_URL: 'https://storage.clued.test',
+      CLUED_DB_GATEWAY_TOKEN: gatewayToken,
       ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
     const rawBinding = `clued_bnd_${'w'.repeat(43)}`;
     const workerBindingId = (await admin.query(`insert into public.clued_agent_bindings
@@ -411,7 +419,10 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       assert.ok(rpc, url.pathname);
       const body = JSON.parse(init.body);
       const keys = Object.keys(body);
-      const client = claims ? human : anon;
+      if (!claims && token !== gatewayToken) {
+        return Response.json({ code: 'PGRST301', message: 'invalid JWT' }, { status: 401 });
+      }
+      const client = claims ? human : gateway;
       if (claims) {
         await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
           [userId, claims]);
@@ -448,6 +459,12 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       return { status: response.status, body: envelope.result?.structuredContent ?? envelope.error ?? envelope };
     };
     try {
+      // A missing/wrong Worker credential must never silently reach an anon RPC.
+      for (const value of [undefined, 'wrong-synthetic-gateway']) {
+        workerEnv.CLUED_DB_GATEWAY_TOKEN = value;
+        assert.equal((await call('clued_intake_list', { scope: 'global' })).status, 503);
+      }
+      workerEnv.CLUED_DB_GATEWAY_TOKEN = gatewayToken;
       // A project scope exercises the effective-project mapping end to end.
       const projectId = uuid();
       assert.equal((await agent(tokenA, 'clued_project_mutate', {

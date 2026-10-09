@@ -8,7 +8,7 @@ import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 // onboard RPC with the issuer secret (never the hash or a service role).
 const worker = await loadContinuityWorker();
 const origin = "https://clued.example.invalid";
-const base = { CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_ONBOARD_V1: "true", CLUED_STORAGE_REFRESH_V1: "true",
+const base = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_ONBOARD_V1: "true", CLUED_STORAGE_REFRESH_V1: "true",
   SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
   CLUED_STORAGE_CONNECTOR_ISSUER: "i".repeat(48), CLUED_STORAGE_GOOGLE_CLIENT_ID: "fixture.apps.googleusercontent.com",
   CLUED_STORAGE_GOOGLE_CLIENT_SECRET: "fixture-only-client-secret", CLUED_STORAGE_GOOGLE_REDIRECT_URI: origin + "/storage/google/callback",
@@ -87,7 +87,7 @@ test("cron sweep: expiry through the issuer-hash RPC with the public key only; o
     assert.deepEqual(swept, { status: "ok", expired: 2 });
     assert.equal(calls.length, 1); assert.equal(calls[0].url, base.SUPABASE_URL + "/rest/v1/rpc/clued_storage_onboard_sweep_v1");
     assert.deepEqual(JSON.parse(calls[0].body), { p_issuer_hash: createHash("sha256").update(base.CLUED_STORAGE_CONNECTOR_ISSUER).digest("hex") });
-    assert.equal(calls[0].headers.get("authorization"), "Bearer " + base.SUPABASE_PUBLISHABLE_KEY, "no user token, no service role");
+    assert.equal(calls[0].headers.get("authorization"), "Bearer " + base.CLUED_DB_GATEWAY_TOKEN, "Worker gateway, no user token or service role");
     // The page switch off still drains staged credentials.
     assert.equal((await worker.runStorageOnboardScheduled({ ...base, CLUED_STORAGE_ONBOARD_V1: undefined })).status, "ok");
   });

@@ -4,7 +4,7 @@ import test from "node:test";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 const worker = await loadContinuityWorker();
 const origin = "https://clued.example.invalid", connection = randomUUID(), issuer = randomBytes(32).toString("base64url");
-const env = { CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_REFRESH_V1: "true",
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_REFRESH_V1: "true",
   SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key", CLUED_STORAGE_CONNECTOR_ISSUER: issuer,
   CLUED_STORAGE_GOOGLE_CLIENT_ID: "fixture.apps.googleusercontent.com", CLUED_STORAGE_GOOGLE_CLIENT_SECRET: "fixture-private-client-secret",
   CLUED_STORAGE_VAULT_KEYS: JSON.stringify({ current_key_id: "fixture", keys: { fixture: randomBytes(32).toString("base64url") } }) };
@@ -43,7 +43,7 @@ test("scheduler uses only fixed private issuer RPC, bounded batch and non-sensit
   const previous = globalThis.fetch, calls = []; let connections = [connection], pending = 0;
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_refresh_worker_v1");
-    assert.equal(new Headers(init.headers).get("authorization"), "Bearer fixture-public-key"); assert.equal(init.redirect, "manual");
+    assert.equal(new Headers(init.headers).get("authorization"), "Bearer test-worker-gateway"); assert.equal(init.redirect, "manual");
     const input = JSON.parse(init.body); calls.push(input);
     assert.equal(input.p_issuer_hash, createHash("sha256").update(issuer).digest("hex"));
     if (input.p_input.action === "due") return Response.json({ connections, pending_expired: pending });

@@ -47,11 +47,11 @@ const CONFLICTS = ['integration_version_conflict', 'installation_request_version
   'integration_revoke_connection_set_changed'];
 const RULE_MESSAGE = 'The request was refused by a Clued contract rule; reconnecting will not change the outcome.';
 
-const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 // The production flags without the Integration Runtime flag: the flag-off case. Production itself
 // runs with the flag on since stage C-2 (Decision 85616c43); the frozen baseline is the flag-on list.
 const production = { ...assets, PROJECT_VIEWS_V2: 'true', P5_TENANT_WRITES: 'false' };
-const enabled = { ...production, CLUED_INTEGRATION_RUNTIME_V1: 'true' };
+const enabled = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...production, CLUED_INTEGRATION_RUNTIME_V1: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const bindingToken = `clued_bnd_${'b'.repeat(64)}`;
 const tokenHash = crypto.createHash('sha256').update(bindingToken).digest('hex');
@@ -102,7 +102,7 @@ test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the 
   assert.equal(baseline.tools.length, 43);
   assert.equal(ordinaryBaseline.length, 36);
   for (const value of ['true', '1', 'on', 'enabled']) {
-    const env = { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
+    const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
     assert.equal(JSON.stringify(await listTools(env)), JSON.stringify(ordinaryBaseline), `flag ${JSON.stringify(value)}`);
   }
   // Flag off (the rollback): the baseline without the 7 Integration tools, byte for byte and in order,
@@ -111,7 +111,7 @@ test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the 
   assert.equal(flagOff.length, 29);
   assert.equal(ordinaryBaseline.length - flagOff.length, TOOLS.length);
   for (const value of [undefined, 'false', '0', 'off', '', 'yes']) {
-    const env = value === undefined ? production : { ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
+    const env = value === undefined ? production : { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...production, CLUED_INTEGRATION_RUNTIME_V1: value };
     assert.equal(JSON.stringify(await listTools(env)), JSON.stringify(flagOff), `flag ${JSON.stringify(value)}`);
   }
   const rows = toolVersions.feature_flags.full_matrix;
@@ -138,7 +138,7 @@ test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the 
   assert.deepEqual(toolVersions.feature_flags.production_equivalent,
     { PROJECT_VIEWS_V2: true, P5_TENANT_WRITES: false, CLUED_INTEGRATION_RUNTIME_V1: true,
       CLUED_MODEL_DOMAIN_SOURCE_V1: true, CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: false, expected_tool_count: 43 });
-  const productionSourceOn = { ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false' };
+  const productionSourceOn = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'false' };
   assert.equal(JSON.stringify(await listTools(productionSourceOn)), JSON.stringify(baseline.tools));
   for (const value of ['true', 'TRUE', '1', 'on', 'enabled', ' true ']) {
     assert.equal(integrations.integrationRuntimeEnabled({ CLUED_INTEGRATION_RUNTIME_V1: value }), true, value);
@@ -146,7 +146,7 @@ test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the 
 });
 
 test('Model bootstrap metadata requires all existing prerequisites; positive request fixture is separate from production and 32 rows', async () => {
-  const requestFixture = { ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true',
+  const requestFixture = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true',
     CLUED_OWNER_REQUESTS_V1: 'true' };
   const visible = await listTools(requestFixture);
   assert.equal(visible.length, baseline.tools.length + 3, 'fixture adds the generic Owner request and two separately gated Model bootstrap tools');

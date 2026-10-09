@@ -31,12 +31,16 @@ function fixture() {
   const bindings = new Map(); const prepared = new Map(); const calls = []; const background = [];
   const storageGrants = new Set();
   const grantScopes = ['context:read', 'context:write'];
-  const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
+  const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
     CLUED_AUTHORIZATION_ISSUER_TOKEN: 'isolated-issuer-test-value', SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'test-public-key', PROJECT_VIEWS_V2: 'true' };
   const run = (route, options = {}) => handle(new Request(`${origin}${route}`, options), env, { waitUntil(promise) { background.push(promise); }, passThroughOnException() {}, props: {} }, async () => new Response('fallback', { status: 404 }));
   globalThis.fetch = async (url, options = {}) => {
     const name = new URL(url).pathname.split('/').at(-1); const body = options.body ? JSON.parse(options.body) : {};
     calls.push({ name, body, headers: options.headers });
+    if (['clued_authorization_status_v12', 'clued_authorization_revoke_issuer_v12'].includes(name)) {
+      assert.equal(new Headers(options.headers).get('authorization'), 'Bearer test-worker-gateway');
+      assert.equal(new Headers(options.headers).get('apikey'), env.SUPABASE_PUBLISHABLE_KEY);
+    }
     if (name === 'user') return Response.json({ id: '10000000-0000-4000-8000-000000000001', email: 'test@example.invalid' });
     if (name === 'clued_authorization_prepare_v12') {
       if (!prepared.has(body.p_request.request_digest)) prepared.set(body.p_request.request_digest, { request_id: crypto.randomUUID(), version: 1,
@@ -161,7 +165,7 @@ test('real OAuth MCP storage tools retain live Binding and separate storage gran
 test('real OAuth MCP clued_storage_browse reaches the read evaluator with any memory scope', async () => {
   const f = fixture();
   try {
-    Object.assign(f.env, { CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_GOOGLE_V1: 'true', CLUED_STORAGE_READ_V1: 'true',
+    Object.assign(f.env, { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_GOOGLE_V1: 'true', CLUED_STORAGE_READ_V1: 'true',
       CLUED_STORAGE_CONNECTOR_ISSUER: 'i'.repeat(40), CLUED_STORAGE_GOOGLE_CLIENT_ID: 'read-client',
       CLUED_STORAGE_VAULT_KEYS: JSON.stringify({ current_key_id: 'v1', keys: { v1: Buffer.alloc(32, 7).toString('base64url') } }),
       CLUED_STORAGE_READ_CURSOR_KEY: btoa('c'.repeat(32)), CLUED_STORAGE_READ_RECEIPT_KEYS: JSON.stringify({ current: 'k1', keys: { k1: btoa('h'.repeat(32)) } }) });
@@ -410,6 +414,36 @@ test('transient authorization outage during refresh preserves the usable refresh
     const options = () => ({ method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
     const response = await f.run('/oauth/token', options());
     assert.equal(response.status, 503); assert.deepEqual(f.env.OAUTH_KV.rows, before);
+    globalThis.fetch = wire;
+    assert.equal((await f.run('/oauth/token', options())).status, 200);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('a missing Worker gateway denies OAuth refresh before storage and preserves its token', async () => {
+  const f = fixture(); try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    const before = new Map(f.env.OAUTH_KV.rows), count = f.calls.length;
+    delete f.env.CLUED_DB_GATEWAY_TOKEN;
+    const response = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
+    assert.equal(response.status, 503);
+    assert.equal(f.calls.length, count);
+    assert.deepEqual(f.env.OAUTH_KV.rows, before);
+    assert.equal((await response.text()).includes('test-worker-gateway'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('a rejected Worker JWT leaves the OAuth refresh token usable after gateway recovery', async () => {
+  const f = fixture(); try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    const before = new Map(f.env.OAUTH_KV.rows), wire = globalThis.fetch;
+    globalThis.fetch = async (url, options) => String(url).endsWith('/clued_authorization_status_v12')
+      ? Response.json({ code: 'PGRST301', message: 'JWT expired' }, { status: 401 }) : wire(url, options);
+    const options = () => ({ method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
+    const response = await f.run('/oauth/token', options());
+    assert.equal(response.status, 503);
+    assert.deepEqual(f.env.OAUTH_KV.rows, before);
     globalThis.fetch = wire;
     assert.equal((await f.run('/oauth/token', options())).status, 200);
   } finally { globalThis.fetch = originalFetch; }
