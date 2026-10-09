@@ -5,29 +5,32 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { EXECUTOR_PERMISSIONS, optedIn, renderSummary, runExecutor } from "./clued-merge-executor.mjs";
+import { EXECUTOR_PERMISSIONS, optInSha, renderSummary, runExecutor } from "./clued-merge-executor.mjs";
 import { CI_REQUIRED_CHECKS, HOLDERS_RPC } from "./clued-merge-slot-ci.mjs";
 import { ADMISSION_APP_ID } from "./clued-work-admission.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = "tdoljyj/cross-memory-system";
 const HEAD = "a".repeat(40);
+const APPROVED = "b".repeat(40);
 const TIP = "c".repeat(40);
+const MAINISH = "d".repeat(40);
 const CLAIM = "11111111-2222-4333-8444-555555555555";
 const SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
 const SLOT = `merge:${REPO}:main`;
 
 const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
-  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, ...extra });
+  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, CLUED_OWNER_REVIEW_ENFORCE: "true", ...extra });
 const BODY = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`;
-const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\nClued-Auto-Merge: on`, draft: false, auto_merge: null,
+const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\nClued-Auto-Merge: ${HEAD}`, draft: false, auto_merge: null,
   head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: "main", repo: { default_branch: "main" } }, ...extra });
-const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
-  app: { id: name === "clued-admission-verified" ? ADMISSION_APP_ID : 15368 },
-  ...(name === "clued-admission-verified" ? { output: { title: "ADMITTED [normal · code · reruns 1]" } } : {}), ...extra });
+const verified = (extra = {}) => ({ id: 20, name: "clued-admission-verified", head_sha: HEAD, status: "completed", conclusion: "success",
+  app: { id: ADMISSION_APP_ID }, external_id: "pr:5:run:900", output: { title: "ADMITTED [normal · code · reruns 1]" }, ...extra });
+const check = (name, extra = {}) => (name === "clued-admission-verified" ? verified(extra)
+  : { id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success", app: { id: 15368 }, ...extra });
 
-// Routes are matched by prefix; an RPC route answers with a function of its input.
+// Routes are matched by "METHOD prefix" (GET when no method); an RPC route answers with a function of its input.
 function fakeFetch(routes) {
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
@@ -43,7 +46,7 @@ function fakeFetch(routes) {
     });
     if (!key || !(key in routes)) return new Response("not found", { status: 404 });
     const answer = typeof routes[key] === "function" ? routes[key](body) : routes[key];
-    const status = answer && answer.__status ? answer.__status : (method === "POST" && key.includes("access_tokens") ? 201 : method === "PUT" ? 202 : 200);
+    const status = answer && answer.__status ? answer.__status : (key.includes("access_tokens") ? 201 : method === "PUT" ? 202 : 200);
     const payload = answer && answer.__status ? answer.body : answer;
     return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json" } });
   };
@@ -52,7 +55,7 @@ function fakeFetch(routes) {
 
 const checksRoute = (byName) => Object.fromEntries(Object.entries(byName).map(([name, checks]) =>
   [`/repos/${REPO}/commits/${HEAD}/check-runs?check_name=${name}&`, { check_runs: checks }]));
-const allGreen = () => checksRoute(Object.fromEntries([...CI_REQUIRED_CHECKS.map(({ name }) => name)].map((name) => [name, [check(name)]])));
+const allGreen = () => checksRoute(Object.fromEntries(CI_REQUIRED_CHECKS.map(({ name }) => [name, [check(name)]])));
 
 function world({ pulls = [pull()], holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [SLOT], merge_slot_until: "2026-10-09T12:00:00Z",
   merge_slot_ci: { taken_at: "2026-10-09T10:00:00Z" } }], behindBy = 0, token = { token: "ghs_exec" }, extra = {} } = {}) {
@@ -73,11 +76,11 @@ function world({ pulls = [pull()], holders = [{ claim_id: CLAIM, bound_pr: `${RE
 const run = (fetch, extraEnv = {}) => runExecutor({ env: env(extraEnv), fetchImpl: fetch.fetchImpl, workspace: ROOT });
 const writes = (fetch) => fetch.calls.filter((call) => call.method !== "GET" && !call.route.startsWith("rpc:") && !call.route.includes("access_tokens"));
 
-test("optedIn: only an exact body line turns it on", () => {
-  assert.equal(optedIn("x\nClued-Auto-Merge: on\n"), true);
-  assert.equal(optedIn("clued-auto-merge:   ON"), true);
-  for (const body of [null, "", "Clued-Auto-Merge: off", "Clued-Auto-Merge: on please", "see Clued-Auto-Merge: on"]) {
-    assert.equal(optedIn(body), false, String(body));
+test("optInSha: only an exact body line naming a full head sha", () => {
+  assert.equal(optInSha(`x\nClued-Auto-Merge: ${HEAD}\n`), HEAD);
+  assert.equal(optInSha(`clued-auto-merge:   ${HEAD.toUpperCase().replace(/A/g, "a")}`), HEAD);
+  for (const body of [null, "", "Clued-Auto-Merge: on", `Clued-Auto-Merge: ${HEAD.slice(0, 12)}`, `see Clued-Auto-Merge: ${HEAD}`, `Clued-Auto-Merge: ${HEAD} please`]) {
+    assert.equal(optInSha(body), null, String(body));
   }
 });
 
@@ -87,34 +90,90 @@ test("a head behind the default branch is brought up to date as the App, bound t
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.actions.map((a) => [a.pr, a.action, a.status]), [[5, "update_branch", 202]]);
   const minted = fetch.calls.find((call) => call.route.includes("access_tokens"));
-  assert.deepEqual(minted.body.permissions, EXECUTOR_PERMISSIONS);
-  assert.deepEqual(minted.body.repositories, ["cross-memory-system"]);
+  assert.deepEqual([minted.body.permissions, minted.body.repositories], [EXECUTOR_PERMISSIONS, ["cross-memory-system"]]);
   const [put] = writes(fetch);
   assert.deepEqual([put.method, put.route, put.body, put.authorization],
     ["PUT", `/repos/${REPO}/pulls/5/update-branch`, { expected_head_sha: HEAD }, "Bearer ghs_exec"]);
   assert.deepEqual(fetch.calls.find((call) => call.route === `rpc:${HOLDERS_RPC}`).input, { scope: SCOPE, repository: REPO });
   assert.match(renderSummary(result), /#5 `aaaaaaaaaaaa`: \*\*update_branch\*\*/);
+  // Not a protected-layer pull request (review MINOR-4), nor one whose admission has no mode yet.
+  for (const title of ["ADMITTED [normal · protected · reruns 0]", "ADMITTED"]) {
+    const held = world({ behindBy: 2, extra: checksRoute({ "clued-admission-verified": [verified({ output: { title } })] }) });
+    const outcome = await run(held);
+    assert.deepEqual([writes(held), outcome.actions[0].action], [[], "none"], title);
+  }
 });
 
-test("an up-to-date, green, admitted, opted-in head gets auto-merge with its expected head", async () => {
-  const fetch = world();
+test("an up-to-date, admitted head opted in for itself gets auto-merge before CI ends; GitHub waits for the checks", async () => {
+  const running = { ...checksRoute({ trivy: [check("trivy", { status: "in_progress", conclusion: null })] }),
+    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [] } };
+  for (const extra of [{}, running]) {
+    const fetch = world({ extra });
+    const result = await run(fetch);
+    assert.deepEqual(result.actions.map((a) => [a.action, a.status, a.error]), [["enable_auto_merge", 200, undefined]]);
+    const [mutation] = writes(fetch);
+    assert.equal(mutation.route, "/graphql");
+    assert.match(mutation.body.query, /enablePullRequestAutoMerge\(input: \{pullRequestId: \$id, mergeMethod: MERGE, expectedHeadOid: \$oid\}\)/);
+    assert.deepEqual(mutation.body.variables, { id: "PR_node5", oid: HEAD });
+  }
+});
+
+test("an opt-in for an approved head covers merges of the default branch into it, and nothing else", async () => {
+  const merge = (sha, first, second = MAINISH) => ({ [`/repos/${REPO}/commits/${sha}`]: { sha, parents: [{ sha: first }, { sha: second }] } });
+  const ancestor = (sha, behind = 0) => ({ [`/repos/${REPO}/compare/${sha}...${TIP}`]: { behind_by: behind } });
+  const body = `${BODY}\nClued-Auto-Merge: ${APPROVED}`;
+  let fetch = world({ pulls: [pull({ body })], extra: { ...merge(HEAD, APPROVED), ...ancestor(MAINISH) } });
+  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge", "one merge of main");
+  const mid = "e".repeat(40);
+  fetch = world({ pulls: [pull({ body })], extra: { ...merge(HEAD, mid), ...merge(mid, APPROVED), ...ancestor(MAINISH) } });
+  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge", "two merges of main");
+  for (const [name, extra] of [
+    ["a plain commit after the approval", { [`/repos/${REPO}/commits/${HEAD}`]: { sha: HEAD, parents: [{ sha: APPROVED }] } }],
+    ["a merge of something not on main", { ...merge(HEAD, APPROVED), ...ancestor(MAINISH, 1) }],
+    ["a merge onto another head", { ...merge(HEAD, mid), ...ancestor(MAINISH), [`/repos/${REPO}/commits/${mid}`]: { sha: mid, parents: [{ sha: APPROVED }] } }],
+  ]) {
+    fetch = world({ pulls: [pull({ body })], extra });
+    const result = await run(fetch);
+    assert.deepEqual([writes(fetch), result.actions[0].action], [[], "none"], name);
+    assert.match(result.actions[0].reason, /opt-in names bbbbbbbbbbbb/, name);
+  }
+});
+
+test("auto-merge on with an opt-in for another head is turned off (review MAJOR-2)", async () => {
+  const body = `${BODY}\nClued-Auto-Merge: ${APPROVED}`;
+  const fetch = world({ pulls: [pull({ body, auto_merge: { merge_method: "merge" } })],
+    extra: { [`/repos/${REPO}/commits/${HEAD}`]: { sha: HEAD, parents: [{ sha: APPROVED }] },
+      "POST /graphql": { data: { disablePullRequestAutoMerge: { pullRequest: { number: 5 } } } } } });
   const result = await run(fetch);
-  assert.deepEqual(result.actions.map((a) => [a.action, a.status, a.error]), [["enable_auto_merge", 200, undefined]]);
+  assert.deepEqual(result.actions.map((a) => [a.action, a.status]), [["disable_auto_merge", 200]]);
   const [mutation] = writes(fetch);
-  assert.equal(mutation.route, "/graphql");
-  assert.match(mutation.body.query, /enablePullRequestAutoMerge\(input: \{pullRequestId: \$id, mergeMethod: MERGE, expectedHeadOid: \$oid\}\)/);
-  assert.deepEqual(mutation.body.variables, { id: "PR_node5", oid: HEAD });
+  assert.match(mutation.body.query, /disablePullRequestAutoMerge\(input: \{pullRequestId: \$id\}\)/);
+  assert.deepEqual(mutation.body.variables, { id: "PR_node5" });
+  // Auto-merge someone turned on without an opt-in line is left alone.
+  const manual = world({ pulls: [pull({ body: BODY, auto_merge: { merge_method: "merge" } })] });
+  assert.deepEqual([writes(manual), (await run(manual)).actions[0].reason], [[], "auto-merge is already on"]);
+});
+
+test("a pull request GitHub can already merge is reported, not an error (review MAJOR-1)", async () => {
+  const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Pull request Pull request is in clean status" }] } } });
+  const result = await run(fetch);
+  assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error], [[], "mergeable_now", undefined]);
+  assert.match(result.notices[0], /already mergeable/);
+  // Any other GraphQL error is a refusal notice.
+  const other = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Resource not accessible by integration" }] } } });
+  const refused = await run(other);
+  assert.deepEqual([refused.errors, refused.actions[0].error], [[], "Resource not accessible by integration"]);
+  assert.match(refused.notices[0], /enable_auto_merge was refused/);
 });
 
 test("nothing is written unless every condition holds", async () => {
   const cases = [
     ["not opted in", { pulls: [pull({ body: BODY })] }, /did not opt in/],
-    ["auto-merge already on", { pulls: [pull({ auto_merge: { enabled_by: { login: "x" } } })] }, /already on/],
-    ["CI running", { extra: { [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [] },
-      ...checksRoute({ trivy: [check("trivy", { status: "in_progress", conclusion: null })] }) } }, /CI is idle/],
-    ["CI failed", { extra: checksRoute({ gitleaks: [check("gitleaks", { conclusion: "failure", completed_at: "2026-10-09T11:00:00Z" })] }) }, /CI is failed/],
-    ["not admitted", { extra: checksRoute({ "clued-admission-verified": [check("clued-admission-verified", { conclusion: "failure" })] }) }, /CI is failed|not admitted/],
-    ["no mode in the title", { extra: checksRoute({ "clued-admission-verified": [check("clued-admission-verified", { output: { title: "ADMITTED" } })] }) }, /has not admitted/],
+    ["auto-merge already on", { pulls: [pull({ auto_merge: { merge_method: "merge" } })] }, /already on/],
+    ["CI failed", { extra: checksRoute({ gitleaks: [check("gitleaks", { conclusion: "failure", completed_at: "2026-10-09T11:00:00Z" })] }) }, /CI failed/],
+    ["not admitted", { extra: checksRoute({ "clued-admission-verified": [verified({ conclusion: "failure" })] }) }, /has not admitted/],
+    ["admitted for another pull request (review MINOR-2)", { extra: checksRoute({ "clued-admission-verified": [verified({ external_id: "pr:6:run:901" })] }) }, /has not admitted/],
+    ["no mode in the title", { extra: checksRoute({ "clued-admission-verified": [verified({ output: { title: "ADMITTED" } })] }) }, /has not admitted/],
   ];
   for (const [name, options, reason] of cases) {
     const fetch = world(options);
@@ -123,6 +182,16 @@ test("nothing is written unless every condition holds", async () => {
     assert.equal(fetch.calls.some((call) => call.route.includes("access_tokens")), false, `${name}: no token is minted`);
     assert.match(result.actions[0].reason, reason, name);
   }
+});
+
+test("a protected-layer pull request is auto-merged only while Owner review is enforced (review MINOR-1)", async () => {
+  const protectedCheck = { extra: checksRoute({ "clued-admission-verified": [verified({ output: { title: "ADMITTED [normal · protected · reruns 0]" } })] }) };
+  let fetch = world(protectedCheck);
+  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge");
+  fetch = world(protectedCheck);
+  const advisory = await run(fetch, { CLUED_OWNER_REVIEW_ENFORCE: "" });
+  assert.deepEqual(writes(fetch), []);
+  assert.match(advisory.actions[0].reason, /Owner review is not enforced/);
 });
 
 test("frozen: the executor does nothing, not even read the queue", async () => {
@@ -139,19 +208,23 @@ test("without the App permissions it reports and changes nothing", async () => {
   assert.deepEqual(writes(fetch), []);
   assert.deepEqual(result.actions.map((a) => [a.action, a.wanted]), [["skipped", "update_branch"]]);
   assert.match(result.notices[0], /does not have Contents: write and Pull requests: write/);
-  // Nor without the App at all.
   const bare = world({ behindBy: 1 });
   const unconfigured = await run(bare, { CLUED_ADMISSION_APP_ID: "", CLUED_ADMISSION_APP_PRIVATE_KEY: "" });
   assert.deepEqual(writes(bare), []);
   assert.match(unconfigured.notices[0], /not configured/);
+  const missing = world({ behindBy: 1, extra: { [`/repos/${REPO}/installation`]: { __status: 404, body: { message: "Not Found" } } } });
+  const uninstalled = await run(missing);
+  assert.deepEqual(writes(missing), []);
+  assert.match(uninstalled.notices[0], /installation returned 404/);
 });
 
-test("only the default branch's queue head, an open same-repository non-draft pull request, is acted on", async () => {
+test("only the default branch's queue head, an open same-repository non-draft pull request that names its claim, is acted on", async () => {
   for (const [name, options] of [
     ["another branch's queue", { holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [`merge:${REPO}:release`] }] }],
     ["a pull request not open", { pulls: [] }],
     ["a fork", { pulls: [pull({ head: { sha: HEAD, repo: { full_name: "someone/fork" } } })] }],
     ["a draft", { pulls: [pull({ draft: true })] }],
+    ["no claim in the body (review MINOR-3)", { pulls: [pull({ body: `Clued-Auto-Merge: ${HEAD}` })] }],
     ["no head", { holders: [] }],
   ]) {
     const fetch = world({ behindBy: 1, ...options });
@@ -174,6 +247,7 @@ test("the workflow runs default-branch code after the slot report, hourly and by
   assert.doesNotMatch(text, /pull_request/);
   assert.match(text, /permissions:\n  actions: read\n  checks: read\n  contents: read\n  pull-requests: read\n\n/);
   assert.doesNotMatch(text, /^\s+[a-z-]+: write$/m);
-  assert.match(text, /runs-on: ubuntu-latest\n    timeout-minutes: 5\n    environment: clued-admission\n/);
+  assert.match(text, /if: github\.event_name != 'workflow_run' \|\| github\.event\.workflow_run\.conclusion != 'skipped'\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    environment: clued-admission\n/);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false/);
+  assert.match(text, /CLUED_OWNER_REVIEW_ENFORCE: \$\{\{ vars\.CLUED_OWNER_REVIEW_ENFORCE \}\}/);
 });

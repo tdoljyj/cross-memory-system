@@ -12,20 +12,31 @@
 //               commit, expected_head_sha bound to the head it read). A head
 //               that only merges the default branch in keeps an Owner grant
 //               (Decision a0d93cd0), and the App's push starts CI, which a
-//               GITHUB_TOKEN push would not.
-//   green       the head contains the tip and the four CI required checks
-//               passed: the executor turns on GitHub auto-merge (merge
-//               commit, expectedHeadOid), only when
-//               - the pull request opted in with a body line
-//                 "Clued-Auto-Merge: on" (the Agent writes it once the merge
-//                 is approved; without it the Agent merges as before),
-//               - the head's clued-admission-verified check admitted it and
-//                 the policy allows auto-merge for its state and layer
-//                 (never in frozen),
+//               GITHUB_TOKEN push would not. Not for a protected-layer pull
+//               request: when the default branch changed a protected file it
+//               also changes, the merge needs a new Owner Grant, so its
+//               holder brings the branch in (review MINOR-4).
+//   up to date  the executor turns on GitHub auto-merge (merge commit,
+//               expectedHeadOid) and GitHub waits for the five required
+//               checks (§7.4; GitHub refuses auto-merge on a pull request
+//               that is already mergeable, review MAJOR-1). Only when
+//               - the body has a line "Clued-Auto-Merge: <head sha>" naming
+//                 this head, or a head this one only merged the default
+//                 branch into (the Agent writes it once the merge of that
+//                 head is approved; a later push needs a new line, review
+//                 MAJOR-2),
+//               - the head's clued-admission-verified check, posted for this
+//                 pull request, admitted it and the policy allows auto-merge
+//                 for its state and layer (never in frozen; a protected
+//                 layer only while Owner review is enforced, review MINOR-1),
+//               - no CI required check has finally failed on the head,
 //               - auto-merge is not on already.
-//   otherwise   nothing: CI is running, failed (clued-merge-slot-ci returns
-//               the slot), or the pull request has a conflict the holder
-//               must resolve.
+//               When the line names another head and auto-merge is on, the
+//               executor turns it off. Without a line it leaves auto-merge
+//               alone: the Agent merges as before.
+//   otherwise   nothing: the pull request has a conflict the holder must
+//               resolve, CI failed (clued-merge-slot-ci returns the slot), or
+//               it is already mergeable (the Agent merges).
 //
 // It acts as the clued-admission App, with an installation token for
 // Contents: write and Pull requests: write. Until the Owner grants those
@@ -42,22 +53,46 @@ import {
   ADMISSION_APP_ID,
   appChecksOnHead,
   appJwt,
+  checkNamesPullRequest,
   cluedRpc,
   githubJson,
   githubPaged,
+  ownerReviewEnforced,
   parseClaimReference,
   withTokenHint,
 } from "./clued-work-admission.mjs";
 import { HOLDERS_RPC, ciStateOf, ciWorkflows } from "./clued-merge-slot-ci.mjs";
 import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-policy.mjs";
 
-export const OPT_IN = /^\s*Clued-Auto-Merge:\s*on\s*$/im;
+export const OPT_IN = /^\s*Clued-Auto-Merge:\s*([0-9a-f]{40})\s*$/im;
+// How many merges of the default branch may lie between the approved head and this one.
+const MAX_MERGE_HOPS = 5;
 export const EXECUTOR_PERMISSIONS = Object.freeze({ contents: "write", pull_requests: "write" });
 const VERIFIED_CHECK = "clued-admission-verified";
 
-// Whether the pull request body opts in to auto-merge.
-export function optedIn(body) {
-  return OPT_IN.test(String(body ?? ""));
+// The head the pull request body opts in to auto-merge for, or null.
+export function optInSha(body) {
+  const match = OPT_IN.exec(String(body ?? ""));
+  return match ? match[1].toLowerCase() : null;
+}
+
+// Whether head is the opted-in head, or reaches it through first parents that
+// are each a two-parent merge of the default branch (second parent an
+// ancestor of tip): the only changes since the approval came from the
+// default branch.
+export async function optInCovers(fetchImpl, env, repository, optedSha, headSha, tip) {
+  let sha = headSha;
+  for (let hop = 0; hop <= MAX_MERGE_HOPS; hop++) {
+    if (sha === optedSha) return true;
+    if (hop === MAX_MERGE_HOPS) return false;
+    const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${sha}`);
+    const parents = Array.isArray(commit && commit.parents) ? commit.parents.map((parent) => parent && parent.sha) : [];
+    if (parents.length !== 2) return false;
+    const toTip = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${parents[1]}...${tip}`);
+    if (Number(toTip && toTip.behind_by) !== 0) return false;
+    sha = parents[0];
+  }
+  return false;
 }
 
 async function appRequest(fetchImpl, env, method, route, bearer, body) {
@@ -99,9 +134,11 @@ export async function executorToken({ env, fetchImpl, now = () => Date.now() }) 
   return { token: null, reason: `GitHub API POST /app/installations/…/access_tokens returned ${minted.status}` };
 }
 
-// The newest clued-admission-verified check on the head: admitted, and its mode.
-async function admissionOf(fetchImpl, env, repository, headSha) {
-  const [newest] = await appChecksOnHead(fetchImpl, env, repository, headSha, VERIFIED_CHECK);
+// The newest clued-admission-verified check on the head posted for this pull
+// request (review MINOR-2): admitted, and its mode.
+async function admissionOf(fetchImpl, env, repository, headSha, prNumber) {
+  const [newest] = (await appChecksOnHead(fetchImpl, env, repository, headSha, VERIFIED_CHECK))
+    .filter((check) => checkNamesPullRequest(check, prNumber));
   if (!newest || newest.status !== "completed" || newest.conclusion !== "success" || !newest.app || Number(newest.app.id) !== ADMISSION_APP_ID) {
     return { admitted: false, mode: null };
   }
@@ -109,23 +146,37 @@ async function admissionOf(fetchImpl, env, repository, headSha) {
 }
 
 const ENABLE_AUTO_MERGE = "mutation($id: ID!, $oid: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $oid}) { pullRequest { number autoMergeRequest { enabledAt } } } }";
+const DISABLE_AUTO_MERGE = "mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { pullRequest { number } } }";
 
 // What to do for one head pull request, without doing it.
 export async function planFor({ env, fetchImpl, repository, pr, tip, since, workflows, policy, state }) {
+  const admission = await admissionOf(fetchImpl, env, repository, pr.head.sha, pr.number);
+  const layer = admission.mode ? admission.mode.layer : null;
   const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${pr.head.sha}`);
   if (Number(compare && compare.behind_by) > 0) {
+    if (layer === "protected" || !layer) {
+      return { action: "none", reason: `the head is ${compare.behind_by} commit(s) behind; ${layer ? "a protected-layer pull request is brought up to date by its holder" : "its admission check has no mode yet"}` };
+    }
     return { action: "update_branch", reason: `the head is ${compare.behind_by} commit(s) behind the default branch` };
   }
-  if (pr.auto_merge) return { action: "none", reason: "auto-merge is already on" };
-  if (!optedIn(pr.body)) return { action: "none", reason: "the pull request did not opt in to auto-merge (Clued-Auto-Merge: on)" };
-  const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
-  if (seen.state !== "green") return { action: "none", reason: `CI is ${seen.state}: ${seen.reason}` };
-  const admission = await admissionOf(fetchImpl, env, repository, pr.head.sha);
-  if (!admission.admitted || !admission.mode) return { action: "none", reason: "the head's clued-admission-verified check has not admitted it" };
+  const opted = optInSha(pr.body);
+  const covered = opted ? await optInCovers(fetchImpl, env, repository, opted, pr.head.sha, tip) : false;
+  if (pr.auto_merge) {
+    if (opted && !covered) return { action: "disable_auto_merge", reason: `the opt-in names ${opted.slice(0, 12)}, not this head or a merge of the default branch into it` };
+    return { action: "none", reason: "auto-merge is already on" };
+  }
+  if (!opted) return { action: "none", reason: "the pull request did not opt in to auto-merge (Clued-Auto-Merge: <head sha>)" };
+  if (!covered) return { action: "none", reason: `the opt-in names ${opted.slice(0, 12)}, not this head or a merge of the default branch into it` };
+  if (!admission.admitted || !admission.mode) return { action: "none", reason: "the head's clued-admission-verified check for this pull request has not admitted it" };
+  if (layer === "protected" && !ownerReviewEnforced(env)) {
+    return { action: "none", reason: "Owner review is not enforced, so a protected-layer pull request is not auto-merged" };
+  }
   // The executor's own state wins over the title's: a switch to frozen applies at once.
-  const rules = effectiveRules(policy, state, admission.mode.layer);
-  if (rules.auto_merge !== "allowed") return { action: "none", reason: `auto-merge is ${rules.auto_merge} in ${state} for the ${admission.mode.layer} layer` };
-  return { action: "enable_auto_merge", reason: "green, up to date, admitted and opted in" };
+  const rules = effectiveRules(policy, state, layer);
+  if (rules.auto_merge !== "allowed") return { action: "none", reason: `auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer` };
+  const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
+  if (seen.state === "failed") return { action: "none", reason: `CI failed: ${seen.reason}` };
+  return { action: "enable_auto_merge", reason: `up to date, admitted and opted in; CI is ${seen.state}` };
 }
 
 export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = fs.readFileSync, now = () => Date.now() }) {
@@ -141,9 +192,11 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
     return result;
   }
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+  // Only pull requests whose body names their claim: an update-branch merge commit carries no
+  // trailer, so a claim named only in a commit would be lost (review MINOR-3).
   const pulls = (await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch
-      && pr.head.repo && pr.head.repo.full_name === repository && !pr.draft);
+      && pr.head.repo && pr.head.repo.full_name === repository && !pr.draft && parseClaimReference(pr.body));
   const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
   const scopes = [...new Set(pulls.map((pr) => parseClaimReference(pr.body)).filter(Boolean).map((ref) => ref.scope))].sort();
   const heads = [];
@@ -208,11 +261,19 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       // 422: the head moved since it was read, or the merge has a conflict the holder must resolve.
       if (response.status !== 202) entry.error = response.body && response.body.message ? String(response.body.message) : `HTTP ${response.status}`;
     } else {
-      const response = await appRequest(fetchImpl, env, "POST", "/graphql", token,
-        { query: ENABLE_AUTO_MERGE, variables: { id: plan.pr.node_id, oid: plan.pr.head.sha } });
+      const enable = plan.action === "enable_auto_merge";
+      const response = await appRequest(fetchImpl, env, "POST", "/graphql", token, enable
+        ? { query: ENABLE_AUTO_MERGE, variables: { id: plan.pr.node_id, oid: plan.pr.head.sha } }
+        : { query: DISABLE_AUTO_MERGE, variables: { id: plan.pr.node_id } });
       entry.status = response.status;
       const errors = response.body && Array.isArray(response.body.errors) ? response.body.errors : [];
       if (response.status !== 200 || errors.length) entry.error = errors.map((e) => e && e.message).filter(Boolean).join("; ") || `HTTP ${response.status}`;
+      // GitHub refuses auto-merge on a pull request that can merge now: its holder merges it.
+      if (enable && entry.error && /clean status/i.test(entry.error)) {
+        entry.result = "mergeable_now";
+        delete entry.error;
+        result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; its holder merges it`);
+      }
     }
     if (entry.error) result.notices.push(`#${plan.pr.number}: ${plan.action} was refused: ${entry.error}`);
     result.actions.push(entry);

@@ -5,10 +5,10 @@ name: clued-merge-executor
 # queue's work (scripts/ci/clued-merge-executor.mjs). For the pull request
 # whose claim heads the default branch's merge queue it brings the default
 # branch in when the head is behind, and turns on auto-merge once the head is
-# up to date, green, admitted and opted in ("Clued-Auto-Merge: on" in the
-# body). It acts as the clued-admission App and needs Contents: write and
-# Pull requests: write; until the Owner grants them it only reports. It does
-# nothing in frozen.
+# up to date, admitted and opted in for that head ("Clued-Auto-Merge: <head
+# sha>" in the body); GitHub then waits for the required checks. It acts as
+# the clued-admission App and needs Contents: write and Pull requests: write;
+# until the Owner grants them it only reports. It does nothing in frozen.
 #
 # It runs after each clued-merge-slot-ci run (which runs when a pull
 # request's CI run completes), hourly, and by hand. workflow_run and schedule
@@ -41,6 +41,8 @@ concurrency:
 jobs:
   execute:
     name: clued-merge-executor
+    # A slot report skipped for a push or schedule run changed nothing (review MINOR-5).
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: clued-admission
@@ -57,5 +59,6 @@ jobs:
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
           CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-merge-executor.mjs
