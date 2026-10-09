@@ -1,7 +1,9 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 const hash = value => createHash("sha256").update(value).digest("hex");
 export async function testAccountRefresh(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const session = randomUUID(), issuer = hash(randomUUID());
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session,user]);
   await admin.query("insert into clued_private.storage_oauth_apps_v1 values($1,'refresh-fixture-client','https://clued.invalid/storage/google/callback',null)", [issuer]);

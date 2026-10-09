@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials, issuerBusinessDefinition } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -18,6 +19,7 @@ const MiB = 1024 * 1024;
 // in-memory Drive, create-verified/3 settlement and GET-only recovery, against disposable
 // PostgreSQL. Never Google, never R2 (the staged bytes are handed to the executor directly).
 export async function testStorageBinaryUpload(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], session = randomUUID(), issuer = sha(randomUUID() + randomUUID()), clientIssuer = sha(randomUUID());
   const oauthClient = `binary-exec-${randomUUID()}`, resource = "https://binary-exec.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
@@ -683,7 +685,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
 
     await t.test("no live size / sha256 derivation reads mutation.content without a content_ref guard", async () => {
       for (const signature of ["clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)", "clued_private.storage_verified_result_v2(text,jsonb)"]) {
-        const body = (await admin.query("select pg_get_functiondef($1::regprocedure) body", [signature])).rows[0].body;
+        const body = await issuerBusinessDefinition(admin,signature);
         const uses = [...body.matchAll(/(octet_length\(j\.mutation->>'content'\)|convert_to\(j\.mutation->>'content')/g)];
         assert.ok(uses.length >= 2, signature);
         for (const use of uses) {

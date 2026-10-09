@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -13,6 +14,7 @@ const CHUNK = 262144, MIB = 1024 * 1024, IMAGE = 5 * MIB, BUDGET = 256 * MIB;
 // (256 MiB per Binding with reservation extension, 20260930200000).
 // Synthetic, disposable PostgreSQL only.
 export async function testStorageReadContent(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], session = randomUUID(), issuer = sha(randomUUID()), clientIssuer = sha(randomUUID());
   const oauthClient = `read-content-${randomUUID()}`, resource = "https://read-content.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;

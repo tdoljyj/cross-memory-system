@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build, stop } from 'esbuild';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 // Real OAuth library -> application transport -> real migrated PostgreSQL.
 // Identity and HTTP plumbing are local fixtures, not a live Supabase/ChatGPT login.
@@ -48,6 +49,7 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     await db.query("insert into auth.users values($1,'fixture@example.invalid',now()),($2,'developer@example.invalid',now())", [U, V]);
     await db.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Integration project','integration project',$3)", [P, U, 'project:' + P]);
     const issuer = crypto.randomBytes(32).toString('hex');
+    await allowTestIssuerCredentials(db);
     await db.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'Integration fixture')", [hash(issuer), resource]);
     const human = server.getPgClient(), gateway = server.getPgClient(), invited = server.getPgClient();
     for (const connection of [human, gateway, invited]) { connections.push(connection); await connection.connect(); }
