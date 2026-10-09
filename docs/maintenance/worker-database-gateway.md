@@ -16,6 +16,12 @@ creator an administrative membership from the bootstrap superuser (OID 10):
 management relationship and rejects changed options, other holders or grantors.
 The gateway receives no membership in another role, direct table privileges,
 private-schema USAGE or function ownership.
+Table and column access combines schema USAGE with object ACLs. PUBLIC SELECT
+on statistics views inside an inaccessible schema does not admit a table read;
+direct gateway ACLs are still rejected even when the schema is inaccessible.
+Sequence privileges remain globally rejected: an OID can reach `nextval`
+without a schema-name lookup. No statistics-extension removal or object-name
+allowlist is used to admit the gateway.
 Existing `anon`, user-session and P5 paths retain their grants at this stage.
 The G6 role guard and removal of `anon` belong to stage 2.
 

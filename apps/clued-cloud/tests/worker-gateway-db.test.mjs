@@ -123,6 +123,77 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
       }
     });
 
+    await t.test('schema lookup gates PUBLIC table/column grants, but never excuses direct ACLs or OID sequence access', async () => {
+      const schema = 'test_worker_gateway_private';
+      await admin.query(`create schema ${schema};
+        create table ${schema}.public_table(id integer); insert into ${schema}.public_table values(7);
+        create table ${schema}.public_column(visible integer,hidden integer);
+        insert into ${schema}.public_column values(11,13);
+        create view ${schema}.public_view as select id from ${schema}.public_table;
+        grant select on ${schema}.public_table to public;
+        grant select on ${schema}.public_view to public;
+        grant select(visible) on ${schema}.public_column to public;
+        create sequence ${schema}.sequence_oid;`);
+      const limited = server.getPgClient(); clients.push(limited); await limited.connect();
+      await limited.query('set session authorization authenticator; set role clued_worker_gateway');
+      const apply = () => migrator.query('select pg_temp.apply_gateway($1)', [sql]);
+      const denied = error => error.code === '42501';
+      const rejectsKind = (kind, object, directAcl) => error => {
+        if (error.code !== '42501' || error.message !== 'worker_gateway_role_unexpected_privileges') return false;
+        const matching = JSON.parse(error.detail).violations.find(v => v.kind === kind && v.object === object);
+        assert.ok(matching, error.detail);
+        assert.equal(matching.schema, schema);
+        assert.equal(matching.schema_usage, false);
+        assert.equal(matching.direct_acl, directAcl);
+        return true;
+      };
+      try {
+        assert.deepEqual((await admin.query(`select has_schema_privilege($1,$2,'USAGE') schema_usage,
+          has_table_privilege($1,$2||'.public_table','SELECT') table_select,
+          has_table_privilege($1,$2||'.public_view','SELECT') view_select,
+          has_column_privilege($1,$2||'.public_column','visible','SELECT') column_select`, [role, schema])).rows[0],
+          { schema_usage: false, table_select: true, view_select: true, column_select: true });
+        await apply();
+        await assert.rejects(limited.query(`select * from ${schema}.public_table`), denied);
+        await assert.rejects(limited.query(`select * from ${schema}.public_view`), denied);
+        await assert.rejects(limited.query(`select visible from ${schema}.public_column`), denied);
+        await assert.rejects(limited.query(`select nextval('${schema}.sequence_oid')`), denied);
+        for (const [widen, repair] of [
+          [`grant usage on schema ${schema} to ${role}`, `revoke usage on schema ${schema} from ${role}`],
+          [`grant usage on schema ${schema} to public`, `revoke usage on schema ${schema} from public`],
+        ]) {
+          await admin.query(widen);
+          try { await assert.rejects(apply(), error => error.code === '42501' &&
+            JSON.parse(error.detail).violations.some(v => v.kind === 'schema_permission' && v.object === schema), widen); }
+          finally { await admin.query(repair); }
+        }
+        for (const [widen, repair, kind, object] of [
+          [`grant select on ${schema}.public_table to ${role}`, `revoke select on ${schema}.public_table from ${role}`, 'table_permission', `${schema}.public_table`],
+          [`grant select(hidden) on ${schema}.public_column to ${role}`, `revoke select(hidden) on ${schema}.public_column from ${role}`, 'column_permission', `${schema}.public_column`],
+          [`grant usage on sequence ${schema}.sequence_oid to ${role}`, `revoke usage on sequence ${schema}.sequence_oid from ${role}`, 'sequence_permission', `${schema}.sequence_oid`],
+        ]) {
+          await admin.query(widen);
+          try { await assert.rejects(apply(), rejectsKind(kind, object, true), widen); }
+          finally { await admin.query(repair); }
+        }
+        await admin.query(`grant usage on sequence ${schema}.sequence_oid to public`);
+        try {
+          const oid = (await admin.query('select $1::regclass::oid value', [`${schema}.sequence_oid`])).rows[0].value;
+          await assert.rejects(limited.query(`select nextval('${schema}.sequence_oid')`), denied);
+          assert.equal((await limited.query('select nextval($1::oid::regclass)::integer value', [oid])).rows[0].value, 1,
+            'numeric OID sequence access needs no schema lookup');
+          await assert.rejects(apply(), rejectsKind('sequence_permission', `${schema}.sequence_oid`, false));
+        } finally { await admin.query(`revoke usage on sequence ${schema}.sequence_oid from public`); }
+        await admin.query('create table public.test_worker_gateway_public_readable(id integer); grant select on public.test_worker_gateway_public_readable to public');
+        try {
+          await assert.rejects(apply(), error => error.code === '42501' && JSON.parse(error.detail).violations.some(v =>
+            v.kind === 'table_permission' && v.object === 'public.test_worker_gateway_public_readable' &&
+            v.schema === 'public' && v.schema_usage === true && v.direct_acl === false));
+        } finally { await admin.query('drop table public.test_worker_gateway_public_readable'); }
+        await apply();
+      } finally { await admin.query(`drop schema ${schema} cascade`); }
+    });
+
     await t.test('replay refuses an existing role with unexpected privileges instead of silently cleaning it', async () => {
       const fixtureSecret = hex();
       await admin.query('create table public.test_worker_gateway_diagnostic_secret(secret text)');

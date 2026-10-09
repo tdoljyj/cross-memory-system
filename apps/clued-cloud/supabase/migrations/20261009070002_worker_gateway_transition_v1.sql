@@ -149,10 +149,17 @@ begin
         and pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE,CREATE'))
     or exists(select 1 from pg_catalog.pg_class c
       join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-      where n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
-        and case when c.relkind in ('r','p','v','m','f') then
-          (pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
-           or pg_catalog.has_any_column_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) else false end)
+      where case when c.relkind in ('r','p','v','m','f') then
+          ((n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
+            and pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE')
+            and (pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+              or pg_catalog.has_any_column_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
+           or exists(select 1 from pg_catalog.aclexplode(c.relacl) a where a.grantee='clued_worker_gateway'::regrole)
+           or exists(select 1 from pg_catalog.pg_attribute col
+             join lateral pg_catalog.aclexplode(col.attacl) a on a.grantee='clued_worker_gateway'::regrole
+             where col.attrelid=c.oid and col.attnum>0 and not col.attisdropped)) else false end)
+    -- Sequence operations accept numeric regclass OIDs: schema USAGE is not
+    -- required for that path, so every effective sequence privilege is refused.
     or exists(select 1 from pg_catalog.pg_class c
       where case when c.relkind='S' then
         pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE') else false end)
@@ -166,8 +173,8 @@ begin
       where d.refclassid='pg_catalog.pg_authid'::regclass and d.refobjid='clued_worker_gateway'::regrole
         and d.deptype='o') then
     -- Diagnostics read catalog identity and ACL metadata only, never business
-    -- rows, function bodies, role settings or comments. Keep the guard above
-    -- unchanged; bounded DETAIL lets CI identify every rejected boundary kind.
+    -- rows, function bodies, role settings or comments. Match the access/direct
+    -- grant predicates above; bounded DETAIL identifies each rejected kind.
     with violations as (
       select jsonb_build_object('kind','gateway_membership','role',m.roleid::regrole::text,
         'member',m.member::regrole::text,'grantor',m.grantor::regrole::text,
@@ -185,28 +192,41 @@ begin
         or (n.nspname not in ('public','information_schema') and n.nspname !~ '^pg_'
           and pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE,CREATE'))
       union all
-      select jsonb_build_object('kind','table_permission','object',c.oid::regclass::text,
+      select jsonb_build_object('kind','table_permission','schema',n.nspname,
+        'object',pg_catalog.format('%I.%I',n.nspname,c.relname),
+        'schema_usage',pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE'),
+        'direct_acl',exists(select 1 from pg_catalog.aclexplode(c.relacl) a where a.grantee='clued_worker_gateway'::regrole),
         'privileges',array(select privilege from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN']) privilege
           where pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,privilege)), 'acl',c.relacl::text)
       from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-      where n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
-        and case when c.relkind in ('r','p','v','m','f') then
-          pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') else false end
+      where case when c.relkind in ('r','p','v','m','f') then
+          ((n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
+            and pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE')
+            and pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN'))
+           or exists(select 1 from pg_catalog.aclexplode(c.relacl) a where a.grantee='clued_worker_gateway'::regrole)) else false end
       union all
-      select jsonb_build_object('kind','column_permission','object',c.oid::regclass::text,
+      select jsonb_build_object('kind','column_permission','schema',n.nspname,
+        'object',pg_catalog.format('%I.%I',n.nspname,c.relname),
+        'schema_usage',pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE'),
+        'direct_acl',exists(select 1 from pg_catalog.aclexplode(a.attacl) acl where acl.grantee='clued_worker_gateway'::regrole),
         'column',a.attname,'privileges',array(select privilege from unnest(array['SELECT','INSERT','UPDATE','REFERENCES']) privilege
           where pg_catalog.has_column_privilege('clued_worker_gateway',c.oid,a.attnum,privilege)), 'acl',a.attacl::text)
       from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
         join pg_catalog.pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
-      where n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
-        and case when c.relkind in ('r','p','v','m','f') then
-          (not pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')
-           and pg_catalog.has_column_privilege('clued_worker_gateway',c.oid,a.attnum,'SELECT,INSERT,UPDATE,REFERENCES')) else false end
+      where case when c.relkind in ('r','p','v','m','f') then
+          ((n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
+            and pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE')
+            and not pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')
+            and pg_catalog.has_column_privilege('clued_worker_gateway',c.oid,a.attnum,'SELECT,INSERT,UPDATE,REFERENCES'))
+           or exists(select 1 from pg_catalog.aclexplode(a.attacl) acl where acl.grantee='clued_worker_gateway'::regrole)) else false end
       union all
-      select jsonb_build_object('kind','sequence_permission','object',c.oid::regclass::text,
+      select jsonb_build_object('kind','sequence_permission','schema',n.nspname,
+        'object',pg_catalog.format('%I.%I',n.nspname,c.relname),
+        'schema_usage',pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE'),
+        'direct_acl',exists(select 1 from pg_catalog.aclexplode(c.relacl) a where a.grantee='clued_worker_gateway'::regrole),
         'privileges',array(select privilege from unnest(array['USAGE','SELECT','UPDATE']) privilege
           where pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,privilege)), 'acl',c.relacl::text)
-      from pg_catalog.pg_class c where case when c.relkind='S' then
+      from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace where case when c.relkind='S' then
         pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE') else false end
       union all
       select jsonb_build_object('kind','function_permission','object',p.oid::regprocedure::text,
