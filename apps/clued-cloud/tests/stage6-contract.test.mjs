@@ -182,7 +182,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /A passing check is not verified again at merge time/);
   assert.match(contract, /First dispatch `clued-work-admission-dispatch\.yml` on the default branch with `workflow`/);
   assert.match(contract, /with `admission_run_id` set to that run's id, within 30 minutes of that run's start/);
-  assert.match(contract, /resume also returns `contract_version`/);
+  assert.match(contract, /Every successful resume returns `contract_version` and `agent_contract_sha256`/);
+  assert.match(contract, /read it through `clued_agent_bootstrap` \(all parts\)/);
+  assert.match(contract, /do not report the difference and do not ask for reinstall because of a contract change/);
   assert.match(skill, /claim its Task as the contract's §1\.7 says/);
   assert.match(contract, /Resume lists unabsorbed work-log events newest first \(`event_order: "newest"`, the default\)/);
   assert.match(contract, /`checkpoint_recommended` and `pending_event_count_recent` count only those of the last 24 hours/);
