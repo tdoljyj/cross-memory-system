@@ -1304,9 +1304,9 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
 // Merge slot (agent contract v33 §1.7; Owner Decisions 0edf7889, 2ea795e4).
 // The default branch requires a pull request to contain its tip before it
 // merges, so a merge by another session during a CI run wastes that run. The
-// merge slot, the trigger ref merge:<owner>/<name>:<branch>, is held by one
-// live claim at a time (Clued's conflict check) and lapses 45 minutes after it
-// was last taken or refreshed (migration 20261006120000). The admission run
+// merge slot, the trigger ref merge:<owner>/<name>:<branch>, is a first-in,
+// first-out queue whose head holds the slot (migration 20261009080000, Merge
+// Admission step 4); merge_slot_until is set only for the head. The admission run
 // posts the clued-merge-slot check as the clued-admission App: it fails while
 // the head contains the base branch's tip and the claim does not hold the slot,
 // so once the Owner makes the check required, nobody can merge without it.
@@ -1373,7 +1373,7 @@ export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, bran
     case "missing":
       return { success: false, title: "Merge slot not held",
         summary: `This head contains the tip of ${target}, so it could merge now, and only the session holding the merge slot may merge. `
-          + `Renew the claim${claimId ? ` \`${claimId}\`` : ""} with \`${slot}\` added to its trigger_refs (agent contract §1.7; on work_claim_conflict another session holds it: wait and try again). `
+          + `Join the merge queue by renewing the claim${claimId ? ` \`${claimId}\`` : ""} with \`${slot}\` added to its trigger_refs, or, if it is already there, wait until its merge_queue shows it as head (agent contract §1.7). `
           + "Then push, or edit the pull request body, to run this check again." };
     default:
       return { success: false, title: "Merge slot unknown",
