@@ -21,7 +21,7 @@ const SLOT = `merge:${REPO}:main`;
 
 const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" });
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
-  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, CLUED_OWNER_REVIEW_ENFORCE: "true", ...extra });
+  CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, ...extra });
 const BODY = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`;
 const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\nClued-Auto-Merge: ${HEAD}`, draft: false, auto_merge: null,
   head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: "main", repo: { default_branch: "main" } }, ...extra });
@@ -189,14 +189,13 @@ test("nothing is written unless every condition holds", async () => {
   }
 });
 
-test("a protected-layer pull request is auto-merged only while Owner review is enforced (review MINOR-1)", async () => {
+test("a protected-layer pull request is auto-merged; Owner review is always enforced (Merge Admission step 6)", async () => {
   const protectedCheck = { extra: checksRoute({ "clued-admission-verified": [verified({ output: { title: "ADMITTED [normal · protected · reruns 0]" } })] }) };
-  let fetch = world(protectedCheck);
-  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge");
-  fetch = world(protectedCheck);
-  const advisory = await run(fetch, { CLUED_OWNER_REVIEW_ENFORCE: "" });
-  assert.deepEqual(writes(fetch), []);
-  assert.match(advisory.actions[0].reason, /Owner review is not enforced/);
+  for (const retired of [undefined, "", "false"]) {
+    const fetch = world(protectedCheck);
+    const result = await run(fetch, retired === undefined ? {} : { CLUED_OWNER_REVIEW_ENFORCE: retired });
+    assert.equal(result.actions[0].action, "enable_auto_merge", String(retired));
+  }
 });
 
 test("frozen: the executor does nothing, not even read the queue", async () => {
@@ -254,5 +253,5 @@ test("the workflow runs default-branch code after the slot report, hourly and by
   assert.doesNotMatch(text, /^\s+[a-z-]+: write$/m);
   assert.match(text, /if: github\.event_name != 'workflow_run' \|\| github\.event\.workflow_run\.conclusion != 'skipped'\n    runs-on: ubuntu-slim\n    timeout-minutes: 5\n    environment: clued-admission\n/);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false/);
-  assert.match(text, /CLUED_OWNER_REVIEW_ENFORCE: \$\{\{ vars\.CLUED_OWNER_REVIEW_ENFORCE \}\}/);
+  assert.doesNotMatch(text, /_ENFORCE/);
 });

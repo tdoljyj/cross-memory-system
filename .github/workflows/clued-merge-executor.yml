@@ -65,6 +65,5 @@ jobs:
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
           CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
-          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-merge-executor.mjs
