@@ -83,7 +83,11 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 40/);
+  assert.match(contract, /Contract version: 41/);
+  // Owner auto-approval switch and Owner answers (OwnerCredential §12, §13; Task ce42fc18).
+  assert.match(contract, /That result is the receipt: go on with the gated step and do not hand the Owner a link/);
+  assert.match(contract, /your Host session id as `session_ref`/);
+  assert.match(contract, /act on it without asking the Owner to confirm again/);
   // Merge slot: closing gives it back, reopening does not take it again (Task 6525c538).
   assert.match(contract, /Closing gives the slot back even when you reopen the pull request at once/);
   // MergeAdmission step 2 (Owner Decisions 73050422, 77216370): "Re-run all jobs" on the current head
