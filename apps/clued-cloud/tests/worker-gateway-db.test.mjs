@@ -124,8 +124,31 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
     });
 
     await t.test('replay refuses an existing role with unexpected privileges instead of silently cleaning it', async () => {
-      const rejected = error => error.code === '42501' && error.message === 'worker_gateway_role_unexpected_privileges';
+      const fixtureSecret = hex();
+      await admin.query('create table public.test_worker_gateway_diagnostic_secret(secret text)');
+      await admin.query('insert into public.test_worker_gateway_diagnostic_secret values($1)', [fixtureSecret]);
+      const diagnosticKinds = new Set();
+      const rejected = error => {
+        if (error.code !== '42501' || error.message !== 'worker_gateway_role_unexpected_privileges') return false;
+        const diagnostic = JSON.parse(error.detail);
+        assert.equal(diagnostic.schema, 'clued.worker-gateway-diagnostic.v1');
+        assert.ok(diagnostic.violations.length > 0);
+        assert.ok(diagnostic.violations.length <= 100);
+        assert.ok(!error.detail.includes(fixtureSecret), 'diagnostics never contain business row values');
+        for (const violation of diagnostic.violations) {
+          diagnosticKinds.add(violation.kind);
+          assert.ok(violation.object || violation.role || violation.class, 'each rejection identifies its catalog object');
+          if (violation.kind === 'gateway_membership' || violation.kind === 'inherited_role') {
+            assert.equal(typeof violation.member, 'string');
+            assert.equal(typeof violation.grantor, 'string');
+            for (const option of ['admin', 'inherit', 'set']) assert.equal(typeof violation[option], 'boolean');
+          }
+        }
+        return true;
+      };
       const cases = [
+        [`grant select on public.test_worker_gateway_diagnostic_secret to ${role}`,
+          `revoke select on public.test_worker_gateway_diagnostic_secret from ${role}`],
         [`grant select on public.clued_agent_bindings to ${role}`, `revoke select on public.clued_agent_bindings from ${role}`],
         [`grant maintain on public.clued_agent_bindings to ${role}`, `revoke maintain on public.clued_agent_bindings from ${role}`],
         [`grant select(token_hash) on public.clued_agent_bindings to ${role}`, `revoke select(token_hash) on public.clued_agent_bindings from ${role}`],
@@ -158,6 +181,10 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         try { await assert.rejects(migrator.query('select pg_temp.apply_gateway($1)', [sql]), refuses, widen); }
         finally { await admin.query(repair); }
       }
+      assert.deepEqual([...diagnosticKinds].sort(), ['column_permission', 'function_acl', 'function_permission',
+        'gateway_membership', 'inherited_role', 'ownership', 'role_attributes', 'schema_permission',
+        'sequence_permission', 'table_permission'].sort(), 'the actual rejected boundary kinds are diagnosed');
+      await admin.query('drop table public.test_worker_gateway_diagnostic_secret');
       await migrator.query('select pg_temp.apply_gateway($1)', [sql]);
     });
 

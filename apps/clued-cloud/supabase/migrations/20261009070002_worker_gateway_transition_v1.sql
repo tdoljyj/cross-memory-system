@@ -5,6 +5,7 @@
 -- Native human and P5 functions are deliberately not granted to this role.
 
 do $gateway$
+declare diagnostic jsonb;
 begin
   if not exists (select 1 from pg_catalog.pg_roles where rolname='clued_worker_gateway') then
     create role clued_worker_gateway nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
@@ -12,7 +13,22 @@ begin
     and (rolcanlogin or rolinherit or rolsuper or rolcreatedb or rolcreaterole or rolreplication or rolbypassrls))
     or exists (select 1 from pg_catalog.pg_auth_members m
       where m.member='clued_worker_gateway'::regrole) then
-    raise exception 'worker_gateway_role_unexpected_privileges' using errcode='42501';
+    with violations as (
+        select jsonb_build_object('kind','role_attributes','role',r.rolname,
+          'login',r.rolcanlogin,'inherit',r.rolinherit,'superuser',r.rolsuper,
+          'createdb',r.rolcreatedb,'createrole',r.rolcreaterole,
+          'replication',r.rolreplication,'bypassrls',r.rolbypassrls) v
+        from pg_catalog.pg_roles r where r.rolname='clued_worker_gateway'
+          and (r.rolcanlogin or r.rolinherit or r.rolsuper or r.rolcreatedb or r.rolcreaterole or r.rolreplication or r.rolbypassrls)
+        union all
+        select jsonb_build_object('kind','inherited_role','role',m.roleid::regrole::text,
+          'member',m.member::regrole::text,'grantor',m.grantor::regrole::text,
+          'admin',m.admin_option,'inherit',m.inherit_option,'set',m.set_option)
+        from pg_catalog.pg_auth_members m where m.member='clued_worker_gateway'::regrole
+      ), bounded as (select v,count(*) over() total from violations order by v::text limit 100)
+    select jsonb_build_object('schema','clued.worker-gateway-diagnostic.v1','violations',jsonb_agg(v order by v::text),
+      'violation_count',max(total),'truncated',max(total)>100) into diagnostic from bounded;
+    raise exception 'worker_gateway_role_unexpected_privileges' using errcode='42501', detail=diagnostic::text;
   end if;
 end $gateway$;
 
@@ -23,7 +39,7 @@ grant usage on schema public to clued_worker_gateway;
 -- Exact overloads, derived from the serving Worker's Binding/issuer call sites.
 -- No blanket grant or default privilege: future RPCs need their own reviewed grant.
 do $grants$
-declare signature text; expected_oids oid[];
+declare signature text; expected_oids oid[]; diagnostic jsonb;
   expected_signatures text[]:=array[
     'public.clued_agent_inbox_summary_v1(text,jsonb)',
     'public.clued_agent_inbox_v1(text,jsonb)',
@@ -149,7 +165,72 @@ begin
     or exists(select 1 from pg_catalog.pg_shdepend d
       where d.refclassid='pg_catalog.pg_authid'::regclass and d.refobjid='clued_worker_gateway'::regrole
         and d.deptype='o') then
-    raise exception 'worker_gateway_role_unexpected_privileges' using errcode='42501';
+    -- Diagnostics read catalog identity and ACL metadata only, never business
+    -- rows, function bodies, role settings or comments. Keep the guard above
+    -- unchanged; bounded DETAIL lets CI identify every rejected boundary kind.
+    with violations as (
+      select jsonb_build_object('kind','gateway_membership','role',m.roleid::regrole::text,
+        'member',m.member::regrole::text,'grantor',m.grantor::regrole::text,
+        'grantor_oid',m.grantor,'admin',m.admin_option,'inherit',m.inherit_option,'set',m.set_option) v
+      from pg_catalog.pg_auth_members m where m.roleid='clued_worker_gateway'::regrole
+        and not ((m.member='authenticator'::regrole and not m.admin_option and not m.inherit_option and m.set_option)
+          or (m.member='postgres'::regrole and m.grantor=10 and m.admin_option and not m.inherit_option and not m.set_option))
+      union all
+      select jsonb_build_object('kind','schema_permission','object',n.nspname,
+        'usage',pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE'),
+        'create',pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'CREATE'),
+        'acl',n.nspacl::text)
+      from pg_catalog.pg_namespace n where
+        (n.nspname='public' and pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'CREATE'))
+        or (n.nspname not in ('public','information_schema') and n.nspname !~ '^pg_'
+          and pg_catalog.has_schema_privilege('clued_worker_gateway',n.oid,'USAGE,CREATE'))
+      union all
+      select jsonb_build_object('kind','table_permission','object',c.oid::regclass::text,
+        'privileges',array(select privilege from unnest(array['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER','MAINTAIN']) privilege
+          where pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,privilege)), 'acl',c.relacl::text)
+      from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+      where n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
+        and case when c.relkind in ('r','p','v','m','f') then
+          pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') else false end
+      union all
+      select jsonb_build_object('kind','column_permission','object',c.oid::regclass::text,
+        'column',a.attname,'privileges',array(select privilege from unnest(array['SELECT','INSERT','UPDATE','REFERENCES']) privilege
+          where pg_catalog.has_column_privilege('clued_worker_gateway',c.oid,a.attnum,privilege)), 'acl',a.attacl::text)
+      from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+        join pg_catalog.pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+      where n.nspname not in ('pg_catalog','information_schema') and n.nspname !~ '^pg_'
+        and case when c.relkind in ('r','p','v','m','f') then
+          (not pg_catalog.has_table_privilege('clued_worker_gateway',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')
+           and pg_catalog.has_column_privilege('clued_worker_gateway',c.oid,a.attnum,'SELECT,INSERT,UPDATE,REFERENCES')) else false end
+      union all
+      select jsonb_build_object('kind','sequence_permission','object',c.oid::regclass::text,
+        'privileges',array(select privilege from unnest(array['USAGE','SELECT','UPDATE']) privilege
+          where pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,privilege)), 'acl',c.relacl::text)
+      from pg_catalog.pg_class c where case when c.relkind='S' then
+        pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE') else false end
+      union all
+      select jsonb_build_object('kind','function_permission','object',p.oid::regprocedure::text,
+        'privileges',array['EXECUTE'],'acl',coalesce(p.proacl,pg_catalog.acldefault('f',p.proowner))::text)
+      from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and pg_catalog.has_function_privilege('clued_worker_gateway',p.oid,'EXECUTE')
+        and not (p.oid=any(expected_oids))
+      union all
+      select jsonb_build_object('kind','function_acl','object',p.oid::regprocedure::text,
+        'grantee',a.grantee::regrole::text,'grantor',a.grantor::regrole::text,
+        'privilege',a.privilege_type,'grantable',a.is_grantable)
+      from pg_catalog.pg_proc p join lateral pg_catalog.aclexplode(p.proacl) a on a.grantee='clued_worker_gateway'::regrole
+      where not (p.oid=any(expected_oids)) or a.is_grantable
+      union all
+      select jsonb_build_object('kind','ownership','database',(select datname from pg_catalog.pg_database where oid=d.dbid),
+        'class',d.classid::regclass::text,'object_oid',d.objid,'subobject',d.objsubid,
+        'object',case when d.dbid=0 or d.dbid=(select oid from pg_catalog.pg_database where datname=current_database())
+          then pg_catalog.pg_describe_object(d.classid,d.objid,d.objsubid) else null end)
+      from pg_catalog.pg_shdepend d where d.refclassid='pg_catalog.pg_authid'::regclass
+        and d.refobjid='clued_worker_gateway'::regrole and d.deptype='o'
+    ), bounded as (select v,count(*) over() total from violations order by v::text limit 100)
+    select jsonb_build_object('schema','clued.worker-gateway-diagnostic.v1','violations',jsonb_agg(v order by v::text),
+      'violation_count',max(total),'truncated',max(total)>100) into diagnostic from bounded;
+    raise exception 'worker_gateway_role_unexpected_privileges' using errcode='42501', detail=diagnostic::text;
   end if;
 end $grants$;
 
