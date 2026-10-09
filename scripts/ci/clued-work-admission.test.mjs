@@ -963,7 +963,8 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
 test("gate guard: the exact PR-read version is registered before workflow rollout; other changes are refused", () => {
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest], "only the two exact gate versions");
+  const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest], "only the three exact gate versions");
   for (const name of GATED_FILES) {
     const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     // Exercise both bootstrap phases, before and after the workflow PR.
@@ -991,6 +992,22 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
       assert.notEqual(changed, withPrRead, `${name}: ${label} fixture changed`);
       assert.deepEqual(gateFindings(changed, legacy), ["admission_gate_changed"], `${name}: ${label}`);
     }
+  }
+});
+
+test("gate guard (Merge Admission step 6): the gate without the CLUED_WORK_ADMISSION_ENFORCE line is registered before the workflows drop it", () => {
+  const line = "          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}\n";
+  for (const name of GATED_FILES) {
+    const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
+    const dropped = current.replace(line, "");
+    assert.notEqual(dropped, current, `${name}: fixture drops the line`);
+    assert.deepEqual(gateFindings(dropped, current), [], `${name}: only the variable line is dropped`);
+    const gateJob = workflowJobs(dropped).find((job) => job.name === "admission-gate");
+    assert.equal(sha256Hex(gateJob.lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
+    // Dropping the token or swapping in another variable is still a changed gate.
+    assert.deepEqual(gateFindings(dropped.replace("          GITHUB_TOKEN: ${{ github.token }}\n", ""), current), ["admission_gate_changed"], name);
+    assert.deepEqual(gateFindings(current.replace(line, "          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}\n"), current),
+      ["admission_gate_changed"], name);
   }
 });
 

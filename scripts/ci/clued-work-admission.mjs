@@ -319,6 +319,9 @@ export const GATE_JOB_SHA256 = new Set([
   // Task fb97ebd5: the same gate with Pull requests: read for private-PR
   // re-runs. Register this exact version before updating the workflows.
   "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd",
+  // Merge Admission step 6 (Task 958f8ed7): the same gate without the
+  // CLUED_WORK_ADMISSION_ENFORCE line, once enforcement no longer reads it.
+  "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 
