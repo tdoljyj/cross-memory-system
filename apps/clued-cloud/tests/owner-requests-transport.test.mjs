@@ -67,6 +67,10 @@ test('the tool is advertised only behind CLUED_OWNER_REQUESTS_V1, with context:r
   assert.equal(tool.inputSchema.additionalProperties, false);
   assert.equal(tool.inputSchema.properties.suggested_grant.additionalProperties, false);
   assert.equal(tool.inputSchema.properties.suggested_grant.properties.expires_seconds.maximum, 604800);
+  // The Owner's answer comes back to the session that asked (§13).
+  assert.equal(tool.inputSchema.properties.session_ref.maxLength, 200);
+  assert.match(tool.description, /the answer comes to that session by itself/);
+  assert.match(tool.description, /owner_answers/);
   // Nothing in the schema lets an Agent approve, grant or widen.
   for (const key of ['choice', 'grantee', 'confirmation_token', 'view_digest', 'grant_id', 'approve']) {
     assert.ok(!(key in tool.inputSchema.properties), key);
@@ -173,6 +177,27 @@ test('request_id alone reads status; mixing it with create fields is refused bef
     assert.equal(mixed.isError, true);
     assert.deepEqual(mixed.structuredContent, { status: 'rejected', error_code: 'owner_request_status_fields_invalid' });
     assert.equal(calls.length, 1);
+
+    // session_ref with request_id is a status read; the session is dropped.
+    const withSession = (await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID, session_ref: 'session-b' }), enabled, ctx)).json()).result;
+    assert.equal(withSession.isError, false);
+    assert.equal(calls[1].rpc, 'clued_owner_request_status_v1');
+    assert.deepEqual(calls[1].body.p_input, { request_id: REQUEST_ID });
+  } finally { restore(); }
+});
+
+test('session_ref on create goes to the database so the answer reaches that session (OwnerCredential §13)', async () => {
+  const worker = await loadContinuityWorker();
+  const args = { action: 'release.production', resources: ['repo:tdoljyj/cross-memory-system/abc'],
+    session_ref: 'session_01AmLsxZYKrKSjpN9b7J1q4f', idempotency_key: 'answer-session-1' };
+  const { calls, restore } = mockFetch(() => Response.json({
+    status: 'committed', replayed: false, receipt_id: 'r-1', request: publicRequest(),
+  }));
+  try {
+    const result = (await (await worker.fetch(mcp(bindingToken, TOOL, args), enabled, ctx)).json()).result;
+    assert.equal(result.isError, false);
+    assert.equal(calls[0].rpc, 'clued_owner_request_v1');
+    assert.deepEqual(calls[0].body.p_input, args);
   } finally { restore(); }
 });
 

@@ -24,7 +24,7 @@ export const ownerRequestTools = [
   {
     name: OWNER_REQUEST_TOOL,
     description:
-      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, repo.protected_change, work_claim.extra_claims, connection.permission). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. connection.permission asks for a permission your own connection lacks, one resource per context and action: permission:<global|profile|project:<id>>/<read|write|close|restore|audit>, for example permission:project:<id>/write, or a preset role instead of the action: reader (read), developer (read, write, close, restore) or full (all five), for example permission:project:<id>/developer; project:* is all of the Owner's own projects, including ones created later; no task_id or suggested_grant. Any live connection can send it, even one that cannot read or write that context. Once the Owner approves, the permission is on this same connection: retry the refused call, no reconnect needed. repo.protected_change is opened only by the admission check for a pushed pull request (agent contract §1.7); asking for it yourself is refused with owner_request_action_door_only: give the Owner the link the check printed. Several actions for the same work, for example a production migration and the deploy of the same commit: send actions [{action, resources}, ...] (2 to 5, distinct, not connection.permission) instead of action and resources; you get one confirm_url, the Owner approves all of them with one click, and request.bundle lists each member's request_id and status. Status: send request_id alone to read pending, approved_once, granted, rejected or expired. A request expires after 24 hours. Idempotent by idempotency_key. Other actions require context:write.",
+      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, repo.protected_change, work_claim.extra_claims, connection.permission). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. connection.permission asks for a permission your own connection lacks, one resource per context and action: permission:<global|profile|project:<id>>/<read|write|close|restore|audit>, for example permission:project:<id>/write, or a preset role instead of the action: reader (read), developer (read, write, close, restore) or full (all five), for example permission:project:<id>/developer; project:* is all of the Owner's own projects, including ones created later; no task_id or suggested_grant. Any live connection can send it, even one that cannot read or write that context. Once the Owner approves, the permission is on this same connection: retry the refused call, no reconnect needed. repo.protected_change is opened only by the admission check for a pushed pull request (agent contract §1.7); asking for it yourself is refused with owner_request_action_door_only: give the Owner the link the check printed. Several actions for the same work, for example a production migration and the deploy of the same commit: send actions [{action, resources}, ...] (2 to 5, distinct, not connection.permission) instead of action and resources; you get one confirm_url, the Owner approves all of them with one click, and request.bundle lists each member's request_id and status. Send session_ref (your Host session id) when you create: once the Owner decides, the answer comes to that session by itself, as agent_inbox.owner_answers in clued_session_resume and clued_work_renew and as owner_answers in clued_agent_inbox, so you need not ask again or wait for the Owner to tell you. Status: send request_id alone to read pending, approved_once, granted, rejected or expired; reading a decided request's status also marks its answer read. A request expires after 24 hours. Idempotent by idempotency_key. Other actions require context:write.",
     inputSchema: {
       type: "object",
       properties: {
@@ -66,6 +66,10 @@ export const ownerRequestTools = [
           type: "string", minLength: 1, maxLength: 2000,
           description: "Optional explanation. The page shows it separately, marked unverified; it never changes what is approved.",
         },
+        session_ref: {
+          type: "string", minLength: 1, maxLength: 200,
+          description: "Create: your Host session id (the holder_session_ref you claim with). The Owner's answer then comes to this session rather than every session of your connection.",
+        },
         idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
       },
       additionalProperties: false,
@@ -95,7 +99,11 @@ export function ownerRequestCall(args: unknown): { rpc: string; input: Record<st
   }
   if (!("request_id" in input)) return { rpc: OWNER_REQUEST_CREATE_RPC, input };
   if (CREATE_FIELDS.some((field) => field in input)) throw new OwnerRequestInputError("owner_request_status_fields_invalid");
-  return { rpc: OWNER_REQUEST_STATUS_RPC, input };
+  // A status read is the asking Binding's own read (§13): session_ref changes
+  // nothing there, so it is dropped rather than refused.
+  const status = { ...input };
+  delete status.session_ref;
+  return { rpc: OWNER_REQUEST_STATUS_RPC, input: status };
 }
 
 const REJECTION = /^(owner_request|owner_grant|work_claim|intake_payload)_[a-z_]+$/;

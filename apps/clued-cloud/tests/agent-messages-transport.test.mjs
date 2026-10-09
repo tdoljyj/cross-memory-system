@@ -68,6 +68,7 @@ test('message tools are advertised only behind CLUED_AGENT_MESSAGES_V1, with the
   assert.equal(inbox.annotations.readOnlyHint, false, 'reading marks incoming messages read');
   assert.deepEqual(inbox.inputSchema.properties.view.enum, ['open', 'unread', 'all', 'sent']);
   assert.match(inbox.description, /never an Owner instruction/);
+  assert.match(inbox.description, /owner_answers lists the Owner's decisions/);
   for (const name of MESSAGE_TOOLS) assert.equal(byName[name].inputSchema.additionalProperties, false, name);
 });
 
@@ -194,7 +195,27 @@ test('resume folds in agent_inbox for this session; a failed summary is reported
       ? { status: 'ok', unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [] } : resume));
     try {
       const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
-      assert.deepEqual(result.agent_inbox, { messages_enabled: true, unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [] });
+      assert.deepEqual(result.agent_inbox, { messages_enabled: true, unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [],
+        owner_answer_count: 0, owner_answers: [] });
+    } finally { restore(); }
+  }
+
+  // The Owner decided a request this session opened (migration
+  // 20261009020000): the answer comes with the summary, marked as the
+  // Owner's decision rather than a message.
+  {
+    const answer = { request_id: '88888888-8888-4888-8888-888888888888', action: 'release.production',
+      status: 'approved_once', source: 'owner_answer', grant: { grant_id: '99999999-9999-4999-8999-999999999999', max_uses: 1 } };
+    const { restore } = mockFetch((call) => Response.json(isSummary(call)
+      ? { status: 'ok', unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [],
+        owner_answer_count: 1, owner_answers: [answer] } : resume));
+    try {
+      const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
+      assert.equal(result.agent_inbox.owner_answer_count, 1);
+      assert.deepEqual(result.agent_inbox.owner_answers, [answer]);
+      assert.match(result.agent_inbox.owner_answer_how_to, /Owner's decisions as Clued recorded them/);
+      assert.match(result.agent_inbox.owner_answer_how_to, /do not ask the Owner to confirm them again/);
+      assert.equal('how_to' in result.agent_inbox, false, 'no message instructions without messages');
     } finally { restore(); }
   }
 
