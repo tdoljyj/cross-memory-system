@@ -269,6 +269,7 @@
 2. **「Re-run failed jobs」仍拒绝**：它沿用 gate 上一次的输出，不重新判定（复审 3 N-R3、复审 5 n2）。gate 自己拦不住它（成功过的 gate job 在这种重跑里不再运行），所以 runner 开工前检查是唯一执行者，其放行条件写明为：`GITHUB_RUN_ATTEMPT ≥ 2` 时，`GET /repos/{o}/{r}/actions/runs/{run_id}/attempts/{n}/jobs` 里必须存在**同一 attempt** 的 `admission-gate` job 且 `conclusion=success`（证明 gate 在本次 attempt 重新判定过），否则拒绝；只看 `GITHUB_RUN_ATTEMPT == 2` 会把「Re-run failed jobs」一起放进来。
 
    **更正（2026-10-08，Owner Decision `77216370`）**：上面「同一 attempt 的 `admission-gate` job 且 `conclusion=success`」分不出「Re-run failed jobs」：GitHub 在新 attempt 的 job 列表里照样列出上一次没有重跑的 gate job，结论为 `success`（在 microsoft/vscode 运行 37727629063 上实测）。所以 runner 开工前检查还要求该 gate job 的 `started_at` 不早于运行的 `run_started_at`（每个 attempt 各自更新），观察不到（job 列表不完整、时间读不到）即拒绝。同一 Decision 允许 `gitleaks`、`trivy`（没有 gate 的必需检查）在打开的 PR 的当前 head 上重跑一次（attempt ≤ 2）。Decision `1b93760d` 取代 `610eeaaa`。
+   **补充（2026-10-09，Owner Decision `661f8c36`，Task `26cced7e`）**：改 workflow 的 PR 第一轮在准入成功前全部被钩子拒，其中没有 gate 的自托管短检查（如 `runner-budget-policy`）此前无法重跑，只能新提交或关闭重开。钩子版本 `merge-admission-ungated-rerun` 起，没有 `admission-gate` job 的 workflow 与 `gitleaks`、`trivy` 同样可在当前 head 上重跑一次（attempt 2），条件是该 workflow 文件在 head 处与默认分支逐字节相同（blob SHA 相等）且默认分支的副本没有 `admission-gate` job（只看这一轮的 job 列表不够：加闸 workflow 的单个 job 重跑可能列不出 gate）。改 workflow 的 PR 仍要求本事件准入运行成功。
 
 3. 旧 head（不是 PR 当前 head）的重跑仍拒绝；第 `2 + reruns_per_head` 次起拒绝。runner 开工前检查需要 Owner 在每台 runner 上更新钩子脚本（Decision `f303f861`）。
 4. 准入运行（`pull_request_target`，默认分支代码）的重跑不受次数限制：它每次都重新读 PR 与 main 当前代码，没有「沿用旧输出」的问题。
