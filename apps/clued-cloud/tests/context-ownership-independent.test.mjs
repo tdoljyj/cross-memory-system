@@ -9,6 +9,8 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import EmbeddedPostgres from 'embedded-postgres';
 
+// raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
+
 // Independent boundary checks. Transport fixtures are not database authorization evidence.
 const directory = await mkdtemp(path.join(os.tmpdir(), 'clued-context-independent-'));
 await build({ entryPoints: ['worker/continuity.ts'], outdir: directory, bundle: true, platform: 'node', format: 'esm', outExtension: { '.js': '.mjs' } });

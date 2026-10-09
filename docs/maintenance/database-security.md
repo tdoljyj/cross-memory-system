@@ -302,9 +302,61 @@ update public.clued_agent_bindings set revoked_at = null
 
 The Projection Builder cannot get a v12 authorization:
 `clued_private.projection_refresh_builder_binding` refuses a Builder Binding
-that has one. Closing the fallback (step 7b) therefore keeps a narrow
-exception for Bindings with an active `projection_builder_grants` row, read
-on scope `global` only.
+that has one. Closing the fallback (step 7b, below) therefore keeps a narrow,
+explicit exception for it.
+
+## Raw Binding grants, 2026-10-09
+
+Migration `20261009050000_close_v12_raw_binding_fallback_v1.sql` (step 7b,
+Owner Decision `d0458559`) makes `authorization_assert_entry_v12` refuse a
+Binding that has no v12 authorization, unless
+`clued_private.raw_binding_grants_v1` names it. A row lets that Binding do the
+listed `actions` on the scope in `context_key`; nothing else. Only the database
+owner can read or write the table. The migration writes one row: the Projection
+Builder (`05effaa9`), `global`, `read`, which is all its refresh RPCs ask for.
+
+Check after applying:
+
+```sql
+select binding_id, context_key, actions from clued_private.raw_binding_grants_v1;
+-- one row: 05effaa9-966d-43ad-904b-1f3426394410 | global | {read}
+select outcome, max(started_at) from clued_private.projection_refresh_attempts
+ where started_at > now() - interval '15 minutes' group by 1;
+-- SUCCEEDED rows keep appearing after the next Canonical write
+```
+
+If a live Binding turns out to depend on the old fallback, give it a v12
+authorization (reissue it), or as a stopgap add a row naming its scope and
+actions. Rollback restores the old body of the function:
+
+```sql
+create or replace function clued_private.authorization_assert_entry_v12(p_binding uuid,p_kind text,p_id text,p_environment text,p_action text)
+returns void language plpgsql security definer set search_path='' as $$
+declare a clued_private.authorizations_v12; e clued_private.authorization_entries_v12; m clued_private.project_memberships_v13;
+begin
+ if p_kind='scope' and p_id='project:*' then raise exception 'resource_action_not_authorized' using errcode='42501'; end if;
+ select * into a from clued_private.authorizations_v12 where binding_id=p_binding for share;
+ if not found then return; end if;
+ perform clued_private.authorization_account_v12(a.owner_id);
+ if a.revoked_at is not null or a.expires_at<=clock_timestamp() then raise exception 'authorization_revoked_or_expired' using errcode='42501'; end if;
+ select * into e from clued_private.authorization_entries_v12 where binding_id=p_binding and resource_kind=p_kind and resource_id=p_id and environment=p_environment;
+ if not found or not(p_action=any(e.actions)) then raise exception 'resource_action_not_authorized' using errcode='42501'; end if;
+ if e.qualification_id is not null then
+  if p_kind<>'context' then raise exception 'qualification_resource_mismatch' using errcode='42501'; end if;
+  m:=clued_private.project_context_membership_v13(a.owner_id,p_id::uuid,p_environment,e.qualification_id);
+  if not(p_action=any(m.actions)) then raise exception 'current_project_action_required' using errcode='42501'; end if;
+  perform 1 from clued_private.development_spaces_v14 where id=p_id::uuid and environment=p_environment for update;
+ else
+  perform clued_private.authorization_owner_resource_v12(a.owner_id,p_kind,p_id,p_environment);
+ end if;
+end $$;
+```
+
+Database tests insert raw Bindings freely; after applying the migrations they
+call `allowRawTestBindings` from `apps/clued-cloud/tests/raw-binding-grants-fixture.mjs`,
+which installs a test-only trigger granting such Bindings everything (a row with
+an empty `context_key`). `tests/raw-binding-grants-guard.test.mjs` fails when a
+test inserts Bindings without it.
 
 ## Left for later
 
@@ -321,10 +373,6 @@ on scope `global` only.
 - **Leaked-password protection.** A Supabase Auth dashboard setting that needs
   the Pro plan; the organization is on the free plan, so it stays off until an
   upgrade (Owner Decision `c4bc1ebe`).
-- **Close the v12 fallback (step 7b).** Make `authorization_assert_entry_v12`
-  refuse a Binding without a v12 authorization, except the Projection Builder
-  as above, and move the 73 database tests that insert raw Bindings to Bindings
-  with a v12 authorization.
 - **Contract text.** IntegrationRuntime v0.1.8 §5.13 still says
   `anon, authenticated` for the Binding path.
 - **Kept functions.** Move the tests in the table above to the successors, then

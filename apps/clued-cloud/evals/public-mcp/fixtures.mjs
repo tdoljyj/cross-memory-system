@@ -38,6 +38,10 @@ export async function resetAcceptanceFixture(connectionString = process.env.SUPA
       FIXTURE.bindingA, FIXTURE.ownerA, sha256(FIXTURE.bindingTokenA), FIXTURE.contextA,
       FIXTURE.bindingB, FIXTURE.ownerB, sha256(FIXTURE.bindingTokenB), FIXTURE.contextB,
     ]);
+    // Raw fixture Bindings work only with an explicit raw grant (migration 20261009050000, P0-4 step 7b).
+    await client.query(`insert into clued_private.raw_binding_grants_v1(binding_id,context_key,actions,reason)
+      select id,null,array['read','write','close','restore','audit','feedback_submit'],'public MCP acceptance fixture'
+        from unnest($1::uuid[]) id`, [[FIXTURE.bindingA, FIXTURE.bindingB]]);
     await client.query("insert into public.clued_context_streams(user_id,context_key,version) values ($1,$2,0),($3,$4,1)", [
       FIXTURE.ownerA, FIXTURE.contextA, FIXTURE.ownerB, FIXTURE.contextB,
     ]);

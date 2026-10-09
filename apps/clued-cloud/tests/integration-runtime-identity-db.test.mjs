@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2c Integration Runtime PR-2 (IntegrationRuntime v0.1.8 §14.1): Integration identity, Installation
 // Requests, the Claim Store, connections and explicit Binding ownership, normalization and the PR-2
@@ -1651,6 +1652,7 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
       try { await db.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(db);
     const columns = (await db.query(`select array_agg(attname::text) c from pg_attribute
       where attrelid = 'public.clued_agent_bindings'::regclass and attnum > 0 and not attisdropped`)).rows[0].c;
     assert.equal(columns.includes('organization_id'), false, 'the shape under test has no P5 columns');

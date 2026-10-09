@@ -23,6 +23,7 @@ import {
   verifyEvidenceSet,
   writeImmutableEvidenceSet,
 } from "../scripts/p6-shadow-canary.mjs";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const BUILD_EPOCH = "2026-08-27T00:00:00.000Z";
 const HASH = "a".repeat(64);
@@ -102,6 +103,7 @@ async function createP6Database(root, label) {
   `);
   const migrations = (await readdir(MIGRATIONS)).filter((name) => name.endsWith(".sql")).sort();
   for (const name of migrations) await client.query(await readFile(path.join(MIGRATIONS, name), "utf8"));
+  await allowRawTestBindings(client);
   await client.query(`insert into auth.users(id,email) values
     ('${DB_IDS.owner}','owner@p6.invalid'),('${DB_IDS.tenantBUser}','tenant-b@p6.invalid')`);
   await client.query(`

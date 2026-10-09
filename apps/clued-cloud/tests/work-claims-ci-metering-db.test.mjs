@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // GitHub CI metered per Task (migration 20261003180000, GenericWorkClaim
 // §10.4, Task bb9f1e36): verify with pr_ref and head_sha admits at most 40
@@ -59,6 +60,7 @@ test('work claims: GitHub CI heads metered per Task in a sliding 24-hour window'
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

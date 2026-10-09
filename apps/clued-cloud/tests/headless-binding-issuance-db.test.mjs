@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Headless Binding issuance (migration 20261004120000, Task 364212a1, Owner
 // Decision 6e0371e3): the Owner issues a least-privilege, expiring Binding
@@ -60,6 +61,7 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

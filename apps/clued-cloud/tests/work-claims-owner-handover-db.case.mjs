@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Work Claims PR 2 (migration 20261005200000, Task f165eb56, Decisions
 // 22b9bd9e and 4bcc424d): the Agent's holder_label, the Owner's list of live
@@ -62,6 +63,7 @@ test('work claims: holder labels, the Owner list and the Owner handover to a new
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const strangerId = uuid();

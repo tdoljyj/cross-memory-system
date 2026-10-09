@@ -10,6 +10,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { build, stop as stopEsbuild } from 'esbuild';
 import { presentCluedLogCard } from '../app/record-presentation.ts';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLOUD_ROOT = path.resolve(TEST_DIR, '..');
@@ -196,6 +197,7 @@ async function applyMigrations(client) {
     await client.query(await fs.readFile(path.join(MIGRATIONS, name), 'utf8'));
     if (name === LOG_ISOLATION_FORWARD_MIGRATION) upgradedAfter = await recordListFunctionIdentity(client);
   }
+  await allowRawTestBindings(client);
   check(productionBefore && upgradedAfter, 'upgrade probe observed both production-old and forward-migrated definitions');
   equal(upgradedAfter.oid, productionBefore.oid,
     'forward migration replaces record_list_core in place without changing its identity');

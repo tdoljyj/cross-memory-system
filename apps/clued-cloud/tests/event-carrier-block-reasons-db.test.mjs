@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -47,6 +48,7 @@ test("Event carrier blocks: decision-class Events rejected, blocks named with re
       try { await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8")); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const tokenHash = hash();

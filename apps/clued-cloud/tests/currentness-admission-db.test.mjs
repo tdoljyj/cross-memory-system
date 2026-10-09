@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -49,6 +50,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
     const userId = uuid();
     const tokenHash = hash();
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'admission@example.invalid',now())", [userId]);

@@ -10,6 +10,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 // Re-review 7, MAJOR-3: the admission door's case runs with this file, which
 // the authorization database job already lists.
 import './owner-grants-admission-door-db.case.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Owner Credential v0.1, rollout step 4 (migration 20261003170000_owner_grants_release_door;
 // OwnerCredential.v0.1.md §6.1): the production release workflow consumes an
@@ -65,6 +66,7 @@ test('owner grants: the release door consumes by action and commit and opens a r
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

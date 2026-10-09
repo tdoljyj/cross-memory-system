@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2a-1 / BUG-20260924-002: an update merges the top-level type_fields and
 // relations keys it sends; null removes a key; omitted keys are kept.
@@ -51,6 +52,7 @@ test('record updates merge type_fields and relations instead of replacing them',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     for (const role of ['anon', 'authenticated', 'service_role']) {
       assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') ok',

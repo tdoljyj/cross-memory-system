@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Owner Credential v0.1, rollout step 1 (migration 20261002220000_owner_grants_v1;
 // OwnerCredential.v0.1.md §3, §4): Agents create Owner Requests, only the
@@ -61,6 +62,7 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();
