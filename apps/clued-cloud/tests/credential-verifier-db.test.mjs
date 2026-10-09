@@ -80,7 +80,10 @@ test('Binding and Resource Center credentials are stored as verifiers', { timeou
       (user_id,vendor,agent_name,token_hash,scopes,context_keys) values($1,'test','Before',$2,
       array['context:read'],array['*']) returning id`, [userId, before])).rows[0].id;
 
-    await apply(migrations.filter((name) => name >= MIGRATION));
+    // This test replays and rolls back the historical 2a migration at its own boundary. Successor issuer
+    // identity functions are validated on the complete chain by issuer-credentials-db.test.mjs; reapplying
+    // the older text-rewrite migration over a newer contract is not a supported rollback.
+    await apply(migrations.filter((name) => name === MIGRATION));
 
     const stored = async (id) => (await admin.query('select token_hash from public.clued_agent_bindings where id=$1', [id])).rows[0].token_hash;
     assert.equal(await stored(beforeId), verifier(before), 'the existing row now holds the verifier');

@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -20,6 +21,7 @@ const TRACK = "20_P_产品与体验";
 // through the real cloud executor (verified-result mode) against disposable
 // PostgreSQL and an in-memory Drive with revisions. Never Google, never a disk.
 export async function testStorageReplace(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `replace-exec-${randomUUID()}`, resource = "https://replace-exec.invalid/mcp";

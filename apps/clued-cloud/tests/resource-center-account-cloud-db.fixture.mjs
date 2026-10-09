@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -14,6 +15,7 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapi
 // already-tested registration/transition contracts, not a production backfill.
 // All provider operations below use an in-memory fake, never Google or a disk.
 export async function testAccountCloud(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `account-cloud-${randomUUID()}`, resource = "https://account-cloud.invalid/mcp";

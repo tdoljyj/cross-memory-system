@@ -40,6 +40,7 @@ import { testStorageBudget } from "./resource-center-storage-budget-db.fixture.m
 import { testStorageConnections } from "./resource-center-storage-connections-db.fixture.mjs";
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 import { allowRawTestBindings } from "./raw-binding-grants-fixture.mjs";
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 const USER = "10000000-0000-4000-8000-000000000071";
 const PROJECT = "20000000-0000-4000-8000-000000000071";
@@ -124,6 +125,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       }
     }
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
     await t.test("Binding schema explicitly covers deployed missing-column and optional legacy shapes",async()=>{
       const has=(await admin.query("select exists(select 1 from information_schema.columns where table_schema='public' and table_name='clued_agent_bindings' and column_name='expires_at') present")).rows[0].present;
       assert.equal(has,bindingSchema==="legacy-expiry");

@@ -1,3 +1,4 @@
+// issuer-credentials: this historical test selects a migration chain before step 2b.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';

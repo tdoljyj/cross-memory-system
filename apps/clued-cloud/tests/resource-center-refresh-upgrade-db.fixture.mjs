@@ -1,9 +1,11 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 const hash=value=>createHash('sha256').update(value).digest('hex');
 
 // Seed through the pre-upgrade API, then verify against the actual migration.
 export async function seedRefreshUpgrade(admin,server) {
+  await allowTestIssuerCredentials(admin);
   const user=randomUUID(),project=randomUUID(),decision=randomUUID(),session=randomUUID(),issuer=hash(randomUUID());
   await admin.query("insert into auth.users(id,email) values($1,'upgrade@example.invalid')",[user]);
   await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at) values($1,$2,'Upgrade','upgrade',$3,'confirmed',now())",[project,user,'project:'+project]);

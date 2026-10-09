@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -10,7 +11,9 @@ const NATIVE = "public.clued_storage_policy_transition_v2";
 // real connections or issue a provider request. Reviewed client identity seeds
 // reuse the foundation schema; qualification is tested in its separate fixture.
 export async function testStoragePolicyTransition(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], sessionId = randomUUID(), issuer = hash(randomUUID()), oauthClient = `transition-${randomUUID()}`;
+  let issuerCredentialProof = issuer;
   const clientIssuer = hash(randomUUID()), resource = "https://policy-transition.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
   const platform = (await admin.query("select subject_id,version from clued_private.storage_admin_v2 where singleton")).rows[0];
@@ -87,7 +90,7 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
     assert.equal(result.status, "committed", JSON.stringify(result)); return { id: result.evidence_ids[0], digest: input.content_hash };
   };
   const adminCall = async (input, client = admin) => (await client.query(`select ${ADMIN}($1::jsonb) value`, [JSON.stringify(input)])).rows[0].value;
-  const rpc = async (input, client = native, secret = issuer) => (await client.query(`select ${NATIVE}($1,$2::jsonb) value`, [secret, JSON.stringify(input)])).rows[0].value;
+  const rpc = async (input, client = native, secret = issuerCredentialProof) => (await client.query(`select ${NATIVE}($1,$2::jsonb) value`, [secret, JSON.stringify(input)])).rows[0].value;
   const manifestInput = async (target, overrides = {}, history = target.history) => {
     const version = (await admin.query("select version from public.clued_memories where id=$1", [decision])).rows[0].version;
     const document = { contract: "clued.storage-policy-transition/2", owner_id: user, connection_id: target.connection, source_decision_id: decision,
@@ -144,6 +147,43 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
         assert.deepEqual(await effects(), before); assert.deepEqual(await counts(), auditBefore);
         for (const other of otherIssuers) await rejected(() => rpc(input, native, other), /storage_transition_denied|storage_transition_conflict/);
         assert.deepEqual(await counts(), auditBefore);
+      }
+      if ((await admin.query("select to_regclass('clued_private.issuer_credentials_v1') is not null ready")).rows[0].ready) {
+        const identity = (await admin.query("select id from clued_private.issuer_identities_v1 where kind='storage' and legacy_key=$1", [issuer])).rows[0].id;
+        const credentialVerifier = proof => 'cv1:' + hash('clued.credential-verifier.v1:' + proof);
+        const oldProof = issuerCredentialProof;
+        const oldGeneration = (await admin.query("select generation from clued_private.issuer_credentials_v1 where issuer_id=$1 and verifier=$2", [identity, credentialVerifier(oldProof)])).rows[0].generation;
+        const nextProof = hash(randomUUID() + randomUUID());
+        const nextGeneration = (await admin.query("select clued_private.issuer_credential_stage_v1($1,$2) value", [identity, credentialVerifier(nextProof)])).rows[0].value;
+        await admin.query("select clued_private.issuer_credential_activate_v1($1,$2)", [identity, nextGeneration]);
+        await admin.query("select clued_private.issuer_credential_retire_v1($1,$2)", [identity, oldGeneration]);
+        issuerCredentialProof = nextProof;
+        // The app is still revoked. A newly authenticated credential can read
+        // only the exact original Receipt; it cannot reinstate the old proof.
+        assert.deepEqual(await rpc(input), committed);
+        for (const proof of [oldProof, credentialVerifier(nextProof), identity, hash("unknown transition credential")]) {
+          await rejected(() => rpc(input, native, proof), /storage_transition_denied/);
+        }
+        const expiredProof = hash(randomUUID()), expiredGeneration = Number(nextGeneration) + 1;
+        const deadline = (await admin.query(`insert into clued_private.issuer_credentials_v1
+          (issuer_id,generation,verifier,state,activated_at,valid_until)
+          values($1,$2,$3,'active',clock_timestamp(),clock_timestamp()+interval '0.1 seconds') returning valid_until`,
+        [identity, expiredGeneration, credentialVerifier(expiredProof)])).rows[0].valid_until;
+        await waitPastDeadline(deadline);
+        await rejected(() => rpc(input, native, expiredProof), /storage_transition_denied/);
+        // A new key/payload, or status request, is not a historical replay.
+        for (const fresh of [{ ...input, idempotency_key: randomUUID() },
+          { ...input, manifest_sha256: hash("changed manifest") }, { ...input, expected_inventory_digest: hash("changed inventory") },
+          { action: "inspect", manifest_id: input.manifest_id }, { action: "describe", manifest_id: input.manifest_id }]) {
+          await rejected(() => rpc(fresh), /storage_transition_denied|storage_transition_conflict/);
+        }
+        const foreignOwner = randomUUID(), foreignSession = randomUUID(), foreign = await connect("authenticated");
+        await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'foreign-replay@example.invalid',now())", [foreignOwner]);
+        await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [foreignSession, foreignOwner]);
+        await login(foreign, foreignOwner, foreignSession);
+        await rejected(() => rpc(input, foreign), /storage_transition_denied/);
+        await rejected(async () => rpc(input, await connect("anon")), /permission denied|native|denied/);
+        assert.deepEqual(await effects(), before); assert.deepEqual(await counts(), auditBefore);
       }
     } finally {
       await admin.query("update clued_private.storage_oauth_apps_v1 set execution_enabled=$2,revoked_at=$3 where issuer_hash=$1", [issuer, original.execution_enabled, original.revoked_at]);
