@@ -15,6 +15,7 @@ import {
   APP_REQUEST_CAP,
   MEASURE_PERMISSIONS,
   REQUEST_CAP,
+  RUN_LIST_CAP,
   TIME_BUDGET_MS,
   budgetedFetch,
   cachedJobs,
@@ -36,6 +37,7 @@ import {
   renderSummary,
   runsOfPull,
   sumBy,
+  daysOf,
   windowOf,
 } from "./ci-usage-report.mjs";
 import { gateFindings, workflowFormFindings } from "./clued-work-admission.mjs";
@@ -71,7 +73,12 @@ function fakeGitHub({ runs = [], pulls = [], jobs = {}, remaining = () => 4000, 
     const page = Number(new URL(`https://x${route}`).searchParams.get("page") ?? 1);
     const slice = (items) => items.slice((page - 1) * 100, page * 100);
     let body = null;
-    if (route.startsWith(`/repos/${REPO}/actions/runs?created=`)) body = { total_count: runs.length, workflow_runs: slice(runs) };
+    if (route.startsWith(`/repos/${REPO}/actions/runs?created=`)) {
+      // Like GitHub: ">=date" lists at most 1,000 runs; "date" lists that day's runs, also at most 1,000.
+      const created = new URL(`https://x${route}`).searchParams.get("created");
+      const matching = created.startsWith(">=") ? runs : runs.filter((r) => r.created_at.startsWith(created));
+      body = { total_count: matching.length, workflow_runs: page > 10 ? [] : slice(matching) };
+    }
     else if (route.startsWith(`/repos/${REPO}/pulls?state=closed`)) body = slice(pulls);
     else {
       const match = new RegExp(`^/repos/${REPO}/actions/runs/(\\d+)/jobs\\?filter=all`).exec(route);
@@ -309,6 +316,41 @@ test("measurement App: the installation token is masked in the log", async () =>
   const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)], answer: withApp() });
   await runMain(github, { ...memoryFs(), log: (line) => lines.push(line) }, APP_ENV);
   assert.equal(lines[0], "::add-mask::app-token");
+});
+
+test("run list: a run listed twice (pages shifted by new runs) counts once", async () => {
+  const runs = Array.from({ length: 150 }, (_, i) => run(i + 1));
+  const jobs = Object.fromEntries(runs.map((r) => [r.id, [job(r.id * 10)]]));
+  // Page 2 starts with the last run of page 1 again, as when a new run arrives between the two pages.
+  const shifted = (route, n, headers) => (route.includes("actions/runs?created=") && route.endsWith("page=2")
+    ? new Response(JSON.stringify({ total_count: 151, workflow_runs: [runs[99], ...runs.slice(100)] }), { status: 200, headers }) : null);
+  const github = fakeGitHub({ runs, jobs, pulls: [pr(1)], answer: shifted });
+  const { report } = await runMain(github);
+  assert.deepEqual([report.coverage.runs_listed, report.coverage.runs_completed, report.coverage.runs_with_jobs, report.coverage.partial],
+    [150, 150, 150, false]);
+  assert.equal(report.metrics.self_hosted_minutes.jobs, 150);
+});
+
+test("run list: a window over GitHub's 1,000-run limit is listed day by day; a day over it is cut short", async () => {
+  assert.deepEqual(daysOf(WINDOW), ["2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"]);
+  const on = (day, from, count) => Array.from({ length: count }, (_, i) => run(from + i, { created_at: `${day}T10:00:00Z` }));
+  // 1,200 runs over three days: the whole window stops at 1,000, each day is under it.
+  let runs = [...on("2026-10-03", 1, 400), ...on("2026-10-05", 401, 400), ...on("2026-10-07", 801, 400)];
+  let github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
+  let { report } = await runMain(github, memoryFs(), APP_ENV);
+  const lists = github.calls.filter((call) => call.route.includes("actions/runs?created="));
+  assert.equal(lists.filter((call) => call.route.includes("created=%3E%3D")).length, RUN_LIST_CAP / 100, "the whole window: 10 full pages, no 11th");
+  assert.deepEqual([...new Set(lists.map((call) => new URL(`https://x${call.route}`).searchParams.get("created")).filter((c) => !c.startsWith(">=")))],
+    daysOf(WINDOW));
+  assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_by_day, report.coverage.run_list_complete, report.coverage.run_list_days_capped],
+    [1200, true, true, []]);
+  // 1,100 runs on one day: that day is cut short at 1,000 and the report says so.
+  runs = on("2026-10-05", 1, 1100);
+  github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
+  ({ report } = await runMain(github, memoryFs(), APP_ENV));
+  assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_complete, report.coverage.run_list_days_capped, report.coverage.partial],
+    [1000, false, ["2026-10-05"], true]);
+  assert.match(renderSummary(report), /run list cut short \(over GitHub's 1,000-run limit on 2026-10-05\)/);
 });
 
 test("cache: a completed run's jobs are fetched once; running runs are not cached; a re-run is read again", async () => {
