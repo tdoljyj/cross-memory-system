@@ -83,7 +83,8 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 42/);
+  const manifest = JSON.parse(await readFile(new URL("../../../config/clued-components.json", import.meta.url), "utf8"));
+  assert.equal(contractVersionOf(contract), Number(manifest.components.find((component) => component.id === "agent-contract").version));
   // Owner auto-approval switch and Owner answers (OwnerCredential §12, §13; Task ce42fc18).
   assert.match(contract, /That result is the receipt: go on with the gated step and do not hand the Owner a link/);
   assert.match(contract, /your Host session id as `session_ref`/);

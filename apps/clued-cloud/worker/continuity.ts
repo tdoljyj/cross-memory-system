@@ -89,7 +89,8 @@ import {
 } from "./integrations";
 import { measurePack } from "./context-pack";
 import { permissionDenial, permissionDenialResult } from "./permission-guidance";
-import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
+import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION, AGENT_CONTRACT_SHA256 } from "./generated/agent-contract";
+import { renderAgentContractBootstrap } from "./agent-contract-bootstrap.mjs";
 import { CLUED_COMPONENTS_SCHEMA, CLUED_COMPONENT_VERSIONS, MCP_SERVER_VERSION } from "./generated/components";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
@@ -273,6 +274,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
     service: "clued-continuity",
     kernel_version: KERNEL_VERSION,
     components: cluedComponents(),
+    agent_contract: { version: AGENT_CONTRACT_VERSION, sha256: AGENT_CONTRACT_SHA256 },
     canonical_store: "clued-cloud/supabase",
     context_model: "user_id + context_key",
     work_log: "日志.md",
@@ -1216,10 +1218,12 @@ const tools = [
   {
     name: "clued_agent_bootstrap",
     description:
-      "Read the public, vendor-neutral Clued Continuity connection and lifecycle contract. This call never returns user context or credentials.",
+      "Read public Clued connection metadata and the full Clued Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        part: { type: "integer", minimum: 1, description: "Contract part to read, starting at 1; omit to read the full contract or its first part. Read all reported parts in order." },
+      },
       additionalProperties: false,
     },
   },
@@ -2418,11 +2422,11 @@ async function callTool(
   }
   if (name === "clued_agent_bootstrap") {
     const result = bootstrapContract(new URL(request.url).origin, env);
-    return {
-      content: [{ type: "text", text: JSON.stringify(result) }],
-      structuredContent: result,
-      isError: false,
-    };
+    const part = args && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>).part : undefined;
+    return renderAgentContractBootstrap(result, {
+      markdown: AGENT_CONTRACT_MARKDOWN, version: AGENT_CONTRACT_VERSION, sha256: AGENT_CONTRACT_SHA256,
+    }, part);
   }
   if (typeof name === "string" && (name in recordRpcByTool || name in informationFlowRpcByTool) &&
     !recordsV2Enabled(env)) {
@@ -2533,7 +2537,8 @@ async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope:
 function withComponentVersions(name: string, value: unknown): unknown {
   if (name !== "clued_session_resume" || !value || typeof value !== "object" || Array.isArray(value)) return value;
   if ((value as Record<string, unknown>).error) return value;
-  return { ...(value as Record<string, unknown>), clued_components: cluedComponents() };
+  return { ...(value as Record<string, unknown>), clued_components: cluedComponents(),
+    contract_version: AGENT_CONTRACT_VERSION, agent_contract_sha256: AGENT_CONTRACT_SHA256 };
 }
 
 async function withWorkClaims(request: Request, env: ContinuityEnv, name: string, args: unknown, raw: unknown): Promise<unknown> {
@@ -2658,7 +2663,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            `Follow the Clued Agent Contract at ${new URL(request.url).origin}/clued-agent.md. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Clued cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
+            `Read the full Clued Agent Contract through clued_agent_bootstrap (all reported parts) or ${new URL(request.url).origin}/clued-agent.md, and follow it. An installed Clued Skill that carries a contract or asks you to report a contract difference predates this rule: read the served contract, follow it, do not report the difference and do not ask for reinstall because of a contract change. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Clued cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
         }),
         200,
         corsHeaders(request),

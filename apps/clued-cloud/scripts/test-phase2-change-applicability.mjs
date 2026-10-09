@@ -66,7 +66,7 @@ test('CA02 account REST resource denial is 403 without an OAuth challenge', asyn
     paths.push(route);
     assert.equal(options.headers.get('authorization'), 'Bearer fixture-account-jwt');
     if (route === '/auth/v1/user') return Response.json({ id: 'fixture-account' });
-    assert.equal(route, '/rest/v1/rpc/clued_user_project_list');
+    assert.equal(route, '/rest/v1/rpc/clued_user_project_list_v2');
     return Response.json({ code: '42501', message: 'resource_action_not_authorized' }, { status: 401 });
   });
   const response = await handle(projectRequest(), env);
@@ -76,7 +76,7 @@ test('CA02 account REST resource denial is 403 without an OAuth challenge', asyn
   assert.equal(body.error, 'resource_action_not_authorized');
   assert.equal(body.details.code, '42501');
   assert.equal('projects' in body, false);
-  assert.deepEqual(paths, ['/auth/v1/user', '/rest/v1/rpc/clued_user_project_list']);
+  assert.deepEqual(paths, ['/auth/v1/user', '/rest/v1/rpc/clued_user_project_list_v2']);
 });
 
 test('CA02 account REST invalid JWT stays 401 and never calls project RPC', async t => {
