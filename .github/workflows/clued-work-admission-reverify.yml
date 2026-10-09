@@ -51,9 +51,9 @@ concurrency:
 jobs:
   reverify:
     name: clued-work-admission-reverify
-    # Keep the literal hosted label until the trusted admission guard accepts
-    # the exact latest/slim expression; arbitrary expressions remain fail-closed.
-    runs-on: ubuntu-latest
+    # slim is limited to 15 minutes; state_change retains standard Ubuntu
+    # for its 30-minute rejudgment of every open pull request.
+    runs-on: ${{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}
     # state_change judges every open pull request and posts two checks each.
     timeout-minutes: ${{ inputs.reason == 'state_change' && 30 || 10 }}
     environment: clued-admission
