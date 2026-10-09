@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Work Claims merge slot (migration 20261006120000, Task f89eaf0a, Owner
 // Decisions 0edf7889 and 2ea795e4): the slot merge:<owner>/<name>:<branch> is
@@ -65,6 +66,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at)

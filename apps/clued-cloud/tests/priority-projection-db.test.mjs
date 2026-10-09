@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
 
+// raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const migrationName = "20260922030001_sync_m1_record_priority_projection.sql";
 const uuid = () => crypto.randomUUID();

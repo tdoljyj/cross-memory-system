@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Search re-review (Owner Decisions 07f80a00 and 5d61f655, Task f46591b2):
 // input checks after authorization, admitted-only resume hints, the session's
@@ -52,6 +53,7 @@ test('search re-review: inputs, sessions, merged projects and paging limit', { t
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
     for (const fn of ['search_int_input_v1(jsonb,integer)', 'search_bool_input_v1(jsonb)',
       'search_scope_allowed_v2(text,text,text,text[])']) {
       for (const role of ['anon', 'authenticated', 'service_role']) {

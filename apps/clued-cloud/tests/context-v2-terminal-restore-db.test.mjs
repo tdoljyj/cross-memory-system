@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -54,6 +55,7 @@ test("terminal restore binds explicit intent to the exact closeout Receipt", { t
         throw new Error(`Migration ${name}: ${error.message}`, { cause: error });
       }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const tokenHash = hash();

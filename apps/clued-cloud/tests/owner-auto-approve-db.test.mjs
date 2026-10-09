@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Owner auto-approval switch (migration 20261008170000_owner_auto_approve_v1;
 // OwnerCredential.v0.1.md §12, Owner Decision 5ce219c6, Task 8eb340c7). The
@@ -61,6 +62,7 @@ test('owner auto-approval: the switch approves requests at once, never connectio
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

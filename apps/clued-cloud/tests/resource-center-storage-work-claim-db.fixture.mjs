@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
+// raw-binding-grants: the calling test (resource-center-authority-db) calls allowRawTestBindings.
+
 const sha = value => createHash("sha256").update(value).digest("hex");
 const JOBS = "public.clued_storage_jobs_router_v2";
 const BATCH = "public.clued_storage_trash_batch_v1";

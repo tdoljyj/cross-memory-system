@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
+// raw-binding-grants: applies only migrations before 20261009050000, where raw Bindings still pass.
+
 // Work Claim per-Task cap exemption (migration 20261002190000, Owner Decision
 // d16b5bfc): only a fresh Native account session can grant one, in two steps;
 // it admits 5 more claims or takeovers of one Task for 24 hours.

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const vendored = path.resolve(root, '../../development/contracts/information-flow/vendored/m0a');
@@ -98,6 +99,7 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     // DB enum sets must equal the vendored frozen schemas.
     const candidateSchema = JSON.parse(await fs.readFile(path.join(vendored, 'candidate-information.v1.schema.json'), 'utf8'));
