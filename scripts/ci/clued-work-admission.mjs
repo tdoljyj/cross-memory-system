@@ -695,28 +695,44 @@ export function ownerReviewFindings(headText, baseText) {
   return findings;
 }
 
-export async function ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note) {
+// Task 2b2359da: the door can exceed the anon role's 3 s statement timeout
+// (500, code 57014) on a fresh database connection. A cancelled call rolls
+// back as a whole and the door is idempotent (it reuses the pending request
+// and replays a grant use), so that one error is retried, twice at most.
+export const DOOR_RETRY_DELAYS_MS = Object.freeze([2000, 4000]);
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note,
+  { delays = DOOR_RETRY_DELAYS_MS, sleep = sleepMs } = {}) {
   const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
   const resource = `repo:${repository}/${headSha}`;
-  const response = await fetchImpl(`${base}/rest/v1/rpc/${OWNER_REVIEW_RPC}`, {
-    method: "POST",
-    headers: {
-      apikey: key,
-      authorization: `Bearer ${key}`,
-      "content-type": "application/json",
-      accept: "application/json",
-      "user-agent": "clued-work-admission",
-    },
-    body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN),
-      p_input: { action: OWNER_REVIEW_ACTION, resources: [resource], ...(note ? { note } : {}) } }),
-  });
+  let response;
   let text = "";
   let body = null;
-  try {
-    text = await response.text();
-    body = text ? JSON.parse(text) : null;
-  } catch {
+  for (let attempt = 0; ; attempt += 1) {
+    response = await fetchImpl(`${base}/rest/v1/rpc/${OWNER_REVIEW_RPC}`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+        accept: "application/json",
+        "user-agent": "clued-work-admission",
+      },
+      body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN),
+        p_input: { action: OWNER_REVIEW_ACTION, resources: [resource], ...(note ? { note } : {}) } }),
+    });
+    text = "";
     body = null;
+    try {
+      text = await response.text();
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    const timedOut = response.status === 500 && body && body.code === "57014";
+    if (!timedOut || attempt >= delays.length) break;
+    await sleep(delays[attempt]);
   }
   const detail = describe(response.status, body, text, response.headers);
   if (response.status === 404 && body && body.code === "PGRST202") return { kind: "rpc_unavailable", detail, resource };
