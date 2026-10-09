@@ -22,7 +22,7 @@ const { createStorageCredentialVault } = await load("storage-credential-vault");
 const SCOPE = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const CLIENT = "backfill.apps.googleusercontent.com";
 const PERMISSIONS = [{ id: "owner", type: "user", role: "owner" }];
-const FLAGS = { CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_JOBS_V2: "true",
+const FLAGS = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_JOBS_V2: "true",
   CLUED_STORAGE_EXECUTOR_V1: "true", CLUED_STORAGE_CONNECTOR_ISSUER: "i".repeat(40), CLUED_STORAGE_GOOGLE_CLIENT_ID: CLIENT,
   SUPABASE_URL: "https://db.example.test", SUPABASE_PUBLISHABLE_KEY: "publishable" };
 
@@ -43,6 +43,8 @@ async function fixture({ drive = {}, token = {}, load = {}, directories } = {}) 
       return Response.json({ id: "folder", version: "7", permissions: PERMISSIONS, ...drive.body });
     }
     assert.equal(url.pathname, "/rest/v1/rpc/clued_storage_access_digest_backfill_v1");
+    assert.equal(new Headers(init.headers).get('authorization'), 'Bearer test-worker-gateway');
+    assert.equal(new Headers(init.headers).get('apikey'), FLAGS.SUPABASE_PUBLISHABLE_KEY);
     const body = JSON.parse(init.body);
     assert.match(body.p_issuer_hash, /^[0-9a-f]{64}$/);
     const input2 = body.p_input;
@@ -64,7 +66,7 @@ async function fixture({ drive = {}, token = {}, load = {}, directories } = {}) 
 test("disabled without the storage flags, unavailable without the issuer, vault or client", async () => {
   assert.deepEqual(await runStorageAccessDigestBackfillScheduled({}), { status: "disabled" });
   const f = await fixture();
-  for (const missing of ["CLUED_STORAGE_CONNECTOR_ISSUER", "CLUED_STORAGE_VAULT_KEYS", "CLUED_STORAGE_GOOGLE_CLIENT_ID"])
+  for (const missing of ["CLUED_DB_GATEWAY_TOKEN", "CLUED_STORAGE_CONNECTOR_ISSUER", "CLUED_STORAGE_VAULT_KEYS", "CLUED_STORAGE_GOOGLE_CLIENT_ID"])
     assert.deepEqual(await runStorageAccessDigestBackfillScheduled({ ...f.env, [missing]: "" }, { fetch: f.fetch }), { status: "unavailable" });
 });
 

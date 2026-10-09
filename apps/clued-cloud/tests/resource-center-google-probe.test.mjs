@@ -155,7 +155,7 @@ test("time spent checking identity is part of the shared observation deadline",a
 test("native HTTP probe route preserves JWT plus fixed issuer and never accepts a report",async()=>{
   const {loadContinuityWorker}=await import("./worker-continuity-loader.mjs"), worker=await loadContinuityWorker();
   const f=await fixture(), origin="https://clued.example.invalid", issuer=randomBytes(32).toString("base64url");
-  const env={CLUED_STORAGE_ACCOUNT_V1:"true",CLUED_STORAGE_GOOGLE_V1:"true",SUPABASE_URL:"https://db.example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture-key",
+  const env={ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",CLUED_STORAGE_ACCOUNT_V1:"true",CLUED_STORAGE_GOOGLE_V1:"true",SUPABASE_URL:"https://db.example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture-key",
     CLUED_STORAGE_GOOGLE_CLIENT_ID:f.client,CLUED_STORAGE_CONNECTOR_ISSUER:issuer,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(f.vaultConfig)};
   const request=(body,token="native-fixture")=>new Request(origin+"/v1/storage/google/probe",{method:"POST",headers:{origin,"content-type":"application/json",authorization:"Bearer "+token},body:JSON.stringify(body)});
   const original=globalThis.fetch; let redirect=false;

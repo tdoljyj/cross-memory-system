@@ -293,7 +293,14 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
 
     // ---- Worker transport. Only the PostgREST hop is shimmed.
     const worker = await loadContinuityWorker();
+    const gatewayToken = 'synthetic-information-flow-invalidation-worker-gateway';
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await gateway.query('set session authorization authenticator; set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
     const workerEnv = { PROJECT_VIEWS_V2: 'true', SUPABASE_URL: 'https://storage.clued.test',
+      CLUED_DB_GATEWAY_TOKEN: gatewayToken,
       ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
     const rawBinding = `clued_bnd_${'s'.repeat(43)}`;
     const rawDeleted = `clued_bnd_${'d'.repeat(43)}`;
@@ -327,10 +334,13 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       }
       const rpc = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url.pathname)?.[1];
       assert.ok(rpc, url.pathname);
+      if (!claims && token !== gatewayToken) {
+        return Response.json({ code: 'PGRST301', message: 'invalid JWT' }, { status: 401 });
+      }
       rpcLog.push(rpc);
       const body = JSON.parse(init.body);
       const keys = Object.keys(body);
-      const client = claims ? human : anon;
+      const client = claims ? human : gateway;
       if (claims) await as(claims);
       try {
         const value = (await client.query(`select public.${rpc}(${keys.map((name, i) => `${name}=>$${i + 1}`).join(',')}) v`,

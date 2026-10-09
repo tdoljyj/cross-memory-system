@@ -1,6 +1,7 @@
 /** OAuth protocol is delegated to the maintained provider; Clued retains live grants. */
 import { OAuthProvider, OAuthError, GrantType, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
+import { databaseGatewayToken } from './database-gateway';
 import { isStorageAgentTool } from './storage-agent-tools';
 import { storageReadTool, storageContentTool } from './storage-read-agent';
 import { storageConnectionsTool } from './storage-connections';
@@ -74,12 +75,18 @@ async function rpc(env: DelegatedOAuthEnv, token: string, name: string, body: Js
   return await response.json() as Json;
 }
 async function bindingRpc(env: DelegatedOAuthEnv, name: string, bindingToken: string): Promise<Json> {
+  const gatewayToken = databaseGatewayToken(env);
+  if (!gatewayToken) throw new AuthorizationFailure(503, '授权服务暂不可用，请稍后重试。');
   const response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${name}`, {
-    method: 'POST', headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY!, 'Content-Type': 'application/json' },
+    method: 'POST', headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY!, Authorization: `Bearer ${gatewayToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ p_token_hash: await hash(bindingToken) }), signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) {
     if (transient(response.status)) throw new OAuthError('temporarily_unavailable', { description: 'Clued authorization service is temporarily unavailable.', statusCode: 503 });
+    const problem = await response.json().catch(() => null) as { code?: unknown } | null;
+    if (response.status === 401 && typeof problem?.code === 'string' && /^PGRST30[123]$/.test(problem.code)) {
+      throw new OAuthError('temporarily_unavailable', { description: 'Clued authorization service is temporarily unavailable.', statusCode: 503 });
+    }
     throw new OAuthError('invalid_grant', { description: 'Clued authorization is revoked or unavailable to this connection.' });
   }
   return await response.json() as Json;
@@ -136,8 +143,10 @@ function terminalRedirect(auth: AuthRequest, error: string) {
   return url.href;
 }
 async function revokeIssuedBinding(env: DelegatedOAuthEnv, bindingId: string) {
+  const gatewayToken = databaseGatewayToken(env);
+  if (!gatewayToken) throw new AuthorizationFailure(503, '撤销尚未确认，请稍后重试。');
   const response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/clued_authorization_revoke_issuer_v12`, {
-    method: 'POST', headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY!, 'Content-Type': 'application/json' },
+    method: 'POST', headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY!, Authorization: `Bearer ${gatewayToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ p_issuer_hash: await hash(env.CLUED_AUTHORIZATION_ISSUER_TOKEN!), p_binding_id: bindingId }),
     signal: AbortSignal.timeout(15000),
   });

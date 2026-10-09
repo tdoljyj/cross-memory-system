@@ -127,7 +127,7 @@ test("dedicated renewal transport never echoes token hashes, rejects other crede
     calls++;assert.equal(JSON.parse(options.body).p_token_hash, hash("clued_rcr_" + "a".repeat(64)));
     return Response.json({ status: "rotated", grant_id: randomUUID(), generation: 1, reader_hash: "should-not-leak" });
   };
-  const call = token => worker.fetch(new Request("https://clued.test/v1/resource-center/renew", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ contract: "clued.resource-center-renewal/1", request: { action: "rotate", reader_hash: "private" } }) }), { ASSETS: { fetch() {} } }, { waitUntil() {} });
+  const call = token => worker.fetch(new Request("https://clued.test/v1/resource-center/renew", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ contract: "clued.resource-center-renewal/1", request: { action: "rotate", reader_hash: "private" } }) }), { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch() {} } }, { waitUntil() {} });
   try {
     for (const prefix of ["clued_rcw_", "clued_rcb_", "clued_bnd_"]) assert.equal((await call(prefix + "a".repeat(64))).status, 403);
     assert.equal(calls, 0);const response = await call("clued_rcr_" + "a".repeat(64));assert.equal(response.headers.get("cache-control"), "no-store");

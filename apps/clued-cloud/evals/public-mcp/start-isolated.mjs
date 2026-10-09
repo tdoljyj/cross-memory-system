@@ -2,12 +2,13 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertLocalGatewayUrl, createLocalGatewayToken, localGatewayChildEnv } from './gateway-token.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cloudRoot = path.resolve(here, "../..");
 const secretPath = path.join(here, ".dev.vars.public-mcp");
 
-function reportedPublishableKey() {
+function reportedLocalStatus() {
   try {
     const statusArgs = process.platform === "linux" && process.arch === "x64"
       ? ["--yes", "--package=supabase@2.115.0", "--package=@supabase/cli-linux-x64@2.115.0",
@@ -21,10 +22,10 @@ function reportedPublishableKey() {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         shell: process.platform === "win32",
+        env: localGatewayChildEnv(),
       },
     );
-    const status = JSON.parse(output);
-    return status.PUBLISHABLE_KEY ?? status.ANON_KEY;
+    return JSON.parse(output);
   } catch {
     return undefined;
   }
@@ -32,16 +33,25 @@ function reportedPublishableKey() {
 
 // `db reset` ends by restarting containers, and `status` can omit the keys
 // until they are back. Wait for the key instead of failing on the first read.
-async function localPublishableKey() {
+async function localCredentials() {
   for (let attempt = 1; attempt <= 20; attempt += 1) {
-    const key = reportedPublishableKey();
-    if (key) return key;
+    const status = reportedLocalStatus();
+    const key = status?.PUBLISHABLE_KEY ?? status?.ANON_KEY;
+    if (key && status.JWT_SECRET) {
+      const origin = assertLocalGatewayUrl(status.API_URL);
+      const config = JSON.parse(fs.readFileSync(path.join(here, 'wrangler.jsonc'), 'utf8'));
+      if (assertLocalGatewayUrl(config.vars.SUPABASE_URL) !== origin) {
+        throw new Error('isolated Worker and local Supabase origins differ');
+      }
+      return { key, gateway: createLocalGatewayToken({ apiUrl: origin, jwtSecret: status.JWT_SECRET }) };
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error("Local Supabase did not report a publishable key.");
+  throw new Error("Local Supabase did not report a publishable key and JWT_SECRET.");
 }
 
-fs.writeFileSync(secretPath, `SUPABASE_PUBLISHABLE_KEY=${await localPublishableKey()}\n`, { mode: 0o600 });
+const credentials = await localCredentials();
+fs.writeFileSync(secretPath, `SUPABASE_PUBLISHABLE_KEY=${credentials.key}\nCLUED_DB_GATEWAY_TOKEN=${credentials.gateway}\n`, { mode: 0o600 });
 
 const command = process.platform === "win32" ? "npx.cmd" : "npx";
 const child = spawn(command, [
@@ -54,7 +64,7 @@ const child = spawn(command, [
   "--log-level", "error",
 ], {
   cwd: cloudRoot,
-  env: { ...process.env, WRANGLER_LOG_PATH: path.join(cloudRoot, ".wrangler", "public-mcp.log") },
+  env: localGatewayChildEnv(process.env, { WRANGLER_LOG_PATH: path.join(cloudRoot, ".wrangler", "public-mcp.log") }),
   stdio: "inherit",
   shell: process.platform === "win32",
 });
@@ -74,4 +84,5 @@ child.on("exit", (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   else process.exitCode = code ?? 1;
 });
+child.on('error', () => { cleanup(); process.exitCode = 1; });
 process.on("exit", cleanup);

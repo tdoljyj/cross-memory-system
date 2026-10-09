@@ -43,7 +43,14 @@ test('Authorization closeout: new resources and interrupted multi-step work', { 
       await db.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [subject ?? '', JSON.stringify({ sub: subject })]);
       return db;
     }
-    const owner = await client('authenticated', user), anon = await client('anon');
+    const owner = await client('authenticated', user);
+    // The full migration set supplies C1's gateway role and RPC grants. Binding
+    // calls use its real authenticator path; consent and revoke stay human APIs.
+    const gateway = server.getPgClient(); clients.push(gateway); await gateway.connect();
+    await gateway.query('set session authorization authenticator; set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
+    assert.deepEqual((await gateway.query('select session_user, current_user')).rows[0],
+      { session_user: 'authenticator', current_user: 'clued_worker_gateway' });
     const rpc = async (db, name, args) => (await db.query('select public.' + name + '(' + args.map((_, index) => '$' + (index + 1)).join(',') + ') value', args.map(value => Array.isArray(value) ? JSON.stringify(value) : value))).rows[0].value;
     const denied = promise => assert.rejects(promise, error => ['42501', '28000'].includes(error.code));
     const prepare = () => rpc(owner, 'clued_authorization_prepare_v12', [issuer, { request_digest: hash(), client_id: 'same-closeout-client', client_name: 'Local closeout', redirect_uri: 'https://client.example.invalid/callback', resource, requested_scopes: ['context:read', 'context:write'] }]);
@@ -58,7 +65,7 @@ test('Authorization closeout: new resources and interrupted multi-step work', { 
       const context = await rpc(owner, 'clued_development_owner_v14', [{ op: 'context_create', idempotency_key: key(), name: name + ' development', project_id: id, environment: 'test' }]);
       return { id, context: context.result.id };
     }
-    const call = (binding, context, input) => rpc(anon, 'clued_development_call_v14', [binding.tokenHash, { context_id: context, ...input }]);
+    const call = (binding, context, input) => rpc(gateway, 'clued_development_call_v14', [binding.tokenHash, { context_id: context, ...input }]);
     const entries = binding => admin.query('select resource_kind,resource_id,environment,actions from clued_private.authorization_entries_v12 where binding_id=$1 order by resource_kind,resource_id,environment', [binding.binding_id]).then(result => result.rows);
     const firstProject = await project('Project A');
 

@@ -3,7 +3,7 @@ import test from "node:test";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 const worker = await loadContinuityWorker();
 const origin = "https://clued.example.invalid";
-const env = { CLUED_STORAGE_ACCOUNT_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
 const request = (body, token = "fixture-native-jwt") => new Request(origin + "/v1/storage/account", {
   method: "POST", headers: { "content-type": "application/json", origin, authorization: "Bearer " + token }, body: JSON.stringify(body),
 });
@@ -57,7 +57,7 @@ test("owner storage management is native-only and routes to its exact RPC",async
     assert.equal((await worker.fetch(ownerRequest({action:"connections"}),{})).status,404);
     assert.equal((await worker.fetch(ownerRequest({action:"connections"},"clued_bnd_"+"a".repeat(64)),env)).status,401);
     assert.equal(calls.length,0);
-    const result=await worker.fetch(ownerRequest({action:"connections"}),{...env,CLUED_STORAGE_EXECUTOR_V1:"false"});
+    const result=await worker.fetch(ownerRequest({action:"connections"}),{ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",...env,CLUED_STORAGE_EXECUTOR_V1:"false"});
     assert.equal(result.status,200);assert.deepEqual(await result.json(),{connections:[],worker_execution_enabled:false});
     assert.equal(calls[1].url,env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_owner_manage_v2");
     assert.equal(calls[1].headers.get("authorization"),"Bearer fixture-native-jwt");

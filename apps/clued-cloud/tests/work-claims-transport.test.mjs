@@ -18,7 +18,7 @@ const CONTRACT_VERSION = contractVersionOf(await readFile(new URL('../../../skil
 // fold-in over the Worker transport. The database side is covered by
 // currentness-work-claims-db.test.mjs; here every RPC is mocked.
 
-const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 const enabled = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_WORK_CLAIMS_V1: 'true' };
 const disabled = { ...assets, PROJECT_VIEWS_V2: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };

@@ -813,13 +813,25 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       });
       assert.equal(tempBinding.status, "committed");
       const worker = await loadContinuityWorker();
+      const gatewayToken = "synthetic-resource-center-authority-worker-gateway";
+      const gateway = server.getPgClient();
+      await gateway.connect();
+      await gateway.query("set session authorization authenticator; set role clued_worker_gateway");
+      await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
+      const workerEnv = { SUPABASE_URL: "https://storage.clued.test",
+        CLUED_DB_GATEWAY_TOKEN: gatewayToken,
+        ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
       const originalFetch = globalThis.fetch;
       globalThis.fetch = async (url, options) => {
+        assert.equal(new URL(String(url)).host, "storage.clued.test", "no external call");
         assert.match(String(url), /\/rpc\/clued_resource_center_(authority|write)_v1$/);
+        if (new Headers(options.headers).get("authorization") !== `Bearer ${gatewayToken}`) {
+          return Response.json({ code: "PGRST301", message: "invalid JWT" }, { status: 401 });
+        }
         const body = JSON.parse(options.body);
         const rpcName = String(url).endsWith("/clued_resource_center_write_v1")
           ? "clued_resource_center_write_v1" : "clued_resource_center_authority_v1";
-        const result = (await anon.query(
+        const result = (await gateway.query(
           `select public.${rpcName}($1,$2::jsonb) value`,
           [body.p_token_hash, JSON.stringify(body.p_request)],
         )).rows[0].value;
@@ -872,7 +884,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
           authority_binding_token: rawToken,
           authority_fetch: (url, options) => worker.fetch(
             new Request(url, options),
-            { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+            workerEnv,
             { waitUntil() {}, passThroughOnException() {} },
           ),
         };
@@ -996,6 +1008,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         await assert.rejects(fs.stat(deniedTopic), { code: "ENOENT" });
       } finally {
         globalThis.fetch = originalFetch;
+        await gateway.end();
       }
     });
     await testRenewalDatabase(t, admin, server, USER, DECISION);

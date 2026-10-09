@@ -6,7 +6,7 @@ import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 // message tools and the three fold-ins over the Worker transport. The database
 // side is covered by agent-messages-db.test.mjs; here every RPC is mocked.
 
-const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 const enabled = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_WORK_CLAIMS_V1: 'true', CLUED_AGENT_MESSAGES_V1: 'true' };
 const claimsOnly = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_WORK_CLAIMS_V1: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -330,7 +330,7 @@ test('a work-claim conflict names who to write to; without the flag it is unchan
 
 test('a storage write refused by a live claim names who to write to, for submit and trash batch alike', async () => {
   const worker = await loadContinuityWorker();
-  const storage = { CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_JOBS_V1: 'true',
+  const storage = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_JOBS_V1: 'true',
     SUPABASE_URL: 'https://db.example.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key' };
   const connection = '20000000-0000-4000-8000-000000000001';
   const rejection = { status: 'rejected', error_code: 'work_claim_conflict', door: 'clued-storage',

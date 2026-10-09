@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   SUPABASE_URL: "https://clued.test",
   SUPABASE_PUBLISHABLE_KEY: "anon-test",
   CLUED_PROJECTION_BUILDER_TOKEN: `clued_bnd_${"p".repeat(43)}`,

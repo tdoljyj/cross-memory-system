@@ -83,7 +83,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 41/);
+  assert.match(contract, /Contract version: 42/);
   // Owner auto-approval switch and Owner answers (OwnerCredential §12, §13; Task ce42fc18).
   assert.match(contract, /That result is the receipt: go on with the gated step and do not hand the Owner a link/);
   assert.match(contract, /your Host session id as `session_ref`/);
@@ -104,19 +104,28 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /A head that only merges the default branch into an approved head keeps that approval/);
   // Merge slot (Owner Decision 0edf7889): one session at a time brings main in, runs CI and merges.
   assert.match(contract, /The slot is the trigger ref `merge:<owner>\/<name>:<branch>`/);
-  assert.match(contract, /Here a conflict means wait; do not stop or tell the Owner for it/);
+  // Merge Admission step 4 (Owner Decision 661f8c36, Task 38e0c90d): the slot is a queue; a merge ref never conflicts.
+  assert.match(contract, /A merge ref never conflicts: the renewal succeeds, and the claim's `merge_queue` shows your `state`/);
+  assert.match(contract, /bring the default branch in and push first, then renew its claim/);
+  assert.match(contract, /While you wait, do nothing for the merge/);
+  assert.match(contract, /Renew about once an hour to keep your lease \(2 hours\) without spending the claim's 12 renewals/);
+  assert.match(contract, /a renewal that keeps the ref joins again at the back/);
   assert.match(contract, /Merge dependent pull requests one at a time/);
   // Owner Decision 2ea795e4: the slot lapses on its own clock and a required App check enforces it.
-  assert.match(contract, /The slot lapses 45 minutes after you last took or renewed it/);
+  assert.match(contract, /The head's slot starts when it becomes head and lapses 45 minutes after that or after your last renewal/);
   // Merge Admission step 3 (Owner Decisions 4f576896, 1fb7f6b3): CI keeps the slot, a failure returns it, a hard cap ends it.
   assert.match(contract, /Where the `clued-merge-slot-ci` workflow runs, CI keeps the slot for you, so do not renew only to keep it/);
-  assert.match(contract, /a CI required check that fails gives the slot back at once/);
-  assert.match(contract, /the slot ends `merge_slot_hard_cap_minutes` \(the policy file's, 120 by default\) after you took it/);
+  assert.match(contract, /a CI required check that fails after you became head gives the slot back at once, takes you out of the queue/);
+  assert.match(contract, /A check that had already failed when you became head, such as the admission of a head that fell behind while you waited, does not/);
+  assert.match(contract, /the slot ends `merge_slot_hard_cap_minutes` \(the policy file's, 120 by default\) after you became head/);
   assert.match(contract, /the slot lasts 90 minutes past the latest report/);
   assert.match(contract, /If it shows no report for your current head while CI runs .* or the workflow does not run, renew with the same refs/);
   assert.match(contract, /or `merge_slot_until` comes within 10 minutes while a run of your head is still going/);
   assert.match(contract, /Turn auto-merge off as soon as a CI required check fails or the merge is refused/);
   assert.match(contract, /posts a `clued-merge-slot` check on every head/);
+  assert.match(contract, /the check passes only while the claim holds the slot as head of the queue/);
+  // Runner hook merge-admission-ungated-rerun (Task 26cced7e): an ungated self-hosted check may be re-run once.
+  assert.match(contract, /a self-hosted check that has no `admission-gate` job \(such as `runner-budget-policy`\)/);
   assert.match(contract, /`migration\.production`: one resource per migration file the run applies/);
   assert.match(contract, /ask for everything the release needs in one call: `clued_owner_request` with `actions`/);
   assert.match(contract, /When it carries `suggested_request`, call `clued_owner_request` with that object as is/);

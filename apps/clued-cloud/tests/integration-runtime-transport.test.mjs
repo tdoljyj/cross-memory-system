@@ -123,17 +123,20 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
     await admin.query(`insert into clued_private.authorization_issuers_v12(token_hash, resource, name)
       values ($1, $2, 'Integration transport fixture')`, [sha(issuer), resource]);
     const human = await connect();
-    const anon = await connect();
+    const gateway = await connect();
     await human.query('set role authenticated');
     await human.query("select set_config('request.jwt.claim.sub', $1, false), set_config('request.jwt.claims', $2, false)",
       [OWNER, JSON.stringify({ sub: OWNER })]);
-    await anon.query('set role anon');
+    await gateway.query('set session authorization authenticator; set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
 
-    const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
+    const gatewayToken = 'synthetic-integration-runtime-worker-gateway';
+    const env = { CLUED_DB_GATEWAY_TOKEN: gatewayToken, OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
       CLUED_AUTHORIZATION_ISSUER_TOKEN: issuer, SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key',
       PROJECT_VIEWS_V2: 'true', CLUED_INTEGRATION_RUNTIME_V1: 'true',
       ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
-    // PostgREST stand-in: the account JWT runs as authenticated with its claims, anything else as anon;
+    // PostgREST stand-in: the account JWT runs as authenticated with its claims;
+    // the Worker credential runs as the real gateway, and unknown credentials are refused.
     // the SQLSTATE → HTTP mapping is PostgREST's for the codes these entries raise.
     const rpcLog = [];
     globalThis.fetch = async (input, init = {}) => {
@@ -146,12 +149,15 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
       }
       const name = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url.pathname)?.[1];
       assert.ok(name, url.pathname);
+      if (!isHuman && new Headers(init.headers).get('authorization') !== `Bearer ${gatewayToken}`) {
+        return Response.json({ code: 'PGRST301', message: 'invalid JWT' }, { status: 401 });
+      }
       rpcLog.push(name);
       const values = JSON.parse(init.body || '{}');
       const keys = Object.keys(values);
       assert.ok(keys.every((name) => /^p_[a-z0-9_]+$/.test(name)), keys.join());
       try {
-        const { rows } = await (isHuman ? human : anon).query(
+        const { rows } = await (isHuman ? human : gateway).query(
           `select public.${name}(${keys.map((name, index) => `${name} => $${index + 1}`).join(', ')}) value`,
           keys.map((name) => (values[name] !== null && typeof values[name] === 'object' ? JSON.stringify(values[name]) : values[name])));
         return Response.json(rows[0].value);
