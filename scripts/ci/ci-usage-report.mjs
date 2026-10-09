@@ -38,7 +38,11 @@
 // GitHub requests per run: the run list of the window (one per 100 runs), the
 // closed pull requests until the first one updated before the window (one per
 // 100), and one jobs list (filter=all, every attempt) for each completed run
-// that is not cached yet.
+// that is not cached yet. GitHub returns at most 1,000 runs for a created
+// filter, so a window that reaches that many is listed again day by day, and a
+// day that reaches it marks the list cut short. New runs arriving while the
+// list is paged shift its pages, so runs are counted once by id (run
+// 37959346703 listed 12 runs twice).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -58,6 +62,8 @@ export const RATE_LIMIT_FLOOR = 600;
 export const DEFAULT_DAYS = 7;
 export const MAX_DAYS = 14;
 export const PAGE_SIZE = 100;
+// GitHub's limit on the results of one created-filtered run list.
+export const RUN_LIST_CAP = 1000;
 export const CACHE_DIR = ".ci-usage-cache";
 export const CACHE_FILE = "runs.json";
 export const CACHE_SCHEMA = "clued.ci-usage-cache/v1";
@@ -252,19 +258,48 @@ async function mintMeasureToken({ env, fetchImpl, now, appId, key, fallback }) {
     + "it needs read access to actions, checks, contents, issues and pull requests)");
 }
 
-// The pages of a list until a short page, until `done(chunk)`, or until the
-// budget stops it; complete is false in the last case.
-export async function fetchPaged(request, route, key, { done = () => false } = {}) {
+// The pages of a list until a short page, until `done(chunk)`, until
+// `maxItems` (capped: true), or until the budget stops it; complete is false
+// in the last case.
+export async function fetchPaged(request, route, key, { done = () => false, maxItems = Infinity } = {}) {
   const items = [];
   const sep = route.includes("?") ? "&" : "?";
   for (let page = 1; ; page += 1) {
     const answer = await request(`${route}${sep}per_page=${PAGE_SIZE}&page=${page}`);
-    if (!answer.ok) return { items, complete: false };
+    if (!answer.ok) return { items, complete: false, capped: false };
     const chunk = key ? answer.body && answer.body[key] : answer.body;
     if (!Array.isArray(chunk)) throw new Error(`GitHub API ${route} returned no ${key ?? "list"}`);
     items.push(...chunk);
-    if (chunk.length < PAGE_SIZE || done(chunk)) return { items, complete: true };
+    if (chunk.length < PAGE_SIZE || done(chunk)) return { items, complete: true, capped: false };
+    if (items.length >= maxItems) return { items, complete: true, capped: true };
   }
+}
+
+// The window's days, start_date to the end's date (UTC).
+export function daysOf(window) {
+  const days = [];
+  for (let day = Date.parse(`${window.start_date}T00:00:00Z`); day <= Date.parse(window.end); day += DAY_MS) {
+    days.push(new Date(day).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+// The window's runs, once each by id. complete is false when the budget
+// stopped the list or a single day reached GitHub's 1,000-run limit.
+export async function listRuns(request, repository, window) {
+  const route = (created) => `/repos/${repository}/actions/runs?created=${encodeURIComponent(created)}`;
+  const once = (items) => [...new Map(items.map((run) => [run.id, run])).values()];
+  const whole = await fetchPaged(request, route(`>=${window.start_date}`), "workflow_runs", { maxItems: RUN_LIST_CAP });
+  if (!whole.capped) return { items: once(whole.items), complete: whole.complete, by_day: false, day_capped: [] };
+  const items = [];
+  const dayCapped = [];
+  for (const day of daysOf(window)) {
+    const listed = await fetchPaged(request, route(day), "workflow_runs", { maxItems: RUN_LIST_CAP });
+    items.push(...listed.items);
+    if (listed.capped) dayCapped.push(day);
+    if (!listed.complete) return { items: once(items), complete: false, by_day: true, day_capped: dayCapped };
+  }
+  return { items: once(items), complete: dayCapped.length === 0, by_day: true, day_capped: dayCapped };
 }
 
 // --- The cache of completed runs' jobs, keyed by run id.
@@ -328,8 +363,7 @@ const slimRun = (run) => ({
 });
 
 export async function collectUsage({ request, repository, window, cache }) {
-  const runsRoute = `/repos/${repository}/actions/runs?created=${encodeURIComponent(`>=${window.start_date}`)}`;
-  const listed = await fetchPaged(request, runsRoute, "workflow_runs");
+  const listed = await listRuns(request, repository, window);
   const runs = listed.items.map(slimRun).filter((run) => run.created_at && run.created_at >= window.start);
   // Closed pull requests, newest update first, until one was updated before the window.
   const before = (pr) => !pr || !pr.updated_at || pr.updated_at < window.start;
@@ -341,7 +375,8 @@ export async function collectUsage({ request, repository, window, cache }) {
   // are read first, and a run that stops leaves the newest for the next one.
   const jobsByRun = new Map();
   const coverage = { runs_listed: runs.length, runs_completed: 0, runs_in_progress: 0, runs_with_jobs: 0, runs_from_cache: 0,
-    runs_fetched_now: 0, run_list_complete: listed.complete, pull_list_complete: closed.complete };
+    runs_fetched_now: 0, run_list_complete: listed.complete, run_list_by_day: listed.by_day, run_list_days_capped: listed.day_capped,
+    pull_list_complete: closed.complete };
   for (const run of [...runs].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id)) {
     if (run.status !== "completed") { coverage.runs_in_progress += 1; continue; }
     coverage.runs_completed += 1;
@@ -460,7 +495,9 @@ export function renderSummary(report) {
     + `${coverage.runs_in_progress} still running.`);
   if (coverage.partial) {
     lines.push("", `**Partial coverage**${coverage.stopped ? ` (stopped: ${coverage.stopped})` : ""}: `
-      + `run list ${coverage.run_list_complete ? "complete" : "cut short"}, pull request list ${coverage.pull_list_complete ? "complete" : "cut short"}.`);
+      + `run list ${coverage.run_list_complete ? "complete" : "cut short"}`
+      + `${coverage.run_list_days_capped && coverage.run_list_days_capped.length ? ` (over GitHub's 1,000-run limit on ${coverage.run_list_days_capped.join(", ")})` : ""}, `
+      + `pull request list ${coverage.pull_list_complete ? "complete" : "cut short"}.`);
   }
   const dist = (metric, unit) => `p50 ${show(metric.p50, unit)} · p95 ${show(metric.p95, unit)} · n ${metric.count}`;
   lines.push("", "| Metric | Status | Value |", "| --- | --- | --- |");
