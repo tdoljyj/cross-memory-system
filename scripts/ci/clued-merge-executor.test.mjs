@@ -157,12 +157,25 @@ test("auto-merge on with an opt-in for another head is turned off (review MAJOR-
   assert.deepEqual([writes(manual), (await run(manual)).actions[0].reason], [[], "auto-merge is already on"]);
 });
 
-test("a pull request GitHub can already merge is reported, not an error (review MAJOR-1)", async () => {
+test("a pull request GitHub can already merge is merged by the executor, bound to its head (Task ff476b06)", async () => {
   for (const status of ["clean", "unstable"]) {
-    const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: `Pull request Pull request is in ${status} status` }] } } });
+    const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: `Pull request Pull request is in ${status} status` }] },
+      [`PUT /repos/${REPO}/pulls/5/merge`]: { __status: 200, body: { merged: true, sha: "c".repeat(40), message: "Pull Request successfully merged" } } } });
     const result = await run(fetch);
-    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error], [[], "mergeable_now", undefined], status);
-    assert.match(result.notices[0], /already mergeable/);
+    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].merge_status, result.actions[0].merge_commit, result.actions[0].error],
+      [[], "merged", 200, "c".repeat(40), undefined], status);
+    const merge = writes(fetch).find((call) => call.method === "PUT" && call.route === `/repos/${REPO}/pulls/5/merge`);
+    assert.deepEqual(merge.body, { merge_method: "merge", sha: HEAD }, status);
+    assert.match(result.notices[0], /already mergeable, so GitHub does not take auto-merge; the executor merged it/);
+  }
+  // GitHub refuses the merge (a required check, or the head moved): reported, nothing else written.
+  for (const [code, message] of [[405, "Required status check \"trivy\" is expected."], [409, "Head branch was modified. Review and try the merge again."]]) {
+    const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Pull request Pull request is in clean status" }] },
+      [`PUT /repos/${REPO}/pulls/5/merge`]: { __status: code, body: { message } } } });
+    const result = await run(fetch);
+    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].merge_status], [[], "mergeable_now", code], String(code));
+    assert.equal(result.actions[0].error, `merge refused: ${message}`);
+    assert.match(result.notices[0], /enable_auto_merge was refused: merge refused/);
   }
   // Any other GraphQL error is a refusal notice.
   const other = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Resource not accessible by integration" }] } } });

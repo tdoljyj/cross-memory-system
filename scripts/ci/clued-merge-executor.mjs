@@ -35,16 +35,22 @@
 //               When the line names another head and auto-merge is on, the
 //               executor turns it off. Without a line it leaves auto-merge
 //               alone: the Agent merges as before.
+//   mergeable   GitHub refuses auto-merge on a pull request that can merge
+//               now ("clean status", or "unstable status" when only a check
+//               that is not required failed). Under the same conditions the
+//               executor then merges it itself (merge commit, sha bound to
+//               the head it read); the ruleset still requires every required
+//               check. The opt-in line is the merge approval, so nobody has
+//               to click merge (Owner, Task ff476b06).
 //   otherwise   nothing: the pull request has a conflict the holder must
-//               resolve, CI failed (clued-merge-slot-ci returns the slot), or
-//               it is already mergeable (the Agent merges).
+//               resolve, or CI failed (clued-merge-slot-ci returns the slot).
 //
 // It acts as the clued-admission App, with an installation token for
 // Contents: write and Pull requests: write. Until the Owner grants those
 // permissions the token request fails and the executor only reports that,
-// changing nothing. In frozen it does nothing at all. It never merges by
-// itself, never pushes to the default branch (the ruleset forbids it) and
-// trusts nothing in the triggering event.
+// changing nothing. In frozen it does nothing at all. It merges only an
+// opted-in head GitHub can merge now, never pushes to the default branch (the
+// ruleset forbids it) and trusts nothing in the triggering event.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -264,12 +270,23 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       entry.status = response.status;
       const errors = response.body && Array.isArray(response.body.errors) ? response.body.errors : [];
       if (response.status !== 200 || errors.length) entry.error = errors.map((e) => e && e.message).filter(Boolean).join("; ") || `HTTP ${response.status}`;
-      // GitHub refuses auto-merge on a pull request that can merge now: its holder merges it.
-      // GitHub says "clean status", or "unstable status" when only a check that is not required failed.
+      // GitHub refuses auto-merge on a pull request that can merge now: "clean status", or
+      // "unstable status" when only a check that is not required failed. The plan's conditions
+      // hold, so the executor merges it, bound to the head it read (Task ff476b06).
       if (enable && entry.error && /(clean|unstable) status/i.test(entry.error)) {
-        entry.result = "mergeable_now";
         delete entry.error;
-        result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; its holder merges it (an Agent that writes the opt-in line after the checks passed merges itself)`);
+        const merged = await appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/merge`, token,
+          { merge_method: "merge", sha: plan.pr.head.sha });
+        entry.merge_status = merged.status;
+        if (merged.status === 200 && merged.body && merged.body.merged === true) {
+          entry.result = "merged";
+          entry.merge_commit = merged.body.sha ?? null;
+          result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; the executor merged it (${String(entry.merge_commit).slice(0, 12)})`);
+        } else {
+          // 405: not mergeable after all (a required check, the ruleset); 409: the head moved.
+          entry.result = "mergeable_now";
+          entry.error = `merge refused: ${merged.body && merged.body.message ? String(merged.body.message) : `HTTP ${merged.status}`}`;
+        }
       }
     }
     if (entry.error) result.notices.push(`#${plan.pr.number}: ${plan.action} was refused: ${entry.error}`);
