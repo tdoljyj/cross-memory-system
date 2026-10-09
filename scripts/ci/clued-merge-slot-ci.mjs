@@ -9,10 +9,10 @@
 //   failed   one of the four CI required checks (gitleaks, trivy and
 //            clued-work-admission from GitHub Actions, clued-admission-verified
 //            from the clued-admission App) finally failed on the head after
-//            the claim got the slot (step 4: a failure from before, such as
-//            the admission of a head that fell behind while the claim waited
-//            in the merge queue, leaves the holder the slot to bring the
-//            default branch in and push; it holds green back); Clued
+//            the claim got the slot (step 4: an admission check that failed
+//            before, as it does when the head falls behind while the claim
+//            waits in the merge queue, leaves the holder the slot to bring
+//            the default branch in and push; it holds green back); Clued
 //            returns the slot at once, and a failing clued-merge-slot check is
 //            posted on the head so that auto-merge cannot merge it on a
 //            re-run's green (independent review MAJOR-2).
@@ -117,9 +117,10 @@ async function newestCheck(fetchImpl, env, repository, headSha, { name, app_id: 
     .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
 }
 
-// failed, running, green, or idle (not reported), with what was seen. A
-// failure that completed before slotSince (when the claim got the slot, ms)
-// is not reported.
+// failed, running, green, or idle (not reported), with what was seen. An
+// admission check's failure that completed before slotSince (when the claim
+// became head of the merge queue, ms) is not reported.
+const STALE_OK = new Set(["clued-work-admission", "clued-admission-verified"]);
 export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null) {
   const checks = [];
   let before = null;
@@ -128,7 +129,9 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
     checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
     if (check && check.status === "completed" && FAILING.has(check.conclusion)) {
       const completed = Date.parse(check.completed_at ?? "");
-      if (Number.isFinite(slotSince) && Number.isFinite(completed) && completed < slotSince) {
+      // Only the admission checks: they fail when the head falls behind while the claim waits. A
+      // gitleaks or trivy failure is the head's own (independent review MINOR-6).
+      if (STALE_OK.has(required.name) && Number.isFinite(slotSince) && Number.isFinite(completed) && completed < slotSince) {
         before ??= `${required.name} concluded ${check.conclusion} before the slot was taken`;
         continue;
       }

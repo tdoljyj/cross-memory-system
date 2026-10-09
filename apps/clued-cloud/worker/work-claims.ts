@@ -37,7 +37,7 @@ const writeSet = {
 const triggerRefs = {
   type: "array", maxItems: 50, uniqueItems: true,
   items: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}:\\S{1,200}$" },
-  description: "What set this work off, as kind:value (for example ghsa:GHSA-xxxx, ci:trivy@<base_sha>, issue:<n>, pr:<n>). Two claims that share a ref conflict whatever their titles.",
+  description: "What set this work off, as kind:value (for example ghsa:GHSA-xxxx, ci:trivy@<base_sha>, issue:<n>, pr:<n>). Two claims that share a ref conflict whatever their titles, except a merge slot ref (merge:<owner>/<name>:<branch>), which joins that branch's merge queue.",
 } as const;
 const idempotencyKey = { type: "string", minLength: 8, maxLength: 160 } as const;
 const baseCommit = { type: "string", pattern: "^[0-9a-f]{7,64}$" } as const;

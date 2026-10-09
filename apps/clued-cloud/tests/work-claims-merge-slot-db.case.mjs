@@ -454,6 +454,33 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
         [role])).rows[0].v, false, role);
     }
 
+    // --- A lapsed entry whose lease ended before its turn leaves without moving the head's start (review BLOCKER-1). ---
+    let l1 = await claim('claude', 'L1', { trigger_refs: [SLOT], holder_session_ref: 'lease-1' });
+    const l2 = await claim('codex', 'L2', { trigger_refs: [SLOT], holder_session_ref: 'lease-2' });
+    let l3 = await claim('codex', 'L3', { trigger_refs: [SLOT], holder_session_ref: 'lease-3' });
+    await age(46);
+    await admin.query(`update clued_private.work_claims_v1 set issued_at=clock_timestamp()-interval '60 minutes',expires_at=clock_timestamp()-interval '50 minutes'
+      where claim_id=$1`, [l2.claim_id]);
+    await admin.query(`update clued_private.work_claims_v1 set status='EXPIRED' where claim_id=$1`, [l2.claim_id]);
+    [l1, l3] = [await view(l1), await view(l3)];
+    assert.deepEqual([queue(l1).state, queue(l3).state], ['out', 'head']);
+    assert.ok(minutesLeft(l3.merge_slot_until) > 43, `L3 keeps the start it got when L2's turn came: ${l3.merge_slot_until}`);
+    l1 = committed(await renew('claude', l1, { trigger_refs: [] })).claim;
+    l3 = committed(await renew('codex', l3, { trigger_refs: [] })).claim;
+
+    // --- Changing the merge refs joins again at the back: no jumping the line (review MAJOR-2). ---
+    let x = await claim('claude', 'X', { trigger_refs: ['merge:tdoljyj/cross-memory-system:release'], holder_session_ref: 'switch-x' });
+    let h = await claim('codex', 'H', { trigger_refs: [SLOT], holder_session_ref: 'switch-h' });
+    x = committed(await renew('claude', x, { trigger_refs: [SLOT] })).claim;
+    assert.deepEqual([queue(x).state, queue(x).ahead.map((row) => row.claim_id), x.merge_slot_until],
+      ['waiting', [h.claim_id], null]);
+    assert.equal(queue(await view(h)).state, 'head');
+    // A change of letter case only is the same ref: the head stays head (review MINOR-3).
+    h = committed(await renew('codex', h, { trigger_refs: ['merge:TDOLJYJ/cross-memory-system:main'] })).claim;
+    assert.deepEqual([queue(h).state, queue(h).position, queue(h).length], ['head', 1, 2]);
+    x = committed(await renew('claude', x, { trigger_refs: [] })).claim;
+    h = committed(await renew('codex', h, { trigger_refs: [] })).claim;
+
     // Once the Owner marks the CI admission Binding, only it may report or list.
     const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
       values($1,'global','binding_role_set','binding','fixture','{}'::jsonb) returning id`, [userId])).rows[0].id;

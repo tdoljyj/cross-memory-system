@@ -48,8 +48,9 @@ update clued_private.work_claims_v1
   set merge_queued_at=coalesce(merge_slot_taken_at,merge_slot_at,updated_at)
   where status in ('ACTIVE','DRAINING') and cardinality(clued_private.work_claim_merge_refs_v1(trigger_refs))>0;
 
+-- Live entries only: a released or expired claim keeps its join time (review MINOR-5).
 create index work_claims_v1_merge_queue_idx on clued_private.work_claims_v1(user_id,merge_queued_at)
-  where merge_queued_at is not null;
+  where merge_queued_at is not null and status in ('ACTIVE','DRAINING');
 
 -- When a claim's slot lapses if it became head at p_start: the later of the
 -- renewal clock and the CI clock, never after the hard cap counted from
@@ -145,40 +146,52 @@ language sql stable security definer set search_path='' as $$
       where x.v->'head'->>'claim_id'=c.claim_id::text) end
 $$;
 
--- Stamps the queue. Before the change, an entry that was head or had lapsed
--- and now leaves a queue (its merge ref dropped, its claim no longer live,
--- or a renewal that joins again) records its leaving. Then: joined (issued
--- with a merge ref, a merge ref newly added, or renewed with one after its
--- slot lapsed: back of the queue, no CI state); refreshed (renewed while head
--- or waiting: the renewal clock). Without merge refs there is no slot.
+-- Stamps the queue. A claim joins (back of its queues, no CI state) when it
+-- is issued with merge refs, when its set of merge refs changes in any way
+-- other than dropping all of them (one join time per claim, so a changed set
+-- joins every queue again; independent review MAJOR-2), or when it is
+-- renewed while lapsed or out in one of them. A renewal while head or waiting
+-- refreshes the renewal clock. Before the change, each queue in which the
+-- claim was head or had lapsed and that it now leaves (ref dropped, claim no
+-- longer live, or joining again) records the leaving: for a head, now or its
+-- lapse if earlier; for a lapsed entry, the cursor after it, its lapse or
+-- its start whichever is later (independent review BLOCKER-1). Merge refs
+-- are compared without case, as the queue matches them (review MINOR-3).
+-- Without merge refs there is no slot.
 create or replace function clued_private.work_claim_merge_slot_stamp_v1() returns trigger
 language plpgsql security definer set search_path='' as $$
 declare v_now timestamptz:=pg_catalog.clock_timestamp(); v_ref text; e jsonb;
-  v_rejoin boolean:=false; v_lapsed boolean:=false;
+  v_old text[]; v_new text[]; v_rejoin boolean:=false; v_states jsonb:='{}'::jsonb;
 begin
+  v_new:=array(select distinct lower(t) from unnest(clued_private.work_claim_merge_refs_v1(new.trigger_refs)) t order by 1);
+  if tg_op='UPDATE' then
+    v_old:=array(select distinct lower(t) from unnest(clued_private.work_claim_merge_refs_v1(old.trigger_refs)) t order by 1);
+  end if;
   if tg_op='UPDATE' and old.merge_queued_at is not null and old.status in ('ACTIVE','DRAINING') then
-    foreach v_ref in array clued_private.work_claim_merge_refs_v1(old.trigger_refs) loop
+    foreach v_ref in array v_old loop
       e:=null;
       select x into e from jsonb_array_elements(clued_private.work_claim_merge_queue_v1(old.user_id,v_ref)->'entries') x
         where x->>'claim_id'=old.claim_id::text;
-      continue when e is null;
-      -- Lapsed or out: a renewal that keeps the ref joins again at the back.
-      v_lapsed:=v_lapsed or e->>'state' in ('lapsed','out');
+      if e is not null then v_states:=v_states||jsonb_build_object(v_ref,e); end if;
+    end loop;
+    v_rejoin:=cardinality(v_new)>0 and (v_new is distinct from v_old
+      or (new.renewals is distinct from old.renewals
+        and exists(select 1 from jsonb_each(v_states) j where j.value->>'state' in ('lapsed','out'))));
+    for v_ref,e in select j.key,j.value from jsonb_each(v_states) j loop
       continue when e->>'state' not in ('head','lapsed');
-      continue when new.status in ('ACTIVE','DRAINING') and v_ref=any(clued_private.work_claim_merge_refs_v1(new.trigger_refs))
-        and not (new.renewals is distinct from old.renewals and e->>'state'='lapsed');
+      continue when new.status in ('ACTIVE','DRAINING') and v_ref=any(v_new) and not v_rejoin;
       insert into clued_private.work_claim_merge_queue_v1 as q(user_id,merge_ref,head_left_at,left_queued_at,left_claim_id)
-        values(old.user_id,lower(v_ref),
-          case e->>'state' when 'head' then least(v_now,(e->>'until')::timestamptz) else (e->>'until')::timestamptz end,
+        values(old.user_id,v_ref,
+          case e->>'state' when 'head' then least(v_now,(e->>'until')::timestamptz)
+            else greatest((e->>'until')::timestamptz,(e->>'since')::timestamptz) end,
           old.merge_queued_at,old.claim_id)
         on conflict (user_id,merge_ref) do update set
           head_left_at=greatest(q.head_left_at,excluded.head_left_at),
           left_queued_at=excluded.left_queued_at,left_claim_id=excluded.left_claim_id
           where (excluded.left_queued_at,excluded.left_claim_id)>(q.left_queued_at,q.left_claim_id);
     end loop;
-    v_rejoin:=new.renewals is distinct from old.renewals and v_lapsed;
   end if;
-  if cardinality(clued_private.work_claim_merge_refs_v1(new.trigger_refs))=0 then
+  if cardinality(v_new)=0 then
     new.merge_slot_at:=null;
     new.merge_queued_at:=null;
     new.merge_slot_taken_at:=null;
@@ -186,8 +199,7 @@ begin
     new.merge_slot_ci_head:=null;
     new.merge_slot_ci_at:=null;
     new.merge_slot_hard_cap_seconds:=null;
-  elsif tg_op='INSERT' or old.merge_queued_at is null
-      or cardinality(clued_private.work_claim_merge_refs_v1(old.trigger_refs))=0 or v_rejoin then
+  elsif tg_op='INSERT' or old.merge_queued_at is null or v_rejoin then
     new.merge_slot_at:=v_now;
     new.merge_queued_at:=v_now;
     new.merge_slot_taken_at:=v_now;

@@ -166,6 +166,9 @@ test("ciStateOf: a failure from before the slot was taken is not reported and ho
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "failed");
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [{ ...old, completed_at: "2026-10-09T05:01:00Z" }] }) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "failed");
+  // Only the admission checks: a gitleaks failure from before the slot is the head's own.
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure", completed_at: "2026-10-09T04:59:00Z" })] }) });
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "failed");
   // A counted run still reports running, so the holder keeps the slot while CI runs on its new head.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [old] }),
     ...runsRoute(HEAD, [run(GITLEAKS)]), ...sameAsMain() });
