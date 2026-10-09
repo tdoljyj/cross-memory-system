@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Owner Credential v0.1, step 3 (migration 20261003030000): over the per-Task
 // claim cap, a claim or takeover consumes an Owner Grant for
@@ -64,6 +65,7 @@ test('work claims over the per-Task cap consume Owner Grants; refusals carry an 
         try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
         catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
       }
+      await allowRawTestBindings(admin);
     };
     // Everything before step 3 first, so a legacy exemption can be granted
     // the old way; then step 3 and anything after it.
