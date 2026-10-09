@@ -392,7 +392,8 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     // Once the Owner marks the CI admission Binding, only it may report or list.
     const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
       values($1,'global','binding_role_set','binding','fixture','{}'::jsonb) returning id`, [userId])).rows[0].id;
-    const ciBinding = (await admin.query('select id from public.clued_agent_bindings where token_hash=$1', [tokens.ci])).rows[0].id;
+    // By name: the stored token_hash is a verifier since 20261008210000 (P0-4), not the token's hash.
+    const ciBinding = (await admin.query(`select id from public.clued_agent_bindings where user_id=$1 and agent_name='ci connection'`, [userId])).rows[0].id;
     await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
       values($1,$2,'ci-admission',now(),$3)`, [userId, ciBinding, roleReceipt]);
     assert.deepEqual(await agent('claude', 'clued_work_merge_slot_touch_v1',
