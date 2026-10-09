@@ -901,17 +901,17 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       // Raw Binding deletion and raw context_keys narrowing (widening does not stale).
       const md = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawDeleted),
         'raw deleted').manifest.id;
-      await admin.query('delete from public.clued_agent_bindings where token_hash=$1', [sha256(rawDeleted)]);
+      await admin.query('delete from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)', [sha256(rawDeleted)]);
       assert.deepEqual([(await manifest(md)).stale, (await manifest(md)).stale_reason], [true, 'binding_deleted']);
       const mn = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawNarrowed),
         'raw narrowed').manifest.id;
       assert.deepEqual((await manifest(mn)).effective_scopes, [p5a, p5b].sort());
-      await admin.query('update public.clued_agent_bindings set context_keys=array[$2] where token_hash=$1',
+      await admin.query('update public.clued_agent_bindings set context_keys=array[$2] where token_hash=clued_private.credential_verifier_v1($1)',
         [sha256(rawNarrowed), p5a]);
       assert.deepEqual([(await manifest(mn)).stale, (await manifest(mn)).stale_reason], [true, 'binding_scope_reduced']);
       const mn2 = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawNarrowed),
         'raw narrowed again').manifest.id;
-      await admin.query("update public.clued_agent_bindings set context_keys=array['*'] where token_hash=$1",
+      await admin.query("update public.clued_agent_bindings set context_keys=array['*'] where token_hash=clued_private.credential_verifier_v1($1)",
         [sha256(rawNarrowed)]);
       assert.equal((await manifest(mn2)).stale, false, 'widening does not stale');
 

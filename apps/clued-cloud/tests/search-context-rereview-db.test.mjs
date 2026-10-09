@@ -80,7 +80,7 @@ test('search re-review: inputs, sessions, merged projects and paging limit', { t
             ($1,'synthetic','Write only',$4,array['context:write'],array['global']),
             ($1,'synthetic','Revoked',$5,array['context:read'],array['global'])`,
       [userId, allToken, projectAToken, writeOnlyToken, revokedToken, scopeA]);
-    await admin.query('update public.clued_agent_bindings set revoked_at=now() where token_hash=$1', [revokedToken]);
+    await admin.query('update public.clued_agent_bindings set revoked_at=now() where token_hash=clued_private.credential_verifier_v1($1)', [revokedToken]);
     const anon = server.getPgClient();
     clients.push(anon);
     await anon.connect();

@@ -155,7 +155,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
       where event_id=$1`, [event.event_id])).rows[0];
     assert.equal(carrier.carrier_state, 'ACTIVE_UNSTRUCTURED');
     const primaryBindingId = (await admin.query(`select id from public.clued_agent_bindings
-      where user_id=$1 and token_hash=$2`, [userId, tokenHash])).rows[0].id;
+      where user_id=$1 and token_hash=clued_private.credential_verifier_v1($2)`, [userId, tokenHash])).rows[0].id;
     const proofReceiptId = (await admin.query(`insert into public.clued_audit_receipts
       (user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
       values($1,$2,'global','continuity_only_resolution_authorized','event',

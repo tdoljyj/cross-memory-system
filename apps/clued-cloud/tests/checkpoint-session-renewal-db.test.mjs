@@ -261,7 +261,7 @@ test("a committed checkpoint renews the session without a second resume", { time
     // A constraint that becomes visible without changing (here: the Binding
     // gains Global read after its resume) arrives in full.
     const widened = await call(projectToken, "clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
-    await admin.query("update public.clued_agent_bindings set context_keys=array['global',$2] where token_hash=$1",
+    await admin.query("update public.clued_agent_bindings set context_keys=array['global',$2] where token_hash=clued_private.credential_verifier_v1($1)",
       [projectToken, projectContext]);
     let widenedCheckpoint = await call(projectToken, "clued_mcp_commit_checkpoint", {
       context_key: projectContext, session_token: widened.session_token, base_version: widened.version,
@@ -302,7 +302,7 @@ test("a committed checkpoint renews the session without a second resume", { time
 
     // A Binding that lost read admission still checkpoints but gets no renewal.
     const readable = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
-    await admin.query("update public.clued_agent_bindings set scopes=array['context:write','audit:read'] where token_hash=$1", [tokenHash]);
+    await admin.query("update public.clued_agent_bindings set scopes=array['context:write','audit:read'] where token_hash=clued_private.credential_verifier_v1($1)", [tokenHash]);
     const writeOnly = await checkpoint(readable.session_token, readable.version, []);
     assert.equal(writeOnly.status, "committed");
     assert.equal(writeOnly.session_renewal, null);

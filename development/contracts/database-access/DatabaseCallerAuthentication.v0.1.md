@@ -1,6 +1,6 @@
 # Database Caller Authentication v0.1：库里只存校验值、Worker 不走 anon、G6 运输证明
 
-状态：**Proposed，部分已定（Owner 2026-10-08 Decision `1427642f`：接受设计 A 与 7 天备份；第 1 步先单独上线；设计 C 先做第 3 步只读核实，再选 C1 或 C2。Decision `096df8b8`：第 1 步一并收紧 Binding 表的插入、修改、删除；「无 v12 授权记录即放行」加为后续一步）。** 本文不授予任何迁移、Worker 发布、规则集或合同版本改动的权限；每一步实施由 Owner 单独批准，每步一个 PR。
+状态：**Proposed，部分已定（Owner 2026-10-08 Decision `1427642f`：接受设计 A 与 7 天备份；第 1 步先单独上线；设计 C 先做第 3 步只读核实，再选 C1 或 C2。Decision `096df8b8`：第 1 步一并收紧 Binding 表的插入、修改、删除；「无 v12 授权记录即放行」加为后续一步。Decision `2ec964af`：第 2 步按「写入自动转换」实现，见 §4.7）。** 本文不授予任何迁移、Worker 发布、规则集或合同版本改动的权限；每一步实施由 Owner 单独批准，每步一个 PR。
 日期：2026-10-08
 来源：审计 P0-4 Task `9a4d6d2c` 的步骤 4（库里存的哈希不再等于口令、G6 门不再信任客户端提交的提交号）与步骤 5（Worker 脱离 anon）；Owner Decision `8a7e345f`（2026-10-08，两步合并为一份设计稿，只写方案）。前置工作：步骤 1 卫生迁移 `20261007120000_db_security_hygiene.sql`（Decision `eed7154f`，已在生产），以及 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md) 的「Left for later」。
 对照基线：main `b290d0dd`（2026-10-08），生产库 `clued-prod` 2026-10-08 只读核对（安全检查：anon 可执行的 SECURITY DEFINER 函数 84、authenticated 69、search_path 可变 0、`rls_enabled_no_policy` 118、泄露密码保护关闭）。
@@ -124,6 +124,22 @@ Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`
 
 `authorization_assert_entry_v12` 在找不到 `authorizations_v12` 记录时直接返回（注释写的是「Existing non-migrated raw bindings keep their explicit existing grant」）。生产 62 个 Binding 中 17 个没有 v12 授权记录，其中 3 个仍有效：两个 2026-08-29 的旧 OAuth 审计 Binding（`c0cc5abf`、`b3603c56`，旧 OAuth 路径已一律拒绝，应已不可用）与 Projection Builder（`05effaa9`，`context:read`，`*`，Worker 机密 `CLUED_PROJECTION_BUILDER_TOKEN` 在用）。第 1 步之后已登录会话再也插不进新的这类行，但这条放行规则本身仍在。关闭它：先给 Projection Builder 补 v12 授权记录与条目、确认并撤销两个旧 OAuth 审计 Binding，再把 `if not found then return` 改为拒绝。见 §8 第 7 步。
 
+
+### 4.7 第 2 步的实现方式（Decision `2ec964af`，取代 §4.1、§4.2 的相应细节）
+
+目录查询（2026-10-08）显示，§4.2 第 4 点的「所有写入处改写校验值」要改约 45 个写入函数和约 150 个直接往凭据列写种子的测试文件，与在途 PR 冲突面大。Owner 选定：
+
+- **校验值格式**：`'cv1:' || sha256('clued.credential-verifier.v1:' || 证明值)`。前缀让校验值与 64 位十六进制的证明值在格式上可区分。`credential_verifier_v1` 对不是证明值的输入（含 NULL）返回 `'cv0:'`，它与任何存储值都不相等，也不会让 `<>` 比较变成 NULL 而放行。
+- **写入自动转换**：每个在范围内的列有 `credential_verifier_normalize_v1` 触发器（BEFORE INSERT/UPDATE OF 该列）：写入的若是证明值，就换成校验值；已是校验值则不动，所以复制已存值（如轮换时把旧值写进 `resource_center_rotations_v1`）不会被二次哈希。写入函数与测试照旧写证明值。列上的格式约束改为 `^cv1:[0-9a-f]{64}$`。
+- **比对**：所有与调用方证明值的比较改为与 `credential_verifier_v1(证明值)` 比较。
+- **内部转交**：有些函数把库里存的凭据当作证明值交给另一个函数（`clued_oauth_call` 的全部工具、存储云端执行器、Resource Center 写入日志）。它们改传 `credential_internal_proof_v1(存储值)`：一个随机的 64 位十六进制证明值，`credential_verifier_v1` 只在本事务内把它映射回该校验值。映射放在事务级设置 `clued.credential_internal_v1` 里，PostgREST 调用方无法设置；被调函数的格式检查不用改。`clued_oauth_call` 在解析出 Binding 后把 `v_binding.token_hash` 换成内部证明值一次，以后新加的工具照旧写 `v_binding.token_hash` 即可。
+- **守卫**：迁移末尾与 `credential-verifier-db.test.mjs` 检查：没有函数把在范围内的列与 `p_*` 参数（或 `h`、`reader_hash`、`writer_hash`）直接比较（`set` 赋值除外，触发器会转换）；测试还检查没有函数把 `x.token_hash` 当参数交给另一个函数（除非先换成内部证明值）。
+- **分两步**：
+  - **2a**：Binding（`clued_agent_bindings.token_hash`）与 Resource Center 令牌列（`resource_center_bindings_v1`、`resource_center_writer_bindings_v1`、`resource_center_renewals_v1` 的 `token_hash`，`resource_center_rotations_v1` 的 `old_*_hash` 与 `request` 里的新哈希，`resource_center_mutations_v1.authority_token_hash`）。迁移 `20261008210000_credential_verifier_v1.sql`。
+  - **2b**：发行方列（`authorization_issuers_v12.token_hash`、`authorization_requests_v12.issuer_hash`、各 `storage_*.issuer_hash`）。它们另有三个问题，所以单独做：`storage_client_request_digest_v2` 与 `storage_client_redirect_identity_v3` 把 `issuer_hash` 算进存储客户端摘要，而这些摘要已存进不可改的登记表；`storage_oauth_connection_consent_v1` 与 `storage_onboard_activate_v1` 把发行方证明值写进了不可改的回执；`storage_verified_result_v2` 把它存进持久化核验 JSON。2b 需要先定摘要怎么换代，并在迁移后轮换两个发行方密钥（旧证明值已在回执里）。
+
+§4.3 的生产核对与 §4.4 的 7 天备份照旧；备份另存被改写函数的原定义（`credential_function_backup_v1`），回退步骤见 [database-security.md](../../../docs/maintenance/database-security.md)。
+
 ---
 
 ## 5. 设计 B：G6 运输证明（T2 的一部分）
@@ -199,7 +215,7 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 ## 8. 分步实施（每步一个 PR，每步单独请 Owner 批准）
 
 1. **凭据表直接权限**（§4.5）：列级 SELECT 不含 `token_hash`；收回 INSERT、DELETE；UPDATE 只留 `revoked_at` 并只许撤销。迁移 `20261008150000_credential_table_privileges_v1.sql` 与数据库测试随本 PR 提交，需要 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`。
-2. **校验值迁移（设计 A）**：先用目录查询列出全部比对点与写入点作为 PR 附件，再写迁移、`credential_verifier_v1`、守卫测试、7 天备份表与回退迁移，更新两份运行手册；`test:db` 全绿、守卫测试通过后请 Owner 批准生产迁移；迁移后按 §4.3 只读核对。归属 Task `9a4d6d2c`，依据 Decision `8a7e345f`。
+2. **校验值迁移（设计 A）**：按 §4.7 分两步。**2a** Binding 与 Resource Center 令牌：迁移 `20261008210000_credential_verifier_v1.sql`、`credential_verifier_v1`、内部证明值、守卫测试、7 天备份与回退；`test:db` 全绿后请 Owner 批准生产迁移；迁移后按 §4.3 只读核对。**2b** 发行方列：先定存储客户端摘要的换代方式，迁移后轮换两个发行方密钥并更新两份运行手册。归属 Task `9a4d6d2c`，依据 Decision `8a7e345f`、`2ec964af`。
 3. **核实 Worker 凭据签发（只读）**：查清生产项目 JWT 签名方式与 `CLUED_P5_GATEWAY_TOKEN` 的签发与有效期，写成结论交 Owner 选 C1 或 C2。不改任何东西。2026-10-08 已完成，结论见 §6.4。归属 Task `9a4d6d2c`。
 4. **Worker 角色上线（过渡）**：建角色、给 Worker 用的函数加授新角色（`anon` 暂留）、Worker 改带新凭据并发布；按角色统计确认生产调用全部切换。需要 `migration.production` 与 `release.production` 授权。归属 Task `9a4d6d2c`。
 5. **收回 anon**：Worker 用的函数收回 `anon`，只留 §6.3 白名单；G6 门加角色断言；数据库测试固定 anon 集合等于白名单；更新 database-security.md 的预期数字。归属 Task `9a4d6d2c`。
