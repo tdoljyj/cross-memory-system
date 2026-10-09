@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -12,6 +13,7 @@ const SCOPES = ["audit:read", "context:read", "context:write"];
 // without a reviewed link inherits the one active qualified lineage with the
 // same redirect identity. Synthetic, disposable PostgreSQL only.
 export async function testStorageClientRedirectIdentity(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], session = randomUUID(), issuer = sha(randomUUID()), clientIssuer = sha(randomUUID());
   const oauthClient = `redirect-identity-${randomUUID()}`, resource = "https://redirect-identity.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;

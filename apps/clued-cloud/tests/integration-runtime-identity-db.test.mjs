@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -1653,6 +1654,7 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(db);
+    await allowTestIssuerCredentials(db);
     const columns = (await db.query(`select array_agg(attname::text) c from pg_attribute
       where attrelid = 'public.clued_agent_bindings'::regclass and attnum > 0 and not attisdropped`)).rows[0].c;
     assert.equal(columns.includes('organization_id'), false, 'the shape under test has no P5 columns');

@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdtemp} from 'node:fs/promises';
@@ -15,6 +16,7 @@ const {createStorageGoogleOAuth,createStorageGoogleRecoveryOAuth,createStorageCr
 const sha=s=>createHash('sha256').update(s).digest('hex');
 
 export async function testCredentialRecoveryOAuth(t,admin,server,{user,connection,native,issuer,lost,row,vaultConfig}) {
+  await allowTestIssuerCredentials(admin);
   const claims=(await native.query("select current_setting('request.jwt.claims') v")).rows[0].v;
   const session=JSON.parse(claims).session_id;
   const db=server.getPgClient();await db.connect();

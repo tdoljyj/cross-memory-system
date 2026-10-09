@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -62,6 +63,7 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     const userId = uuid();
     const otherUser = uuid();
