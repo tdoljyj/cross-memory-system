@@ -246,6 +246,14 @@
 - 合同 §1.7 随本步发 agent-contract v42（#653 已用 v41；Owner 在 Decision `b4a19a1f` 同意随第 4 步发版）：合并引用排队、不冲突；先并入 main 并推送再入队；等待时约每小时续期一次保租约（租约 2 小时，续期上限 12 次）、不为合并做任何事；成为队列头后如 main 已前进再并入。同时写入 runner 钩子 `merge-admission-ungated-rerun` 的重跑规则（§8 第 5 项）。
 - 上线顺序：先应用迁移（v40/v41 的 Worker 与 Skill 读到 `merge_queue` 只是多一个字段；旧合同的 Agent 不会再收到合并位冲突，按旧文字会以为已持位，所以紧接着发布 Worker v42），再合并，最后发布 Worker 对外服务 v42。
 
+**实施说明（2026-10-09，第 5 步，Task `91039d74`，Owner Decision `661f8c36`、`5aa668e3`）**：执行器是独立的 `.github/workflows/clued-merge-executor.yml` 与 `scripts/ci/clued-merge-executor.mjs`，在每次 `clued-merge-slot-ci` 运行完成后（`workflow_run`）、每小时与手动运行，只跑默认分支代码，用 clued-admission 环境的令牌与 App 私钥。与上文的差别如下，均不放松 §2 的保证：
+- 只为默认分支队列的队列头做事（`clued_work_merge_slot_holders_v1` 自第 4 步起只列队列头，并按 `merge:<owner>/<name>:<default>` 过滤）；只处理同仓库、非草稿、指向默认分支的打开 PR。
+- head 落后默认分支时，用 GitHub「update branch」把默认分支并入（合并提交，`expected_head_sha` 绑定读到的 head）；只并入默认分支的 head 保留 Owner 授权（Decision `a0d93cd0`），App 的推送会触发 CI（`GITHUB_TOKEN` 的推送不会）。冲突或 head 已变时 GitHub 拒绝，执行器只记 notice，由持有者处理。
+- auto-merge 只在 PR **选择加入**时打开：正文有一行 `Clued-Auto-Merge: on`（Agent 在合并获批后写）。另需 head 含默认分支 tip、四个 CI 类必需检查全绿（沿用第 3 步的判定，成为队列头之前就已失败的准入检查不算）、head 的 `clued-admission-verified` 为通过且标题带模式、策略对该状态与层允许 auto-merge、auto-merge 尚未打开；用 GraphQL `enablePullRequestAutoMerge`（`MERGE`，`expectedHeadOid`）。没有这一行时 Agent 照旧自己合并：Owner 现行的「合并前先问」不因执行器而被绕过。
+- 执行器自己从不合并、从不推默认分支（规则集禁止，App 不在 bypass 名单）；`frozen` 下什么都不做，连队列都不读。
+- 需要 App 的 Contents: write 与 Pull requests: write。Owner 授予之前，令牌请求被拒（422），执行器只记 notice、什么都不改（Owner 选择先写代码、上线前再加权限）。
+- 合同 §1.7 本步不改（避开 Task `af536fcc` 正在搬动的合同文件）：Agent 自己并入 main、自己合并仍然有效；执行器只是先替它做。等合同搬出 Skill 包后再写入「入队后可交给执行器」与 `Clued-Auto-Merge` 行。
+
 ### 7.4 用 GitHub 原生 auto-merge 替代 Agent 守 CI
 
 **结论：可以，且推荐；前提是 Owner 在仓库设置里打开 `Allow auto-merge`（现为关闭）。** GitHub 文档：auto-merge 在公开仓库对 Free 可用，对私有仓库在 GitHub Pro、Team、Enterprise 可用。本仓库是个人账号私有仓库，账号计划从 Agent 侧 API 读不到（令牌无 `user` scope）；它已对私有仓库启用了规则集与分支保护，通常意味着 Pro 及以上，Owner 打开设置时 GitHub 界面会直接显示该选项是否可用，以此为准。

@@ -45,6 +45,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-merge-slot-ci.yml": (
         "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes; default-branch code only, seconds of work, no install, no pull request trigger."
     ),
+    "clued-merge-executor.yml": (
+        "Merge Admission step 5: the executor brings the default branch into the merge queue head and turns on auto-merge as the clued-admission App, after each slot report and hourly; default-branch code only, seconds of work, no install, no pull request trigger."
+    ),
     "clued-ci-usage-report.yml": (
         "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 200-request budget; default-branch code only, no install, no secret, no pull request trigger, and it must not take the self-hosted capacity it measures."
     ),
