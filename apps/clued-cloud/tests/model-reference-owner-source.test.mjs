@@ -83,9 +83,15 @@ test('schema is closed on four selectors, exact18 approval and exact18 budget, p
   assert.equal(ownerApprovalOutputSchema.required.length, 16); assert.equal(ownerApprovalOutputSchema.additionalProperties, false);
   assert(!['actor', 'source_ref', 'content'].some(k => k in ownerApprovalOutputSchema.properties));
 });
-test('five known tools include four source-only reads while Bootstrap remains separate', () => {
-  assert.equal(modelDomainTools.length, 7); assert.equal(isModelDomainTool(MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL), true);
+test('nine exact tools include seven source-only reads and two separate Bootstrap operations', () => {
+  assert.deepEqual(modelDomainTools.map(t => t.name), [
+    'clued_model_reference_owner_approval_refs', 'clued_model_dataset_split_owner_anchor_refs',
+    'clued_model_dataset_split_resolve_refs', 'clued_model_dataset_split_verify',
+    'clued_model_dataset_split_prepare_plan', 'clued_model_dataset_split_verify_successor',
+    'clued_model_dataset_split_bootstrap_request', 'clued_model_dataset_split_bootstrap_readiness',
+    'clued_model_dataset_split_bootstrap_commit',
+  ]); assert.equal(isModelDomainTool(MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL), true);
   assert.deepEqual(modelDomainToolPolicies[MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL].scopes, ['context:read']);
   assert.equal(modelDomainToolPolicies[MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL].readOnlyHint, true);
-  assert.equal(modelDomainTools.filter(t => modelDomainToolPolicies[t.name].readOnlyHint).length, 6);
+  assert.equal(modelDomainTools.filter(t => modelDomainToolPolicies[t.name].readOnlyHint).length, 7);
 });
