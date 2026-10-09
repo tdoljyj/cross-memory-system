@@ -5,9 +5,24 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { renderAgentContractBootstrap, renderedBootstrapBytes, AGENT_BOOTSTRAP_BUDGET_BYTES } from "../worker/agent-contract-bootstrap.mjs";
 
+export function validateAgentContractResponse(response, contract, part) {
+  const metadata = JSON.parse(response.content[0].text);
+  const fragment = response.content[1]?.text;
+  assert.ok(typeof fragment === "string" && fragment.length > 0);
+  const containsFragment = (value) => typeof value === "string" ? value.includes(fragment)
+    : value && typeof value === "object" ? Object.values(value).some(containsFragment) : false;
+  assert.equal(containsFragment(metadata), false, "bootstrap metadata duplicates the current contract fragment");
+  assert.equal(containsFragment(response.structuredContent), false, "structured metadata duplicates the current contract fragment");
+  assert.deepEqual(metadata.agent_contract, { version: contract.version, sha256: contract.sha256 });
+  assert.equal(metadata.lifecycle.contract.version, contract.version);
+  assert.deepEqual(response, renderAgentContractBootstrap(metadata, contract, part));
+  return metadata;
+}
+
+async function main() {
 const options = process.argv.slice(2);
 const valueOf = (key) => options[options.indexOf(key) + 1];
 if (!options.includes("--worker-module") || !options.includes("--output")) {
@@ -64,10 +79,10 @@ for (let part = 2; part <= identity.parts; part++) {
 assert.equal(responses.map((response) => response.content[1].text).join(""), markdown);
 const bootstrap = metadataOnly(first);
 assert.deepEqual(bootstrap.agent_contract, { version, sha256: hash(markdown) });
-for (const response of responses) {
+for (const [index, response] of responses.entries()) {
+  validateAgentContractResponse(response, { markdown, version, sha256: hash(markdown) }, index + 1);
   assert.equal(response.structuredContent.agent_contract.markdown_in, "content[1]");
   for (const field of ["endpoints", "authentication", "capabilities"]) assert.equal(field in response.structuredContent, false);
-  assert.equal(JSON.stringify(response.structuredContent).includes(markdown), false);
 }
 const synthetic = "# Contract\nContract version: 999\n" + Array.from({ length: 4 }, (_, i) =>
   `## Synthetic ${i}\n${'字"\\\n'.repeat(7_000)}`).join("");
@@ -83,3 +98,6 @@ for (const response of syntheticResponses) assert.ok(renderedBootstrapBytes(resp
 await writeFile(valueOf("--output"), `${JSON.stringify([...responses, ...syntheticResponses])}\n`, { flag: "wx" });
 console.log(JSON.stringify({ current_parts: responses.length, current_response_bytes: responses.map(renderedBootstrapBytes),
   synthetic_parts: syntheticResponses.length, synthetic_response_bytes: syntheticResponses.map(renderedBootstrapBytes), version, sha256: identity.sha256 }));
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) await main();

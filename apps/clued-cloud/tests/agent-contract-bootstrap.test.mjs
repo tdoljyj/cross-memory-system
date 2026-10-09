@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import test from "node:test";
 import { AGENT_BOOTSTRAP_BUDGET_BYTES, renderAgentContractBootstrap, renderedBootstrapBytes } from "../worker/agent-contract-bootstrap.mjs";
+import { validateAgentContractResponse } from "../scripts/render-agent-contract-budget.mjs";
 
 const hash = (markdown) => createHash("sha256").update(markdown).digest("hex");
 const bootstrap = {
@@ -93,4 +94,24 @@ test("rendering has no shared mutable request state", () => {
   assert.equal(renderAgentContractBootstrap(bootstrap, first).content[1].text, first.markdown);
   assert.equal(renderAgentContractBootstrap(bootstrap, second).structuredContent.agent_contract.version, 43);
   assert.equal(renderAgentContractBootstrap(bootstrap, first).structuredContent.agent_contract.version, 42);
+});
+
+test("budget probe rejects duplicated multiline fragments and extra response fields", () => {
+  const contract = source("Contract version: 42\n## Rules\ncomplete multiline text\n");
+  const payload = { ...bootstrap, agent_contract: { version: contract.version, sha256: contract.sha256 } };
+  const valid = renderAgentContractBootstrap(payload, contract);
+  assert.deepEqual(validateAgentContractResponse(valid, contract, 1), payload);
+  for (const surface of ["bootstrap", "structured", "content"]) {
+    const response = structuredClone(valid);
+    if (surface === "bootstrap") response.content[0].text = JSON.stringify({ ...payload, duplicate: contract.markdown });
+    if (surface === "structured") response.structuredContent.duplicate = contract.markdown;
+    if (surface === "content") response.content.push({ type: "text", text: "extra" });
+    assert.throws(() => validateAgentContractResponse(response, contract, 1));
+  }
+  const oversized = source("Contract version: 42\n" + Array.from({ length: 3 }, (_, i) => `## Section ${i}\n${"x".repeat(40_000)}\n`).join(""));
+  const metadata = { ...bootstrap, agent_contract: { version: oversized.version, sha256: oversized.sha256 } };
+  const part = renderAgentContractBootstrap(metadata, oversized, 2);
+  assert.doesNotThrow(() => validateAgentContractResponse(part, oversized, 2));
+  part.structuredContent.duplicate = part.content[1].text;
+  assert.throws(() => validateAgentContractResponse(part, oversized, 2));
 });
