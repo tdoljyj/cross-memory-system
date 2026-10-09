@@ -83,7 +83,8 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 42/);
+  const manifest = JSON.parse(await readFile(new URL("../../../config/clued-components.json", import.meta.url), "utf8"));
+  assert.equal(contractVersionOf(contract), Number(manifest.components.find((component) => component.id === "agent-contract").version));
   // Owner auto-approval switch and Owner answers (OwnerCredential §12, §13; Task ce42fc18).
   assert.match(contract, /That result is the receipt: go on with the gated step and do not hand the Owner a link/);
   assert.match(contract, /your Host session id as `session_ref`/);
@@ -182,7 +183,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /A passing check is not verified again at merge time/);
   assert.match(contract, /First dispatch `clued-work-admission-dispatch\.yml` on the default branch with `workflow`/);
   assert.match(contract, /with `admission_run_id` set to that run's id, within 30 minutes of that run's start/);
-  assert.match(contract, /resume also returns `contract_version`/);
+  assert.match(contract, /Every successful resume returns `contract_version` and `agent_contract_sha256`/);
+  assert.match(contract, /read it through `clued_agent_bootstrap` \(all parts\)/);
+  assert.match(contract, /do not report the difference and do not ask for reinstall because of a contract change/);
   assert.match(skill, /claim its Task as the contract's §1\.7 says/);
   assert.match(contract, /Resume lists unabsorbed work-log events newest first \(`event_order: "newest"`, the default\)/);
   assert.match(contract, /`checkpoint_recommended` and `pending_event_count_recent` count only those of the last 24 hours/);
@@ -212,7 +215,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
   const [skill, contract, agents, rootAgents, manifestText] = await Promise.all([
     readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
-    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8").then((text) => text.replace(/\r\n/g, "\n")),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../memory/manifest.json", import.meta.url), "utf8"),
@@ -240,7 +243,7 @@ test("the Worker serves the single agent contract and advertises capture", async
     worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx),
   ]);
   const served = await response.text();
-  assert.ok(served.startsWith(source), "served contract must be the source file verbatim");
+  assert.ok(served.startsWith(source.replace(/\r\n/g, "\n")), "served contract must be the LF-normalized source file verbatim");
   assert.match(served, /## 3\. Capture/);
   const { renderAgentContractModule } = await import("../scripts/generate-agent-contract.mjs");
   const generated = await readFile(new URL("../worker/generated/agent-contract.ts", import.meta.url), "utf8");
