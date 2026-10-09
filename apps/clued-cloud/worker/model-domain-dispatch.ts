@@ -3,7 +3,7 @@ import { readOwnerAnchorsWithExistingBindingRpc } from "./model-domain-owner-anc
 import { resolveWithExistingBindingRpc } from "./model-domain-ref-resolver.mjs";
 import { verifyWithExistingBindingRpc, type ExistingBindingRpc } from "./model-domain-rpc-source.mjs";
 import { prepareNativeBootstrapRequest } from "./model-domain-native-bootstrap-request.mjs";
-import { readBootstrapReadiness, commitBootstrap, EXACT_BOOTSTRAP_PLAN } from "./model-domain-bootstrap-source.mjs";
+import { readBootstrapReadiness, commitBootstrap, EXACT_BOOTSTRAP_PLAN, BootstrapReadinessDenied } from "./model-domain-bootstrap-source.mjs";
 import { prepareExactPlanWithExistingBindingRpc } from "./model-domain-plan-preparation.mjs";
 import { verifySuccessorWithExistingBindingRpc } from "./model-domain-successor-rpc-source.mjs";
 import { MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL, MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL, MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
@@ -53,7 +53,11 @@ export async function dispatchModelDomainTool(env: ModelDomainFeatureEnv, name: 
       // It does not approve a grant or invoke any Canonical/M1 writer.
       return await transport.submitOwnerRequest(prepared.request);
     }
-  } catch {
+  } catch (error) {
+    // Keep the already-supported, private-data-free readiness denial so the
+    // Worker can distinguish this pre-submission failure from a generic source
+    // denial. Validation and all Native write/claim gates stay unchanged.
+    if (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL && error instanceof BootstrapReadinessDenied) throw error;
     throw new ModelDomainToolDenied();
   }
   throw new ModelDomainToolDenied();

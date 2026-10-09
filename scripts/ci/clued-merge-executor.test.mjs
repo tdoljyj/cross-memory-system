@@ -252,7 +252,7 @@ test("the workflow runs default-branch code after the slot report, hourly and by
   assert.doesNotMatch(text, /pull_request/);
   assert.match(text, /permissions:\n  actions: read\n  checks: read\n  contents: read\n  pull-requests: read\n\n/);
   assert.doesNotMatch(text, /^\s+[a-z-]+: write$/m);
-  assert.match(text, /if: github\.event_name != 'workflow_run' \|\| github\.event\.workflow_run\.conclusion != 'skipped'\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    environment: clued-admission\n/);
+  assert.match(text, /if: github\.event_name != 'workflow_run' \|\| github\.event\.workflow_run\.conclusion != 'skipped'\n    runs-on: ubuntu-slim\n    timeout-minutes: 5\n    environment: clued-admission\n/);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false/);
   assert.match(text, /CLUED_OWNER_REVIEW_ENFORCE: \$\{\{ vars\.CLUED_OWNER_REVIEW_ENFORCE \}\}/);
 });
