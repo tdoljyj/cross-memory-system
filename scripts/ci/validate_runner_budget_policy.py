@@ -46,13 +46,13 @@ HOSTED_ONLY_ALLOWLIST = {
         "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
     ),
     "clued-merge-executor.yml": (
-        "Merge Admission step 5: the executor brings the default branch into the merge queue head and turns on auto-merge as the clued-admission App, after each slot report and hourly; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
+        "Merge Admission step 5: the executor brings the default branch into the merge queue head and turns on auto-merge or merges it as the clued-admission App, after each slot report, on main push and by hand; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
     ),
     "contract-placement.yml": (
         "Owner Decision 6a66d2fd: unfiltered required placement and actual public-bootstrap budget check on ubuntu-latest; no secrets or application dependency tree, no self-hosted PR execution, five-minute timeout."
     ),
     "clued-ci-usage-report.yml": (
-        "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 2,000-request budget with the measurement-only read-only App's installation token (200 with the GITHUB_TOKEN fallback; Owner Decision 00b71629), its ID and key only from the main-only clued-admission environment; default-branch code only, no application dependency install, no pull request trigger, and it must not take the self-hosted capacity it measures."
+        "Merge Admission §12.1 CI usage measurement: a daily and hand-dispatched read-only report under a 2,000-request budget with the measurement-only read-only App's installation token (200 with the GITHUB_TOKEN fallback; Owner Decision 00b71629), its ID and key only from the main-only clued-admission environment; default-branch code only, no application dependency install, no pull request trigger, and it must not take the self-hosted capacity it measures."
     ),
     "clued-release-tags.yml": (
         "Release tagging (Task 6dfd7560): creates the VERSION and release/<date>-r<run> tags after a VERSION change on main or a successful production deploy; default-branch code only, no application dependency install, no pull request trigger."
