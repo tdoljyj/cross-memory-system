@@ -52,7 +52,7 @@ HOSTED_ONLY_ALLOWLIST = {
         "Owner Decision 6a66d2fd: unfiltered required placement and actual public-bootstrap budget check on ubuntu-latest; no secrets or application dependency tree, no self-hosted PR execution, five-minute timeout."
     ),
     "clued-ci-usage-report.yml": (
-        "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 200-request budget; default-branch code only, no application dependency install, no secret, no pull request trigger, and it must not take the self-hosted capacity it measures."
+        "Merge Admission §12.1 CI usage measurement: a weekly and hand-dispatched read-only report under a 2,000-request budget with the measurement-only read-only App's installation token (200 with the GITHUB_TOKEN fallback; Owner Decision 00b71629), its ID and key only from the main-only clued-admission environment; default-branch code only, no application dependency install, no pull request trigger, and it must not take the self-hosted capacity it measures."
     ),
     "clued-release-tags.yml": (
         "Release tagging (Task 6dfd7560): creates the VERSION and release/<date>-r<run> tags after a VERSION change on main or a successful production deploy; default-branch code only, no application dependency install, no pull request trigger."

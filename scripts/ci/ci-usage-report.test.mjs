@@ -15,6 +15,7 @@ import {
   APP_REQUEST_CAP,
   MEASURE_PERMISSIONS,
   REQUEST_CAP,
+  TIME_BUDGET_MS,
   budgetedFetch,
   cachedJobs,
   collectUsage,
@@ -262,8 +263,14 @@ test("measurement App: not configured, not installed or refused falls back to th
   for (const [name, env, answer, reason] of [
     ["not configured", {}, () => null, /not configured/],
     ["half configured", { CLUED_MEASURE_APP_ID: "4242" }, () => null, /not configured/],
-    ["not installed", APP_ENV, withApp({ installation: 404 }), /not installed .*returned 404/],
+    ["not installed", APP_ENV, withApp({ installation: 404 }), /not installed .* or not authenticated .*returned 404/],
+    ["not authenticated", APP_ENV, withApp({ installation: 401 }), /or not authenticated .*returned 401/],
     ["refused", APP_ENV, withApp({ minted: 422 }), /token was refused .*returned 422/],
+    // Review MINOR-2: a key that cannot sign, or a failing request, falls back too.
+    ["malformed key", { ...APP_ENV, CLUED_MEASURE_APP_KEY: "-----BEGIN RSA PRIVATE KEY-----\\nnot a key\\n-----END RSA PRIVATE KEY-----" },
+      () => null, /could not be minted \(\w+: /],
+    ["network error", APP_ENV, (route) => { if (route.includes("installation")) throw new TypeError("fetch failed"); return null; },
+      /could not be minted \(TypeError: fetch failed\)/],
   ]) {
     const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)], answer });
     const notices = [];
@@ -273,6 +280,7 @@ test("measurement App: not configured, not installed or refused falls back to th
     assert.ok(github.calls.filter((call) => !call.route.includes("installation")).every((call) => call.headers.authorization === "Bearer t"), name);
     assert.deepEqual([report.metrics.api_requests.token_source, report.metrics.api_requests.cap], ["github_token", REQUEST_CAP], name);
     assert.ok(notices.some((line) => /^::notice title=clued-ci-usage-report::reading with the GITHUB_TOKEN \(cap 200\)/.test(line) && reason.test(line)), name);
+    assert.ok(notices.every((line) => !line.includes("PRIVATE KEY") && !line.includes(APP_KEY.slice(40, 80))), `${name}: no key material`);
   }
   const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)] });
   const errors = [];
@@ -280,6 +288,27 @@ test("measurement App: not configured, not installed or refused falls back to th
   assert.equal(code, 1, "no App and no GITHUB_TOKEN is an error");
   assert.match(errors.join("\n"), /GITHUB_TOKEN is not set, and the measurement App is not configured/);
   assert.equal(github.calls.length, 0);
+});
+
+test("time budget (review MINOR-3): after 15 minutes the run stops, keeps what it read and saves the cache", async () => {
+  const runs = Array.from({ length: 30 }, (_, i) => run(i + 1));
+  const jobs = Object.fromEntries(runs.map((r) => [r.id, [job(r.id * 10)]]));
+  const github = fakeGitHub({ runs, jobs, pulls: [pr(1)] });
+  // Each request takes one minute of the clock.
+  const clock = () => github.calls.length * 60 * 1000;
+  const memory = { ...memoryFs(), clock };
+  const { code, report } = await runMain(github, memory);
+  assert.equal(code, 0);
+  assert.equal(github.calls.length, TIME_BUDGET_MS / 60000);
+  assert.deepEqual([report.metrics.api_requests.stopped, report.coverage.partial, report.coverage.runs_with_jobs], ["time_budget", true, 13]);
+  assert.equal(Object.keys(JSON.parse(memory.files.get(CACHE)).runs).length, 13);
+});
+
+test("measurement App: the installation token is masked in the log", async () => {
+  const lines = [];
+  const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)], answer: withApp() });
+  await runMain(github, { ...memoryFs(), log: (line) => lines.push(line) }, APP_ENV);
+  assert.equal(lines[0], "::add-mask::app-token");
 });
 
 test("cache: a completed run's jobs are fetched once; running runs are not cached; a re-run is read again", async () => {
