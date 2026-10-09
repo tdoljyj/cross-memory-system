@@ -24,6 +24,11 @@ still apply. A retired or expired historical credential grants no fresh operatio
 `issuer_kind` and the credential generation captured by the resolver; it contains no issuer proof, verifier or
 legacy `issuer_hash` field. The generation is audit provenance and does not bypass current authentication.
 
+Native policy-transition recovery retains its current Owner and exact Receipt/payload/issuer checks when the
+issuer app has been revoked. An active credential is still required; fresh or changed operations are denied.
+The separate onboarding sweep may use an active credential only to expire its own staged attempts, as in
+the original cleanup contract. Neither path revives a retired credential or starts new provider work.
+
 New default-refresh consent and onboard activation requests also use UUID identity, kind and credential
 generation. Their M1 received-payload and request hashes bind that input. Historical Receipt bytes are
 preserved; refresh-delegation FK keys remain fixed identity values. Consumers use the delegation and current

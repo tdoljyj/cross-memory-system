@@ -23,3 +23,20 @@ test('test-only issuer credential grants never enter production migrations or th
     assert.doesNotMatch(await fs.readFile(path.join(root,dir,file),'utf8'),/test_issuer_credential_v1|allowTestIssuerCredentials/,file);
   }
 });
+test('evaluators inserting synthetic issuers explicitly stage and activate credentials',async()=>{
+  const missing=[];let count=0;
+  async function scan(dir){
+    for(const entry of await fs.readdir(dir,{withFileTypes:true})){
+      const file=path.join(dir,entry.name);
+      if(entry.isDirectory()){await scan(file);continue;}
+      if(!/\.(mjs|sql)$/.test(entry.name))continue;
+      const source=await fs.readFile(file,'utf8');
+      if(!INSERT.test(source))continue;count++;
+      if(!/issuer_credential_stage_v1/.test(source)||!/issuer_credential_activate_v1/.test(source))missing.push(path.relative(root,file));
+      assert.doesNotMatch(source,/test_issuer_credential_v1|allowTestIssuerCredentials/,file);
+    }
+  }
+  await scan(path.join(root,'evals'));
+  assert.ok(count>0,'the scan found the real Information Flow issuer setup');
+  assert.deepEqual(missing,[]);
+});

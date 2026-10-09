@@ -222,7 +222,14 @@ test('issuer identity, versioned digests and independently retired credentials',
       assert.equal(sources.length,40);assert.equal(sources.filter(x=>x.schema_name==='public').length,25);
       for(const source of sources){
         const def=(await admin.query(`select pg_get_functiondef($1::regprocedure) v`,[source.signature])).rows[0].v;
-        if(source.function_name!=='storage_onboard_activate_v1')assert.match(def,/issuer_resolve_identity(?:_compatible)?_v1/,source.signature);
+        if(source.schema_name==='public'&&source.function_name==='clued_storage_policy_transition_v2'){
+          assert.match(def,/issuer_resolve_identity_policy_transition_v1\(p_issuer_hash,\s*p_input\)/,source.signature);
+        }else if(source.schema_name==='public'&&source.function_name==='clued_storage_onboard_sweep_v1'){
+          assert.match(def,/issuer_resolve_identity_onboard_sweep_v1\(p_issuer_hash\)/,source.signature);
+        }else if(source.function_name!=='storage_onboard_activate_v1'){
+          assert.match(def,/issuer_resolve_identity(?:_compatible)?_v1/,source.signature);
+          assert.doesNotMatch(def,/issuer_resolve_identity_(?:policy_transition|onboard_sweep)_v1/,source.signature);
+        }
         if(source.identity_name){
           const internal=(await admin.query(`select pg_get_functiondef(p.oid) def,has_function_privilege('anon',p.oid,'execute') anon,
             has_function_privilege('authenticated',p.oid,'execute') native,has_function_privilege('service_role',p.oid,'execute') service
@@ -264,6 +271,73 @@ test('issuer identity, versioned digests and independently retired credentials',
             await assert.rejects(admin.query(`select clued_private.${entry.name}($1,$2)`,entry.args),/offline_database_operator_required/);
           }finally{await admin.query('rollback');}
         }
+      }
+    });
+    await t.test('only the Native transition resolver keeps active credential authentication separate from issuer activation',async()=>{
+      const original=(await admin.query('select revoked_at from clued_private.storage_oauth_apps_v1 where issuer_hash=$1',[storageProof])).rows[0].revoked_at;
+      const checked=await connect(),noOwner=await connect(),blocker=await connect();
+      await checked.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [user,JSON.stringify({sub:user,session_id:session})]);
+      const checkedResolve=(proof,action='inspect')=>checked.query('select clued_private.issuer_resolve_identity_policy_transition_v1($1,$2) value',
+        [proof,{action,manifest_id:crypto.randomUUID()}]);
+      const rejected=error=>error.code==='42501'&&error.message==='storage_transition_denied';
+      const expiration=async()=>{
+        const proof=hex(),generation=Number((await admin.query('select max(generation) generation from clued_private.issuer_credentials_v1 where issuer_id=$1',[storageId])).rows[0].generation)+1;
+        const deadline=(await admin.query(`insert into clued_private.issuer_credentials_v1(issuer_id,generation,verifier,state,activated_at,valid_until)
+          values($1,$2,$3,'active',clock_timestamp(),clock_timestamp()+interval '0.3 seconds') returning valid_until`,[storageId,generation,verifier(proof)])).rows[0].valid_until;
+        return {proof,deadline};
+      };
+      const waitForLock=async(pending)=>{
+        let settled=false;pending.then(()=>{settled=true;});
+        for(let i=0;i<200;i++){
+          if((await admin.query('select exists(select 1 from pg_locks where pid=$1 and not granted) value',[checked.processID])).rows[0].value)return;
+          assert.equal(settled,false,'the credential must reach the intended lock wait');
+          await new Promise(resolve=>setTimeout(resolve,5));
+        }
+        assert.fail('the transition credential did not wait');
+      };
+      const waitExpired=async(deadline)=>{
+        for(let i=0;i<1200;i++){
+          if((await admin.query("select clock_timestamp()>$1::timestamptz+interval '0.02 seconds' value",[deadline])).rows[0].value)return;
+          await new Promise(resolve=>setTimeout(resolve,10));
+        }
+        assert.fail('the database clock did not pass the credential deadline');
+      };
+      try{
+        await admin.query('update clued_private.storage_oauth_apps_v1 set revoked_at=clock_timestamp() where issuer_hash=$1',[storageProof]);
+        assert.equal((await checkedResolve(newStorageProof)).rows[0].value,storageProof);
+        await denied(resolve(newStorageProof,'storage'));
+        for(const proof of [storageProof,verifier(newStorageProof),storageId,authorizationProof])await assert.rejects(checkedResolve(proof),rejected);
+        const staged=hex(),stagedGeneration=await stage(storageId,staged);
+        await assert.rejects(checkedResolve(staged),rejected);await retire(storageId,stagedGeneration);
+        const expired=await expiration();
+        await waitExpired(expired.deadline);
+        await assert.rejects(checkedResolve(expired.proof),rejected);
+        await assert.rejects(owner.query('select public.clued_storage_policy_transition_v2($1,$2)',
+          [newStorageProof,{action:'inspect',manifest_id:crypto.randomUUID()}]),rejected,'fresh operations remain denied for revoked issuers');
+        for(const action of ['transition','inspect']){
+          await blocker.query('begin');
+          try{
+            if(action==='transition')await blocker.query('lock table clued_private.storage_oauth_apps_v1 in row exclusive mode');
+            else await blocker.query('update clued_private.storage_oauth_apps_v1 set revoked_at=revoked_at where issuer_hash=$1',[storageProof]);
+            if(action==='transition')await assert.rejects(noOwner.query('select clued_private.issuer_resolve_identity_policy_transition_v1($1,$2)',
+              [newStorageProof,{action}]),error=>error.code==='42501'&&error.message==='direct_human_session_required',
+              'an issuer proof without a Native Owner must not wait on the transition table');
+            const expiring=await expiration();
+            const pending=checkedResolve(expiring.proof,action).then(()=>null,error=>error);
+            await waitForLock(pending);
+            if(action==='transition'){
+              // The table wait must precede app-row SHARE: this real operator
+              // UPDATE completes rather than waiting for the reader's row lock.
+              await blocker.query('set local statement_timeout=\'1s\'');
+              await blocker.query('update clued_private.storage_oauth_apps_v1 set revoked_at=revoked_at where issuer_hash=$1',[storageProof]);
+            }
+            await waitExpired(expiring.deadline);
+            await blocker.query('commit');assert.ok(rejected(await pending),'expiry after either table or app-row wait denies authentication');
+          }finally{await blocker.query('rollback');}
+        }
+      }finally{
+        await admin.query('update clued_private.storage_oauth_apps_v1 set revoked_at=$2 where issuer_hash=$1',[storageProof,original]);
       }
     });
     await t.test('permanent issuer provisioning creates identity without implicit credentials, even on reapplication',async()=>{
@@ -337,6 +411,71 @@ test('issuer identity, versioned digests and independently retired credentials',
         assert.equal(row.received_payload_hash,hashes.received);assert.equal(row.request_sha256,hashes.request);
         assert.ok(!JSON.stringify(row.metadata).includes('issuer_hash'));assert.ok(!JSON.stringify(row.canonical_result).includes('issuer_hash'));
       }
+    });
+    await t.test('a new active sweep credential clears only its revoked issuer expired attempts, never fresh onboard operations',async()=>{
+      const key=hex(),foreignKey=hex(),secret=hex(),proof=crypto.createHash('sha256').update(secret).digest('hex');
+      await admin.query(`insert into clued_private.storage_oauth_apps_v1(issuer_hash,oauth_client_id,redirect_uri)
+        values($1,'cleanup-fixture','https://cleanup.invalid/storage/google/callback'),
+          ($2,'foreign-cleanup-fixture','https://foreign-cleanup.invalid/storage/google/callback')`,[key,foreignKey]);
+      const id=await identity('storage',key), generation=await stage(id,proof);await activate(id,generation);await retire(id,1);
+      await admin.query('update clued_private.storage_oauth_apps_v1 set revoked_at=clock_timestamp() where issuer_hash=$1',[key]);
+      const makeAttempt=async(issuer,expired)=>{
+        const attempt=crypto.randomUUID();
+        await admin.query(`insert into clued_private.storage_onboard_attempts_v1(id,owner_id,session_id,issuer_hash,
+          oauth_attempt_id,connection_id,root_mode,root_name,tracks,normal_use_requested,default_refresh_requested,
+          disclosure_version,disclosure_text,disclosure_sha256,state,provider_subject,granted_scope_profile,
+          credential_envelope,run_token,run_lease_until,effects,expires_at)
+          values($1::uuid,$2,$3,$4,gen_random_uuid(),gen_random_uuid(),'new','Synthetic cleanup','["资料"]',false,false,
+            'clued.storage-onboard-disclosure/1','Synthetic cleanup disclosure',$5,'credential_staged','cleanup_subject','legacy',
+            '{"fixture":"sealed-synthetic-envelope"}',gen_random_uuid(),clock_timestamp()+interval '5 minutes',
+            jsonb_build_object('root',jsonb_build_object('intent_at',clock_timestamp(),'provider_file_id','orphan-'||$1::uuid::text,'created',true)),
+            clock_timestamp()+case when $6 then interval '-1 second' else interval '1 hour' end)`,[attempt,user,session,issuer,hex(),expired]);
+        return attempt;
+      };
+      const expired=await makeAttempt(key,true),live=await makeAttempt(key,false),foreign=await makeAttempt(foreignKey,true);
+      const snapshot=async()=>(await admin.query('select id,state,credential_envelope,run_token,run_lease_until,orphans from clued_private.storage_onboard_attempts_v1 where id=any($1::uuid[]) order by id',[[expired,live,foreign]])).rows;
+      const before=await snapshot(),sweep=token=>anon.query('select public.clued_storage_onboard_sweep_v1($1) value',[token]);
+      const rejected=error=>error.code==='42501'&&error.message==='storage_onboard_denied';
+      try{
+        for(const bad of [key,verifier(proof),id,newAuthorizationProof,hex()])await assert.rejects(sweep(bad),rejected);
+        const staged=hex(),stagedGeneration=await stage(id,staged);await assert.rejects(sweep(staged),rejected);await retire(id,stagedGeneration);
+        const expiredProof=hex(),expiringGeneration=Number(stagedGeneration)+1;
+        const deadline=(await admin.query(`insert into clued_private.issuer_credentials_v1(issuer_id,generation,verifier,state,activated_at,valid_until)
+          values($1,$2,$3,'active',clock_timestamp(),clock_timestamp()+interval '0.3 seconds') returning valid_until`,[id,expiringGeneration,verifier(expiredProof)])).rows[0].valid_until;
+        const blocker=await connect();await blocker.query('begin');
+        try{
+          await blocker.query('update clued_private.storage_oauth_apps_v1 set revoked_at=revoked_at where issuer_hash=$1',[key]);
+          const pending=sweep(expiredProof).then(()=>null,error=>error);
+          let waiting=false;
+          for(let n=0;n<200;n++){
+            waiting=(await admin.query('select exists(select 1 from pg_locks where pid=$1 and not granted) value',[anon.processID])).rows[0].value;
+            if(waiting)break;await new Promise(resolve=>setTimeout(resolve,5));
+          }
+          assert.equal(waiting,true,'sweep credential must recheck expiry after the issuer-row wait');
+          let elapsed=false;
+          for(let n=0;n<1200;n++){
+            elapsed=(await admin.query("select clock_timestamp()>$1::timestamptz+interval '0.02 seconds' value",[deadline])).rows[0].value;
+            if(elapsed)break;await new Promise(resolve=>setTimeout(resolve,10));
+          }
+          assert.equal(elapsed,true);await blocker.query('commit');assert.ok(rejected(await pending));
+        }finally{await blocker.query('rollback');}
+        assert.deepEqual(await snapshot(),before,'all credential refusals leave attempts untouched');
+        await denied(resolve(proof,'storage'));
+        await assert.rejects(anon.query('select public.clued_storage_cloud_worker_router_v2($1,$2)',[proof,{action:'load'}]),/denied/);
+        await assert.rejects(owner.query('select public.clued_storage_onboard_v1($1,$2)',[secret,{action:'list'}]),/denied/);
+        await assert.rejects(anon.query('select clued_private.issuer_resolve_identity_onboard_sweep_v1($1)',[proof]),/permission denied/);
+        assert.equal((await sweep(proof)).rows[0].value.expired,1);
+        const after=await snapshot(),cleared=after.find(row=>row.id===expired);
+        assert.equal(cleared.state,'expired');assert.equal(cleared.credential_envelope,null);assert.equal(cleared.run_token,null);assert.equal(cleared.run_lease_until,null);
+        assert.deepEqual(cleared.orphans.map(row=>row.provider_file_id),['orphan-'+expired]);
+        assert.deepEqual(after.find(row=>row.id===live),before.find(row=>row.id===live));
+        assert.deepEqual(after.find(row=>row.id===foreign),before.find(row=>row.id===foreign),'a foreign expired attempt is untouched');
+        assert.equal((await sweep(proof)).rows[0].value.expired,0);
+        assert.equal((await sweep(foreignKey)).rows[0].value.expired,1,'another issuer can sweep only its own expired row');
+        const foreignSwept=await snapshot();
+        for(const target of [expired,live])assert.deepEqual(foreignSwept.find(row=>row.id===target),after.find(row=>row.id===target));
+        await retire(id,generation);await assert.rejects(sweep(proof),rejected);
+      }finally{await admin.query('delete from clued_private.storage_onboard_attempts_v1 where id=any($1::uuid[])',[[expired,live,foreign]]);}
     });
     await t.test('a repeated migration never revives retired credentials or changes historical digests',async()=>{
       const state=async()=>(await admin.query(`select

@@ -43,6 +43,14 @@ issuer proofs. Existing RPC names, parameters and grants remain; private identit
 The wrappers preserve the existing entry's denial vocabulary (including `authorization_issuer_required`);
 the private resolver reports `issuer_credential_required`.
 
+Two closed, fixed storage resolvers preserve existing recovery behavior without weakening fresh-operation
+guards. Native policy transition still requires the current Native Owner and an active credential, but can
+return only an exact historical Receipt after issuer revocation; changed input or a fresh operation remains
+denied. Its transition table SHARE precedes the app-row SHARE lock. Onboarding sweep can use an active
+credential of a revoked issuer only to expire that issuer's staged attempts under the original cleanup body;
+it starts no onboarding or provider operation. Both recheck expiry after locks, reject retired credentials,
+and expose no public bypass flag. Other entry points keep the strict resolver.
+
 The first application gives existing issuers one legacy credential generation with a 24-hour maximum cutover
 window. It is a backstop, not a grace period after successful rotation: retire the old generation immediately
 after validating its replacement. Reapplication does not extend or revive it. New issuer provisioning creates

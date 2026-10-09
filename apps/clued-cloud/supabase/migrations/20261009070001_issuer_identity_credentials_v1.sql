@@ -163,6 +163,63 @@ exception when sqlstate '42501' then
   raise exception '%',p_error using errcode='42501';
 end $$;
 
+-- Only the Native policy-transition wrapper uses this resolver. Its original
+-- business body may return an exact committed historical Receipt after whole-
+-- issuer revocation; every fresh operation still checks the live issuer there.
+-- A live credential remains mandatory even for history. No public bypass flag.
+create or replace function clued_private.issuer_resolve_identity_policy_transition_v1(p_proof text,p_input jsonb) returns text
+language plpgsql volatile security definer set search_path='' as $$
+declare c clued_private.issuer_credentials_v1; i clued_private.issuer_identities_v1;
+begin
+  perform clued_private.storage_owner_v1();
+  if coalesce(p_proof,'') !~ '^[0-9a-f]{64}$' then
+    raise exception 'storage_transition_denied' using errcode='42501'; end if;
+  select c0.* into c from clued_private.issuer_credentials_v1 c0
+    join clued_private.issuer_identities_v1 i0 on i0.id=c0.issuer_id and i0.kind='storage'
+    where c0.verifier='cv1:'||encode(extensions.digest('clued.credential-verifier.v1:'||p_proof,'sha256'),'hex')
+      and c0.state='active' and (c0.valid_until is null or c0.valid_until>clock_timestamp()) for share of c0;
+  if not found then raise exception 'storage_transition_denied' using errcode='42501'; end if;
+  select * into i from clued_private.issuer_identities_v1 where id=c.issuer_id;
+  -- Preserve the original transition table-before-app-row lock order. Taking
+  -- the app-row SHARE first could deadlock an operator updating that same app.
+  if p_input->>'action'='transition' then lock table clued_private.storage_oauth_apps_v1 in share mode; end if;
+  perform 1 from clued_private.storage_oauth_apps_v1 where issuer_hash=i.legacy_key for share;
+  if not found or (c.valid_until is not null and c.valid_until<=clock_timestamp()) then
+    raise exception 'storage_transition_denied' using errcode='42501'; end if;
+  perform set_config('clued.issuer_credential_context_v1',
+    (coalesce(nullif(current_setting('clued.issuer_credential_context_v1',true),''),'{}')::jsonb
+      ||jsonb_build_object(i.id::text,c.generation))::text,true);
+  return i.legacy_key;
+end $$;
+revoke all on function clued_private.issuer_resolve_identity_policy_transition_v1(text,jsonb)
+  from public,anon,authenticated,service_role;
+
+-- Only the existing onboard expiry sweep uses this background resolver. Its
+-- original body can remove credentials from this issuer's expired attempts
+-- after issuer revocation; it cannot onboard, issue, activate or call a provider.
+create or replace function clued_private.issuer_resolve_identity_onboard_sweep_v1(p_proof text) returns text
+language plpgsql volatile security definer set search_path='' as $$
+declare c clued_private.issuer_credentials_v1; i clued_private.issuer_identities_v1;
+begin
+  if coalesce(p_proof,'') !~ '^[0-9a-f]{64}$' then
+    raise exception 'storage_onboard_denied' using errcode='42501'; end if;
+  select c0.* into c from clued_private.issuer_credentials_v1 c0
+    join clued_private.issuer_identities_v1 i0 on i0.id=c0.issuer_id and i0.kind='storage'
+    where c0.verifier='cv1:'||encode(extensions.digest('clued.credential-verifier.v1:'||p_proof,'sha256'),'hex')
+      and c0.state='active' and (c0.valid_until is null or c0.valid_until>clock_timestamp()) for share of c0;
+  if not found then raise exception 'storage_onboard_denied' using errcode='42501'; end if;
+  select * into i from clued_private.issuer_identities_v1 where id=c.issuer_id;
+  perform 1 from clued_private.storage_oauth_apps_v1 where issuer_hash=i.legacy_key for share;
+  if not found or (c.valid_until is not null and c.valid_until<=clock_timestamp()) then
+    raise exception 'storage_onboard_denied' using errcode='42501'; end if;
+  perform set_config('clued.issuer_credential_context_v1',
+    (coalesce(nullif(current_setting('clued.issuer_credential_context_v1',true),''),'{}')::jsonb
+      ||jsonb_build_object(i.id::text,c.generation))::text,true);
+  return i.legacy_key;
+end $$;
+revoke all on function clued_private.issuer_resolve_identity_onboard_sweep_v1(text)
+  from public,anon,authenticated,service_role;
+
 -- Audit provenance only. This context does not authenticate an identity or grant a business operation.
 create or replace function clued_private.issuer_credential_generation_v1(p_identity text,p_kind text) returns bigint
 language plpgsql stable set search_path='' as $$
@@ -331,7 +388,13 @@ begin
       for index in 1..array_length(f.argument_names,1) loop
         arg:=quote_ident(f.argument_names[index]);
         if index=f.credential_argument then
-          arg:=format('clued_private.issuer_resolve_identity_compatible_v1(%s,%L,%L)',arg,f.kind,denied_error);
+          if f.schema_name='public' and f.function_name='clued_storage_policy_transition_v2' then
+            arg:=format('clued_private.issuer_resolve_identity_policy_transition_v1(%s,p_input)',arg);
+          elsif f.schema_name='public' and f.function_name='clued_storage_onboard_sweep_v1' then
+            arg:=format('clued_private.issuer_resolve_identity_onboard_sweep_v1(%s)',arg);
+          else
+            arg:=format('clued_private.issuer_resolve_identity_compatible_v1(%s,%L,%L)',arg,f.kind,denied_error);
+          end if;
         end if;
         args:=args||case when index>1 then ',' else '' end||arg;
       end loop;

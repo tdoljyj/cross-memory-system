@@ -383,6 +383,13 @@ use digest `/3` over UUID identity; historical `/2` digests, registrations, requ
 verification JSON are not rewritten. New verification `/3` and default-refresh request hashes bind UUID/kind/
 credential generation without an issuer credential value.
 
+The Native policy-transition and onboarding-sweep entries use fixed private resolvers for their existing
+recovery contracts. Both require an active, unexpired storage credential even after issuer-wide revocation.
+The Native Owner can recover only an exact committed historical Receipt; the original body rejects fresh
+or changed requests. Sweep only expires the same issuer's staged attempts, without starting provider work.
+Transition keeps table-before-app-row locks; both recheck the clock after their locks. Retired credentials
+remain denied and no public bypass flag is added. Other authenticated entries retain the strict resolver.
+
 There is no rollback that restores issuer proofs as credentials. `issuer_function_sources_v1` is necessary
 versioned implementation source for deterministic migration reapplication, not a seven-day credential backup;
 retain it while that migration remains replayable. The seven-day backup/rollback section above applies only
