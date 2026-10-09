@@ -3327,6 +3327,32 @@
         ],
         "clued/scopeEnforcement": "server-side"
       }
+    },
+    {
+      "name": "clued_model_dataset_split_bootstrap_readiness",
+      "description": "Read only the installed immutable DatasetSplit plan and two fixed Owner source chains through this same Binding. Recomputes complete server Record hashes and verifies private M1 Receipt/Event chains; returns minimal references and readiness only. Accepts no selector, Actor, scope, grant, proof or clock. It grants no bootstrap, DomainAuthority, DataGate, M2 or training permission. Required Clued scope: context:read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "description": "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+        "additionalProperties": true
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "_meta": {
+        "clued/requiredScopes": [
+          "context:read"
+        ],
+        "clued/scopeEnforcement": "server-side"
+      }
     }
   ]
 }

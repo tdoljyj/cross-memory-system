@@ -14,7 +14,7 @@
       "CLUED_INTEGRATION_RUNTIME_V1": true,
       "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
       "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-      "expected_tool_count": 42
+      "expected_tool_count": 43
     },
     "full_matrix": [
       {
@@ -167,7 +167,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": false,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 35
+        "expected_tool_count": 36
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -175,7 +175,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": false,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 35
+        "expected_tool_count": 36
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -199,7 +199,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 42
+        "expected_tool_count": 43
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -207,7 +207,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 42
+        "expected_tool_count": 43
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -231,7 +231,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": false,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 40
+        "expected_tool_count": 41
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -239,7 +239,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": false,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 40
+        "expected_tool_count": 41
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -263,7 +263,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
-        "expected_tool_count": 47
+        "expected_tool_count": 48
       },
       {
         "PROJECT_VIEWS_V2": true,
@@ -271,7 +271,7 @@
         "CLUED_INTEGRATION_RUNTIME_V1": true,
         "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
         "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
-        "expected_tool_count": 47
+        "expected_tool_count": 48
       }
     ]
   }
