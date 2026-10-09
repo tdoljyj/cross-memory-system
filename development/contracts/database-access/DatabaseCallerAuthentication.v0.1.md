@@ -127,7 +127,7 @@ Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`
 2026-10-09 生产只读核实修正了原计划：
 
 - 两个旧 OAuth 审计 Binding 自 2026-08-29 起未再使用，可以直接撤销。
-- Projection Builder 在用（`projection_refresh_attempts` 已成功 5870 次），而 `clued_private.projection_refresh_builder_binding` 明确要求 Builder Binding **没有** `authorizations_v12` 记录（Builder 的权限来自 `projection_builder_grants`，不受委托授权限制）。所以「给 Projection Builder 补 v12 授权」会打断投影刷新，不做。改为：放行规则只留给持有有效 `projection_builder_grants` 的 Binding，并且只放行 `scope` `global` 的只读；其余找不到记录一律拒绝。
+- Projection Builder 在用（`projection_refresh_attempts` 已成功 5870 次），而 `clued_private.projection_refresh_builder_binding` 明确要求 Builder Binding **没有** `authorizations_v12` 记录（Builder 的权限来自 `projection_builder_grants`，不受委托授权限制）。所以 Decision `29bff239` 不给 Projection Builder 补 v12 授权（补了会打断投影刷新）。改为：放行规则只留给持有有效 `projection_builder_grants` 的 Binding，并且只放行 `scope` `global` 的只读；其余找不到记录一律拒绝。
 - 仓库中 73 个数据库测试直接插入没有 v12 记录的 Binding，靠这条放行通过；关闭它要同时把这些测试改成带 v12 授权的 Binding。
 
 
