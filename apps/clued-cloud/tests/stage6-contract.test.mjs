@@ -4,7 +4,7 @@ import test from "node:test";
 import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 import { contractVersionOf, verifyServedAgentContract } from "../scripts/verify-served-agent-contract.mjs";
 
-const baseEnv = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+const baseEnv = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
 test("bootstrap and record config publish one M1 semantic contract", async () => {
