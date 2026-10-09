@@ -2,8 +2,8 @@
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
   "exported_at": "2026-10-07T03:49:58.107Z",
-  "history_through": "20261008150701",
-  "row_count": 216,
+  "history_through": "20261009000153",
+  "row_count": 219,
   "rows": [
     {
       "version": "20260823154017",
@@ -1731,6 +1731,30 @@
       "statements_md5": "ca814a9339c50786e4ef13ac909105dc",
       "statements_length": 17925,
       "source": "migrations/20261008140000_storage_ancestor_identity_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008234320",
+      "name": "agent_messages_switch_v1",
+      "statements_md5": "838e1070a593d16e2ecb29719439e5a7",
+      "statements_length": 8527,
+      "source": "migrations/20261008190000_agent_messages_switch_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008234513",
+      "name": "owner_auto_approve_v1",
+      "statements_md5": "3aec66316e351b19d2bdd67d37811354",
+      "statements_length": 23934,
+      "source": "migrations/20261008170000_owner_auto_approve_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009000153",
+      "name": "credential_verifier_v1",
+      "statements_md5": "d777f4d61691d5d6dc0c8375552dc0d3",
+      "statements_length": 24583,
+      "source": "migrations/20261008210000_credential_verifier_v1.sql",
       "transform": "identical"
     }
   ],
