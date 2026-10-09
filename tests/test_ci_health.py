@@ -50,6 +50,20 @@ class CluedCiHealthTests(unittest.TestCase):
         self.assertIn(transport.TRANSPORT_LABEL, transport.LABEL_SPECS)
         self.assertIn(transport.DO_NOT_MERGE_LABEL, transport.LABEL_SPECS)
 
+    def test_hosted_monitor_and_revocation_schedules_stay_independent(self):
+        workflows = ROOT / ".github" / "workflows"
+        monitor = (workflows / "clued-ci-health.yml").read_text(encoding="utf-8")
+        reverify = (workflows / "clued-work-admission-reverify.yml").read_text(encoding="utf-8")
+        executor = (workflows / "clued-merge-executor.yml").read_text(encoding="utf-8")
+        self.assertIn('cron: "17 */6 * * *"', monitor)
+        self.assertIn("runs-on: ubuntu-slim", monitor)
+        self.assertIn("  pull_request:\n", monitor)
+        self.assertIn("  workflow_dispatch:\n", monitor)
+        self.assertNotIn("needs:", monitor, "pool loss must not prevent its hosted monitor")
+        self.assertIn('cron: "17 * * * *"', reverify, "revocation checks remain hourly")
+        self.assertIn("inputs.reason == 'state_change' && 30 || 10", reverify)
+        self.assertNotRegex(executor, r"(?m)^  schedule:")
+
     def report(self, runners=None, jobs=None):
         return health.build_report(
             "tdoljyj/cross-memory-system",
