@@ -1,8 +1,10 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 const hash = value => createHash("sha256").update(value).digest("hex");
 
 export async function testStorageOAuth(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const session = randomUUID(), otherSession = randomUUID(), issuer = hash(randomUUID());
   await admin.query("insert into auth.sessions(id,user_id) values($1,$3),($2,$3)", [session, otherSession, user]);
   const profile = (await admin.query("select id from clued_private.resource_center_profiles_v1 where profile_version='account/1' and user_id=$1", [user])).rows[0].id;

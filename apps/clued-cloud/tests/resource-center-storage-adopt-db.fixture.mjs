@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -22,6 +23,7 @@ const OWNER_ONLY = [{ id: "owner-permission", type: "user", role: "owner" }];
 // and an in-memory Drive, then ordinary writes on the adopted items. Never
 // Google, never a disk.
 export async function testStorageAdopt(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `adopt-${randomUUID()}`, resource = "https://adopt.invalid/mcp";

@@ -6,6 +6,7 @@
 // statement). Every call is recorded by the harness as a `db_fixture_setup`
 // step and is never a pass observation.
 
+import crypto from 'node:crypto';
 import pg from 'pg';
 import { identity, loopbackOrBridge } from './observer.mjs';
 
@@ -20,9 +21,26 @@ export async function connectFixtures(dbUrl, expected, bridgeCidrs = []) {
   if (!loopbackOrBridge(id.server_addr, bridgeCidrs)) throw new Error(`fixture server address ${id.server_addr} is not local`);
   return {
     identity: id,
-    registerIssuer: async (issuerHash, resource) => client.query(
-      "insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'IF M0-D S6 harness issuer')",
-      [issuerHash, resource]),
+    registerIssuer: async (issuerHash, resource) => {
+      await client.query('begin');
+      try {
+        const registered = await client.query(
+          "insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'IF M0-D S6 harness issuer')",
+          [issuerHash, resource]);
+        // After 2b, permanent issuer provisioning creates identity only. This
+        // isolated setup explicitly issues its synthetic credential generation.
+        const issuer = (await client.query(
+          "select id from clued_private.issuer_identities_v1 where kind='authorization' and legacy_key=$1",
+          [issuerHash])).rows[0];
+        if (!issuer) throw new Error('synthetic issuer identity was not provisioned');
+        const verifier = 'cv1:' + crypto.createHash('sha256').update('clued.credential-verifier.v1:' + issuerHash).digest('hex');
+        const generation = (await client.query(
+          'select clued_private.issuer_credential_stage_v1($1,$2) generation', [issuer.id, verifier])).rows[0].generation;
+        await client.query('select clued_private.issuer_credential_activate_v1($1,$2)', [issuer.id, generation]);
+        await client.query('commit');
+        return registered;
+      } catch (error) { await client.query('rollback'); throw error; }
+    },
     maintenanceWrite: async (userId, input, requestHash) => (await client.query(
       'select clued_private.record_mutation_with_terminal_guard($1,null,$2,$3) v', [userId, input, requestHash])).rows[0].v,
     deleteBinding: async (bindingId) => (await client.query(

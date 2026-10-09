@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -10,6 +11,7 @@ const READ_DISCLOSURE = "clued.storage-read-disclosure/1";
 // own Owner: earlier fixtures leave many active connections on the shared one,
 // and the list holds at most 50.
 export async function testStorageConnections(t, admin, server) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], session = randomUUID(), clientIssuer = sha(randomUUID());
   const resource = "https://storage-connections.invalid/mcp";
   const user = randomUUID(), project = randomUUID(), decision = randomUUID();

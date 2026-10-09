@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials, issuerBusinessDefinition } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -13,6 +14,7 @@ const MIB = 1024 * 1024, GIB = 1024 * MIB, IMAGE = 5 * MIB;
 // independent of the receipts other fixtures leave in the rolling hour.
 // Synthetic, disposable PostgreSQL only.
 export async function testStorageBudget(t, admin, server, mainUser) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], user = randomUUID(), project = randomUUID(), decision = randomUUID();
   const session = randomUUID(), issuer = sha(randomUUID()), clientIssuer = sha(randomUUID());
   const oauthClient = `budget-${randomUUID()}`, resource = "https://budget.invalid/mcp";
@@ -242,7 +244,7 @@ export async function testStorageBudget(t, admin, server, mainUser) {
     });
 
     await t.test("upload reservations use the configured per-Binding and account upload budgets at once", async () => {
-      const definition = (await admin.query("select pg_get_functiondef('public.clued_storage_staging_v1(text,text,jsonb)'::regprocedure) body")).rows[0].body;
+      const definition = await issuerBusinessDefinition(admin,'public.clued_storage_staging_v1(text,text,jsonb)');
       assert.match(definition, /storage_upload_budget_v2\(c\.owner_id,\(snapshot->>'binding_id'\)::uuid,c\.id,/);
       assert.equal((await admin.query("select to_regprocedure('clued_private.storage_upload_budget_v1(uuid,uuid,bigint)') fn")).rows[0].fn, null,
         "the fixed-limit function is gone");

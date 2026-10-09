@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -189,6 +190,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     await apply(GRANTS);
     for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     // ---- fixtures ----------------------------------------------------------------------------
     const newUser = async () => {

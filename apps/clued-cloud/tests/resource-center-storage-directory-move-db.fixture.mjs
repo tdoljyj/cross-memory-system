@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -21,6 +22,7 @@ const OWNER_ONLY = [{ id: "owner-permission", type: "user", role: "owner" }];
 // executor (verified-result mode) against disposable PostgreSQL and an
 // in-memory Drive. Never Google, never a disk.
 export async function testStorageDirectoryMove(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `subtree-${randomUUID()}`, resource = "https://subtree.invalid/mcp";

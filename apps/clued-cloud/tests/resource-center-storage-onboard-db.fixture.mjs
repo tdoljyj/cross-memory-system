@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
@@ -13,6 +14,7 @@ const READ_DISCLOSURE = "clued.storage-read-disclosure/1";
 // Host /clued-cloud/ refusal and the Owner's existing connections staying
 // unchanged. Synthetic, disposable PostgreSQL only.
 export async function testStorageOnboard(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], session = randomUUID(), otherSession = randomUUID();
   const issuerSecret = randomBytes(32).toString("hex"), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `onboard-${randomUUID()}`, resource = "https://onboard.invalid/mcp";
