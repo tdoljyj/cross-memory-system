@@ -70,7 +70,7 @@ store; compute its proof and `cv1:` verifier there. Pass only the verifier to th
 `issuer_credential_activate_v1(issuer_uuid, generation)`. Update the matching Worker secret; verify prepare,
 approval/replay/revoke for authorization, or refresh/onboard/queued recovery for storage. Then immediately call
 `issuer_credential_retire_v1(issuer_uuid, previous_generation)` and prove the old credential is refused.
-Do not proceed to the second key until the first key's positive and negative checks pass. Never set the issuer
+Do not proceed to the second key until the first key's positive and negative checks pass. Never set the
 underlying issuer row's `revoked_at` in `authorization_issuers_v12` or `storage_oauth_apps_v1` for ordinary key
 rotation: that would invalidate its existing authorizations. The UUID identity table has no `revoked_at`.
 Each migration, Worker secret update and release needs its own exact production authorization. C1's
