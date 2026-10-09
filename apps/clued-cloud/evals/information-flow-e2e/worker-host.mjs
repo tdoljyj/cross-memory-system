@@ -3,25 +3,29 @@
 // outboundService ledger. Spawned detached, so it leads its own process
 // group; workerd inherits that group and SIGKILL of the group kills both.
 // Talks to the orchestrator only over the Node IPC channel; configuration
-// (including the local publishable key) arrives over IPC, never in a file.
+// (including the local publishable key and short-lived gateway JWT) arrives
+// over IPC, never in a file. PostgREST verifies the JWT signature itself.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { Miniflare, Log, LogLevel } from 'miniflare';
 import { createGatewayLedger } from './gateway-ledger.mjs';
+import { assertLocalGatewayConfig } from '../public-mcp/gateway-token.mjs';
+import { redact } from './evidence.mjs';
 
 if (!process.send) throw new Error('worker-host must be spawned with an IPC channel');
 const send = (message) => { try { process.send(message); } catch { /* parent gone */ } };
 
 class RingLog extends Log {
   constructor() { super(LogLevel.WARN); }
-  log(message) { send({ type: 'log', message: String(message).slice(0, 2000) }); }
+  log(message) { send({ type: 'log', message: redact(String(message)).slice(0, 2000) }); }
 }
 
 let mf = null;
 let ledger = null;
 
 async function start(config) {
+  assertLocalGatewayConfig(config);
   const bundle = path.join(config.bundleDir, 'worker.js');
   if (!fs.existsSync(bundle)) throw new Error(`missing bundle ${bundle}`);
   const persistDirNew = !fs.existsSync(config.persistDir);
@@ -35,7 +39,7 @@ async function start(config) {
     port: 0,
     log: new RingLog(),
     handleStructuredLogs(entry) {
-      send({ type: 'log', level: entry.level, message: String(entry.message ?? '').slice(0, 2000) });
+      send({ type: 'log', level: entry.level, message: redact(String(entry.message ?? '')).slice(0, 2000) });
     },
     telemetry: { enabled: false },
     // No request.cf download from workers.cloudflare.com: use the built-in placeholder.
@@ -55,6 +59,7 @@ async function start(config) {
         env: Object.fromEntries(Object.entries({
           SUPABASE_URL: config.gatewayOrigin,
           SUPABASE_PUBLISHABLE_KEY: config.publishableKey,
+          CLUED_DB_GATEWAY_TOKEN: config.gatewayToken,
           PROJECT_VIEWS_V2: 'true',
           P5_TENANT_WRITES: 'false',
           CLUED_ALLOWED_ORIGINS: config.allowedOrigins,
@@ -82,7 +87,7 @@ process.on('message', async (message) => {
       process.exit(0);
     }
   } catch (error) {
-    send({ type: 'error', message: String(error?.stack ?? error).slice(0, 4000) });
+    send({ type: 'error', message: redact(String(error?.stack ?? error)).slice(0, 4000) });
   }
 });
 process.on('SIGTERM', async () => { await mf?.dispose().catch(() => {}); process.exit(0); });

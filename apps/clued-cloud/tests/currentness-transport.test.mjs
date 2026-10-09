@@ -11,7 +11,7 @@ const CLUED_COMPONENTS = {
   source_commit: null,
 };
 
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   PROJECT_VIEWS_V2: "true",
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
 };

@@ -5,7 +5,7 @@ import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 const worker = await loadContinuityWorker();
 const origin = "https://clued.example.invalid", connection = randomUUID();
 const issuer = randomBytes(32).toString("base64url");
-const env = { CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key",
   CLUED_STORAGE_GOOGLE_CLIENT_ID: "fixture.apps.googleusercontent.com", CLUED_STORAGE_GOOGLE_CLIENT_SECRET: "fixture-client-secret",
   CLUED_STORAGE_GOOGLE_REDIRECT_URI: origin + "/storage/google/callback", CLUED_STORAGE_CONNECTOR_ISSUER: issuer,
   CLUED_STORAGE_VAULT_KEYS: JSON.stringify({ current_key_id: "fixture", keys: { fixture: randomBytes(32).toString("base64url") } }) };
@@ -86,7 +86,7 @@ test("default refresh requires the refresh feature and a strict boolean before a
   const original=globalThis.fetch; let rpcCalls=0;
   globalThis.fetch=async url=>{if(String(url).endsWith('/auth/v1/user'))return Response.json({id:'fixture-owner'});rpcCalls++;throw Error('unexpected private RPC');};
   try {
-    for(const value of ['true',1,null,{}]) assert.equal((await worker.fetch(request('start',{connection_id:connection,default_refresh:value}),{...env,CLUED_STORAGE_REFRESH_V1:'true'})).status,403);
+    for(const value of ['true',1,null,{}]) assert.equal((await worker.fetch(request('start',{connection_id:connection,default_refresh:value}),{ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",...env,CLUED_STORAGE_REFRESH_V1:'true'})).status,403);
     assert.equal((await worker.fetch(request('start',{connection_id:connection,default_refresh:true}),env)).status,403);
     assert.equal(rpcCalls,0);
   } finally {globalThis.fetch=original;}

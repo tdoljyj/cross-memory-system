@@ -17,7 +17,7 @@ const issuerHash = createHash("sha256").update(issuer).digest("hex");
 const CONNECTION = "20000000-0000-4000-8000-000000000031", OWNER = "30000000-0000-4000-8000-000000000031", BINDING = "40000000-0000-4000-8000-000000000031";
 const ROOT = "G:/My Drive/Clued_资料中心/20_P_产品与体验";
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const baseEnv = () => ({ CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_JOBS_V1: "true", CLUED_STORAGE_JOBS_V2: "true",
+const baseEnv = () => ({ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_JOBS_V1: "true", CLUED_STORAGE_JOBS_V2: "true",
   CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_BINARY_V1: "true", CLUED_STORAGE_EXECUTOR_V1: "true", CLUED_STORAGE_CONNECTOR_ISSUER: issuer,
   CLUED_STORAGE_STAGING: memoryBucket(), CLUED_STORAGE_STAGING_URL_KEY: Buffer.alloc(32, 5).toString("base64url"),
   CLUED_STORAGE_STAGING_KEYS: JSON.stringify({ current_key_id: "s1", keys: { s1: Buffer.alloc(32, 6).toString("base64url") } }),
@@ -109,7 +109,7 @@ async function withDatabase(fn) {
 }
 
 test("discovery: upload_begin and binary submit variants exist only with every binary flag", async () => {
-  for (const [env, expected] of [[{ ...baseEnv(), CLUED_STORAGE_BINARY_V1: undefined }, false], [{ ...baseEnv(), CLUED_STORAGE_JOBS_V2: undefined }, false], [baseEnv(), true]]) {
+  for (const [env, expected] of [[{ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...baseEnv(), CLUED_STORAGE_BINARY_V1: undefined }, false], [{ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...baseEnv(), CLUED_STORAGE_JOBS_V2: undefined }, false], [baseEnv(), true]]) {
     const tools = (await (await worker.fetch(rpc("tools/list", {}), env)).json()).result.tools;
     assert.equal(tools.some(t => t.name === "clued_storage_upload_begin"), expected);
     assert.equal(tools.find(t => t.name === "clued_storage_submit").inputSchema.properties.mutation.oneOf.length, expected ? 13 : 9);

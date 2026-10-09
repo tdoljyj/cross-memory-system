@@ -13,7 +13,7 @@ await build({ entryPoints: ['worker/continuity.ts', 'app/contexts/context-sessio
 stop();
 const { handleContinuityRequest: handle, publicMcpTools } = await import(pathToFileURL(path.join(dir, 'worker/continuity.mjs')));
 const { ContextSession, localDraft } = await import(pathToFileURL(path.join(dir, 'app/contexts/context-session.mjs')));
-const env = { CLUED_DEVELOPMENT_CONTEXT_V14: 'true', SUPABASE_URL: 'https://db.example', SUPABASE_PUBLISHABLE_KEY: 'test-public-key' };
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_DEVELOPMENT_CONTEXT_V14: 'true', SUPABASE_URL: 'https://db.example', SUPABASE_PUBLISHABLE_KEY: 'test-public-key' };
 const request = (body = { op: 'context_list' }, token = 'clued_bnd_developer-test', route = '/v1/development', headers = {}) => new Request(`https://clued.example${route}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
 test('API: default-off rejects and does not contact storage; tool list unchanged', async () => {

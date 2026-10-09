@@ -20,8 +20,9 @@ import { resolveSupabasePublicConfig } from "../app/supabase-public-config";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
+import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 
-export interface StorageAccessDigestBackfillEnv {
+export interface StorageAccessDigestBackfillEnv extends DatabaseGatewayEnv {
   CLUED_STORAGE_ACCOUNT_V1?: string;
   CLUED_STORAGE_GOOGLE_V1?: string;
   CLUED_STORAGE_JOBS_V2?: string;
@@ -54,8 +55,9 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
   if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" ||
       env.CLUED_STORAGE_JOBS_V2 !== "true" || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return { status: "disabled" };
   const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+  const gatewayToken = databaseGatewayToken(env);
   const clientId = env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "";
-  if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS || !clientId) return { status: "unavailable" };
+  if (!issuer || issuer.length < 32 || !gatewayToken || !env.CLUED_STORAGE_VAULT_KEYS || !clientId) return { status: "unavailable" };
   const fetcher = deps.fetch ?? fetch;
   const clock = deps.clock ?? Date.now;
   let rpc: (input: Data) => Promise<Data>;
@@ -68,7 +70,7 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
     rpc = async (input: Data) => {
       const response = await fetcher(`${url}/rest/v1/rpc/clued_storage_access_digest_backfill_v1`, {
         method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
-        headers: { apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json" },
+        headers: { apikey: key, authorization: `Bearer ${gatewayToken}`, "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
       });
       if (!response.ok) { await response.body?.cancel().catch(() => undefined); throw new Error("storage_access_digest_rpc_failed"); }
