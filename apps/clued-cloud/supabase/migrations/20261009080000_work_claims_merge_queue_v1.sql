@@ -130,7 +130,7 @@ language sql stable security definer set search_path='' as $$
             from jsonb_array_elements(x.v->'entries') e where e->>'claim_id'=c.claim_id::text),
           jsonb_build_object('state','none')) order by x.v->>'ref')
       from (select clued_private.work_claim_merge_queue_v1(c.user_id,r.ref) v
-              from unnest(clued_private.work_claim_merge_refs_v1(c.trigger_refs)) r(ref)) x)
+              from (select distinct lower(t) from unnest(clued_private.work_claim_merge_refs_v1(c.trigger_refs)) t) r(ref)) x)
   end
 $$;
 
@@ -142,7 +142,7 @@ language sql stable security definer set search_path='' as $$
       and cardinality(clued_private.work_claim_merge_refs_v1(c.trigger_refs))>0
     then (select min((x.v->'head'->>'until')::timestamptz)
       from (select clued_private.work_claim_merge_queue_v1(c.user_id,r.ref) v
-              from unnest(clued_private.work_claim_merge_refs_v1(c.trigger_refs)) r(ref)) x
+              from (select distinct lower(t) from unnest(clued_private.work_claim_merge_refs_v1(c.trigger_refs)) t) r(ref)) x
       where x.v->'head'->>'claim_id'=c.claim_id::text) end
 $$;
 
@@ -226,7 +226,7 @@ language sql stable security definer set search_path='' as $$
       'hard_cap_until',(x.v->'head'->>'since')::timestamptz+make_interval(secs=>c.merge_slot_hard_cap_seconds),
       'ci_state',c.merge_slot_ci_state,'ci_head_sha',c.merge_slot_ci_head,'ci_at',c.merge_slot_ci_at)
     from (select clued_private.work_claim_merge_queue_v1(c.user_id,r.ref) v
-            from unnest(clued_private.work_claim_merge_refs_v1(c.trigger_refs)) r(ref)) x
+            from (select distinct lower(t) from unnest(clued_private.work_claim_merge_refs_v1(c.trigger_refs)) t) r(ref)) x
     where x.v->'head'->>'claim_id'=c.claim_id::text
       and (x.v->'head'->>'until')::timestamptz>pg_catalog.clock_timestamp()
     limit 1)
