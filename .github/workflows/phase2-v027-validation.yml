@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Preserve exact accepted Git blob bytes
         shell: bash
@@ -43,12 +43,12 @@ jobs:
           git checkout-index --all --force
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "24.19.0"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -239,7 +239,7 @@ jobs:
 
       - name: Upload real positive gate receipt
         if: always() && steps.mode.outputs.negative_case == 'none'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: phase2-v027-ci-receipt
           path: |
@@ -253,7 +253,7 @@ jobs:
 
       - name: Upload negative gate evidence
         if: always() && steps.mode.outputs.negative_case != 'none'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: phase2-v027-negative-${{ steps.mode.outputs.negative_case }}
           path: |
@@ -316,7 +316,7 @@ jobs:
 
       - name: Retain actual permission observation
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: phase2-readonly-token-permission
           path: PermissionObservation.json

@@ -149,11 +149,11 @@ jobs:
       enforced: ${{ steps.gate.outputs.enforced }}
       verdict: ${{ steps.gate.outputs.verdict }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24.19.0
       - id: gate
@@ -186,10 +186,10 @@ jobs:
       run:
         working-directory: apps/clued-cloud
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24.19.0
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.
@@ -231,7 +231,7 @@ jobs:
         run: npm run integration-runtime:gate-evidence -- --out "$RUNNER_TEMP/integration-runtime-gate-evidence.json"
       - name: Upload S2c gate evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: integration-runtime-gate-evidence-self-hosted
           path: ${{ runner.temp }}/integration-runtime-gate-evidence.json
@@ -266,10 +266,10 @@ jobs:
       run:
         working-directory: apps/clued-cloud
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24.19.0
           cache: npm
@@ -309,7 +309,7 @@ jobs:
         run: npm run integration-runtime:gate-evidence -- --out "$RUNNER_TEMP/integration-runtime-gate-evidence.json"
       - name: Upload S2c gate evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: integration-runtime-gate-evidence-hosted
           path: ${{ runner.temp }}/integration-runtime-gate-evidence.json
