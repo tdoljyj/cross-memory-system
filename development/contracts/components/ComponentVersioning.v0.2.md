@@ -34,28 +34,36 @@ Until v0.2 the contract lived at `skills/clued/references/agent-contract.md`. PR
 
 ### 2.3 How an Agent gets the contract
 
-1. `clued_agent_bootstrap`, the public tool every Clued connection already lists, returns the contract. Using an existing tool means no Host has to reconnect to see it. The tool's handler, and only it, adds the text: `content` holds the existing JSON block followed by one plain-text block with the contract markdown, and `structuredContent` gains `agent_contract: { version, sha256 }` without the markdown, so the text travels once. `bootstrapContract()` also builds `/.well-known/clued-continuity` and `/v1/continuity/bootstrap`; those carry only `agent_contract: { version, sha256 }`.
+1. `clued_agent_bootstrap`, the public tool every Clued connection already lists, returns the contract. Using an existing tool means no Host has to reconnect to see it. The tool's handler, and only it, adds the text: `content` holds the existing JSON block followed by one plain-text block with the contract markdown, and `structuredContent` gains `agent_contract: { version, sha256, markdown_in: "content[1]", url }` without the markdown, so the text travels once and a client reading only `structuredContent` still learns where the text is (`url` is `/clued-agent.md`). `bootstrapContract()` also builds `/.well-known/clued-continuity` and `/v1/continuity/bootstrap`; those carry only `agent_contract: { version, sha256 }`.
 2. `sha256` is the SHA-256 of the UTF-8 source file with CRLF read as LF, which is exactly the markdown block of item 1. It is not the hash of `/clued-agent.md`, whose served text adds an origin-dependent footer.
 3. Every successful `clued_session_resume` returns `contract_version` and `agent_contract_sha256` from `withComponentVersions`, whether or not the work-claims flag is on. Today `contract_version` is added only when work claims are enabled; step 1 of §8 moves it.
 4. `GET /clued-agent.md` keeps serving the contract for Agents that can reach the web.
-5. Size budget. The contract source stays at or below 80,000 bytes (63,369 bytes at v41), so the tool response stays under the default 25,000-token MCP output limit of Claude Code. A CI test fails above the budget. Raising the budget needs a successor of this contract that adds paged delivery.
+5. Size budget. The whole rendered `clued_agent_bootstrap` response (every `content` block and `structuredContent`) stays at or below 76,000 bytes, about 21,700 tokens at 3.5 bytes per token, leaving a margin under the default 25,000-token MCP output limit of Claude Code. At v41 the contract source is 63,369 bytes. A CI test renders the response and fails above the budget. Raising the budget needs a successor of this contract that adds paged delivery.
 6. An Agent that does not hold the text of the returned `contract_version` in its conversation reads it through item 1 (or item 4) and follows it before any work. This is routine and silent: a contract version that differs from what an Agent saw before is not a stale install, is not reported to the Owner as one, and needs no reinstall. Only when the Agent can read the contract through neither path does it tell the Owner and stop (agent-contract §1.6).
 7. `mcp.server` is raised in the change that adds item 1, so a client can tell from the reported version whether the service delivers the contract.
 
 ### 2.4 Enforcement
 
-The rules of §2.2 are checked by `scripts/ci/check_contract_placement.py`, with its test `scripts/ci/test_check_contract_placement.py`, run by the `clued-components` workflow on every pull request and every push to `main`. Both files and the workflow are in the protected layer (`scripts/ci/**`, `.github/**`, agent-contract §1.7): a pull request that changes them is admitted only with an Owner Grant of `repo.protected_change` for its exact head. The check fails when:
+The rules of §2.2 are checked by `scripts/ci/check_contract_placement.py`, with its test `scripts/ci/test_check_contract_placement.py`, run as a job named `contract-placement` on every pull request and every push to `main`. The job reports under that one name whoever opened the pull request (unlike the `clued-components` job, whose name changes with the author). Enforcement has three parts, all needed:
 
-1. a file under a `skill` component's root or under `integrations/**/skills/clued/**` is named `agent-contract.md` or has a line matching `^Contract version: \d+$` (§2.2 item 2);
-2. the `agent-contract` component's root lies inside a `skill` component's root (§2.2 item 3);
-3. `SKILL.md` or a Skill reference states a contract version number, that is, matches `(?i)\bcontract\s+(?:version\s*)?v?\d+\b` or `合同\s*v?\d+` (§2.2 item 4). Field and component names such as `contract_version` and `agent-contract`, `metadata.version` and section citations such as §1.6 do not match;
-4. the contract source exceeds the size budget of §2.3 item 5.
+- **Required check.** `contract-placement` is a required status check of the `main` ruleset and is in `CI_REQUIRED_CHECKS` of `scripts/ci/clued-merge-slot-ci.mjs`, so a red result blocks the merge, auto-merge included. Adding it to the ruleset is an Owner action.
+- **Protected files.** The checker, its test, the workflow that runs it and `clued-merge-slot-ci.mjs` are in the protected layer (`scripts/ci/**`, `.github/**`, agent-contract §1.7): a pull request that changes them is admitted only with an Owner Grant of `repo.protected_change` for its exact head.
+- **No trust in editable inputs.** The checker hardcodes the Skill locations `skills/**` and `integrations/**/skills/**` and does not take them from `config/clued-components.json`. It also fails when the manifest has no `skill.clued` component, when that component's kind is not `skill`, or when its root is not `skills/clued`.
 
-Each failure message cites this section and Decisions `07f0edc7` and `56c3fc66`. The test has a failing fixture for each case and a passing fixture for each exempt form of item 3. The rule changes only through an Owner Decision that supersedes those two Decisions and a successor of this contract; the protected layer makes the Owner see any change to the check.
+The check fails when:
+
+1. a file under `skills/**` or `integrations/**/skills/**` is named `agent-contract.md` or has a line matching `^Contract version: \d+$` (§2.2 item 2);
+2. the `agent-contract` component's root lies inside `skills/**` or `integrations/**/skills/**` (§2.2 item 3);
+3. `SKILL.md` or a Skill reference states a contract version number (§2.2 item 4), that is, matches any of `(?i)\bcontract(?:'s)?\s+(?:version\s*[:#]?\s*)?v?\d+(?![.\d])`, `(?i)\bcontract_version\W{0,4}\d+`, `(?i)\(v\d+\)`, `(?i)\bv\d+\s+of\s+the\s+contract` or `合同\s*v?\d+(?![.\d])`. Section citations carry the § sign (for example agent-contract §1.6, 合同 §3.6) and do not match; a section number without § is written with it. Field and component names such as `contract_version` and `agent-contract` without a number, and `metadata.version`, do not match;
+4. the rendered `clued_agent_bootstrap` response exceeds the size budget of §2.3 item 5.
+
+Each failure message cites this section and Decisions `07f0edc7` and `56c3fc66`. The test has a failing fixture for each case, including `Contract version: 42` inside a sentence, `contract_version` 42, `contract (v42)` and `v42 of the contract`, and a passing fixture for each exempt form of item 3. The rule changes only through an Owner Decision that supersedes those two Decisions and a successor of this contract.
 
 ### 2.5 Rollout gate
 
-When a pull request removes the contract from a Skill whose base-branch copy still holds it, `check_contract_placement.py` reads production's `/v1/continuity/bootstrap` and fails unless it reports `agent_contract` with the same `version` and `sha256` as the head's `protocol/agent/agent-contract.md`. Merging to `main` already releases the Skill (the Claude Code plugin updates by commit, Codex installs from the checkout), so this gate, not a deploy schedule, keeps a Skill without the contract from reaching Agents while the service cannot deliver it. After the removal is on `main` the gate has nothing to compare and stays inactive.
+The pull request that removes the contract from the Skill (step 3 of §8) moves the contract and does not change its bytes: the checker fails when, in that pull request, `protocol/agent/agent-contract.md` differs from the base branch's `skills/clued/references/agent-contract.md`. A contract text change goes in a pull request of its own, before or after.
+
+In that pull request the checker also reads production's `/v1/continuity/bootstrap` and fails unless it reports `agent_contract` with the `sha256` of the base branch's contract and an `mcp.server` version at or above the one step 1 introduced. The HTTP bootstrap stands in for the MCP tool because both come from the same Worker build. Merging to `main` already releases the Skill (the Claude Code plugin updates by commit, Codex installs from the checkout), so this gate, not a deploy schedule, keeps a Skill without the contract from reaching Agents while the service cannot deliver it. When a contract change has merged after the last production deploy, the gate stays red until the next deploy; that is intended. After the removal is on `main` the gate has nothing to compare and stays inactive.
 
 ### 2.6 Skills installed before v0.2
 
@@ -73,7 +81,7 @@ A component's files and its version change together. `scripts/clued_components.p
 3. `apps/clued-cloud/worker/generated/components.ts` differs from the manifest;
 4. against the base manifest, a component's digest changed while its version did not, its version went down, or it was removed.
 
-The `clued-components` workflow runs this, and the placement check of §2.4, on every pull request and every push to `main`. `bump <id> <version>` raises a version and rewrites its marker; `update` re-records digests; `node apps/clued-cloud/scripts/generate-agent-contract.mjs` regenerates the Worker modules.
+The `clued-components` workflow runs this on every pull request and every push to `main`; the placement check of §2.4 runs beside it as `contract-placement`. `bump <id> <version>` raises a version and rewrites its marker; `update` re-records digests; `node apps/clued-cloud/scripts/generate-agent-contract.mjs` regenerates the Worker modules.
 
 ## 4. What the service reports
 
@@ -114,7 +122,7 @@ Hosts other than Claude Code run no hook. On them the Agent compares versions it
 
 ## 8. Implementation steps
 
-1. (Task `af536fcc`) Service: `clued_agent_bootstrap` delivers the contract as §2.3 items 1–2 say; `/.well-known/clued-continuity` and `/v1/continuity/bootstrap` report `agent_contract: { version, sha256 }`; `withComponentVersions` adds `contract_version` and `agent_contract_sha256` to every resume (§2.3 item 3); the MCP `initialize` instructions name `clued_agent_bootstrap` as the way to read the contract and carry §2.6 item 1; `verify-served-agent-contract.mjs` also checks `agent_contract` after deploy; raise `mcp.server`. Deployed to production before step 3 can pass §2.5.
+1. (Task `af536fcc`) Service: `clued_agent_bootstrap` delivers the contract as §2.3 items 1–2 say; `/.well-known/clued-continuity` and `/v1/continuity/bootstrap` report `agent_contract: { version, sha256 }`; `withComponentVersions` adds `contract_version` and `agent_contract_sha256` to every resume (§2.3 item 3); the MCP `initialize` instructions name `clued_agent_bootstrap` as the way to read the contract and carry §2.6 item 1; `verify-served-agent-contract.mjs` also checks `agent_contract` after deploy; raise `mcp.server`. Acceptance: the contract text reaches the model through `clued_agent_bootstrap` on Claude Code, claude.ai, Codex and ChatGPT, recorded per Host. Deployed to production before step 3 can pass §2.5.
 2. (Task `af536fcc`) Contract text: §1.6 describes §2.3 item 6 and §2.6 item 1; raise the contract version.
 3. (Task `af536fcc`) Move the source to `protocol/agent/agent-contract.md` and update every reader of the old path:
    - generator and verifier: `apps/clued-cloud/scripts/generate-agent-contract.mjs`, `apps/clued-cloud/scripts/verify-served-agent-contract.mjs`;
@@ -122,8 +130,8 @@ Hosts other than Claude Code run no hook. On them the Agent compares versions it
    - workflow path filters: `.github/workflows/public-mcp-protocol.yml`, `.github/workflows/clued-connection-authorization.yml` (to `protocol/agent/**`);
    - `config/merge-admission-policy.json`: the `!skills/clued/references/agent-contract.md` exception and its fixtures in `scripts/ci/merge-admission-policy.fixtures.mjs` and `merge-admission-policy.test.mjs`;
    - hooks and their plugin copies: `scripts/hooks/clued_capture_guard.py` (docstring, `OWN_MESSAGE` together with the message it matches, and `tests/test_clued_capture_guard.py`), `scripts/hooks/clued_work_claim_guard.py`, `scripts/hooks/clued_version_check.py` (§5), each with its version raised;
-   - docs and Skill: `AGENTS.md`, `apps/clued-cloud/AGENTS.md`, `CONTRIBUTING.md`, `skills/clued/SKILL.md` and its references (links to `agent-contract.md`), and the execution note of Decision `f1dbabc4`;
-   - remove the contract from `skills/clued` and the plugin copy; update manifest roots and digests; raise the Skill version (the last one a contract change causes).
+   - docs and Skill: `AGENTS.md`, `apps/clued-cloud/AGENTS.md`, `CONTRIBUTING.md`, `skills/README.md` (cites v0.1 and describes the contract comparison this contract removes), `skills/clued/SKILL.md` and its references (links to `agent-contract.md`), and the execution note of Decision `f1dbabc4`;
+   - remove the contract from `skills/clued` and the plugin copy; update manifest roots and digests; raise the Skill version (the last one a contract change causes). The contract's bytes do not change in this pull request (§2.5).
    The workflow and policy files are in the protected layer and need an Owner Grant for the pull request's head.
-4. (Task `af536fcc`) `scripts/ci/check_contract_placement.py` and its test (§2.4, §2.5), wired into the `clued-components` workflow; protected layer, Owner Grant needed. It lands with or before step 3.
+4. (Task `af536fcc`) `scripts/ci/check_contract_placement.py` and its test (§2.4, §2.5), run as the `contract-placement` job; `contract-placement` added to `CI_REQUIRED_CHECKS` in `scripts/ci/clued-merge-slot-ci.mjs` (coordinate with Task `38e0c90d`, which is changing that file); protected layer, Owner Grant needed. The Owner adds `contract-placement` to the required checks of the `main` ruleset. It lands, and is required, before step 3.
 5. (Task `af536fcc`) After the steps are on `main`, an archive copy of this contract goes to the Resource Center; the repository copy stays authoritative (Decision `56c3fc66`). The Owner reinstalls the Skill once (§2.6 item 2).
