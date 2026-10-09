@@ -4,7 +4,7 @@ import { publicMcpTools } from "../../worker/continuity";
 import { isModelDomainTool, modelDomainTools, MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL,
   MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL, MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL,
   MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL, MODEL_DOMAIN_PLAN_PREPARATION_TOOL,
-  MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL } from "../../worker/model-domain-tools";
+  MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL, MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL } from "../../worker/model-domain-tools";
 
 const toolVersions = JSON.parse(
   fs.readFileSync(new URL("./tool-versions.json", import.meta.url), "utf8"),
@@ -23,7 +23,7 @@ const FLAGS = ["PROJECT_VIEWS_V2", "P5_TENANT_WRITES", "CLUED_INTEGRATION_RUNTIM
   "CLUED_MODEL_DOMAIN_SOURCE_V1", "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1"] as const;
 const READ_MODEL_TOOLS = [MODEL_REFERENCE_OWNER_APPROVAL_REFS_TOOL, MODEL_DOMAIN_OWNER_ANCHOR_REFS_TOOL,
   MODEL_DOMAIN_REFS_TOOL, MODEL_DOMAIN_VERIFY_TOOL, MODEL_DOMAIN_PLAN_PREPARATION_TOOL,
-  MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL];
+  MODEL_DOMAIN_SUCCESSOR_VERIFY_TOOL, MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL];
 const modelOutputSchema = { type: "object",
   description: "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
   additionalProperties: true };
@@ -81,14 +81,15 @@ const results = flags.full_matrix.map((item: Record<(typeof FLAGS)[number], bool
   );
   const independentCount = 18 + (item.PROJECT_VIEWS_V2 ? 11 : 0) + (item.P5_TENANT_WRITES ? 5 : 0)
     + (item.CLUED_INTEGRATION_RUNTIME_V1 ? 7 : 0)
-    + (item.PROJECT_VIEWS_V2 && item.CLUED_MODEL_DOMAIN_SOURCE_V1 ? 6 : 0);
-  assert.equal(tools.length, independentCount, "five-flag count differs from independent legacy plus six-readonly counts");
+    + (item.PROJECT_VIEWS_V2 && item.CLUED_MODEL_DOMAIN_SOURCE_V1 ? 7 : 0);
+  assert.equal(tools.length, independentCount, "five-flag count differs from independent legacy plus seven-readonly counts");
   const modelTools = tools.filter((tool) => isModelDomainTool(tool.name));
   assert.deepEqual(modelTools.map((tool) => tool.name),
     item.PROJECT_VIEWS_V2 && item.CLUED_MODEL_DOMAIN_SOURCE_V1 ? READ_MODEL_TOOLS : [],
     "Model readonly tools require both existing Records and source flags");
   assert.equal(tools.some((tool) => tool.name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL), false,
     "all 32 uniform rows leave the existing OwnerRequests prerequisite OFF");
+  assert.equal(tools.some((tool) => tool.name === MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL), false, "commit must remain hidden while OwnerRequests is OFF");
   for (const tool of modelTools) {
     const descriptor = modelDomainTools.find((candidate) => candidate.name === tool.name);
     assert.ok(descriptor, "Model tool must have an existing registered descriptor");
@@ -121,6 +122,6 @@ const productionOff = publicMcpTools({ PROJECT_VIEWS_V2: "true", P5_TENANT_WRITE
   CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: "false" });
 assert.equal(productionOff.length, 36, "the ordinary source-OFF baseline remains 36 tools");
 assert.equal(JSON.stringify(productionOff), JSON.stringify(baseline.tools.filter((tool: { name: string }) => !isModelDomainTool(tool.name))),
-  "filtering the six production readonly additions must preserve every ordinary tool byte and order");
+  "filtering the seven production readonly additions must preserve every ordinary tool byte and order");
 
 console.log(JSON.stringify({ status: "PASS", matrix: results, metadata_bound: true }));
