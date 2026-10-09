@@ -35,9 +35,9 @@ jobs:
   # Clued token (this job runs PR code): it waits for the trusted
   # pull_request_target run of clued-work-admission.yml on this head and reads
   # its result, always enforced (Merge Admission step 6 retired the advisory
-  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand
-  # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
-  # push events are admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
+  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs
+  # admission_run_id from clued-work-admission-dispatch.yml; push events are
+  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
   admission-gate:
     name: admission-gate
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
