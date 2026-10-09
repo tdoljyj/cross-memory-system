@@ -329,6 +329,8 @@
 
 `scripts/ci/ci-usage-report.mjs`（受保护路径），只读 GitHub API，输出 JSON artifact 与 step summary。**硬规则**：度量只在 GitHub Actions 内运行。首选一个**度量专用**的只读 GitHub App（与 Decision `d8bc893c` 给 runner 钩子的只读 App 同类、另建一个，只装本仓库）的安装令牌：它有独立的 5,000 次/小时额度，私钥只放进 `clued-admission` environment（限 main，PR 代码拿不到）。度量脚本读的端点比钩子多，这个 App 需要 `actions`、`contents`、`pull_requests`、`issues`、`checks` 五项**只读**（`pulls/{n}`、`pulls/{n}/files`、`pulls/{n}/commits` 要 pull requests 读，`issues/{n}/events` 要 issues 读，读 App check 标题要 checks 读）；不把这五项加到钩子 App 上——钩子 App 的私钥在 PR 代码可读的 runner 上，保持它只有 Actions / Contents 读。用 `GITHUB_TOKEN` 兜底时在 workflow 的 `permissions:` 块声明同一组。`GITHUB_TOKEN` 只作兜底：它的 1,000 次/小时是**每仓库共享池**，gate 轮询（每 10 秒 2 次请求、最多 480 秒、一个 head 最多 10 个 gate）、准入运行与复核都在同一池里，用它度量时预算 ≤200、每批前读 `x-ratelimit-remaining`、低于 600 即停、只在没有 PR 活动的时段 schedule。绝不用 Owner 的个人令牌，也不用机器账号（个人账号下的私有仓库只能给协作者读写权限与 classic 令牌，Decision `d8bc893c`）。按运行 id 落盘缓存只拉增量。来历：2026-10-07 本研究的临时采集脚本用 Owner 个人令牌对 #530–#616 逐运行、逐提交拉取，约 18 分钟发出 4,600 余次请求把 5,000 次/小时的额度用到 0，而自托管 runner 的开工前检查用同一账号的令牌，PR #617 的检查在钩子阶段被 403 拒绝。Owner 随后决定（Decision `d8bc893c`，Task `4e691ab6`，PR #620）：runner 启动钩子改用新建的只读 GitHub App 的安装令牌，走 App 自己的额度；不用机器账号，也不复用 clued-admission App（它的私钥放到 job 可读的 runner 上会被 PR 代码拿去伪造准入检查）。
 
+**实施说明（2026-10-09，Task `f70546e5`，Owner Decision `00b71629`）**：第 1 版（#650）先用 `GITHUB_TOKEN`。首份报告（运行 37894585499，7 天）只拿到 994 个运行中 187 个的 job 明细（停在 200 次上限），一周约 1,000 个运行，缓存追不上，所以按上文首选方案建度量专用只读 App。workflow 进 `clued-admission` environment，只引用 `CLUED_MEASURE_APP_ID` 与 `CLUED_MEASURE_APP_KEY` 两个 secret；脚本用 App 安装令牌（只申请上述五项只读）读取，上限 2,000 次；App 未配置、未安装或拒发令牌时退回 `GITHUB_TOKEN`、上限 200，并在日志与摘要里写明令牌来源和原因。低于 600 即停、不重试、按运行 id 缓存不变。
+
 | 指标 | 定义 |
 | --- | --- |
 | `self_hosted_minutes` | 窗口内自托管 job 的 `completed_at - started_at` 之和，按 workflow、按层、按状态分组 |
