@@ -1,5 +1,6 @@
--- DatasetSplit exact installation proposal, NOT APPLIED. All existing readers remain unchanged.
--- UNINSTALLED exact frozen contract constants, no authority or writes.
+-- Numbered DatasetSplit installation migration. Applying it installs the fixed
+-- constants, Binding-protected RPC EXECUTE ACLs and Native action catalog below.
+-- It issues no Owner Grant or Canonical projection; existing readers are unchanged.
 create or replace function clued_private.model_domain_bootstrap_adoption_constant_candidate() returns jsonb language sql immutable set search_path='' as $$ select $M2JSON${"canonical_record_id":"b8c1d482-9eb4-4bc5-8dd1-372b0d55174e","record_version":1,"canonical_scope":"project:0597aa60-9b98-4da6-a4ab-63d7705b632f","record_content_sha256":"b58db4fe2cc81c123f078aeff789fcc9fe971902321ffd36a9e3ebaa1af477eb","canonical_receipt_id":"45a657d9-ba34-437e-b17c-2d792ce5c692","quote_evidence_id":"1257e89f-d6b6-4015-8712-0bab340cc1b4","quote_sha256":"905819e2e3a059a02087855e9f326d05c877c1767ec31dc012c5c44652840230","quote_size_bytes":6,"effect":"OWNER_BASELINE_ADOPTION_ONLY"}$M2JSON$::jsonb $$;
 revoke all on function clued_private.model_domain_bootstrap_adoption_constant_candidate() from public,anon,authenticated,service_role;
 create or replace function clued_private.model_domain_bootstrap_recognizer_constant_candidate() returns jsonb language sql immutable set search_path='' as $$ select $M2JSON${"role":"OWNER","effect":"FINAL_RECOGNIZER_DESIGNATION_AND_NON_PRODUCTION_PREPARATION_ONLY","subject":{"version":"v0.1","definition_id":"clued.model-program.DatasetSplit","definition_sha256":"f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77","instance_schema_sha256":"062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"},"owner_subject_id":null,"production_enabled":false,"domain_permission_granted":false,"authenticated_identity_status":"NOT_EXPOSED_BY_CURRENT_MCP"}$M2JSON$::jsonb $$;
@@ -144,7 +145,9 @@ begin
     jsonb_typeof(installed_plan->'source_resource') is distinct from 'string' or
     jsonb_typeof(installed_plan->'source_sha256') is distinct from 'string'
  then raise exception 'MODEL_DOMAIN_EXACT_PLAN_NOT_INSTALLED' using errcode='42501'; end if;
- if installed_plan->>'source_resource' is distinct from p_input->>'immutable_plan_resource' or
+ if installed_plan->>'source_resource' is distinct from 'repo:tdoljyj/cross-memory-system/8a975c42ddba3ee7a80fe54a4223b7f590014b67/development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json' or
+    installed_plan->>'source_sha256' is distinct from 'fc83a4a1f69de07d6de9dea5e879f1498b1b8f288ba3f9b8fba11d979de110ea' or
+    installed_plan->>'source_resource' is distinct from p_input->>'immutable_plan_resource' or
     coalesce(installed_plan->>'source_sha256','') !~ '^[0-9a-f]{64}$' or
     encode(extensions.digest(convert_to(installed_plan->>'raw_utf8','UTF8'),'sha256'),'hex') is distinct from installed_plan->>'source_sha256'
  then raise exception 'MODEL_DOMAIN_EXACT_PLAN_ARTIFACT_BINDING_INVALID' using errcode='42501'; end if;
@@ -190,7 +193,7 @@ begin
  owner_proof:=jsonb_build_object('adoption',clued_private.model_domain_owner_chain_successor(b,own),
    'designation',clued_private.model_domain_owner_chain_successor(b,designation));
  source_fingerprint:=jsonb_build_object('adoption',to_jsonb(own),'designation',to_jsonb(designation),'proof',owner_proof);
- if exists(select 1 from public.clued_memories x where x.id=any(ids)) then
+ if exists(select 1 from public.clued_memories x where x.user_id=b.user_id and x.id=any(ids)) then
    raise exception 'BOOTSTRAP_CREATE_TARGET_ALREADY_EXISTS_NO_REPLAY' using errcode='42501'; end if;
  consumed:=clued_private.owner_grant_consume_v1(b.user_id,b.id,v_action,expected_resources,task);
  if consumed->>'grant_id' is distinct from g.id::text or consumed->>'use' is distinct from '1'
@@ -324,7 +327,11 @@ revoke all on function public.clued_model_dataset_split_bootstrap_readiness_cand
 grant execute on function public.clued_model_dataset_split_bootstrap_readiness_candidate(text,jsonb),
  public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb) to anon;
 
--- UNINSTALLED minimal catalog successor, not a numbered migration.
+-- This numbered migration registers the high-risk Native write action.
+-- MCP feature flags gate Worker routes only; direct RPCs still require the
+-- same Binding, exact single-use Native grant and current Task claim.
+-- The existing grant engine may select a broader covering grant first; the
+-- exact-ID postcondition then fails and rolls back, never borrowing that grant.
 -- Existing model.dataset_split.verify/recognize/producer grants from the
 -- read-only source package must NOT be consumed as Canonical write permission.
 -- Reuse only the existing Owner Grant/Native confirmation storage and engine.
@@ -332,5 +339,6 @@ insert into clued_private.owner_grant_actions(action,doors,title,risk) values
  ('model.dataset_split.bootstrap',array['model-domain-bootstrap'],
   '一次创建指定的非生产DatasetSplit生产者、权限投影与认定记录：固定Owner来源、三目标ID和真实Native确认；不授权Kernel/M2/训练',
   'high');
--- No grants, producer registration, source records, EXECUTE or DML privileges
--- are installed by this catalog candidate. Native approval remains external.
+-- The RPC EXECUTE ACLs above are installed; no Owner Grants, producer
+-- registrations or Canonical source records are created by this migration.
+-- Native approval remains external, exact, single-use and at most one hour.

@@ -21,6 +21,7 @@ export interface BootstrapCommitResult {
  readonly training_or_data_use_authorized:false;readonly private_actor_fields_exposed:false;
 }
 export class BootstrapInputDenied extends Error { constructor(); }
+export class BootstrapExecutionDenied extends Error { constructor(); }
 export class BootstrapCompletionUnknown extends Error { constructor(); }
 export class BootstrapReadinessDenied extends Error { constructor(); }
 export function readBootstrapReadiness(rpc:ExistingBindingRpc,input:unknown,clock?:()=>number):Promise<Readonly<BootstrapReadiness>>;

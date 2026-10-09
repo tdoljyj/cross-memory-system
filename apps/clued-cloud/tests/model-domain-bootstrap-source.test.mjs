@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import {readBootstrapReadiness,commitBootstrap,EXACT_BOOTSTRAP_PLAN,BOOTSTRAP_READINESS_RPC,BOOTSTRAP_COMMIT_RPC,BootstrapInputDenied,BootstrapCompletionUnknown,BootstrapReadinessDenied} from '../worker/model-domain-bootstrap-source.mjs';
+import {readBootstrapReadiness,commitBootstrap,EXACT_BOOTSTRAP_PLAN,BOOTSTRAP_READINESS_RPC,BOOTSTRAP_COMMIT_RPC,BootstrapInputDenied,BootstrapExecutionDenied,BootstrapCompletionUnknown,BootstrapReadinessDenied} from '../worker/model-domain-bootstrap-source.mjs';
 const planBytes=fs.readFileSync(new URL('../../../development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json',import.meta.url));
 assert.equal(crypto.createHash('sha256').update(planBytes).digest('hex'),EXACT_BOOTSTRAP_PLAN.sha256);
 const plan=JSON.parse(planBytes.toString('utf8'));
@@ -17,7 +17,7 @@ function stub(changeReady=v=>v,changeCommit=v=>v){const calls=[];return{calls,rp
 test('relay-only fixture: exact plan and minimal committed DTO; no real source or write qualification',async()=>{
  const s=stub();const value=await commitBootstrap(s.rpc,input(),()=>now);
  assert.equal(value.m2_verdict,'NOT_ISSUED');assert.equal(value.training_or_data_use_authorized,false);
- assert.deepEqual(s.calls.map(x=>x.name),[BOOTSTRAP_READINESS_RPC,BOOTSTRAP_COMMIT_RPC]);assert.deepEqual(s.calls[1].body,input());
+ assert.deepEqual(s.calls.map(x=>x.name),[BOOTSTRAP_COMMIT_RPC]);assert.deepEqual(s.calls[0].body,input());
 });
 test('readiness never invokes a writer or grants bootstrap authority',async()=>{
  const s=stub();const r=await readBootstrapReadiness(s.rpc,{},()=>now);assert.equal(r.bootstrap_write_authorized,false);assert.equal(s.calls.length,1);
@@ -27,19 +27,32 @@ test('input rejects caller Actor/proof/scope/clock before any RPC',async()=>{
 });
 test('readiness denies changed bytes, elevated result, stale source and private payload with no write',async()=>{
  for(const mutate of [v=>({...v,plan_sha256:'f'.repeat(64)}),v=>({...v,bootstrap_write_authorized:true}),v=>({...v,evaluated_at:'2026-10-08T10:00:00Z'}),v=>({...v,actor:'private'})]){
-  const s=stub(mutate);await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapReadinessDenied);assert.equal(s.calls.length,1);
+  const s=stub(mutate);await assert.rejects(readBootstrapReadiness(s.rpc,{},()=>now),BootstrapReadinessDenied);assert.equal(s.calls.length,1);
  }
 });
 test('one failed dispatch is completion unknown and never retried',async()=>{
- const s=stub(v=>v,()=>{throw Error('lost response');});await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapCompletionUnknown);assert.equal(s.calls.length,2);
+ const s=stub(v=>v,()=>{throw Error('lost response');});await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapCompletionUnknown);assert.equal(s.calls.length,1);
 });
 test('post-dispatch private fields, wrong target, repeated Receipt or Gate claims cannot be completion',async()=>{
  for(const mutate of [v=>({...v,actor:'private'}),v=>({...v,producer_record_ref:{...v.producer_record_ref,id:crypto.randomUUID()}}),v=>({...v,canonical_receipt_ids:[v.canonical_receipt_ids[0],v.canonical_receipt_ids[0],v.canonical_receipt_ids[2]]}),v=>({...v,m2_verdict:'PASS'})]){
-  const s=stub(v=>v,mutate);await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapCompletionUnknown);assert.equal(s.calls.length,2);
+  const s=stub(v=>v,mutate);await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapCompletionUnknown);assert.equal(s.calls.length,1);
  }
 });
 test('descriptors, inherited fields and duplicate targets are rejected without hidden getters',async()=>{
  let read=0;const a=input();Object.defineProperty(a,'actor',{enumerable:false,get(){read++;return'private';}});
  const s=stub();await assert.rejects(commitBootstrap(s.rpc,a,()=>now),BootstrapInputDenied);assert.equal(read,0);assert.equal(s.calls.length,0);
  await assert.rejects(commitBootstrap(s.rpc,{...input(),permission_record_id:plan.targets.producer_record_id},()=>now),BootstrapInputDenied);
+});
+
+test('owned transport definite database rollback is denied once without neutral reads or retry',async()=>{
+ const s=stub(v=>v,()=>{throw new BootstrapExecutionDenied();});
+ await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapExecutionDenied);
+ assert.deepEqual(s.calls.map(v=>v.name),[BOOTSTRAP_COMMIT_RPC]);
+});
+test('bare HTTP/SQLSTATE objects and generic transport errors remain completion unknown',async()=>{
+ for(const error of [{status:403,details:{code:'42501'}},{status:400,code:'22023'},new Error('network/5xx')]){
+  const s=stub(v=>v,()=>{throw error;});
+  await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapCompletionUnknown);
+  assert.equal(s.calls.length,1);
+ }
 });

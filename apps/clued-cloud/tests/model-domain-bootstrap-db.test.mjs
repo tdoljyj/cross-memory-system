@@ -98,8 +98,8 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'model-fixture@example.invalid',now()),($2,'other-fixture@example.invalid',now())", [userId, otherUser]);
     const bindingId = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Model DB fixture',$2,array['context:read','context:write','audit:read'],array['*']) returning id`, [userId, token])).rows[0].id;
-    await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
-      values($1,'synthetic','Other DB fixture',$2,array['context:read','context:write'],array['*']) returning id`, [userId, otherToken]);
+    const otherBindingId=(await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Other DB fixture',$2,array['context:read','context:write'],array['*']) returning id`, [userId, otherToken])).rows[0].id;
 
     let faultTransaction=false,lastNativeTransaction=null;
     const nativeTransactionProof=[];
@@ -192,7 +192,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       from public.clued_agent_bindings b,public.clued_memories m where b.id=$1 and m.id=$2`,[readBinding,ownerLikeId])).rows[0].value;
     await t.test('Owner M1 chain preserves historical writer Binding across current same-owner readers',async()=>{
       const historical=await ownerChain();assert.equal(historical.receipt.id,ownerReceipt);assert.equal(historical.event.actor_binding_ref,bindingId);
-      const reader=(await admin.query('select id from public.clued_agent_bindings where token_hash=$1',[otherToken])).rows[0].id;
+      const reader=otherBindingId; // Hold the fixture's actual inserted identity, independent of credential storage form.
       assert.notEqual(reader,bindingId);assert.deepEqual(await ownerChain(reader),historical);
     });
     await fault('Owner helper direct anon execution denied',async()=>{},()=>roleCall('anon','select clued_private.model_domain_owner_chain_successor(null,null)'),/42501/);
@@ -243,6 +243,11 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
     const bootstrapInput={...frozen.targets,...frozen.owner_anchor_refs,idempotency_key:frozen.idempotency_key,immutable_plan_resource:exactPlan.source_resource};
     const commitBootstrap=(i=bootstrapInput,tk=token)=>rpc('clued_model_dataset_split_bootstrap_commit_candidate',i,tk);
     const readiness=(i={},tk=token)=>rpc('clued_model_dataset_split_bootstrap_readiness_candidate',i,tk);
+    await t.test('stored credential verifier cannot authenticate a Model source RPC',async()=>{
+      const stored=(await admin.query('select token_hash from public.clued_agent_bindings where id=$1',[bindingId])).rows[0].token_hash;
+      assert.match(stored,/^cv1:[0-9a-f]{64}$/);assert.notEqual(stored,token);
+      await assert.rejects(readiness({},stored),e=>e.code==='28000' && e.message==='invalid_binding_or_context');
+    });
     await t.test('installed exact plan is the original service UTF8 and immutable commit, not a caller plan',async()=>{
       assert.equal(Buffer.byteLength(exactPlan.raw_utf8),1987);
       assert.equal(crypto.createHash('sha256').update(exactPlan.raw_utf8).digest('hex'),'fc83a4a1f69de07d6de9dea5e879f1498b1b8f288ba3f9b8fba11d979de110ea');
@@ -288,6 +293,22 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       await assert.rejects(commitBootstrap(),e=>/OWNER_FULL_CONTRACT_OR_LEGACY_SERVER_REF_UNRESOLVED/.test(e.message));
       assert.equal(await countBootstrap(),0);assert.equal(await bootstrapUses(),0);
     });
+    // These mutate only isolated fixture grants, never live permission or
+    // fixed Canonical Owner hashes. Each denial leaves all target rows absent.
+    for (const [name,setup] of [
+      ['bootstrap rejects an already consumed one-use Native grant',()=>admin.query('update clued_private.owner_grants_v1 set uses=1 where id=$1',[bootstrapGrant])],
+      ['bootstrap rejects a Native grant longer than one hour',()=>admin.query("update clued_private.owner_grants_v1 set expires_at=granted_at+interval '2 hours' where id=$1",[bootstrapGrant])],
+      ['bootstrap rejects an expired Native grant',()=>admin.query("update clued_private.owner_grants_v1 set granted_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 hour' where id=$1",[bootstrapGrant])],
+    ]) {
+      await fault(name,setup,commitBootstrap,/EXACT_SINGLE_USE_NATIVE_BOOTSTRAP_WRITE_GRANT_REQUIRED/);
+      assert.equal(await countBootstrap(),0);assert.equal(await bootstrapUses(),0);
+    }
+    await fault('bootstrap rejects a self-consistent replacement plan hash without Native consumption',async()=>{
+      const replacement={...exactPlan,raw_utf8:exactPlan.raw_utf8+' '};
+      replacement.source_sha256=crypto.createHash('sha256').update(replacement.raw_utf8).digest('hex');
+      const literal=JSON.stringify(replacement).replaceAll("'","''");
+      await admin.query("create or replace function clued_private.model_domain_bootstrap_exact_plan_candidate() returns jsonb language sql immutable set search_path='' as $$ select '"+literal+"'::jsonb $$");
+    },commitBootstrap,/MODEL_DOMAIN_EXACT_PLAN_ARTIFACT_BINDING_INVALID/);
     await fault('bootstrap cannot use a different immutable Git plan',async()=>{},()=>commitBootstrap({...bootstrapInput,immutable_plan_resource:exactPlan.source_resource.replace('8a975c42','8a975c43')}),/EXACT_SINGLE_USE_NATIVE_BOOTSTRAP_WRITE_GRANT_REQUIRED/);
     await fault('bootstrap cannot use old source read grants as independent write authority',
       ()=>admin.query('update clued_private.owner_grants_v1 set revoked_at=clock_timestamp() where id=$1',[bootstrapGrant]),commitBootstrap,/EXACT_SINGLE_USE_NATIVE_BOOTSTRAP_WRITE_GRANT_REQUIRED/);

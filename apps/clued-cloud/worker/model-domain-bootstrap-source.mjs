@@ -25,6 +25,7 @@ function recent(value,now){
  const parsed=Date.parse(value);return Number.isSafeInteger(now)&&Number.isFinite(parsed)&&parsed<=now&&now-parsed<=300000;
 }
 export class BootstrapInputDenied extends Error{constructor(){super('BOOTSTRAP_EXACT_INPUT_REQUIRED');this.name='BootstrapInputDenied';}}
+export class BootstrapExecutionDenied extends Error{constructor(){super('BOOTSTRAP_DATABASE_TRANSACTION_REJECTED');this.name='BootstrapExecutionDenied';}}
 export class BootstrapCompletionUnknown extends Error{constructor(){super('BOOTSTRAP_COMPLETION_UNVERIFIED_INSPECT_ORIGINAL_RECEIPTS_DO_NOT_RETRY');this.name='BootstrapCompletionUnknown';}}
 export class BootstrapReadinessDenied extends Error{constructor(){super('BOOTSTRAP_FIXED_SOURCE_READINESS_DENIED_OR_UNAVAILABLE');this.name='BootstrapReadinessDenied';}}
 export async function readBootstrapReadiness(rpc,input,clock=()=>Date.now()){
@@ -53,11 +54,16 @@ export async function commitBootstrap(rpc,input,clock=()=>Date.now()){
   typeof input.idempotency_key!=='string'||input.idempotency_key.length<8||input.idempotency_key.length>100||
   input.immutable_plan_resource!==EXACT_BOOTSTRAP_PLAN.resource||input.idempotency_key!==EXACT_BOOTSTRAP_PLAN.idempotency_key||
   !['producer_record_id','permission_record_id','recognition_record_id'].every(k=>input[k]===EXACT_BOOTSTRAP_PLAN.targets[k]))throw new BootstrapInputDenied();
- // Neutral readiness is not authorization. The SQL writer still obtains the
- // independent exact Native grant and current claim inside its transaction.
- await readBootstrapReadiness(rpc,{},clock);
+ // Do not read neutral Owner readiness inside a write invocation. The SQL
+ // transaction checks exact Native permission before its first Canonical read;
+ // callers may invoke the separate read-only readiness tool explicitly.
  const request=structuredClone(input);let result;
- try{result=await rpc(BOOTSTRAP_COMMIT_RPC,request);}catch{throw new BootstrapCompletionUnknown();}
+ try{result=await rpc(BOOTSTRAP_COMMIT_RPC,request);}catch(error){
+  // Only the owned Worker transport can classify a definite database rollback.
+  // A caller-shaped status/code object or any transport uncertainty is not proof.
+  if(error instanceof BootstrapExecutionDenied)throw error;
+  throw new BootstrapCompletionUnknown();
+ }
  const keys=['status','actual_execution','producer_record_ref','permission_record_ref','recognition_record_ref',
   'canonical_receipt_ids','canonical_event_ids','evaluated_at','domain_authority_receipt','data_gate','m2_verdict',
   'training_or_data_use_authorized','private_actor_fields_exposed'];
