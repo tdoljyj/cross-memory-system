@@ -41,6 +41,13 @@
 //         (the reruns-per-head count in its admission check's title);
 //       - gitleaks.yml and trivy.yml, required checks without a gate, may be
 //         re-run once (attempt 2);
+//       - so may any other workflow without an admission-gate job (the short
+//         checks, such as runner-budget-policy) whose file at the head is the
+//         default branch's, byte for byte (Task 26cced7e, Owner Decision
+//         661f8c36). A pull request that changes a workflow has every job of
+//         its first run refused until its admission run succeeds, so without
+//         this its short checks could only run again on a new commit or a
+//         close and reopen;
 //       - every other job starts only when this attempt's admission-gate job
 //         ran again in this attempt and succeeded ("Re-run all jobs"). "Re-run
 //         failed jobs" and a single-job re-run list the earlier gate job in
@@ -78,7 +85,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "merge-admission-step2-pr-read";
+export const HOOK_VERSION = "merge-admission-ungated-rerun";
 
 // The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
@@ -217,8 +224,52 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
     .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
+// Whether the workflow is an ungated short check on the default branch and
+// the run's commit has that very file: same path, same git blob, the default
+// branch's copy names no admission-gate anywhere (fail closed: any mention
+// counts as gated), and every job in it has a literal timeout-minutes of at
+// most UNGATED_RERUN_TIMEOUT_CAP. The attempt's job list is checked first;
+// the default branch's file decides as well, as defense in depth. A copy the
+// pull request changed is never re-run this way (Task 26cced7e; review
+// MINOR-1, MINOR-2).
+export const UNGATED_RERUN_TIMEOUT_CAP = 30;
+export function shortCheckFindings(text) {
+  const yaml = String(text ?? "").replace(/\r\n?/g, "\n");
+  if (yaml.includes("admission-gate")) return ["names admission-gate"];
+  const jobsAt = yaml.search(/^jobs:\s*(#.*)?$/m);
+  if (jobsAt < 0) return ["has no jobs block"];
+  const jobs = yaml.slice(jobsAt).split("\n").slice(1).join("\n").split(/^(?= {2}[A-Za-z0-9_-]+:\s*(#.*)?$)/m)
+    .filter((chunk) => /^ {2}[A-Za-z0-9_-]+:/.test(chunk));
+  if (!jobs.length) return ["has no jobs"];
+  const findings = [];
+  for (const job of jobs) {
+    const name = /^ {2}([A-Za-z0-9_-]+):/.exec(job)[1];
+    const timeout = /^ {4}timeout-minutes:\s*(\d{1,4})\s*(#.*)?$/m.exec(job);
+    if (!timeout) findings.push(`job ${name} has no literal timeout-minutes`);
+    else if (Number(timeout[1]) > UNGATED_RERUN_TIMEOUT_CAP) findings.push(`job ${name} may run ${timeout[1]} minutes (cap ${UNGATED_RERUN_TIMEOUT_CAP})`);
+  }
+  return findings;
+}
+async function ungatedAsDefaultBranch(fetchImpl, token, repository, defaultBranch, sha, workflow) {
+  const file = async (ref) => {
+    const body = await github(fetchImpl, token,
+      `/repos/${repository}/contents/${workflow.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`,
+      { allowMissing: true });
+    return body && body.type === "file" && /^[0-9a-f]{40}$/.test(String(body.sha ?? "")) ? body : null;
+  };
+  const [atHead, atDefault] = await Promise.all([file(sha), file(defaultBranch)]);
+  if (!atHead || !atDefault || atHead.sha !== atDefault.sha) return { ok: false, why: `its file at ${sha} is not ${defaultBranch}'s` };
+  if (typeof atDefault.content !== "string" || atDefault.encoding !== "base64") return { ok: false, why: `${defaultBranch}'s copy cannot be read` };
+  const findings = shortCheckFindings(Buffer.from(atDefault.content, "base64").toString("utf8"));
+  if (findings.includes("names admission-gate")) {
+    return { ok: false, why: `${defaultBranch}'s copy has an ${GATE_JOB} job, so it re-runs only with "Re-run all jobs"` };
+  }
+  if (findings.length) return { ok: false, why: `${defaultBranch}'s copy is not a short check (${findings.join("; ")})` };
+  return { ok: true };
+}
+
 // Re-runs of a pull request run (MergeAdmission v0.1 §8; Owner Decisions
-// 77216370 item 2 and 3, 1b93760d item 2).
+// 77216370 item 2 and 3, 1b93760d item 2, 661f8c36).
 export const GATE_JOB = "admission-gate";
 // Required checks without a gate: one re-run (attempt 2) on the current head.
 export const RERUN_ONCE_WORKFLOWS = [".github/workflows/gitleaks.yml", ".github/workflows/trivy.yml"];
@@ -257,7 +308,7 @@ async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attem
     return { state: "refused", detail: `attempt ${attempt} has ${body.total_count ?? "an unknown number of"} jobs and ${jobs.length} were listed` };
   }
   const gates = jobs.filter((job) => job && job.name === GATE_JOB);
-  if (gates.length === 0) return { state: "refused", detail: `attempt ${attempt} has no ${GATE_JOB} job` };
+  if (gates.length === 0) return { state: "refused", ungated: true, detail: `attempt ${attempt} has no ${GATE_JOB} job` };
   if (gates.length > 1) {
     return { state: "refused", detail: `attempt ${attempt} has ${gates.length} jobs named ${GATE_JOB} (${gates.map((job) => job.id).join(", ")}); exactly one is required` };
   }
@@ -328,6 +379,23 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
   }
   if (seen.state === "ok") {
     return { allow: true, reason: `run attempt ${attempt} on the current head: ${GATE_JOB} job ${seen.job.id} ran again in this attempt and succeeded` };
+  }
+  // An ungated workflow (no admission-gate job in this attempt), as the
+  // default branch has it: once, like gitleaks and trivy (Task 26cced7e).
+  if (seen.ungated) {
+    if (attempt !== 2) return refuse(`attempt ${attempt} lists no ${GATE_JOB} job (${seen.detail}); a workflow without one may be re-run once (attempt 2) only`);
+    let verdict;
+    try {
+      // The run's own commit (GITHUB_SHA, the merge commit the job runs), so the file compared is the one that runs (review NIT-1).
+      verdict = await ungatedAsDefaultBranch(fetchImpl, token, repository, defaultBranch, (env.GITHUB_SHA ?? "").trim(), workflow);
+    } catch (error) {
+      return refuse(`cannot compare ${workflow} with ${defaultBranch} (${errorText(error)}); re-run refused`);
+    }
+    if (!verdict.ok) {
+      return refuse(`attempt 2 lists no ${GATE_JOB} job, but ${workflow}: ${verdict.why}; `
+        + `an ungated workflow is re-run only as ${defaultBranch} has it`);
+    }
+    return { allow: true, reason: `run attempt 2 of ${workflow} on the current head: no ${GATE_JOB} job, the file is ${defaultBranch}'s (one re-run allowed)` };
   }
   return refuse(`no ${GATE_JOB} job that ran again in this attempt and succeeded (${seen.detail}); `
     + `use "Re-run all jobs", not "Re-run failed jobs" or a single job`);
