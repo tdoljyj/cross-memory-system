@@ -33,6 +33,7 @@
   - 授权检查先只提示（Owner 选择）：Owner 设仓库变量 `CLUED_RELEASE_GRANT_ENFORCE=true` 后才拦。
   - Agent 合同升到第 20 版，§6.6 写明发布与迁移前按提交申请授权。
 - 自动审批开关（§12，Owner Decision `5ce219c6`，Task `8eb340c7`）：迁移 `20261008170000_owner_auto_approve_v1.sql`，测试 `tests/owner-auto-approve-db.test.mjs`、`tests/owner-grants-ui.test.mjs`、`tests/owner-requests-transport.test.mjs`。需生产迁移与 Worker 发布后生效；Agent 合同与工具说明的补写见 Task `ce42fc18`。
+- 批完自动告诉 Agent（§13，Owner Decision `973e1b5b`，Task `d5bd604e`）：迁移 `20261009020000_owner_request_answers_v1.sql`，测试 `tests/owner-request-answers-db.test.mjs`、`tests/owner-requests-transport.test.mjs`、`tests/agent-messages-transport.test.mjs`。需生产迁移与 Worker 发布后生效。
 - 第 5 步（Owner 授权 2026-10-03，Task `340693ee`）：Agent 合同升到第 14 版，§6.6 写明 Owner 批准只来自 Owner 本人登录的页面、`confirm_url` 原样交给 Owner、不得自称已批准、被拒或过期就停；§4 错误表的 `work_claim_budget_exhausted` 改为先给 `owner_request.confirm_url`。尚无门口消费的动作（发布、迁移）仍按 §6.4 需要明确授权。Worker 发布后服务端 `/clued-agent.md` 才是第 14 版。
 日期：2026-10-02
 Task：`17ab25b3`（Global）。Owner 决定：方向与优先级见 Task `17ab25b3` v3，规则见 Decision `6fa79397`，待定三条见 Decision `667f588b`（§11）。
@@ -330,3 +331,25 @@ Owner 打开开关后，在开关有效期内，Agent 或门口提交的申请�
 ### 12.5 不保护什么（补充 §9）
 
 开关有效期间，§6.1 发布授权与 §6.3 准入复核对上述动作不再等 Owner：Agent 可以在这段时间里发布、迁移，或合并改动准入与发布门口本身的 PR。开关的保护只剩时长上限、Receipt 记录和随时可关。所以默认 24 小时，最长 7 天。
+
+## 13. 批完自动告诉 Agent（Owner Decision `973e1b5b`，Task `d5bd604e`）
+
+开关关着时，Owner 在 `/confirm` 上批准一次、给一段时间的授权或拒绝之后，结果自动送到提交申请的 Agent，不用它再拿 `request_id` 去查，也不用 Owner 回聊天说"批了"。全在 Clued 内部完成，不接邮件或推送等外部渠道。
+
+### 13.1 送给谁
+
+- 送给打开申请的那个 Binding。申请时带了 `session_ref`（Agent 的 Host 会话号，与认领用的 `holder_session_ref` 相同）就只送那个会话；没带就送这个 Binding 的每个会话，与 Agent 消息的寻址一致。一次申请多个动作时，`session_ref` 随每个成员保存。
+- 只送 Owner 的决定：`approved_once`、`granted`、`rejected`。仍在等待或已过期的申请不算。
+- 开关打开时自动通过的申请（§12）不再送：打开申请的那次调用已经把结果带回去了。
+- 决定超过 7 天还没读的不再显示。迁移之前已决定的申请都算已读。
+
+### 13.2 在哪里看到
+
+- `clued_session_resume` 和 `clued_work_renew` 的 `agent_inbox` 里：`owner_answer_count`，以及最新 5 条 `owner_answers`。这里只显示，不标已读。续租按认领自己的会话取。
+- `clued_agent_inbox`（视图 open、unread、all）的 `owner_answers`：最多 20 条，与消息一起标已读（`mark_read: false` 时不标）。`sent` 视图和按 `thread_id` 读线程时不显示。
+- Agent 用 `clued_owner_request` 读这条申请的状态时，也会标已读；别的 Binding 读状态不会。
+- 每条与状态读取看到的申请相同（动作、资源、结果、授权），另带 `source: "owner_answer"`。一次申请多个动作算一条，显示为第一个成员，`bundle` 列出全部成员；读一次，所有成员都标已读。
+
+### 13.3 怎么对待
+
+这是 Clued 记下的 Owner 决定，不是别的 Agent 的消息：Agent 可以据此继续（批了就用授权重试被拒的步骤，拒了就不重试，并用一句话告诉 Owner 卡住了什么），不必再请 Owner 确认。授权在每个门口使用时照常核对，送达本身不放宽任何东西。
