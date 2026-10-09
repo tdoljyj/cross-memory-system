@@ -224,13 +224,32 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
     .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
-// Whether the workflow is ungated on the default branch and the pull
-// request's head has that very file: same path, same git blob, and the
-// default branch's copy has no admission-gate job. The job list of an
-// attempt alone cannot tell: a single-job re-run of a gated workflow may list
-// no gate job. A copy the pull request changed is never re-run this way
-// (Task 26cced7e).
-export const GATE_JOB_LINE = /^ {2}admission-gate:\s*(#.*)?$/m;
+// Whether the workflow is an ungated short check on the default branch and
+// the run's commit has that very file: same path, same git blob, the default
+// branch's copy names no admission-gate anywhere (fail closed: any mention
+// counts as gated), and every job in it has a literal timeout-minutes of at
+// most UNGATED_RERUN_TIMEOUT_CAP. The attempt's job list is checked first;
+// the default branch's file decides as well, as defense in depth. A copy the
+// pull request changed is never re-run this way (Task 26cced7e; review
+// MINOR-1, MINOR-2).
+export const UNGATED_RERUN_TIMEOUT_CAP = 30;
+export function shortCheckFindings(text) {
+  const yaml = String(text ?? "").replace(/\r\n?/g, "\n");
+  if (yaml.includes("admission-gate")) return ["names admission-gate"];
+  const jobsAt = yaml.search(/^jobs:\s*(#.*)?$/m);
+  if (jobsAt < 0) return ["has no jobs block"];
+  const jobs = yaml.slice(jobsAt).split("\n").slice(1).join("\n").split(/^(?= {2}[A-Za-z0-9_-]+:\s*(#.*)?$)/m)
+    .filter((chunk) => /^ {2}[A-Za-z0-9_-]+:/.test(chunk));
+  if (!jobs.length) return ["has no jobs"];
+  const findings = [];
+  for (const job of jobs) {
+    const name = /^ {2}([A-Za-z0-9_-]+):/.exec(job)[1];
+    const timeout = /^ {4}timeout-minutes:\s*(\d{1,4})\s*(#.*)?$/m.exec(job);
+    if (!timeout) findings.push(`job ${name} has no literal timeout-minutes`);
+    else if (Number(timeout[1]) > UNGATED_RERUN_TIMEOUT_CAP) findings.push(`job ${name} may run ${timeout[1]} minutes (cap ${UNGATED_RERUN_TIMEOUT_CAP})`);
+  }
+  return findings;
+}
 async function ungatedAsDefaultBranch(fetchImpl, token, repository, defaultBranch, sha, workflow) {
   const file = async (ref) => {
     const body = await github(fetchImpl, token,
@@ -241,9 +260,11 @@ async function ungatedAsDefaultBranch(fetchImpl, token, repository, defaultBranc
   const [atHead, atDefault] = await Promise.all([file(sha), file(defaultBranch)]);
   if (!atHead || !atDefault || atHead.sha !== atDefault.sha) return { ok: false, why: `its file at ${sha} is not ${defaultBranch}'s` };
   if (typeof atDefault.content !== "string" || atDefault.encoding !== "base64") return { ok: false, why: `${defaultBranch}'s copy cannot be read` };
-  if (GATE_JOB_LINE.test(Buffer.from(atDefault.content, "base64").toString("utf8"))) {
+  const findings = shortCheckFindings(Buffer.from(atDefault.content, "base64").toString("utf8"));
+  if (findings.includes("names admission-gate")) {
     return { ok: false, why: `${defaultBranch}'s copy has an ${GATE_JOB} job, so it re-runs only with "Re-run all jobs"` };
   }
+  if (findings.length) return { ok: false, why: `${defaultBranch}'s copy is not a short check (${findings.join("; ")})` };
   return { ok: true };
 }
 
@@ -365,7 +386,8 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
     if (attempt !== 2) return refuse(`attempt ${attempt} lists no ${GATE_JOB} job (${seen.detail}); a workflow without one may be re-run once (attempt 2) only`);
     let verdict;
     try {
-      verdict = await ungatedAsDefaultBranch(fetchImpl, token, repository, defaultBranch, pr.head.sha, workflow);
+      // The run's own commit (GITHUB_SHA, the merge commit the job runs), so the file compared is the one that runs (review NIT-1).
+      verdict = await ungatedAsDefaultBranch(fetchImpl, token, repository, defaultBranch, (env.GITHUB_SHA ?? "").trim(), workflow);
     } catch (error) {
       return refuse(`cannot compare ${workflow} with ${defaultBranch} (${errorText(error)}); re-run refused`);
     }
