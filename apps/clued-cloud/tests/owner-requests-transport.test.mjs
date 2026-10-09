@@ -6,7 +6,7 @@ import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 // step-1 Agent RPCs. The database side is covered by owner-grants-db.test.mjs;
 // here every RPC is mocked.
 
-const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 const enabled = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_OWNER_REQUESTS_V1: 'true' };
 const disabled = { ...assets, PROJECT_VIEWS_V2: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };

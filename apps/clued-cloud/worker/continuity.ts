@@ -1,4 +1,5 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
   type ModelDomainFeatureEnv, type ModelDomainToolName } from "./model-domain-tools";
@@ -134,7 +135,7 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
+export interface ContinuityEnv extends DatabaseGatewayEnv, RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
   AgentMessageFeatureEnv, IntegrationFeatureEnv, ModelDomainFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
@@ -584,11 +585,13 @@ async function supabaseRequest(
   init: RequestInit & { userToken?: string } = {},
 ) {
   const { url, key } = supabaseConfig(env);
+  const token = init.userToken ?? databaseGatewayToken(env);
+  if (!token) throw new HttpError(503, "Clued database gateway is not configured.");
   const headers = new Headers(init.headers);
   headers.set("apikey", key);
   headers.set("content-type", "application/json");
   headers.set("accept", "application/json");
-  headers.set("authorization", `Bearer ${init.userToken ?? key}`);
+  headers.set("authorization", `Bearer ${token}`);
   const response = await fetch(`${url}${path}`, { ...init, headers });
   const text = await response.text();
   let payload: unknown = null;
@@ -610,11 +613,16 @@ async function supabaseRequest(
         : typeof details?.error_description === "string"
           ? details.error_description
           : "Clued storage request failed.";
-    // Binding RPCs use the storage anon role after Clued authenticates the
+    // Binding RPCs use the Worker gateway role after Clued authenticates the
     // connection. PostgREST maps that role's insufficient_privilege to 401;
     // forwarding it makes MCP clients restart OAuth for a resource denial.
-    // Preserve actual JWT/authentication errors as 401.
+    // A rejected Worker JWT is a server outage, not an expired client grant.
+    // Explicit user/P5 JWT authentication errors retain 401.
     const status =
+      !init.userToken && response.status === 401 &&
+        typeof details?.code === "string" && /^PGRST30[123]$/.test(details.code)
+        ? 503
+        :
       response.status === 401 && details?.code === "42501"
         ? 403
         : response.status >= 500 &&
@@ -624,8 +632,8 @@ async function supabaseRequest(
         : response.status;
     throw new HttpError(
       status,
-      message,
-      payload,
+      status === 503 && response.status === 401 ? "Clued database gateway is temporarily unavailable." : message,
+      status === 503 && response.status === 401 ? { code: "worker_gateway_unavailable" } : payload,
     );
   }
   return payload;

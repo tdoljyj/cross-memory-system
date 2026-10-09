@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { loadContinuityWorker as loadWorker } from "./worker-continuity-loader.mjs";
 
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
 };
 const ctx = { waitUntil() {}, passThroughOnException() {} };

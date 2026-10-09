@@ -1,7 +1,7 @@
 # Database Caller Authentication v0.1：库里只存校验值、Worker 不走 anon、G6 运输证明
 
-状态：**Proposed，部分已定（Owner 2026-10-08 Decision `1427642f`：接受设计 A 与 7 天备份；第 1 步先单独上线；设计 C 先做第 3 步只读核实，再选 C1 或 C2。Decision `096df8b8`：第 1 步一并收紧 Binding 表的插入、修改、删除；「无 v12 授权记录即放行」加为后续一步。Decision `2ec964af`：第 2 步按「写入自动转换」实现，见 §4.7）。** 本文不授予任何迁移、Worker 发布、规则集或合同版本改动的权限；每一步实施由 Owner 单独批准，每步一个 PR。
-日期：2026-10-08
+状态：**设计已选定，剩余实施待验证。** Owner 2026-10-08 Decision `1427642f` 接受设计 A 与 7 天备份，第 1 步先单独上线；Decision `096df8b8` 一并收紧 Binding 表的插入、修改、删除，并把「无 v12 授权记录即放行」列为后续一步；Decision `2ec964af` 选定第 2 步的「写入自动转换」（§4.7）。Owner 2026-10-09 Decision `818a9b05-4115-4143-8874-da7bdf6f9c4b`（Receipt `21190495-ac1b-45c8-a858-a7451c39c754`）选定：2b 身份与凭据分开、增加摘要版本；两把发行方凭据逐把切换，验证后立即停用对应旧凭据；C1 按两阶段方案开发，与 2b 并行，生产观察至少 24 小时后才收回旧权限，Owner 配合导入签名密钥。第 1、2a、7a/7b 已完成上线的范围不重做；2b、C1 与第 6 步合同勘误仍待各自实现、验证和收口。设计选择与开发授权不代替精确生产迁移、Worker 发布、权限收回或冻结合同勘误所需的授权。
+日期：2026-10-09（原现状基线保留 2026-10-08 的核对边界）
 来源：审计 P0-4 Task `9a4d6d2c` 的步骤 4（库里存的哈希不再等于口令、G6 门不再信任客户端提交的提交号）与步骤 5（Worker 脱离 anon）；Owner Decision `8a7e345f`（2026-10-08，两步合并为一份设计稿，只写方案）。前置工作：步骤 1 卫生迁移 `20261007120000_db_security_hygiene.sql`（Decision `eed7154f`，已在生产），以及 [docs/maintenance/database-security.md](../../../docs/maintenance/database-security.md) 的「Left for later」。
 对照基线：main `b290d0dd`（2026-10-08），生产库 `clued-prod` 2026-10-08 只读核对（安全检查：anon 可执行的 SECURITY DEFINER 函数 84、authenticated 69、search_path 可变 0、`rls_enabled_no_policy` 118、泄露密码保护关闭）。
 
@@ -9,7 +9,7 @@
 
 ## 0. 一句话结论
 
-**先做 A：库里不再存「调用方送来的那个值」，改存它的再一次哈希（校验值），调用方一行不改。** 今天调用方送 `p_token_hash = sha256(token)`，库里存的也正是这个值，所以谁读到这一列谁就能冒充；改成库里存 `sha256(p_token_hash)`、函数比对时现算一次，读到列也没用，而 Worker、CI、钩子、冻结合同里的 `p_token_hash = sha256(token)` 约定全部不变。**再做 C：Worker 用自己的数据库角色调用，anon 只留给 CI 的少数门口函数**，这样持有令牌的人也绕不过 Worker 的开关、校验和范围收窄，G6 门的 `__transport_source_commit` 也随之只能由 Worker 提供（B）。A 是一个迁移、零调用方改动；C 要 Worker 发布和逐函数改授权，先核实 Worker 角色凭据怎么签发再定选项。
+**A 让库里只存校验值，调用方继续提交原来的证明值。** `p_token_hash = sha256(token)` 的调用约定不变；库内格式按 §4.7 的 `cv1:` 域分离校验值，读到列值不能直接冒充。2a 已处理 Binding 与 Resource Center 令牌；剩余 2b 把固定发行方身份与可轮换凭据分开，保留历史摘要、登记与回执，为新登记增加摘要版本，逐把停用旧凭据。**C 已选 C1：Worker 用专用数据库角色。** 2b 与 C1 可并行开发；C1 先加授新角色、发布 Worker，旧权限仍保留，至少观察 24 小时并确认流量切换后再收回 Worker 专用 RPC 的旧权限，anon 只留 CI/钩子的门口白名单。G6 的角色限制随第二阶段收口。
 
 ---
 
@@ -149,9 +149,20 @@ Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`
 - **守卫**：迁移末尾与 `credential-verifier-db.test.mjs` 检查：没有函数把在范围内的列与 `p_*` 参数（或 `h`、`reader_hash`、`writer_hash`）直接比较（`set` 赋值除外，触发器会转换）；测试还检查没有函数把 `x.token_hash` 当参数交给另一个函数（除非先换成内部证明值）。
 - **分两步**：
   - **2a**：Binding（`clued_agent_bindings.token_hash`）与 Resource Center 令牌列（`resource_center_bindings_v1`、`resource_center_writer_bindings_v1`、`resource_center_renewals_v1` 的 `token_hash`，`resource_center_rotations_v1` 的 `old_*_hash` 与 `request` 里的新哈希，`resource_center_mutations_v1.authority_token_hash`）。迁移 `20261008210000_credential_verifier_v1.sql`。
-  - **2b**：发行方列（`authorization_issuers_v12.token_hash`、`authorization_requests_v12.issuer_hash`、各 `storage_*.issuer_hash`）。它们另有三个问题，所以单独做：`storage_client_request_digest_v2` 与 `storage_client_redirect_identity_v3` 把 `issuer_hash` 算进存储客户端摘要，而这些摘要已存进不可改的登记表；`storage_oauth_connection_consent_v1` 与 `storage_onboard_activate_v1` 把发行方证明值写进了不可改的回执；`storage_verified_result_v2` 把它存进持久化核验 JSON。2b 需要先定摘要怎么换代，并在迁移后轮换两个发行方密钥（旧证明值已在回执里）。
+  - **2b**：发行方列（`authorization_issuers_v12.token_hash`、`authorization_requests_v12.issuer_hash`、各 `storage_*.issuer_hash`）。`storage_client_request_digest_v2` 与 `storage_client_redirect_identity_v3` 把 `issuer_hash` 算进已存的不可改登记摘要；`storage_oauth_connection_consent_v1` 与 `storage_onboard_activate_v1` 把发行方证明值写进了不可改回执；`storage_verified_result_v2` 把它存进持久化核验 JSON。因此不能只替换列值，选定设计见 §4.8。
 
 §4.3 的生产核对与 §4.4 的 7 天备份照旧；备份另存被改写函数的原定义（`credential_function_backup_v1`），回退步骤见 [database-security.md](../../../docs/maintenance/database-security.md)。
+
+### 4.8 2b：固定发行方身份、凭据代与摘要版本（Decision `818a9b05`）
+
+本节属于既有 Task `9a4d6d2c` 的 2b，不创建新任务；设计已选定，实现和生产验收仍待证明。
+
+- **身份与凭据分开。** 每个发行方使用非秘密、固定的 `issuer_id`；发行方凭据单独分代，认证列只存 `credential_verifier_v1(证明值)`。凭据代必须绑定同一发行方身份及其原有用途、Owner/连接/授权范围，不得因轮换扩大范围。身份、凭据代 ID、校验值各有不同职责；`issuer_id` 和代 ID 本身不能用于认证。
+- **先认证再解析身份。** 入口仍接收原有证明值，resolver 先校验凭据代的校验值、有效性及撤销状态，再得到固定 `issuer_id`；后续内部检查按该身份映射到历史标识。历史登记使用过的旧 `issuer_hash` 只作历史身份/摘要输入，不得成为新的认证后门；直接提交旧证明值、存储校验值、固定 ID 或代 ID均不能代替有效的新证明值。
+- **旧摘要保持原字节。** 已有登记、回执和摘要原位保留，不重写不可变对象、不把重新计算的摘要伪装成原摘要。旧登记继续按原摘要算法及原输入字节核验；其历史凭据标识的存在不代表该凭据现在仍有效。
+- **新摘要显式换代。** 新登记增加摘要版本，摘要绑定固定的非秘密 `issuer_id`，不得包含原始秘密、证明值或校验值。版本选择与身份映射由服务端受控数据确定；缺失、未知版本、错配身份或错配范围失败关闭，不允许调用方自行选择旧版来绕过新认证。新回执及持久化核验 JSON 记录非秘密的身份、凭据代与摘要版本所需引用，不再落入可认证证明值。具体字段名与摘要域在 2b PR 固定并接受复审。
+- **逐把切换与立即停旧。** `CLUED_AUTHORIZATION_ISSUER_TOKEN`、`CLUED_STORAGE_CONNECTOR_ISSUER` 分别处理：生成新代、把新秘密放入原受控机密位置、切换对应调用、验证该路径成功后立即停用该路径的旧代，再处理另一把。每次必须有新凭据成功及旧凭据被拒的证据；不得轮换一把后顺带撤销另一把，也不得在验证失败时继续下一把。旧秘密已出现的历史回执保留，但轮换后不能再认证；回退不得恢复已停用旧代的认证权，应前向修复或签发新的代。
+- **恢复边界。** §4.4 的七天凭据备份与回退仅适用于历史 2a。2b 采用前向修复，不把已停用旧代或历史证明值恢复成认证授权；`issuer_function_sources_v1` 是迁移重放所需的版本化实现来源，不是七天凭据回退备份。登记兼容性、新登记、存储接入/读取/刷新/执行、OAuth 批准/撤销以及逐把轮换的验收需使用现有共用数据库测试工具，具体测试范围由实现 PR 明列。
 
 ---
 
@@ -159,7 +170,7 @@ Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`
 
 现状：Worker 只在调用 `clued_currentness_g6_gate` 时注入 `__transport_source_commit = 构建 SHA`；库里把它与 `clued_private.currentness_transport_attestations`（只由部署核验脚本经直连 Postgres 写入）比对，最多返回 `transport_precheck_ready`，Worker 再把结果提升为 `closed`。直连调用者可以填 `/healthz` 公布的 SHA 通过比对，但拿不到 `closed`。
 
-方案：**不单独改函数，随 C 一起收口。** C 完成后该函数只授予 Worker 角色，`__transport_source_commit` 只能来自 Worker，库里的比对就是可信的；同时在函数开头加角色断言（`current_user = '<Worker 角色>'`，否则拒绝），防止以后误授权。C 之前的这段时间，直连调用者最多拿到非权威的 `transport_precheck_ready`，风险低。
+方案：**随 C1 第二阶段收口，第一阶段不能提前加只许 Worker 的断言。** 第二阶段把 G6 入口只授予 Worker 角色，并校验 PostgREST 已认证的调用角色，防止以后误授权；`__transport_source_commit` 仍由 Worker 注入，不把调用方输入当作可信运输事实。2026-10-09 核对的 G6 是 SECURITY DEFINER、属主 `postgres`，因此函数内部的 `current_user` 是函数属主，不能用 `current_user = 'clued_worker_gateway'` 判断原调用者。实现须采用与真实 PostgREST 调用一致、不能由请求参数伪造的角色上下文，或在 invoker 外层完成判定，并证明新角色通过、anon/authenticated/伪造输入被拒、函数属主不误作调用角色；具体方式在 C1 PR 固定。第一阶段仍保留旧授权与非权威 `transport_precheck_ready` 行为；只有第二阶段权限收回与角色守卫验证完成后才声明该边界收口。
 
 备选：把运输事实放进 Worker 角色凭据的声明里（如 JWT `app_metadata.source_commit`），库里读 `auth.jwt()`。每次部署都要换凭据，代价高于收益，不推荐。
 
@@ -171,21 +182,31 @@ Worker 用用户会话直接访问这张表只有两处（`worker/continuity.ts`
 
 | 选项 | 做法 | 优点 | 缺点 |
 |---|---|---|---|
-| **C1 Worker 专用角色 + Worker 持有的 JWT（推荐，待核实签发方式）** | 新建 NOLOGIN 角色 `clued_worker_gateway`，授予 `authenticator`；Worker 以 `Authorization: Bearer <Worker JWT>`（`role` 声明为该角色）调用；Worker 用的函数从 `anon` 收回、授予该角色 | 先例 `clued_p5_gateway` 已在生产运行；PostgREST 在执行函数前就按授权拒绝，函数体不跑；安全检查里的 anon 数降到个位数；每个函数仍要 Binding 证明，等于「Worker 凭据 + Binding 证明」两道 | JWT 是长期凭据，需要轮换手段；签发依赖项目 JWT 签名设置（旧的 HS256 共享密钥还是新的非对称签名密钥），`CLUED_P5_GATEWAY_TOKEN` 怎么签发的仓库里没有记录 |
+| **C1 Worker 专用角色 + Worker 持有的 JWT（Owner 已选，Decision `818a9b05`）** | 新建 NOLOGIN 角色 `clued_worker_gateway`，授予 `authenticator`；Worker 以 `Authorization: Bearer <Worker JWT>`（`role` 声明为该角色）调用；先加授、发布与观察，第二阶段才收回 Worker 专用 RPC 的旧授权 | 先例 `clued_p5_gateway`；PostgREST 在执行函数前按授权拒绝；每个函数仍要原有 Binding/发行方证明 | 需要 Owner 导入专用签名密钥、独立轮换与真实调用证据；现有 P5 凭据不是新角色凭据的替代品 |
 | C2 PostgREST 预请求函数 + Worker 请求头密钥 | 配置 `pgrst.db_pre_request`：读请求头 `x-clued-worker-proof`，与库内校验值比对，设事务级 GUC `clued.caller = 'worker'`；Worker 用的函数开头断言该 GUC | 不依赖 JWT；两个校验值并存即可无缝轮换 | 角色仍是 anon，函数仍对互联网开放、执行到断言才拒；安全检查仍报 anon；每个请求（含 Console）多一次函数调用；84 个函数都要加断言 |
 | C3 Supabase secret key（`service_role`） | Worker 改用 `sb_secret_` | 最省事 | `service_role` 绕过 RLS，且本项目已把它从几乎所有函数收回；Worker 密钥一旦泄露即等于整个库，**否决** |
 | C4 Worker 直连 Postgres（Hyperdrive + 登录角色） | 不经 PostgREST | 完全不暴露 Data API | 改动 131 个调用点与连接管理，超出本审计范围，**否决** |
 
-推荐 C1：§6.4 的核实表明 Owner 可以导入专用私钥签发并独立轮换 Worker JWT；Owner 若不愿在控制台导入密钥，则用 C2。
+Owner 已选 C1，并配合导入签名密钥（Decision `818a9b05`）；C2 保留为历史备选，不因实施不便自行切换方案。
 
 ### 6.2 C1 细节
 
 - 角色：`clued_worker_gateway`，NOLOGIN，`grant clued_worker_gateway to authenticator`，`statement_timeout` 与 `anon` 一致或略长（由迁移设定）。
 - 凭据：Worker 机密 `CLUED_DB_GATEWAY_TOKEN`，`role` 声明为 `clued_worker_gateway`，有效期一年（`exp`），不进仓库、不进 Clued 记录。
 - 签发（第 3 步核实结论，见 §6.4）：Owner 在本机用 `supabase gen signing-key --algorithm ES256` 生成一把专用私钥，在项目「JWT signing keys」页导入为新密钥并放在只验证、不签发的状态（Previously used），**不点 Rotate**，这样 Supabase Auth 继续用现有密钥给用户签会话；再用这把私钥在本机签 Worker JWT（头部 `alg: ES256`、`kid` 为该密钥）写入 Cloudflare 机密。私钥导入 Supabase 后不可再导出；Owner 本机另存一份用于签发，不进仓库、不进 Cloudflare、不进 Clued。
-- 轮换：导入一把新的只验证密钥、签新凭据、发布 Worker、确认流量切换后吊销旧密钥。只影响 Worker 凭据，不影响用户会话。吊销后各组件的密钥缓存最多约 20 分钟才失效，紧急吊销时同时收回该角色的函数授权。
-- Worker 改动：`supabaseRequest` 在没有 `userToken` 时用 `CLUED_DB_GATEWAY_TOKEN` 作 `Authorization`，`apikey` 仍是 publishable key；`delegated-oauth.ts` 的 `bindingRpc` 与两个存储后台文件同样处理。人类会话转发不变。
-- 过渡：第 4 步先把这些函数**同时**授予 `anon` 与新角色并发布 Worker；确认生产流量全部带新凭据后（Worker 日志与 Supabase API 日志按角色统计），第 5 步再收回 `anon`。
+- 轮换：导入一把新的只验证密钥、签新凭据、发布 Worker、确认流量切换后吊销旧密钥。只影响 Worker 专用签名密钥，不轮换用户会话正在使用的密钥。[Supabase JWT Signing Keys 文档](https://supabase.com/docs/guides/auth/signing-keys) 的约 20 分钟指 JWKS discovery 的边缘/客户端缓存（自定义缓存可更长），**不代表 Data API 吊销延迟**；Supabase 产品不依赖这层缓存。生产验收必须核对旧 JWT 经真实 Data API 被拒，不能用固定等 20 分钟代替；紧急处置可同时收回专用角色的函数授权。
+- Worker 改动覆盖下面五个数据库调用入口，`apikey` 仍为 publishable key，服务调用的 `Authorization` 使用 `CLUED_DB_GATEWAY_TOKEN`；缺失或无效的新凭据失败关闭，不回退 publishable key/anon。人类会话转发与 P5 独立网关凭据路径保持原语义。
+
+  | 调用入口 | 覆盖范围 |
+  |---|---|
+  | `worker/continuity.ts` 的 `supabaseRequest` | 无 `userToken` 的 Binding/发行方/存储后台调用；显式用户 JWT 与 P5 调用不能被新凭据覆盖 |
+  | `worker/delegated-oauth.ts` 的 `bindingRpc` | OAuth 已签发 Binding 的状态查询 |
+  | `worker/delegated-oauth.ts` 的 `revokeIssuedBinding` | 发行方执行 Binding 撤销 |
+  | `worker/storage-access-digest-backfill.ts` 的 PostgREST 调用 | 存储访问摘要回填 |
+  | `worker/storage-queued-dispatch.ts` 的 PostgREST 调用 | 排队存储作业 sweep/分派 |
+
+- **阶段 1（第 4 步）**：建角色、把 Worker 使用的 RPC 加授给新角色，保留原有授权；完成上述五入口切换、Owner 导入签名密钥、部署及按角色统计的生产核验。本阶段不收回 anon，不提前启用只接受 Worker 的 G6 角色守卫；迁移、凭据配置与 Worker 发布分别使用实际阶段授权。
+- **阶段 2（第 5 步）**：阶段 1 验证完成后至少观察 24 小时；只有 Worker 日志与 Supabase API 日志证明相关生产流量已切换、五入口均覆盖、CI/钩子白名单仍正常，并取得收回权限的实际授权后，才收回 Worker 专用 RPC 的旧授权，启用 §5 的 G6 角色守卫。第二阶段验证 anon 集合等于 §6.3 白名单、非 Worker 角色不能直调专用入口；Native/Operator 的用户会话 RPC 保留其既有授权。开发可与 2b 并行，这个生产观察与收权次序不可省略。
 - G6：见 §5。
 
 ### 6.3 CI 与钩子
@@ -201,7 +222,7 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 - 生产项目已改用 JWT 签名密钥体系：近 24 小时与 10-01 全天的请求日志里，所有用户会话 JWT 都是 `ES256`、同一 `kid`（`c86f0e85-…`），签发方为项目 Auth。即用户会话由 Supabase 托管的非对称私钥签发，私钥不可导出。
 - 所以 Owner 无法拿项目现有密钥签 Worker JWT，但可以按 Supabase 文档「How to create (mint) JWTs」导入自己生成的私钥（§6.2）。导入的密钥只用于验证 Worker 凭据，轮换不牵动用户会话——这消除了原先担心的「轮换要让所有用户重新登录」。
 - P5 网关凭据 `CLUED_P5_GATEWAY_TOKEN`：两段日志窗口里都没有 `clued_p5_gateway` 角色的请求，它的签名方式与有效期查不到（Worker 机密不可读）。若它由旧的 HS256 共享密钥签发，一旦旧密钥被吊销 P5 路径就会失效；这与本文无关，只作提示。
-- 结论：C1 可行，推荐 C1；需要 Owner 在控制台做一次导入密钥的操作（Agent 做不了）。
+- 当时结论：C1 可行、推荐 C1。2026-10-09 Owner 已选 C1 并配合导入专用密钥（Decision `818a9b05`）；导入完成、真实 Data API 验签与切流仍须实施证据，设计选择不证明已完成这些操作。
 
 ### 6.5 与 MergeAdmission 的关系（避免重复与冲突）
 
@@ -228,16 +249,16 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 ## 8. 分步实施（每步一个 PR，每步单独请 Owner 批准）
 
 1. **凭据表直接权限**（§4.5）：列级 SELECT 不含 `token_hash`；收回 INSERT、DELETE；UPDATE 只留 `revoked_at` 并只许撤销。迁移 `20261008150000_credential_table_privileges_v1.sql` 与数据库测试随本 PR 提交，需要 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`。
-2. **校验值迁移（设计 A）**：按 §4.7 分两步。**2a** Binding 与 Resource Center 令牌：迁移 `20261008210000_credential_verifier_v1.sql`、`credential_verifier_v1`、内部证明值、守卫测试、7 天备份与回退；`test:db` 全绿后请 Owner 批准生产迁移；迁移后按 §4.3 只读核对。**2b** 发行方列：先定存储客户端摘要的换代方式，迁移后轮换两个发行方密钥并更新两份运行手册。归属 Task `9a4d6d2c`，依据 Decision `8a7e345f`、`2ec964af`。
+2. **校验值迁移（设计 A）**：按 §4.7 分两步。**2a** Binding 与 Resource Center 令牌：迁移 `20261008210000_credential_verifier_v1.sql`、`credential_verifier_v1`、内部证明值、守卫测试、7 天备份与回退；已上线范围不重做。**2b** 按 §4.8 采用固定发行方身份、凭据代与新摘要版本；保留历史登记/回执/摘要原字节，逐把切换两把发行方密钥，各自验证后立即停旧；补齐运行手册与新旧认证、摘要兼容证据。归属 Task `9a4d6d2c`，依据 Decision `8a7e345f`、`2ec964af`、`818a9b05`；生产迁移与轮换仍须精确阶段授权。
 3. **核实 Worker 凭据签发（只读）**：查清生产项目 JWT 签名方式与 `CLUED_P5_GATEWAY_TOKEN` 的签发与有效期，写成结论交 Owner 选 C1 或 C2。不改任何东西。2026-10-08 已完成，结论见 §6.4。归属 Task `9a4d6d2c`。
-4. **Worker 角色上线（过渡）**：建角色、给 Worker 用的函数加授新角色（`anon` 暂留）、Worker 改带新凭据并发布；按角色统计确认生产调用全部切换。需要 `migration.production` 与 `release.production` 授权。归属 Task `9a4d6d2c`。
-5. **收回 anon**：Worker 用的函数收回 `anon`，只留 §6.3 白名单；G6 门加角色断言；数据库测试固定 anon 集合等于白名单；更新 database-security.md 的预期数字。归属 Task `9a4d6d2c`。
-6. **合同文字**：IntegrationRuntime v0.1.8 是冻结文件，§5.13（grant `anon, authenticated` → Worker 角色）与 §10.1、§11（存储形式）改动经 ERRATA 记录并需 Owner Decision；同步 HeadlessBindingIssuance「令牌能用在哪里」、WorkClaimAdmission §4.6、OwnerCredential §9、StorageNormalUse §6.2 的措辞。归属 Task `9a4d6d2c`。
+4. **C1 阶段 1，Worker 角色上线（过渡）**：按 §6.2 建角色、加授、切换五个调用入口，Owner 导入签名密钥，Worker 使用新凭据发布；旧授权保留，G6 不提前收紧；按角色统计确认生产调用切换。需要 `migration.production` 与 `release.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `818a9b05`。
+5. **C1 阶段 2，收回旧权限**：阶段 1 验证后至少观察 24 小时并取得本阶段授权；Worker 专用函数收回旧角色的执行权，anon 只留 §6.3 白名单；G6 门校验真实调用角色，不使用 SECURITY DEFINER 内的 `current_user`；验证白名单与失败关闭，更新预期数字。归属 Task `9a4d6d2c`，依据 Decision `818a9b05`。
+6. **合同文字**：跟随 2b 与 C1 第二阶段收口。IntegrationRuntime v0.1.8 字节不变，§5.13、§10.1、§11、§12.3 的授权/存储/运输语义改动只经 ERRATA，并需最终 Owner Decision；同步 HeadlessBindingIssuance「令牌能用在哪里」、WorkClaimAdmission §4.6、OwnerCredential §9、StorageNormalUse §6.2 的措辞。现有 ERRATA 到 004，后继编号提交时复核；可先准备候选，不提前写 `in force`，不把本设计选择当成冻结合同已勘误。归属 Task `9a4d6d2c`。
 7. **关闭「无 v12 授权记录即放行」**（§4.6），分两个 PR，各需 `migration.production` 授权。归属 Task `9a4d6d2c`，依据 Decision `096df8b8`、`5f60b7ba`、`29bff239`。
    - **7a**：迁移 `20261009040000_revoke_legacy_audit_bindings_v1.sql` 撤销 `c0cc5abf`、`b3603c56`（只撤销仍与核实时一致的行），每次撤销记入 `authorization_audit_v12`（operation `legacy_binding_revoke`）。不改测试。
    - **7b**：迁移 `20261009050000_close_v12_raw_binding_fallback_v1.sql`：`authorization_assert_entry_v12` 找不到 v12 授权时，只按 `clued_private.raw_binding_grants_v1` 放行，迁移只给 Projection Builder 一行（`global` 只读）。直接插入 Binding 的数据库测试改为调用共用工具 `allowRawTestBindings`，guard 测试防止新增测试漏掉。实现细节见 §4.6，依据 Decision `d0458559`。
 
-第 1、2 步与第 3–5 步互不依赖，可以并行；第 6 步跟随第 2、5 步；第 7 步在第 1 步之后任何时候都可以做。
+已完成的第 1、2a、7a/7b 不重做。按 Decision `818a9b05`，2b 与 C1 两阶段实现可并行开发、分别复审；C1 的第 4 步部署验证 → 至少 24 小时生产观察 → 第 5 步授权收权严格串行；第 6 步跟随 2b 与第 5 步的实际证据及最终 Owner Decision。开发并行不授予提前轮换、发布或收权。
 
 ---
 
@@ -256,10 +277,10 @@ CI 与钩子直接调用的函数保留 `anon`（「anon 白名单」）。理�
 
 ## 10. 需要 Owner 决定
 
-1. 是否接受设计 A（只存校验值、调用方不改），以及 7 天备份表。
-2. Worker 角色选 C1 还是 C2：第 3 步结论见 §6.4，推荐 C1。
-3. §6.3 的 anon 白名单规则（由 CI 与钩子源码推出，不写死名单）是否可以。
-4. 第 1 步是否先单独上线（已定：先行，并一并收紧插入、修改、删除，Decision `096df8b8`）。
+1. **已定**：设计 A 与 7 天备份（Decision `1427642f`）、第 1 步先行并收紧插入/修改/删除（Decision `096df8b8`）、自动转换与 2a/2b 拆分（Decision `2ec964af`）。
+2. **已定**：2b 固定身份与凭据分离、新摘要版本、历史原字节保留；两把凭据逐把验证后立即停旧（Decision `818a9b05`，§4.8）。
+3. **已定**：C1 两阶段与 2b 并行开发；Owner 配合导入签名密钥；至少 24 小时生产观察后才收回旧权限（Decision `818a9b05`，§6.2）。
+4. **待精确阶段确认**：2b 实现的具体摘要版本/字段和轮换包、C1 的实际 RPC 白名单/调用角色守卫及两阶段迁移发布包，以及第 6 步冻结合同 ERRATA 的最终 Owner Decision。设计选择不把未核验实现升级成接受或生产授权。
 
 ---
 

@@ -19,7 +19,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(root, '../..');
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const TOKENIZER = { package: 'js-tiktoken', version: '1.0.21', encoding: 'o200k_base', model_mapping: 'gpt-4.1-2025-04-14' };
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   PROJECT_VIEWS_V2: 'true',
   ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) },
 };

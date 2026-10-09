@@ -5,7 +5,7 @@ import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 const worker = await loadContinuityWorker();
 const origin = "https://clued.example.invalid";
 const token = "clued_bnd_" + "a".repeat(40);
-const env = { CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_JOBS_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_JOBS_V1: "true", SUPABASE_URL: "https://db.example.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
 const request = (body, bearer = token) => new Request(origin + "/v1/storage/jobs", {
   method: "POST", headers: { "content-type": "application/json", origin, authorization: "Bearer " + bearer }, body: JSON.stringify(body),
 });
@@ -33,7 +33,7 @@ test("submit/status route hashes Binding and never supplies an owner or service 
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, env.SUPABASE_URL + "/rest/v1/rpc/clued_storage_jobs_v1");
     assert.deepEqual(calls[0].body, { p_token_hash: createHash("sha256").update(token).digest("hex"), p_input: input });
-    assert.equal(calls[0].headers.get("authorization"), "Bearer fixture-public-key");
+    assert.equal(calls[0].headers.get("authorization"), "Bearer test-worker-gateway");
   } finally { globalThis.fetch = before; }
 });
 test("database rejection does not expose payload or internal diagnostics", async () => {
@@ -67,7 +67,7 @@ test("qualified submit schedules only fixed issuer execution; status reads never
   const before=globalThis.fetch, calls=[], pending=[];
   const ref={connection_id:'20000000-0000-4000-8000-000000000001',job_id:'10000000-0000-4000-8000-000000000001'};
   const secret='synthetic-fixed-issuer-'.repeat(3);
-  const enabled={...env,CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_EXECUTOR_V1:'true',CLUED_STORAGE_CONNECTOR_ISSUER:secret,
+  const enabled={ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",...env,CLUED_STORAGE_GOOGLE_V1:'true',CLUED_STORAGE_EXECUTOR_V1:'true',CLUED_STORAGE_CONNECTOR_ISSUER:secret,
     CLUED_STORAGE_GOOGLE_CLIENT_ID:'fixture-client',CLUED_STORAGE_VAULT_KEYS:JSON.stringify({current_key_id:'v1',keys:{v1:Buffer.alloc(32,7).toString('base64url')}})};
   globalThis.fetch=async(url,init)=>{
     const body=JSON.parse(init.body);calls.push({url:String(url),body});
