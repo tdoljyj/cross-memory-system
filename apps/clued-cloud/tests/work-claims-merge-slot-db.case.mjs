@@ -12,7 +12,10 @@ import EmbeddedPostgres from 'embedded-postgres';
 // Decisions 0edf7889 and 2ea795e4): the slot merge:<owner>/<name>:<branch> is
 // held by one live claim at a time, lapses 45 minutes after it was last taken
 // or refreshed, cannot be revived by its old holder once another session took
-// it, and is returned when its pull request is merged or closed. Imported by
+// it, and is returned when its pull request is merged or closed. Merge
+// Admission step 3 (migration 20261009010000, Task 3576d10d): CI reports keep
+// it (running 45 minutes, green 30), a CI failure returns it, a hard cap ends
+// it, and the admission mode goes into the verify Receipts. Imported by
 // work-claims-reject-receipts-db.test.mjs, so it runs with npm run test:work:claims.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -248,6 +251,163 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual((await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9' })).merge_slot_returned, [c1.claim_id]);
     assert.deepEqual((await view(c1)).trigger_refs, ['merge:other/repo:main', 'task:race']);
+
+    // --- Merge Admission step 3 (migration 20261009010000): the slot follows CI. ---
+    const slotProfile = (await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v;
+    assert.deepEqual([slotProfile.merge_slot_running_seconds, slotProfile.merge_slot_green_seconds], [5400, 1800]);
+    const PR = 'tdoljyj/cross-memory-system#20';
+    const HEAD = 'f'.repeat(40);
+    const touch = (input) => agent('ci', 'clued_work_merge_slot_touch_v1',
+      { scope: 'global', pr_ref: PR, head_sha: HEAD, ...input });
+    const holders = (input = {}) => agent('ci', 'clued_work_merge_slot_holders_v1',
+      { scope: 'global', repository: 'tdoljyj/cross-memory-system', ...input });
+    const receipts = async (c, operation) => (await admin.query(`select metadata from public.clued_audit_receipts
+      where operation=$2 and object_id=$1 order by created_at,id`, [c.claim_id, operation])).rows.map((row) => row.metadata);
+    const setSlot = (c, column, minutes) => admin.query(`update clued_private.work_claims_v1
+      set ${column}=clock_timestamp()-make_interval(mins=>$2) where claim_id=$1`, [c.claim_id, minutes]);
+    c1 = committed(await renew('claude', c1, { trigger_refs: ['task:race'] })).claim;
+    let d = await claim('codex', 'D: final round under CI', { trigger_refs: [SLOT] });
+    assert.ok(d.merge_slot_until);
+    assert.deepEqual(d.merge_slot_ci, { taken_at: d.merge_slot_ci.taken_at, hard_cap_until: null,
+      ci_state: null, ci_head_sha: null, ci_at: null }, 'a new slot has no CI state and no cap yet');
+
+    // §10: the admission mode goes into the Receipts of the binding and of each newly admitted head.
+    await assert.rejects(() => agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id,
+      head_sha: HEAD, base_sha: 'b'.repeat(40), pr_ref: PR, admission_mode: { state: 'relaxed', layer: 'code' } }),
+    /work_claim_admission_mode_invalid/);
+    for (const mode of [[], { state: 'normal' }, { state: 'normal', layer: 'code', reruns_per_head: 4 },
+      { state: 'normal', layer: 'code', extra: 1 }, { state: 'normal', layer: 'code', reruns_per_head: '1' }]) {
+      await assert.rejects(() => agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id,
+        head_sha: HEAD, pr_ref: PR, admission_mode: mode }), /work_claim_admission_mode_invalid/, JSON.stringify(mode));
+    }
+    const MODE = { state: 'normal', layer: 'code', reruns_per_head: 1 };
+    const boundD = await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id,
+      head_sha: HEAD, base_sha: 'b'.repeat(40), pr_ref: PR, admission_mode: MODE });
+    assert.deepEqual([boundD.verdict, boundD.admission_mode], ['ADMITTED', MODE], JSON.stringify(boundD));
+    assert.deepEqual((await receipts(d, 'work_claim_bind_pr')).map((m) => m.admission_mode), [MODE]);
+    // The same head again writes nothing more; a new head writes its own Receipt, with or without a mode.
+    await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id, head_sha: HEAD, pr_ref: PR, admission_mode: MODE });
+    await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id, head_sha: '9'.repeat(40), pr_ref: PR });
+    assert.deepEqual((await receipts(d, 'work_claim_admit_head')).map((m) => [m.receipt_kind, m.head_sha, m.pr_ref, m.admission_mode]),
+      [['WORK_CLAIM_HEAD_ADMITTED', HEAD, PR, MODE], ['WORK_CLAIM_HEAD_ADMITTED', '9'.repeat(40), PR, null]]);
+    // A read-only verify (no pull request) with a mode admits nothing and writes nothing.
+    assert.equal((await agent('ci', 'clued_work_verify_v1', { scope: 'global', claim_id: d.claim_id, admission_mode: MODE })).verdict, 'ADMITTED');
+    assert.equal((await receipts(d, 'work_claim_admit_head')).length, 2);
+
+    // The holders of a repository's slot.
+    const listed = await holders();
+    assert.deepEqual(listed.holders.map((row) => [row.claim_id, row.bound_pr, row.merge_refs]), [[d.claim_id, PR, [SLOT]]]);
+    assert.deepEqual((await holders({ repository: 'other/repo' })).holders, []);
+    await assert.rejects(() => holders({ repository: 'not a repo' }), /work_claim_repository_invalid/);
+    await assert.rejects(() => holders({ pr_ref: PR }), /work_claim_merge_slot_holders_input_invalid/);
+
+    // Input checks.
+    for (const [input, error] of [[{ ci_state: 'pending', hard_cap_minutes: 120 }, /work_claim_merge_slot_ci_state_invalid/],
+      [{ ci_state: 'running' }, /work_claim_merge_slot_hard_cap_invalid/],
+      [{ ci_state: 'running', hard_cap_minutes: 59 }, /work_claim_merge_slot_hard_cap_invalid/],
+      [{ ci_state: 'running', hard_cap_minutes: 181 }, /work_claim_merge_slot_hard_cap_invalid/],
+      [{ ci_state: 'running', hard_cap_minutes: '120' }, /work_claim_merge_slot_hard_cap_invalid/],
+      [{ ci_state: 'running', hard_cap_minutes: 120.5 }, /work_claim_merge_slot_hard_cap_invalid/],
+      [{ ci_state: 'running', hard_cap_minutes: 120, head_sha: 'not a sha' }, /work_claim_head_sha_invalid/],
+      [{ ci_state: 'running', hard_cap_minutes: 120, pr_ref: 'nope' }, /work_claim_pr_ref_invalid/],
+      [{ ci_state: 'running', hard_cap_minutes: 120, merge_sha: HEAD }, /work_claim_merge_slot_touch_input_invalid/]]) {
+      await assert.rejects(() => touch(input), error, JSON.stringify(input));
+    }
+
+    // running keeps the slot 90 minutes after the report (an hour between reports and a late
+    // scheduled run, review MAJOR-1), whatever the renewal clock says.
+    await setSlot(d, 'merge_slot_at', 40);
+    assert.ok(minutesLeft((await view(d)).merge_slot_until) < 6, 'the renewal clock alone has 5 minutes left');
+    const running = await touch({ ci_state: 'running', hard_cap_minutes: 120 });
+    assert.deepEqual([running.status, running.touched, running.claims], ['ok', true, [d.claim_id]], JSON.stringify(running));
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 89 && minutesLeft(d.merge_slot_until) <= 90, d.merge_slot_until);
+    assert.deepEqual([d.merge_slot_ci.ci_state, d.merge_slot_ci.ci_head_sha], ['running', HEAD]);
+    assert.ok(Math.abs(Date.parse(d.merge_slot_ci.hard_cap_until) - Date.parse(d.merge_slot_ci.taken_at) - 120 * 60000) < 1000);
+    // A repeated report refreshes the clock but writes no new Receipt.
+    await touch({ ci_state: 'running', hard_cap_minutes: 120 });
+    assert.deepEqual((await receipts(d, 'work_claim_merge_slot_touch')).map((m) => [m.receipt_kind, m.ci_state, m.previous_ci_state]),
+      [['WORK_CLAIM_MERGE_SLOT_TOUCHED', 'running', null]]);
+    // Reports do not count as renewals.
+    assert.equal(d.renewals, 0);
+
+    // green keeps it 30 minutes after the report, unless a renewal gives more.
+    await touch({ ci_state: 'green', hard_cap_minutes: 120 });
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 29 && minutesLeft(d.merge_slot_until) <= 30, d.merge_slot_until);
+    // A later green report for the same head does not move its 30 minutes (review MINOR-3)...
+    await setSlot(d, 'merge_slot_ci_at', 20);
+    await touch({ ci_state: 'green', hard_cap_minutes: 120 });
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 9 && minutesLeft(d.merge_slot_until) <= 10, d.merge_slot_until);
+    // ...a new head's does, and so does running in between.
+    await touch({ ci_state: 'green', hard_cap_minutes: 120, head_sha: '9'.repeat(40) });
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 29, d.merge_slot_until);
+    await touch({ ci_state: 'green', hard_cap_minutes: 120 });
+    d = committed(await renew('codex', await view(d))).claim;
+    assert.ok(minutesLeft(d.merge_slot_until) > 44, 'the renewal clock is later now');
+    assert.equal(d.merge_slot_ci.ci_state, 'green', 'a renewal of a live slot keeps its CI state');
+    assert.deepEqual((await receipts(d, 'work_claim_merge_slot_touch')).map((m) => [m.ci_state, m.head_sha, m.previous_ci_state]),
+      [['running', HEAD, null], ['green', HEAD, 'running'], ['green', '9'.repeat(40), 'green'], ['green', HEAD, 'green']]);
+
+    // The hard cap ends the slot whatever the clocks say, and a report cannot revive it.
+    await setSlot(d, 'merge_slot_taken_at', 110);
+    await touch({ ci_state: 'running', hard_cap_minutes: 120 });
+    d = await view(d);
+    assert.ok(minutesLeft(d.merge_slot_until) > 9 && minutesLeft(d.merge_slot_until) <= 10, d.merge_slot_until);
+    await setSlot(d, 'merge_slot_taken_at', 121);
+    d = await view(d);
+    assert.equal(d.merge_slot_until, null, 'past the hard cap the slot has lapsed');
+    assert.deepEqual((await holders()).holders, []);
+    const late = await touch({ ci_state: 'running', hard_cap_minutes: 120 });
+    assert.deepEqual([late.touched, late.reason], [false, 'no_live_slot_for_pr']);
+    assert.equal((await view(d)).merge_slot_until, null);
+    // Someone else may take it now; the old holder may take it again only while it is free, as a new slot.
+    let e = await claim('claude', 'E: waits for the slot');
+    e = committed(await renew('claude', e, { trigger_refs: [SLOT] })).claim;
+    assert.ok(e.merge_slot_until, 'E takes the slot D lost to the hard cap');
+    rejected(await renew('codex', d), 'work_claim_conflict');
+    e = committed(await renew('claude', e, { trigger_refs: [] })).claim;
+    d = committed(await renew('codex', await view(d))).claim;
+    assert.ok(minutesLeft(d.merge_slot_until) > 44);
+    assert.deepEqual([d.merge_slot_ci.ci_state, d.merge_slot_ci.hard_cap_until], [null, null], 'taken again: a new slot');
+    assert.ok(Date.now() - Date.parse(d.merge_slot_ci.taken_at) < 60000);
+    // Another pull request's report does nothing to it.
+    assert.equal((await touch({ pr_ref: 'tdoljyj/cross-memory-system#21', ci_state: 'running', hard_cap_minutes: 90 })).touched, false);
+    assert.equal((await touch({ pr_ref: 'tdoljyj/cross-memory-system#21', ci_state: 'failed' })).returned, false);
+    assert.ok((await view(d)).merge_slot_until);
+
+    // failed returns the slot at once, with its Receipt.
+    const failed = await touch({ ci_state: 'failed' });
+    assert.deepEqual([failed.returned, failed.merge_slot_returned], [true, [d.claim_id]]);
+    d = await view(d);
+    assert.deepEqual([d.merge_slot_until, d.merge_slot_ci, d.trigger_refs], [null, null, []]);
+    const failure = (await receipts(d, 'work_claim_merge_slot_return')).at(-1);
+    assert.deepEqual([failure.receipt_kind, failure.why, failure.ref.head_sha, failure.merge_refs],
+      ['WORK_CLAIM_MERGE_SLOT_RETURNED', 'ci_failed', HEAD, [SLOT]]);
+    assert.equal((await touch({ ci_state: 'failed', hard_cap_minutes: 120 })).returned, false, 'nothing more to return');
+    await assert.rejects(() => touch({ ci_state: 'failed', hard_cap_minutes: 200 }), /work_claim_merge_slot_hard_cap_invalid/);
+
+    // Once the Owner marks the CI admission Binding, only it may report or list.
+    const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
+      values($1,'global','binding_role_set','binding','fixture','{}'::jsonb) returning id`, [userId])).rows[0].id;
+    // By name: the stored token_hash is a verifier since 20261008210000 (P0-4), not the token's hash.
+    const ciBinding = (await admin.query(`select id from public.clued_agent_bindings where user_id=$1 and agent_name='ci connection'`, [userId])).rows[0].id;
+    await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id)
+      values($1,$2,'ci-admission',now(),$3)`, [userId, ciBinding, roleReceipt]);
+    assert.deepEqual(await agent('claude', 'clued_work_merge_slot_touch_v1',
+      { scope: 'global', pr_ref: PR, head_sha: HEAD, ci_state: 'failed' }),
+    { status: 'ok', touched: false, reason: 'admission_binding_required' });
+    assert.deepEqual(await agent('claude', 'clued_work_merge_slot_holders_v1',
+      { scope: 'global', repository: 'tdoljyj/cross-memory-system' }),
+    { status: 'ok', holders: [], reason: 'admission_binding_required' });
+    assert.equal((await holders()).status, 'ok');
+    for (const fn of ['clued_work_merge_slot_touch_v1(text,jsonb)', 'clued_work_merge_slot_holders_v1(text,jsonb)']) {
+      assert.deepEqual([await admin.query(`select has_function_privilege('anon','public.${fn}'::regprocedure,'execute') v`),
+        await admin.query(`select has_function_privilege('authenticated','public.${fn}'::regprocedure,'execute') v`)]
+        .map((result) => result.rows[0].v), [true, false], fn);
+    }
 
     // --- Grants: the return RPC to anon (the admission door) only; helpers to nobody. ---
     const can = async (role, signature) => (await admin.query(
