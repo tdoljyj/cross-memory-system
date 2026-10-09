@@ -84,7 +84,7 @@ test('actual Worker reports readiness rejection without an Owner request or priv
       method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_model_dataset_split_bootstrap_request', arguments: input } }),
     });
-    const response = await worker.fetch(request, { PROJECT_VIEWS_V2: 'true', ...flags, CLUED_OWNER_REQUESTS_V1: 'true' }, { waitUntil() {} });
+    const response = await worker.fetch(request, { CLUED_DB_GATEWAY_TOKEN: 'test-worker-gateway', PROJECT_VIEWS_V2: 'true', ...flags, CLUED_OWNER_REQUESTS_V1: 'true' }, { waitUntil() {} });
     assert.equal(response.status, 403);
     const body = await response.json();
     assert.equal(body.error.message, 'DatasetSplit bootstrap readiness denied or unavailable.');
