@@ -214,7 +214,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
   const [skill, contract, agents, rootAgents, manifestText] = await Promise.all([
     readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
-    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8").then((text) => text.replace(/\r\n/g, "\n")),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../memory/manifest.json", import.meta.url), "utf8"),
@@ -242,7 +242,7 @@ test("the Worker serves the single agent contract and advertises capture", async
     worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx),
   ]);
   const served = await response.text();
-  assert.ok(served.startsWith(source), "served contract must be the source file verbatim");
+  assert.ok(served.startsWith(source.replace(/\r\n/g, "\n")), "served contract must be the LF-normalized source file verbatim");
   assert.match(served, /## 3\. Capture/);
   const { renderAgentContractModule } = await import("../scripts/generate-agent-contract.mjs");
   const generated = await readFile(new URL("../worker/generated/agent-contract.ts", import.meta.url), "utf8");
