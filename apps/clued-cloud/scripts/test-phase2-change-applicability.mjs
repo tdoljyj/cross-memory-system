@@ -38,9 +38,11 @@ for (const scenario of [
   assert.equal(response.headers.has('www-authenticate'), false);
   const { result } = await response.json();
   assert.equal(result.isError, false);
-  assert.equal(result.structuredContent.authentication.oauth.authorization_server, scenario.issuer);
-  assert.equal(result.structuredContent.authentication.oauth.consent_path, origin + '/oauth/consent');
-  assert.deepEqual(result.structuredContent.authentication.scopes, ['context:read', 'context:write', 'audit:read']);
+  const metadata = JSON.parse(result.content[0].text);
+  assert.equal(metadata.authentication.oauth.authorization_server, scenario.issuer);
+  assert.equal(metadata.authentication.oauth.consent_path, origin + '/oauth/consent');
+  assert.deepEqual(metadata.authentication.scopes, ['context:read', 'context:write', 'audit:read']);
+  assert.equal(result.structuredContent.authentication, undefined);
   assert.equal(fetch.mock.callCount(), 0);
 });
 

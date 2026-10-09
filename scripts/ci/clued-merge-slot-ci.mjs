@@ -75,10 +75,11 @@ export const CI_REQUIRED_CHECKS = Object.freeze([
   Object.freeze({ name: "trivy", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "clued-work-admission", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "clued-admission-verified", app_id: ADMISSION_APP_ID }),
+  Object.freeze({ name: "contract-placement", app_id: ACTIONS_APP_ID }),
 ]);
 // Workflows that count as CI besides the gated ones: those of the required checks
 // that run on the self-hosted runners. clued-work-admission takes seconds.
-export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.yml"]);
+export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.yml", "contract-placement.yml"]);
 // A required check passes as the ruleset counts it. A final failure returns
 // the slot; cancelled is not one: the admission run of an edited pull request
 // cancels the previous one on the same head, and the next run's check may not

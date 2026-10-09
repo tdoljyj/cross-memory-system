@@ -10,7 +10,7 @@ const bootstrap = {
   lifecycle: { contract: { version: 42, url: "https://clued.test/clued-agent.md" } },
   endpoints: { mcp: "https://clued.test/mcp" }, authentication: { scheme: "Bearer" }, capabilities: { arbitrary: true },
 };
-const source = (markdown) => ({ markdown, version: 42, sha256: hash(markdown) });
+const source = (markdown) => ({ markdown, version: Number(/^Contract version: (\d+)$/m.exec(markdown)?.[1] ?? 42), sha256: hash(markdown) });
 
 function allParts(markdown, payload = bootstrap) {
   const contract = source(markdown);
@@ -30,10 +30,14 @@ function allParts(markdown, payload = bootstrap) {
 
 test("current source travels exactly once, while full public metadata stays in content[0]", async () => {
   const markdown = (await fs.readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
-  const [response] = allParts(markdown);
+  const contract = source(markdown);
+  const payload = { ...bootstrap, lifecycle: { ...bootstrap.lifecycle, contract: { ...bootstrap.lifecycle.contract, version: contract.version } },
+    agent_contract: { version: contract.version, sha256: contract.sha256 } };
+  const [response] = allParts(markdown, payload);
   assert.equal(response.content.length, 2);
   assert.equal(response.content[1].text, markdown);
-  assert.deepEqual(JSON.parse(response.content[0].text), bootstrap);
+  assert.deepEqual(JSON.parse(response.content[0].text), payload);
+  assert.equal(response.structuredContent.agent_contract.version, contract.version);
   assert.equal(response.structuredContent.agent_contract.markdown_in, "content[1]");
   for (const field of ["endpoints", "authentication", "capabilities"]) assert.equal(field in response.structuredContent, false);
   assert.equal(JSON.stringify(response.structuredContent).includes("# Clued Agent Contract"), false);
