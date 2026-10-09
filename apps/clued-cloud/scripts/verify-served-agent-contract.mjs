@@ -18,6 +18,7 @@ export function contractVersionOf(markdown) {
 
 export function verifyServedAgentContract({ contract, served, bootstrap }) {
   const errors = [];
+  contract = typeof contract === 'string' ? contract.replace(/\r\n/g, '\n') : contract;
   const version = contractVersionOf(contract);
   if (version === null) errors.push('repository_contract_version_missing');
   if (typeof served !== 'string' || !served.startsWith(contract)) {
@@ -27,6 +28,10 @@ export function verifyServedAgentContract({ contract, served, bootstrap }) {
   if (live?.version !== version) errors.push('bootstrap_contract_version_mismatch');
   if (typeof live?.url !== 'string' || !live.url.endsWith('/clued-agent.md')) {
     errors.push('bootstrap_contract_url_invalid');
+  }
+  if (bootstrap?.agent_contract?.version !== version) errors.push('bootstrap_agent_contract_version_mismatch');
+  if (typeof contract !== 'string' || bootstrap?.agent_contract?.sha256 !== sha256(contract)) {
+    errors.push('bootstrap_agent_contract_sha256_mismatch');
   }
   return errors;
 }
@@ -43,7 +48,7 @@ async function fetchLive(url, accept) {
 async function main() {
   const commit = process.env.GITHUB_SHA ?? '';
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('source_commit_missing');
-  const contract = await readFile(contractSource, 'utf8');
+  const contract = (await readFile(contractSource, 'utf8')).replace(/\r\n/g, '\n');
   // The query only bypasses caches between the runner and the Worker; the
   // Worker routes on the path alone.
   const served = await (await fetchLive(
