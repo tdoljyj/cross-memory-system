@@ -14,6 +14,7 @@ import './work-claims-lease-key-db.case.mjs';
 import './work-claims-owner-handover-db.case.mjs';
 // The merge slot case (migration 20261006120000) as well.
 import './work-claims-merge-slot-db.case.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Work Claim rejection Receipts for renew, takeover pre-checks and replays
 // (migration 20261003070000, Task 91272c5d): every such refusal leaves a
@@ -64,6 +65,7 @@ test('work claims: renew, takeover and replay refusals leave rate-limited reject
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at)

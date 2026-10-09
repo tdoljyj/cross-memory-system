@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Owner Credential v0.1 §4 item 3 (migration 20261003190000, Task fcd55008,
 // Owner Decision c4e82dee): for "grant for a while" the Owner keeps a subset of
@@ -61,6 +62,7 @@ test('owner grants: the confirmation page narrows or widens a request\'s resourc
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

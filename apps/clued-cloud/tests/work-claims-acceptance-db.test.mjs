@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Work Claim Admission v0.1, step 7 (development/contracts/execution-admission/
 // WorkClaimAdmission.v0.1.md §6): the acceptance-matrix rows that
@@ -57,6 +58,7 @@ test('work claims acceptance: races, revoked Bindings, verify repeatability, exp
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at)

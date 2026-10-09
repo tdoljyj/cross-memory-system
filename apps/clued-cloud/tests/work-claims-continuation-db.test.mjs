@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Work Claim continuation (migration 20261006180000, GenericWorkClaim §10.8,
 // Decisions 754dff5d and 9aa6e329): a new claim that picks up, on the same Binding, the
@@ -60,6 +61,7 @@ test('work claims: a same-Binding continuation of a completed claim takes no tok
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at)

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2c Integration Runtime PR-4 (IntegrationRuntime v0.1.8 §14.1): revoke (Native / Binding revoke_self /
 // Operator), restore / regrant, reauth mark / clear, capability_expansion, lifecycle, §10.5 REPLACE_HOLDER
@@ -203,6 +204,7 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
 
     // every later migration, in production order
     for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+    await allowRawTestBindings(admin);
 
     await t.test('T-S-2 after the security hygiene migration: the Binding path is anon only', async () => {
       const rows = await executors();

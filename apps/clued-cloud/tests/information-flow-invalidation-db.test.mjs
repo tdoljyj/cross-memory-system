@@ -9,6 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { serialize } from '../../../scripts/phase2-qualification/minimum-context-compiler/compiler.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Information Flow M0-D slice S5 (contract M0DCloseout.v0.1 sections 4.1,
 // 4.3.3, 5.1, 6.3, 6.4, 7 E2E-03/04/05/14, 8 gates M0D-B01 and M0D-B05):
@@ -197,6 +198,7 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
 
     await apply(S5_MIGRATION);
     for (const name of migrations.slice(s5Index + 1)) await apply(name);
+    await allowRawTestBindings(admin);
 
     // Backfill: live lineage for K0, backfill_source_changed for K0b.
     assert.deepEqual((await lineage(k0)).map((row) => [row.source_record_id, row.source_version, row.lineage_stale,

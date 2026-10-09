@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Work Claim multi-copy mode, a "race" (migration 20261003120000,
 // GenericWorkClaim §5.3): only the Owner turns a Task into N copies, in two
@@ -60,6 +61,7 @@ test('work claims: Owner-enabled races, copy slots, write-back adoption and copy
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();

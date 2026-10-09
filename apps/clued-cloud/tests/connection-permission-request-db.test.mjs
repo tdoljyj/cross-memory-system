@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Connection permission requests (migration 20261004150000; Owner Decision
 // 43ba00e2, Task e86eb58d): a connection that lacks a context or action asks
@@ -60,6 +61,7 @@ test('connection permission requests: ask without the scope, Owner approves once
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const owner = uuid();
     const other = uuid();

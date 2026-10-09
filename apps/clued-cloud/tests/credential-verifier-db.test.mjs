@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Binding and Resource Center credentials stored as verifiers (migration 20261008210000, P0-4 step 2a, Clued Task
 // 9a4d6d2c, Owner Decisions 1427642f and 2ec964af). The stored column holds 'cv1:'||sha256(prefix||proof); a caller
@@ -67,6 +68,7 @@ test('Binding and Resource Center credentials are stored as verifiers', { timeou
         try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
         catch (error) { throw new Error(`Migration ${name}: ${error.message} ${error.detail ?? ""}`, { cause: error }); }
       }
+      await allowRawTestBindings(admin);
     };
     await apply(migrations.filter((name) => name < MIGRATION));
 

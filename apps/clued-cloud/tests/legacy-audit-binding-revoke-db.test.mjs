@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
+// raw-binding-grants: every resolve here runs before migration 20261009050000 is applied.
+
 // Migration 20261009040000 revokes the two 2026-08-29 OAuth audit Bindings that had no v12 authorization
 // (P0-4 step 7, first PR; Clued Task 9a4d6d2c, Owner Decision 29bff239). It touches only those two rows while
 // they still look as checked, records each revocation, and changes nothing on a second run.
