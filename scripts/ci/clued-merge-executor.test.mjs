@@ -118,19 +118,21 @@ test("an up-to-date, admitted head opted in for itself gets auto-merge before CI
   }
 });
 
-test("an opt-in for an approved head covers merges of the default branch into it, and nothing else", async () => {
-  const merge = (sha, first, second = MAINISH) => ({ [`/repos/${REPO}/commits/${sha}`]: { sha, parents: [{ sha: first }, { sha: second }] } });
-  const ancestor = (sha, behind = 0) => ({ [`/repos/${REPO}/compare/${sha}...${TIP}`]: { behind_by: behind } });
-  const body = `${BODY}\nClued-Auto-Merge: ${APPROVED}`;
-  let fetch = world({ pulls: [pull({ body })], extra: { ...merge(HEAD, APPROVED), ...ancestor(MAINISH) } });
-  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge", "one merge of main");
-  const mid = "e".repeat(40);
-  fetch = world({ pulls: [pull({ body })], extra: { ...merge(HEAD, mid), ...merge(mid, APPROVED), ...ancestor(MAINISH) } });
-  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge", "two merges of main");
+test("an opt-in for an approved head covers later changes only where they equal the default branch", async () => {
+  const body = `${BODY}
+Clued-Auto-Merge: ${APPROVED}`;
+  const files = (...names) => names.map((filename) => ({ filename, status: "modified" }));
+  // compare/{approved}...{head}: what changed since the approval; compare/{tip}...{head}: where the head differs from main.
+  const since = (list, behind = 0) => ({ [`/repos/${REPO}/compare/${APPROVED}...${HEAD}`]: { behind_by: behind, files: list } });
+  const vsTip = (list) => ({ [`/repos/${REPO}/compare/${TIP}...${HEAD}`]: { behind_by: 0, ahead_by: 3, files: list } });
+  let fetch = world({ pulls: [pull({ body })], extra: { ...since(files("README.md", "worker/a.ts")), ...vsTip(files("scripts/pr-change.mjs")) } });
+  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge", "only main's files changed since the approval");
   for (const [name, extra] of [
-    ["a plain commit after the approval", { [`/repos/${REPO}/commits/${HEAD}`]: { sha: HEAD, parents: [{ sha: APPROVED }] } }],
-    ["a merge of something not on main", { ...merge(HEAD, APPROVED), ...ancestor(MAINISH, 1) }],
-    ["a merge onto another head", { ...merge(HEAD, mid), ...ancestor(MAINISH), [`/repos/${REPO}/commits/${mid}`]: { sha: mid, parents: [{ sha: APPROVED }] } }],
+    ["a change of the pull request's own after the approval", { ...since(files("README.md", "scripts/pr-change.mjs")), ...vsTip(files("scripts/pr-change.mjs")) }],
+    ["a hand-resolved conflict or an amended merge (an evil merge)", { ...since(files("worker/a.ts")), ...vsTip(files("worker/a.ts", "scripts/pr-change.mjs")) }],
+    ["a rename onto a file that differs from main", { ...since([{ filename: "x.md", previous_filename: "scripts/pr-change.mjs", status: "renamed" }]), ...vsTip(files("scripts/pr-change.mjs")) }],
+    ["the approved head is not an ancestor", { ...since(files("README.md"), 2), ...vsTip(files("scripts/pr-change.mjs")) }],
+    ["a diff that may be truncated", { ...since(Array.from({ length: 300 }, (_, i) => ({ filename: `f${i}` }))), ...vsTip(files("scripts/pr-change.mjs")) }],
   ]) {
     fetch = world({ pulls: [pull({ body })], extra });
     const result = await run(fetch);
@@ -142,7 +144,8 @@ test("an opt-in for an approved head covers merges of the default branch into it
 test("auto-merge on with an opt-in for another head is turned off (review MAJOR-2)", async () => {
   const body = `${BODY}\nClued-Auto-Merge: ${APPROVED}`;
   const fetch = world({ pulls: [pull({ body, auto_merge: { merge_method: "merge" } })],
-    extra: { [`/repos/${REPO}/commits/${HEAD}`]: { sha: HEAD, parents: [{ sha: APPROVED }] },
+    extra: { [`/repos/${REPO}/compare/${APPROVED}...${HEAD}`]: { behind_by: 0, files: [{ filename: "scripts/pr-change.mjs" }] },
+      [`/repos/${REPO}/compare/${TIP}...${HEAD}`]: { behind_by: 0, files: [{ filename: "scripts/pr-change.mjs" }] },
       "POST /graphql": { data: { disablePullRequestAutoMerge: { pullRequest: { number: 5 } } } } } });
   const result = await run(fetch);
   assert.deepEqual(result.actions.map((a) => [a.action, a.status]), [["disable_auto_merge", 200]]);
@@ -155,10 +158,12 @@ test("auto-merge on with an opt-in for another head is turned off (review MAJOR-
 });
 
 test("a pull request GitHub can already merge is reported, not an error (review MAJOR-1)", async () => {
-  const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Pull request Pull request is in clean status" }] } } });
-  const result = await run(fetch);
-  assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error], [[], "mergeable_now", undefined]);
-  assert.match(result.notices[0], /already mergeable/);
+  for (const status of ["clean", "unstable"]) {
+    const fetch = world({ extra: { "POST /graphql": { data: null, errors: [{ message: `Pull request Pull request is in ${status} status` }] } } });
+    const result = await run(fetch);
+    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error], [[], "mergeable_now", undefined], status);
+    assert.match(result.notices[0], /already mergeable/);
+  }
   // Any other GraphQL error is a refusal notice.
   const other = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Resource not accessible by integration" }] } } });
   const refused = await run(other);
@@ -243,7 +248,7 @@ test("a refused update (head moved, conflict) is a notice, not an error", async 
 
 test("the workflow runs default-branch code after the slot report, hourly and by hand, read-only, in the admission environment", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-merge-executor.yml"), "utf8");
-  assert.match(text, /on:\n  workflow_run:\n    workflows:\n      - clued-merge-slot-ci\n    types: \[completed\]\n  schedule:\n    - cron: "41 \* \* \* \*"\n  workflow_dispatch:\n/);
+  assert.match(text, /on:\n  # [^\n]*\n  push:\n    branches: \[main\]\n  workflow_run:\n    workflows:\n      - clued-merge-slot-ci\n    types: \[completed\]\n  schedule:\n    - cron: "41 \* \* \* \*"\n  workflow_dispatch:\n/);
   assert.doesNotMatch(text, /pull_request/);
   assert.match(text, /permissions:\n  actions: read\n  checks: read\n  contents: read\n  pull-requests: read\n\n/);
   assert.doesNotMatch(text, /^\s+[a-z-]+: write$/m);

@@ -21,10 +21,10 @@
 //               checks (§7.4; GitHub refuses auto-merge on a pull request
 //               that is already mergeable, review MAJOR-1). Only when
 //               - the body has a line "Clued-Auto-Merge: <head sha>" naming
-//                 this head, or a head this one only merged the default
-//                 branch into (the Agent writes it once the merge of that
-//                 head is approved; a later push needs a new line, review
-//                 MAJOR-2),
+//                 this head, or an ancestor such that every file changed
+//                 since is identical to the default branch's (the Agent
+//                 writes it once the merge of that head is approved; any
+//                 other change needs a new line, review MAJOR-2),
 //               - the head's clued-admission-verified check, posted for this
 //                 pull request, admitted it and the policy allows auto-merge
 //                 for its state and layer (never in frozen; a protected
@@ -65,8 +65,6 @@ import { HOLDERS_RPC, ciStateOf, ciWorkflows } from "./clued-merge-slot-ci.mjs";
 import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-policy.mjs";
 
 export const OPT_IN = /^\s*Clued-Auto-Merge:\s*([0-9a-f]{40})\s*$/im;
-// How many merges of the default branch may lie between the approved head and this one.
-const MAX_MERGE_HOPS = 5;
 export const EXECUTOR_PERMISSIONS = Object.freeze({ contents: "write", pull_requests: "write" });
 const VERIFIED_CHECK = "clued-admission-verified";
 
@@ -76,23 +74,24 @@ export function optInSha(body) {
   return match ? match[1].toLowerCase() : null;
 }
 
-// Whether head is the opted-in head, or reaches it through first parents that
-// are each a two-parent merge of the default branch (second parent an
-// ancestor of tip): the only changes since the approval came from the
-// default branch.
+// Whether the opt-in for optedSha still covers headSha, which contains tip:
+// optedSha is an ancestor of the head, and every file the head changed since
+// optedSha is byte-identical to tip's (it is not in the head-versus-tip diff).
+// So the only changes since the approval came from the default branch; a
+// hand-resolved conflict or an amended merge needs a new line (confirmation
+// review MAJOR). Fails closed when a diff may be truncated.
+const COMPARE_FILE_LIMIT = 300;
 export async function optInCovers(fetchImpl, env, repository, optedSha, headSha, tip) {
-  let sha = headSha;
-  for (let hop = 0; hop <= MAX_MERGE_HOPS; hop++) {
-    if (sha === optedSha) return true;
-    if (hop === MAX_MERGE_HOPS) return false;
-    const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${sha}`);
-    const parents = Array.isArray(commit && commit.parents) ? commit.parents.map((parent) => parent && parent.sha) : [];
-    if (parents.length !== 2) return false;
-    const toTip = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${parents[1]}...${tip}`);
-    if (Number(toTip && toTip.behind_by) !== 0) return false;
-    sha = parents[0];
-  }
-  return false;
+  if (optedSha === headSha) return true;
+  const sinceApproval = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${optedSha}...${headSha}`);
+  if (Number(sinceApproval && sinceApproval.behind_by) !== 0) return false;
+  const changed = Array.isArray(sinceApproval && sinceApproval.files) ? sinceApproval.files : null;
+  if (!changed || changed.length >= COMPARE_FILE_LIMIT) return false;
+  const againstTip = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${headSha}`);
+  const differs = Array.isArray(againstTip && againstTip.files) ? againstTip.files : null;
+  if (!differs || differs.length >= COMPARE_FILE_LIMIT || Number(againstTip.behind_by) !== 0) return false;
+  const fromTip = new Set(differs.flatMap((file) => [file && file.filename, file && file.previous_filename]).filter(Boolean));
+  return changed.every((file) => file && !fromTip.has(file.filename) && !(file.previous_filename && fromTip.has(file.previous_filename)));
 }
 
 async function appRequest(fetchImpl, env, method, route, bearer, body) {
@@ -269,10 +268,11 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       const errors = response.body && Array.isArray(response.body.errors) ? response.body.errors : [];
       if (response.status !== 200 || errors.length) entry.error = errors.map((e) => e && e.message).filter(Boolean).join("; ") || `HTTP ${response.status}`;
       // GitHub refuses auto-merge on a pull request that can merge now: its holder merges it.
-      if (enable && entry.error && /clean status/i.test(entry.error)) {
+      // GitHub says "clean status", or "unstable status" when only a check that is not required failed.
+      if (enable && entry.error && /(clean|unstable) status/i.test(entry.error)) {
         entry.result = "mergeable_now";
         delete entry.error;
-        result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; its holder merges it`);
+        result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; its holder merges it (an Agent that writes the opt-in line after the checks passed merges itself)`);
       }
     }
     if (entry.error) result.notices.push(`#${plan.pr.number}: ${plan.action} was refused: ${entry.error}`);
