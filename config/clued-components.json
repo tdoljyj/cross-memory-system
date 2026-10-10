@@ -26,7 +26,7 @@
       "files": [
         "**/*"
       ],
-      "content_sha256": "2862180d55480907fd421c34891e283f57ea5c1314095ee3b3fd30f7acc3f93b",
+      "content_sha256": "2bc97ca8f28c6c7655f8ad25f816865a453ba096853c6a378aa27d2ed22e4f01",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -41,7 +41,7 @@
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "bede75f1c6d1f1d42ede4d3175fc90cd10c55bffdf6c8d5509bf6b46d0ec17ea",
+      "content_sha256": "c5e42b58b4a09e3f88a86ce384b01c29c3b5f784ea2164c2bb7c37b29b83e6e6",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
