@@ -69,7 +69,7 @@ export async function createStorageOwnerLifecycle(configuration: {
     try { const v = await configuration.rpc(input); if (!object(v)) deny(); return v; }
     catch (error) {
       if (error instanceof StorageOwnerLifecycleError) throw error;
-      const allowed = new Set(["storage_owner_lifecycle_conflict", "storage_root_has_unresolved_mutation", "storage_owner_lifecycle_replayed"]);
+      const allowed = new Set(["storage_owner_lifecycle_conflict", "storage_root_has_unresolved_mutation", "storage_owner_lifecycle_replayed", "storage_connection_unavailable"]);
       throw new StorageOwnerLifecycleError(error instanceof Error && allowed.has(error.message) ? error.message : "lifecycle_unavailable");
     }
   };
@@ -85,12 +85,12 @@ export async function createStorageOwnerLifecycle(configuration: {
       return raw.access_token as string;
     } catch { return deny("fresh_authorization_required"); }
   }
-  async function json(url: string, access: string, b: Budget): Promise<{ value: Data; etag: string }> {
+  async function json(url: string, access: string, b: Budget, unavailable = "metadata_unavailable"): Promise<{ value: Data; etag: string }> {
     try {
       const signal = AbortSignal.timeout(remaining(b));
       const r = await request(url, { headers: { authorization: "Bearer " + access }, cache: "no-store", signal });
-      if (!r.ok) { await r.body?.cancel(); deny("metadata_unavailable"); }
-      if (!r.body) return deny("metadata_unavailable");
+      if (!r.ok) { await r.body?.cancel(); deny(unavailable); }
+      if (!r.body) return deny(unavailable);
       const reader = r.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
       const abort = () => { void reader.cancel().catch(() => undefined); };
       signal.addEventListener("abort", abort, { once: true });
@@ -99,15 +99,18 @@ export async function createStorageOwnerLifecycle(configuration: {
           remaining(b); if (signal.aborted) deny("operation_deadline");
           const part = await reader.read(); if (signal.aborted) deny("operation_deadline"); if (part.done) break;
           size += part.value.byteLength;
-          if (size > 262144) { await reader.cancel(); deny("metadata_unavailable"); }
+          if (size > 262144) { await reader.cancel(); deny(unavailable); }
           chunks.push(part.value);
         }
       } finally { signal.removeEventListener("abort", abort); reader.releaseLock(); }
       const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      const value: unknown = JSON.parse(text); if (!object(value)) return deny("metadata_unavailable");
+      const value: unknown = JSON.parse(text); if (!object(value)) return deny(unavailable);
       return { value, etag: r.headers.get("etag") ?? "" };
-    } catch { return deny("metadata_unavailable"); }
+    } catch (error) {
+      if (error instanceof StorageOwnerLifecycleError) throw error;
+      return deny(unavailable);
+    }
   }
   const fields = "id,name,mimeType,parents,version,trashed,ownedByMe,isAppAuthorized,driveId,capabilities(canTrash)";
   async function metadata(d: Descriptor, access: string, b: Budget, allowTrashed = false) {
@@ -129,7 +132,7 @@ export async function createStorageOwnerLifecycle(configuration: {
       do {
         const q = new URLSearchParams({ q: `'${parent}' in parents`, pageSize: "100", fields: `nextPageToken,incompleteSearch,files(id,name,mimeType,parents,version,trashed)`,
           ...(page ? { pageToken: page } : {}) });
-        const listing = (await json(`${DRIVE}?${q}`, access, b)).value;
+        const listing = (await json(`${DRIVE}?${q}`, access, b, "inventory_unavailable")).value;
         if (listing.incompleteSearch === true || !Array.isArray(listing.files) || listing.files.length > 100) return deny("inventory_unavailable");
         for (const raw of listing.files) {
           if (!object(raw) || !FILE.test(String(raw.id)) || typeof raw.name !== "string" || raw.name.length > 1000 ||
@@ -238,7 +241,9 @@ export async function createStorageOwnerLifecycle(configuration: {
       ownerValid(owner); if (!UUID.test(connectionId)) deny("input_invalid");
       const d = await load(owner, connectionId); if (!d.created_by_clued) return { trash_available: false, reason: "picked_or_legacy_root" };
       const s = await snapshot(d, await token(d), budget());
-      return { trash_available: s.can_trash && /^"[^"\r\n]{1,200}"$/.test(s.etag), root_folder_id: s.root_folder_id,
+      const conditional = /^"[^"\r\n]{1,200}"$/.test(s.etag);
+      return { trash_available: s.can_trash && conditional,
+        ...(!s.can_trash ? { reason: "can_trash_unavailable" } : !conditional ? { reason: "conditional_capability_unavailable" } : {}), root_folder_id: s.root_folder_id,
         root_name: s.root_name, root_version: s.root_version, metadata_digest: s.metadata_digest, item_count: s.item_count,
         connection_version: d.connection_version, profile_version: d.profile_version };
     },
