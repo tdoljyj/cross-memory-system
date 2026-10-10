@@ -77,7 +77,6 @@ jobs:
     env:
       PROMPTFOO_CONFIG_DIR: /tmp/promptfoo
       PROMPTFOO_DISABLE_TELEMETRY: "true"
-      MCP_ISOLATED_URL: http://127.0.0.1:8787/mcp
       MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
@@ -97,32 +96,35 @@ jobs:
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
       - run: npm run mcp:isolated:fixture
-      - name: Start isolated MCP
+      - name: Allocate a behavior-only loopback port
         run: |
-          npm run mcp:isolated:start &
-          echo $! > "$RUNNER_TEMP/public-mcp.pid"
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:8787/.well-known/clued-continuity; then exit 0; fi
-            sleep 1
-          done
-          exit 1
+          mcp_port="$(node evals/public-mcp/start-isolated.mjs allocate)"
+          echo "MCP_ISOLATED_PORT=$mcp_port" >> "$GITHUB_ENV"
+          echo "MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp" >> "$GITHUB_ENV"
+      - name: Start isolated MCP
+        timeout-minutes: 2
+        run: |
+          setsid node evals/public-mcp/start-isolated.mjs &
+          node evals/public-mcp/start-isolated.mjs record "$!" > "$RUNNER_TEMP/public-mcp.pid"
+          node evals/public-mcp/start-isolated.mjs ready "$(cat "$RUNNER_TEMP/public-mcp.pid")"
       - run: npm run mcp:eval:positive
       - run: npm run mcp:isolated:fixture
       - run: npm run mcp:eval:negative
       - run: npm run test:p5:postgres
       - name: Stop isolated services
         if: always()
+        timeout-minutes: 2
         run: |
+          cleanup_result=0
           if [ -f "$RUNNER_TEMP/public-mcp.pid" ]; then
             mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
-            if kill -0 "$mcp_pid" 2>/dev/null; then
-              kill "$mcp_pid"
-            fi
+            node evals/public-mcp/start-isolated.mjs stop "$mcp_pid" || cleanup_result=1
           fi
           if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then
-            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
+            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1
           fi
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" release public-mcp-ports
+          exit "$cleanup_result"
 
   untrusted-hosted:
     name: >-
@@ -146,7 +148,6 @@ jobs:
     env:
       PROMPTFOO_CONFIG_DIR: /tmp/promptfoo
       PROMPTFOO_DISABLE_TELEMETRY: "true"
-      MCP_ISOLATED_URL: http://127.0.0.1:8787/mcp
       MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
@@ -163,28 +164,31 @@ jobs:
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
       - run: npm run mcp:isolated:fixture
-      - name: Start isolated MCP
+      - name: Allocate a behavior-only loopback port
         run: |
-          npm run mcp:isolated:start &
-          echo $! > "$RUNNER_TEMP/public-mcp.pid"
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:8787/.well-known/clued-continuity; then exit 0; fi
-            sleep 1
-          done
-          exit 1
+          mcp_port="$(node evals/public-mcp/start-isolated.mjs allocate)"
+          echo "MCP_ISOLATED_PORT=$mcp_port" >> "$GITHUB_ENV"
+          echo "MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp" >> "$GITHUB_ENV"
+      - name: Start isolated MCP
+        timeout-minutes: 2
+        run: |
+          setsid node evals/public-mcp/start-isolated.mjs &
+          node evals/public-mcp/start-isolated.mjs record "$!" > "$RUNNER_TEMP/public-mcp.pid"
+          node evals/public-mcp/start-isolated.mjs ready "$(cat "$RUNNER_TEMP/public-mcp.pid")"
       - run: npm run mcp:eval:positive
       - run: npm run mcp:isolated:fixture
       - run: npm run mcp:eval:negative
       - run: npm run test:p5:postgres
       - name: Stop isolated services
         if: always()
+        timeout-minutes: 2
         run: |
+          cleanup_result=0
           if [ -f "$RUNNER_TEMP/public-mcp.pid" ]; then
             mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
-            if kill -0 "$mcp_pid" 2>/dev/null; then
-              kill "$mcp_pid"
-            fi
+            node evals/public-mcp/start-isolated.mjs stop "$mcp_pid" || cleanup_result=1
           fi
           if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then
-            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
+            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1
           fi
+          exit "$cleanup_result"

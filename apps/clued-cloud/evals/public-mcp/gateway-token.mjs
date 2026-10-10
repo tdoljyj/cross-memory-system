@@ -42,7 +42,8 @@ export function assertLocalGatewayConfig({ gatewayOrigin, gatewayToken }, now = 
 export function localGatewayChildEnv(source = process.env, extra = {}) {
   const keep = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TEMP', 'TMP', 'USER', 'USERPROFILE',
     'LOGNAME', 'SHELL', 'TERM', 'SystemRoot', 'SYSTEMROOT', 'ComSpec', 'COMSPEC', 'PATHEXT',
-    'npm_config_cache', 'NVM_DIR', 'SUPABASE_INTERNAL_IMAGE_REGISTRY', 'DOCKER_HOST', 'CI', 'GITHUB_ACTIONS', 'RUNNER_TEMP'];
+    'npm_config_cache', 'NVM_DIR', 'SUPABASE_INTERNAL_IMAGE_REGISTRY', 'DOCKER_HOST', 'CI', 'GITHUB_ACTIONS', 'RUNNER_TEMP',
+    'RUNNER_TRACKING_ID', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'GITHUB_WORKSPACE', 'RUNNER_NAME'];
   return { ...Object.fromEntries(keep.filter((key) => source[key] !== undefined).map((key) => [key, source[key]])),
     DO_NOT_TRACK: '1', SUPABASE_TELEMETRY_DISABLED: '1', WRANGLER_SEND_METRICS: 'false', ...extra };
 }
