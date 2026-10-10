@@ -15,7 +15,7 @@ export function gateIdentityWitness({sourceQualified,log,run,job,repository,head
     typeof log.text!=='string' || log.text.length>524288 || !/^[a-f0-9]{40}$/.test(gateSource??''))
     return unknown('gate identity log/source descriptor missing');
   const lines=log.text.replace(/\x1b\[[0-9;]*[A-Za-z]/g,'').split(/\r?\n/)
-    .map(line=>line.replace(/^\d{4}-\d\d-\d\dT\S+\s+/,''));
+    .map(line=>line.replace(/^\d{4}-\d\d-\d\dT\S+ /,''));
   const objects=[];let chunk=[];
   for(const line of lines) {
     if(!chunk.length && line.trim()==='{')chunk=[line];

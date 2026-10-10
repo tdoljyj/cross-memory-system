@@ -156,7 +156,7 @@ test('trigger applicability refuses incomplete, excessive, changed or unsupporte
 test('gate identity log is bound to an authenticated attempt and qualified gate source, not execution',()=>{
   const gateSource='b'.repeat(40),run={id:7,run_attempt:1};
   const result={mode:'gate',event:'pull_request',head_sha:HEAD,base_sha:gateSource,pr_ref:'o/r#5',enforced:true,
-    admitted:false,verdict:'NO_ADMISSION_RUN',error:null};
+    admitted:false,verdict:'NO_ADMISSION_RUN',error:null,admission_run:{id:9,source:'trusted admission'},reasons:[]};
   const text=JSON.stringify(result,null,2).split('\n').map(line=>'2026-10-10T14:48:30.123Z '+line).join('\n');
   const w={sourceQualified:true,run,job:gate,repository:'o/r',head:HEAD,prNumber:5,gateSource,
     log:{complete:true,job_id:1,run_id:7,run_attempt:1,text}};
