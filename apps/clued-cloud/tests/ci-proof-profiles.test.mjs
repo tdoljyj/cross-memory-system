@@ -12,6 +12,7 @@ import '../../../scripts/ci/clued-workflow-profile.test.mjs';
 import '../../../scripts/ci/clued-gated-proof-runtime.test.mjs';
 // Consumer regressions execute on the actual PR's quality unit entry too.
 import '../../../scripts/ci/clued-merge-executor.test.mjs';
+import '../../../scripts/ci/npm-cache-observation.test.mjs';
 const require=createRequire(import.meta.url);
 const YAML=require('yaml');
 const root=fileURLToPath(new URL('../../../',import.meta.url));
