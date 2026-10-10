@@ -114,7 +114,7 @@ export function attributionMetrics({runs,pulls,jobsByRun,attribution,isSelfHoste
       const named=run?.pull_requests??[];
       const matches=run?.event==='pull_request'?(named.length?named:pulls.filter(pr=>pr.head_ref===run?.head_branch &&
         run?.created_at>=pr.created_at && run?.created_at<=pr.merged_at).map(pr=>pr.number)):[];
-      const pr=matches.length===1?matches[0]:null;
+      const pr=matches.length===1 && pulls.some(x=>x.number===matches[0])?matches[0]:null;
       const observed=observationAt(attribution.heads.get(run?.head_sha)??[],job.started_at,pr);
       const layer=observed?.layer??'unknown',state=observed?.state??'unknown';
       byLayer[layer]=(byLayer[layer]??0)+minutes;byState[state]=(byState[state]??0)+minutes;

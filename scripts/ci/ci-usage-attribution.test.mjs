@@ -120,3 +120,11 @@ test('same-head dispatch and push jobs do not borrow a PR admission observation'
   assert.deepEqual(metric.self_hosted_minutes.by_state,{unknown:18});
   assert.equal(metric.self_hosted_minutes.observed_jobs,0);
 });
+test('unsampled and multiply-associated PRs remain unknown on a sampled SHA',()=>{
+  const checks=[admissionObservation(check(),9,sha(1)),admissionObservation(check({id:2,external_id:'pr:999:run:123'}),9,sha(1))];
+  const attribution={heads:new Map([[sha(1),checks]]),updates:[],coverage:{pulls_complete:0}};
+  const runs=[[999],[1,999]].map((pull_requests,i)=>({...own()[0],id:i+1,pull_requests}));
+  const job={status:'completed',labels:['self-hosted'],conclusion:'success',started_at:'2026-10-05T10:01:00Z',completed_at:'2026-10-05T10:10:00Z'};
+  const metric=attributionMetrics({runs,pulls:[{number:1}],jobsByRun:new Map([[1,[job]],[2,[job]]]),attribution,isSelfHosted,durationMinutes,round});
+  assert.deepEqual(metric.self_hosted_minutes.by_state,{unknown:18});
+});
