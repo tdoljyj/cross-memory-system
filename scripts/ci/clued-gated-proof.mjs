@@ -13,6 +13,8 @@ export function gateIdentityWitness({sourceQualified,log,run,job,repository,head
   if(sourceQualified!==true || job?.name!=='admission-gate' ||
     !Number.isSafeInteger(job?.id) || job.id<1 || !Number.isSafeInteger(run?.id) || run.id<1 ||
     !Number.isSafeInteger(run?.run_attempt) || run.run_attempt<1 ||
+    job.run_id!==run.id || job.run_attempt!==run.run_attempt || run.event!=='pull_request' ||
+    run.head_sha!==head || run.repository?.full_name!==repository ||
     !Number.isSafeInteger(prNumber) || prNumber<1 || !/^[a-f0-9]{40}$/.test(head??'') ||
     typeof repository!=='string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
     log?.complete!==true || log.job_id!==job.id || log.run_id!==run?.id || log.run_attempt!==run.run_attempt ||
@@ -36,6 +38,30 @@ export function gateIdentityWitness({sourceQualified,log,run,job,repository,head
     return unknown('gate identity result differs from qualified source/PR');
   return {passed:true,state:'qualified',scope:'pr_identity',head,pr_number:prNumber,run_id:run.id,
     run_attempt:run.run_attempt,job_id:job.id,gate_source:gateSource};
+}
+
+// For audited ungated jobs, the pinned checkout action's attempt log binds
+// a PR merge ref to a real merge commit; its two parents bind base and head.
+export function checkoutIdentityWitness({sourceQualified,log,run,job,repository,head,prNumber,commit,base}) {
+  if(sourceQualified!==true || !Number.isSafeInteger(job?.id) || job.id<1 ||
+    !Number.isSafeInteger(run?.id) || run.id<1 || !Number.isSafeInteger(run?.run_attempt) || run.run_attempt<1 ||
+    job.run_id!==run.id || job.run_attempt!==run.run_attempt || run.event!=='pull_request' ||
+    run.head_sha!==head || run.repository?.full_name!==repository ||
+    !Number.isSafeInteger(prNumber) || prNumber<1 || !/^[a-f0-9]{40}$/.test(head??'') ||
+    !/^[a-f0-9]{40}$/.test(base??'') || log?.complete!==true || log.job_id!==job.id ||
+    log.run_id!==run.id || log.run_attempt!==run.run_attempt || typeof log.text!=='string' ||
+    log.text.length>524288 || !/^[a-f0-9]{40}$/.test(commit?.sha??'') ||
+    !Array.isArray(commit.parents) || commit.parents.length!==2 || commit.parents[0]?.sha!==base ||
+    commit.parents[1]?.sha!==head)return unknown('checkout identity source/attempt/merge parents missing');
+  const lines=log.text.replace(/\x1b\[[0-9;]*[A-Za-z]/g,'').split(/\r?\n/)
+    .map(line=>line.replace(/^\d{4}-\d\d-\d\dT\S+ /,''));
+  const refs=lines.filter(line=>/^\[command\].*\/git checkout --progress --force refs\/remotes\/pull\/\d+\/merge$/.test(line));
+  const commits=[];
+  for(let i=0;i<lines.length-1;i++)if(/^\[command\].*\/git log -1 --format=%H$/.test(lines[i]))commits.push(lines[i+1]);
+  if(refs.length!==1 || !refs[0].endsWith(`refs/remotes/pull/${prNumber}/merge`) ||
+    commits.length!==1 || commits[0]!==commit.sha)return unknown('checkout ref/commit identity missing or ambiguous');
+  return {passed:true,state:'qualified',scope:'pr_identity',head,pr_number:prNumber,run_id:run.id,
+    run_attempt:run.run_attempt,job_id:job.id,checkout_sha:commit.sha};
 }
 
 // A source-qualified descriptor supplies the PR's complete three-dot diff.
@@ -132,7 +158,7 @@ async function completeList(read, route, key) {
   return null;
 }
 
-export async function qualifiedCI({read,repository,head,prNumber,workflows,profiles,authorizeSource,qualifyDocumentation}) {
+export async function qualifiedCI({read,repository,head,prNumber,workflows,profiles,authorizeSource,qualifyDocumentation,qualifyRunIdentity}) {
   try {
     if(!/^[a-f0-9]{40}$/.test(head) || !Number.isInteger(prNumber) || prNumber<=0 ||
         !(workflows instanceof Map) || !profiles?.workflows || typeof authorizeSource!=='function')
@@ -151,10 +177,15 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
     if(!latest.size || latest.size!==workflows.size) return unknown('required CI workflow set incomplete');
     // Failures and recovery metadata can drive writes too. Never return a
     // stale terminal result just because only successful proofs reach the end.
+    const witnessed=new Set();
+    const sameMembership=(a,b)=>Array.isArray(a?.pull_requests) && Array.isArray(b.pull_requests) &&
+      a.pull_requests.length===b.pull_requests.length &&
+      (a.pull_requests.length===1?a.pull_requests[0]?.number===prNumber:
+        a.pull_requests.length===0 && witnessed.has(b.id));
     const sameRun=(a,b)=>a?.id===b.id && a.head_sha===head && a.event==='pull_request' &&
       String(a.path??'').replace(/@.*$/,'')===String(b.path??'').replace(/@.*$/,'') &&
       a.run_attempt===b.run_attempt && a.status===b.status && a.conclusion===b.conclusion &&
-      Array.isArray(a.pull_requests) && a.pull_requests.length===1 && a.pull_requests[0]?.number===prNumber;
+      sameMembership(a,b);
     const terminal=async(run,result)=>{
       try {
       if(!sameRun(await read(`/repos/${repository}/actions/runs/${run.id}`),run))
@@ -177,12 +208,21 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       if(run.status!=='completed') return unknown(`${file}: CI active`);
       if(!['success',...FAILED].includes(run.conclusion) || !Number.isInteger(run.run_attempt) || run.run_attempt<1)
         return unknown(`${file}: workflow outcome/attempt unknown`);
-      // Ambiguous same-SHA PR membership is not a source binding.
-      if(!Array.isArray(run.pull_requests) || run.pull_requests.length!==1 || run.pull_requests[0]?.number!==prNumber)
-        return unknown(`${file}: PR run membership unavailable or ambiguous`);
       const jobs=await completeList(read,`/repos/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`,'jobs');
-      if(!jobs) return unknown(`${file}: job history incomplete`);
+      if(!jobs || jobs.some(job=>job.run_id!==run.id || job.run_attempt!==run.run_attempt))
+        return unknown(`${file}: job history incomplete or crosses attempts`);
       if((await authorizeSource({file,run,jobs}))!==true) return unknown(`${file}: candidate source not qualified`);
+      // Empty native membership may be resolved only by an independently
+      // source-qualified attempt witness. Wrong or multiple associations are
+      // never overridden by the fallback.
+      if(!Array.isArray(run.pull_requests) || run.pull_requests.length>1 ||
+        (run.pull_requests.length===1 && run.pull_requests[0]?.number!==prNumber))
+        return unknown(`${file}: PR run membership unavailable or ambiguous`);
+      if(run.pull_requests.length===0) {
+        if(typeof qualifyRunIdentity!=='function' || (await qualifyRunIdentity({file,run,jobs}))!==true)
+          return unknown(`${file}: empty PR membership needs trusted attempt identity`);
+        witnessed.add(run.id);
+      }
       if(FAILED.has(run.conclusion)) return terminal(run,failed(`${file}: qualified workflow failed`));
       if(jobs.some(x=>x.status==='completed' && FAILED.has(x.conclusion))) return terminal(run,failed(`${file}: CI job failed`));
       if(jobs.some(x=>x.status!=='completed' || !['success','skipped','neutral'].includes(x.conclusion)))
@@ -206,7 +246,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       const now=await read(`/repos/${repository}/actions/runs/${proof.id}`);
       if(now?.head_sha!==head || now.id!==proof.id || now.event!=='pull_request' ||
         String(now.path??'').replace(/@.*$/,'')!==proof.file ||
-        !Array.isArray(now.pull_requests) || now.pull_requests.length!==1 || now.pull_requests[0]?.number!==prNumber ||
+        !sameMembership(now,latest.get(proof.file)) ||
         now.run_attempt!==proof.run_attempt || now.status!=='completed' || now.conclusion!=='success')
         return unknown(`${proof.file}: attempt changed while qualifying`);
     }
@@ -223,7 +263,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       const final=afterLatest.get(proof.file);
       if(!final || final.id!==proof.id || final.run_attempt!==proof.run_attempt ||
         final.status!=='completed' || final.conclusion!=='success' ||
-        !Array.isArray(final.pull_requests) || final.pull_requests.length!==1 || final.pull_requests[0]?.number!==prNumber)
+        !sameMembership(final,latest.get(proof.file)))
         return unknown(`${proof.file}: final latest run/attempt changed`);
     }
     return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs};

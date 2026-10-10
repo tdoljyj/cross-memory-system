@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import {qualifyPrimary,qualifiedCI,applicableCI,gateIdentityWitness,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
+import {qualifyPrimary,qualifiedCI,applicableCI,gateIdentityWitness,checkoutIdentityWitness,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
 const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
 const FILE='.github/workflows/clued-components.yml',HEAD='a'.repeat(40);
 const profile=profiles.workflows[FILE],route=profile.routes[0];
@@ -47,7 +47,7 @@ function world({runDelta={},jobs=[gate,primary()],readFailure=false,changedAttem
   const read=async url=>{calls.push(url);if(readFailure)throw new Error('read failed');
     if(url.includes('/actions/runs?')){lists++;const rows=lists>1&&newRun?[run,{...run,id:8}]:
       lists>1&&finalAttempt?[{...run,run_attempt:2,status:'in_progress',conclusion:null}]:[run];return{total_count:rows.length,workflow_runs:rows};}
-    if(url.includes('/attempts/'))return{total_count:jobs.length,jobs};
+    if(url.includes('/attempts/'))return{total_count:jobs.length,jobs:jobs.map(job=>({run_id:run.id,run_attempt:run.run_attempt,...job}))};
     if(url.endsWith('/actions/runs/7'))return{...run,run_attempt:changedAttempt?2:1};
     throw new Error('unexpected mocked read');};
   return{read,calls,repository:'o/r',head:HEAD,prNumber:5,workflows:new Map([[FILE,'default-blob']]),profiles,authorizeSource:async()=>source};
@@ -154,14 +154,46 @@ test('trigger applicability refuses incomplete, excessive, changed or unsupporte
   }
 });
 test('gate identity log is bound to an authenticated attempt and qualified gate source, not execution',()=>{
-  const gateSource='b'.repeat(40),run={id:7,run_attempt:1};
+  const gateSource='b'.repeat(40),run={id:7,run_attempt:1,event:'pull_request',head_sha:HEAD,repository:{full_name:'o/r'}};
   const result={mode:'gate',event:'pull_request',head_sha:HEAD,base_sha:gateSource,pr_ref:'o/r#5',enforced:true,
     admitted:false,verdict:'NO_ADMISSION_RUN',error:null,admission_run:{id:9,source:'trusted admission'},reasons:[]};
   const text=JSON.stringify(result,null,2).split('\n').map(line=>'2026-10-10T14:48:30.123Z '+line).join('\n');
-  const w={sourceQualified:true,run,job:gate,repository:'o/r',head:HEAD,prNumber:5,gateSource,
+  const w={sourceQualified:true,run,job:{...gate,run_id:7,run_attempt:1},repository:'o/r',head:HEAD,prNumber:5,gateSource,
     log:{complete:true,job_id:1,run_id:7,run_attempt:1,text}};
   assert.equal(gateIdentityWitness(w).scope,'pr_identity');
   for(const change of [{sourceQualified:false},{prNumber:6},{prNumber:0},{run:null},{gateSource:'c'.repeat(40)},
+    {job:{...w.job,run_id:8}},{job:{...w.job,run_attempt:2}},{run:{...run,event:'push'}},
+    {run:{...run,head_sha:'c'.repeat(40)}},{run:{...run,repository:{full_name:'other/repo'}}},
     {log:{...w.log,run_attempt:2}},{log:{...w.log,complete:false}},{log:{...w.log,text:text+'\n'+text}}])
     assert.equal(gateIdentityWitness({...w,...change}).state,'unknown');
+});
+test('job metadata cannot cross the qualified workflow attempt',async()=>{
+  assert.equal((await qualifiedCI(world({jobs:[gate,primary({run_id:99})]}))).state,'unknown');
+  assert.equal((await qualifiedCI(world({jobs:[gate,primary({run_attempt:99})]}))).state,'unknown');
+});
+test('empty native PR membership requires a source-qualified attempt witness; ambiguous membership cannot be overridden',async()=>{
+  const w=world({runDelta:{pull_requests:[]}});w.qualifyRunIdentity=async()=>true;
+  assert.equal((await qualifiedCI(w)).passed,true);
+  for(const associations of [[{number:6}],[{number:5},{number:6}],null]) {
+    const wrong=world({runDelta:{pull_requests:associations}});wrong.qualifyRunIdentity=async()=>true;
+    assert.equal((await qualifiedCI(wrong)).state,'unknown');
+  }
+  for(const changes of [{finalAttempt:true},{changedAttempt:true},{newRun:true}]) {
+    const changed=world({...changes,runDelta:{pull_requests:[]}});changed.qualifyRunIdentity=async()=>true;
+    assert.equal((await qualifiedCI(changed)).state,'unknown');
+  }
+  w.qualifyRunIdentity=async()=>({passed:false});assert.equal((await qualifiedCI(w)).state,'unknown');
+});
+test('ungated checkout identity requires a unique attempt checkout and exact two-parent merge',()=>{
+  const base='b'.repeat(40),merge='c'.repeat(40);
+  const text=`[command]/usr/bin/git checkout --progress --force refs/remotes/pull/5/merge\n[command]/usr/bin/git log -1 --format=%H\n${merge}`;
+  const w={sourceQualified:true,repository:'o/r',head:HEAD,prNumber:5,base,
+    run:{id:7,run_attempt:1,event:'pull_request',head_sha:HEAD,repository:{full_name:'o/r'}},
+    job:{id:2,run_id:7,run_attempt:1},commit:{sha:merge,parents:[{sha:base},{sha:HEAD}]},
+    log:{complete:true,run_id:7,run_attempt:1,job_id:2,text}};
+  assert.equal(checkoutIdentityWitness(w).scope,'pr_identity');
+  for(const changes of [{sourceQualified:false},{prNumber:6},{job:{...w.job,run_id:8}},
+    {commit:{...w.commit,parents:[{sha:HEAD},{sha:base}]}},{log:{...w.log,text:text+'\n'+text}},
+    {log:{...w.log,complete:false}},{run:{...w.run,head_sha:base}}])
+    assert.equal(checkoutIdentityWitness({...w,...changes}).state,'unknown');
 });
