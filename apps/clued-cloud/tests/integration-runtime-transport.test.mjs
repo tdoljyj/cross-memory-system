@@ -17,6 +17,9 @@ import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 // at POST /oauth/token reaches revoke_issuer and derives REVOKED (CONNECTION_USER_REVOKE); reconnecting the
 // same client is refused. (d) refresh rotation, expiry and the provider's expiry cleanup never call
 // revoke_issuer. The (b)(c) variants are in integration-runtime-lifecycle-db.test.mjs.
+// The controlled PostgREST shim selects real PostgreSQL roles from synthetic credentials.
+// Its HTTP status mapping is fixture behavior; this does not qualify production JWT
+// verification or real PostgREST response codes.
 // Every database runs as a non-root OS user (embedded-postgres refuses root).
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
