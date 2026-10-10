@@ -7,6 +7,33 @@ const FAILED = new Set(['failure','timed_out','action_required','startup_failure
 const unknown = reason => ({passed:false,state:'unknown',reason,scopes:[]});
 const failed = reason => ({passed:false,state:'failed',reason,scopes:[]});
 
+// The authenticated reader binds an attempt-specific job log to its job/run.
+// This is an identity witness only; it does not qualify the heavy execution.
+export function gateIdentityWitness({sourceQualified,log,run,job,repository,head,prNumber,gateSource}) {
+  if(sourceQualified!==true || job?.name!=='admission-gate' ||
+    log?.complete!==true || log.job_id!==job.id || log.run_id!==run?.id || log.run_attempt!==run.run_attempt ||
+    typeof log.text!=='string' || log.text.length>524288 || !/^[a-f0-9]{40}$/.test(gateSource??''))
+    return unknown('gate identity log/source descriptor missing');
+  const lines=log.text.replace(/\x1b\[[0-9;]*[A-Za-z]/g,'').split(/\r?\n/)
+    .map(line=>line.replace(/^\d{4}-\d\d-\d\dT\S+\s+/,''));
+  const objects=[];let chunk=[];
+  for(const line of lines) {
+    if(!chunk.length && line.trim()==='{')chunk=[line];
+    else if(chunk.length){chunk.push(line);if(line==='}'){
+      try {const object=JSON.parse(chunk.join('\n'));if(object.mode==='gate')objects.push(object);}catch{}
+      chunk=[];
+    }}
+  }
+  if(chunk.length || objects.length!==1)return unknown('gate identity result missing or ambiguous');
+  const witness=objects[0];
+  if(witness.event!=='pull_request' || witness.head_sha!==head || witness.base_sha!==gateSource ||
+    witness.pr_ref!==`${repository}#${prNumber}` || witness.enforced!==true ||
+    typeof witness.admitted!=='boolean' || typeof witness.verdict!=='string' || witness.error)
+    return unknown('gate identity result differs from qualified source/PR');
+  return {passed:true,state:'qualified',scope:'pr_identity',head,pr_number:prNumber,run_id:run.id,
+    run_attempt:run.run_attempt,job_id:job.id,gate_source:gateSource};
+}
+
 // A source-qualified descriptor supplies the PR's complete three-dot diff.
 // Only the literal/*/trailing-/** patterns in the audited workflows are
 // supported. New trigger syntax must receive a reviewed implementation.

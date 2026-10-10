@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import {qualifyPrimary,qualifiedCI,applicableCI,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
+import {qualifyPrimary,qualifiedCI,applicableCI,gateIdentityWitness,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
 const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
 const FILE='.github/workflows/clued-components.yml',HEAD='a'.repeat(40);
 const profile=profiles.workflows[FILE],route=profile.routes[0];
@@ -152,4 +152,16 @@ test('trigger applicability refuses incomplete, excessive, changed or unsupporte
     const altered=structuredClone(profiles);altered.workflows[QUALITY].pull_request={paths};
     assert.equal(applicableCI({...w,profiles:altered}).state,'unknown');
   }
+});
+test('gate identity log is bound to an authenticated attempt and qualified gate source, not execution',()=>{
+  const gateSource='b'.repeat(40),run={id:7,run_attempt:1};
+  const result={mode:'gate',event:'pull_request',head_sha:HEAD,base_sha:gateSource,pr_ref:'o/r#5',enforced:true,
+    admitted:false,verdict:'NO_ADMISSION_RUN',error:null};
+  const text=JSON.stringify(result,null,2).split('\n').map(line=>'2026-10-10T14:48:30.123Z '+line).join('\n');
+  const w={sourceQualified:true,run,job:gate,repository:'o/r',head:HEAD,prNumber:5,gateSource,
+    log:{complete:true,job_id:1,run_id:7,run_attempt:1,text}};
+  assert.equal(gateIdentityWitness(w).scope,'pr_identity');
+  for(const change of [{sourceQualified:false},{prNumber:6},{gateSource:'c'.repeat(40)},
+    {log:{...w.log,run_attempt:2}},{log:{...w.log,complete:false}},{log:{...w.log,text:text+'\n'+text}}])
+    assert.equal(gateIdentityWitness({...w,...change}).state,'unknown');
 });
