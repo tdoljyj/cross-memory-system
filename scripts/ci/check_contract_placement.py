@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = "config/clued-components.json"
@@ -239,7 +239,10 @@ def git_tree(root: Path, revision: str) -> dict[str, Blob]:
 
 
 def production_bootstrap() -> dict:
-    with urlopen(PRODUCTION_BOOTSTRAP, timeout=20) as response:
+    request = Request(PRODUCTION_BOOTSTRAP, headers={
+        "accept": "application/json", "user-agent": "clued-contract-placement/1",
+    })
+    with urlopen(request, timeout=20) as response:
         data = response.read(100_001)
     if len(data) > 100_000:
         raise ValueError("production bootstrap exceeds read bound")
