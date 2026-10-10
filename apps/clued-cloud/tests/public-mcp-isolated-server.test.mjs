@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { allocateIsolatedPort, boundedLocalCommand, launchIsolatedWorker, launcherIdentity, localCredentials, spawnOwnedCommand,
   stopOwnedCommand, stopRecordedLauncher, waitForIsolatedReady } from '../evals/public-mcp/start-isolated.mjs';
 import { localGatewayChildEnv } from '../evals/public-mcp/gateway-token.mjs';
@@ -95,6 +96,34 @@ test('recorded launcher refuses an unrelated ownership marker before sending any
   assert.equal(child.exitCode,null);assert.equal(child.signalCode,null);
   // Same job marker and own process group still cannot authorize a different program.
   await assert.rejects(stopRecordedLauncher(identity,'synthetic-owner-marker'),/ownership mismatch|ownership unavailable/);
+});
+
+test('recorded PATH-invoked node launcher verifies its real executable and stops successfully',async t=>{
+  if(process.platform!=='linux'){
+    await assert.rejects(stopRecordedLauncher(`${process.pid}:1`,'synthetic-path-marker'),/ownership unavailable/);return;
+  }
+  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'clued-isolated-path-node-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const statusMarker=path.join(directory,'status-started'),statusScript=path.join(directory,'status.mjs');
+  // The real CLI waits on a synthetic local status process, without contacting
+  // Supabase or creating Worker credentials. Its argv[0] is exactly "node".
+  await fs.writeFile(statusScript,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(statusMarker)},'started');setInterval(()=>{},1000);`);
+  const quote=value=>`'${value.replaceAll("'","'\\''")}'`;
+  await fs.writeFile(path.join(directory,'npx'),`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(statusScript)}\n`,{mode:0o700});
+  const launcher=fileURLToPath(new URL('../evals/public-mcp/start-isolated.mjs',import.meta.url));
+  const child=spawnOwnedCommand('node',[launcher],{capture:true,env:{...process.env,
+    PATH:[directory,path.dirname(process.execPath),process.env.PATH].join(path.delimiter),RUNNER_TRACKING_ID:'synthetic-path-marker'}});
+  t.after(()=>stopOwnedCommand(child));await once(child,'spawn');
+  const identity=launcherIdentity(child.pid),deadline=Date.now()+3000;
+  while(Date.now()<deadline){try{await fs.stat(statusMarker);break;}catch{await new Promise(r=>setTimeout(r,20));}}
+  assert.equal(await fs.readFile(statusMarker,'utf8'),'started','the real CLI has entered its own status collection');
+  const argv=(await fs.readFile(`/proc/${child.pid}/cmdline`)).toString().split('\0').filter(Boolean);
+  assert.equal(argv[0],'node');assert.equal(argv[1],launcher);
+  assert.equal(await fs.realpath(`/proc/${child.pid}/exe`),await fs.realpath(process.execPath));
+  await stopRecordedLauncher(identity,'synthetic-path-marker');
+  const stopped=Date.now()+3000;
+  while(child.exitCode===null&&child.signalCode===null&&Date.now()<stopped)await new Promise(r=>setTimeout(r,20));
+  assert.equal(child.exitCode,0);assert.equal(child.signalCode,null);
 });
 test('cancellation during actual status collection cannot retry status or create a secret file/Worker afterward',async t=>{
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'clued-isolated-cancel-'));

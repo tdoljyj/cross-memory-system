@@ -70,7 +70,7 @@ export async function stopRecordedLauncher(identity,trackingId=process.env.RUNNE
   const argv=fs.readFileSync(`${root}/cmdline`).toString().split('\0').filter(Boolean),cwd=fs.readlinkSync(`${root}/cwd`);
   const marker=fs.readFileSync(`${root}/environ`).toString().split('\0').find(item=>item.startsWith('RUNNER_TRACKING_ID='));
   if(group!==pid||launcherIdentity(pid)!==identity||!started||marker!==`RUNNER_TRACKING_ID=${trackingId}`||argv.length!==2||
-    path.resolve(cwd,argv[1])!==fileURLToPath(import.meta.url)||fs.realpathSync(argv[0])!==fs.realpathSync(process.execPath))throw Error('isolated launcher ownership mismatch');
+    path.resolve(cwd,argv[1])!==fileURLToPath(import.meta.url)||fs.realpathSync(`${root}/exe`)!==fs.realpathSync(process.execPath))throw Error('isolated launcher ownership mismatch');
   process.kill(-pid,'SIGTERM');
   const deadline=Date.now()+5000;
   while(alive(pid)&&Date.now()<deadline)await delay(25);
