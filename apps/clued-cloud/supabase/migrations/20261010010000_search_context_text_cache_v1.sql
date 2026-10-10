@@ -12,22 +12,24 @@
 --
 -- The lower-cased search text of each row is now kept in
 -- clued_private.search_text_v1, written by triggers on the three tables and
--- backfilled here. Search reads it (falling back to building it when a row
--- has none), skips with plain strpos every row that holds neither the whole
--- query nor any of its terms, and scores only the rest with
--- search_score_lc_v1, the same scorer without its lower(). The minimum score
--- is above zero for every term count (1, 0.9999 or 0.6), so a row that holds
--- neither scores 0 and was never a result: results, scores, order, paging,
--- caps and authorization are unchanged. On the stored texts the prefilter
--- takes about 60 ms. The search text stays out of the source rows, whose
--- whole-row JSON other functions read.
+-- backfilled here. Search reads it (building it only for a row without one)
+-- and scores it with search_score_lc_v1, the same scorer without its
+-- lower(), so results, scores, order, paging, caps and authorization are
+-- unchanged. On the stored texts a pass over every row takes about 60 ms.
+-- The search text stays out of the source rows, whose whole-row JSON other
+-- functions read. The three tables are locked together up front, with a
+-- lock timeout, so the triggers and the backfill cannot deadlock with
+-- writers or queue them behind a long wait.
+
+set local lock_timeout = '5s';
+lock table public.clued_memories, public.clued_context_checkpoints, public.clued_context_events in share row exclusive mode;
 
 create table clued_private.search_text_v1 (
+  user_id uuid not null,
   source text not null check (source in ('record','checkpoint','event')),
   source_id text not null,
-  user_id uuid not null,
   text_lc text not null,
-  primary key (source, source_id)
+  primary key (user_id, source, source_id)
 );
 alter table clued_private.search_text_v1 enable row level security;
 revoke all on table clued_private.search_text_v1 from public,anon,authenticated,service_role;
@@ -50,9 +52,14 @@ create or replace function clued_private.search_text_sync_v1()
 returns trigger language plpgsql security definer set search_path='' as $$
 declare v_source text:=tg_argv[0]; v_text text;
 begin
-  if tg_op='DELETE' then
-    delete from clued_private.search_text_v1 where source=v_source and source_id=old.id::text;
-    return old;
+  if tg_op='TRUNCATE' then
+    delete from clued_private.search_text_v1 where source=v_source;
+    return null;
+  end if;
+  -- A deleted row, or the old key of a row whose id or user changed, loses its text.
+  if tg_op='DELETE' or (tg_op='UPDATE' and (old.id is distinct from new.id or old.user_id is distinct from new.user_id)) then
+    delete from clued_private.search_text_v1 where user_id=old.user_id and source=v_source and source_id=old.id::text;
+    if tg_op='DELETE' then return old; end if;
   end if;
   -- One branch per source: each reads only its own table's columns.
   if v_source='record' then
@@ -62,38 +69,38 @@ begin
   else
     v_text:=clued_private.search_text_event_v1(new.payload);
   end if;
-  insert into clued_private.search_text_v1(source,source_id,user_id,text_lc)
-  values (v_source,new.id::text,new.user_id,v_text)
-  on conflict (source,source_id) do update set user_id=excluded.user_id,text_lc=excluded.text_lc;
+  insert into clued_private.search_text_v1(user_id,source,source_id,text_lc)
+  values (new.user_id,v_source,new.id::text,v_text)
+  on conflict (user_id,source,source_id) do update set text_lc=excluded.text_lc;
   return new;
 end $$;
 
 create trigger clued_memories_search_text_v1
-  after insert or update of title,content,type_fields,user_id or delete on public.clued_memories
+  after insert or update of id,user_id,title,content,type_fields or delete on public.clued_memories
   for each row execute function clued_private.search_text_sync_v1('record');
+create trigger clued_memories_search_text_truncate_v1
+  after truncate on public.clued_memories for each statement execute function clued_private.search_text_sync_v1('record');
 create trigger clued_context_checkpoints_search_text_v1
-  after insert or update of summary,next_action,snapshot,user_id or delete on public.clued_context_checkpoints
+  after insert or update of id,user_id,summary,next_action,snapshot or delete on public.clued_context_checkpoints
   for each row execute function clued_private.search_text_sync_v1('checkpoint');
+create trigger clued_context_checkpoints_search_text_truncate_v1
+  after truncate on public.clued_context_checkpoints for each statement execute function clued_private.search_text_sync_v1('checkpoint');
 create trigger clued_context_events_search_text_v1
-  after insert or update of payload,user_id or delete on public.clued_context_events
+  after insert or update of id,user_id,payload or delete on public.clued_context_events
   for each row execute function clued_private.search_text_sync_v1('event');
+create trigger clued_context_events_search_text_truncate_v1
+  after truncate on public.clued_context_events for each statement execute function clued_private.search_text_sync_v1('event');
 
-insert into clued_private.search_text_v1(source,source_id,user_id,text_lc)
-  select 'record',m.id::text,m.user_id,clued_private.search_text_record_v1(m.title,m.content,m.type_fields) from public.clued_memories m
+insert into clued_private.search_text_v1(user_id,source,source_id,text_lc)
+  select m.user_id,'record',m.id::text,clued_private.search_text_record_v1(m.title,m.content,m.type_fields) from public.clued_memories m
   union all
-  select 'checkpoint',c.id::text,c.user_id,clued_private.search_text_checkpoint_v1(c.summary,c.next_action,c.snapshot) from public.clued_context_checkpoints c
+  select c.user_id,'checkpoint',c.id::text,clued_private.search_text_checkpoint_v1(c.summary,c.next_action,c.snapshot) from public.clued_context_checkpoints c
   union all
-  select 'event',e.id::text,e.user_id,clued_private.search_text_event_v1(e.payload) from public.clued_context_events e
-on conflict (source,source_id) do nothing;
+  select e.user_id,'event',e.id::text,clued_private.search_text_event_v1(e.payload) from public.clued_context_events e
+on conflict (user_id,source,source_id) do nothing;
 
--- Whether a lower-cased text holds the whole query or any term: a row that
--- holds neither scores 0, below every minimum score.
-create or replace function clued_private.search_may_match_v1(p_hay_lc text,p_query text,p_terms text[])
-returns boolean language sql immutable set search_path='' as $$
-  select strpos(p_hay_lc,p_query)>0 or exists(select 1 from unnest(p_terms) t where strpos(p_hay_lc,t)>0)
-$$;
-
--- search_score_v1 on a text that is already lower-cased.
+-- search_score_v1 on a text that is already lower-cased (search_score_v1 is
+-- kept, unused, for a rollback of the function).
 create or replace function clued_private.search_score_lc_v1(p_hay_lc text,p_query text,p_terms text[])
 returns numeric language plpgsql immutable set search_path='' as $$
 declare v_hay text:=coalesce(p_hay_lc,''); v_hit integer:=0; v_miss integer:=0;
@@ -116,7 +123,6 @@ revoke all on function clued_private.search_text_record_v1(text,text,jsonb) from
 revoke all on function clued_private.search_text_checkpoint_v1(text,text,jsonb) from public,anon,authenticated,service_role;
 revoke all on function clued_private.search_text_event_v1(jsonb) from public,anon,authenticated,service_role;
 revoke all on function clued_private.search_text_sync_v1() from public,anon,authenticated,service_role;
-revoke all on function clued_private.search_may_match_v1(text,text,text[]) from public,anon,authenticated,service_role;
 revoke all on function clued_private.search_score_lc_v1(text,text,text[]) from public,anon,authenticated,service_role;
 
 -- search_context is rewritten in place, as 20261008210000 rewrote it: the
@@ -134,22 +140,19 @@ begin
     ($o$    cross join lateral (select clued_private.search_score_v1(
       coalesce(m.title,'')||E'\n'||coalesce(m.content,'')||E'\n'||coalesce(m.type_fields::text,''),
       v_query_lc,v_terms) score offset 0) sc$o$,
-     $n$    left join clued_private.search_text_v1 st on st.source='record' and st.source_id=m.id::text
-    cross join lateral (select coalesce(st.text_lc,clued_private.search_text_record_v1(m.title,m.content,m.type_fields)) hay) t
-    cross join lateral (select case when clued_private.search_may_match_v1(t.hay,v_query_lc,v_terms)
-      then clued_private.search_score_lc_v1(t.hay,v_query_lc,v_terms) else 0 end score offset 0) sc$n$),
+     $n$    left join clued_private.search_text_v1 st on st.user_id=m.user_id and st.source='record' and st.source_id=m.id::text
+    cross join lateral (select coalesce(st.text_lc,clued_private.search_text_record_v1(m.title,m.content,m.type_fields)) hay offset 0) t
+    cross join lateral (select clued_private.search_score_lc_v1(t.hay,v_query_lc,v_terms) score offset 0) sc$n$),
     ($o$    cross join lateral (select clued_private.search_score_v1(
       coalesce(c.summary,'')||E'\n'||coalesce(c.next_action,'')||E'\n'||coalesce(c.snapshot::text,''),
       v_query_lc,v_terms) score offset 0) sc$o$,
-     $n$    left join clued_private.search_text_v1 st on st.source='checkpoint' and st.source_id=c.id::text
-    cross join lateral (select coalesce(st.text_lc,clued_private.search_text_checkpoint_v1(c.summary,c.next_action,c.snapshot)) hay) t
-    cross join lateral (select case when clued_private.search_may_match_v1(t.hay,v_query_lc,v_terms)
-      then clued_private.search_score_lc_v1(t.hay,v_query_lc,v_terms) else 0 end score offset 0) sc$n$),
+     $n$    left join clued_private.search_text_v1 st on st.user_id=c.user_id and st.source='checkpoint' and st.source_id=c.id::text
+    cross join lateral (select coalesce(st.text_lc,clued_private.search_text_checkpoint_v1(c.summary,c.next_action,c.snapshot)) hay offset 0) t
+    cross join lateral (select clued_private.search_score_lc_v1(t.hay,v_query_lc,v_terms) score offset 0) sc$n$),
     ($o$    cross join lateral (select clued_private.search_score_v1(e.payload::text,v_query_lc,v_terms) score offset 0) sc$o$,
-     $n$    left join clued_private.search_text_v1 st on st.source='event' and st.source_id=e.id::text
-    cross join lateral (select coalesce(st.text_lc,clued_private.search_text_event_v1(e.payload)) hay) t
-    cross join lateral (select case when clued_private.search_may_match_v1(t.hay,v_query_lc,v_terms)
-      then clued_private.search_score_lc_v1(t.hay,v_query_lc,v_terms) else 0 end score offset 0) sc$n$)) v(old_text, new_text) loop
+     $n$    left join clued_private.search_text_v1 st on st.user_id=e.user_id and st.source='event' and st.source_id=e.id::text
+    cross join lateral (select coalesce(st.text_lc,clued_private.search_text_event_v1(e.payload)) hay offset 0) t
+    cross join lateral (select clued_private.search_score_lc_v1(t.hay,v_query_lc,v_terms) score offset 0) sc$n$)) v(old_text, new_text) loop
     n := (length(body) - length(replace(body, r.old_text, ''))) / length(r.old_text);
     if n <> 1 then
       raise exception 'search_context_rewrite_mismatch' using detail = format('%s occurrences of %s', n, left(r.old_text, 80));

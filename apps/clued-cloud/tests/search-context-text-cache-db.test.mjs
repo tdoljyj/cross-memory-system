@@ -96,6 +96,8 @@ test('search_context on stored lower-cased texts answers as before and stays in 
     await create(scope, '项目记录 Alpha', 'alpha-beta_gamma.delta joined run and 认领');
     await create(scope, 'Type field only', 'nothing here', { note_kind: 'log', marker: 'FIELDMARKER 执行器' });
     for (let i = 0; i < 30; i += 1) await create('global', `Filler ${i}`, `filler text number ${i} 合并 ${i % 3 === 0 ? '执行' : ''}`);
+    // LIKE and regex characters are plain text to the scorer.
+    await create('global', 'Special chars', 'rate 100%_x\\y [a-z]+ (group) ÄÖÜ İstanbul ß');
     // Legacy events (history only) besides the record events, and checkpoints (history only).
     const legacyEvent = (marker) => admin.query(`insert into public.clued_context_events(user_id,context_key,event_type,payload)
       values($1,'global','note',$2)`, [userId, { marker }]);
@@ -119,6 +121,7 @@ test('search_context on stored lower-cased texts answers as before and stays in 
       { query: '认领', include_history: true, limit: 3 }, { query: '合并', limit: 5, cursor: 5 }, { query: 'filler', limit: 50 },
       { query: '执', include_history: true }, { query: 'nomatchatall' }, { query: 'x' },
       { query: '合并', context_key: 'global' }, { query: '认领', scope: 'all' },
+      { query: '100%_x\\y' }, { query: '[a-z]+' }, { query: 'äöü' }, { query: '%' }, { query: '_' },
     ];
     // Results without the volatile per-call fields.
     const answer = async (input) => {
@@ -159,6 +162,22 @@ test('search_context on stored lower-cased texts answers as before and stays in 
     // A row without a stored text is still found.
     await admin.query(`delete from clued_private.search_text_v1 where source='record' and source_id=$1`, [fresh]);
     assert.deepEqual((await answer({ query: 'renamedmarker' })).results.filter((x) => x.kind === 'record').map((x) => x.id), [fresh]);
+    // An update of type_fields alone refreshes the stored text.
+    await admin.query(`update public.clued_memories set type_fields='{"note_kind":"log","tag":"TYPEONLYMARKER"}' where id=$1`, [fresh]);
+    assert.deepEqual((await answer({ query: 'typeonlymarker' })).results.filter((x) => x.kind === 'record').map((x) => x.id), [fresh]);
+    // A row moved to another account leaves this account's search and keys its text by the new account.
+    const other = uuid();
+    await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'other@example.invalid',now())`, [other]);
+    await admin.query(`update public.clued_memories set user_id=$2 where id=$1`, [fresh, other]);
+    assert.equal((await answer({ query: 'typeonlymarker' })).results.filter((x) => x.kind === 'record').length, 0);
+    assert.deepEqual((await admin.query(`select user_id from clued_private.search_text_v1 where source='record' and source_id=$1`, [fresh])).rows,
+      [{ user_id: other }]);
+    // Deleting a record or an event deletes its stored text.
+    await admin.query(`delete from public.clued_memories where id=$1`, [fresh]);
+    const [late] = (await admin.query(`select id from public.clued_context_events where payload->>'marker'='LATEEVENT marker'`)).rows;
+    await admin.query(`delete from public.clued_context_events where id=$1`, [late.id]);
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.search_text_v1 where (source='record' and source_id=$1) or (source='event' and source_id=$2)`,
+      [fresh, String(late.id)])).rows[0].n, 0);
     // Deleting a source row deletes its stored text.
     const [checkpoint] = (await admin.query(`select id from public.clued_context_checkpoints where summary='plain checkpoint'`)).rows;
     await admin.query(`delete from public.clued_context_checkpoints where id=$1`, [checkpoint.id]);
@@ -167,8 +186,7 @@ test('search_context on stored lower-cased texts answers as before and stays in 
     // Nothing new is callable or readable by the API roles.
     for (const role of ['anon', 'authenticated', 'service_role']) {
       for (const fn of ['search_text_record_v1(text,text,jsonb)', 'search_text_checkpoint_v1(text,text,jsonb)',
-        'search_text_event_v1(jsonb)', 'search_text_sync_v1()', 'search_may_match_v1(text,text,text[])',
-        'search_score_lc_v1(text,text,text[])']) {
+        'search_text_event_v1(jsonb)', 'search_text_sync_v1()', 'search_score_lc_v1(text,text,text[])']) {
         assert.equal((await admin.query(`select has_function_privilege($1,$2,'execute') ok`, [role, `clued_private.${fn}`])).rows[0].ok,
           false, `${role} ${fn}`);
       }
