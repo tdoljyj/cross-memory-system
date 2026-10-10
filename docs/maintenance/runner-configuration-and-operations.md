@@ -1,6 +1,6 @@
 # Runner 配置与运维规范
 
-版本：v1.0；适用仓库：`tdoljyj/cross-memory-system`。编写基线：2026-10-07，主线提交 `4765da25502ec1ff0da92e1098ea3535b80a4d19`。
+版本：v1.2；适用仓库：`tdoljyj/cross-memory-system`。本次核对：2026-10-10，主线基线 `cd99bf7ef1483b18726940159f3778e13c24c62f`。旧 v1.1 无窗口安装器候选在 PR #615，尚未合入，不能当作当前主线实现。
 
 本文件是工程 Runbook，规定配置、上线验收、日常维护、增减与回退的操作要求。它不声明某台机器此刻在线，也不代替操作授权、Clued 当前任务或 GitHub 准入。下文的“必须”是执行本规范的要求；“现状”只说明编写时已核对的实现。未实现的要求见第 12 节，不得据此宣称已达标。
 
@@ -23,7 +23,7 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 
 ## 2. 当前清单与配置底线
 
-编写基线有两台主机、七个 runner，均在清单中为 active。未来数量从清单重新读取，不能把此表当动态监控。
+本次主线清单有两台主机、七个 runner，均为 active；2026-10-10 GitHub 注册 API 核对到同一七个名称及能力标签。表格是配置身份快照，未来数量从清单重新读取，不能把它当动态在线监控。
 
 | 主机 / HostId | 容量配置 | runner | 独立根目录 |
 | --- | --- | --- | --- |
@@ -36,6 +36,8 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 | 同上 | 同上 | home-linux-01 | `/opt/actions-runner` |
 
 表内名称均加前缀 `clued-ci-`。公司 WSL 为 `CluedCI-Linux`，家里为 `Ubuntu-24.04`；Linux 服务用户为 `runner`。完整服务名、路由标签和看门狗路径从清单取，不能按机器名猜测。
+
+本次证据边界：公司现场已复读 Windows 自动服务 `StartName=.\clued-runner`，四个 Linux unit 为 `User=runner`、`KillMode=control-group`、各自独立工作目录且 active；公司 `.wslconfig` 实际为 28 GB / 16 CPU / 8 GB swap。家里本轮只核对 GitHub 注册与路由标签，主机侧账号、启动链和冷启动资格仍按对应精确历史验收及变更失效规则使用，不宣称本轮远端主机重新验收。
 
 ### 2.1 身份、目录与路由
 
@@ -61,7 +63,7 @@ WSL 预算属于该 Windows 用户的 WSL2 虚拟机，不是每个 runner 独�
 
 规范目标是容量停止服务前先阻断新派单并排空共享负载。**当前 renderer 只有尽力检测，未达到完整排空或不误伤忙作业的保证**：它两次查 `Runner.Worker`，仅 Worker 查询异常时延期；listener 日志缺失/不可读或 journalctl 失败不会阻止暂停。检查结束后 listener 仍能接单，检查与停止之间的竞态可能让刚开始的作业被 control-group 停止。未闭合经审的调度隔离/安全停机实现前，新部署或新增槽位不得启用、扩大这种自动停服务模式；先保持路由隔离，并取得可实施的安全方案。现有部署的风险处置另需明确授权，本次文档不自动改变其模式。共享 Docker 停止还会影响该 distro 的所有容器，不能据这些查询证明其他业务负载已排空。[路由依据](https://docs.github.com/en/actions/reference/runners/self-hosted-runners#routing-precedence-for-self-hosted-runners)
 
-同一 WSL 下的多个 runner 共享 OS、用户及 Docker；独立目录不等于安全隔离。固定端口作业应按已有 [host-port-lock.sh](../../scripts/ci/self-hosted/host-port-lock.sh) 实现串行，协议/行为测试共用 `public-mcp-ports` 锁；释放步骤须使用 `if: always()`。其他固定端口消费者也须纳入同一锁域，否则不能宣称互不冲突。
+同一 WSL 下的多个 runner 共享 OS、用户及 Docker；独立目录不等于安全隔离。当前 protocol 与 behavior 各自分配动态 loopback MCP 端口，不能再假定所有作业固定使用 8787。behavior 的自托管流程仍因共享本地 Supabase 固定端口使用 [host-port-lock.sh](../../scripts/ci/self-hosted/host-port-lock.sh) 的 `public-mcp-ports` 锁，并在 `if: always()` 中释放；protocol 没有该锁，使用其独立动态端口。其他固定端口消费者须加入准确锁域；动态 MCP 端口不能消除共享数据库/Docker负载争用。进程退出必须按本作业记录的进程身份和归属清理，不能按端口占用或进程名称全机杀进程。
 
 ### 2.3 加固、更新与秘密
 
@@ -141,7 +143,9 @@ if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 
 调度定义最低要求：WSL 所属日常账号，Interactive/Limited；登录触发 + 每分钟无限重复；IgnoreNew；ExecutionTimeLimit=0；失败后间隔一分钟重启三次；电池供电不停。沿用脚本的 mutex；不能让不同启动入口竞争管理同一主机。不得改成 SYSTEM 来“保证开机”，SYSTEM 看不到同一用户的 WSL 发行版。
 
-基线现状：家里的 `Clued-CI-Watchdog-home-primary` 已安装上述计划任务并实测 53 秒自动恢复；公司只确认原看门狗运行，未在此次规范工作中安装相同计划任务。登录会话退出后的无人值守能力不在已验范围，不能称不登录也可用。
+已核对部署与主线分开记录：家里 `Clued-CI-Watchdog-home-primary` 的计划任务与 53 秒恢复为既有验收，仍需按后续变更判断适用性。公司于 2026-10-08 已部署 `Clued-CI-Watchdog-company-primary`；2026-10-10 现场复读为 Enabled/Running、每日触发带重复恢复、日常 Windows 账号 Interactive/Limited、`pythonw.exe -I -S` 无控制台启动器承载 PowerShell 看门狗、标准输出/错误写日志。此前公司受控退出恢复实测为 36.08 秒；本轮未重跑退出测试、冷启动或登出无人值守测试。主线 renderer 仍只提供旧 Startup/HKCU Run 安装路径；PR #615 的无窗口计划任务安装器尚未合入，不能用“已部署”证明“已进入主线”。
+
+无窗口要求不能只靠 `/min` 或 `PowerShell -WindowStyle Hidden`。监督应使用不分配控制台的启动器，关闭标准输入并落盘 stdout/stderr、启动/退出结果。停维护前核对整条启动器→PowerShell→WSL keepalive 链；计划任务结束或启动器退出不证明所有后代已退出。只按已复读 PID、创建时间、完整启动命令和目标主机确认对应进程，不全机结束 PowerShell、pythonw 或 WSL 进程。
 
 安装/替换时：保存已有任务定义和启动项；核对已有路径与当前账号；启动新任务、确认唯一进程和新日志；再可逆停用重复 Startup/Run 入口。renderer 实际注册的 HKCU 属性名是 `CluedCIWatchdog-<HostId>`，与计划任务 `Clued-CI-Watchdog-<HostId>` 不同，必须按真实值核对，不能仅删除一个看起来相似的名称。
 
@@ -185,6 +189,32 @@ wsl.exe -d Ubuntu-24.04 -u runner -e systemctl show actions.runner.tdoljyj-cross
 [健康监控](../../scripts/ci/self-hosted/ci_health.py)每小时分析；[路由心跳](../../.github/workflows/clued-ci-runner-heartbeat.yml)每 15 分钟探测。基线 matrix 只有公司 Linux01/02 与家里 Linux01、两 Windows，**不包含公司 Linux03/04**。不得把它称为七节点完整覆盖；03/04 先用直接 API 与指定实际 job 证据核对，监控覆盖补齐另走受审变更。
 
 告警运输 PR 是 do-not-merge 的事件载体，不合入 main。恢复后以机器与实际作业证据结案，再登记 Clued；不把 API 状态延迟、采样缺口或旧资格说明当结论。
+
+### 6.3 CI 临时文件与缓存
+
+本节公共入口与八流程覆盖实现在 [PR #693](https://github.com/tdoljyj/cross-memory-system/pull/693)，候选提交 `48205446348a65e578094aef999e59cf853eeac0`，编写基线尚未合入；只有该 PR 完成准入、实际 CI 和合并后才能按这一实现执行。已合入的 PR #691 与尚在审核的补齐范围分别说明如下，不用规范要求冒充主线现状。
+
+本次临时目录治理的实施范围是应用的八条持续安装/测试流程：quality、Node22安装、integration-runtime nightly、connection authorization、G4、Information Flow E2E、public MCP protocol和behavior。覆盖检查对这些工作流中每个产生安装、解压、构建、测试或评测临时数据的 job，要求在首次此类命令前把 `TMPDIR`、`TMP`、`TEMP` 指向该 runner 的 `RUNNER_TEMP`。Node 准备和 checkout 完成后使用 `ci-temporary-storage` 公共入口；入口先验证绝对路径、目录身份、作业账号归属和可写性，再写入 `GITHUB_ENV`。失败不得静默回退到共享 `/tmp`。新增同域流程必须纳入同一覆盖检查；这次应用覆盖不证明仓库控制或生产发布流程的所有临时路径均已治理，后者保持自己的执行范围和验证。受信任准入 job 若检出 base/main，不能先调用仅存在于未合入 PR 的本地 action。
+
+当前已合入的 PR #691：应用 package 的 Node 测试命令与内容选择器通过 `scripts/run-tests.mjs` 运行，每次 suite 拥有独立 `clued-test-run-*` 子目录，测试和原生依赖子进程继承它；成功、失败、正常强制退出、启动失败和可处理的取消均在外层回收。取消只作用于该调用创建的进程组。quality job 的依赖安装前已经配置 runner 临时目录。其它 CI 直接测试、安装入口应以工作流覆盖检查及实际 job 的入口日志为验收证据，不能由某一套 unit tests 通过推定全入口覆盖。
+
+Runner 的 job 临时目录在 job 开始/结束时清理；这为安装中断、进程硬杀和机器故障留下的文件提供下一次作业的回收边界。硬杀本身不能执行 JavaScript `finally`，不能承诺取消瞬间零残留。作业账号无法删除的文件不保证由 runner 回收；出现清理失败必须留诊断并处理准确归属/权限，不能扩大 runner 权限或换成共享 `/tmp`。该目录不是安全沙箱，同机 runner 仍共享 WSL/用户/Docker。
+
+缓存与临时文件分别管理：npm 的既有持久缓存、Node 工具缓存、Docker 镜像/卷、数据库和明确保留的测试报告不进入这种临时清扫。promptfoo 的作业内配置/临时评测状态应放到该 job 的临时目录，不能把全机 `/tmp/promptfoo` 当跨 runner 共享配置。报告及需要保留的诊断先按现有流程上传/归档，再由 job 生命周期清理临时根。临时目录不是后续证据唯一存放位置。
+
+不得新增 `/tmp/*`、全部 ONNX/构建目录或全机 Docker prune 的定时清扫来代替归属治理。历史残留删除是独立操作：列明准确前缀/目录、保留条件和截止时间，确认没有在运行或已分配的作业使用目标，核对真实路径、目录身份、最新子项时间及文件系统边界；只删除明确批准的清单。不要根据目录名、字节相同或“看起来旧”推定删除授权。
+
+### 6.4 C 盘与 WSL 虚拟磁盘空间恢复
+
+C 盘可用空间、VHDX 在宿主的占用和 Linux `df`/`du` 的使用量是三个观测量。删除 Linux 文件通常不会立即把同等空间归还 C 盘；记录删除、trim、离线压缩及恢复的实际结果，不以 VHDX 文件长度减 Linux 使用量许诺可回收字节。
+
+2026-10-10 公司容量暂停的精确诊断与恢复见 Clued Task `f7d19375-98f5-46c5-aa94-99a4eb5c3388`：C 盘约 49.3 GiB 触发既有 50 GiB 门槛；`/tmp` 约 104 GiB。Owner 批准后按身份/年龄/无作业的清单清理 19,115 个旧测试目录约 85.79 GiB，Linux 使用量约 148→63 GiB；对准确 CI 磁盘完成 trim、离线压缩，VHDX 197.13→79.39 GiB、C 盘达到 170.14 GiB，四个公司 Linux runner 恢复并执行实际作业。这是一次有范围的历史事件，不是当前容量表或其它主机维护授权。
+
+后续离线回收须先取得准确 distro/VHDX、停机与数据保留范围的授权，并按第 7 节排空受影响作业。暂停监督的调度入口且结束经身份复读的监督链，保存恢复所需的原任务状态；共享 WSL/Docker 的所有负载都在范围内，不能只看一个 runner 的 busy=false。先处理经批准的废弃文件，按需 `sync`/`fstrim`；trim 返回的是全部可丢弃区域，不等于本次新增释放量。
+
+只停止指定发行版，等待宿主确认目标磁盘未挂载。若需要关闭 WSL 虚拟机，必须先复读同一用户全部发行版和其它负载，证明没有未授权受影响的运行项；不得直接全机 `wsl --shutdown`。管理员只对经复读的准确独立动态磁盘操作，拒绝未知差分父盘、挂载状态不明或磁盘身份变化。使用系统支持的只读挂载/压缩/卸载入口；不对仍挂载的盘强制压缩、不用填满 C 盘的零文件方案，不自动启用带额外风险的稀疏磁盘选项。
+
+维护始终有 `finally` 恢复：释放自己的只读挂载、恢复原监督入口及其原配置。失败不能留下监督被禁用或磁盘仍只读占用。完成后验证磁盘身份/大小、C 盘可用量、Linux 文件系统/必要数据、原服务账号/units、监督单实例以及实际 job；容量不足时按既有门槛保持暂停，不能强启或降低 50/80 GiB 规则。权限不足应区分 Windows 管理员权限与网络/WSL故障，不借他人凭据。
 
 ## 7. 排空、维护与减少 runner
 
@@ -258,10 +288,12 @@ wsl.exe -d Ubuntu-24.04 -u runner -e systemctl show actions.runner.tdoljyj-cross
 
 | 差异 | 实施时的限制 |
 | --- | --- |
-| self-hosted README 仍含四/五节点及登录模式、默认自动更新的历史描述 | 以当前清单、钩子加固说明及本文件的验收要求核对，数量/资格仍需实时证据 |
+| 主线清单七节点；历史 P7/P8/P14 资格只覆盖当时受查对象 | 当前数量由清单/API读取；旧四节点资格不能推广为七节点或本轮主机重验 |
 | 清单 auto_update_after_registration=true；bootstrap 没有 --disableupdate/完整标准账号加固入口 | 不以基础安装成功直接上线；使用受审管理员安装/加固方案并验收，代码统一另走 PR |
 | 心跳 matrix 仅覆盖五节点，未列公司 Linux03/04 | 保留 API/实际定点 job 核对；新增/退役流程必须安排 matrix 对应变更，不能称完整覆盖 |
-| renderer 只安装 Startup/HKCU Run，未生成持久计划任务 | 新部署另提供受审的调度定义与退出恢复验收；家里已实例化，公司未在此规范工作中升级 |
+| 主线 renderer 仍只安装 Startup/HKCU Run；无窗口计划任务安装器在未合入 PR #615 | 公司现场已安装无窗口 Limited 计划任务，家里有既有计划任务验收；部署事实不冒充主线工具能力，安装器更新另按原 Task/PR 受审 |
+| 公司已部署任务为每日触发并带重复恢复；规范目标是登录触发 | 既有受控退出恢复通过不等于已符合全部调度定义；公司登录/冷启动/登出无人值守仍未实测，不据此新增或变更任务 |
+| 八应用 workflow 的公共临时入口为 PR #693 候选，不在编写基线 main 内 | 先完成该实现的精确准入、实际 CI 与合并，再以已合入提交和入口 job 日志验收；PR #691 已合入的 suite 清理单独有效 |
 | 清单 draining/maintenance/retired 不自动阻断 GitHub 或停止 primary 服务 | 必须按第 7 节隔离派单、停监督并排空，不能只改状态 |
 | 自动容量检查缺少阻断派单/停止的原子边界，listener 日志异常也不阻止暂停 | 仅是尽力检测；未闭合安全停机实现前限制新启用/扩大自动停服务模式，不能作排空或不误伤保证 |
 | capacitySuspended 只存在进程内，重启看门狗不保留此前暂停阶段 | 恢复测试在资源稳定窗口进行；若需跨进程恢复状态保证，先独立修复并验收，不宣称已有该能力 |
