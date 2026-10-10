@@ -62,23 +62,25 @@ test('Native Owner validates a Project Task with a registered Global intent thro
     await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'scope@example.invalid',now()),($2,'other-scope@example.invalid',now())", [owner, other]);
     const binding = (await db.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Scope correction fixture',$2,array['context:read','context:write','audit:read'],array['*']) returning id`, [owner, token])).rows[0].id;
-    const claims = sub => ({ sub, role: 'authenticated', session_id: 'scope-fixture', aal: 'aal1',
+    const claims = (sub, role) => ({ sub, role, session_id: 'scope-fixture', aal: 'aal1',
       amr: [{ method: 'password', timestamp: Math.floor(Date.now() / 1000) }] });
     async function call(role, sql, values, sub = owner, inside = false) {
       if (!inside) await db.query('begin');
       try {
-        await db.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)", [sub, JSON.stringify(claims(sub))]);
+        await db.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)", [sub, JSON.stringify(claims(sub, role))]);
         await db.query('set local role ' + role);
         const v = (await db.query(sql, values)).rows[0].v;
         if (!inside) await db.query('commit'); else await db.query('reset role');
         return v;
       } catch (e) { if (!inside) await db.query('rollback'); throw e; }
     }
-    const rpc = (name, input) => call('anon', 'select public.' + name + '($1,$2) v', [token, input]);
+    const rpc = (name, input) => call('clued_worker_gateway', 'select public.' + name + '($1,$2) v', [token, input]);
     const native = (name, input, sub = owner, inside = false) => call('authenticated', 'select public.' + name + '($1) v', [input], sub, inside);
-    assert.equal((await rpc('clued_project_mutate', { operation: 'create', canonical_project_id: PROJECT,
-      project_schema_version: 1, base_version: null, idempotency_key: uid(), mutation: {
-        name: 'Synthetic scope fixture', progress_status: 'active', certainty_status: 'confirmed', aliases: [] } })).status, 'committed');
+    assert.equal((await rpc('clued_project_mutate_v2', { operation: 'create', canonical_project_id: PROJECT,
+      project_schema_version: 2, base_version: null, idempotency_key: uid(), mutation: {
+        name: 'Synthetic scope fixture', progress_status: 'active', aliases: [] },
+      recognition: { confidence: 1, reason: 'Synthetic isolated scope regression.',
+        source: 'v2_agent_recognition', source_refs: [] } })).status, 'committed');
     await db.query(`insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status,
       record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)
       values($1,$2,'Synthetic scope task','Isolated test','project',$3,'task','active',1,'active',$4,
