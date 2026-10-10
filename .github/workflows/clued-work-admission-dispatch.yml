@@ -61,6 +61,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Verify the work claim with Clued
         env:
           ADMIT_WORKFLOW: ${{ inputs.workflow }}

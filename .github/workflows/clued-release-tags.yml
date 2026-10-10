@@ -54,6 +54,11 @@ jobs:
       - name: Require the tag token
         env:
           TAG_TOKEN: ${{ secrets.CLUED_RELEASE_TAG_TOKEN }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
         run: |
           if [ -z "$TAG_TOKEN" ]; then
             echo "::error::Secret CLUED_RELEASE_TAG_TOKEN (clued-release environment) is not set: tags need a token with Contents and Workflows write for this repository; GITHUB_TOKEN cannot have the workflows permission."
@@ -65,6 +70,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.CLUED_RELEASE_TAG_TOKEN }}
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Product version tag
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.product)
         run: python3 scripts/ci/clued_release_tags.py product --ref origin/main --apply

@@ -37,6 +37,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Evaluate runner pool and startup latency
         id: health
         env:

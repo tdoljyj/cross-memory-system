@@ -64,6 +64,8 @@ jobs:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Validate exclusive release mode
         env:
           RELEASE_MODE: ${{ inputs.mode }}
@@ -124,15 +126,35 @@ jobs:
         run: |
           set -euo pipefail
           evidence_dir=.sites-runtime/release-evidence
-          dump_path="$evidence_dir/clued-production-pre-migration.dump"
-          encrypted_path="$dump_path.enc"
-          verified_path="$dump_path.verified"
           mkdir -p "$evidence_dir"
+          umask 077
+          backup_tmp=$(mktemp -d "$RUNNER_TEMP/clued-production-backup-XXXXXX")
+          dump_path="$backup_tmp/clued-production-pre-migration.dump"
+          encrypted_path="$evidence_dir/clued-production-pre-migration.dump.enc"
+          verified_path="$backup_tmp/clued-production-pre-migration.dump.verified"
+          cleanup_plaintext() {
+            original_status=$?
+            cleanup_status=0
+            for plaintext in "$dump_path" "$verified_path"; do
+              if [ -f "$plaintext" ]; then
+                shred -u -- "$plaintext" || cleanup_status=1
+              fi
+            done
+            rmdir -- "$backup_tmp" || cleanup_status=1
+            if [ "$cleanup_status" -ne 0 ]; then
+              echo "::error::Could not remove this job's plaintext backup files" >&2
+              exit 1
+            fi
+            exit "$original_status"
+          }
+          trap cleanup_plaintext EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
           database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             -e DATABASE_URL="$database_url" \
-            -v "$PWD/$evidence_dir:/backup" \
+            -v "$backup_tmp:/backup" \
             postgres:17-alpine \
             sh -ceu 'pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --schema=clued_private --schema=clued_watchdog --table=supabase_migrations.schema_migrations --file=/backup/clued-production-pre-migration.dump && pg_restore --list /backup/clued-production-pre-migration.dump >/dev/null'
           dump_sha256=$(sha256sum "$dump_path" | cut -d' ' -f1)
@@ -264,8 +286,11 @@ jobs:
       - name: Install embedded PostgreSQL ICU compatibility runtime
         if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         run: |
-          curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
-          sudo dpkg -i /tmp/libicu60.deb
+          set -euo pipefail
+          icu_deb=$(mktemp "$RUNNER_TEMP/clued-libicu60-XXXXXX.deb")
+          trap 'rm -f -- "$icu_deb"' EXIT
+          curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
+          sudo dpkg -i "$icu_deb"
       - name: Verify projection and MTPE behavior
         if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         run: |
