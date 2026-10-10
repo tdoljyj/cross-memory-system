@@ -3,8 +3,8 @@
 export const CLUED_COMPONENTS_SCHEMA = "clued.components/1";
 export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
-  "skill.clued": "1.0.16",
-  "agent-contract": "44",
+  "skill.clued": "1.0.17",
+  "agent-contract": "45",
   "mcp.server": "0.4.5",
   "hook.capture-guard": "1.0.0",
   "hook.work-claim-guard": "1.1.1",

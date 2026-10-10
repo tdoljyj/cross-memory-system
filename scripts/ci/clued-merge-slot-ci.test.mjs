@@ -111,6 +111,7 @@ test("both pending entry points report CI before the executor last in the same t
     const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", file), "utf8");
     assert.match(text, /runs-on: ubuntu-slim\n    timeout-minutes: 10\n    environment: clued-admission\n/);
     assert.match(text, /run: node --test scripts\/ci\/clued-merge-slot-ci\.test\.mjs scripts\/ci\/clued-merge-executor\.test\.mjs/);
+    assert.match(text, /permissions:\n(?:  #[^\n]*\n)?  actions: write\n  checks: read\n  contents: read\n  pull-requests: read/);
     const report = /- name: Report the CI state of the pull requests holding a merge slot\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-slot-ci\.mjs\n/.exec(text);
     const execute = /- name: Bring the default branch into the queue head, turn on auto-merge or merge it\n {8}timeout-minutes: 5\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-executor\.mjs\n?$/.exec(text);
     assert.ok(report && execute, "both steps use the same job; executor is last with default success condition");
@@ -256,13 +257,19 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
   fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) } });
   result = await report(fetch);
   assert.deepEqual(fetch.calls.find((call) => call.route === `rpc:${TOUCH_RPC}`).input,
-    { scope: SCOPE, pr_ref: `${REPO}#5`, head_sha: HEAD, ci_state: "failed" });
+    { scope: SCOPE, pr_ref: `${REPO}#5`, head_sha: HEAD, ci_state: "failed", reason: 'gitleaks concluded failure' });
   assert.deepEqual([result.reports[0].ci_state, result.reports[0].returned, result.reports[0].merge_slot_check_run_id], ["failed", true, 5005]);
   const posted = fetch.calls.find((call) => call.method === "POST" && call.route === `/repos/${REPO}/check-runs`).body;
   assert.deepEqual([posted.name, posted.head_sha, posted.conclusion, posted.external_id, posted.output.title],
     ["clued-merge-slot", HEAD, "failure", "pr:5:run:9001", "Merge slot returned: CI failed"]);
   assert.match(posted.output.summary, /^gitleaks concluded failure on this head.*Turn auto-merge off/);
   assert.match(renderSummary(result), /slot returned/);
+  assert.match(renderSummary(result), /notified 0 claim\(s\)/);
+  const notified = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check('gitleaks', { conclusion: 'failure' })] }) },
+    touch: () => ({ status: 'ok', returned: true, notified: [CLAIM] }) });
+  const noticeResult = await report(notified);
+  assert.deepEqual(noticeResult.reports[0].notified, [CLAIM]);
+  assert.match(renderSummary(noticeResult), /notified 1 claim\(s\)/);
   // Nothing returned (already given back) and the newest slot check already failed: no check is posted.
   const slotCheck = (conclusion) => ({ id: 30, name: "clued-merge-slot", head_sha: HEAD, status: "completed", conclusion, app: { id: ADMISSION_APP_ID } });
   const failedCi = { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) };
