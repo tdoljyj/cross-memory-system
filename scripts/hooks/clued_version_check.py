@@ -205,12 +205,11 @@ def resume_report(payload: dict) -> str | None:
     lines = []
     contract_local, contract_served = local.get(CONTRACT_ID), served.get(CONTRACT_ID)
     if contract_served and contract_local and contract_served != contract_local:
-        if older(contract_local, contract_served):
-            lines.append("- Read the current served contract through clued_agent_bootstrap (all parts) "
-                         "or /clued-agent.md and follow it before work (agent-contract §1.6). "
-                         "A contract change needs no Skill reinstall; if neither path delivers the full text, "
-                         "tell the Owner and stop.")
-        else:
+        lines.append("- Read the current served contract through clued_agent_bootstrap (all parts) "
+                     "or /clued-agent.md and follow it before work (agent-contract §1.6). "
+                     "A contract change needs no Skill reinstall; if neither path delivers the full text, "
+                     "tell the Owner and stop.")
+        if older(contract_served, contract_local):
             lines.append(f"- Agent contract: this checkout ({contract_local}) is newer than the served one "
                          f"({contract_served}), which is not released yet; the service behaves per {contract_served}.")
     behind = [f"{cid} {local[cid]} < {served[cid]}" for cid in sorted(served)

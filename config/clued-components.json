@@ -92,7 +92,7 @@
       "files": [
         "clued_version_check.py"
       ],
-      "content_sha256": "f10fea2884fa00d8306ae4938adbe95f8192b13e52e7c076d737b208f36305e7",
+      "content_sha256": "58138bd1000b02b9c95a49140634ebab92d73d09c24e7ae5d1aab515dc100c19",
       "version_marker": {
         "file": "clued_version_check.py",
         "pattern": "__version__ = \"{version}\""

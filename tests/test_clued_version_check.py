@@ -172,6 +172,16 @@ class HookTest(unittest.TestCase):
         text = self.context(self.resume({"status": "restored", "clued_components": {"versions": versions}}))
         self.assertIn("This checkout is older than the service: hook.capture-guard", text)
 
+    def test_resume_with_older_served_contract_still_requires_the_served_full_text(self):
+        served_contract = str(int(LOCAL["agent-contract"]) - 1)
+        text = self.context(self.resume({"status": "restored",
+                            "contract_version": int(served_contract),
+                            "clued_components": {"versions": dict(LOCAL, **{
+                                "agent-contract": served_contract})}}))
+        self.assertIn("clued_agent_bootstrap (all parts) or /clued-agent.md", text)
+        self.assertIn(f"the service behaves per {served_contract}", text)
+        self.assertIn("needs no Skill reinstall", text)
+
     def test_other_tools_are_ignored(self):
         payload = self.resume({"contract_version": 1})
         payload["tool_name"] = "mcp__Clued__clued_record_list"
