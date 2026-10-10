@@ -1513,7 +1513,11 @@ export function renderReverifySummary(result) {
 // its gate job changes only its own cost gating; the required check, which
 // merging needs, is unaffected.
 
-export const GATE_WAIT_SECONDS = 480;
+// R1: release the gate's self-hosted slot after three minutes of polling.
+// A late App check never changes this attempt's admitted=false output. The
+// executor must qualify a current-head gate-only attempt and run all jobs
+// once, within the live admission's rerun allowance, before considering merge.
+export const GATE_WAIT_SECONDS = 180;
 export const GATE_POLL_SECONDS = 10;
 
 // Re-review 2, N3c: the pull_requests list of a run names every open pull
@@ -1641,7 +1645,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   // A fork pull request, like any other, follows the App check that main's
   // admission run posts; the gate reads no repository variable.
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
-  const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : GATE_WAIT_SECONDS;
+  const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0
+    ? Math.min(waitSeconds, GATE_WAIT_SECONDS) : GATE_WAIT_SECONDS;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);

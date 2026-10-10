@@ -33,6 +33,7 @@ import {
   appCheck,
   appJwt,
   GATE_JOB_SHA256,
+  GATE_WAIT_SECONDS,
   checkNamesPullRequest,
   SAME_EVENT_MS,
   gateFindings,
@@ -676,6 +677,49 @@ test("main --mode reverify: exit 1 only when a PR could not be re-verified", asy
 });
 
 // --- Token isolation: the gate reads the trusted pull_request_target check run.
+
+test("R1: a late admission cannot promote an expired gate; only a fresh permitted whole-job attempt admits", async () => {
+  assert.equal(GATE_WAIT_SECONDS, 180);
+  let elapsed = 0;
+  const current = { number: 452, state: "open", head: { sha: HEAD }, base: { ref: "main" } };
+  const check = () => appCheckRun({ output: { title: "ADMITTED [normal · code · reruns 1]" } });
+  const run = async (extra = {}, lateAt = 181, pull = current) => {
+    const { fetchImpl, calls } = fakeFetch({ ...SELF_RUN, [PULL]: { body: pull },
+      [CHECKS]: () => ({ body: { check_runs: elapsed >= lateAt ? [check()] : [] } }) });
+    const outcome = await gate({ env: env(extra), event: withClaim(), eventName: "pull_request", fetchImpl,
+      sleep: async (ms) => { elapsed += ms / 1000; } });
+    return { outcome, calls };
+  };
+  const first = await run();
+  assert.equal(elapsed, 180);
+  assert.deepEqual([first.outcome.admitted, first.outcome.enforced, first.outcome.verdict], [false, true, "ADMISSION_PENDING"]);
+  elapsed = 200; // The same event's trusted App check arrives after this attempt ended.
+  assert.equal(first.outcome.admitted, false, "later checks cannot mutate the recorded gate output");
+  const second = await run({ GITHUB_RUN_ATTEMPT: "2" });
+  assert.deepEqual([second.outcome.admitted, second.outcome.verdict], [true, "ADMITTED"]);
+  assert.equal((await run({ GITHUB_RUN_ATTEMPT: "3" })).outcome.verdict, "RERUN_REFUSED");
+  assert.equal((await run({ GITHUB_RUN_ATTEMPT: "2" }, 181, { ...current, head: { sha: BASE } })).outcome.verdict, "RERUN_REFUSED");
+  assert.ok(![...first.calls, ...second.calls].some(c => c.method !== "GET"), "the gate does not retry CI or write authorization itself");
+  elapsed = 0;
+  const boundary = await run({}, 180);
+  assert.deepEqual([boundary.outcome.admitted, elapsed], [true, 180], "a trusted check visible at the last poll still counts");
+});
+
+test("R1: wait overrides cannot restore the old eight-minute polling budget", async () => {
+  for (const value of [undefined, "480", "181", "bad", "-1"]) {
+    let waited = 0;
+    const extra = value === undefined ? {} : { CLUED_ADMISSION_GATE_WAIT_SECONDS: value };
+    const outcome = await gate({ env: env(extra), event: withClaim(), eventName: "pull_request",
+      fetchImpl: fakeFetch({ ...SELF_RUN, [CHECKS]: { body: { check_runs: [] } } }).fetchImpl,
+      sleep: async ms => { waited += ms / 1000; } });
+    assert.deepEqual([waited, outcome.admitted, outcome.verdict], [180, false, "ADMISSION_PENDING"], String(value));
+  }
+  let waited = 0;
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" }), event: withClaim(), eventName: "pull_request",
+    fetchImpl: fakeFetch({ ...SELF_RUN, [CHECKS]: { body: { check_runs: [] } } }).fetchImpl,
+    sleep: async ms => { waited += ms / 1000; } });
+  assert.deepEqual([waited, outcome.admitted], [0, false], "the existing immediate fail-closed test mode stays available");
+});
 
 test("gate: deadlines, errors and fork pull requests, without Clued", async () => {
   const gateWith = async (list, extraEnv = {}, sleeps = []) => {
