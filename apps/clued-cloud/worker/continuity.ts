@@ -98,6 +98,7 @@ import { createStorageGoogleOnboard } from "./storage-google-onboard";
 import { ONBOARD_DISCLOSURE_VERSION } from "./storage-onboard-disclosure";
 import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
+import { createStorageOwnerLifecycle, StorageOwnerLifecycleError, type OwnerReconnectInput, type OwnerDeleteInput } from "./storage-owner-lifecycle";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
@@ -1185,6 +1186,27 @@ async function requireSupabaseUser(request: Request, env: ContinuityEnv) {
   })) as AuthenticatedUser;
   if (!user?.id) throw new HttpError(401, "The Clued session is invalid.");
   return { user, token };
+}
+
+async function storageOwnerLifecycleRuntime(env: ContinuityEnv, token: string) {
+  const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+  if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+  const vault = JSON.parse(env.CLUED_STORAGE_VAULT_KEYS);
+  const oauth = await createStorageGoogleOAuth({
+    client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+    client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
+    redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "", vault,
+    rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_oauth_v1", {
+      method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
+    }) as Record<string, unknown>,
+  });
+  return createStorageOwnerLifecycle({ vault, oauth,
+    rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_owner_lifecycle_v1", {
+      method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
+    }) as Record<string, unknown>,
+  });
 }
 
 async function listBindings(request: Request, env: ContinuityEnv) {
@@ -3338,6 +3360,12 @@ async function handleContinuityRequestInner(
         } else {
           if (Object.keys(input).length !== 2 || typeof input.state !== "string" || typeof input.code !== "string") throw new Error("Invalid");
           result = await (await createStorageGoogleOAuth(configuration)).complete({ state: input.state, code: input.code });
+          // A completed fresh Google authorization may belong to a reconnect.
+          // Activation uses the same live Native session and never exchanges a
+          // code twice or revives the disconnected credential.
+          const { user } = await requireSupabaseUser(request, env);
+          const activated = await (await storageOwnerLifecycleRuntime(env, token)).completeReconnect(user.id, input.state);
+          if (activated.status !== "not_applicable") result = activated;
         }
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch (error) {
@@ -3455,6 +3483,30 @@ async function handleContinuityRequestInner(
           : rpc === "clued_storage_write_access_v1" && error instanceof HttpError
             && error.message === "storage_root_has_unresolved_mutation" ? "storage_root_busy" : undefined;
         return json({ error: "Storage access operation unavailable.", ...(reason ? { reason } : {}) }, reason ? 409 : 403, headers);
+      }
+    }
+    if (url.pathname === "/v1/storage/lifecycle") {
+      validateOrigin(request, env);
+      const headers = { ...corsHeaders(request), "cache-control": "no-store" };
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404, headers);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...headers, allow: "POST, OPTIONS" });
+      const { user, token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request), runtime = await storageOwnerLifecycleRuntime(env, token);
+        const action = input.action;
+        const body = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "action"));
+        let result;
+        if (action === "list" && Object.keys(body).length === 0) result = { ...await runtime.list(user.id), worker_execution_enabled: env.CLUED_STORAGE_EXECUTOR_V1 === "true" };
+        else if (action === "reconnect") result = await runtime.reconnect(user.id, body as OwnerReconnectInput);
+        else if (action === "delete") result = await runtime.delete(user.id, body as OwnerDeleteInput);
+        else if (action === "preview_delete" && Object.keys(body).length === 1 && typeof body.connection_id === "string") result = await runtime.previewDelete(user.id, body.connection_id);
+        else if (action === "recover" && Object.keys(body).length === 1 && typeof body.attempt_id === "string") result = await runtime.recover(user.id, body.attempt_id);
+        else return json({ error: "Storage operation not recognized.", reason: "input_invalid" }, 400, headers);
+        return json(result, 200, headers);
+      } catch (error) {
+        const reason = error instanceof StorageOwnerLifecycleError ? error.reason : "lifecycle_unavailable";
+        return json({ error: "Storage connection operation unavailable.", reason }, 409, headers);
       }
     }
     if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {
