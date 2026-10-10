@@ -1,9 +1,16 @@
 {
-  "schema": "clued.gated-proof-profiles/1",
-  "audit_source": "d6ea4eb1e7f3d1143f47d013d845466745ae8af3",
+  "schema": "clued.gated-proof-profiles/2",
+  "audit_source": "8c8b816cec51acdceeb2197b0f16b50f266957d7",
   "workflows": {
     ".github/workflows/clued-cloud-node22-install.yml": {
+      "registration_status": "registered",
       "workflow_blob": "059a1350fab94dbf1bb631a7658aea992e73ac26",
+      "source_sha256": "b5ba08214a1f0e5a620d9e367aed3b15f2a1b712b3a6a784dba0c6fd0b71d32e",
+      "source_yaml": "name: clued-cloud-node22-install\n\n# apps/clued-cloud declares engines node >=22.22.0, but every other workflow\n# installs on Node 24 (npm 11). npm 10 validates the lockfile more strictly,\n# so a lockfile that npm 11 accepts can still fail `npm ci` on Node 22.\n# This job installs on the declared engines floor to catch that drift.\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-cloud-node22-install.yml'\n      - 'apps/clued-cloud/package.json'\n      - 'apps/clued-cloud/package-lock.json'\n      - 'apps/clued-cloud/.npmrc'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/clued-cloud-node22-install.yml'\n      - 'apps/clued-cloud/package.json'\n      - 'apps/clued-cloud/package-lock.json'\n      - 'apps/clued-cloud/.npmrc'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'clued-cloud-node22-install' || 'clued-cloud-node22-install-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 15\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 22.22.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - run: node --version && npm --version\n      - name: Install from lockfile on the engines floor\n        run: >-\n          timeout --signal=TERM --kill-after=15s 8m\n          npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline\n          --fetch-retries=2 --fetch-timeout=30000\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'clued-cloud-node22-install' || 'clued-cloud-node22-install-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 22.22.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - run: node --version && npm --version\n      - name: Install from lockfile on the engines floor\n        run: npm ci --ignore-scripts\n",
+      "primary_ids": [
+        "trusted-self-hosted",
+        "untrusted-hosted"
+      ],
       "pull_request": {
         "paths": [
           ".github/workflows/clued-cloud-node22-install.yml",
@@ -15,29 +22,55 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "trusted-self-hosted",
           "name": "clued-cloud-node22-install",
           "self_hosted": true,
           "required_steps": {
             "Run node --version && npm --version": 1,
             "Install from lockfile on the engines floor": 1
+          },
+          "command_digests": {
+            "Run node --version && npm --version": [
+              "6a1140e189a0a6785c303e03e71eb24f2489f622dd0e0bbbafb1165b0c1113f7"
+            ],
+            "Install from lockfile on the engines floor": [
+              "00748c6c6e2381b82667ece10aa5756aa65b2caf29f2523f59de8802847cd55a"
+            ]
           }
         },
         {
+          "job_id": "untrusted-hosted",
           "name": "clued-cloud-node22-install",
           "self_hosted": false,
           "required_steps": {
             "Run node --version && npm --version": 1,
             "Install from lockfile on the engines floor": 1
+          },
+          "command_digests": {
+            "Run node --version && npm --version": [
+              "6a1140e189a0a6785c303e03e71eb24f2489f622dd0e0bbbafb1165b0c1113f7"
+            ],
+            "Install from lockfile on the engines floor": [
+              "e568f48e4564d1ada4a272f93f6e94a1db7c70212a765c414a6ec92d2a889e21"
+            ]
           }
         }
       ]
     },
     ".github/workflows/clued-cloud-quality-gate.yml": {
+      "registration_status": "registered",
       "workflow_blob": "4eb989ce8bf6c54467748a7c658a130c602ba1c4",
+      "source_sha256": "ae8a818a6b7ee51c868de1dbc4aaec3db851c1f59c71e5c026450cad575b745b",
+      "source_yaml": "name: clued-cloud-quality\n\n# Lint, migration ledger, typecheck, build and unit tests of apps/clued-cloud\n# (npm run lint, npm run ledger:verify, npm run typecheck, npm run build, npm\n# run test:unit) on every pull request and\n# every push to main; the build comes first because tests/rendered-html.test.mjs\n# reads the built server bundle.\n# Ordinary documentation gets a scoped check without application installs/tests;\n# unknown, code, dependency, config and governance changes still run the full suite.\n# This workflow deliberately has no paths filter: the other app checks are\n# path-filtered, so none of them can be a required status check, while this\n# one can be added to the main ruleset's required checks under the single\n# check name clued-cloud-quality. The gate job is the shared admission gate\n# (Work Claim Admission v0.1 §4.6 L0b). Audit 2026-10-06, Task 5077b641.\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: >-\n          timeout --signal=TERM --kill-after=15s 8m\n          npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline\n          --fetch-retries=2 --fetch-timeout=30000\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: ${{ (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') && 'npm' || '' }}\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm ci --ignore-scripts\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n",
+      "primary_ids": [
+        "trusted-self-hosted",
+        "untrusted-hosted"
+      ],
       "pull_request": null,
       "gated": true,
       "routes": [
         {
+          "job_id": "trusted-self-hosted",
           "name": "clued-cloud-quality",
           "self_hosted": true,
           "required_steps": {
@@ -48,9 +81,33 @@
             "Run npm run typecheck": 1,
             "Run npm run build": 1,
             "Run npm run test:unit": 1
+          },
+          "command_digests": {
+            "Qualify ordinary documentation changes": [
+              "390212452e7b00c1f931da0ca737b06708eaefdb4cc857b58be5b84b58c1e827"
+            ],
+            "Install from lockfile": [
+              "00748c6c6e2381b82667ece10aa5756aa65b2caf29f2523f59de8802847cd55a"
+            ],
+            "Run npm run lint": [
+              "326d9800e732eb9d5a5eb56384a547a097ed84be317cb2852cea5bb574831812"
+            ],
+            "Run npm run ledger:verify": [
+              "9d06ddb90df675a29953f2ca4432c4e8d18ec7422099c42dda409f39658a2707"
+            ],
+            "Run npm run typecheck": [
+              "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+            ],
+            "Run npm run build": [
+              "16c0e4305ac213dff39fc82b69b6e08aeeb8758e33cd72d7c409752a70e9f054"
+            ],
+            "Run npm run test:unit": [
+              "79f78a59a4f1b3d573566924d3450cbd057589af4b945d84d50fce00d93a3f01"
+            ]
           }
         },
         {
+          "job_id": "untrusted-hosted",
           "name": "clued-cloud-quality",
           "self_hosted": false,
           "required_steps": {
@@ -61,16 +118,47 @@
             "Run npm run typecheck": 1,
             "Run npm run build": 1,
             "Run npm run test:unit": 1
+          },
+          "command_digests": {
+            "Qualify ordinary documentation changes": [
+              "390212452e7b00c1f931da0ca737b06708eaefdb4cc857b58be5b84b58c1e827"
+            ],
+            "Install from lockfile": [
+              "e568f48e4564d1ada4a272f93f6e94a1db7c70212a765c414a6ec92d2a889e21"
+            ],
+            "Run npm run lint": [
+              "326d9800e732eb9d5a5eb56384a547a097ed84be317cb2852cea5bb574831812"
+            ],
+            "Run npm run ledger:verify": [
+              "9d06ddb90df675a29953f2ca4432c4e8d18ec7422099c42dda409f39658a2707"
+            ],
+            "Run npm run typecheck": [
+              "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+            ],
+            "Run npm run build": [
+              "16c0e4305ac213dff39fc82b69b6e08aeeb8758e33cd72d7c409752a70e9f054"
+            ],
+            "Run npm run test:unit": [
+              "79f78a59a4f1b3d573566924d3450cbd057589af4b945d84d50fce00d93a3f01"
+            ]
           }
         }
       ]
     },
     ".github/workflows/clued-components.yml": {
+      "registration_status": "registered",
       "workflow_blob": "405d9929b8c66afaefca6a82243798abf0dc2971",
+      "source_sha256": "f82575168b8c45dea04bd05e0a8bbee522dd4ae237f41a6065acb033141450dd",
+      "source_yaml": "name: clued-components\n\n# Clued component versions (config/clued-components.json, Task 6dfd7560):\n# every component's files match its recorded digest and version marker, the\n# Worker's generated module matches the manifest, and a component that changed\n# against the base carries a higher version, and that VERSION and its git tag\n# agree (scripts/ci/clued_release_tags.py). Also runs the unit tests of the\n# manifest tool and of the SessionStart / resume version-check hook, and this\n# head's copy of the admission self-tests.\n# No paths filter: a component can live anywhere in the repository.\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'clued-components' || 'clued-components-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Check component versions against the base\n        env:\n          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}\n        run: python3 scripts/clued_components.py check --base \"$BASE\"\n      - run: python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v\n      - name: VERSION and its git tag agree\n        run: python3 scripts/ci/clued_release_tags.py check\n      - run: python3 -m unittest scripts/ci/test_clued_release_tags.py -v\n      # The admission check runs main's copy of these self-tests; running the\n      # pull request's copy here fails a change that would break them on main\n      # before it merges (the self-test deadlock of #552 and #598).\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Admission self-tests on this head\n        run: node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/merge-admission-policy.test.mjs scripts/ci/merge-admission-policy-file.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs scripts/ci/clued-merge-slot-ci.test.mjs\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'clued-components' || 'clued-components-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - name: Check component versions against the base\n        env:\n          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}\n        run: python3 scripts/clued_components.py check --base \"$BASE\"\n      - run: python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v\n      - name: VERSION and its git tag agree\n        run: python3 scripts/ci/clued_release_tags.py check\n      - run: python3 -m unittest scripts/ci/test_clued_release_tags.py -v\n      # The admission check runs main's copy of these self-tests; running the\n      # pull request's copy here fails a change that would break them on main\n      # before it merges (the self-test deadlock of #552 and #598).\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Admission self-tests on this head\n        run: node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/merge-admission-policy.test.mjs scripts/ci/merge-admission-policy-file.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs scripts/ci/clued-merge-slot-ci.test.mjs\n",
+      "primary_ids": [
+        "trusted-self-hosted",
+        "untrusted-hosted"
+      ],
       "pull_request": null,
       "gated": true,
       "routes": [
         {
+          "job_id": "trusted-self-hosted",
           "name": "clued-components",
           "self_hosted": true,
           "required_steps": {
@@ -79,9 +167,27 @@
             "VERSION and its git tag agree": 1,
             "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v": 1,
             "Admission self-tests on this head": 1
+          },
+          "command_digests": {
+            "Check component versions against the base": [
+              "cf1b13328eaf30342ffe00f6ce4f2eed1dff2d57e3a67038c5e7c9eb50f52b6a"
+            ],
+            "Run python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v": [
+              "217d579174b9dd13d37725a32db4ca08a6dc333d7d96c61496e53ba1d60c0667"
+            ],
+            "VERSION and its git tag agree": [
+              "de7af7bf051c43e5bcd81611f34e1266f5405ee92565574aa3740477cc1dcd7f"
+            ],
+            "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v": [
+              "b6361b17441ba514596df618bcc98ae7ea5cc7f39881fc3aa50e2cf61768310f"
+            ],
+            "Admission self-tests on this head": [
+              "c12455780dea1873e400a0cd1a78edf85ac71a50860410d6a78d74b3098b8040"
+            ]
           }
         },
         {
+          "job_id": "untrusted-hosted",
           "name": "clued-components",
           "self_hosted": false,
           "required_steps": {
@@ -90,12 +196,36 @@
             "VERSION and its git tag agree": 1,
             "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v": 1,
             "Admission self-tests on this head": 1
+          },
+          "command_digests": {
+            "Check component versions against the base": [
+              "cf1b13328eaf30342ffe00f6ce4f2eed1dff2d57e3a67038c5e7c9eb50f52b6a"
+            ],
+            "Run python3 -m unittest tests.test_clued_components tests.test_clued_version_check -v": [
+              "217d579174b9dd13d37725a32db4ca08a6dc333d7d96c61496e53ba1d60c0667"
+            ],
+            "VERSION and its git tag agree": [
+              "de7af7bf051c43e5bcd81611f34e1266f5405ee92565574aa3740477cc1dcd7f"
+            ],
+            "Run python3 -m unittest scripts/ci/test_clued_release_tags.py -v": [
+              "b6361b17441ba514596df618bcc98ae7ea5cc7f39881fc3aa50e2cf61768310f"
+            ],
+            "Admission self-tests on this head": [
+              "c12455780dea1873e400a0cd1a78edf85ac71a50860410d6a78d74b3098b8040"
+            ]
           }
         }
       ]
     },
     ".github/workflows/clued-connection-authorization.yml": {
+      "registration_status": "registered",
       "workflow_blob": "59e64340b4c7b737a0f129606c94e2e803a73162",
+      "source_sha256": "97c0f7f73c8a8db3da89cfe9123bdcd552c966b64ad29852e866c15386051531",
+      "source_yaml": "name: Clued connection authorization candidate\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-connection-authorization.yml'\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - 'apps/clued-cloud/worker/**'\n      - 'apps/clued-cloud/app/**'\n      - 'apps/clued-cloud/vite.config.ts'\n      - 'apps/clued-cloud/supabase/migrations/**'\n      - 'apps/clued-cloud/tests/information-flow-*.test.mjs'\n      - 'development/contracts/information-flow/vendored/**'\n      - 'scripts/phase2-qualification/minimum-context-compiler/**'\n      - 'apps/clued-cloud/tests/*authorization*.test.mjs'\n      - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'\n      - 'apps/clued-cloud/tests/development-context-api.test.mjs'\n      - 'apps/clued-cloud/tests/development-contexts-ui.test.mjs'\n      - 'apps/clued-cloud/tests/consent-account-race.test.mjs'\n      - 'apps/clued-cloud/tests/supabase-browser.test.mjs'\n      - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'\n      - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'\n      - 'apps/clued-cloud/tests/context-v2-*.test.mjs'\n      - 'apps/clued-cloud/tests/currentness-*.test.mjs'\n      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'\n      - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'\n      - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'\n      - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'\n      - 'apps/clued-cloud/tests/task-dependency-guard-db.test.mjs'\n      - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'\n      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'\n      - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'\n      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'\n      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n      - 'kernel/host/resource-center-*.py'\n      - 'apps/clued-cloud/scripts/*resource-center*.mjs'\n      - 'kernel/policy/resource-center-*.mjs'\n      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'\n      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-worker.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-transport.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs'\n      - 'apps/clued-cloud/evals/integration-runtime/**'\n      - 'development/contracts/integration-runtime/**'\n      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'\n      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'\n      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'\n      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'\n      - 'apps/clued-cloud/scripts/production-release-*'\n      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'\n      - 'skills/clued/references/agent-contract.md'\n      - '.github/workflows/clued-cloud-production-release.yml'\n      - 'apps/clued-cloud/package*.json'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/clued-connection-authorization.yml'\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - 'apps/clued-cloud/worker/**'\n      - 'apps/clued-cloud/app/**'\n      - 'apps/clued-cloud/vite.config.ts'\n      - 'apps/clued-cloud/supabase/migrations/**'\n      - 'apps/clued-cloud/tests/information-flow-*.test.mjs'\n      - 'development/contracts/information-flow/vendored/**'\n      - 'scripts/phase2-qualification/minimum-context-compiler/**'\n      - 'apps/clued-cloud/tests/*authorization*.test.mjs'\n      - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'\n      - 'apps/clued-cloud/tests/development-context-api.test.mjs'\n      - 'apps/clued-cloud/tests/development-contexts-ui.test.mjs'\n      - 'apps/clued-cloud/tests/consent-account-race.test.mjs'\n      - 'apps/clued-cloud/tests/supabase-browser.test.mjs'\n      - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'\n      - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'\n      - 'apps/clued-cloud/tests/context-v2-*.test.mjs'\n      - 'apps/clued-cloud/tests/currentness-*.test.mjs'\n      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'\n      - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'\n      - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'\n      - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'\n      - 'apps/clued-cloud/tests/task-dependency-guard-db.test.mjs'\n      - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'\n      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'\n      - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'\n      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'\n      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n      - 'kernel/host/resource-center-*.py'\n      - 'apps/clued-cloud/scripts/*resource-center*.mjs'\n      - 'kernel/policy/resource-center-*.mjs'\n      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'\n      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-worker.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-transport.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs'\n      - 'apps/clued-cloud/evals/integration-runtime/**'\n      - 'development/contracts/integration-runtime/**'\n      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'\n      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'\n      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'\n      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'\n      - 'apps/clued-cloud/scripts/production-release-*'\n      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'\n      - 'skills/clued/references/agent-contract.md'\n      - '.github/workflows/clued-cloud-production-release.yml'\n      - 'apps/clued-cloud/package*.json'\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref\n        required: false\n        type: string\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs\n  # admission_run_id from clued-work-admission-dispatch.yml; push events are\n  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  push-reuse:\n    name: Verify prior PR tested tree\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')\n    runs-on: ubuntu-slim\n    timeout-minutes: 3\n    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n    outputs:\n      run_heavy: ${{ steps.reuse.outputs.run_heavy }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        if: github.event_name == 'push'\n        with:\n          ref: ${{ github.sha }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        if: github.event_name == 'push'\n        with:\n          node-version: 22.23.3\n      - name: Configure job temporary storage\n        if: github.event_name == 'push'\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify duplicate-push proof regressions\n        if: github.event_name == 'push'\n        run: node --test scripts/ci/clued-push-reuse.test.mjs\n      - id: reuse\n        if: github.event_name == 'push'\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n          REUSE_WORKFLOW: clued-connection-authorization.yml\n        run: node scripts/ci/clued-push-reuse.mjs\n\n  isolated-candidate-trusted-self-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner)))\n    name: >-\n      ${{ ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n             (github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner))\n          && 'isolated-candidate' || 'isolated-candidate-self-hosted-skipped' }}\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - run: npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline\n      - name: Hydrate embedded PostgreSQL bundled library symlinks\n        # --ignore-scripts skips the platform package's postinstall, which links the\n        # bundled libpq.so.5 and libicu*.so.60 that the binaries load via $ORIGIN/../lib.\n        working-directory: apps/clued-cloud/node_modules/@embedded-postgres/linux-x64\n        run: |\n          node scripts/hydrate-symlinks.js\n          ./native/bin/initdb --version\n          ./native/bin/postgres --version\n      - run: npm run typecheck\n      - run: npm run test:authorization:transport\n      - run: npm run test:authorization:database\n      - run: npm run test:context:v2\n      - run: npm run test:projection:refresh\n      - run: npm run test:work:claims\n      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs\n      - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs\n      # Without --test-force-exit, which can end a loaded run before every test has run: this\n      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.\n      - run: node --test tests/db-security-hygiene-db.test.mjs\n      - run: npm run test:information-flow:candidates\n      - run: npm run test:information-flow:intake\n      - run: npm run test:information-flow:promotion\n      - run: npm run test:information-flow:context\n      - run: npm run test:information-flow:invalidation\n      - run: npm run test:information-flow:hardening\n      - run: npm run test:records:db\n      - run: npm run test:mtpe:intake\n      - run: npm run test:production:release-gate\n      - run: npm run test:integration-runtime:gate-evidence\n      # IntegrationRuntime §17 item 2: every S2c suite runs once, here, through the gate evidence\n      # generator, which fails the step unless G-A3/7/8/9/10/11 are all PASS and every test passed.\n      - name: S2c gate evidence\n        env:\n          CLUED_EVIDENCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}\n        run: npm run integration-runtime:gate-evidence -- --out \"$RUNNER_TEMP/integration-runtime-gate-evidence.json\"\n      - name: Upload S2c gate evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: integration-runtime-gate-evidence-self-hosted\n          path: ${{ runner.temp }}/integration-runtime-gate-evidence.json\n          if-no-files-found: warn\n      - run: npm run test:authorization:invitations\n      - run: npm run test:authorization:migrations\n      - run: npm run test:resource-center:authority\n      - run: npm run test:authorization:integration\n      - run: npm run test:authorization:pages\n\n      - name: Record the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        env:\n          REUSE_WORKFLOW: clued-connection-authorization.yml\n          REUSE_REPORT_PATH: ${{ runner.temp }}/clued-tested-tree.json\n        run: node ../../scripts/ci/clued-push-reuse.mjs --report\n      - name: Upload the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-tested-tree-clued-connection-authorization.yml-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/clued-tested-tree.json\n          if-no-files-found: error\n          compression-level: 0\n          retention-days: 7\n\n  isolated-candidate-untrusted-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner))))\n    name: >-\n      ${{ ((github.event_name == 'workflow_dispatch' && github.actor != github.repository_owner) ||\n             (github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner)))\n          && 'isolated-candidate' || 'isolated-candidate-hosted-skipped' }}\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - run: npm ci --ignore-scripts\n      - name: Install embedded PostgreSQL ICU compatibility runtime\n        run: |\n          curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb\n          sudo dpkg -i /tmp/libicu60.deb\n          ldconfig -p | grep 'libicuuc.so.60'\n      - run: npm run typecheck\n      - run: npm run test:authorization:transport\n      - run: npm run test:authorization:database\n      - run: npm run test:context:v2\n      - run: npm run test:projection:refresh\n      - run: npm run test:work:claims\n      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs\n      - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs\n      # Without --test-force-exit, which can end a loaded run before every test has run: this\n      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.\n      - run: node --test tests/db-security-hygiene-db.test.mjs\n      - run: npm run test:information-flow:candidates\n      - run: npm run test:information-flow:intake\n      - run: npm run test:information-flow:promotion\n      - run: npm run test:information-flow:context\n      - run: npm run test:information-flow:invalidation\n      - run: npm run test:information-flow:hardening\n      - run: npm run test:records:db\n      - run: npm run test:mtpe:intake\n      - run: npm run test:production:release-gate\n      - run: npm run test:integration-runtime:gate-evidence\n      # IntegrationRuntime §17 item 2: every S2c suite runs once, here, through the gate evidence\n      # generator, which fails the step unless G-A3/7/8/9/10/11 are all PASS and every test passed.\n      - name: S2c gate evidence\n        env:\n          CLUED_EVIDENCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}\n        run: npm run integration-runtime:gate-evidence -- --out \"$RUNNER_TEMP/integration-runtime-gate-evidence.json\"\n      - name: Upload S2c gate evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: integration-runtime-gate-evidence-hosted\n          path: ${{ runner.temp }}/integration-runtime-gate-evidence.json\n          if-no-files-found: warn\n      - run: npm run test:authorization:invitations\n      - run: npm run test:authorization:migrations\n      - run: npm run test:resource-center:authority\n      - run: npm run test:authorization:integration\n      - run: npm run test:authorization:pages\n",
+      "primary_ids": [
+        "isolated-candidate-trusted-self-hosted",
+        "isolated-candidate-untrusted-hosted"
+      ],
       "pull_request": {
         "paths": [
           ".github/workflows/clued-connection-authorization.yml",
@@ -160,6 +290,7 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "isolated-candidate-trusted-self-hosted",
           "name": "isolated-candidate",
           "self_hosted": true,
           "required_steps": {
@@ -191,9 +322,96 @@
             "Run npm run test:authorization:integration": 1,
             "Run npm run test:authorization:pages": 1,
             "Record the actual PR test tree": 1
+          },
+          "command_digests": {
+            "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline": [
+              "a0e4de3aa5bf8e4180f7f97b8534188319ddfbdfd10c7bce625f8eadf150db3d"
+            ],
+            "Hydrate embedded PostgreSQL bundled library symlinks": [
+              "cbbbf33a5b7496a916465f41967b85a92f52f88665a1131ec1dfb371e9449c9d"
+            ],
+            "Run npm run typecheck": [
+              "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+            ],
+            "Run npm run test:authorization:transport": [
+              "7058e0bc142aa67c7efda9aca1790d121488bcde188131d50ef8ea91b571d04a"
+            ],
+            "Run npm run test:authorization:database": [
+              "f1f927a987663373de89a2e561aed6eb2c9c7e062562e62b839e33ab5b9d991a"
+            ],
+            "Run npm run test:context:v2": [
+              "d4c74200f5c31152d84744dc27bcf875cb373f88da7bc15d8478c8bbe530582d"
+            ],
+            "Run npm run test:projection:refresh": [
+              "c29327cbae8b4e66b63d2b973806ed685be2fd825cbb04d5e80956c6af1c87eb"
+            ],
+            "Run npm run test:work:claims": [
+              "36c3d37570567c35a081cbffe15da28601a0ed6696e533f5adb980adecda8e81"
+            ],
+            "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs": [
+              "2483d3ecba15c87daf343f39e8098366a2915369d7de093bf26d0afeaef17ec7"
+            ],
+            "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs": [
+              "4517c9f118a4bdb48ab565e1e01dab244309bd792b0ba3a711c5fc0307d8c916"
+            ],
+            "Run node --test tests/db-security-hygiene-db.test.mjs": [
+              "58c105372996bc13b00aa1934d1edae9b350cad7b474151489a919c0ed7b4c97"
+            ],
+            "Run npm run test:information-flow:candidates": [
+              "a67757e541fc7c92820cef03fa7c7809f1f4cf90c4b1e5c9828e70b76a15ecea"
+            ],
+            "Run npm run test:information-flow:intake": [
+              "b1143fcfe91fd917e2c2becbfe3b1d88ac314a7a628cedcc669b9c4ccf99dd69"
+            ],
+            "Run npm run test:information-flow:promotion": [
+              "992f7123fce147ad09a0d2464139930e173531cad58d878c2ba793cf68754663"
+            ],
+            "Run npm run test:information-flow:context": [
+              "9ad30e3bd5aa963769f2a9ae94b913f106859153fa2349388507360425ede633"
+            ],
+            "Run npm run test:information-flow:invalidation": [
+              "2b5da6c8b3f4189e816da817fb38b41ac49586b0b419e4a2b5e0a0de70aeb169"
+            ],
+            "Run npm run test:information-flow:hardening": [
+              "c53cbe82858a1e38f2b1b6a642fe7176f37f8d208057690672543a3c59696e9b"
+            ],
+            "Run npm run test:records:db": [
+              "fd78dc4d889d254a9c799855427215603aa284ebf3b6bfb59d4624fda0ad4179"
+            ],
+            "Run npm run test:mtpe:intake": [
+              "3d12bf450ae89f40bee8e9fa9963441ccac77320de5fba3176c5cc6d4a73865f"
+            ],
+            "Run npm run test:production:release-gate": [
+              "26ade4bb689ac2e644a75bb66366e082546aa706f51089072bb70b4afeecb778"
+            ],
+            "Run npm run test:integration-runtime:gate-evidence": [
+              "62ce70bdc2fd82e9aaf4bd42a77951ad9834fbee33c97b16f4e5d1db8b0fa2dd"
+            ],
+            "S2c gate evidence": [
+              "fdbed96e23b6e7e4d03938c723c6532d6b282f05c7c79531854cfc65aa4584f8"
+            ],
+            "Run npm run test:authorization:invitations": [
+              "aaad36a3e956e26503a817abb23d0b6a4c07105e55af364e71a8012c6efd7a77"
+            ],
+            "Run npm run test:authorization:migrations": [
+              "3a85da426228b7648c76046573b33d1ae1b77999741a06e0d9006a3fadb1c615"
+            ],
+            "Run npm run test:resource-center:authority": [
+              "f91f927f5ca87627572ed208b020aa13da05bf99ae9719513d5e7c9b936a003c"
+            ],
+            "Run npm run test:authorization:integration": [
+              "10c35750a356a4a10991a6a64e0126b88ac0d490a3f1e49a8ef8b2521f30f014"
+            ],
+            "Run npm run test:authorization:pages": [
+              "b07154ac821f3f7995f64728b322c99e821fb5b0c4a281ead8cd25ac072545d0"
+            ],
+            "Record the actual PR test tree": [
+              "ad01e6e5d4a764c0ec7a1bcd7203a25881b5d3229e4f0f80132888dc5260a4f5"
+            ]
           }
         },
         {
+          "job_id": "isolated-candidate-untrusted-hosted",
           "name": "isolated-candidate",
           "self_hosted": false,
           "required_steps": {
@@ -224,12 +442,102 @@
             "Run npm run test:resource-center:authority": 1,
             "Run npm run test:authorization:integration": 1,
             "Run npm run test:authorization:pages": 1
+          },
+          "command_digests": {
+            "Run npm ci --ignore-scripts": [
+              "e568f48e4564d1ada4a272f93f6e94a1db7c70212a765c414a6ec92d2a889e21"
+            ],
+            "Install embedded PostgreSQL ICU compatibility runtime": [
+              "8ddb55426259288075b15fc9e68f9ef2c39d56e64b62c722aed375e96f0fb63f"
+            ],
+            "Run npm run typecheck": [
+              "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+            ],
+            "Run npm run test:authorization:transport": [
+              "7058e0bc142aa67c7efda9aca1790d121488bcde188131d50ef8ea91b571d04a"
+            ],
+            "Run npm run test:authorization:database": [
+              "f1f927a987663373de89a2e561aed6eb2c9c7e062562e62b839e33ab5b9d991a"
+            ],
+            "Run npm run test:context:v2": [
+              "d4c74200f5c31152d84744dc27bcf875cb373f88da7bc15d8478c8bbe530582d"
+            ],
+            "Run npm run test:projection:refresh": [
+              "c29327cbae8b4e66b63d2b973806ed685be2fd825cbb04d5e80956c6af1c87eb"
+            ],
+            "Run npm run test:work:claims": [
+              "36c3d37570567c35a081cbffe15da28601a0ed6696e533f5adb980adecda8e81"
+            ],
+            "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs": [
+              "2483d3ecba15c87daf343f39e8098366a2915369d7de093bf26d0afeaef17ec7"
+            ],
+            "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs": [
+              "4517c9f118a4bdb48ab565e1e01dab244309bd792b0ba3a711c5fc0307d8c916"
+            ],
+            "Run node --test tests/db-security-hygiene-db.test.mjs": [
+              "58c105372996bc13b00aa1934d1edae9b350cad7b474151489a919c0ed7b4c97"
+            ],
+            "Run npm run test:information-flow:candidates": [
+              "a67757e541fc7c92820cef03fa7c7809f1f4cf90c4b1e5c9828e70b76a15ecea"
+            ],
+            "Run npm run test:information-flow:intake": [
+              "b1143fcfe91fd917e2c2becbfe3b1d88ac314a7a628cedcc669b9c4ccf99dd69"
+            ],
+            "Run npm run test:information-flow:promotion": [
+              "992f7123fce147ad09a0d2464139930e173531cad58d878c2ba793cf68754663"
+            ],
+            "Run npm run test:information-flow:context": [
+              "9ad30e3bd5aa963769f2a9ae94b913f106859153fa2349388507360425ede633"
+            ],
+            "Run npm run test:information-flow:invalidation": [
+              "2b5da6c8b3f4189e816da817fb38b41ac49586b0b419e4a2b5e0a0de70aeb169"
+            ],
+            "Run npm run test:information-flow:hardening": [
+              "c53cbe82858a1e38f2b1b6a642fe7176f37f8d208057690672543a3c59696e9b"
+            ],
+            "Run npm run test:records:db": [
+              "fd78dc4d889d254a9c799855427215603aa284ebf3b6bfb59d4624fda0ad4179"
+            ],
+            "Run npm run test:mtpe:intake": [
+              "3d12bf450ae89f40bee8e9fa9963441ccac77320de5fba3176c5cc6d4a73865f"
+            ],
+            "Run npm run test:production:release-gate": [
+              "26ade4bb689ac2e644a75bb66366e082546aa706f51089072bb70b4afeecb778"
+            ],
+            "Run npm run test:integration-runtime:gate-evidence": [
+              "62ce70bdc2fd82e9aaf4bd42a77951ad9834fbee33c97b16f4e5d1db8b0fa2dd"
+            ],
+            "S2c gate evidence": [
+              "fdbed96e23b6e7e4d03938c723c6532d6b282f05c7c79531854cfc65aa4584f8"
+            ],
+            "Run npm run test:authorization:invitations": [
+              "aaad36a3e956e26503a817abb23d0b6a4c07105e55af364e71a8012c6efd7a77"
+            ],
+            "Run npm run test:authorization:migrations": [
+              "3a85da426228b7648c76046573b33d1ae1b77999741a06e0d9006a3fadb1c615"
+            ],
+            "Run npm run test:resource-center:authority": [
+              "f91f927f5ca87627572ed208b020aa13da05bf99ae9719513d5e7c9b936a003c"
+            ],
+            "Run npm run test:authorization:integration": [
+              "10c35750a356a4a10991a6a64e0126b88ac0d490a3f1e49a8ef8b2521f30f014"
+            ],
+            "Run npm run test:authorization:pages": [
+              "b07154ac821f3f7995f64728b322c99e821fb5b0c4a281ead8cd25ac072545d0"
+            ]
           }
         }
       ]
     },
     ".github/workflows/clued-g4-database.yml": {
+      "registration_status": "registered",
       "workflow_blob": "aed508eaf3849a2fe80d2b558c7da68f2118f9d3",
+      "source_sha256": "74887bd7f3ce71f4a13438620cb639ff6d4b95d15b6e34230123099f145e3466",
+      "source_yaml": "name: Clued G4 Database Gate\n\non:\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref\n        required: false\n        type: string\n  push:\n    branches:\n      - main\n    paths:\n      - .github/workflows/clued-g4-database.yml\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - apps/clued-cloud/package.json\n      - apps/clued-cloud/package-lock.json\n      - apps/clued-cloud/supabase/**\n  pull_request:\n    paths:\n      - .github/workflows/clued-g4-database.yml\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - apps/clued-cloud/package.json\n      - apps/clued-cloud/package-lock.json\n      - apps/clued-cloud/supabase/**\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: clued-g4-database-${{ github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs\n  # admission_run_id from clued-work-admission-dispatch.yml; push events are\n  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  push-reuse:\n    name: Verify prior PR tested tree\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')\n    runs-on: ubuntu-slim\n    timeout-minutes: 3\n    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n    outputs:\n      run_heavy: ${{ steps.reuse.outputs.run_heavy }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        if: github.event_name == 'push'\n        with:\n          ref: ${{ github.sha }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        if: github.event_name == 'push'\n        with:\n          node-version: 22.23.3\n      - name: Configure job temporary storage\n        if: github.event_name == 'push'\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify duplicate-push proof regressions\n        if: github.event_name == 'push'\n        run: node --test scripts/ci/clued-push-reuse.test.mjs\n      - id: reuse\n        if: github.event_name == 'push'\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n          REUSE_WORKFLOW: clued-g4-database.yml\n        run: node scripts/ci/clued-push-reuse.mjs\n\n  database-gate-trusted-self-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner)))\n    name: Supabase migration, RLS, transaction, and pgTAP\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n\n      - name: Set up Node.js\n        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;\n          # restoring the ~860 MB Actions cache on top of it only adds download time.\n\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install application dependencies\n        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n        run: npm ci --cache \"$HOME/.npm\" --prefer-offline\n\n      - name: Build the application surfaces used by lifecycle tests\n        run: npm run build\n\n      - name: Verify fresh-start guard regressions\n        run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs\n\n      - name: Prepare a fresh attempt-specific Supabase project\n        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare\n\n      - name: Start isolated Supabase runtime\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n\n      - name: Verify fresh migration initialization\n        # start applies the complete migration chain once to a proven empty project.\n        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify\n\n      - name: Lint public and private database schemas\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error\n\n      - name: Run Unified Record V2 RLS and transaction tests\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local\n\n      - name: Run Project Lifecycle Successor v2 database and surface tests\n        run: npm run test:project:lifecycle:v2\n\n      - name: Capture safe failure diagnostics\n        if: failure()\n        run: |\n          docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\n          docker system df\n\n      - name: Stop isolated Supabase runtime\n        if: always() && env.CLUED_G4_FRESH_PROJECT != ''\n        run: |\n          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup\n          # The CLI may return nonzero while pruning unrelated containers on\n          # this persistent runner. The gate still requires this run's isolated\n          # runtime to be stopped; Docker errors must not be mistaken for clean.\n          npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || stop_status=$?\n          running=$(docker ps --format '{{.Names}}') || exit 1\n          if grep -Eq \"^supabase_.*_${CLUED_G4_FRESH_PROJECT}$\" <<< \"$running\"; then\n            echo '::error::Isolated Supabase containers remain running'\n            exit 1\n          fi\n          if [ \"${stop_status:-0}\" -ne 0 ]; then\n            echo '::warning::Supabase global prune failed after this run stopped'\n          fi\n\n      - name: Record the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        env:\n          REUSE_WORKFLOW: clued-g4-database.yml\n          REUSE_REPORT_PATH: ${{ runner.temp }}/clued-tested-tree.json\n        run: node ../../scripts/ci/clued-push-reuse.mjs --report\n      - name: Upload the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-tested-tree-clued-g4-database.yml-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/clued-tested-tree.json\n          if-no-files-found: error\n          compression-level: 0\n          retention-days: 7\n\n  database-gate-untrusted-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner))))\n    name: Supabase migration, RLS, transaction, and pgTAP (hosted)\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n\n      - name: Set up Node.js\n        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install application dependencies\n        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n        run: npm ci\n\n      - name: Build the application surfaces used by lifecycle tests\n        run: npm run build\n\n      - name: Verify fresh-start guard regressions\n        run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs\n\n      - name: Prepare a fresh attempt-specific Supabase project\n        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare\n\n      - name: Start isolated Supabase runtime\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n\n      - name: Verify fresh migration initialization\n        # start applies the complete migration chain once to a proven empty project.\n        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify\n\n      - name: Lint public and private database schemas\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error\n\n      - name: Run Unified Record V2 RLS and transaction tests\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local\n\n      - name: Run Project Lifecycle Successor v2 database and surface tests\n        run: npm run test:project:lifecycle:v2\n\n      - name: Capture safe failure diagnostics\n        if: failure()\n        run: |\n          docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\n          docker system df\n\n      - name: Stop isolated Supabase runtime\n        if: always() && env.CLUED_G4_FRESH_PROJECT != ''\n        run: |\n          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup\n          npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup\n",
+      "primary_ids": [
+        "database-gate-trusted-self-hosted",
+        "database-gate-untrusted-hosted"
+      ],
       "pull_request": {
         "paths": [
           ".github/workflows/clued-g4-database.yml",
@@ -245,6 +553,7 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "database-gate-trusted-self-hosted",
           "name": "Supabase migration, RLS, transaction, and pgTAP",
           "self_hosted": true,
           "required_steps": {
@@ -259,9 +568,45 @@
             "Run Project Lifecycle Successor v2 database and surface tests": 1,
             "Stop isolated Supabase runtime": 1,
             "Record the actual PR test tree": 1
+          },
+          "command_digests": {
+            "Install application dependencies": [
+              "04f62177d39631ec60e1f258a78dbd2cebf48e0c52453253058e1c26426f889b"
+            ],
+            "Build the application surfaces used by lifecycle tests": [
+              "16c0e4305ac213dff39fc82b69b6e08aeeb8758e33cd72d7c409752a70e9f054"
+            ],
+            "Verify fresh-start guard regressions": [
+              "b1f072d211d6ddbdf52fe75a16240679c937697e74cd3910396bbbda0669af8c"
+            ],
+            "Prepare a fresh attempt-specific Supabase project": [
+              "e60fab75edd908fdab29642bf567274d7e677bc8dd0a1fbc4c159184376a1820"
+            ],
+            "Start isolated Supabase runtime": [
+              "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
+            ],
+            "Verify fresh migration initialization": [
+              "5398bf5bf6d97d7e2ec892fea887a3468b243f0bed829059d410da0c928c1b3a"
+            ],
+            "Lint public and private database schemas": [
+              "46f8e1d4ee57dc525c8b798eb0aad092625fbbbbaba11defad13f61ee749830d"
+            ],
+            "Run Unified Record V2 RLS and transaction tests": [
+              "d9ad976aee06da21eb87a5c8279c7eee0e40a4361aa21ebe31a81bbab7a288b4"
+            ],
+            "Run Project Lifecycle Successor v2 database and surface tests": [
+              "f4480b8c8982d88efe02d14430aa50199012adde524ad6992084b6ade9d45e65"
+            ],
+            "Stop isolated Supabase runtime": [
+              "586deca870899eee7ec43a3539cefde252d47abc2b8768990ff2f95a227275f5"
+            ],
+            "Record the actual PR test tree": [
+              "ad01e6e5d4a764c0ec7a1bcd7203a25881b5d3229e4f0f80132888dc5260a4f5"
+            ]
           }
         },
         {
+          "job_id": "database-gate-untrusted-hosted",
           "name": "Supabase migration, RLS, transaction, and pgTAP (hosted)",
           "self_hosted": false,
           "required_steps": {
@@ -275,16 +620,55 @@
             "Run Unified Record V2 RLS and transaction tests": 1,
             "Run Project Lifecycle Successor v2 database and surface tests": 1,
             "Stop isolated Supabase runtime": 1
+          },
+          "command_digests": {
+            "Install application dependencies": [
+              "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+            ],
+            "Build the application surfaces used by lifecycle tests": [
+              "16c0e4305ac213dff39fc82b69b6e08aeeb8758e33cd72d7c409752a70e9f054"
+            ],
+            "Verify fresh-start guard regressions": [
+              "b1f072d211d6ddbdf52fe75a16240679c937697e74cd3910396bbbda0669af8c"
+            ],
+            "Prepare a fresh attempt-specific Supabase project": [
+              "e60fab75edd908fdab29642bf567274d7e677bc8dd0a1fbc4c159184376a1820"
+            ],
+            "Start isolated Supabase runtime": [
+              "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
+            ],
+            "Verify fresh migration initialization": [
+              "5398bf5bf6d97d7e2ec892fea887a3468b243f0bed829059d410da0c928c1b3a"
+            ],
+            "Lint public and private database schemas": [
+              "46f8e1d4ee57dc525c8b798eb0aad092625fbbbbaba11defad13f61ee749830d"
+            ],
+            "Run Unified Record V2 RLS and transaction tests": [
+              "d9ad976aee06da21eb87a5c8279c7eee0e40a4361aa21ebe31a81bbab7a288b4"
+            ],
+            "Run Project Lifecycle Successor v2 database and surface tests": [
+              "f4480b8c8982d88efe02d14430aa50199012adde524ad6992084b6ade9d45e65"
+            ],
+            "Stop isolated Supabase runtime": [
+              "1e34d9c2a7095016330b9571e8d97f9d0ada388b43b494cf27e1d59ad75fef4a"
+            ]
           }
         }
       ]
     },
     ".github/workflows/contract-placement.yml": {
+      "registration_status": "registered",
       "workflow_blob": "e424d690ef63aa9049cdbe2afed277331df6f37e",
+      "source_sha256": "42473e0f3fec4bac5a2112f42253b0d3aa3ab66b496d949e09268cfbcba2a583",
+      "source_yaml": "name: contract-placement\n\n# Task af536fcc; ComponentVersioning.v0.2 §2.4. Always a real hosted conclusion.\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  contract-placement:\n    name: contract-placement\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 0\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Placement and renderer fixtures\n        run: |\n          python3 -m unittest scripts/ci/test_check_contract_placement.py -v\n          node --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs\n      - name: Build actual public bootstrap without the application dependency tree\n        env:\n          CANDIDATE: ${{ github.sha }}\n        run: |\n          npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1\n          node \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\\n            --bundle --platform=node --format=esm --external:js-tiktoken/* \\\n            --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"\n      - name: Render all actual and synthetic contract parts\n        run: node apps/clued-cloud/scripts/render-agent-contract-budget.mjs --worker-module \"$RUNNER_TEMP/contract-bootstrap.mjs\" --output \"$RUNNER_TEMP/contract-responses.json\"\n      - name: Enforce placement and one-time production gate\n        env:\n          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}\n          CANDIDATE: ${{ github.sha }}\n        run: python3 scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"\n",
+      "primary_ids": [
+        "contract-placement"
+      ],
       "pull_request": null,
       "gated": false,
       "routes": [
         {
+          "job_id": "contract-placement",
           "name": "contract-placement",
           "self_hosted": false,
           "required_steps": {
@@ -292,12 +676,33 @@
             "Build actual public bootstrap without the application dependency tree": 1,
             "Render all actual and synthetic contract parts": 1,
             "Enforce placement and one-time production gate": 1
+          },
+          "command_digests": {
+            "Placement and renderer fixtures": [
+              "2209eaa45f97135463094c9285b3c060e17249b542d29b5e1413c096fcec9545"
+            ],
+            "Build actual public bootstrap without the application dependency tree": [
+              "3b44b30adbae4fff996c9307b13094ed74be091c7818b55b9f869feee04b1651"
+            ],
+            "Render all actual and synthetic contract parts": [
+              "9df862325ae71c0657b06648d3c043f19dd422e4610912aef1e962114a44071d"
+            ],
+            "Enforce placement and one-time production gate": [
+              "b47cea25b2d3efa93c1f4488f03049e5658574f357987e12b6f6bff4e64e7c00"
+            ]
           }
         }
       ]
     },
     ".github/workflows/design-refs.yml": {
+      "registration_status": "registered",
       "workflow_blob": "f0b9a8d2e27061a605f59ffacde5b880ae8ae995",
+      "source_sha256": "27ce071604d0fc9820e7f59d7d11e24d5f65574531757bbad5d73ae345b08001",
+      "source_yaml": "# Design-gap prevention, rule B (Task b896173e): every step-list item and\n# every deferral sentence in development/contracts/** names its Clued Task or\n# Decision. See scripts/ci/check_design_refs.py.\nname: design-refs\n\non:\n  pull_request:\n    paths:\n      - 'development/contracts/**'\n      - 'scripts/ci/check_design_refs.py'\n      - 'scripts/ci/test_check_design_refs.py'\n      - '.github/workflows/design-refs.yml'\n  push:\n    branches: [main]\n    paths:\n      - 'development/contracts/**'\n      - 'scripts/ci/check_design_refs.py'\n      - 'scripts/ci/test_check_design_refs.py'\n      - '.github/workflows/design-refs.yml'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  design-refs-trusted-self-hosted:\n    name: >-\n      ${{ ((github.event_name == 'push' &&\n                     github.actor == github.repository_owner) ||\n                    (github.event_name == 'pull_request' &&\n                     github.event.pull_request.head.repo.full_name == github.repository &&\n                     github.actor == github.repository_owner))\n          && 'design-refs' || 'design-refs-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - run: python3 -m unittest scripts/ci/test_check_design_refs.py\n      - run: python3 scripts/ci/check_design_refs.py\n\n  design-refs-untrusted-hosted:\n    name: >-\n      ${{ ((github.event_name == 'push' &&\n                     github.actor != github.repository_owner) ||\n                    (github.event_name == 'pull_request' &&\n                     (github.event.pull_request.head.repo.full_name != github.repository ||\n                      github.actor != github.repository_owner)))\n          && 'design-refs' || 'design-refs-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - run: python3 -m unittest scripts/ci/test_check_design_refs.py\n      - run: python3 scripts/ci/check_design_refs.py\n",
+      "primary_ids": [
+        "design-refs-trusted-self-hosted",
+        "design-refs-untrusted-hosted"
+      ],
       "pull_request": {
         "paths": [
           "development/contracts/**",
@@ -309,50 +714,106 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "design-refs-trusted-self-hosted",
           "name": "design-refs",
           "self_hosted": true,
           "required_steps": {
             "Run python3 -m unittest scripts/ci/test_check_design_refs.py": 1,
             "Run python3 scripts/ci/check_design_refs.py": 1
+          },
+          "command_digests": {
+            "Run python3 -m unittest scripts/ci/test_check_design_refs.py": [
+              "8e8cdd0e4f81b7f06735c5cfe2635d35164258537d5eb9c8b18d1ba02388d912"
+            ],
+            "Run python3 scripts/ci/check_design_refs.py": [
+              "370a11c8b3ca9d0c349f50b1062b5425327bb02a27c60ced09b14e79247947cc"
+            ]
           }
         },
         {
+          "job_id": "design-refs-untrusted-hosted",
           "name": "design-refs",
           "self_hosted": false,
           "required_steps": {
             "Run python3 -m unittest scripts/ci/test_check_design_refs.py": 1,
             "Run python3 scripts/ci/check_design_refs.py": 1
+          },
+          "command_digests": {
+            "Run python3 -m unittest scripts/ci/test_check_design_refs.py": [
+              "8e8cdd0e4f81b7f06735c5cfe2635d35164258537d5eb9c8b18d1ba02388d912"
+            ],
+            "Run python3 scripts/ci/check_design_refs.py": [
+              "370a11c8b3ca9d0c349f50b1062b5425327bb02a27c60ced09b14e79247947cc"
+            ]
           }
         }
       ]
     },
     ".github/workflows/gitleaks.yml": {
+      "registration_status": "registered",
       "workflow_blob": "8570015b95c754904444a89b0c1e2a8837b89b5f",
+      "source_sha256": "8018e31ead4b87c8d9f30a67e8faa975e767107438885b0e9311b780d58d58e8",
+      "source_yaml": "name: gitleaks\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  gitleaks-trusted-self-hosted:\n    timeout-minutes: 25\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'gitleaks' || 'gitleaks-self-hosted-skipped' }}\n    if: >-\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner)\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          fetch-depth: 0\n          persist-credentials: true\n      # Self-hosted workspaces persist between runs. Checkout neither prunes\n      # remote-tracking refs of deleted branches nor removes the PR merge refs\n      # (refs/remotes/pull/*) that earlier runs of other PRs left behind, so\n      # closed or superseded history stayed in the scan. Scan exactly the\n      # remote's branches and tags plus this run's checked-out HEAD.\n      - name: Drop refs of deleted branches and of other PRs' earlier runs\n        run: |\n          git remote prune origin\n          git for-each-ref --format='%(refname)' refs/remotes/pull |\n            while read -r ref; do git update-ref -d \"$ref\"; done\n      - name: Validate exact historical exceptions and detection regressions\n        run: |\n          python3 scripts/ci/reviewed_gitleaks.py \\\n            --config .gitleaks.toml \\\n            --output \"$RUNNER_TEMP/clued-reviewed.ignore\" \\\n            --self-test\n      - name: Scan complete history with Gitleaks 8.30.1\n        run: |\n          docker run --rm \\\n            -v \"$PWD:/repo\" \\\n            -v \"$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro\" \\\n            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \\\n            git /repo --config /repo/.gitleaks.toml \\\n            --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n\n  gitleaks-untrusted-hosted:\n    timeout-minutes: 25\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'gitleaks' || 'gitleaks-hosted-skipped' }}\n    if: >-\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner))\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          fetch-depth: 0\n          persist-credentials: true\n      # Self-hosted workspaces persist between runs. Checkout neither prunes\n      # remote-tracking refs of deleted branches nor removes the PR merge refs\n      # (refs/remotes/pull/*) that earlier runs of other PRs left behind, so\n      # closed or superseded history stayed in the scan. Scan exactly the\n      # remote's branches and tags plus this run's checked-out HEAD.\n      - name: Drop refs of deleted branches and of other PRs' earlier runs\n        run: |\n          git remote prune origin\n          git for-each-ref --format='%(refname)' refs/remotes/pull |\n            while read -r ref; do git update-ref -d \"$ref\"; done\n      - name: Validate exact historical exceptions and detection regressions\n        run: |\n          python3 scripts/ci/reviewed_gitleaks.py \\\n            --config .gitleaks.toml \\\n            --output \"$RUNNER_TEMP/clued-reviewed.ignore\" \\\n            --self-test\n      - name: Scan complete history with Gitleaks 8.30.1\n        run: |\n          docker run --rm \\\n            -v \"$PWD:/repo\" \\\n            -v \"$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro\" \\\n            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \\\n            git /repo --config /repo/.gitleaks.toml \\\n            --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n",
+      "primary_ids": [
+        "gitleaks-trusted-self-hosted",
+        "gitleaks-untrusted-hosted"
+      ],
       "pull_request": null,
       "gated": false,
       "routes": [
         {
+          "job_id": "gitleaks-trusted-self-hosted",
           "name": "gitleaks",
           "self_hosted": true,
           "required_steps": {
             "Drop refs of deleted branches and of other PRs' earlier runs": 1,
             "Validate exact historical exceptions and detection regressions": 1,
             "Scan complete history with Gitleaks 8.30.1": 1
+          },
+          "command_digests": {
+            "Drop refs of deleted branches and of other PRs' earlier runs": [
+              "32aa292ea25589324f99c1c0f73f3136e6639d8d8c440b34dc2a6a30f4b1255e"
+            ],
+            "Validate exact historical exceptions and detection regressions": [
+              "5b3a59f921498d369902bbff2d66e06e98ec6daad5d34ebc3720af2646b1b086"
+            ],
+            "Scan complete history with Gitleaks 8.30.1": [
+              "ab9b3e80945d804dc211b516ebcb989cdf3a9abb812a4d0fd14845db2ba608f5"
+            ]
           }
         },
         {
+          "job_id": "gitleaks-untrusted-hosted",
           "name": "gitleaks",
           "self_hosted": false,
           "required_steps": {
             "Drop refs of deleted branches and of other PRs' earlier runs": 1,
             "Validate exact historical exceptions and detection regressions": 1,
             "Scan complete history with Gitleaks 8.30.1": 1
+          },
+          "command_digests": {
+            "Drop refs of deleted branches and of other PRs' earlier runs": [
+              "32aa292ea25589324f99c1c0f73f3136e6639d8d8c440b34dc2a6a30f4b1255e"
+            ],
+            "Validate exact historical exceptions and detection regressions": [
+              "5b3a59f921498d369902bbff2d66e06e98ec6daad5d34ebc3720af2646b1b086"
+            ],
+            "Scan complete history with Gitleaks 8.30.1": [
+              "ab9b3e80945d804dc211b516ebcb989cdf3a9abb812a4d0fd14845db2ba608f5"
+            ]
           }
         }
       ]
     },
     ".github/workflows/information-flow-e2e.yml": {
+      "registration_status": "registered",
       "workflow_blob": "1c0143d4acc0bdf40f5184fbe2e30a51b38a54d7",
+      "source_sha256": "67d185f8a2de58cdd56ccecd94e9a20bc596ae6d411986ca8aa46ed452b19bc4",
+      "source_yaml": "name: Information Flow M0-D E2E\n\n# Contract development/contracts/information-flow/M0DCloseout.v0.1.md section 7\n# and gates M0D-B06..B08. Runs the S6 harness over the real local Worker\n# (workerd via Miniflare) and the full local Supabase stack (Kong, PostgREST,\n# GoTrue, PostgreSQL with the full migration chain). Local qualification only:\n# no production access, no deploy, no model or provider calls. The evidence is\n# uploaded as a CI artifact for the reproducibility cross-check; committed\n# evidence comes from the reviewed local run.\n\non:\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref\n        required: false\n        type: string\n  push:\n    branches:\n      - main\n    paths:\n      - .github/workflows/information-flow-e2e.yml\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - apps/clued-cloud/supabase/migrations/**\n      - apps/clued-cloud/worker/**\n      - apps/clued-cloud/evals/information-flow-e2e/**\n      - apps/clued-cloud/evals/public-mcp/worker.ts\n      - apps/clued-cloud/tests/information-flow-*.test.mjs\n      - development/contracts/information-flow/**\n      - apps/clued-cloud/package.json\n      - apps/clued-cloud/package-lock.json\n  pull_request:\n    paths:\n      - .github/workflows/information-flow-e2e.yml\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - apps/clued-cloud/supabase/migrations/**\n      - apps/clued-cloud/worker/**\n      - apps/clued-cloud/evals/information-flow-e2e/**\n      - apps/clued-cloud/evals/public-mcp/worker.ts\n      - apps/clued-cloud/tests/information-flow-*.test.mjs\n      - development/contracts/information-flow/**\n      - apps/clued-cloud/package.json\n      - apps/clued-cloud/package-lock.json\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs\n  # admission_run_id from clued-work-admission-dispatch.yml; push events are\n  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  push-reuse:\n    name: Verify prior PR tested tree\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')\n    runs-on: ubuntu-slim\n    timeout-minutes: 3\n    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n    outputs:\n      run_heavy: ${{ steps.reuse.outputs.run_heavy }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        if: github.event_name == 'push'\n        with:\n          ref: ${{ github.sha }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        if: github.event_name == 'push'\n        with:\n          node-version: 22.23.3\n      - name: Configure job temporary storage\n        if: github.event_name == 'push'\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify duplicate-push proof regressions\n        if: github.event_name == 'push'\n        run: node --test scripts/ci/clued-push-reuse.test.mjs\n      - id: reuse\n        if: github.event_name == 'push'\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n          REUSE_WORKFLOW: information-flow-e2e.yml\n        run: node scripts/ci/clued-push-reuse.mjs\n\n  e2e-trusted-self-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner)))\n    name: Information Flow E2E over the local Worker and Supabase stack\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]\n    timeout-minutes: 35\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n\n      - name: Set up Node.js\n        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm; no Actions npm cache.\n\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install application dependencies\n        run: npm ci --cache \"$HOME/.npm\" --prefer-offline\n\n      - name: Isolate local Supabase ports\n        env:\n          CLUED_IFE2E_RUN_ID: ${{ github.run_id }}\n        run: |\n          python3 - <<'PY'\n          import os\n          import re\n          from pathlib import Path\n\n          run_id = int(os.environ['CLUED_IFE2E_RUN_ID'])\n          port_base = 45000 + (run_id % 1000) * 10\n          config = Path('supabase/config.toml')\n          source = config.read_text(encoding='utf-8')\n          project = 'project_id = \"clued-cloud\"'\n          if source.count(project) != 1:\n              raise RuntimeError('Unexpected Supabase project ID')\n          source = source.replace(project, f'project_id = \"clued-ife2e-{run_id}\"')\n          source, count = re.subn(\n              r'(?m)^([ \\t]*(?:port|shadow_port)[ \\t]*=[ \\t]*)5432([0-9])$',\n              lambda match: match.group(1) + str(port_base + int(match.group(2))),\n              source,\n          )\n          if count != 7:\n              raise RuntimeError(f'Expected seven Supabase ports, found {count}')\n          config.write_text(source, encoding='utf-8')\n          print(f'IF E2E Supabase project and ports isolated for run {run_id}')\n          PY\n\n      - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor\n\n      - name: Deny loopback proxy ports to the harness isolation guard\n        run: |\n          # Any loopback HTTP(S) proxy port is refused by the guard; \"none\" when\n          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).\n          ports=$(python3 - <<'PY'\n          import os, urllib.parse\n          out = set()\n          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):\n              value = os.environ.get(name)\n              if not value:\n                  continue\n              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)\n              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:\n                  out.add(str(url.port))\n          print(','.join(sorted(out)) or 'none')\n          PY\n          )\n          echo \"IFE2E_DENY_PORTS=$ports\" >> \"$GITHUB_ENV\"\n\n      - name: Run the Information Flow E2E harness\n        run: npm run test:information-flow:e2e -- --evidence-dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Recompute normalized evidence digests\n        if: always()\n        run: npm run information-flow:e2e:verify -- --dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Upload E2E evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: information-flow-e2e-evidence\n          path: ${{ runner.temp }}/ife2e\n          retention-days: 30\n          if-no-files-found: warn\n\n      - name: Capture safe failure diagnostics\n        if: failure()\n        run: |\n          docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\n          docker system df\n\n      - name: Stop the local Supabase stack\n        if: always()\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup\n\n      - name: Record the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        env:\n          REUSE_WORKFLOW: information-flow-e2e.yml\n          REUSE_REPORT_PATH: ${{ runner.temp }}/clued-tested-tree.json\n        run: node ../../scripts/ci/clued-push-reuse.mjs --report\n      - name: Upload the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-tested-tree-information-flow-e2e.yml-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/clued-tested-tree.json\n          if-no-files-found: error\n          compression-level: 0\n          retention-days: 7\n\n  e2e-untrusted-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner))))\n    name: Information Flow E2E over the local Worker and Supabase stack (hosted)\n    runs-on: ubuntu-24.04\n    timeout-minutes: 35\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n\n      - name: Set up Node.js\n        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install application dependencies\n        run: npm ci\n\n      - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor\n\n      - name: Deny loopback proxy ports to the harness isolation guard\n        run: |\n          # Any loopback HTTP(S) proxy port is refused by the guard; \"none\" when\n          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).\n          ports=$(python3 - <<'PY'\n          import os, urllib.parse\n          out = set()\n          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):\n              value = os.environ.get(name)\n              if not value:\n                  continue\n              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)\n              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:\n                  out.add(str(url.port))\n          print(','.join(sorted(out)) or 'none')\n          PY\n          )\n          echo \"IFE2E_DENY_PORTS=$ports\" >> \"$GITHUB_ENV\"\n\n      - name: Run the Information Flow E2E harness\n        run: npm run test:information-flow:e2e -- --evidence-dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Recompute normalized evidence digests\n        if: always()\n        run: npm run information-flow:e2e:verify -- --dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Upload E2E evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: information-flow-e2e-evidence\n          path: ${{ runner.temp }}/ife2e\n          retention-days: 30\n          if-no-files-found: warn\n\n      - name: Capture safe failure diagnostics\n        if: failure()\n        run: |\n          docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\n          docker system df\n\n      - name: Stop the local Supabase stack\n        if: always()\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup\n",
+      "primary_ids": [
+        "e2e-trusted-self-hosted",
+        "e2e-untrusted-hosted"
+      ],
       "pull_request": {
         "paths": [
           ".github/workflows/information-flow-e2e.yml",
@@ -373,6 +834,7 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "e2e-trusted-self-hosted",
           "name": "Information Flow E2E over the local Worker and Supabase stack",
           "self_hosted": true,
           "required_steps": {
@@ -384,9 +846,36 @@
             "Recompute normalized evidence digests": 1,
             "Stop the local Supabase stack": 1,
             "Record the actual PR test tree": 1
+          },
+          "command_digests": {
+            "Install application dependencies": [
+              "04f62177d39631ec60e1f258a78dbd2cebf48e0c52453253058e1c26426f889b"
+            ],
+            "Isolate local Supabase ports": [
+              "20a9cdd92aac5e374a9e6dbe4b217e036d6e12936e892073fe59aaed2650cf9c"
+            ],
+            "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)": [
+              "33a5a9bd3ec180e071aa4575b6d79c7a8b7f1b8d8fd17455537b786522066c0c"
+            ],
+            "Deny loopback proxy ports to the harness isolation guard": [
+              "0575517e1b4def7b029395b044dd7f474a2b2c12823805e79c385640791aada3"
+            ],
+            "Run the Information Flow E2E harness": [
+              "1042ac6869aaff94b885261521eb2246413cb386fcc8c12c9db7a0199c17b58a"
+            ],
+            "Recompute normalized evidence digests": [
+              "1d8df57e9dd66de04ddd30c054ce45c7b539d8e8c82fd620d36d78f4b5bf66a9"
+            ],
+            "Stop the local Supabase stack": [
+              "23e5a1fcbb56ea8066977755b4fc7b7aafe825853d7f6fa0069ad5b8224da96d"
+            ],
+            "Record the actual PR test tree": [
+              "ad01e6e5d4a764c0ec7a1bcd7203a25881b5d3229e4f0f80132888dc5260a4f5"
+            ]
           }
         },
         {
+          "job_id": "e2e-untrusted-hosted",
           "name": "Information Flow E2E over the local Worker and Supabase stack (hosted)",
           "self_hosted": false,
           "required_steps": {
@@ -396,12 +885,39 @@
             "Run the Information Flow E2E harness": 1,
             "Recompute normalized evidence digests": 1,
             "Stop the local Supabase stack": 1
+          },
+          "command_digests": {
+            "Install application dependencies": [
+              "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+            ],
+            "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)": [
+              "33a5a9bd3ec180e071aa4575b6d79c7a8b7f1b8d8fd17455537b786522066c0c"
+            ],
+            "Deny loopback proxy ports to the harness isolation guard": [
+              "0575517e1b4def7b029395b044dd7f474a2b2c12823805e79c385640791aada3"
+            ],
+            "Run the Information Flow E2E harness": [
+              "1042ac6869aaff94b885261521eb2246413cb386fcc8c12c9db7a0199c17b58a"
+            ],
+            "Recompute normalized evidence digests": [
+              "1d8df57e9dd66de04ddd30c054ce45c7b539d8e8c82fd620d36d78f4b5bf66a9"
+            ],
+            "Stop the local Supabase stack": [
+              "23e5a1fcbb56ea8066977755b4fc7b7aafe825853d7f6fa0069ad5b8224da96d"
+            ]
           }
         }
       ]
     },
     ".github/workflows/model-program-m2-scoped-consumer.yml": {
+      "registration_status": "registered",
       "workflow_blob": "06246336ab0e6d2cc2c65b84d0570605f0cfb47c",
+      "source_sha256": "12e39ad81029681a513213ebce29af83095e1630bff56f6642856544e066d104",
+      "source_yaml": "name: model-program-m2-scoped-consumer\n\n# Pure source-fixture consumer regression; Task 1502fd80.\n# No generator, live data, model backend, DomainReceipt, deployment or M1 rerun.\non:\n  pull_request:\n    paths:\n      - \"development/contracts/model-program/stage-admission/**\"\n      - \"scripts/model-program/**\"\n      - \"tests/test_model_program_m2_scoped_consumer.py\"\n      - \"tests/fixtures/model-stage-admission/pr441-e76a7/**\"\n      - \".github/workflows/model-program-m2-scoped-consumer.yml\"\n  push:\n    branches: [main]\n    paths:\n      - \"development/contracts/model-program/stage-admission/**\"\n      - \"scripts/model-program/**\"\n      - \"tests/test_model_program_m2_scoped_consumer.py\"\n      - \"tests/fixtures/model-stage-admission/pr441-e76a7/**\"\n      - \".github/workflows/model-program-m2-scoped-consumer.yml\"\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Same current 412e admission pattern as clued-components.\n  # Base code reads the trusted pull_request_target result; no Clued token.\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-windows:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'm2-scoped-consumer' || 'm2-scoped-consumer-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' && github.actor == github.repository_owner) ||\n       (github.event_name == 'pull_request' &&\n        github.event.pull_request.head.repo.full_name == github.repository &&\n        github.actor == github.repository_owner))\n    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n      - name: Verify standard Python 3.12\n        shell: powershell\n        run: |\n          python -c \"import sys; assert sys.version_info[:2] == (3, 12), sys.version\"\n          if ($LASTEXITCODE -ne 0) { throw \"Python 3.12 is required\" }\n      - name: Install fixed official validation wheels in temporary venv\n        shell: powershell\n        run: |\n          $m2VenvPath = Join-Path $env:RUNNER_TEMP (\"clued-m2-scoped-\" + $env:GITHUB_RUN_ID + \"-\" + $env:GITHUB_RUN_ATTEMPT)\n          python -m venv $m2VenvPath\n          if ($LASTEXITCODE -ne 0) { throw \"M2 temporary venv creation failed\" }\n          & \"$m2VenvPath\\Scripts\\python.exe\" -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url https://pypi.org/simple -r development/contracts/model-program/stage-admission/m2-scoped-successor/requirements.ci.lock.txt\n          if ($LASTEXITCODE -ne 0) { throw \"Fixed M2 dependency installation failed\" }\n          \"$m2VenvPath\\Scripts\" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append\n      - name: Validate four consumers using genuine libraries and frozen public fixtures\n        shell: powershell\n        run: |\n          python -m unittest tests.test_model_program_m2_scoped_consumer -v\n          if ($LASTEXITCODE -ne 0) { throw \"M2 scoped source-fixture regression failed\" }\n\n  untrusted-linux:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'm2-scoped-consumer' || 'm2-scoped-consumer-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' && github.actor != github.repository_owner) ||\n       (github.event_name == 'pull_request' &&\n        (github.event.pull_request.head.repo.full_name != github.repository ||\n         github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          fetch-depth: 0\n          persist-credentials: false\n      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065\n        with:\n          python-version: \"3.12\"\n      - name: Install fixed official validation wheels in temporary venv\n        shell: bash\n        run: |\n          set -euo pipefail\n          m2_venv_path=\"$RUNNER_TEMP/clued-m2-scoped-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\"\n          python -m venv \"$m2_venv_path\"\n          \"$m2_venv_path/bin/python\" -m pip --isolated install --disable-pip-version-check --require-hashes --only-binary=:all: --index-url https://pypi.org/simple -r development/contracts/model-program/stage-admission/m2-scoped-successor/requirements.ci.lock.txt\n          echo \"$m2_venv_path/bin\" >> \"$GITHUB_PATH\"\n      - name: Validate four consumers using genuine libraries and frozen public fixtures\n        run: python -m unittest tests.test_model_program_m2_scoped_consumer -v\n",
+      "primary_ids": [
+        "trusted-windows",
+        "untrusted-linux"
+      ],
       "pull_request": {
         "paths": [
           "development/contracts/model-program/stage-admission/**",
@@ -414,26 +930,54 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "trusted-windows",
           "name": "m2-scoped-consumer",
           "self_hosted": true,
           "required_steps": {
             "Verify standard Python 3.12": 1,
             "Install fixed official validation wheels in temporary venv": 1,
             "Validate four consumers using genuine libraries and frozen public fixtures": 1
+          },
+          "command_digests": {
+            "Verify standard Python 3.12": [
+              "f15c58742e1f1e7cd1393e9a2e63319cff72e8837c01e6cd77bdac44df919a75"
+            ],
+            "Install fixed official validation wheels in temporary venv": [
+              "804433726697d6cf9902b8bffd520b2848bdc874ef976bcdc9d72a0a78d1c0f4"
+            ],
+            "Validate four consumers using genuine libraries and frozen public fixtures": [
+              "b04f1e23bce2bde72f63f4c8e1f61b195a101e5a0f1d862ed890d4d5f81360b7"
+            ]
           }
         },
         {
+          "job_id": "untrusted-linux",
           "name": "m2-scoped-consumer",
           "self_hosted": false,
           "required_steps": {
             "Install fixed official validation wheels in temporary venv": 1,
             "Validate four consumers using genuine libraries and frozen public fixtures": 1
+          },
+          "command_digests": {
+            "Install fixed official validation wheels in temporary venv": [
+              "c5fc20789126feadf1bf738afa1d604c5fb694d0d03217b6c863084852e038f0"
+            ],
+            "Validate four consumers using genuine libraries and frozen public fixtures": [
+              "72c540e0497d6911ebe46fe6dab733109307196d08e0794c221a677f96edc567"
+            ]
           }
         }
       ]
     },
     ".github/workflows/public-mcp-behavior.yml": {
+      "registration_status": "registered",
       "workflow_blob": "235a95023607bb3bcc5dd3c96fcff20c6f95b6c1",
+      "source_sha256": "4d367f9027b4b549ad9d1bf2aaa5639f858866b3077177895c01737d408612ed",
+      "source_yaml": "name: public-mcp-behavior\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); push events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, site-company]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;\n          # restoring the ~860 MB Actions cache on top of it only adds download time.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - run: npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5\n      - name: Serialize fixed public MCP ports with other runners on this host\n        run: |\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" acquire public-mcp-ports\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then\n            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n          fi\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" release public-mcp-ports\n          exit \"$cleanup_result\"\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - run: npm ci\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then\n            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n          fi\n          exit \"$cleanup_result\"\n",
+      "primary_ids": [
+        "trusted-self-hosted",
+        "untrusted-hosted"
+      ],
       "pull_request": {
         "paths": [
           ".github/workflows/public-mcp-*.yml",
@@ -444,6 +988,7 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "trusted-self-hosted",
           "name": "public-mcp-behavior",
           "self_hosted": true,
           "required_steps": {
@@ -458,9 +1003,46 @@
             "Run npm run mcp:eval:negative": 1,
             "Run npm run test:p5:postgres": 1,
             "Stop isolated services": 1
+          },
+          "command_digests": {
+            "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5": [
+              "c957d6f6f02e57c59eaa32c5a69dea148d7b860a276c1590b1d35003b724f93e"
+            ],
+            "Serialize fixed public MCP ports with other runners on this host": [
+              "b98671a0c8edfc04908618e49f74d0fb314831c9c88ce07a17249e347604c615"
+            ],
+            "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": [
+              "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
+            ],
+            "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": [
+              "7d498cbcb1d24798cd06541795db4411e9ae5f06d0e469e70cc22eeb2f68416c"
+            ],
+            "Run npm run mcp:isolated:fixture": [
+              "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7",
+              "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7"
+            ],
+            "Allocate a behavior-only loopback port": [
+              "268ad0b3cbcbb6085ac1491082352a2a0687dc12c071b1b9e404232ea8f136e6"
+            ],
+            "Start isolated MCP": [
+              "6182c906ddb20fbad60ae40100719758c60dadcad516d1ef46f499b728c11c7b"
+            ],
+            "Run npm run mcp:eval:positive": [
+              "f1842aff62969729ce45a0392c3d261a0d126872154529218061826b06ee96c2"
+            ],
+            "Run npm run mcp:eval:negative": [
+              "c52c627cbfd5ff95d75f64afbb09866203ed231671309af2d4a60e6269edb389"
+            ],
+            "Run npm run test:p5:postgres": [
+              "7e09e54920550c9496558458afe80bf0171472c0a1ba187051605f33d099744f"
+            ],
+            "Stop isolated services": [
+              "96b74c91073b588066c677c08e013919dab46ae124862c0cc6a6782d9d3a85d2"
+            ]
           }
         },
         {
+          "job_id": "untrusted-hosted",
           "name": "public-mcp-behavior",
           "self_hosted": false,
           "required_steps": {
@@ -474,12 +1056,52 @@
             "Run npm run mcp:eval:negative": 1,
             "Run npm run test:p5:postgres": 1,
             "Stop isolated services": 1
+          },
+          "command_digests": {
+            "Run npm ci": [
+              "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+            ],
+            "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": [
+              "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
+            ],
+            "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": [
+              "7d498cbcb1d24798cd06541795db4411e9ae5f06d0e469e70cc22eeb2f68416c"
+            ],
+            "Run npm run mcp:isolated:fixture": [
+              "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7",
+              "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7"
+            ],
+            "Allocate a behavior-only loopback port": [
+              "268ad0b3cbcbb6085ac1491082352a2a0687dc12c071b1b9e404232ea8f136e6"
+            ],
+            "Start isolated MCP": [
+              "6182c906ddb20fbad60ae40100719758c60dadcad516d1ef46f499b728c11c7b"
+            ],
+            "Run npm run mcp:eval:positive": [
+              "f1842aff62969729ce45a0392c3d261a0d126872154529218061826b06ee96c2"
+            ],
+            "Run npm run mcp:eval:negative": [
+              "c52c627cbfd5ff95d75f64afbb09866203ed231671309af2d4a60e6269edb389"
+            ],
+            "Run npm run test:p5:postgres": [
+              "7e09e54920550c9496558458afe80bf0171472c0a1ba187051605f33d099744f"
+            ],
+            "Stop isolated services": [
+              "7d574836fda6b7ef3031c53c1ca8f44ad1d40aff950a04fbbb7001310d930b9a"
+            ]
           }
         }
       ]
     },
     ".github/workflows/public-mcp-protocol.yml": {
+      "registration_status": "registered",
       "workflow_blob": "a32fa7fb12a438ce41b7381606419d48d3a6b267",
+      "source_sha256": "66ef7e1fc517d7d27218a142e5391e94d2ece03592e9d2601be5dd54f72dbac8",
+      "source_yaml": "name: public-mcp-protocol\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n      - 'skills/clued/references/agent-contract.md'\n      - 'kernel/policy/resource-center-mutation-policy.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n      - 'skills/clued/references/agent-contract.md'\n      - 'kernel/policy/resource-center-mutation-policy.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); push events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'public-mcp-protocol' || 'public-mcp-protocol-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;\n          # restoring the ~860 MB Actions cache on top of it only adds download time.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify gate terminal-state and timeout regressions\n        run: npm run mcp:gate-receipt:test\n      - name: Install dependencies from runner cache\n        # CPU bindings are bundled; protocol checks do not need optional CUDA binaries.\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n        run: >-\n          timeout --signal=TERM --kill-after=15s 8m\n          npm ci --cache \"$HOME/.npm\" --prefer-offline\n          --fetch-retries=2 --fetch-timeout=30000\n      - name: Verify governed Resource Center mutation contract\n        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs\n      - name: Allocate a protocol-only loopback port\n        run: |\n          rm -f \"$RUNNER_TEMP/public-mcp.pid\"\n          node --input-type=module <<'NODE'\n          import net from 'node:net';\n          import fs from 'node:fs';\n          const server = net.createServer();\n          await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });\n          const port = server.address().port;\n          await new Promise((resolve) => server.close(resolve));\n          fs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\\n`);\n          NODE\n      - name: Start isolated MCP\n        run: |\n          printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\\n' > evals/public-mcp/.dev.vars.public-mcp\n          setsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port \"$MCP_ISOLATED_PORT\" --inspector-port 0 --define \"__CLUED_BUILD_SHA__:\\\"$GITHUB_SHA\\\"\" --local --show-interactive-dev-session false --log-level error &\n          echo $! > \"$RUNNER_TEMP/public-mcp.pid\"\n          for attempt in $(seq 1 30); do\n            kill -0 \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\" 2>/dev/null || exit 1\n            if node --input-type=module <<'NODE'\n          import assert from 'node:assert/strict';\n          const response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });\n          assert.equal(response.status, 200);\n          assert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);\n          NODE\n            then exit 0; fi\n            sleep 1\n          done\n          exit 1\n      - name: Inspector strict schema validation\n        run: >-\n          npx mcp-inspector --cli\n          --server-url \"$MCP_ISOLATED_URL\"\n          --transport http\n          --header \"Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})\"\n          --method tools/list\n          --format json\n          --strict\n      - run: npm run mcp:protocol:verify\n      - run: npm run mcp:tools:verify\n      - run: npm run mcp:flags:verify\n      - name: Stop isolated MCP\n        if: always()\n        run: |\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            kill -- \"-$mcp_pid\" 2>/dev/null || true\n          fi\n          rm -f evals/public-mcp/.dev.vars.public-mcp\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'public-mcp-protocol' || 'public-mcp-protocol-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify gate terminal-state and timeout regressions\n        run: npm run mcp:gate-receipt:test\n      - run: npm ci\n        # CPU bindings are bundled; protocol checks do not need optional CUDA binaries.\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n      - name: Verify governed Resource Center mutation contract\n        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs\n      - name: Allocate a protocol-only loopback port\n        run: |\n          rm -f \"$RUNNER_TEMP/public-mcp.pid\"\n          node --input-type=module <<'NODE'\n          import net from 'node:net';\n          import fs from 'node:fs';\n          const server = net.createServer();\n          await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });\n          const port = server.address().port;\n          await new Promise((resolve) => server.close(resolve));\n          fs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\\n`);\n          NODE\n      - name: Start the allocated protocol instance\n        run: |\n          printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\\n' > evals/public-mcp/.dev.vars.public-mcp\n          setsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port \"$MCP_ISOLATED_PORT\" --inspector-port 0 --define \"__CLUED_BUILD_SHA__:\\\"$GITHUB_SHA\\\"\" --local --show-interactive-dev-session false --log-level error &\n          echo $! > \"$RUNNER_TEMP/public-mcp.pid\"\n          for attempt in $(seq 1 30); do\n            kill -0 \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\" 2>/dev/null || exit 1\n            if node --input-type=module <<'NODE'\n          import assert from 'node:assert/strict';\n          const response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });\n          assert.equal(response.status, 200);\n          assert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);\n          NODE\n            then exit 0; fi\n            sleep 1\n          done\n          exit 1\n      - name: Inspector strict schema validation\n        run: >-\n          npx mcp-inspector --cli\n          --server-url \"$MCP_ISOLATED_URL\"\n          --transport http\n          --header \"Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})\"\n          --method tools/list\n          --format json\n          --strict\n      - run: npm run mcp:protocol:verify\n      - run: npm run mcp:tools:verify\n      - run: npm run mcp:flags:verify\n      - name: Stop isolated MCP\n        if: always()\n        run: |\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            kill -- \"-$mcp_pid\" 2>/dev/null || true\n          fi\n          rm -f evals/public-mcp/.dev.vars.public-mcp\n",
+      "primary_ids": [
+        "trusted-self-hosted",
+        "untrusted-hosted"
+      ],
       "pull_request": {
         "paths": [
           ".github/workflows/public-mcp-*.yml",
@@ -493,6 +1115,7 @@
       "gated": true,
       "routes": [
         {
+          "job_id": "trusted-self-hosted",
           "name": "public-mcp-protocol",
           "self_hosted": true,
           "required_steps": {
@@ -506,9 +1129,42 @@
             "Run npm run mcp:tools:verify": 1,
             "Run npm run mcp:flags:verify": 1,
             "Stop isolated MCP": 1
+          },
+          "command_digests": {
+            "Verify gate terminal-state and timeout regressions": [
+              "500cc5475f2ce9bf029071b7269f31773bd54d8711ef09fda3d9271f0938766c"
+            ],
+            "Install dependencies from runner cache": [
+              "321212edcbf8c72614a914c7e599366249ad7c46dcf987814b54d81dd12208a5"
+            ],
+            "Verify governed Resource Center mutation contract": [
+              "1c2393efd080a9873c7b23f7cfb3640c32df0c829dc4473389cd188c7f8a9930"
+            ],
+            "Allocate a protocol-only loopback port": [
+              "8f26774addf9a691594ef21afb910e438e22d92f88ad6386aa30bc31567d56da"
+            ],
+            "Start isolated MCP": [
+              "ec5007815dd34325048b26113d9f776f832e1f820e1bced3d3d1f98b8052ad93"
+            ],
+            "Inspector strict schema validation": [
+              "8fc0189fe3d4165acf36c61b601249e2bb17c43163c08e4498e3fc90fe3f450d"
+            ],
+            "Run npm run mcp:protocol:verify": [
+              "d3e23af4b3a876ebd90d20f0eafce160341aabb7864d81d5ed7a4420aaf1d2fa"
+            ],
+            "Run npm run mcp:tools:verify": [
+              "0e2d518c9cd89e18c35737a97eba94b358bd3dda3313fd1b3548e6067088fbc0"
+            ],
+            "Run npm run mcp:flags:verify": [
+              "b06015ae0f3765bdf1630ee5dfcf5fb7737d36bd6a00c1d2f77069e9a008b221"
+            ],
+            "Stop isolated MCP": [
+              "97bc037ecb8257e149262bb4bff434526d1ebb8863249eb1bec564867ae05969"
+            ]
           }
         },
         {
+          "job_id": "untrusted-hosted",
           "name": "public-mcp-protocol",
           "self_hosted": false,
           "required_steps": {
@@ -522,16 +1178,56 @@
             "Run npm run mcp:tools:verify": 1,
             "Run npm run mcp:flags:verify": 1,
             "Stop isolated MCP": 1
+          },
+          "command_digests": {
+            "Verify gate terminal-state and timeout regressions": [
+              "500cc5475f2ce9bf029071b7269f31773bd54d8711ef09fda3d9271f0938766c"
+            ],
+            "Run npm ci": [
+              "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+            ],
+            "Verify governed Resource Center mutation contract": [
+              "1c2393efd080a9873c7b23f7cfb3640c32df0c829dc4473389cd188c7f8a9930"
+            ],
+            "Allocate a protocol-only loopback port": [
+              "8f26774addf9a691594ef21afb910e438e22d92f88ad6386aa30bc31567d56da"
+            ],
+            "Start the allocated protocol instance": [
+              "ec5007815dd34325048b26113d9f776f832e1f820e1bced3d3d1f98b8052ad93"
+            ],
+            "Inspector strict schema validation": [
+              "8fc0189fe3d4165acf36c61b601249e2bb17c43163c08e4498e3fc90fe3f450d"
+            ],
+            "Run npm run mcp:protocol:verify": [
+              "d3e23af4b3a876ebd90d20f0eafce160341aabb7864d81d5ed7a4420aaf1d2fa"
+            ],
+            "Run npm run mcp:tools:verify": [
+              "0e2d518c9cd89e18c35737a97eba94b358bd3dda3313fd1b3548e6067088fbc0"
+            ],
+            "Run npm run mcp:flags:verify": [
+              "b06015ae0f3765bdf1630ee5dfcf5fb7737d36bd6a00c1d2f77069e9a008b221"
+            ],
+            "Stop isolated MCP": [
+              "97bc037ecb8257e149262bb4bff434526d1ebb8863249eb1bec564867ae05969"
+            ]
           }
         }
       ]
     },
     ".github/workflows/trivy.yml": {
+      "registration_status": "registered",
       "workflow_blob": "f856d837094602fe7303da7cc2d213178085ab36",
+      "source_sha256": "9d707e93c79a48c2a0615102f2895342a8d95a1e0cf6c438c8afd7aecb90f132",
+      "source_yaml": "name: trivy\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  trivy-trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'trivy' || 'trivy-self-hosted-skipped' }}\n    if: >-\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner)\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]\n    timeout-minutes: 25\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - name: Prepare persistent Trivy cache\n        run: |\n          TRIVY_CACHE_DIR=\"${XDG_CACHE_HOME:-$HOME/.cache}/clued-trivy\"\n          mkdir -p \"$TRIVY_CACHE_DIR\"\n          echo \"TRIVY_CACHE_DIR=$TRIVY_CACHE_DIR\" >> \"$GITHUB_ENV\"\n      - name: Download vulnerability database through runner network\n        timeout-minutes: 22\n        env:\n          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9\n          # When every download attempt fails, a cached database built within\n          # this many hours is still used, with a warning. Older or missing\n          # databases fail the job as before.\n          TRIVY_DB_FALLBACK_MAX_AGE_HOURS: \"72\"\n        run: |\n          # Only the pinned scanner and its cache use the runner network. No\n          # checkout or Docker socket is mounted during this download. A host\n          # loopback proxy is otherwise unreachable from the container bridge.\n          db_dir=\"$TRIVY_CACHE_DIR/db\"\n          metadata_epoch() {\n            value=\"$(sed -n \"s/.*\\\"$1\\\" *: *\\\"\\([^\\\"]*\\)\\\".*/\\1/p\" \"$db_dir/metadata.json\" 2>/dev/null | head -n 1)\"\n            if [ -n \"$value\" ]; then date -u -d \"$value\" +%s 2>/dev/null || true; fi\n          }\n          now=\"$(date -u +%s)\"\n          next_update=\"$(metadata_epoch NextUpdate)\"\n          if [ -f \"$db_dir/trivy.db\" ] && [ -n \"$next_update\" ] && [ \"$now\" -lt \"$next_update\" ]; then\n            echo \"Cached vulnerability database is current; no download needed.\"\n            exit 0\n          fi\n\n          # Trivy deletes the cached metadata before it downloads, so a failed\n          # in-place download destroys the last good database. Download into a\n          # per-run staging cache and swap it in only after success. The cache\n          # is root-owned by the container, so file operations run in it too.\n          staging=\"trivy-db-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\"\n          in_cache() {\n            docker run --rm --network none --entrypoint sh \\\n              -v \"$TRIVY_CACHE_DIR:/cache\" \"$TRIVY_IMAGE\" -ec \"$1\" sh \"$staging\"\n          }\n          # Also drop staging caches abandoned by cancelled runs.\n          cleanup_staging() {\n            in_cache 'rm -rf \"/cache/$1\"\n              find /cache -maxdepth 1 -name \"trivy-db-staging-*\" -mmin +120 -exec rm -rf {} \\;' || true\n          }\n          trap cleanup_staging EXIT\n\n          downloaded=false\n          for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do\n            for attempt in 1 2; do\n            if docker run --rm --network host \\\n              -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \\\n              -e http_proxy -e https_proxy -e no_proxy \\\n              -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n              \"$TRIVY_IMAGE\" \\\n              fs --download-db-only --timeout 5m --cache-dir \"/root/.cache/trivy/$staging\" --db-repository \"$repository\"; then\n              downloaded=true\n              break 2\n            fi\n            sleep \"$attempt\"\n            done\n          done\n          if [ \"$downloaded\" = true ]; then\n            in_cache 'rm -rf /cache/db.previous\n              if [ -d /cache/db ]; then mv /cache/db /cache/db.previous; fi\n              mv \"/cache/$1/db\" /cache/db\n              rm -rf /cache/db.previous'\n            exit 0\n          fi\n\n          updated_at=\"$(metadata_epoch UpdatedAt)\"\n          if [ -f \"$db_dir/trivy.db\" ] && [ -n \"$updated_at\" ]; then\n            age_hours=$(( (now - updated_at) / 3600 ))\n            if [ \"$age_hours\" -le \"$TRIVY_DB_FALLBACK_MAX_AGE_HOURS\" ]; then\n              echo \"::warning title=Trivy DB download failed::Using the cached vulnerability database built ${age_hours}h ago (limit ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h).\"\n              exit 0\n            fi\n            echo \"::error title=Trivy DB download failed::Cached vulnerability database is ${age_hours}h old, over the ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h fallback limit.\"\n          else\n            echo \"::error title=Trivy DB download failed::No usable cached vulnerability database.\"\n          fi\n          exit 1\n      - name: Vulnerabilities (HIGH/CRITICAL)\n        run: |\n          # The previous step prepared the database; never re-download here.\n          docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n            fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo\n      - name: Secrets\n        run: |\n          docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n            fs --scanners secret --exit-code 1 /repo\n      - name: Misconfiguration (HIGH/CRITICAL)\n        run: |\n          docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo\n\n  trivy-untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'trivy' || 'trivy-hosted-skipped' }}\n    if: >-\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner))\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - name: Vulnerabilities (HIGH/CRITICAL)\n        run: |\n          docker run --rm -v \"$PWD:/repo\" \\\n            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n            fs --db-repository ghcr.io/aquasecurity/trivy-db:2 --db-repository mirror.gcr.io/aquasec/trivy-db:2 --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo\n      - name: Secrets\n        run: |\n          docker run --rm -v \"$PWD:/repo\" \\\n            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n            fs --scanners secret --exit-code 1 /repo\n      - name: Misconfiguration (HIGH/CRITICAL)\n        run: |\n          docker run --rm -v \"$PWD:/repo\" \\\n            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo\n",
+      "primary_ids": [
+        "trivy-trusted-self-hosted",
+        "trivy-untrusted-hosted"
+      ],
       "pull_request": null,
       "gated": false,
       "routes": [
         {
+          "job_id": "trivy-trusted-self-hosted",
           "name": "trivy",
           "self_hosted": true,
           "required_steps": {
@@ -540,15 +1236,44 @@
             "Vulnerabilities (HIGH/CRITICAL)": 1,
             "Secrets": 1,
             "Misconfiguration (HIGH/CRITICAL)": 1
+          },
+          "command_digests": {
+            "Prepare persistent Trivy cache": [
+              "cc1cf2fcc54392c3678c8191a2db2ca3bc6e02fcb452bc80e0ff9e71aa140f2c"
+            ],
+            "Download vulnerability database through runner network": [
+              "66254d5404103789d4115daa3266b45a5cdb299de638f1a1584ef710060b9e07"
+            ],
+            "Vulnerabilities (HIGH/CRITICAL)": [
+              "469cbda715306bf6f69ab5370a3d39f9fb2df0746c613c8303a0cc3f29547260"
+            ],
+            "Secrets": [
+              "f436214cce763410f49a72af541c4f53bbd5b388efeaa1ef427409eb8a3188d1"
+            ],
+            "Misconfiguration (HIGH/CRITICAL)": [
+              "3af63e808dac596cb6b08aedbb088b915e871f41c20dac29f65c6dc0cb2197a5"
+            ]
           }
         },
         {
+          "job_id": "trivy-untrusted-hosted",
           "name": "trivy",
           "self_hosted": false,
           "required_steps": {
             "Vulnerabilities (HIGH/CRITICAL)": 1,
             "Secrets": 1,
             "Misconfiguration (HIGH/CRITICAL)": 1
+          },
+          "command_digests": {
+            "Vulnerabilities (HIGH/CRITICAL)": [
+              "a71b09c4b3db8afe8971a4631613d1058e83f0f239a4f6e01ed9cadbaed955e6"
+            ],
+            "Secrets": [
+              "8c05be0c32e36b6706bbe868b7317199f5008c6834f62b8c9428a5e5eb5a61f4"
+            ],
+            "Misconfiguration (HIGH/CRITICAL)": [
+              "94e15dff9e9f0651869c81ff1ef30051af63e50bfef610a99b61aeba65ade36d"
+            ]
           }
         }
       ]
