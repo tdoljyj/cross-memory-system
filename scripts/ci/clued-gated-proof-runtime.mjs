@@ -2,6 +2,7 @@
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
 import {applicableCI} from './clued-gated-proof.mjs';
+import {workflowIsGated,workflowFormFindings,gateFindings} from './clued-work-admission.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -96,7 +97,17 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     for(const [file,blob] of atHead) {
       if(!/\.ya?ml$/.test(file) || defaultWorkflows.has(file) || atDefault.get(file)===blob)continue;
       const text=decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${head}`),file,blob);
-      if(!explicitNonPrWorkflow(text))return unknown('new/changed unregistered CI trigger');
+      if(text===null || workflowFormFindings(text).length || workflowIsGated(text))
+        return unknown('non-CI workflow became gated or has ambiguous source');
+      if(atDefault.has(file)) {
+        const before=decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${tip}`),file,atDefault.get(file));
+        // Existing short ungated PR checks retain the accepted gateFindings
+        // exception. Their exact authenticated base, not their PR assertion,
+        // establishes that class; no new registration of them as tests.
+        if(before===null || workflowIsGated(before) || gateFindings(text,before).length)
+          return unknown('existing non-CI admission boundary changed');
+      } else if(!explicitNonPrWorkflow(text) || gateFindings(text,null).length)
+        return unknown('new unregistered CI trigger');
     }
     const targets=applicableCI({workflows:sources,profiles:selected,changedFiles:diff.changedFiles,
       commits:diff.commits,diffComplete:true,sourceQualified:true});

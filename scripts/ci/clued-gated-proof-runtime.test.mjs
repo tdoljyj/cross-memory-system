@@ -37,20 +37,23 @@ test('complete catalogue retains counted CI when a PR deletes its gate; non-CI e
   const registry={schema:'clued.gated-proof-profiles/2',workflows:{[file]:profile}};
   const roleSpecs={schema:'clued.gated-proof-role-specs/2',workflows:{[file]:{sources:{[profile.workflow_blob]:roles}}}};
   const tip='c'.repeat(40),other='.github/workflows/maintenance.yml';
-  const old='on: workflow_dispatch\njobs:\n  old: {}',newText='on: workflow_dispatch\njobs:\n  new: {}';
+  const body='\njobs:\n  short:\n    runs-on: ubuntu-slim\n    timeout-minutes: 5\n    steps:\n      - run: echo short';
+  const old='on: workflow_dispatch'+body,newText='on: workflow_dispatch\n# changed comment'+body;
   const content=(path,text)=>({type:'file',path,sha:workflowBlob(text),encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});
   const directory=(otherText,primaryBlob=profile.workflow_blob)=>[{type:'file',path:file,sha:primaryBlob},
     {type:'file',path:other,sha:workflowBlob(otherText)}];
   const opts={repository,tip,head,registry,roleSpecs,defaultWorkflows:new Map([[file,profile.workflow_blob]]),
     diff:{passed:true,diffComplete:true,commits:1,changedFiles:[other],descriptor:{repository,head}}};
-  const read=async route=>route.includes('ref='+tip)?directory(old):route.includes('/contents/.github/workflows?')?
-    directory(newText):content(other,newText);
+  const read=async route=>route.includes('/contents/.github/workflows?')?
+    directory(route.includes('ref='+tip)?old:newText):content(other,route.includes('ref='+tip)?old:newText);
   const call=extra=>boundWorkflowCatalog({...opts,read,...extra});
   const good=await call();assert.equal(good.passed,true);assert.equal(good.workflows.size,1);
   assert.deepEqual([...good.workflows.keys()],[file]);
-  for(const text of ['on: pull_request\njobs: {}', 'on:\n  <<: *events\n  push:\njobs: {}']) {
-    const r=async route=>route.includes('ref='+tip)?directory(old):route.includes('/contents/.github/workflows?')?
-      directory(text):content(other,text);
+  for(const text of ['on: pull_request\njobs: {}',
+    'on: workflow_dispatch\njobs:\n  admission-gate:\n    runs-on: ubuntu-slim\n    steps:\n      - run: echo gate',
+    'on: workflow_dispatch\njobs:\n  short:\n    runs-on: [self-hosted, Linux]\n    timeout-minutes: 5\n    steps:\n      - run: echo short']) {
+    const r=async route=>route.includes('/contents/.github/workflows?')?
+      directory(route.includes('ref='+tip)?old:text):content(other,route.includes('ref='+tip)?old:text);
     assert.equal((await call({read:r})).state,'unknown');
   }
   // Removing the gate/CI source cannot shrink the independently counted set.
@@ -61,9 +64,17 @@ test('complete catalogue retains counted CI when a PR deletes its gate; non-CI e
   assert.equal((await call({read:async route=>route.includes('ref='+tip)?[...directory(old),...directory(old)]:directory(newText)})).state,'unknown');
   assert.equal((await call({defaultWorkflows:new Map([[file,'e'.repeat(40)]])})).state,'unknown');
   assert.equal((await call({roleSpecs:{...roleSpecs,workflows:{}}})).state,'unknown');
-  const newWorkflow=async route=>route.includes('ref='+tip)?directory(old).slice(0,1):route.includes('/contents/.github/workflows?')?
-    directory(newText):content(other,newText);
+  const newWorkflow=async route=>route.includes('/contents/.github/workflows?')?
+    route.includes('ref='+tip)?directory(old).slice(0,1):directory(newText):content(other,newText);
   assert.equal((await call({read:newWorkflow})).passed,true);
+  for(const text of ['on: pull_request'+body,'on: workflow_dispatch\njobs:\n  admission-gate:\n    runs-on: ubuntu-slim\n    steps:\n      - run: echo gate']) {
+    assert.equal((await call({read:async route=>route.includes('/contents/.github/workflows?')?
+      route.includes('ref='+tip)?directory(old).slice(0,1):directory(text):content(other,text)})).state,'unknown');
+  }
+  const oldShort='on: pull_request'+body,newShort='on: pull_request\n# changed documentation comment'+body;
+  const existingShort=async route=>route.includes('/contents/.github/workflows?')?
+    directory(route.includes('ref='+tip)?oldShort:newShort):content(other,route.includes('ref='+tip)?oldShort:newShort);
+  assert.equal((await call({read:existingShort})).passed,true);
 });
 test('documentation independently reconstructs old event-base to actual merge checkout and regular file modes',async()=>{
   const eventBase='1'.repeat(40),firstParent='2'.repeat(40),checkout='3'.repeat(40);
