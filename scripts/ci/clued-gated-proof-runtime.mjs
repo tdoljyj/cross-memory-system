@@ -103,7 +103,11 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
           if(!current.passed || current.workflow_blob!==before?.workflow_blob || current.source_sha!==before.source_sha ||
             current.source_repository!==before.source_repository)return false;
         }
-        return true;
+        // The source walk itself is asynchronous. Re-read mutable PR/main
+        // after it; the pure framework then barriers the native run set.
+        const finalPr=pullDescriptor(await read(`/repos/${repository}/pulls/${prNumber}`),repository,prNumber,head);
+        if(!finalPr || JSON.stringify(finalPr)!==JSON.stringify(diff.descriptor))return false;
+        return (await read(tipRoute))?.commit?.sha===snapshot.tip;
       }});
     return {...proof,tip:snapshot.tip,pr_number:prNumber,head};
   } catch {return unknown('execution proof read failed');}
@@ -476,6 +480,60 @@ export function githubGraphReader(fetchImpl,env) {
       body:JSON.stringify({query,variables})});
     if(response.status!==200)throw Error('platform source metadata unavailable');
     return response.json();
+  };
+}
+
+async function completeLogText(response,signal) {
+  if(response.status!==200 || !response.body || typeof response.body.getReader!=='function')throw Error('complete log body unavailable');
+  const reader=response.body.getReader(),chunks=[];let size=0;
+  try {
+    for(;;) {
+      if(signal?.aborted)throw Error('log observation aborted');
+      const {done,value}=await reader.read();
+      if(done)break;
+      if(!(value instanceof Uint8Array) || (size+=value.byteLength)>524288)throw Error('log exceeds observation bounds');
+      chunks.push(value);
+    }
+    if(signal?.aborted)throw Error('log observation aborted');
+    const bytes=Buffer.concat(chunks),text=bytes.toString('utf8');
+    if(!Buffer.from(text,'utf8').equals(bytes))throw Error('log encoding differs');
+    return text;
+  } finally {await reader.cancel().catch(()=>{});reader.releaseLock();}
+}
+
+// Logs stay in memory. Authenticate only requests to GitHub's API; its signed
+// storage redirect is followed without the repository credential. Completion
+// is set only after EOF, not after reading a prefix or receiving HTTP headers.
+export function githubAttemptLogReader(fetchImpl,env) {
+  return async(job,run,{signal}={})=>{
+    const repository=env.GITHUB_REPOSITORY,api=new URL(env.GITHUB_API_URL||'https://api.github.com');
+    if(!env.GITHUB_TOKEN || !REPO.test(repository??'') || api.protocol!=='https:' || api.username || api.password || api.search || api.hash ||
+      run?.repository?.full_name!==repository || !Number.isSafeInteger(run.id) || run.id<1 ||
+      !Number.isSafeInteger(run.run_attempt) || run.run_attempt<1 || !Number.isSafeInteger(job?.id) || job.id<1 ||
+      job.run_id!==run.id || job.run_attempt!==run.run_attempt)throw Error('attempt log identity missing');
+    const request=async(url,authenticated)=>{
+      if(signal?.aborted)throw Error('log observation aborted');
+      return fetchImpl(url,{method:'GET',signal,redirect:'manual',headers:authenticated?{
+        Authorization:`Bearer ${env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json'}:{}});
+    };
+    const route=api.href.replace(/\/$/,'')+`/repos/${repository}/actions/jobs/${job.id}`;
+    const detailResponse=await request(route,true);
+    if(detailResponse.status!==200)throw Error('attempt log job unavailable');
+    const current=await detailResponse.json();
+    if(current?.id!==job.id || current.run_id!==run.id || current.run_attempt!==run.run_attempt ||
+      current.status!=='completed' || current.conclusion!==job.conclusion)throw Error('attempt log job changed');
+    let response=await request(route+'/logs',true);
+    if(response.status===302) {
+      const target=new URL(response.headers.get('location'));
+      const server=new URL(env.GITHUB_SERVER_URL||'https://github.com');
+      const trusted=target.origin===api.origin || target.origin===server.origin ||
+        /\.blob\.core\.windows\.net$/.test(target.hostname) || /\.actions\.githubusercontent\.com$/.test(target.hostname);
+      if(target.protocol!=='https:' || target.username || target.password || target.hash || !trusted)
+        throw Error('log storage origin outside trusted provider');
+      response=await request(target.href,false);
+    }
+    const text=await completeLogText(response,signal);
+    return {complete:true,text,job_id:job.id,run_id:run.id,run_attempt:run.run_attempt};
   };
 }
 

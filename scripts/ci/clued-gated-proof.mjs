@@ -189,6 +189,19 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       String(a.path??'').replace(/@.*$/,'')===String(b.path??'').replace(/@.*$/,'') &&
       a.run_attempt===b.run_attempt && a.status===b.status && a.conclusion===b.conclusion &&
       sameMembership(a,b);
+    const nativeBarrier=async()=>{
+      const rows=await completeList(read,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request`,'workflow_runs');
+      if(!rows)return false;
+      const current=new Map();
+      for(const row of rows) {
+        const file=String(row.path??'').replace(/@.*$/,'');
+        if(row.head_sha!==head || row.event!=='pull_request' || !workflows.has(file))continue;
+        if(!current.has(file)||row.id>current.get(file).id)current.set(file,row);
+      }
+      if(current.size!==latest.size || [...latest].some(([file,row])=>!sameRun(current.get(file),row)))return false;
+      for(const row of latest.values())if(!sameRun(await read(`/repos/${repository}/actions/runs/${row.id}`),row))return false;
+      return true;
+    };
     const terminal=async(run,result)=>{
       try {
       if(!sameRun(await read(`/repos/${repository}/actions/runs/${run.id}`),run))
@@ -204,6 +217,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       if(finalLatest.size!==latest.size || [...latest].some(([file,row])=>!sameRun(finalLatest.get(file),row)))
         return unknown('terminal latest workflow set changed');
       if(!await sourceStillCurrent())return unknown('terminal source authority changed');
+      if(!await nativeBarrier())return unknown('terminal native state changed during source recheck');
       return result;
       } catch {return unknown('terminal proof recheck read failed');}
     };
@@ -272,6 +286,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
         return unknown(`${proof.file}: final latest run/attempt changed`);
     }
     if(!await sourceStillCurrent())return unknown('source authority changed while qualifying');
+    if(!await nativeBarrier())return unknown('native state changed during source recheck');
     return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs};
   } catch {return unknown('CI qualification read failed');}
 }

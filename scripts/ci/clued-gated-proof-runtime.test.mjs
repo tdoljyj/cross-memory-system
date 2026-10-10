@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange,
-  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution} from './clued-gated-proof-runtime.mjs';
+  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution,githubAttemptLogReader} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +17,7 @@ const payload=()=>({data:{node:{databaseId:7,runAttempt:2,event:'pull_request',f
   run:{databaseId:7,runAttempt:2}}}}});
 const options={repository,headRepository,file,run};
 const pinned='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
-function executionWorld({conclusion='success',moveTip=false,moveSource=false,changedPR=false}={}) {
+function executionWorld({conclusion='success',moveTip=false,moveSource=false,changedPR=false,lateSourceChange=null}={}) {
   const tip='c'.repeat(40),base='d'.repeat(40),sourceSha='a'.repeat(40);
   const text='name: fixture\non:\n  pull_request:\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Real primary\n        run: node actual-tests.mjs\n';
   const parsed={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{name:'Real primary',run:'node actual-tests.mjs'}]}}};
@@ -36,12 +36,12 @@ function executionWorld({conclusion='success',moveTip=false,moveSource=false,cha
   const native={...run,status:'completed',conclusion,pull_requests:[{number:5}]};
   const pr={number:5,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
     base:{sha:base,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:1,commits:1};
-  const calls=[];let branches=0,pulls=0,graphs=0;
+  const calls=[];let branches=0,pulls=0,graphs=0,late=false;
   const content=(path,text)=>({path,sha:workflowBlob(text),type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});
   const read=async route=>{
     calls.push(route);
-    if(route.endsWith('/pulls/5'))return ++pulls>2&&changedPR?{...pr,draft:true}:pr;
-    if(route.includes('/branches/main'))return {commit:{sha:++branches>1&&moveTip?base:tip}};
+    if(route.endsWith('/pulls/5'))return (++pulls>2&&changedPR || late&&lateSourceChange==='pr')?{...pr,draft:true}:pr;
+    if(route.includes('/branches/main'))return {commit:{sha:(++branches>1&&moveTip || late&&lateSourceChange==='main')?base:tip}};
     if(route.includes('/compare/'))return {base_commit:{sha:base},merge_base_commit:{sha:base},total_commits:1,
       commits:[{sha:head}],files:[{filename:'docs/guide.md',status:'modified'}]};
     if(route.includes('/contents/.github/workflows?'))return [{path:file,sha:profile.workflow_blob,type:'file'}];
@@ -49,7 +49,8 @@ function executionWorld({conclusion='success',moveTip=false,moveSource=false,cha
       const path=route.split('/contents/')[1].split('?')[0];
       return content(path,path===file?text:texts[path]);
     }
-    if(route.includes('/actions/runs?'))return {total_count:1,workflow_runs:[native]};
+    if(route.includes('/actions/runs?'))return late&&lateSourceChange==='new_run'?
+      {total_count:2,workflow_runs:[native,{...native,id:9,status:'queued',conclusion:null}]}:{total_count:1,workflow_runs:[native]};
     if(route.includes('/attempts/'))return {total_count:1,jobs:[{id:8,run_id:native.id,run_attempt:native.run_attempt,
       name:'main',labels:['ubuntu-latest'],status:'completed',conclusion:'success',
       steps:[{name:'Real primary',status:'completed',conclusion:'success'}]}]};
@@ -57,7 +58,8 @@ function executionWorld({conclusion='success',moveTip=false,moveSource=false,cha
     throw Error('unexpected read');
   };
   const graphRead=async()=>{
-    const p=payload();p.data.node.file.repositoryFileUrl=`https://github.com/${repository}/blob/${++graphs>1&&moveSource?base:sourceSha}/${file}`;return p;
+    const p=payload();graphs++;if(graphs>1)late=true;
+    p.data.node.file.repositoryFileUrl=`https://github.com/${repository}/blob/${graphs>1&&moveSource?base:sourceSha}/${file}`;return p;
   };
   return {repository,head,prNumber:5,snapshot,read,graphRead,readLog:async()=>{throw Error('native association requires no log');},calls,pr};
 }
@@ -67,10 +69,51 @@ test('shared execution bridge binds native full execution to one trusted snapsho
   for(const changes of [{moveTip:true},{moveSource:true},{changedPR:true},
     {conclusion:'failure',moveTip:true},{conclusion:'failure',moveSource:true},{conclusion:'failure',changedPR:true}])
     assert.equal((await qualifyPrExecution(executionWorld(changes))).state,'unknown');
+  for(const lateSourceChange of ['new_run','main','pr'])for(const conclusion of ['success','failure'])
+    assert.equal((await qualifyPrExecution(executionWorld({lateSourceChange,conclusion}))).state,'unknown');
   const missing=executionWorld();delete missing.snapshot.files['config/merge-admission-policy.json'];
   assert.equal((await qualifyPrExecution(missing)).state,'unknown');
   const mismatch=executionWorld();mismatch.snapshot.profiles={...mismatch.snapshot.profiles,extra:'candidate assertion'};
   assert.equal((await qualifyPrExecution(mismatch)).state,'unknown');
+});
+test('attempt log reader binds native job and follows only provider storage without credential forwarding',async()=>{
+  const job={id:8,run_id:7,run_attempt:2,conclusion:'success'};
+  const env={GITHUB_REPOSITORY:repository,GITHUB_TOKEN:'mock-private-token'};
+  const calls=[];
+  const fetchImpl=async(url,init)=>{
+    calls.push({url,init});
+    if(url.endsWith('/jobs/8'))return new Response(JSON.stringify({...job,status:'completed'}));
+    if(url.endsWith('/logs'))return new Response(null,{status:302,headers:{location:'https://productionresultssa1.blob.core.windows.net/log?signature=fixture'}});
+    return new Response('complete private log\n');
+  };
+  const value=await githubAttemptLogReader(fetchImpl,env)(job,run);
+  assert.equal(value.complete,true);assert.equal(value.job_id,8);assert.equal(value.run_attempt,2);
+  assert.equal(value.text,'complete private log\n');assert.equal(calls.length,3);
+  assert.equal(calls[0].init.headers.Authorization,'Bearer mock-private-token');
+  assert.deepEqual(calls[2].init.headers,{});
+  for(const target of ['https://evil.example/log','http://productionresultssa1.blob.core.windows.net/log',
+    'https://u:p@productionresultssa1.blob.core.windows.net/log']) {
+    let count=0;
+    await assert.rejects(githubAttemptLogReader(async(url)=>{
+      count++;return url.endsWith('/jobs/8')?new Response(JSON.stringify({...job,status:'completed'})):
+        new Response(null,{status:302,headers:{location:target}});
+    },env)(job,run));assert.equal(count,2);
+  }
+  for(const current of [{...job,status:'completed',run_attempt:1},{...job,status:'in_progress'},
+    {...job,status:'completed',run_id:9},{...job,status:'completed',conclusion:'failure'}])
+    await assert.rejects(githubAttemptLogReader(async()=>new Response(JSON.stringify(current)),env)(job,run));
+});
+test('log EOF, byte bound, interrupted body and late abort are never declared complete',async()=>{
+  const job={id:8,run_id:7,run_attempt:2,conclusion:'success'},env={GITHUB_REPOSITORY:repository,GITHUB_TOKEN:'mock-token'};
+  for(const body of [()=>new Response('x'.repeat(524289)),()=>new Response(new Uint8Array([0xff])),
+    ()=>new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('partial'));controller.error(Error('interrupted'));}}))]) {
+    await assert.rejects(githubAttemptLogReader(async url=>url.endsWith('/jobs/8')?
+      new Response(JSON.stringify({...job,status:'completed'})):body(),env)(job,run));
+  }
+  const controller=new AbortController();let calls=0;
+  await assert.rejects(githubAttemptLogReader(async()=>{
+    calls++;controller.abort();return new Response(JSON.stringify({...job,status:'completed'}));
+  },env)(job,run,{signal:controller.signal}));assert.equal(calls,1);
 });
 test('execution bridge aborts the whole read budget and forbids late continuation requests',async()=>{
   const w=executionWorld();let resolve,calls=0,signal;
