@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource} from './clued-gated-proof-runtime.mjs';
+import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange,
+  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution,githubAttemptLogReader} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,12 +10,299 @@ import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSour
 import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 const repository='o/r',headRepository='fork/r',file='.github/workflows/fixture.yml';
 const sha='a'.repeat(40),head='b'.repeat(40);
-const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,
+const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,path:file,
   repository:{full_name:repository},head_repository:{full_name:headRepository}};
 const payload=()=>({data:{node:{databaseId:7,runAttempt:2,event:'pull_request',file:{path:file,
   repositoryName:repository,repositoryFileUrl:`https://github.com/${repository}/blob/${sha}/${file}`,
   run:{databaseId:7,runAttempt:2}}}}});
 const options={repository,headRepository,file,run};
+const pinned='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
+function executionWorld({conclusion='success',moveTip=false,moveSource=false,changedPR=false,lateSourceChange=null}={}) {
+  const tip='c'.repeat(40),base='d'.repeat(40),sourceSha='a'.repeat(40);
+  const text='name: fixture\non:\n  pull_request:\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Real primary\n        run: node actual-tests.mjs\n';
+  const parsed={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{name:'Real primary',run:'node actual-tests.mjs'}]}}};
+  const roles=[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
+  const profile=compileRegisteredWorkflow(text,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:roles});
+  const profiles={schema:'clued.gated-proof-profiles/2',workflows:{[file]:profile}};
+  const roleSpecs={schema:'clued.gated-proof-role-specs/2',workflows:{[file]:{sources:{[profile.workflow_blob]:roles}}}};
+  const texts={'scripts/ci/clued-gated-proof-profiles.json':JSON.stringify(profiles),
+    'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(roleSpecs),
+    'scripts/ci/clued-work-admission.mjs':'trusted gate',
+    'scripts/ci/clued-docs-only.py':'trusted classifier',
+    'scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
+    'config/merge-admission-policy.json':'trusted policy'};
+  const snapshot={tip,checkout:tip,profiles,roleSpecs,workflows:new Map([[file,profile.workflow_blob]]),
+    files:Object.fromEntries(Object.entries(texts).map(([file,text])=>[file,workflowBlob(text)]))};
+  const native={...run,status:'completed',conclusion,pull_requests:[{number:5}]};
+  const pr={number:5,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
+    base:{sha:base,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:1,commits:1};
+  const calls=[];let branches=0,pulls=0,graphs=0,late=false;
+  const content=(path,text)=>({path,sha:workflowBlob(text),type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});
+  const read=async route=>{
+    calls.push(route);
+    if(route.endsWith('/pulls/5'))return (++pulls>2&&changedPR || late&&lateSourceChange==='pr')?{...pr,draft:true}:pr;
+    if(route.includes('/branches/main'))return {commit:{sha:(++branches>1&&moveTip || late&&lateSourceChange==='main')?base:tip}};
+    if(route.includes('/compare/'))return {base_commit:{sha:base},merge_base_commit:{sha:base},total_commits:1,
+      commits:[{sha:head}],files:[{filename:'docs/guide.md',status:'modified'}]};
+    if(route.includes('/contents/.github/workflows?'))return [{path:file,sha:profile.workflow_blob,type:'file'}];
+    if(route.includes('/contents/')) {
+      const path=route.split('/contents/')[1].split('?')[0];
+      return content(path,path===file?text:texts[path]);
+    }
+    if(route.includes('/actions/runs?'))return late&&lateSourceChange==='new_run'?
+      {total_count:2,workflow_runs:[native,{...native,id:9,status:'queued',conclusion:null}]}:{total_count:1,workflow_runs:[native]};
+    if(route.includes('/attempts/'))return {total_count:1,jobs:[{id:8,run_id:native.id,run_attempt:native.run_attempt,
+      name:'main',labels:['ubuntu-latest'],status:'completed',conclusion:'success',
+      steps:[{name:'Real primary',status:'completed',conclusion:'success'}]}]};
+    if(route.endsWith('/actions/runs/7'))return native;
+    throw Error('unexpected read');
+  };
+  const graphRead=async()=>{
+    const p=payload();graphs++;if(graphs>1)late=true;
+    p.data.node.file.repositoryFileUrl=`https://github.com/${repository}/blob/${graphs>1&&moveSource?base:sourceSha}/${file}`;return p;
+  };
+  return {repository,head,prNumber:5,snapshot,read,graphRead,readLog:async()=>{throw Error('native association requires no log');},calls,pr};
+}
+test('shared execution bridge binds native full execution to one trusted snapshot and final source authority',async()=>{
+  const good=executionWorld();assert.equal((await qualifyPrExecution(good)).passed,true);
+  assert.equal((await qualifyPrExecution(executionWorld({conclusion:'failure'}))).state,'failed');
+  for(const changes of [{moveTip:true},{moveSource:true},{changedPR:true},
+    {conclusion:'failure',moveTip:true},{conclusion:'failure',moveSource:true},{conclusion:'failure',changedPR:true}])
+    assert.equal((await qualifyPrExecution(executionWorld(changes))).state,'unknown');
+  for(const lateSourceChange of ['new_run','main','pr'])for(const conclusion of ['success','failure'])
+    assert.equal((await qualifyPrExecution(executionWorld({lateSourceChange,conclusion}))).state,'unknown');
+  const missing=executionWorld();delete missing.snapshot.files['config/merge-admission-policy.json'];
+  assert.equal((await qualifyPrExecution(missing)).state,'unknown');
+  const mismatch=executionWorld();mismatch.snapshot.profiles={...mismatch.snapshot.profiles,extra:'candidate assertion'};
+  assert.equal((await qualifyPrExecution(mismatch)).state,'unknown');
+});
+test('attempt log reader binds native job and follows only provider storage without credential forwarding',async()=>{
+  const job={id:8,run_id:7,run_attempt:2,conclusion:'success'};
+  const env={GITHUB_REPOSITORY:repository,GITHUB_TOKEN:'mock-private-token'};
+  const calls=[];
+  const fetchImpl=async(url,init)=>{
+    calls.push({url,init});
+    if(url.endsWith('/jobs/8'))return new Response(JSON.stringify({...job,status:'completed'}));
+    if(url.endsWith('/logs'))return new Response(null,{status:302,headers:{location:'https://productionresultssa1.blob.core.windows.net/log?signature=fixture'}});
+    return new Response('complete private log\n');
+  };
+  const value=await githubAttemptLogReader(fetchImpl,env)(job,run);
+  assert.equal(value.complete,true);assert.equal(value.job_id,8);assert.equal(value.run_attempt,2);
+  assert.equal(value.text,'complete private log\n');assert.equal(calls.length,3);
+  assert.equal(calls[0].init.headers.Authorization,'Bearer mock-private-token');
+  assert.deepEqual(calls[2].init.headers,{});
+  for(const target of ['https://evil.example/log','http://productionresultssa1.blob.core.windows.net/log',
+    'https://u:p@productionresultssa1.blob.core.windows.net/log']) {
+    let count=0;
+    await assert.rejects(githubAttemptLogReader(async(url)=>{
+      count++;return url.endsWith('/jobs/8')?new Response(JSON.stringify({...job,status:'completed'})):
+        new Response(null,{status:302,headers:{location:target}});
+    },env)(job,run));assert.equal(count,2);
+  }
+  for(const current of [{...job,status:'completed',run_attempt:1},{...job,status:'in_progress'},
+    {...job,status:'completed',run_id:9},{...job,status:'completed',conclusion:'failure'}])
+    await assert.rejects(githubAttemptLogReader(async()=>new Response(JSON.stringify(current)),env)(job,run));
+});
+test('log EOF, byte bound, interrupted body and late abort are never declared complete',async()=>{
+  const job={id:8,run_id:7,run_attempt:2,conclusion:'success'},env={GITHUB_REPOSITORY:repository,GITHUB_TOKEN:'mock-token'};
+  for(const body of [()=>new Response('x'.repeat(524289)),()=>new Response(new Uint8Array([0xff])),
+    ()=>new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('partial'));controller.error(Error('interrupted'));}}))]) {
+    await assert.rejects(githubAttemptLogReader(async url=>url.endsWith('/jobs/8')?
+      new Response(JSON.stringify({...job,status:'completed'})):body(),env)(job,run));
+  }
+  const controller=new AbortController();let calls=0;
+  await assert.rejects(githubAttemptLogReader(async()=>{
+    calls++;controller.abort();return new Response(JSON.stringify({...job,status:'completed'}));
+  },env)(job,run,{signal:controller.signal}));assert.equal(calls,1);
+});
+test('execution bridge aborts the whole read budget and forbids late continuation requests',async()=>{
+  const w=executionWorld();let resolve,calls=0,signal;
+  const pending=new Promise(r=>{resolve=r;});
+  const read=async(route,options)=>{calls++;signal=options.signal;return pending;};
+  const result=await qualifyPrExecution({...w,read,budgetMs:5});
+  assert.equal(result.state,'unknown');assert.equal(signal.aborted,true);assert.equal(calls,1);
+  resolve(w.pr);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls,1);
+  for(const budgetMs of [0,-1,90001,1.5])assert.equal((await qualifyPrExecution({...w,budgetMs})).state,'unknown');
+});
+test('empty membership gate identity requires pinned actual base checkout and current gate script bytes',async()=>{
+  const base='1'.repeat(40),code='trusted gate script',blob=workflowBlob(code);
+  const profile={gated:true,source_yaml:`jobs:\n  admission-gate:\n    steps:\n      - uses: ${pinned}\n        with:\n          ref: \${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - run: node scripts/ci/clued-work-admission.mjs`};
+  const source={passed:true,repository,file,run_id:run.id,run_attempt:run.run_attempt,profile};
+  const job={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'admission-gate',status:'completed',conclusion:'success'};
+  const result={mode:'gate',event:'pull_request',head_sha:head,base_sha:base,pr_ref:repository+'#5',
+    enforced:true,admitted:false,verdict:'NO_ADMISSION_RUN'};
+  const text=`[command]/usr/bin/git log -1 --format=%H\n${base}\n${JSON.stringify(result,null,2)}`;
+  const log={complete:true,text,job_id:job.id,run_id:run.id,run_attempt:run.run_attempt};
+  const content={type:'file',path:'scripts/ci/clued-work-admission.mjs',sha:blob,encoding:'base64',size:Buffer.byteLength(code),content:Buffer.from(code).toString('base64')};
+  const opts={read:async()=>content,readLog:async()=>log,source,run,jobs:[job],repository,head,prNumber:5,trustedGateBlob:blob};
+  assert.equal((await boundRunIdentity(opts)).scope,'pr_identity');
+  for(const extra of [{trustedGateBlob:'2'.repeat(40)},{source:{...source,passed:false}},
+    {source:{...source,run_attempt:1}},{prNumber:6},{jobs:[job,job]},
+    {jobs:[{...job,run_attempt:1}]},{readLog:async()=>({...log,job_id:99})},
+    {readLog:async()=>({...log,text:text+'\n'+JSON.stringify(result,null,2)})},
+    {readLog:async()=>({...log,text:text.replace(base,'2'.repeat(40))})},
+    {source:{...source,profile:{...profile,source_yaml:profile.source_yaml.replace(pinned,'actions/checkout@untrusted')}}},
+    {source:{...source,profile:{...profile,source_yaml:profile.source_yaml.replace('        with:','        with:\n          path: foreign')}}}])
+    assert.equal((await boundRunIdentity({...opts,...extra})).state,'unknown');
+});
+test('ungated source identity binds one pinned primary and the actual merge checkout parents',async()=>{
+  const base='1'.repeat(40),merge='2'.repeat(40);
+  const profile={gated:false,source_yaml:`jobs:\n  scan:\n    steps:\n      - uses: ${pinned}\n      - run: scan`,
+    routes:[{job_id:'scan',name:'scan',self_hosted:false}]};
+  const source={passed:true,repository,file,run_id:run.id,run_attempt:run.run_attempt,profile};
+  const job={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'scan',status:'completed',conclusion:'success',labels:['ubuntu-latest']};
+  const text=`[command]/usr/bin/git checkout --progress --force refs/remotes/pull/5/merge\n[command]/usr/bin/git log -1 --format=%H\n${merge}`;
+  const log={complete:true,text,job_id:job.id,run_id:run.id,run_attempt:run.run_attempt};
+  const commit={sha:merge,parents:[{sha:base},{sha:head}]};
+  const opts={read:async()=>commit,readLog:async()=>log,source,run,jobs:[job],repository,head,prNumber:5};
+  assert.equal((await boundRunIdentity(opts)).scope,'pr_identity');
+  for(const extra of [{jobs:[job,job]},{read:async()=>({...commit,parents:[{sha:head},{sha:base}]})},
+    {readLog:async()=>({...log,complete:false})},{prNumber:6},
+    {source:{...source,profile:{...profile,source_yaml:profile.source_yaml.replace('      - run: scan','        with:\n          ref: other\n      - run: scan')}}}])
+    assert.equal((await boundRunIdentity({...opts,...extra})).state,'unknown');
+});
+test('documentation attempt cannot infer scope from skipped tests or an unbound result log',async()=>{
+  const profile={source_yaml:`jobs:\n  quality:\n    steps:\n      - uses: ${pinned}\n      - run: app`,routes:[{job_id:'quality',name:'quality',self_hosted:true}]};
+  const quality='.github/workflows/clued-cloud-quality-gate.yml';
+  const source={passed:true,repository,file:quality,run_id:run.id,run_attempt:run.run_attempt,profile};
+  const job={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'quality',status:'completed',conclusion:'success',labels:['self-hosted'],
+    steps:[...['Install from lockfile','Run npm run lint','Run npm run ledger:verify','Run npm run typecheck','Run npm run build','Run npm run test:unit']
+      .map(name=>({name,status:'completed',conclusion:'skipped'})),{name:'Qualify ordinary documentation changes',status:'completed',conclusion:'success'}]};
+  let reads=0;
+  const opts={read:async()=>{reads++;throw Error('unexpected');},readLog:async()=>({complete:true,text:'unbound result',job_id:8,run_id:7,run_attempt:2}),
+    source,run:{...run,path:quality},jobs:[job],repository,head,prNumber:5};
+  assert.equal((await boundDocumentationAttempt(opts)).state,'unknown');assert.equal(reads,0);
+  const failed=structuredClone(job);failed.steps.at(-1).conclusion='failure';
+  assert.equal((await boundDocumentationAttempt({...opts,jobs:[failed]})).state,'unknown');
+  const partial=structuredClone(job);partial.steps[0].conclusion='success';
+  assert.equal((await boundDocumentationAttempt({...opts,jobs:[partial]})).state,'unknown');
+});
+test('unregistered workflow classification admits explicit non-PR events, but no hidden or new CI trigger',()=>{
+  for(const text of ['on: workflow_dispatch\njobs:\n  work: {}',
+    "name: housekeeping\non:\n  schedule:\n    - cron: '17 */6 * * *'\n  workflow_dispatch:\njobs:\n  work: {}",
+    'on: [push, workflow_dispatch]\njobs: {}','on:\n  workflow_run:\n    types: [completed]\njobs: {}'])
+    assert.equal(explicitNonPrWorkflow(text),true);
+  for(const text of ['on: pull_request','on: [push, pull_request]',
+    'on:\n  pull_request:\n  push:',"'on': [pull_request]",'on: *events',
+    'on:\n  <<: *events\n  push:', 'on: {pull_request: null}',
+    'on:\n  push:\n"on": [pull_request]', 'on:\n  merge_group:', 'on:\n\t pull_request:',
+    'on:\n  workflow_dispatch:\n  workflow_dispatch:', 'on: [unknown_event]', 'on:\n  "pull_request":'])
+    assert.equal(explicitNonPrWorkflow(text),false);
+  for(const key of ['"\\u006fn"','!!str on','<<'])
+    assert.equal(explicitNonPrWorkflow(`on: push\n${key}: [pull_request]\njobs: {}`),false);
+});
+test('complete catalogue retains counted CI when a PR deletes its gate; non-CI edits do not self-register as tests',async()=>{
+  const text='catalogue source',parsed={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{run:'node --test'}]}}};
+  const roles=[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
+  const profile=compileRegisteredWorkflow(text,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:roles});
+  const registry={schema:'clued.gated-proof-profiles/2',workflows:{[file]:profile}};
+  const roleSpecs={schema:'clued.gated-proof-role-specs/2',workflows:{[file]:{sources:{[profile.workflow_blob]:roles}}}};
+  const tip='c'.repeat(40),other='.github/workflows/maintenance.yml';
+  const body='\njobs:\n  short:\n    runs-on: ubuntu-slim\n    timeout-minutes: 5\n    steps:\n      - run: echo short';
+  const old='on: workflow_dispatch'+body,newText='on: workflow_dispatch\n# changed comment'+body;
+  const content=(path,text)=>({type:'file',path,sha:workflowBlob(text),encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});
+  const directory=(otherText,primaryBlob=profile.workflow_blob)=>[{type:'file',path:file,sha:primaryBlob},
+    {type:'file',path:other,sha:workflowBlob(otherText)}];
+  const opts={repository,tip,head,registry,roleSpecs,defaultWorkflows:new Map([[file,profile.workflow_blob]]),
+    diff:{passed:true,diffComplete:true,commits:1,changedFiles:[other],descriptor:{repository,head}}};
+  const read=async route=>route.includes('/contents/.github/workflows?')?
+    directory(route.includes('ref='+tip)?old:newText):content(other,route.includes('ref='+tip)?old:newText);
+  const call=extra=>boundWorkflowCatalog({...opts,read,...extra});
+  const good=await call();assert.equal(good.passed,true);assert.equal(good.workflows.size,1);
+  assert.deepEqual([...good.workflows.keys()],[file]);
+  for(const text of ['on: pull_request\njobs: {}',
+    'on: workflow_dispatch\njobs:\n  admission-gate:\n    runs-on: ubuntu-slim\n    steps:\n      - run: echo gate',
+    'on: workflow_dispatch\njobs:\n  short:\n    runs-on: [self-hosted, Linux]\n    timeout-minutes: 5\n    steps:\n      - run: echo short']) {
+    const r=async route=>route.includes('/contents/.github/workflows?')?
+      directory(route.includes('ref='+tip)?old:text):content(other,route.includes('ref='+tip)?old:text);
+    assert.equal((await call({read:r})).state,'unknown');
+  }
+  // Removing the gate/CI source cannot shrink the independently counted set.
+  assert.equal((await call({read:async route=>route.includes('ref='+tip)?directory(old):directory(newText,'d'.repeat(40))})).state,'unknown');
+  assert.equal((await call({read:async route=>route.includes('ref='+tip)?directory(old):directory(newText).slice(1)})).state,'unknown');
+  assert.equal((await call({read:async()=>({message:'unavailable'})})).state,'unknown');
+  assert.equal((await call({diff:{...opts.diff,diffComplete:false}})).state,'unknown');
+  assert.equal((await call({read:async route=>route.includes('ref='+tip)?[...directory(old),...directory(old)]:directory(newText)})).state,'unknown');
+  assert.equal((await call({defaultWorkflows:new Map([[file,'e'.repeat(40)]])})).state,'unknown');
+  assert.equal((await call({roleSpecs:{...roleSpecs,workflows:{}}})).state,'unknown');
+  const newWorkflow=async route=>route.includes('/contents/.github/workflows?')?
+    route.includes('ref='+tip)?directory(old).slice(0,1):directory(newText):content(other,newText);
+  assert.equal((await call({read:newWorkflow})).passed,true);
+  for(const text of ['on: pull_request'+body,'on: workflow_dispatch\njobs:\n  admission-gate:\n    runs-on: ubuntu-slim\n    steps:\n      - run: echo gate']) {
+    assert.equal((await call({read:async route=>route.includes('/contents/.github/workflows?')?
+      route.includes('ref='+tip)?directory(old).slice(0,1):directory(text):content(other,text)})).state,'unknown');
+  }
+  const oldShort='on: pull_request'+body,newShort='on: pull_request\n# changed documentation comment'+body;
+  const existingShort=async route=>route.includes('/contents/.github/workflows?')?
+    directory(route.includes('ref='+tip)?oldShort:newShort):content(other,route.includes('ref='+tip)?oldShort:newShort);
+  assert.equal((await call({read:existingShort})).passed,true);
+});
+test('documentation independently reconstructs old event-base to actual merge checkout and regular file modes',async()=>{
+  const eventBase='1'.repeat(40),firstParent='2'.repeat(40),checkout='3'.repeat(40);
+  const baseTree='4'.repeat(40),mergeTree='5'.repeat(40),blob='6'.repeat(40);
+  const trustedSources={'scripts/ci/clued-docs-only.py':'7'.repeat(40),'scripts/ci/test_clued_docs_only.py':'8'.repeat(40)};
+  const sourceEntries=Object.entries(trustedSources).map(([path,sha])=>({path,sha,type:'blob',mode:'100644'}));
+  const normal={path:'docs/guide.md',sha:blob,type:'blob',mode:'100644'};
+  const replies={
+    [`/repos/${repository}/git/commits/${checkout}`]:{sha:checkout,parents:[{sha:firstParent},{sha:head}],tree:{sha:mergeTree}},
+    [`/repos/${repository}/git/commits/${eventBase}`]:{sha:eventBase,tree:{sha:baseTree}},
+    [`/repos/${repository}/compare/${eventBase}...${firstParent}?per_page=1`]:{base_commit:{sha:eventBase},merge_base_commit:{sha:eventBase}},
+    [`/repos/${repository}/compare/${eventBase}...${checkout}?per_page=1`]:{base_commit:{sha:eventBase},merge_base_commit:{sha:eventBase},total_commits:2,
+      files:[{filename:normal.path,status:'modified'}]},
+    [`/repos/${repository}/git/trees/${baseTree}?recursive=1`]:{sha:baseTree,truncated:false,tree:[normal,...sourceEntries]},
+    [`/repos/${repository}/git/trees/${mergeTree}?recursive=1`]:{sha:mergeTree,truncated:false,tree:[normal,...sourceEntries]}
+  };
+  const opts={repository,head,eventBase,checkout,checkoutQualified:true,trustedSources};
+  const call=extra=>boundDocumentationRange({...opts,read:async route=>structuredClone(replies[route]),...extra});
+  assert.equal((await call()).passed,true);
+  const quality='.github/workflows/clued-cloud-quality-gate.yml';
+  const docRun={...run,path:quality},docProfile={source_yaml:`jobs:\n  quality:\n    steps:\n      - uses: ${pinned}\n      - run: app`,
+    routes:[{job_id:'quality',name:'quality',self_hosted:true}]};
+  const docSource={passed:true,repository,file:quality,run_id:run.id,run_attempt:run.run_attempt,profile:docProfile};
+  const docJob={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'quality',status:'completed',conclusion:'success',labels:['self-hosted'],
+    steps:['Install from lockfile','Run npm run lint','Run npm run ledger:verify','Run npm run typecheck','Run npm run build','Run npm run test:unit']
+      .map(name=>({name,status:'completed',conclusion:'skipped'})).concat({name:'Qualify ordinary documentation changes',status:'completed',conclusion:'success'})};
+  const docResult={qualification:'DOCUMENTATION_ONLY',run_full:false,full_app_tests:false,repository,base_sha:eventBase,checkout_sha:checkout,changed_count:1};
+  const docLog={complete:true,job_id:8,run_id:run.id,run_attempt:run.run_attempt,
+    text:`[command]/usr/bin/git checkout --progress --force refs/remotes/pull/5/merge\n[command]/usr/bin/git log -1 --format=%H\n${checkout}\n${JSON.stringify(docResult)}`};
+  const attempt={read:async route=>structuredClone(replies[route]),readLog:async()=>docLog,source:docSource,run:docRun,jobs:[docJob],
+    repository,head,prNumber:5,trustedSources};
+  assert.equal((await boundDocumentationAttempt(attempt)).scope,'documentation');
+  for(const edit of [r=>r.changed_count=2,r=>r.full_app_tests=true,r=>r.repository='other/repo',r=>r.checkout_sha=head]) {
+    const result=structuredClone(docResult);edit(result);
+    assert.equal((await boundDocumentationAttempt({...attempt,readLog:async()=>({...docLog,
+      text:docLog.text.replace(JSON.stringify(docResult),JSON.stringify(result))})})).state,'unknown');
+  }
+  const duplicate=structuredClone(docJob);duplicate.steps.push({...duplicate.steps[0],conclusion:'success'});
+  assert.equal((await boundDocumentationAttempt({...attempt,jobs:[duplicate]})).state,'unknown');
+  assert.equal((await boundDocumentationAttempt({...attempt,readLog:async()=>({...docLog,run_attempt:1})})).state,'unknown');
+  assert.equal((await boundDocumentationAttempt({...attempt,readLog:async()=>({...docLog,
+    text:docLog.text+'\n'+JSON.stringify(docResult)})})).state,'unknown');
+  assert.equal((await call({checkoutQualified:false})).state,'unknown');
+  assert.equal((await call({trustedSources:{}})).state,'unknown');
+  const treeRoute=`/repos/${repository}/git/trees/${mergeTree}?recursive=1`;
+  const compareRoute=`/repos/${repository}/compare/${eventBase}...${checkout}?per_page=1`;
+  for(const edit of [r=>r[treeRoute].truncated=true,r=>r[treeRoute].tree[0].mode='100755',
+    r=>r[treeRoute].tree[0].mode='120000',r=>r[treeRoute].tree[1].sha=blob,
+    r=>r[treeRoute].tree.push(normal),r=>r[compareRoute].files=[],
+    r=>r[compareRoute].files[0].filename='docs/contracts/authority.md',
+    r=>r[compareRoute].files[0]={filename:normal.path,status:'renamed',previous_filename:'src/secret.js'},
+    r=>r[`/repos/${repository}/compare/${eventBase}...${firstParent}?per_page=1`].merge_base_commit.sha=firstParent,
+    r=>r[`/repos/${repository}/git/commits/${checkout}`].parents[1].sha=firstParent]) {
+    const changed=structuredClone(replies);edit(changed);
+    assert.equal((await call({read:async route=>changed[route]})).state,'unknown');
+  }
+  for(const absentSide of [baseTree,mergeTree]) {
+    const changed=structuredClone(replies);
+    changed[`/repos/${repository}/git/trees/${absentSide}?recursive=1`].tree=sourceEntries;
+    assert.equal((await call({read:async route=>changed[route]})).passed,true);
+  }
+  const renamed=structuredClone(replies);
+  renamed[compareRoute].files[0]={filename:normal.path,status:'renamed',previous_filename:'docs/old.md'};
+  renamed[`/repos/${repository}/git/trees/${baseTree}?recursive=1`].tree[0]={...normal,path:'docs/old.md'};
+  assert.equal((await call({read:async route=>renamed[route]})).changed_count,2);
+});
 test('platform executed file binds run, attempt, repository, path and immutable commit',()=>{
   assert.equal(platformWorkflowSource(payload(),options).source_sha,sha);
   const fork=payload();fork.data.node.file.repositoryName=headRepository;
@@ -155,4 +443,44 @@ test('original slot report continues after a hanging shadow request',async()=>{
     eventName:'workflow_run',event:{workflow_run:{id:7}},fetchImpl,sourceObservationBudgetMs:5});
   assert.equal(result.source_observation.reason,'source observation budget exhausted');
   assert.equal(observedSignal.aborted,true);assert.equal(pulls,1);assert.deepEqual(result.errors,[]);
+});
+test('complete three-dot PR diff binds head/base and both rename paths',async()=>{
+  const pr={number:4,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
+    base:{sha,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:1,commits:1};
+  const compare={base_commit:{sha},merge_base_commit:{sha:'c'.repeat(40)},total_commits:1,commits:[{sha:head}],
+    files:[{filename:'docs/new.md',previous_filename:'scripts/old.mjs',status:'renamed'}]};
+  const options={repository,prNumber:4,head,read:async route=>route.includes('/compare/')?compare:pr};
+  const result=await boundPullDiff(options);
+  assert.equal(result.passed,true);assert.deepEqual(result.changedFiles,['docs/new.md','scripts/old.mjs']);
+  assert.equal(result.scope,'pull_diff');
+  for(const edit of [p=>p.files=[],p=>delete p.files[0].previous_filename,p=>p.files[0].previous_filename='../old',
+    p=>p.files[0].filename+='\n',p=>p.total_commits=2,p=>p.commits=[],p=>p.commits[0].sha=sha,p=>p.base_commit.sha=head]) {
+    const altered=structuredClone(compare);edit(altered);
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?altered:pr})).state,'unknown');
+  }
+  let prReads=0;
+  assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?compare:
+    ++prReads===1?pr:{...pr,base:{...pr.base,sha:head}}})).state,'unknown');
+  for(const edit of [p=>delete p.base.ref,p=>delete p.base.repo.default_branch,
+    p=>{delete p.base.ref;delete p.base.repo.default_branch;},p=>{p.base.ref='';p.base.repo.default_branch='';}]) {
+    const missing=structuredClone(pr);edit(missing);
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?compare:missing})).state,'unknown');
+    let count=0;
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?compare:
+      ++count===1?pr:missing})).state,'unknown');
+  }
+});
+test('PR commit pagination must be complete and fixed across all pages',async()=>{
+  const commits=Array.from({length:100},(_,i)=>({sha:(i+1).toString(16).padStart(40,'0')}));
+  const pr={number:4,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
+    base:{sha,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:0,commits:101};
+  const first={base_commit:{sha},merge_base_commit:{sha},total_commits:101,files:[],commits};
+  const second={base_commit:{sha},merge_base_commit:{sha},total_commits:101,commits:[{sha:head}]};
+  const options={repository,prNumber:4,head,read:async route=>route.includes('/compare/')?
+    route.endsWith('page=1')?first:second:pr};
+  assert.equal((await boundPullDiff(options)).passed,true);
+  for(const alternate of [{...second,total_commits:100},{...second,commits:[]},
+    {...second,merge_base_commit:{sha:head}},{...second,commits:[commits[0]]}])
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?
+      route.endsWith('page=1')?first:alternate:pr})).state,'unknown');
 });
