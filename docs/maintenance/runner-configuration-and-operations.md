@@ -1,6 +1,6 @@
 # Runner 配置与运维规范
 
-版本：v1.2；适用仓库：`tdoljyj/cross-memory-system`。本次核对：2026-10-10，主线基线 `cd99bf7ef1483b18726940159f3778e13c24c62f`。旧 v1.1 无窗口安装器候选在 PR #615，尚未合入，不能当作当前主线实现。
+版本：v1.2；适用仓库：`tdoljyj/cross-memory-system`。本次核对：2026-10-10，主线基线 `cf5be21bbb93db534a383410e9b4e9c7617c0f91`。旧 v1.1 无窗口安装器候选在 PR #615，尚未合入，不能当作当前主线实现。
 
 本文件是工程 Runbook，规定配置、上线验收、日常维护、增减与回退的操作要求。它不声明某台机器此刻在线，也不代替操作授权、Clued 当前任务或 GitHub 准入。下文的“必须”是执行本规范的要求；“现状”只说明编写时已核对的实现。未实现的要求见第 12 节，不得据此宣称已达标。
 
@@ -192,7 +192,7 @@ wsl.exe -d Ubuntu-24.04 -u runner -e systemctl show actions.runner.tdoljyj-cross
 
 ### 6.3 CI 临时文件与缓存
 
-本节公共入口与八流程覆盖实现在 [PR #693](https://github.com/tdoljyj/cross-memory-system/pull/693)，候选提交 `48205446348a65e578094aef999e59cf853eeac0`，编写基线尚未合入；只有该 PR 完成准入、实际 CI 和合并后才能按这一实现执行。已合入的 PR #691 与尚在审核的补齐范围分别说明如下，不用规范要求冒充主线现状。
+本节公共入口与八流程覆盖实现在 [PR #693](https://github.com/tdoljyj/cross-memory-system/pull/693)，源提交 `48205446348a65e578094aef999e59cf853eeac0`。全部适用正式 CI、精确受保护准入和合并位通过后，于 2026-10-10 11:06:57 UTC 合入 `cf5be21bbb93db534a383410e9b4e9c7617c0f91`。它与先前已合入的 PR #691 共同构成下述应用临时目录实现；这不代替每个后续版本的实际 job 验收。
 
 本次临时目录治理的实施范围是应用的八条持续安装/测试流程：quality、Node22安装、integration-runtime nightly、connection authorization、G4、Information Flow E2E、public MCP protocol和behavior。覆盖检查对这些工作流中每个产生安装、解压、构建、测试或评测临时数据的 job，要求在首次此类命令前把 `TMPDIR`、`TMP`、`TEMP` 指向该 runner 的 `RUNNER_TEMP`。Node 准备和 checkout 完成后使用 `ci-temporary-storage` 公共入口；入口先验证绝对路径、目录身份、作业账号归属和可写性，再写入 `GITHUB_ENV`。失败不得静默回退到共享 `/tmp`。新增同域流程必须纳入同一覆盖检查；这次应用覆盖不证明仓库控制或生产发布流程的所有临时路径均已治理，后者保持自己的执行范围和验证。受信任准入 job 若检出 base/main，不能先调用仅存在于未合入 PR 的本地 action。
 
@@ -293,7 +293,6 @@ C 盘可用空间、VHDX 在宿主的占用和 Linux `df`/`du` 的使用量是�
 | 心跳 matrix 仅覆盖五节点，未列公司 Linux03/04 | 保留 API/实际定点 job 核对；新增/退役流程必须安排 matrix 对应变更，不能称完整覆盖 |
 | 主线 renderer 仍只安装 Startup/HKCU Run；无窗口计划任务安装器在未合入 PR #615 | 公司现场已安装无窗口 Limited 计划任务，家里有既有计划任务验收；部署事实不冒充主线工具能力，安装器更新另按原 Task/PR 受审 |
 | 公司已部署任务为每日触发并带重复恢复；规范目标是登录触发 | 既有受控退出恢复通过不等于已符合全部调度定义；公司登录/冷启动/登出无人值守仍未实测，不据此新增或变更任务 |
-| 八应用 workflow 的公共临时入口为 PR #693 候选，不在编写基线 main 内 | 先完成该实现的精确准入、实际 CI 与合并，再以已合入提交和入口 job 日志验收；PR #691 已合入的 suite 清理单独有效 |
 | 清单 draining/maintenance/retired 不自动阻断 GitHub 或停止 primary 服务 | 必须按第 7 节隔离派单、停监督并排空，不能只改状态 |
 | 自动容量检查缺少阻断派单/停止的原子边界，listener 日志异常也不阻止暂停 | 仅是尽力检测；未闭合安全停机实现前限制新启用/扩大自动停服务模式，不能作排空或不误伤保证 |
 | capacitySuspended 只存在进程内，重启看门狗不保留此前暂停阶段 | 恢复测试在资源稳定窗口进行；若需跨进程恢复状态保证，先独立修复并验收，不宣称已有该能力 |
