@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource} from './clued-gated-proof-runtime.mjs';
+import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -155,4 +155,36 @@ test('original slot report continues after a hanging shadow request',async()=>{
     eventName:'workflow_run',event:{workflow_run:{id:7}},fetchImpl,sourceObservationBudgetMs:5});
   assert.equal(result.source_observation.reason,'source observation budget exhausted');
   assert.equal(observedSignal.aborted,true);assert.equal(pulls,1);assert.deepEqual(result.errors,[]);
+});
+test('complete three-dot PR diff binds head/base and both rename paths',async()=>{
+  const pr={number:4,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
+    base:{sha,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:1,commits:1};
+  const compare={base_commit:{sha},merge_base_commit:{sha:'c'.repeat(40)},total_commits:1,commits:[{sha:head}],
+    files:[{filename:'docs/new.md',previous_filename:'scripts/old.mjs',status:'renamed'}]};
+  const options={repository,prNumber:4,head,read:async route=>route.includes('/compare/')?compare:pr};
+  const result=await boundPullDiff(options);
+  assert.equal(result.passed,true);assert.deepEqual(result.changedFiles,['docs/new.md','scripts/old.mjs']);
+  assert.equal(result.scope,'pull_diff');
+  for(const edit of [p=>p.files=[],p=>delete p.files[0].previous_filename,p=>p.files[0].previous_filename='../old',
+    p=>p.files[0].filename+='\n',p=>p.total_commits=2,p=>p.commits=[],p=>p.commits[0].sha=sha,p=>p.base_commit.sha=head]) {
+    const altered=structuredClone(compare);edit(altered);
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?altered:pr})).state,'unknown');
+  }
+  let prReads=0;
+  assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?compare:
+    ++prReads===1?pr:{...pr,base:{...pr.base,sha:head}}})).state,'unknown');
+});
+test('PR commit pagination must be complete and fixed across all pages',async()=>{
+  const commits=Array.from({length:100},(_,i)=>({sha:(i+1).toString(16).padStart(40,'0')}));
+  const pr={number:4,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
+    base:{sha,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:0,commits:101};
+  const first={base_commit:{sha},merge_base_commit:{sha},total_commits:101,files:[],commits};
+  const second={base_commit:{sha},merge_base_commit:{sha},total_commits:101,commits:[{sha:head}]};
+  const options={repository,prNumber:4,head,read:async route=>route.includes('/compare/')?
+    route.endsWith('page=1')?first:second:pr};
+  assert.equal((await boundPullDiff(options)).passed,true);
+  for(const alternate of [{...second,total_commits:100},{...second,commits:[]},
+    {...second,merge_base_commit:{sha:head}},{...second,commits:[commits[0]]}])
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?
+      route.endsWith('page=1')?first:alternate:pr})).state,'unknown');
 });

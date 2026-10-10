@@ -7,6 +7,69 @@ import path from 'node:path';
 const SHA=/^[a-f0-9]{40}$/;
 const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const unknown=reason=>({passed:false,state:'unknown',reason});
+const safePath=name=>typeof name==='string' && name.length>0 && name.length<=4096 &&
+  !/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(name) && !name.startsWith('/') &&
+  !name.split('/').some(part=>!part || part==='.' || part==='..');
+
+function pullDescriptor(pr,repository,prNumber,head) {
+  if(pr?.number!==prNumber || pr.state!=='open' || pr.draft!==false || pr.head?.sha!==head ||
+    pr.base?.repo?.full_name!==repository || pr.base.ref!==pr.base.repo.default_branch ||
+    !SHA.test(pr.base.sha??'') || !REPO.test(pr.head.repo?.full_name??'') ||
+    !Number.isSafeInteger(pr.changed_files) || pr.changed_files<0 || pr.changed_files>300 ||
+    !Number.isSafeInteger(pr.commits) || pr.commits<1 || pr.commits>1000)return null;
+  return {repository,pr_number:prNumber,head,head_repository:pr.head.repo.full_name,
+    base:pr.base.sha,default_branch:pr.base.ref,changed_files:pr.changed_files,commits:pr.commits};
+}
+
+// A complete native three-dot PR diff determines workflow path filters. It is
+// not the classifier's base-to-merge-checkout documentation comparison.
+export async function boundPullDiff({read,repository,prNumber,head}) {
+  try {
+    if(typeof read!=='function' || !REPO.test(repository??'') || !SHA.test(head??'') ||
+      !Number.isSafeInteger(prNumber) || prNumber<1)return unknown('PR diff identity missing');
+    const route=`/repos/${repository}/pulls/${prNumber}`;
+    const descriptor=pullDescriptor(await read(route),repository,prNumber,head);
+    if(!descriptor)return unknown('open PR diff descriptor unavailable or outside bounds');
+    const commits=[],seen=new Set();let base=null,files=null;
+    for(let page=1;page<=10;page++) {
+      const body=await read(`/repos/${repository}/compare/${descriptor.base}...${head}?per_page=100&page=${page}`);
+      if(body?.base_commit?.sha!==descriptor.base || !SHA.test(body.merge_base_commit?.sha??'') ||
+        (base!==null && base!==body.merge_base_commit.sha) || body.total_commits!==descriptor.commits ||
+        !Array.isArray(body.commits) || body.commits.length>100)
+        return unknown('PR compare pagination inconsistent');
+      base=body.merge_base_commit.sha;
+      if(page===1) {
+        if(!Array.isArray(body.files) || body.files.length!==descriptor.changed_files)
+          return unknown('PR changed-file list incomplete');
+        files=body.files;
+      }
+      for(const commit of body.commits) {
+        if(!SHA.test(commit?.sha??'') || seen.has(commit.sha))return unknown('PR commits ambiguous');
+        seen.add(commit.sha);commits.push(commit.sha);
+      }
+      if(commits.length===descriptor.commits)break;
+      if(commits.length>descriptor.commits || body.commits.length!==100)
+        return unknown('PR commits incomplete');
+    }
+    if(commits.length!==descriptor.commits || commits.at(-1)!==head)return unknown('PR head/commit list differs');
+    const names=new Set(),fileNames=new Set();
+    for(const file of files) {
+      if(!safePath(file?.filename) || fileNames.has(file.filename) ||
+        !['added','removed','modified','renamed','copied','changed','unchanged'].includes(file.status))
+        return unknown('PR changed-file identity invalid');
+      fileNames.add(file.filename);names.add(file.filename);
+      if(file.status==='renamed') {
+        if(!safePath(file.previous_filename) || file.previous_filename===file.filename)
+          return unknown('PR rename origin unavailable');
+        names.add(file.previous_filename);
+      } else if(file.previous_filename!==undefined)return unknown('PR previous path is not a rename');
+    }
+    const latest=pullDescriptor(await read(route),repository,prNumber,head);
+    if(!latest || JSON.stringify(latest)!==JSON.stringify(descriptor))return unknown('PR diff descriptor changed');
+    return {passed:true,state:'qualified',scope:'pull_diff',descriptor,merge_base:base,
+      changedFiles:[...names].sort(),commits:commits.length,diffComplete:true};
+  } catch {return unknown('PR diff read failed');}
+}
 export const RUN_FILE_QUERY=`query($node:ID!){node(id:$node){...on WorkflowRun{
   databaseId runAttempt event file{path repositoryName repositoryFileUrl
   run{databaseId runAttempt}}}}}`;
