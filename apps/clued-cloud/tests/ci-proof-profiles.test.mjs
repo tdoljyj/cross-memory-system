@@ -4,11 +4,12 @@ import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {compileRegisteredWorkflow,workflowBlob,roleDefinitionDigest} from '../../../scripts/ci/clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,workflowBlob,roleDefinitionDigest,rolesForSource} from '../../../scripts/ci/clued-workflow-profile.mjs';
 import {ciWorkflows} from '../../../scripts/ci/clued-merge-slot-ci.mjs';
 // These critical negative cases run through the existing quality unit entry.
 import '../../../scripts/ci/clued-gated-proof.test.mjs';
 import '../../../scripts/ci/clued-workflow-profile.test.mjs';
+import '../../../scripts/ci/clued-gated-proof-runtime.test.mjs';
 const require=createRequire(import.meta.url);
 const YAML=require('yaml');
 const root=fileURLToPath(new URL('../../../',import.meta.url));
@@ -19,14 +20,18 @@ const parseYaml=text=>{const doc=YAML.parseDocument(text);assert.deepEqual(doc.e
 test('registered definitions match full YAML bytes and complete explicit primary profiles',()=>{
   assert.equal(require('yaml/package.json').version,'2.9.0');
   assert.equal(registry.schema,'clued.gated-proof-profiles/2');
+  assert.equal(roleSpecs.schema,'clued.gated-proof-role-specs/2');
   const current=ciWorkflows(root);
   for(const [file,record] of Object.entries(registry.workflows)) {
     for(const entry of [record,...(record.accepted_sources??[])]) {
       assert.equal(entry.registration_status,'registered');
-      const derived=compileRegisteredWorkflow(entry.source_yaml,{primary_ids:entry.primary_ids,parseYaml,accepted_roles:roleSpecs.workflows[file]});
+      const derived=compileRegisteredWorkflow(entry.source_yaml,{primary_ids:entry.primary_ids,parseYaml,
+        accepted_roles:rolesForSource(roleSpecs,file,entry.workflow_blob)});
       const {accepted_sources,...fields}=entry;
       assert.deepEqual(fields,derived,`${file}: profile omitted or changed source facts`);
     }
+    assert.deepEqual(Object.keys(roleSpecs.workflows[file].sources).sort(),
+      [record,...(record.accepted_sources??[])].map(entry=>entry.workflow_blob).sort(),`${file}: orphan source roles`);
   }
   for(const [file,blob] of current) {
     const record=registry.workflows[file];assert.ok(record,`${file}: missing source registration`);
