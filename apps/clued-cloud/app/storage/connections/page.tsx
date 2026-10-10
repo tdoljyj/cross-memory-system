@@ -208,7 +208,7 @@ export default function StorageConnections() {
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [message, setMessage] = useState("正在读取连接……");
   const [busy, setBusy] = useState(false);
-  const [defaultRefresh, setDefaultRefresh] = useState(false);
+  const [defaultRefresh, setDefaultRefresh] = useState(true);
   const revision = useRef(0), operation = useRef(false);
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
@@ -619,7 +619,7 @@ export default function StorageConnections() {
         </div>}
         {c.state === "awaiting_provider" && <label className="my-2 block">
           <input type="checkbox" disabled={busy} checked={defaultRefresh} onChange={event => setDefaultRefresh(event.target.checked)} />
-          连接后开启后台续签</label>}
+          首次连接后开启后台续签（默认选中，可取消）</label>}
         {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
           <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
         {c.state === "active" && c.auth_mode === "account_policy" && c.policy_active && <div className="my-2">
