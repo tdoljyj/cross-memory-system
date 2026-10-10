@@ -14,7 +14,8 @@ test('registration binds full bytes, explicit primary roles and every command oc
 test('unsupported triggers, routes, reuse, matrix and empty execution never register',()=>{
   for(const edit of [p=>p.on.pull_request={types:['closed']},p=>p.on.pull_request={paths:['!docs/**']},
     p=>p.jobs.main.strategy={matrix:{node:[22]}},p=>p.jobs.main.uses='other.yml',
-    p=>p.jobs.main['runs-on']='${{ matrix.runner }}',p=>p.jobs.main.steps=[]]) {
+    p=>p.jobs.main['runs-on']='${{ matrix.runner }}',p=>p.jobs.main.steps=[],
+    p=>p.jobs.other={...p.jobs.main}]) {
     const parsed=structuredClone(definition);edit(parsed);assert.throws(()=>compile(SOURCE,parsed));
   }
 });
@@ -26,7 +27,8 @@ test('unregistered, altered, revoked, ambiguous or partial candidate sources sta
   assert.equal(selectRegisteredProfiles(registry,sources,{...options,sourceApproved:false}).state,'unknown');
   assert.equal(selectRegisteredProfiles(registry,sources,{...options,directoryComplete:false}).state,'unknown');
   for(const mutation of [p=>p.registration_status='revoked',p=>p.source_yaml+='changed',
-    p=>p.routes[0].required_steps['Actual tests']=0,p=>p.accepted_sources=[structuredClone(p)]]) {
+    p=>p.routes[0].required_steps['Actual tests']=0,p=>p.accepted_sources=[structuredClone(p)],
+    p=>p.accepted_sources=[null],p=>p.accepted_sources=null,p=>p.routes=[null]]) {
     const altered=structuredClone(registry);mutation(altered.workflows[file]);
     assert.equal(selectRegisteredProfiles(altered,sources,options).state,'unknown');
   }

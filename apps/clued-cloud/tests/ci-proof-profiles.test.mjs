@@ -6,6 +6,9 @@ import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {compileRegisteredWorkflow,workflowBlob} from '../../../scripts/ci/clued-workflow-profile.mjs';
 import {ciWorkflows} from '../../../scripts/ci/clued-merge-slot-ci.mjs';
+// These critical negative cases run through the existing quality unit entry.
+import '../../../scripts/ci/clued-gated-proof.test.mjs';
+import '../../../scripts/ci/clued-workflow-profile.test.mjs';
 const require=createRequire(import.meta.url);
 const YAML=require('yaml');
 const root=fileURLToPath(new URL('../../../',import.meta.url));
@@ -36,4 +39,10 @@ test('YAML aliases and duplicate fields cannot hide an execution role or trigger
     'on:\n  pull_request:\n  pull_request:\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps: []\n',
     'on:\n  pull_request:\nx: &steps [{run: node --test}]\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps: *steps\n'])
     assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids:['main'],parseYaml}));
+});
+
+test('real YAML cannot omit a heavy role or replace it with a successful helper',()=>{
+  const source='on:\n  pull_request:\njobs:\n  heavy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n  helper:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo helper\n';
+  for(const primary_ids of [['heavy'],['helper'],['heavy','helper']])
+    assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids,parseYaml}));
 });

@@ -22,6 +22,8 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml}={}) {
     pattern.includes('***') || pattern.replace(/\/\*\*$/,'').includes('**') ||
     pattern.split('/').some(part=>part==='.' || part==='..' || !part)))reject('unsupported path filter');
   const routes=[];
+  const undeclared=Object.keys(value.jobs).filter(id=>!['admission-gate','push-reuse'].includes(id)&&!primary_ids.includes(id));
+  if(undeclared.length)reject('unassigned job roles: '+undeclared.join(','));
   for(const id of primary_ids) {
     if(typeof id!=='string' || !Object.hasOwn(value.jobs,id) || ['admission-gate','push-reuse'].includes(id))reject('primary role not a concrete job');
     const job=value.jobs[id];
@@ -51,6 +53,8 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml}={}) {
       required_steps:Object.fromEntries(Object.entries(commands).map(([name,values])=>[name,values.length])),
       command_digests:Object.fromEntries(Object.entries(commands))});
   }
+  if(routes.length>2 || new Set(routes.map(route=>route.self_hosted)).size!==routes.length)
+    reject('unsupported multiple logical primaries or duplicate routes');
   return {registration_status:'registered',workflow_blob:workflowBlob(text),source_sha256:digest(text),
     source_yaml:text,primary_ids:[...primary_ids],pull_request:trigger,gated:Object.hasOwn(value.jobs,'admission-gate'),routes};
 }
@@ -60,6 +64,7 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml}={}) {
 // cannot register itself by sending a profile in its own JSON.
 export function selectRegisteredProfiles(registry,sources,{sourceApproved,directoryComplete}={}) {
   const unknown=reason=>({passed:false,state:'unknown',reason});
+  try {
   if(registry?.schema!=='clued.gated-proof-profiles/2' || !(sources instanceof Map) ||
     directoryComplete!==true || sourceApproved!==true || !sources.size)return unknown('source approval/directory/registry missing');
   const selected={schema:registry.schema,workflows:{}};
@@ -67,6 +72,8 @@ export function selectRegisteredProfiles(registry,sources,{sourceApproved,direct
     if(!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file) || !/^[a-f0-9]{40}$/.test(blob))
       return unknown('CI source identity invalid');
     const root=registry.workflows?.[file];
+    if(root && Object.hasOwn(root,'accepted_sources') && !Array.isArray(root.accepted_sources))
+      return unknown(`${file}: accepted source list invalid`);
     const entries=root?[root,...(Array.isArray(root.accepted_sources)?root.accepted_sources:[])]:[];
     const matching=entries.filter(entry=>entry.registration_status==='registered' && entry.workflow_blob===blob);
     if(matching.length!==1)return unknown(`${file}: exact source has no unique current registration`);
@@ -86,4 +93,5 @@ export function selectRegisteredProfiles(registry,sources,{sourceApproved,direct
     selected.workflows[file]=entry;
   }
   return {passed:true,state:'qualified',profiles:selected};
+  } catch {return unknown('registered source/profile schema invalid');}
 }
