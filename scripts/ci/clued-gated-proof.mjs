@@ -1,5 +1,6 @@
 // Pure, typed execution proof. Callers supply authenticated, budgeted reads
 // and source qualification. No slot/executor imports and no mutation here.
+import {validDocumentationSkippedRoute} from './clued-workflow-profile.mjs';
 export const QUALITY = '.github/workflows/clued-cloud-quality-gate.yml';
 export const DOCUMENTATION_STEPS = Object.freeze(['Install from lockfile', 'Run npm run lint',
   'Run npm run ledger:verify', 'Run npm run typecheck', 'Run npm run build', 'Run npm run test:unit']);
@@ -119,6 +120,7 @@ export function qualifyPrimary(profile, jobs, file) {
   const routes=profile.routes.filter(x=>x.name===job.name && x.self_hosted===self);
   if(routes.length!==1) return unknown(`${file}: ambiguous primary route`);
   const required=routes[0].required_steps;
+  if(!validDocumentationSkippedRoute(file,routes[0]))return unknown(`${file}: documentation auxiliary route invalid`);
   if(!required || !Object.keys(required).length) return unknown(`${file}: empty execution profile`);
   if(Object.values(required).some(count=>!Number.isSafeInteger(count) || count<1))
     return unknown(`${file}: invalid execution profile count`);
@@ -131,6 +133,8 @@ export function qualifyPrimary(profile, jobs, file) {
     const steps=resultFor(name);
     if(steps.length!==count || steps.some(x=>x.status!=='completed')) return unknown(`${file}: execution step identity/count ${name}`);
     if(docs && DOCUMENTATION_STEPS.includes(name)) continue;
+    if(docs && routes[0].documentation_skipped_steps?.includes(name) &&
+      steps.every(x=>x.conclusion==='skipped')) continue;
     // The classifier is auxiliary on the Full path: continue-on-error is
     // explicitly coupled to running all six real application steps.
     if(file===QUALITY && name==='Qualify ordinary documentation changes' && !docs) continue;

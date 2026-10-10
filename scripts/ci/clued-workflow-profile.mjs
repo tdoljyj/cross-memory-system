@@ -5,6 +5,30 @@ const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof v
   Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 export const roleDefinitionDigest=job=>digest(JSON.stringify(canonical(job)));
 export const workflowBlob=text=>createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+const CACHE_OBSERVER='Observe npm HTTP cache events';
+const CACHE_COMMAND='node "$GITHUB_WORKSPACE/scripts/ci/npm-cache-observation.mjs"';
+const CACHE_CONDITION="${{ !cancelled() && (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') }}";
+const CACHE_DIRECTORY='${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}';
+export function validDocumentationSkippedRoute(file,route) {
+  if(!Object.hasOwn(route,'documentation_skipped_steps'))return true;
+  return file==='.github/workflows/clued-cloud-quality-gate.yml' && route.job_id==='trusted-self-hosted' &&
+    route.self_hosted===true && route.name==='clued-cloud-quality' &&
+    Array.isArray(route.documentation_skipped_steps) && route.documentation_skipped_steps.length===1 &&
+    route.documentation_skipped_steps[0]===CACHE_OBSERVER && route.required_steps?.[CACHE_OBSERVER]===1 &&
+    route.command_digests?.[CACHE_OBSERVER]?.[0]===digest(CACHE_COMMAND);
+}
+// This exception belongs only to the reviewed Self source/role and docs path.
+// It never qualifies telemetry as application execution or changes older routes.
+function documentationSkippedSteps(value,id,job,name) {
+  if(value.name!=='clued-cloud-quality' || id!=='trusted-self-hosted' || name!=='clued-cloud-quality' ||
+    !Array.isArray(job['runs-on']) || !job['runs-on'].includes('self-hosted'))return [];
+  const steps=job.steps.filter(step=>step.name===CACHE_OBSERVER);
+  const step=steps[0];
+  if(steps.length!==1 || step.run!==CACHE_COMMAND || step.if!==CACHE_CONDITION ||
+    step['continue-on-error']!==undefined || step.env?.npm_config_logs_dir!==CACHE_DIRECTORY ||
+    step.env?.NPM_INSTALL_OUTCOME!=='${{ steps.install.outcome }}')return [];
+  return [CACHE_OBSERVER];
+}
 const reject=reason=>{throw new Error(`unregistered workflow definition: ${reason}`);};
 
 // Independent roles are keyed by the exact source blob. A future source must
@@ -70,9 +94,11 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
       (commands[stepName]??=[]).push(digest(step.run.replace(/\r\n/g,'\n').trimEnd()));
     }
     if(!Object.keys(commands).length)reject('primary has no execution command');
+    const docsSkipped=documentationSkippedSteps(value,id,job,name);
     routes.push({job_id:id,name,self_hosted:Array.isArray(labels)&&labels.includes('self-hosted'),
       required_steps:Object.fromEntries(Object.entries(commands).map(([name,values])=>[name,values.length])),
-      command_digests:Object.fromEntries(Object.entries(commands))});
+      command_digests:Object.fromEntries(Object.entries(commands)),
+      ...(docsSkipped.length?{documentation_skipped_steps:docsSkipped}:{})});
   }
   if(routes.length>2 || new Set(routes.map(route=>route.self_hosted)).size!==routes.length)
     reject('unsupported multiple logical primaries or duplicate routes');
@@ -104,6 +130,7 @@ export function registeredWorkflowSource(registry,file,blob) {
       typeof entry.gated!=='boolean' ||
       entry.routes.some(route=>!entry.primary_ids.includes(route.job_id) || !Object.keys(route.required_steps??{}).length ||
         typeof route.self_hosted!=='boolean' || typeof route.name!=='string' || !route.name ||
+        !validDocumentationSkippedRoute(file,route) ||
         Object.entries(route.required_steps).some(([name,count])=>!Number.isSafeInteger(count) || count<1 ||
           !Array.isArray(route.command_digests?.[name]) || route.command_digests[name].length!==count ||
           route.command_digests[name].some(hash=>!/^[a-f0-9]{64}$/.test(hash)))))
