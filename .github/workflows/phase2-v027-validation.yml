@@ -35,6 +35,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Preserve exact accepted Git blob bytes
         shell: bash
         run: |
@@ -270,8 +272,14 @@ jobs:
       contents: read
     steps:
       - name: Check platform write permission using the read-only workflow token
+        working-directory: ${{ runner.temp }}
         env:
           GH_TOKEN: ${{ github.token }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
         shell: bash
         run: |
           python3 - <<'PY'
@@ -319,5 +327,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: phase2-readonly-token-permission
-          path: PermissionObservation.json
+          path: ${{ runner.temp }}/PermissionObservation.json
           if-no-files-found: error
