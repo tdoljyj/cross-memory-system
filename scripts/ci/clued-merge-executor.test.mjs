@@ -67,7 +67,8 @@ function world({ pulls = [pull()], holders = [{ claim_id: CLAIM, bound_pr: `${RE
     // By default the head's CI ran and passed (Task 114d43cf); tests override these two routes.
     [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [{ id: 700, path: ".github/workflows/clued-components.yml@refs/pull/5/merge",
       head_sha: HEAD, event: "pull_request", status: "completed", conclusion: "success" }] },
-    [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: [{ name: "admission-gate", conclusion: "success" }, { name: "components", conclusion: "success" }] },
+    [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: [{ name: "admission-gate", conclusion: "success" }, { name: "clued-components", conclusion: "success" },
+      { name: "${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ... 'clued-components-hosted-skipped' }}", conclusion: "skipped" }] },
     [`/repos/${REPO}/installation`]: { id: 99 },
     "POST /app/installations/99/access_tokens": token,
     [`PUT /repos/${REPO}/pulls/5/update-branch`]: { message: "Updating pull request branch." },
@@ -108,8 +109,9 @@ test("a head behind the default branch is brought up to date as the App, bound t
 });
 
 test("an up-to-date, admitted head opted in for itself gets auto-merge once its CI ran and passed; GitHub waits for the required checks", async () => {
-  // A required check still running (trivy) does not hold it back: GitHub waits for it.
-  const running = checksRoute({ trivy: [check("trivy", { status: "in_progress", conclusion: null })] });
+  // An App check still pending (clued-merge-slot, clued-admission-verified) does not hold it back: GitHub waits for it.
+  // (A workflow's own check, such as trivy, runs in a run that gatedCiOf waits for.)
+  const running = checksRoute({ "clued-merge-slot": [check("clued-merge-slot", { status: "in_progress", conclusion: null })] });
   for (const extra of [{}, running]) {
     const fetch = world({ extra });
     const result = await run(fetch);
@@ -162,7 +164,8 @@ test("auto-merge on with an opt-in for another head is turned off (review MAJOR-
 
 // CI runs on the head: the newest pull_request run of a gated workflow, and its jobs (review MAJOR-1).
 const GATED = ".github/workflows/clued-components.yml";
-const ciRuns = ({ conclusion = "success", status = "completed", jobs = [["admission-gate", "success"], ["components", "success"]] } = {}) => ({
+const ciRuns = ({ conclusion = "success", status = "completed",
+  jobs = [["admission-gate", "success"], ["clued-components", "success"], ["clued-components-hosted-skipped", "skipped"]] } = {}) => ({
   [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [
     { id: 600, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status: "completed", conclusion: "failure" },
     { id: 700, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status, conclusion: status === "completed" ? conclusion : null },
@@ -186,10 +189,19 @@ test("a clean, opted-in head whose CI all ran and passed is merged by the execut
   assert.match(renderSummary(result), /\*\*merged\*\*/);
 });
 
+test("Task 114d43cf: a workflow without a gate passes with one twin run and the other skipped", async () => {
+  const fetch = world({ extra: ciRuns({ jobs: [["gitleaks", "success"], ["gitleaks-hosted-skipped", "skipped"]] }) });
+  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge");
+});
+
 test("Task 114d43cf: skipped gated jobs, a red or running CI run or no CI run get neither auto-merge nor a merge", async () => {
   for (const [name, extra, reason] of [
-    ["gated jobs skipped", ciRuns({ jobs: [["admission-gate", "success"], ["components", "skipped"]] }),
-      /\.github\/workflows\/clued-components\.yml skipped components/],
+    ["gate refused, every gated job skipped", ciRuns({ jobs: [["admission-gate", "success"], ["clued-components", "skipped"],
+      ["clued-components-hosted-skipped", "skipped"]] }), /\.github\/workflows\/clued-components\.yml ran no job besides its gate \(all skipped\)/],
+    ["gate failed", ciRuns({ jobs: [["admission-gate", "failure"], ["clued-components", "skipped"], ["clued-components-hosted-skipped", "skipped"]] }),
+      /clued-components\.yml job admission-gate is failure/],
+    ["a job failed in a successful run", ciRuns({ jobs: [["admission-gate", "success"], ["clued-components", "cancelled"],
+      ["clued-components-hosted-skipped", "skipped"]] }), /clued-components\.yml job clued-components is cancelled/],
     ["CI run failed", ciRuns({ conclusion: "failure" }), /clued-components\.yml is completed \(failure\)/],
     ["CI run still running", { ...ciRuns({ status: "in_progress" }),
       [`/repos/${REPO}/contents/.github/workflows?ref=${HEAD}`]: [] }, /clued-components\.yml is in_progress/],

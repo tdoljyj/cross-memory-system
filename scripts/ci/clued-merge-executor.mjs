@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Merge Admission v0.1 §7.2–§7.4, step 5 of §13 (Task 91039d74; Owner
 // Decisions 661f8c36 and 5aa668e3): the executor does the head of the merge
-// queue's work so its Agent need not stay online. The clued-merge-executor
+// queue's work while its Agent keeps the claim live. The clued-merge-executor
 // workflow runs this on the default branch after each clued-merge-slot-ci
-// run, hourly and by hand. For each open pull request into the default branch
+// run, after each push to main and by hand. For each open pull request into the default branch
 // whose claim heads a merge queue (clued_work_merge_slot_holders_v1 lists
 // only heads since migration 20261009080000):
 //
@@ -20,8 +20,8 @@
 //               expectedHeadOid) and GitHub waits for the required checks
 //               still running (§7.4; GitHub refuses auto-merge on a pull
 //               request that is already mergeable, review MAJOR-1). Only
-//               once every CI workflow that ran on the head passed with no
-//               job skipped (no gated workflow is a required check, so
+//               once every CI workflow that ran on the head passed, its
+//               gated jobs run (no gated workflow is a required check, so
 //               auto-merge alone would not wait for them; Task 114d43cf),
 //               and only when
 //               - the body has a line "Clued-Auto-Merge: <head sha>" naming
@@ -42,7 +42,7 @@
 //   mergeable   GitHub refuses auto-merge on a pull request that can merge
 //               now ("clean status"). Under the same conditions, and only when
 //               the newest pull_request run of every CI workflow on the head
-//               succeeded with no job skipped (GitHub counts a skipped gated
+//               succeeded with its gate and gated jobs run (GitHub counts a skipped gated
 //               job as passing, and none of the gated workflows is required by
 //               the ruleset; review MAJOR-1), the executor merges it itself
 //               (merge commit, sha bound to the head it read); the ruleset
@@ -162,8 +162,12 @@ async function admissionOf(fetchImpl, env, repository, headSha, prNumber) {
   return { admitted: true, mode: parseModeLabel(newest.output && newest.output.title) };
 }
 
-// Every CI workflow's newest pull_request run on the head: completed, success,
-// no job skipped (the gate skips the gated jobs until admission; review MAJOR-1).
+// Every CI workflow's newest pull_request run on the head: completed and
+// successful, no job failed, the admission gate (where there is one) passed,
+// and at least one job besides the gate ran and passed. Each workflow runs one
+// of a pair of jobs (trusted-self-hosted / untrusted-hosted, so the other is
+// always skipped), and a refused gate skips every job after it (review
+// MAJOR-1 of #675; confirmation review of #684).
 export async function gatedCiOf(fetchImpl, env, repository, headSha, workflows) {
   const listed = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${headSha}&event=pull_request&per_page=100`);
   const newest = new Map();
@@ -179,13 +183,20 @@ export async function gatedCiOf(fetchImpl, env, repository, headSha, workflows) 
     if (run.status !== "completed" || run.conclusion !== "success") {
       return { passed: false, reason: `${file} is ${run.status}${run.conclusion ? ` (${run.conclusion})` : ""}` };
     }
-    const jobs = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
-    const skipped = (Array.isArray(jobs && jobs.jobs) ? jobs.jobs : []).filter((job) => job && job.conclusion === "skipped").map((job) => job.name);
-    if (skipped.length) return { passed: false, reason: `${file} skipped ${skipped.join(", ")}` };
+    const listedJobs = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+    const jobs = (Array.isArray(listedJobs && listedJobs.jobs) ? listedJobs.jobs : []).filter(Boolean);
+    const unfinished = jobs.find((job) => !["success", "skipped", "neutral"].includes(job.conclusion));
+    if (unfinished) return { passed: false, reason: `${file} job ${unfinished.name} is ${unfinished.conclusion ?? unfinished.status}` };
+    const gate = jobs.find((job) => job.name === GATE_JOB);
+    if (gate && gate.conclusion !== "success") return { passed: false, reason: `${file} ${GATE_JOB} was ${gate.conclusion}` };
+    if (!jobs.some((job) => job.name !== GATE_JOB && job.conclusion === "success")) {
+      return { passed: false, reason: `${file} ran no job besides its gate (all skipped)` };
+    }
   }
-  return { passed: true, reason: `${newest.size} CI workflow run(s) succeeded on this head` };
+  return { passed: true, reason: `${newest.size} CI workflow run(s) passed on this head` };
 }
 
+const GATE_JOB = "admission-gate";
 const ENABLE_AUTO_MERGE = "mutation($id: ID!, $oid: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $oid}) { pullRequest { number autoMergeRequest { enabledAt } } } }";
 const DISABLE_AUTO_MERGE = "mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { pullRequest { number } } }";
 
@@ -215,7 +226,7 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, work
   const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
   if (seen.state === "failed") return { action: "none", reason: `CI failed: ${seen.reason}` };
   // GitHub's auto-merge waits only for the ruleset's required checks, and no gated workflow is
-  // required: act only once every CI workflow that ran on the head passed with no job skipped,
+  // required: act only once every CI workflow that ran on the head passed, its gated jobs run,
   // as the direct merge does (Task 114d43cf). The executor runs after each slot report, that is
   // after each CI run on the head, so it acts when the last one passes.
   const gated = await gatedCiOf(fetchImpl, env, repository, pr.head.sha, workflows);
