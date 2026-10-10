@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../supabase-browser";
-type Connection = { id: string; provider: string; state: string; version: number; profile_id: string };
+type Connection = { id: string; provider: string; state: string; version: number; root_name: string };
 type RecoveryView = { job_id: string; status: string; receipt_id: string };
 const recoveryLabels: Record<string, string> = { queued: "已排队", prepared: "已准备", started: "已开始，结果待核对", uncertain: "结果待核对",
   committed: "已登记完成", cancelled: "已取消", denied: "已拒绝", attention_required: "需要核查" };
@@ -37,7 +37,9 @@ async function request(path: string, body: object | undefined, stillCurrent: () 
   if (!stillCurrent()) throw new Error("账号或页面已变化，请重新确认。");
   const response = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
     body: JSON.stringify(body), cache: "no-store", redirect: "error" });
+  if (!stillCurrent()) throw new Error("账号或页面已变化，请重新确认。");
   if (!response.ok) {
+    if (path === "/v1/storage/refresh" && response.status === 404) throw new Error("后台续签服务暂未开放，请稍后重新查询；当前续签设置没有改变。");
     if (path === "/v1/storage/google/probe" && response.status === 403) {
       const failure: unknown = await response.json().catch(() => null);
       if (isObject(failure) && failure.execution_permitted === false && isObject(failure.diagnostic)) {
@@ -52,7 +54,7 @@ async function request(path: string, body: object | undefined, stillCurrent: () 
   }
   const value: unknown = await response.json();
   const current = await supabase.auth.getSession();
-  if (current.error || current.data.session?.user.id !== data.session.user.id) throw new Error("账号已变化，请重新读取连接。");
+  if (!stillCurrent() || current.error || current.data.session?.user.id !== data.session.user.id) throw new Error("账号已变化，请重新读取连接。");
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("响应未确认。");
   return value as Record<string, unknown>;
 }
@@ -66,15 +68,17 @@ export default function StorageConnections() {
   const registrationBusy = useRef(false);
   const operationBusy = useRef(false);
   const revision = useRef(0);
+  const accountId = useRef<string | null>(null);
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
     setRenewals({});
     setProbeMessages({});
     setRecoveryJobs({}); setRecoveryViews({});
     setBusy(true);
-    try { const result = await request("/v1/storage/account", { action: "list" });
+    try { const result = await request("/v1/storage/owner", { action: "connections" }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
-      if (!Array.isArray(result.connections) || !result.connections.every(c => c && typeof c.id === "string" && typeof c.provider === "string" && typeof c.state === "string" && Number.isSafeInteger(c.version))) throw new Error("连接列表未确认。");
+      if (!Array.isArray(result.connections) || !result.connections.every(c => isObject(c) && typeof c.id === "string" && typeof c.provider === "string" && typeof c.state === "string" &&
+        Number.isSafeInteger(c.version) && typeof c.root_name === "string" && c.root_name.trim().length > 0)) throw new Error("连接列表未确认。");
       setConnections(result.connections); setMessage(result.connections.length ? "" : "暂无已登记连接。请先完成受治理目录登记。");
     } catch (error) { if (epoch === revision.current) { setConnections([]); setMessage(error instanceof Error ? error.message : "无法读取连接。"); } }
     finally { if (epoch === revision.current) setBusy(false); }
@@ -83,8 +87,13 @@ export default function StorageConnections() {
     let disposed = false;
     const liveRevision = revision;
     const scheduleRead = () => queueMicrotask(() => { if (!disposed) void refresh(); });
-    const { data } = supabase.auth.onAuthStateChange(() => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (disposed) return;
+      const nextAccount = session?.user.id ?? null;
+      // getSession can refresh the token during a button request. The same
+      // account's refreshed credential does not invalidate its connection/CAS view.
+      if (event === "TOKEN_REFRESHED" && nextAccount !== null && nextAccount === accountId.current) return;
+      accountId.current = nextAccount;
       ++revision.current; setConnections([]); setRenewals({}); setProfileId(""); setDecisionId("");
       setProbeMessages({});
       setRecoveryJobs({}); setRecoveryViews({});
@@ -186,17 +195,23 @@ export default function StorageConnections() {
     if (operationBusy.current || busy) return;
     const previous = renewals[c.id];
     if (action !== "status" && !previous) return;
-    if (action === "enable" && !window.confirm("允许 Clued 服务端持续续签这条 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。")) return;
-    if (action === "disable" && !window.confirm("停用后不再发起新的后台续签。已经开始的续签需要核对结果，不能靠重新开启跳过。")) return;
+    if (action === "enable" && !window.confirm(`允许 Clued 服务端持续续签「${c.root_name}」的 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。`)) return;
+    if (action === "disable" && !window.confirm(`停用「${c.root_name}」的后台续签？停用后不再发起新的后台续签。已经开始的续签需要核对结果，不能靠重新开启跳过。`)) return;
     const epoch = revision.current; operationBusy.current = true; setBusy(true);
     try {
-      if (action !== "status") await request("/v1/storage/refresh", { action, connection_id: c.id, base_version: previous.connection_version,
-        delegation_version: previous.version, idempotency_key: crypto.randomUUID(), ...(action === "enable" ? { until_revoked: true } : {}) }, () => epoch === revision.current);
+      if (action !== "status") {
+        const changed = await request("/v1/storage/refresh", { action, connection_id: c.id, base_version: previous.connection_version,
+          delegation_version: previous.version, idempotency_key: crypto.randomUUID(), ...(action === "enable" ? { until_revoked: true } : {}) }, () => epoch === revision.current);
+        if (changed.status !== "committed" || typeof changed.receipt_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(changed.receipt_id)) throw new Error("续签设置结果未确认，请重新查询状态；不会自动重试。");
+      }
       if (epoch !== revision.current) return;
       const value = await request("/v1/storage/refresh", { action: "status", connection_id: c.id }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
-      if (typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version) || !Number.isSafeInteger(value.connection_version) ||
-        !Number.isSafeInteger(value.failures) || typeof value.pending !== "boolean" || !(value.next_refresh_at === null || typeof value.next_refresh_at === "string")) throw new Error("续签状态未确认。");
+      if (typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version) || Number(value.version) < 0 ||
+        !Number.isSafeInteger(value.connection_version) || Number(value.connection_version) < 1 ||
+        !Number.isSafeInteger(value.failures) || Number(value.failures) < 0 || typeof value.pending !== "boolean" ||
+        !(value.next_refresh_at === null || typeof value.next_refresh_at === "string")) throw new Error("续签状态未确认。");
+      if (action !== "status" && value.enabled !== (action === "enable")) throw new Error("续签设置尚未生效，请重新查询状态；不会自动重试。");
       setRenewals(old => ({ ...old, [c.id]: value as RefreshStatus }));
       setConnections(old => old.map(item => item.id === c.id ? { ...item, version: Number(value.connection_version) } : item));
       setMessage(action === "status" ? "" : "设置已确认。");
@@ -219,7 +234,9 @@ export default function StorageConnections() {
       <button disabled={busy || !profileId.trim() || !decisionId.trim()} onClick={() => void register()}>登记账号连接</button>
     </section>
     {connections.map(c => <section className="my-4 rounded-xl border p-4" key={c.id}>
-      <h2>{c.provider} · {labels[c.state] ?? "状态待确认"}</h2><p className="my-2 break-all text-sm">连接：{c.id}</p>
+      <h2>{c.root_name}</h2><p className="my-2">{c.provider === "google-drive" ? "Google Drive" : c.provider} · {labels[c.state] ?? "状态待确认"}</p>
+      <p className="my-2 break-all text-sm">已登记目录：{c.root_name}</p>
+      <details className="my-2 text-sm"><summary>连接技术信息</summary><p className="break-all">连接：{c.id}</p></details>
       <details className="my-4 rounded border p-3"><summary>核对未确认的原存储任务</summary>
         <p className="my-2 text-sm">使用原任务 ID 查询结果。核验仅读取 Google 元数据并登记原回执，不会重派文件操作、恢复权限或开启续签。</p>
         <label className="my-2 block">原存储任务 ID<input className="block w-full rounded border p-2" autoComplete="off" disabled={busy}
