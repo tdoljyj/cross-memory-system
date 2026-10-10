@@ -142,7 +142,9 @@ test('trigger applicability refuses incomplete, excessive, changed or unsupporte
   const workflows=new Map(Object.entries(profiles.workflows).map(([file,p])=>[file,p.workflow_blob]));
   const w={workflows,profiles,changedFiles:['docs/README.md'],commits:1,diffComplete:true,sourceQualified:true};
   for(const changes of [{diffComplete:false},{sourceQualified:false},{commits:1001},{changedFiles:Array(301).fill('docs/a.md')},
-    {changedFiles:['../escape']},{workflows:new Map([[QUALITY,'b'.repeat(40)]])}])
+    {changedFiles:['../escape']},{workflows:new Map([[QUALITY,'b'.repeat(40)]])},
+    {workflows:new Map([[QUALITY,profiles.workflows[QUALITY].workflow_blob]])},
+    ...['\n','\r','\u2028','\u2029','\0'].map(separator=>({changedFiles:[`apps/clued-cloud/worker/a${separator}name.ts`]}))])
     assert.equal(applicableCI({...w,...changes}).state,'unknown');
   for(const paths of [['!docs/**'],['apps/**/deep'],['apps/?.js']]) {
     const altered=structuredClone(profiles);altered.workflows[QUALITY].pull_request={paths};

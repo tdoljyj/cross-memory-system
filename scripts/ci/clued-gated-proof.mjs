@@ -12,9 +12,10 @@ const failed = reason => ({passed:false,state:'failed',reason,scopes:[]});
 // supported. New trigger syntax must receive a reviewed implementation.
 export function applicableCI({workflows,profiles,changedFiles,commits,diffComplete,sourceQualified}) {
   if(sourceQualified!==true || diffComplete!==true || !(workflows instanceof Map) ||
+    !profiles?.workflows || workflows.size!==Object.keys(profiles.workflows).length ||
     !Array.isArray(changedFiles) || !changedFiles.length || changedFiles.length>300 ||
     !Number.isSafeInteger(commits) || commits<1 || commits>1000 ||
-    changedFiles.some(file=>typeof file!=='string' || !file.length || file.startsWith('/') ||
+    changedFiles.some(file=>typeof file!=='string' || !file.length || /[\u0000-\u001f\u007f\u2028\u2029]/.test(file) || file.startsWith('/') ||
       file.split('/').some(part=>part==='..' || part==='.' || !part)))
     return unknown('applicable CI source/diff is incomplete or exceeds audited trigger boundary');
   const targets=new Map();
