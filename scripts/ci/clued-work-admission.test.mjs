@@ -967,17 +967,21 @@ test("gate guard: every gated workflow on this branch passes and uses a listed g
   assert.deepEqual(gateFindings(ungated, ungated), []);
 });
 
+const TEMPORARY_GATE_BOOTSTRAP = "      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n";
+const TEMPORARY_GATE_DIGEST = "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9";
+const withoutTemporaryGateBootstrap = (text) => text.replace(TEMPORARY_GATE_BOOTSTRAP + "      - id: gate\n", "      - id: gate\n");
+
 test("gate guard: the exact PR-read version is registered before workflow rollout; other changes are refused", () => {
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest], "only the three exact gate versions");
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST], "only the four exact gate versions");
   // Merge Admission step 6 dropped this line from the gate; the two older
   // versions below still carry it.
   const token = "          GITHUB_TOKEN: ${{ github.token }}\n";
   const enforceLine = "          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}\n";
   for (const name of GATED_FILES) {
-    const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
+    const current = withoutTemporaryGateBootstrap(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8"));
     assert.equal(sha256Hex(workflowJobs(current).find((job) => job.name === "admission-gate").lines.join("\n")), noEnforceDigest, name);
     const withEnforce = current.replace(token, `${enforceLine}${token}`);
     assert.notEqual(withEnforce, current, `${name}: fixture adds the retired variable line back`);
@@ -1009,13 +1013,36 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   }
 });
 
+test("gate guard: only the exact temporary bootstrap template is registered before rollout", () => {
+  for (const name of GATED_FILES) {
+    const legacy = withoutTemporaryGateBootstrap(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8"));
+    const candidate = legacy.replace("      - id: gate\n", TEMPORARY_GATE_BOOTSTRAP + "      - id: gate\n");
+    assert.notEqual(candidate, legacy, name);
+    assert.equal(sha256Hex(workflowJobs(candidate).find(job => job.name === "admission-gate").lines.join("\n")), TEMPORARY_GATE_DIGEST, name);
+    assert.deepEqual(gateFindings(candidate, legacy), [], name);
+    // Old templates remain admitted; their temporary lifecycle is checked separately.
+    assert.deepEqual(gateFindings(legacy, candidate), [], name);
+    for (const changed of [
+      candidate.replace(TEMPORARY_GATE_BOOTSTRAP, TEMPORARY_GATE_BOOTSTRAP + "        if: false\n"),
+      candidate.replace(TEMPORARY_GATE_BOOTSTRAP, TEMPORARY_GATE_BOOTSTRAP.replace("./.github/", "./candidate/.github/")),
+      candidate.replace(TEMPORARY_GATE_BOOTSTRAP, TEMPORARY_GATE_BOOTSTRAP + "        env:\n          TMPDIR: /tmp/shared\n"),
+      candidate.replace(TEMPORARY_GATE_BOOTSTRAP, TEMPORARY_GATE_BOOTSTRAP + "      - run: echo extra\n"),
+      candidate.replace("ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}", "ref: ${{ github.event.pull_request.head.sha }}"),
+      candidate.replace("run: node scripts/ci/clued-work-admission.mjs --mode gate", "run: echo admitted=true"),
+    ]) {
+      assert.notEqual(changed, candidate, name);
+      assert.deepEqual(gateFindings(changed, legacy), ["admission_gate_changed"], name);
+    }
+  }
+});
+
 test("gate guard (Merge Admission step 6): every gated workflow's gate no longer passes CLUED_WORK_ADMISSION_ENFORCE", () => {
   const token = "          GITHUB_TOKEN: ${{ github.token }}\n";
   for (const name of GATED_FILES) {
     const current = fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
-    assert.equal(sha256Hex(gateJob.lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
+    assert.equal(sha256Hex(workflowJobs(withoutTemporaryGateBootstrap(current)).find(job => job.name === "admission-gate").lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
     assert.deepEqual(gateFindings(current, current), [], name);
     // Dropping the token or adding another variable is still a changed gate.
     assert.deepEqual(gateFindings(current.replace(token, ""), current), ["admission_gate_changed"], name);

@@ -318,6 +318,10 @@ export const GATE_JOB_SHA256 = new Set([
   // Merge Admission step 6 (Task 958f8ed7): the same gate without the
   // CLUED_WORK_ADMISSION_ENFORCE line, once enforcement no longer reads it.
   "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc",
+  // BUG-20261010-CI-TMP-001: exactly the same enforced gate, plus the
+  // checked-out temporary-storage bootstrap immediately before its command.
+  // Register on trusted main first; workflow rollout is a separate PR.
+  "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 
