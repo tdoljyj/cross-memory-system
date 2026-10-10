@@ -190,6 +190,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       a.run_attempt===b.run_attempt && a.status===b.status && a.conclusion===b.conclusion &&
       sameMembership(a,b);
     const nativeBarrier=async()=>{
+      for(const row of latest.values())if(!sameRun(await read(`/repos/${repository}/actions/runs/${row.id}`),row))return false;
       const rows=await completeList(read,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request`,'workflow_runs');
       if(!rows)return false;
       const current=new Map();
@@ -199,7 +200,6 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
         if(!current.has(file)||row.id>current.get(file).id)current.set(file,row);
       }
       if(current.size!==latest.size || [...latest].some(([file,row])=>!sameRun(current.get(file),row)))return false;
-      for(const row of latest.values())if(!sameRun(await read(`/repos/${repository}/actions/runs/${row.id}`),row))return false;
       return true;
     };
     const terminal=async(run,result)=>{
