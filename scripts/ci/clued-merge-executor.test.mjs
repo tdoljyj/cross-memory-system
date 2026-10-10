@@ -400,6 +400,7 @@ test("execution becomes unknown after planning: no rerun",async()=>{
 function authorityWorld(extra={}) {
   const current=pull({changed_files:1,base:{ref:"main",sha:TIP,repo:{default_branch:"main",full_name:REPO}}});
   const fetch=world({pulls:[current],extra:{
+    ...checksRoute({"clued-admission-verified":[verified({output:{title:"ADMITTED [normal · docs · reruns 2]"}})]}),
     [`/repos/${REPO}/pulls/5/files`]:[{filename:"README.md",status:"modified"}],
     [`/repos/${REPO}/compare/${TIP}...${HEAD}`]:{status:"ahead",files:[{filename:"README.md",status:"modified"}]},
     [`rpc:${VERIFY_RPC}`]:{verdict:"ADMITTED",reasons:[],verified_at:"2026-10-10T20:00:00Z",
@@ -476,6 +477,15 @@ test("production live authority retains efficiency's actual FIFO holder",async()
   const result=await currentOperationAuthority({env:env({CLUED_MERGE_ADMISSION_STATE:"efficiency"}),fetchImpl:fetch.fetchImpl,workspace:ROOT,
     readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"merge_pull_request"});
   assert.equal(result.valid,true);assert.deepEqual(writes(fetch),[]);
+});
+
+test("a stale App layer or retry limit does not describe the current policy",async()=>{
+  for(const title of ["ADMITTED [normal · code · reruns 1]","ADMITTED [normal · docs · reruns 1]"]) {
+    const {fetch,current}=authorityWorld(checksRoute({"clued-admission-verified":[verified({output:{title}})]}));
+    const result=await currentOperationAuthority({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT,
+      readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"rerun_gated"});
+    assert.equal(result.valid,false,title);assert.deepEqual(writes(fetch),[]);
+  }
 });
 test("cleanup with withdrawn opt-in, empty claim or missing Clued token never starts slow qualification",async()=>{
   for(const body of [BODY,"",`${BODY}\nClued-Auto-Merge: ${HEAD}`]) {

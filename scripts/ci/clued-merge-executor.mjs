@@ -156,7 +156,9 @@ export async function currentOperationAuthority({env,fetchImpl,workspace,readPol
     if(action!=='update_branch' && !held)return {valid:false};
     if(action==='update_branch' && outcome.admission_mode.layer==='protected')return {valid:false};
     const freshAdmission=await admissionOf(fetchImpl,env,repository,current.head.sha,current.number);
-    if(!freshAdmission.admitted || !freshAdmission.mode || freshAdmission.mode.state!==mode.state)return {valid:false};
+    if(!freshAdmission.admitted || !freshAdmission.mode || freshAdmission.mode.state!==mode.state ||
+      freshAdmission.mode.layer!==outcome.admission_mode.layer ||
+      freshAdmission.mode.reruns_per_head!==outcome.admission_mode.rules.reruns_per_head)return {valid:false};
     const final=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`);
     const finalBranch=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(current.base.ref)}`);
     if(final?.number!==current.number || final.state!=='open' || final.draft!==false || final.head?.sha!==current.head.sha ||
