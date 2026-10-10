@@ -1,6 +1,6 @@
 # Runner 配置与运维规范
 
-版本：v1.3；适用仓库：`tdoljyj/cross-memory-system`。本次核对：2026-10-10，主线基线 `77bcf598fc06ad482e5e1e437f309e9ef4bfba8b`；全仓临时目录补齐与本规范同 PR 审核，合入前仍属候选。旧 v1.1 无窗口安装器候选在 PR #615，尚未合入，不能当作当前主线实现。
+版本：v1.3；适用仓库：`tdoljyj/cross-memory-system`。本次核对：2026-10-10，包含控制入口 PR #700 和质量分类 PR #701；全仓临时目录补齐与本规范同 PR 审核，以该 PR 的实际合入提交为实现边界。旧 v1.1 无窗口安装器候选在 PR #615，尚未合入，不能当作当前主线实现。
 
 本文件是工程 Runbook，规定配置、上线验收、日常维护、增减与回退的操作要求。它不声明某台机器此刻在线，也不代替操作授权、Clued 当前任务或 GitHub 准入。下文的“必须”是执行本规范的要求；“现状”只说明编写时已核对的实现。未实现的要求见第 12 节，不得据此宣称已达标。
 
@@ -37,7 +37,7 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 
 表内名称均加前缀 `clued-ci-`。公司 WSL 为 `CluedCI-Linux`，家里为 `Ubuntu-24.04`；Linux 服务用户为 `runner`。完整服务名、路由标签和看门狗路径从清单取，不能按机器名猜测。
 
-本次证据边界：公司现场已复读 Windows 自动服务 `StartName=.\clued-runner`，四个 Linux unit 为 `User=runner`、`KillMode=control-group`、各自独立工作目录且 active；公司 `.wslconfig` 实际为 28 GB / 16 CPU / 8 GB swap。家里本轮只核对 GitHub 注册与路由标签，主机侧账号、启动链和冷启动资格仍按对应精确历史验收及变更失效规则使用，不宣称本轮远端主机重新验收。
+本次证据边界：公司四个 Linux unit 为 `User=runner`、`KillMode=control-group`、各自独立工作目录且 active；公司 `.wslconfig` 实际为 28 GB / 16 CPU / 8 GB swap。家里 `Ubuntu-24.04` 的 Linux 服务本轮只读复核为 active、`User=runner`、`KillMode=control-group`、根目录 `/opt/actions-runner`。两台原生 Windows 服务本轮经管理员只读复核均为 Running/Auto、`StartName=.\clued-runner`。这些定点读取不替代启动链、冷启动或登出无人值守验收；相应资格仍按历史精确证据及变更失效规则使用。
 
 ### 2.1 身份、目录与路由
 

@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { configureTemporaryStorage } from "../../../.github/actions/ci-temporary-storage/setup.mjs";
-import { checkApplicationWorkflows, checkRepositoryWorkflows, PLATFORM_TEMP_ENVIRONMENT, repositoryTemporaryStorageFindings, stepFingerprint, temporaryStorageFindings } from "../../../.github/actions/ci-temporary-storage/check-workflows.mjs";
+import { checkApplicationWorkflows, checkRepositoryWorkflows, checkoutSources, PLATFORM_TEMP_ENVIRONMENT, repositoryTemporaryStorageFindings, sourceFingerprint, stepFingerprint, temporaryStorageFindings } from "../../../.github/actions/ci-temporary-storage/check-workflows.mjs";
 import { createRequire } from "node:module";
 
 const cli = fileURLToPath(new URL("../../../.github/actions/ci-temporary-storage/setup.mjs", import.meta.url));
@@ -123,7 +123,7 @@ test("repository coverage includes Python/control jobs and preserves the trusted
   const checkout = { uses: "actions/checkout@pinned" };
   const setup = { uses: "./.github/actions/ci-temporary-storage" };
   const run = { run: "python3 -m unittest example" };
-  const audit = { jobs: { control: { mode: "job-temp", action: setup.uses, retained_artifacts: [], persistent_action_caches: [] } } };
+  const audit = { jobs: { control: { mode: "job-temp", action: setup.uses, checkout_sources: checkoutSources([checkout]), retained_artifacts: [], persistent_action_caches: [] } } };
   const check = (steps, job = {}) => repositoryTemporaryStorageFindings({ jobs: { control: { steps, ...job } } }, "control.yml", audit);
   assert.deepEqual(check([checkout, setup, run]), []);
   assert.ok(check([checkout, run]).length);
@@ -135,11 +135,29 @@ test("repository coverage includes Python/control jobs and preserves the trusted
   assert.ok(check([checkout, setup, { ...run, env: { temp: "/tmp" } }]).length);
   assert.ok(check([checkout, setup, run], { container: "python:3.12" }).length);
   assert.ok(check([checkout, setup, { uses: "vendor/unknown@commit" }, run]).length);
-  const trustedAudit = { jobs: { control: { ...audit.jobs.control, action: "./trusted/.github/actions/ci-temporary-storage" } } };
-  const trusted = { jobs: { control: { steps: [{ ...checkout, with: { path: "trusted" } }, { uses: trustedAudit.jobs.control.action }, run] } } };
+  const trustedCheckout = { ...checkout, with: { path: "trusted", ref: "main", repository: "owner/repo" } };
+  const trustedAudit = { jobs: { control: { ...audit.jobs.control, action: "./trusted/.github/actions/ci-temporary-storage", checkout_sources: checkoutSources([trustedCheckout]) } } };
+  const trusted = { jobs: { control: { steps: [trustedCheckout, { uses: trustedAudit.jobs.control.action }, run] } } };
   assert.deepEqual(repositoryTemporaryStorageFindings(trusted, "control.yml", trustedAudit), []);
   trusted.jobs.control.steps[1].uses = "./candidate/.github/actions/ci-temporary-storage";
   assert.ok(repositoryTemporaryStorageFindings(trusted, "control.yml", trustedAudit).length);
+  trusted.jobs.control.steps[1].uses = trustedAudit.jobs.control.action;
+  for (const changed of [{ ...trustedCheckout, if: false }, { ...trustedCheckout, with: { ...trustedCheckout.with, ref: "candidate" } },
+    { ...trustedCheckout, with: { ...trustedCheckout.with, repository: "other/repo" } }]) {
+    trusted.jobs.control.steps[0] = changed;
+    assert.match(repositoryTemporaryStorageFindings(trusted, "control.yml", trustedAudit).join("\n"), /checkout/);
+  }
+  // Even a freshly classified conditional checkout must actually provide the bootstrap.
+  const disabled = { ...checkout, if: false };
+  const disabledAudit = { jobs: { control: { ...audit.jobs.control, checkout_sources: checkoutSources([disabled]) } } };
+  assert.match(repositoryTemporaryStorageFindings({ jobs: { control: { steps: [disabled, setup, run] } } }, "control.yml", disabledAudit).join("\n"), /compatible checkout/);
+  for (const uses of ["actions/setup-node@pinned", "actions/upload-artifact@pinned"]) {
+    const official = { uses, with: { path: "evidence" }, env: { TMPDIR: "/tmp/shared" } };
+    assert.match(check([checkout, setup, official, run]).join("\n"), /overridden temporary/);
+    official.env = { WRANGLER_LOG_SANITIZE: false };
+    assert.match(check([checkout, setup, official, run]).join("\n"), /sanitization/);
+  }
+  assert.match(check([checkout, setup, run], { env: { TEMP: "shared" } }).join("\n"), /overridden job temporary/);
 });
 
 test("no-checkout production control binds every runtime step without loading repository code", () => {
@@ -147,6 +165,7 @@ test("no-checkout production control binds every runtime step without loading re
   const audit = { jobs: { control: { mode: "step-env", retained_artifacts: [], persistent_action_caches: [] } } };
   const check = (steps) => repositoryTemporaryStorageFindings({ jobs: { control: { steps } } }, "control.yml", audit);
   assert.deepEqual(check([run, { ...run, if: "always()" }]), []);
+  assert.match(check([{ uses: "actions/checkout@pinned" }, run]).join("\n"), /no-checkout control/);
   assert.ok(check([run, { ...run, env: { TMPDIR: "${{ runner.temp }}" } }]).length);
   assert.ok(check([run, { ...run, env: { ...run.env, WRANGLER_LOG_PATH: "/tmp/logs" } }]).length);
   assert.ok(check([run, { uses: "actions/upload-artifact@v4", with: { path: "evidence.json" } }]).length);
@@ -177,6 +196,19 @@ test("repository discovery rejects new workflows, jobs, composite actions and st
   mkdirSync(path.join(base, ".github", "actions", "new"));
   writeFileSync(path.join(base, ".github", "actions", "new", "action.yml"), "runs:\n  using: composite\n  steps: []\n");
   assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /no temporary lifecycle/);
+  const action = ".github/actions/new/action.yml", producer = ".github/actions/new/start.py";
+  writeFileSync(path.join(base, producer), "print('fixture')\n");
+  catalog.local_actions[action] = { producer_sources: [producer], source_sha256: {
+    [action]: sourceFingerprint(readFileSync(path.join(base, action), "utf8")),
+    [producer]: sourceFingerprint(readFileSync(path.join(base, producer), "utf8")),
+  } };
+  assert.deepEqual(checkRepositoryWorkflows(workflows, catalog), []);
+  writeFileSync(path.join(base, producer), "print('changed')\n");
+  assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /producer source changed/);
+  writeFileSync(path.join(base, action), "runs:\n  using: node24\n  main: changed.js\n");
+  assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /local action or producer source changed/);
+  rmSync(path.join(base, action));
+  assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /reviewed local action no longer exists/);
   catalog.workflows["removed.yml"] = { jobs: {} };
   assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /no longer exists/);
 }));

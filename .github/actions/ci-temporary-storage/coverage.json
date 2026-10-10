@@ -15,7 +15,12 @@
         ".github/actions/ci-temporary-storage/setup.mjs",
         ".github/actions/ci-temporary-storage/setup.py"
       ],
-      "scope": "Validates the job directory; exports environment only; removes its own exclusive write probe; never sweeps other jobs."
+      "scope": "Validates the job directory; exports environment only; removes its own exclusive write probe; never sweeps other jobs.",
+      "source_sha256": {
+        ".github/actions/ci-temporary-storage/action.yml": "a41e32538ac28a3e28fc482f2e4d93d83223c9f0a10b02103cdea52c86c30106",
+        ".github/actions/ci-temporary-storage/setup.mjs": "dd64d641d040f2036edec99ff1b86d780d12e1b73c5036f839734398946df270",
+        ".github/actions/ci-temporary-storage/setup.py": "f6288615c4b6fe1e2cb8630405c8c618bd73fbe85d1b5336d331600730d9b1fd"
+      }
     }
   },
   "workflows": {
@@ -25,6 +30,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -32,6 +46,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -43,6 +66,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -50,6 +82,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -61,6 +102,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -88,6 +138,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "ci-usage-report.json"
           ],
@@ -103,6 +162,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -110,6 +178,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -117,6 +194,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -128,6 +214,15 @@
           "mode": "job-temp",
           "purpose": "production control/source review only",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json\napps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json\napps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json\napps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json\napps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc\napps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json\napps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json\napps/clued-cloud/.sites-runtime/storage-client-source/registration.json\n"
           ],
@@ -141,6 +236,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -148,6 +252,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -155,6 +268,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -166,6 +288,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -173,6 +304,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -180,6 +320,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -191,6 +340,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -198,6 +356,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "github.event_name == 'push'",
+              "path": "",
+              "ref": "${{ github.sha }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -205,6 +372,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "${{ runner.temp }}/integration-runtime-gate-evidence.json",
             "${{ runner.temp }}/clued-tested-tree.json"
@@ -215,6 +391,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "${{ runner.temp }}/integration-runtime-gate-evidence.json"
           ],
@@ -228,6 +413,15 @@
           "mode": "job-temp",
           "purpose": "production control/source review only",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "apps/clued-cloud/currentness-attestation.json"
           ],
@@ -241,6 +435,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -248,6 +451,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "github.event_name == 'push'",
+              "path": "",
+              "ref": "${{ github.sha }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -255,6 +467,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "${{ runner.temp }}/clued-tested-tree.json"
           ],
@@ -264,6 +485,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -275,6 +505,15 @@
           "mode": "job-temp",
           "purpose": "production control/source review only",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "apps/clued-cloud/prod-e2e-evidence.json"
           ],
@@ -298,6 +537,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -309,6 +557,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -320,6 +577,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -331,6 +597,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -374,6 +649,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -385,6 +669,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -396,6 +689,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -403,6 +705,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -414,6 +725,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -425,6 +745,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -432,6 +761,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -439,6 +777,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -450,6 +797,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -457,6 +813,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -468,6 +833,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -475,6 +849,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "github.event_name == 'push'",
+              "path": "",
+              "ref": "${{ github.sha }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -482,6 +865,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "${{ runner.temp }}/ife2e",
             "${{ runner.temp }}/clued-tested-tree.json"
@@ -492,6 +884,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "${{ runner.temp }}/ife2e"
           ],
@@ -505,6 +906,22 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ github.event.repository.default_branch }}",
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": "${{ github.event.pull_request.head.sha }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -512,6 +929,22 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ github.event.repository.default_branch }}",
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": "${{ github.event.pull_request.head.sha }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -523,6 +956,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -530,6 +972,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -541,6 +992,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -548,6 +1008,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -559,6 +1028,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -566,6 +1044,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -577,6 +1064,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -584,6 +1080,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -595,6 +1100,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -602,6 +1116,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -609,6 +1132,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -620,6 +1152,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -627,6 +1168,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -638,6 +1188,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -645,6 +1204,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -656,6 +1224,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -663,6 +1240,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -670,6 +1256,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -681,6 +1276,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@v4",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryManifest.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryFindings.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventorySummary.md\n${{ runner.temp }}/clued-naming-surface-inventory/GenerationResult.json\n${{ runner.temp }}/clued-naming-surface-inventory/CheckoutNormalizationEvidence.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryConsolidated.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryRecords.jsonl\n${{ runner.temp }}/clued-naming-surface-inventory/Step3Summary.md\n"
           ],
@@ -694,6 +1298,15 @@
           "mode": "job-temp",
           "purpose": "qualification/validation",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@v4",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [
             "${{ env.RECEIPT_PATH }}\nartifacts/clued-validation/phase2-v027/receipt/GateExecution.json\nartifacts/clued-validation/phase2-v027/receipt/NamingReceipt.json\nartifacts/clued-validation/phase2-v027/receipt/NamingExecution.json\nartifacts/clued-validation/phase2-v027/receipt/PostMigrationBoundary.json\nartifacts/clued-validation/phase2-v027/receipt/BoundaryControls.json\n",
             "${{ env.RECEIPT_PATH }}\n${{ env.NEGATIVE_MANIFEST_PATH }}\n"
@@ -716,6 +1329,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -723,6 +1345,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -730,6 +1361,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -741,6 +1381,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./trusted-gate/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted-gate",
+              "ref": "${{ github.sha }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -748,6 +1397,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./trusted-gate/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted-gate",
+              "ref": "${{ github.sha }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -759,6 +1417,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -766,6 +1433,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -773,6 +1449,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -784,6 +1469,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -791,6 +1485,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }
@@ -802,6 +1505,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         },
@@ -809,6 +1521,15 @@
           "mode": "job-temp",
           "purpose": "application or repository control",
           "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
           "retained_artifacts": [],
           "persistent_action_caches": []
         }

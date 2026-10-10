@@ -54,6 +54,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -92,6 +94,8 @@ jobs:
           TMPDIR: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
           TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
         run: |
           python3 scripts/ci/test_clued_docs_only.py
           python3 scripts/ci/clued-docs-only.py
@@ -150,6 +154,8 @@ jobs:
           TMPDIR: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
           TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
         run: |
           python3 scripts/ci/test_clued_docs_only.py
           python3 scripts/ci/clued-docs-only.py
