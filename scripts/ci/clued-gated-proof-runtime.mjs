@@ -1,6 +1,7 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
+import {applicableCI} from './clued-gated-proof.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -10,6 +11,100 @@ const unknown=reason=>({passed:false,state:'unknown',reason});
 const safePath=name=>typeof name==='string' && name.length>0 && name.length<=4096 &&
   !/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(name) && !name.startsWith('/') &&
   !name.split('/').some(part=>!part || part==='.' || part==='..');
+
+function workflowDirectory(body) {
+  if(!Array.isArray(body) || !body.length || body.length>=1000)return null;
+  const entries=new Map();
+  for(const entry of body) {
+    if(entry?.type!=='file' || !/^\.github\/workflows\/[^/]+$/.test(entry.path??'') ||
+      !SHA.test(entry.sha??'') || entries.has(entry.path))return null;
+    entries.set(entry.path,entry.sha);
+  }
+  return entries;
+}
+
+// This is a bounded negative trigger classifier, not a general YAML parser.
+// It only accepts explicit event keys. Alias/merge/quoted/flow ambiguity in
+// the event stanza is unknown; a new PR workflow needs an accepted profile.
+export function explicitNonPrWorkflow(text) {
+  if(typeof text!=='string' || Buffer.byteLength(text)>524288 ||
+    /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))return false;
+  const lines=text.split(/\r?\n/).filter(line=>line.trim()&&!line.trimStart().startsWith('#'));
+  const rootKeys=[];
+  for(const line of lines.filter(line=>!/^\s/.test(line))) {
+    const key=/^([A-Za-z0-9_-]+):/.exec(line);
+    if(!key || rootKeys.includes(key[1]))return false;
+    rootKeys.push(key[1]);
+  }
+  const top=lines.filter(line=>/^['"]?on['"]?:/.test(line));
+  if(top.length!==1 || !top[0].startsWith('on:'))return false;
+  const index=lines.indexOf(top[0]),inline=top[0].slice(3).replace(/\s+#.*$/,'').trim();
+  const events=new Set(['push','schedule','workflow_dispatch','workflow_run','repository_dispatch','release',
+    'issues','issue_comment','create','delete','check_run','check_suite','deployment','deployment_status',
+    'discussion','discussion_comment','fork','gollum','label','merge_group','milestone','page_build','public',
+    'pull_request','pull_request_target','registry_package','status','watch','workflow_call']);
+  let keys=[];
+  if(inline) {
+    if(events.has(inline))keys=[inline];
+    else if(/^\[[a-z_, ]+\]$/.test(inline))keys=inline.slice(1,-1).split(',').map(key=>key.trim());
+    else return false;
+  } else {
+    for(const line of lines.slice(index+1)) {
+      if(!/^\s/.test(line))break;
+      if(/^ {2}\S/.test(line)) {
+        const match=/^ {2}([a-z_]+):\s*(.*)$/.exec(line);
+        if(!match)return false;
+        keys.push(match[1]);
+      } else if(!/^ {4,}\S/.test(line) && !/^ {4,}/.test(line))return false;
+    }
+  }
+  return keys.length>0 && keys.every(key=>events.has(key)&&!['pull_request','pull_request_target','merge_group'].includes(key)) &&
+    new Set(keys).size===keys.length;
+}
+
+function decodedWorkflow(content,file,blob) {
+  if(content?.type!=='file' || content.path!==file || content.sha!==blob || content.encoding!=='base64' ||
+    typeof content.content!=='string' || !/^[A-Za-z0-9+/=\r\n]*$/.test(content.content) ||
+    !Number.isSafeInteger(content.size) || content.size<1 || content.size>524288)return null;
+  const bytes=Buffer.from(content.content.replace(/[\r\n]/g,''),'base64'),text=bytes.toString('utf8');
+  return bytes.length===content.size && Buffer.from(text,'utf8').equals(bytes) && workflowBlob(text)===blob?text:null;
+}
+
+// Default-branch counted workflows stay in the set even if the PR deletes
+// their gate. New/changed non-CI workflows retain their original admission
+// boundaries; they are not registered as tests merely because they changed.
+export async function boundWorkflowCatalog({read,repository,tip,head,defaultWorkflows,registry,roleSpecs,diff}) {
+  try {
+    if(typeof read!=='function' || !REPO.test(repository??'') || !SHA.test(tip??'') || !SHA.test(head??'') ||
+      !(defaultWorkflows instanceof Map) || !defaultWorkflows.size || diff?.passed!==true || diff.diffComplete!==true ||
+      diff.descriptor?.repository!==repository || diff.descriptor.head!==head ||
+      registry?.schema!=='clued.gated-proof-profiles/2' || !registry.workflows ||
+      defaultWorkflows.size!==Object.keys(registry.workflows).length)return unknown('workflow catalogue descriptor missing');
+    const atDefault=workflowDirectory(await read(`/repos/${repository}/contents/.github/workflows?ref=${tip}`));
+    const atHead=workflowDirectory(await read(`/repos/${repository}/contents/.github/workflows?ref=${head}`));
+    if(!atDefault || !atHead)return unknown('workflow directory incomplete');
+    const sources=new Map(),selected={schema:registry.schema,workflows:{}};
+    for(const [file,blob] of defaultWorkflows) {
+      if(atDefault.get(file)!==blob)return unknown('trusted checkout/default catalogue differs');
+      const headBlob=atHead.get(file),source=registeredWorkflowSource(registry,file,headBlob);
+      if(!source.passed)return unknown('counted CI removed or unregistered at PR head');
+      const roles=rolesForSource(roleSpecs,file,headBlob);
+      if(!roles || roles.length!==source.profile.primary_ids.length ||
+        roles.some(role=>!source.profile.primary_ids.includes(role.job_id)))return unknown('counted source roles missing');
+      sources.set(file,headBlob);selected.workflows[file]=source.profile;
+    }
+    for(const [file,blob] of atHead) {
+      if(!/\.ya?ml$/.test(file) || defaultWorkflows.has(file) || atDefault.get(file)===blob)continue;
+      const text=decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${head}`),file,blob);
+      if(!explicitNonPrWorkflow(text))return unknown('new/changed unregistered CI trigger');
+    }
+    const targets=applicableCI({workflows:sources,profiles:selected,changedFiles:diff.changedFiles,
+      commits:diff.commits,diffComplete:true,sourceQualified:true});
+    if(!targets.passed)return targets;
+    return {passed:true,state:'qualified',scope:'applicable_workflow_catalogue',workflows:targets.workflows,
+      profiles:selected,default_directory:[...atDefault],head_directory:[...atHead]};
+  } catch {return unknown('workflow catalogue read failed');}
+}
 
 function pullDescriptor(pr,repository,prNumber,head) {
   if(pr?.number!==prNumber || pr.state!=='open' || pr.draft!==false || pr.head?.sha!==head ||
