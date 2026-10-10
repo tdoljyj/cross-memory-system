@@ -4,8 +4,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 
-// These are the application's eight recurring installation/test consumers.
-// Production deployment and repository-control workflows retain their own scope.
+// Preserve the eight recurring application consumers as a compatibility subset;
+// repository-wide checks below also cover control and production source.
 export const APPLICATION_WORKFLOWS = [
   "clued-cloud-quality-gate.yml",
   "clued-cloud-node22-install.yml",
@@ -102,6 +102,9 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
       continue;
     }
     const steps = job.steps ?? [];
+    if (job.container || Object.keys(job.services ?? {}).length) findings.push(`${label}: container ownership and temporary mounts need explicit review`);
+    const workingDirectories = [document.defaults?.run?.["working-directory"], job.defaults?.run?.["working-directory"], ...steps.map(s => s["working-directory"])];
+    if (workingDirectories.some(value => /^\/(?:var\/)?tmp(?:\/|$)/.test(String(value ?? "")))) findings.push(`${label}: shared temporary working directory`);
     if (classification.mode === "no-temp-writes") {
       if (name !== "clued-ci-runner-heartbeat.yml" || !["windows-route", "linux-route"].includes(id) ||
           stepFingerprint(steps) !== classification.step_sha256) {
@@ -112,7 +115,6 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
     if (!["job-temp", "step-env"].includes(classification.mode)) {
       findings.push(`${label}: unknown temporary-data lifecycle`); continue;
     }
-    if (job.container) findings.push(`${label}: job-container ownership and temporary mount need explicit review`);
     if (classification.mode === "job-temp" && JSON.stringify(checkoutSources(steps)) !== JSON.stringify(classification.checkout_sources)) {
       findings.push(`${label}: reviewed checkout source or condition changed`);
     }

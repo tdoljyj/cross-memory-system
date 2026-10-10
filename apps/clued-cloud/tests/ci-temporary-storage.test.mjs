@@ -134,6 +134,8 @@ test("repository coverage includes Python/control jobs and preserves the trusted
   assert.ok(check([checkout, setup, { run: "curl -o /tmp/shared-package url" }]).length);
   assert.ok(check([checkout, setup, { ...run, env: { temp: "/tmp" } }]).length);
   assert.ok(check([checkout, setup, run], { container: "python:3.12" }).length);
+  assert.match(check([checkout, setup, run], { services: { database: { image: "postgres" } } }).join("\n"), /container ownership/);
+  assert.match(check([checkout, setup, run], { defaults: { run: { "working-directory": "/tmp/shared" } } }).join("\n"), /working directory/);
   assert.ok(check([checkout, setup, { uses: "vendor/unknown@commit" }, run]).length);
   const trustedCheckout = { ...checkout, with: { path: "trusted", ref: "main", repository: "owner/repo" } };
   const trustedAudit = { jobs: { control: { ...audit.jobs.control, action: "./trusted/.github/actions/ci-temporary-storage", checkout_sources: checkoutSources([trustedCheckout]) } } };
@@ -175,6 +177,7 @@ test("route-only review is invalidated by changed behavior and cannot exempt ano
   const steps = [{ run: "echo route observed" }];
   const audit = { jobs: { "linux-route": { mode: "no-temp-writes", step_sha256: stepFingerprint(steps) } } };
   assert.deepEqual(repositoryTemporaryStorageFindings({ jobs: { "linux-route": { steps } } }, "clued-ci-runner-heartbeat.yml", audit), []);
+  assert.match(repositoryTemporaryStorageFindings({ jobs: { "linux-route": { steps, container: "python:3.12" } } }, "clued-ci-runner-heartbeat.yml", audit).join("\n"), /container ownership/);
   assert.ok(repositoryTemporaryStorageFindings({ jobs: { "linux-route": { steps: [{ run: "mkdir /tmp/other" }] } } }, "clued-ci-runner-heartbeat.yml", audit).length);
   assert.ok(repositoryTemporaryStorageFindings({ jobs: { "linux-route": { steps } } }, "new.yml", audit).length);
 });
