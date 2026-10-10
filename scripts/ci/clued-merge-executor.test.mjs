@@ -64,7 +64,11 @@ function world({ pulls = [pull()], holders = [{ claim_id: CLAIM, bound_pr: `${RE
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", repository: REPO, holders }),
     [`/repos/${REPO}/branches/main`]: { commit: { sha: TIP } },
     [`/repos/${REPO}/compare/${TIP}...${HEAD}`]: { behind_by: behindBy, ahead_by: 3 },
-    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [] },
+    // By default the head's CI ran and passed (Task 114d43cf); tests override these two routes.
+    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [{ id: 700, path: ".github/workflows/clued-components.yml@refs/pull/5/merge",
+      head_sha: HEAD, event: "pull_request", status: "completed", conclusion: "success" }] },
+    [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: [{ name: "admission-gate", conclusion: "success" }, { name: "clued-components", conclusion: "success" },
+      { name: "${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ... 'clued-components-hosted-skipped' }}", conclusion: "skipped" }] },
     [`/repos/${REPO}/installation`]: { id: 99 },
     "POST /app/installations/99/access_tokens": token,
     [`PUT /repos/${REPO}/pulls/5/update-branch`]: { message: "Updating pull request branch." },
@@ -104,9 +108,10 @@ test("a head behind the default branch is brought up to date as the App, bound t
   }
 });
 
-test("an up-to-date, admitted head opted in for itself gets auto-merge before CI ends; GitHub waits for the checks", async () => {
-  const running = { ...checksRoute({ trivy: [check("trivy", { status: "in_progress", conclusion: null })] }),
-    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [] } };
+test("an up-to-date, admitted head opted in for itself gets auto-merge once its CI ran and passed; GitHub waits for the required checks", async () => {
+  // An App check still pending (clued-merge-slot, clued-admission-verified) does not hold it back: GitHub waits for it.
+  // (A workflow's own check, such as trivy, runs in a run that gatedCiOf waits for.)
+  const running = checksRoute({ "clued-merge-slot": [check("clued-merge-slot", { status: "in_progress", conclusion: null })] });
   for (const extra of [{}, running]) {
     const fetch = world({ extra });
     const result = await run(fetch);
@@ -159,7 +164,8 @@ test("auto-merge on with an opt-in for another head is turned off (review MAJOR-
 
 // CI runs on the head: the newest pull_request run of a gated workflow, and its jobs (review MAJOR-1).
 const GATED = ".github/workflows/clued-components.yml";
-const ciRuns = ({ conclusion = "success", status = "completed", jobs = [["admission-gate", "success"], ["components", "success"]] } = {}) => ({
+const ciRuns = ({ conclusion = "success", status = "completed",
+  jobs = [["admission-gate", "success"], ["clued-components", "success"], ["clued-components-hosted-skipped", "skipped"]] } = {}) => ({
   [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [
     { id: 600, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status: "completed", conclusion: "failure" },
     { id: 700, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status, conclusion: status === "completed" ? conclusion : null },
@@ -183,21 +189,36 @@ test("a clean, opted-in head whose CI all ran and passed is merged by the execut
   assert.match(renderSummary(result), /\*\*merged\*\*/);
 });
 
-test("review MAJOR-1: clean but with skipped gated jobs, a red or running CI run, no CI run, or unstable: not merged", async () => {
+test("Task 114d43cf: a workflow without a gate passes with one twin run and the other skipped", async () => {
+  const fetch = world({ extra: ciRuns({ jobs: [["gitleaks", "success"], ["gitleaks-hosted-skipped", "skipped"]] }) });
+  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge");
+});
+
+test("Task 114d43cf: skipped gated jobs, a red or running CI run or no CI run get neither auto-merge nor a merge", async () => {
   for (const [name, extra, reason] of [
-    ["gated jobs skipped", { ...mergeable("clean"), ...ciRuns({ jobs: [["admission-gate", "success"], ["components", "skipped"]] }) },
-      /\.github\/workflows\/clued-components\.yml skipped components/],
-    ["CI run failed", { ...mergeable("clean"), ...ciRuns({ conclusion: "failure" }) }, /clued-components\.yml is completed \(failure\)/],
-    ["CI run still running", { ...mergeable("clean"), ...ciRuns({ status: "in_progress" }),
+    ["gate refused, every gated job skipped", ciRuns({ jobs: [["admission-gate", "success"], ["clued-components", "skipped"],
+      ["clued-components-hosted-skipped", "skipped"]] }), /\.github\/workflows\/clued-components\.yml ran no job besides its gate \(all skipped\)/],
+    ["gate failed", ciRuns({ jobs: [["admission-gate", "failure"], ["clued-components", "skipped"], ["clued-components-hosted-skipped", "skipped"]] }),
+      /clued-components\.yml job admission-gate is failure/],
+    ["a job failed in a successful run", ciRuns({ jobs: [["admission-gate", "success"], ["clued-components", "cancelled"],
+      ["clued-components-hosted-skipped", "skipped"]] }), /clued-components\.yml job clued-components is cancelled/],
+    ["CI run failed", ciRuns({ conclusion: "failure" }), /clued-components\.yml is completed \(failure\)/],
+    ["CI run still running", { ...ciRuns({ status: "in_progress" }),
       [`/repos/${REPO}/contents/.github/workflows?ref=${HEAD}`]: [] }, /clued-components\.yml is in_progress/],
-    ["no CI run", mergeable("clean"), /no CI workflow ran on this head/],
-    ["unstable", { ...mergeable("unstable"), ...ciRuns() }, /not required failed or is still pending \(unstable status\)/],
+    ["no CI run", { [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [] } }, /no CI workflow ran on this head/],
   ]) {
-    const fetch = world({ extra });
-    const result = await run(fetch);
-    assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error, mergeCall(fetch)], [[], "mergeable_now", undefined, undefined], name);
-    assert.match(result.notices[0], new RegExp(`already mergeable, but not merged: .*${reason.source}`), name);
+    for (const status of ["clean", "pending"]) {
+      const fetch = world({ extra: { ...(status === "clean" ? mergeable("clean") : {}), ...extra } });
+      const result = await run(fetch);
+      assert.deepEqual([result.errors, result.actions[0].action, writes(fetch)], [[], "none", []], `${name} ${status}`);
+      assert.match(result.actions[0].reason, new RegExp(`^waiting for CI on this head: .*${reason.source}`), `${name} ${status}`);
+    }
   }
+  // Unstable (a check that is not required failed or is pending) is never merged.
+  const fetch = world({ extra: { ...mergeable("unstable"), ...ciRuns() } });
+  const result = await run(fetch);
+  assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error, mergeCall(fetch)], [[], "mergeable_now", undefined, undefined]);
+  assert.match(result.notices[0], /already mergeable, but not merged: .*not required failed or is still pending \(unstable status\)/);
 });
 
 test("GitHub refuses the merge: 405 and 409 stay mergeable_now with the reason; any other answer is merge_refused", async () => {
