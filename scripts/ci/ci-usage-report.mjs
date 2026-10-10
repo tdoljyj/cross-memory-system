@@ -541,7 +541,6 @@ export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budge
     metrics.self_hosted_minutes.attribution_status = jobsComplete && !attributed.self_hosted_minutes.unknown_jobs ? "measured" : "partial";
     metrics.self_hosted_minutes.not_measured = {};
     metrics.self_hosted_minutes.attribution_note = attributed.self_hosted_minutes.note;
-    metrics.update_main_rounds = attributed.update_main_rounds;
   }
   metrics.api_requests = {
     status: "measured", token_source: budget.source, used: budget.used, cap: budget.cap, remaining_seen: budget.remaining,

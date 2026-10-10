@@ -6,29 +6,45 @@ const time = (value) => Number.isFinite(Date.parse(value)) ? Date.parse(value) :
 export function admissionObservation(check, appId, head) {
   if (check?.name !== 'clued-admission-verified' || check.app?.id !== appId ||
       check.head_sha !== head || check.status !== 'completed') return null;
-  const match = /^(ADMITTED|REJECTED|NOT ADMITTED) \[(normal|efficiency|frozen) · (protected|code|docs) · reruns (\d+)\]$/.exec(check.output?.title ?? '');
+  const match = /^(?:RE-VERIFIED(?: \(state change\))?: )?(ADMITTED|REJECTED|NOT ADMITTED) \[(normal|efficiency|frozen) · (protected|code|docs) · reruns (\d+)\]$/.exec(check.output?.title ?? '');
+  const identity = /^pr:([1-9][0-9]{0,9}):run:([0-9]{1,20})$/.exec(check.external_id ?? '');
   const at = time(check.completed_at);
-  if (!match || at === null) return null;
-  return {id:check.id, at, verdict:match[1], state:match[2], layer:match[3],
-    conclusion:check.conclusion, reruns:Number(match[4])};
+  // Keep malformed/unknown titles as barriers. Dropping them would attribute
+  // a later job to an older mode that might already have been revoked.
+  return {id:check.id, at, pr:identity?Number(identity[1]):null,
+    verdict:match?.[1]??null, state:match?.[2]??null, layer:match?.[3]??null,
+    conclusion:check.conclusion, reruns:match?Number(match[4]):null};
 }
 
-export function observationAt(observations, startedAt) {
+export function observationAt(observations, startedAt, prNumber) {
   const at = time(startedAt);
-  if (at === null) return null;
-  return observations.filter(x=>x.at <= at).sort((a,b)=>b.at-a.at || b.id-a.id)[0] ?? null;
+  if (at === null || !Number.isInteger(prNumber)) return null;
+  const own=observations.filter(x=>x.pr===prNumber || x.pr===null);
+  if(own.some(x=>x.at===null || !Number.isInteger(x.id))) return null;
+  const latest=own.filter(x=>x.at <= at).sort((a,b)=>b.at-a.at || b.id-a.id)[0]??null;
+  return latest?.pr===prNumber?latest:null;
 }
 
 async function pages(request, route, key, max=1000) {
-  const items=[];
+  const items=[],seen=new Set();let total=null;
   for(let page=1;items.length<max;page++) {
     const result=await request(`${route}${route.includes('?')?'&':'?'}per_page=100&page=${page}`);
     if(!result.ok) return {items,complete:false};
     const rows=key?result.body?.[key]:result.body;
     if(!Array.isArray(rows)) throw new Error('attribution_list_schema');
+    if(key) {
+      const current=result.body.total_count;
+      if(!Number.isInteger(current) || current<0 || (total!==null && current!==total)) return {items,complete:false};
+      total=current;
+    }
+    for(const row of rows) {
+      const identity=key?row?.id:row?.sha;
+      if((key?!Number.isInteger(identity):!SHA.test(identity)) || seen.has(identity)) return {items,complete:false};
+      seen.add(identity);
+    }
     items.push(...rows);
-    const total=key?result.body?.total_count:null;
-    if(rows.length<100) return {items,complete:total==null || items.length>=total};
+    if(key && items.length>=total) return {items,complete:items.length===total};
+    if(rows.length<100) return {items,complete:!key};
   }
   return {items,complete:false};
 }
@@ -95,10 +111,14 @@ export function attributionMetrics({runs,pulls,jobsByRun,attribution,isSelfHoste
     for(const job of jobs) {
       const minutes=durationMinutes(job.started_at,job.completed_at);
       if(job.status!=='completed' || minutes===null || !isSelfHosted(job)) continue;
-      const observed=observationAt(attribution.heads.get(run?.head_sha)??[],job.started_at);
+      const named=run?.pull_requests??[];
+      const matches=named.length?named:pulls.filter(pr=>pr.head_ref===run?.head_branch &&
+        run?.created_at>=pr.created_at && run?.created_at<=pr.merged_at).map(pr=>pr.number);
+      const pr=matches.length===1?matches[0]:null;
+      const observed=observationAt(attribution.heads.get(run?.head_sha)??[],job.started_at,pr);
       const layer=observed?.layer??'unknown',state=observed?.state??'unknown';
       byLayer[layer]=(byLayer[layer]??0)+minutes;byState[state]=(byState[state]??0)+minutes;
-      if(observed) observedJobs++;else unknownJobs++;
+      if(observed?.state && observed?.layer) observedJobs++;else unknownJobs++;
       if(job.conclusion==='cancelled') {
         cancelled++;
         // This is a correlation, not a timeout/queue-return/supersession cause.
@@ -108,14 +128,14 @@ export function attributionMetrics({runs,pulls,jobsByRun,attribution,isSelfHoste
     }
   }
   for(const checks of attribution.heads.values()) for(const check of checks) if(check.conclusion==='failure')
-    failureTitles[check.verdict]=(failureTitles[check.verdict]??0)+1;
+    failureTitles[check.verdict??'unknown']=(failureTitles[check.verdict??'unknown']??0)+1;
   const rounded=(value)=>Object.fromEntries(Object.entries(value).map(([k,v])=>[k,round(v)]));
   return {scope:attribution.coverage.scope,coverage:attribution.coverage,
     self_hosted_minutes:{by_layer:rounded(byLayer),by_state:rounded(byState),observed_jobs:observedJobs,unknown_jobs:unknownJobs,
       note:'Latest exact-App completed admission observation no later than each job start; non-associated and unobserved jobs stay unknown. Runtime minutes, not billing.'},
-    update_main_rounds:{status:attribution.coverage.pulls_complete===pulls.length?'measured':'partial',
-      value:attribution.updates.reduce((n,x)=>n+x.count,0),per_pr:attribution.updates,
-      note:'Two-parent source commits whose second parent is on main before the final PR merge and whose first parent was not; incomplete/squash/rebase ancestry stays unmeasured.'},
+    main_parent_merge_candidates:{status:'partial',
+      value:attribution.updates.length?attribution.updates.reduce((n,x)=>n+x.count,0):null,per_pr:attribution.updates,
+      note:'Source merge candidates whose second parent is on main before final PR merge. This does NOT prove it was main at the historical merge time: another feature may have reached main later. Not update_main_rounds, wasted work or a savings lower bound.'},
     cancellation_observations:{cancelled_self_hosted_jobs:cancelled,later_different_head_seen:laterHeadSeen,
       cause_counts:null,note:'A later head is correlation only; API job conclusion does not identify actor or cancellation cause.'},
     admission_failure_verdicts:{value:failureTitles,note:'Exact-App verdict titles, not failure reasons or Clued claim receipts.'}};
