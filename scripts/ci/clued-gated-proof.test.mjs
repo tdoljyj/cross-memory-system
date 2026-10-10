@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
-import {qualifyPrimary,qualifiedCI,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
+import {qualifyPrimary,qualifiedCI,applicableCI,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
 const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
 const FILE='.github/workflows/clued-components.yml',HEAD='a'.repeat(40);
 const profile=profiles.workflows[FILE],route=profile.routes[0];
@@ -128,5 +128,24 @@ test('terminal-only detail or final-list read failures remain unknown without re
       };
       assert.equal((await qualifiedCI(w)).state,'unknown');
     }
+  }
+});
+test('audited complete documentation diff selects only five unconditional workflows',()=>{
+  const workflows=new Map(Object.entries(profiles.workflows).map(([file,p])=>[file,p.workflow_blob]));
+  const w={workflows,profiles,changedFiles:['docs/README.md'],commits:1,diffComplete:true,sourceQualified:true};
+  const result=applicableCI(w);assert.equal(result.passed,true);assert.equal(result.workflows.size,5);
+  assert.ok(result.workflows.has(QUALITY));assert.equal(result.workflows.has('.github/workflows/clued-g4-database.yml'),false);
+  w.changedFiles=['apps/clued-cloud/worker/nested/file.ts'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
+  w.changedFiles=['apps/clued-cloud/tests/owner-authorization-db.test.mjs'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
+});
+test('trigger applicability refuses incomplete, excessive, changed or unsupported sources',()=>{
+  const workflows=new Map(Object.entries(profiles.workflows).map(([file,p])=>[file,p.workflow_blob]));
+  const w={workflows,profiles,changedFiles:['docs/README.md'],commits:1,diffComplete:true,sourceQualified:true};
+  for(const changes of [{diffComplete:false},{sourceQualified:false},{commits:1001},{changedFiles:Array(301).fill('docs/a.md')},
+    {changedFiles:['../escape']},{workflows:new Map([[QUALITY,'b'.repeat(40)]])}])
+    assert.equal(applicableCI({...w,...changes}).state,'unknown');
+  for(const paths of [['!docs/**'],['apps/**/deep'],['apps/?.js']]) {
+    const altered=structuredClone(profiles);altered.workflows[QUALITY].pull_request={paths};
+    assert.equal(applicableCI({...w,profiles:altered}).state,'unknown');
   }
 });

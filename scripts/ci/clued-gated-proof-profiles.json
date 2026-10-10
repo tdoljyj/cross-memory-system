@@ -3,6 +3,15 @@
   "audit_source": "d6ea4eb1e7f3d1143f47d013d845466745ae8af3",
   "workflows": {
     ".github/workflows/clued-cloud-node22-install.yml": {
+      "workflow_blob": "059a1350fab94dbf1bb631a7658aea992e73ac26",
+      "pull_request": {
+        "paths": [
+          ".github/workflows/clued-cloud-node22-install.yml",
+          "apps/clued-cloud/package.json",
+          "apps/clued-cloud/package-lock.json",
+          "apps/clued-cloud/.npmrc"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -24,6 +33,8 @@
       ]
     },
     ".github/workflows/clued-cloud-quality-gate.yml": {
+      "workflow_blob": "4eb989ce8bf6c54467748a7c658a130c602ba1c4",
+      "pull_request": null,
       "gated": true,
       "routes": [
         {
@@ -55,6 +66,8 @@
       ]
     },
     ".github/workflows/clued-components.yml": {
+      "workflow_blob": "405d9929b8c66afaefca6a82243798abf0dc2971",
+      "pull_request": null,
       "gated": true,
       "routes": [
         {
@@ -82,6 +95,68 @@
       ]
     },
     ".github/workflows/clued-connection-authorization.yml": {
+      "workflow_blob": "59e64340b4c7b737a0f129606c94e2e803a73162",
+      "pull_request": {
+        "paths": [
+          ".github/workflows/clued-connection-authorization.yml",
+          "scripts/ci/clued-push-reuse.mjs",
+          "scripts/ci/clued-push-reuse.test.mjs",
+          "scripts/ci/clued-g4-fresh-start.mjs",
+          "scripts/ci/clued-g4-fresh-start.test.mjs",
+          "apps/clued-cloud/worker/**",
+          "apps/clued-cloud/app/**",
+          "apps/clued-cloud/vite.config.ts",
+          "apps/clued-cloud/supabase/migrations/**",
+          "apps/clued-cloud/tests/information-flow-*.test.mjs",
+          "development/contracts/information-flow/vendored/**",
+          "scripts/phase2-qualification/minimum-context-compiler/**",
+          "apps/clued-cloud/tests/*authorization*.test.mjs",
+          "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+          "apps/clued-cloud/tests/development-context-api.test.mjs",
+          "apps/clued-cloud/tests/development-contexts-ui.test.mjs",
+          "apps/clued-cloud/tests/consent-account-race.test.mjs",
+          "apps/clued-cloud/tests/supabase-browser.test.mjs",
+          "apps/clued-cloud/tests/project-invitations-*.test.mjs",
+          "apps/clued-cloud/tests/priority-projection-db.test.mjs",
+          "apps/clued-cloud/tests/context-v2-*.test.mjs",
+          "apps/clued-cloud/tests/currentness-*.test.mjs",
+          "apps/clued-cloud/tests/work-claims-*.test.mjs",
+          "apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs",
+          "apps/clued-cloud/tests/resume-constraint-index-db.test.mjs",
+          "apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs",
+          "apps/clued-cloud/tests/projection-refresh-*.test.mjs",
+          "apps/clued-cloud/tests/record-update-field-merge-db.test.mjs",
+          "apps/clued-cloud/tests/task-dependency-guard-db.test.mjs",
+          "apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs",
+          "apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs",
+          "apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs",
+          "apps/clued-cloud/tests/db-security-hygiene-db.test.mjs",
+          "apps/clued-cloud/tests/resource-center-*.test.mjs",
+          "kernel/host/resource-center-*.mjs",
+          "kernel/host/resource-center-*.py",
+          "apps/clued-cloud/scripts/*resource-center*.mjs",
+          "kernel/policy/resource-center-*.mjs",
+          "apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql",
+          "apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs",
+          "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+          "apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs",
+          "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+          "apps/clued-cloud/tests/integration-runtime-worker.test.mjs",
+          "apps/clued-cloud/tests/integration-runtime-transport.test.mjs",
+          "apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs",
+          "apps/clued-cloud/evals/integration-runtime/**",
+          "development/contracts/integration-runtime/**",
+          "apps/clued-cloud/tests/fixtures/integration-runtime/**",
+          "apps/clued-cloud/tests/mtpe-*.test.mjs",
+          "apps/clued-cloud/tests/production-release-gate.test.mjs",
+          "apps/clued-cloud/tests/served-agent-contract.test.mjs",
+          "apps/clued-cloud/scripts/production-release-*",
+          "apps/clued-cloud/scripts/verify-served-agent-contract.mjs",
+          "skills/clued/references/agent-contract.md",
+          ".github/workflows/clued-cloud-production-release.yml",
+          "apps/clued-cloud/package*.json"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -154,6 +229,19 @@
       ]
     },
     ".github/workflows/clued-g4-database.yml": {
+      "workflow_blob": "aed508eaf3849a2fe80d2b558c7da68f2118f9d3",
+      "pull_request": {
+        "paths": [
+          ".github/workflows/clued-g4-database.yml",
+          "scripts/ci/clued-push-reuse.mjs",
+          "scripts/ci/clued-push-reuse.test.mjs",
+          "scripts/ci/clued-g4-fresh-start.mjs",
+          "scripts/ci/clued-g4-fresh-start.test.mjs",
+          "apps/clued-cloud/package.json",
+          "apps/clued-cloud/package-lock.json",
+          "apps/clued-cloud/supabase/**"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -192,6 +280,8 @@
       ]
     },
     ".github/workflows/contract-placement.yml": {
+      "workflow_blob": "e424d690ef63aa9049cdbe2afed277331df6f37e",
+      "pull_request": null,
       "gated": false,
       "routes": [
         {
@@ -207,6 +297,15 @@
       ]
     },
     ".github/workflows/design-refs.yml": {
+      "workflow_blob": "f0b9a8d2e27061a605f59ffacde5b880ae8ae995",
+      "pull_request": {
+        "paths": [
+          "development/contracts/**",
+          "scripts/ci/check_design_refs.py",
+          "scripts/ci/test_check_design_refs.py",
+          ".github/workflows/design-refs.yml"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -228,6 +327,8 @@
       ]
     },
     ".github/workflows/gitleaks.yml": {
+      "workflow_blob": "8570015b95c754904444a89b0c1e2a8837b89b5f",
+      "pull_request": null,
       "gated": false,
       "routes": [
         {
@@ -251,6 +352,24 @@
       ]
     },
     ".github/workflows/information-flow-e2e.yml": {
+      "workflow_blob": "1c0143d4acc0bdf40f5184fbe2e30a51b38a54d7",
+      "pull_request": {
+        "paths": [
+          ".github/workflows/information-flow-e2e.yml",
+          "scripts/ci/clued-push-reuse.mjs",
+          "scripts/ci/clued-push-reuse.test.mjs",
+          "scripts/ci/clued-g4-fresh-start.mjs",
+          "scripts/ci/clued-g4-fresh-start.test.mjs",
+          "apps/clued-cloud/supabase/migrations/**",
+          "apps/clued-cloud/worker/**",
+          "apps/clued-cloud/evals/information-flow-e2e/**",
+          "apps/clued-cloud/evals/public-mcp/worker.ts",
+          "apps/clued-cloud/tests/information-flow-*.test.mjs",
+          "development/contracts/information-flow/**",
+          "apps/clued-cloud/package.json",
+          "apps/clued-cloud/package-lock.json"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -282,6 +401,16 @@
       ]
     },
     ".github/workflows/model-program-m2-scoped-consumer.yml": {
+      "workflow_blob": "06246336ab0e6d2cc2c65b84d0570605f0cfb47c",
+      "pull_request": {
+        "paths": [
+          "development/contracts/model-program/stage-admission/**",
+          "scripts/model-program/**",
+          "tests/test_model_program_m2_scoped_consumer.py",
+          "tests/fixtures/model-stage-admission/pr441-e76a7/**",
+          ".github/workflows/model-program-m2-scoped-consumer.yml"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -304,6 +433,14 @@
       ]
     },
     ".github/workflows/public-mcp-behavior.yml": {
+      "workflow_blob": "235a95023607bb3bcc5dd3c96fcff20c6f95b6c1",
+      "pull_request": {
+        "paths": [
+          ".github/workflows/public-mcp-*.yml",
+          "apps/clued-cloud/**",
+          "protocol/continuity/v1/**"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -342,6 +479,17 @@
       ]
     },
     ".github/workflows/public-mcp-protocol.yml": {
+      "workflow_blob": "a32fa7fb12a438ce41b7381606419d48d3a6b267",
+      "pull_request": {
+        "paths": [
+          ".github/workflows/public-mcp-*.yml",
+          "apps/clued-cloud/**",
+          "protocol/continuity/v1/**",
+          "skills/clued/references/agent-contract.md",
+          "kernel/policy/resource-center-mutation-policy.mjs",
+          "kernel/host/resource-center-*.mjs"
+        ]
+      },
       "gated": true,
       "routes": [
         {
@@ -379,6 +527,8 @@
       ]
     },
     ".github/workflows/trivy.yml": {
+      "workflow_blob": "f856d837094602fe7303da7cc2d213178085ab36",
+      "pull_request": null,
       "gated": false,
       "routes": [
         {

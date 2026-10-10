@@ -7,6 +7,40 @@ const FAILED = new Set(['failure','timed_out','action_required','startup_failure
 const unknown = reason => ({passed:false,state:'unknown',reason,scopes:[]});
 const failed = reason => ({passed:false,state:'failed',reason,scopes:[]});
 
+// A source-qualified descriptor supplies the PR's complete three-dot diff.
+// Only the literal/*/trailing-/** patterns in the audited workflows are
+// supported. New trigger syntax must receive a reviewed implementation.
+export function applicableCI({workflows,profiles,changedFiles,commits,diffComplete,sourceQualified}) {
+  if(sourceQualified!==true || diffComplete!==true || !(workflows instanceof Map) ||
+    !Array.isArray(changedFiles) || !changedFiles.length || changedFiles.length>300 ||
+    !Number.isSafeInteger(commits) || commits<1 || commits>1000 ||
+    changedFiles.some(file=>typeof file!=='string' || !file.length || file.startsWith('/') ||
+      file.split('/').some(part=>part==='..' || part==='.' || !part)))
+    return unknown('applicable CI source/diff is incomplete or exceeds audited trigger boundary');
+  const targets=new Map();
+  for(const [file,blob] of workflows) {
+    const p=profiles?.workflows?.[file];
+    if(!p || !/^[a-f0-9]{40}$/.test(p.workflow_blob??'') || p.workflow_blob!==blob ||
+      !Object.hasOwn(p,'pull_request'))return unknown(`${file}: workflow/profile source differs`);
+    const trigger=p.pull_request;
+    if(trigger===null){targets.set(file,blob);continue;}
+    if(!trigger || Object.keys(trigger).some(key=>key!=='paths') || !Array.isArray(trigger.paths) || !trigger.paths.length)
+      return unknown(`${file}: unsupported PR trigger`);
+    const patterns=[];
+    for(const pattern of trigger.paths) {
+      if(typeof pattern!=='string' || !/^[A-Za-z0-9._/*-]+$/.test(pattern) ||
+        pattern.includes('***') || pattern.replace(/\/\*\*$/,'').includes('**') ||
+        pattern.split('/').some(part=>part==='..' || part==='.' || !part))
+        return unknown(`${file}: unsupported PR path pattern`);
+      const deep=pattern.endsWith('/**');const prefix=deep?pattern.slice(0,-3):pattern;
+      const expression=prefix.split('*').map(part=>part.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('[^/]*');
+      patterns.push(new RegExp(`^${expression}${deep?'/(?:.*)':''}$`));
+    }
+    if(changedFiles.some(path=>patterns.some(pattern=>pattern.test(path))))targets.set(file,blob);
+  }
+  return targets.size?{passed:true,state:'qualified',workflows:targets}:unknown('no applicable CI target');
+}
+
 export function qualifyPrimary(profile, jobs, file) {
   if(!profile || !Array.isArray(profile.routes) || !Array.isArray(jobs)) return unknown(`${file}: missing profile/jobs`);
   const gates=jobs.filter(x=>x.name==='admission-gate');
