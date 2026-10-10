@@ -2,8 +2,8 @@
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
   "exported_at": "2026-10-07T03:49:58.107Z",
-  "history_through": "20261009181419",
-  "row_count": 230,
+  "history_through": "20261010013611",
+  "row_count": 231,
   "rows": [
     {
       "version": "20260823154017",
@@ -1843,6 +1843,14 @@
       "statements_md5": "6d697c6f5d4628b16f391adacad70713",
       "statements_length": 6004,
       "source": "migrations/20261009160100_close_worker_gateway_request_context_probe_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010013611",
+      "name": "search_context_text_cache_v1",
+      "statements_md5": "2b555747d91324dcd21aecc05086942d",
+      "statements_length": 9989,
+      "source": "migrations/20261010010000_search_context_text_cache_v1.sql",
       "transform": "identical"
     }
   ],
