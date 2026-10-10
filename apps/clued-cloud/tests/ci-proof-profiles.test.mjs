@@ -4,7 +4,7 @@ import path from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {compileRegisteredWorkflow,workflowBlob} from '../../../scripts/ci/clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,workflowBlob,roleDefinitionDigest} from '../../../scripts/ci/clued-workflow-profile.mjs';
 import {ciWorkflows} from '../../../scripts/ci/clued-merge-slot-ci.mjs';
 // These critical negative cases run through the existing quality unit entry.
 import '../../../scripts/ci/clued-gated-proof.test.mjs';
@@ -13,6 +13,7 @@ const require=createRequire(import.meta.url);
 const YAML=require('yaml');
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 const registry=JSON.parse(fs.readFileSync(path.join(root,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'));
+const roleSpecs=JSON.parse(fs.readFileSync(path.join(root,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'));
 const parseYaml=text=>{const doc=YAML.parseDocument(text);assert.deepEqual(doc.errors,[]);assert.deepEqual(doc.warnings,[]);return doc.toJS({maxAliasCount:0});};
 
 test('registered definitions match full YAML bytes and complete explicit primary profiles',()=>{
@@ -22,7 +23,7 @@ test('registered definitions match full YAML bytes and complete explicit primary
   for(const [file,record] of Object.entries(registry.workflows)) {
     for(const entry of [record,...(record.accepted_sources??[])]) {
       assert.equal(entry.registration_status,'registered');
-      const derived=compileRegisteredWorkflow(entry.source_yaml,{primary_ids:entry.primary_ids,parseYaml});
+      const derived=compileRegisteredWorkflow(entry.source_yaml,{primary_ids:entry.primary_ids,parseYaml,accepted_roles:roleSpecs.workflows[file]});
       const {accepted_sources,...fields}=entry;
       assert.deepEqual(fields,derived,`${file}: profile omitted or changed source facts`);
     }
@@ -45,4 +46,12 @@ test('real YAML cannot omit a heavy role or replace it with a successful helper'
   const source='on:\n  pull_request:\njobs:\n  heavy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n  helper:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo helper\n';
   for(const primary_ids of [['heavy'],['helper'],['heavy','helper']])
     assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids,parseYaml}));
+});
+
+test('Self heavy and Hosted helper are not implicitly accepted as one logical primary',()=>{
+  const source='on:\n  pull_request:\njobs:\n  heavy:\n    runs-on: [self-hosted, Linux]\n    steps:\n      - run: node --test\n  alternate:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo helper\n';
+  const parsed=parseYaml(source);
+  const accepted_roles=[{job_id:'heavy',definition_sha256:roleDefinitionDigest(parsed.jobs.heavy)},
+    {job_id:'alternate',definition_sha256:roleDefinitionDigest({...parsed.jobs.alternate,steps:[{run:'node --test'}]})}];
+  assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids:['heavy','alternate'],parseYaml,accepted_roles}));
 });

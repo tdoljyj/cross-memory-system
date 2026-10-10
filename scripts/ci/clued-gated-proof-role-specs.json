@@ -1,0 +1,132 @@
+{
+  "schema": "clued.gated-proof-role-specs/1",
+  "audit_source": "8c8b816cec51acdceeb2197b0f16b50f266957d7",
+  "workflows": {
+    ".github/workflows/clued-cloud-node22-install.yml": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "6eeb3fdc96a9bb8d585021abcefd59f30ad1c95f2ea2c11413aacb310d3e9925"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "dbebc120b727c1fb8692f5853318a728e8ea8a2d03f5f9ec37c367cde0556831"
+      }
+    ],
+    ".github/workflows/clued-cloud-quality-gate.yml": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "be1b3d6a2e78152647fe7926385ffb56607ff69b4085646c92f1b826ba7efc5d"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "d76bcf2595d182c594253a28c9e4579308b07ec4344bb4f3c958f67258469aea"
+      }
+    ],
+    ".github/workflows/clued-components.yml": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "b4036d19eed2c90b0c5ffb27dab61f0dc7bb9dc2281699d5a93901bbdbec2ff1"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "3ef21cc1dd042332b40463b991e7da0871626cc652d0a69dc1b304dafac5a15d"
+      }
+    ],
+    ".github/workflows/clued-connection-authorization.yml": [
+      {
+        "job_id": "isolated-candidate-trusted-self-hosted",
+        "definition_sha256": "a4136deb30b3241f9487b622f1fcc713118c0295f3f14d8cdb857a67f712fd03"
+      },
+      {
+        "job_id": "isolated-candidate-untrusted-hosted",
+        "definition_sha256": "3a9c227ed1d493dccfc01eb8c072849f03eccae9a0134b89c021865fedf7d6f4"
+      }
+    ],
+    ".github/workflows/clued-g4-database.yml": [
+      {
+        "job_id": "database-gate-trusted-self-hosted",
+        "definition_sha256": "419fa92df2abbf61c4a0e52bc0790eb4bcee29ac6f87aca2393334c3c84f4d89"
+      },
+      {
+        "job_id": "database-gate-untrusted-hosted",
+        "definition_sha256": "02b6711a85a6e27d14a6c5a1ca3187137a6f0d770637e33ac189ebf9ed06bad8"
+      }
+    ],
+    ".github/workflows/contract-placement.yml": [
+      {
+        "job_id": "contract-placement",
+        "definition_sha256": "be5758fb64e41b8d5f9b719f2342c79012000d66c9e540070fc3eff92c72c51a"
+      }
+    ],
+    ".github/workflows/design-refs.yml": [
+      {
+        "job_id": "design-refs-trusted-self-hosted",
+        "definition_sha256": "7911983fbe50b81094ebae2c2169701a4febcfd37b7a3569847b6cfe7b1f3e36"
+      },
+      {
+        "job_id": "design-refs-untrusted-hosted",
+        "definition_sha256": "3a813f493079a53fedc6421944a23a1458a2ea2ec77ff212bbfaaeaf84956fab"
+      }
+    ],
+    ".github/workflows/gitleaks.yml": [
+      {
+        "job_id": "gitleaks-trusted-self-hosted",
+        "definition_sha256": "471374b29bb96a47fd07d6f049066435514a2e2996800ae390d2f6be3c868ab6"
+      },
+      {
+        "job_id": "gitleaks-untrusted-hosted",
+        "definition_sha256": "e75416c9ed761287012b78f676bd6ad8271d6b514972a5e90f52468322e8cf02"
+      }
+    ],
+    ".github/workflows/information-flow-e2e.yml": [
+      {
+        "job_id": "e2e-trusted-self-hosted",
+        "definition_sha256": "421c62238f81771b43f13d3ead9d6b3471874410fc3f4ecea2bae3a8f919c007"
+      },
+      {
+        "job_id": "e2e-untrusted-hosted",
+        "definition_sha256": "c91a95c9d1e4b0bdef409c0e5e3836b1b8512569fc2be6fa2e730eba426927db"
+      }
+    ],
+    ".github/workflows/model-program-m2-scoped-consumer.yml": [
+      {
+        "job_id": "trusted-windows",
+        "definition_sha256": "c75e405d6a11603e98c4e2e2a11bd0f40cdc315ccccc6a5da7ce323f3dba6f50"
+      },
+      {
+        "job_id": "untrusted-linux",
+        "definition_sha256": "d348fde162eb83c6c2a508ebffd1679abd57d1e677cb936fa62613166a283992"
+      }
+    ],
+    ".github/workflows/public-mcp-behavior.yml": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "eeaebb95becdf8527eae226e8e3947737322a4241a121a805d2ef1ba578d3470"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "8d82691a23b560f6b2f2577dadda0820f6fd58af9582d2633d661b88763b4f39"
+      }
+    ],
+    ".github/workflows/public-mcp-protocol.yml": [
+      {
+        "job_id": "trusted-self-hosted",
+        "definition_sha256": "51ecdcc63e3ca08ebbb0d752f42c6c5b464a71012e89d0cbfa265131cb9a92cb"
+      },
+      {
+        "job_id": "untrusted-hosted",
+        "definition_sha256": "3a6fa39122d2af8665d3167b3faf6714c56a60b5fe8b4a6121a6bd9e4a655245"
+      }
+    ],
+    ".github/workflows/trivy.yml": [
+      {
+        "job_id": "trivy-trusted-self-hosted",
+        "definition_sha256": "d6cca45a3266b3868b2086976001d40c3fc3ac2f519d35a56389007232de1269"
+      },
+      {
+        "job_id": "trivy-untrusted-hosted",
+        "definition_sha256": "dda6e391e6e9ee25a92c8c79c8fd264e3bac07c7e652936f0e3b7e8c830dd196"
+      }
+    ]
+  }
+}

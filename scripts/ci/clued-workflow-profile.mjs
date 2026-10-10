@@ -1,15 +1,21 @@
 import {createHash} from 'node:crypto';
 
 const digest=text=>createHash('sha256').update(text).digest('hex');
+const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?
+  Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
+export const roleDefinitionDigest=job=>digest(JSON.stringify(canonical(job)));
 export const workflowBlob=text=>createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
 const reject=reason=>{throw new Error(`unregistered workflow definition: ${reason}`);};
 
 // Registration-time compiler only. parseYaml must be the locked, independently
 // checked YAML parser. Consumers use default-branch registered data, never a
 // pull request's asserted profile or executable parser.
-export function compileRegisteredWorkflow(text,{primary_ids,parseYaml}={}) {
+export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_roles}={}) {
   if(typeof text!=='string' || text.length>524288 || typeof parseYaml!=='function' ||
-    !Array.isArray(primary_ids) || !primary_ids.length || new Set(primary_ids).size!==primary_ids.length)
+    !Array.isArray(primary_ids) || !primary_ids.length || new Set(primary_ids).size!==primary_ids.length ||
+    !Array.isArray(accepted_roles) || accepted_roles.length!==primary_ids.length ||
+    new Set(accepted_roles.map(role=>role?.job_id)).size!==accepted_roles.length ||
+    accepted_roles.some(role=>!role || !primary_ids.includes(role.job_id) || !/^[a-f0-9]{64}$/.test(role.definition_sha256??'')))
     reject('source/parser/primary roles missing');
   if(/\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text))reject('source character domain');
   const value=parseYaml(text);
@@ -27,6 +33,8 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml}={}) {
   for(const id of primary_ids) {
     if(typeof id!=='string' || !Object.hasOwn(value.jobs,id) || ['admission-gate','push-reuse'].includes(id))reject('primary role not a concrete job');
     const job=value.jobs[id];
+    if(accepted_roles.find(role=>role.job_id===id)?.definition_sha256!==roleDefinitionDigest(job))
+      reject('primary definition has no independent accepted role');
     if(!job || job.uses || job.strategy || !Array.isArray(job.steps))reject('reusable/matrix/missing steps');
     const labels=job['runs-on'];
     if(!(typeof labels==='string' && /^(ubuntu|windows|macos)-[A-Za-z0-9.-]+$/.test(labels)) &&

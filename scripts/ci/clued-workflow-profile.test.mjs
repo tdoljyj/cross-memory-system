@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {compileRegisteredWorkflow,selectRegisteredProfiles} from './clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,selectRegisteredProfiles,roleDefinitionDigest} from './clued-workflow-profile.mjs';
 const SOURCE='name: fake-fixture\non: fixture\njobs: fixture\n';
 const definition={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{name:'Actual tests',run:'node --test'}]}}};
-const compile=(source=SOURCE,parsed=definition)=>compileRegisteredWorkflow(source,{primary_ids:['main'],parseYaml:()=>parsed});
+const fixtureRoles=parsed=>[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
+const compile=(source=SOURCE,parsed=definition)=>compileRegisteredWorkflow(source,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:fixtureRoles(parsed)});
 test('registration binds full bytes, explicit primary roles and every command occurrence',()=>{
   const parsed=structuredClone(definition);parsed.jobs.main.steps.push({name:'Actual tests',run:'node other-tests.mjs'});
   const p=compile(SOURCE,parsed);assert.equal(p.routes[0].required_steps['Actual tests'],2);
