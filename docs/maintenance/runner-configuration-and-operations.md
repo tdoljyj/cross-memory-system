@@ -1,6 +1,6 @@
 # Runner 配置与运维规范
 
-版本：v1.2；适用仓库：`tdoljyj/cross-memory-system`。本次核对：2026-10-10，主线基线 `cf5be21bbb93db534a383410e9b4e9c7617c0f91`。旧 v1.1 无窗口安装器候选在 PR #615，尚未合入，不能当作当前主线实现。
+版本：v1.3；适用仓库：`tdoljyj/cross-memory-system`。本次核对：2026-10-10，包含控制入口 PR #700 和质量分类 PR #701；全仓临时目录补齐与本规范同 PR 审核，以该 PR 的实际合入提交为实现边界。旧 v1.1 无窗口安装器候选在 PR #615，尚未合入，不能当作当前主线实现。
 
 本文件是工程 Runbook，规定配置、上线验收、日常维护、增减与回退的操作要求。它不声明某台机器此刻在线，也不代替操作授权、Clued 当前任务或 GitHub 准入。下文的“必须”是执行本规范的要求；“现状”只说明编写时已核对的实现。未实现的要求见第 12 节，不得据此宣称已达标。
 
@@ -37,7 +37,7 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 
 表内名称均加前缀 `clued-ci-`。公司 WSL 为 `CluedCI-Linux`，家里为 `Ubuntu-24.04`；Linux 服务用户为 `runner`。完整服务名、路由标签和看门狗路径从清单取，不能按机器名猜测。
 
-本次证据边界：公司现场已复读 Windows 自动服务 `StartName=.\clued-runner`，四个 Linux unit 为 `User=runner`、`KillMode=control-group`、各自独立工作目录且 active；公司 `.wslconfig` 实际为 28 GB / 16 CPU / 8 GB swap。家里本轮只核对 GitHub 注册与路由标签，主机侧账号、启动链和冷启动资格仍按对应精确历史验收及变更失效规则使用，不宣称本轮远端主机重新验收。
+本次证据边界：公司四个 Linux unit 为 `User=runner`、`KillMode=control-group`、各自独立工作目录且 active；公司 `.wslconfig` 实际为 28 GB / 16 CPU / 8 GB swap。家里 `Ubuntu-24.04` 的 Linux 服务本轮只读复核为 active、`User=runner`、`KillMode=control-group`、根目录 `/opt/actions-runner`。两台原生 Windows 服务本轮经管理员只读复核均为 Running/Auto、`StartName=.\clued-runner`。这些定点读取不替代启动链、冷启动或登出无人值守验收；相应资格仍按历史精确证据及变更失效规则使用。
 
 ### 2.1 身份、目录与路由
 
@@ -194,13 +194,21 @@ wsl.exe -d Ubuntu-24.04 -u runner -e systemctl show actions.runner.tdoljyj-cross
 
 本节公共入口与八流程覆盖实现在 [PR #693](https://github.com/tdoljyj/cross-memory-system/pull/693)，源提交 `48205446348a65e578094aef999e59cf853eeac0`。全部适用正式 CI、精确受保护准入和合并位通过后，于 2026-10-10 11:06:57 UTC 合入 `cf5be21bbb93db534a383410e9b4e9c7617c0f91`。它与先前已合入的 PR #691 共同构成下述应用临时目录实现；这不代替每个后续版本的实际 job 验收。
 
-本次临时目录治理的实施范围是应用的八条持续安装/测试流程：quality、Node22安装、integration-runtime nightly、connection authorization、G4、Information Flow E2E、public MCP protocol和behavior。覆盖检查对这些工作流中每个产生安装、解压、构建、测试或评测临时数据的 job，要求在首次此类命令前把 `TMPDIR`、`TMP`、`TEMP` 指向该 runner 的 `RUNNER_TEMP`。Node 准备和 checkout 完成后使用 `ci-temporary-storage` 公共入口；入口先验证绝对路径、目录身份、作业账号归属和可写性，再写入 `GITHUB_ENV`。失败不得静默回退到共享 `/tmp`。新增同域流程必须纳入同一覆盖检查；这次应用覆盖不证明仓库控制或生产发布流程的所有临时路径均已治理，后者保持自己的执行范围和验证。受信任准入 job 若检出 base/main，不能先调用仅存在于未合入 PR 的本地 action。
+本规范的临时目录治理范围为全仓工作流、控制入口、发布/资格验证及本地 composite；本轮核对基数为 43 个工作流、86 个静态 job，数量不作为未来白名单。全仓 [覆盖清单](../../.github/actions/ci-temporary-storage/coverage.json) 和 [检查器](../../.github/actions/ci-temporary-storage/check-workflows.mjs) 自动发现新文件、job 和 action；未知、过期分类、晚配置、失配条件、共享临时根、步骤覆盖和未复核的产物/缓存路径一律报错。原八应用覆盖保留为回归子集。只比较 runner 名称的无写入心跳有精确源码指纹，代码变化使这项只读分类失效。
+
+检出仓库的 job 在首个运行命令前使用 `ci-temporary-storage` 公共入口，把 `TMPDIR/TMP/TEMP` 指向该 runner 的 `RUNNER_TEMP`，并将 Python 字节码与 Wrangler 调试日志分别放到作业内 `clued-pycache`、`clued-wrangler-logs`。Node 不在 PATH 时使用标准库 Python 启动器；Windows 使用既有 PowerShell，无需为简单 Python 校验增装 Node 或 PowerShell 7。公共入口验证绝对单行路径、专用目录、符号链接/Windows junction、POSIX 账号归属和可写性，失败不回退共享 `/tmp`。仅依赖 Node 的可信控制 job 在现有 Node 准备后调用；官方 checkout/runtime/cache/artifact 动作按平台工作区、工具缓存及 job 临时传输生命周期管理，不当成无归属解压数据。
+
+原本不检出仓库的生产开关和权限观察保持该边界：每个运行步骤使用精确 `${{ runner.temp }}` 环境绑定，不为临时治理引入候选仓库代码、缓存或生产凭据。可信多目录检出必须从原可信 checkout 加载公共入口，不能改为候选目录。发布标签的检出前凭据检查采用步骤绑定，检出后才加载入口。可重用工作流、job container 或未知第三方动作需要明确源和生命周期复核，不能默认计为已覆盖。生产流程源码检查不代替生产模式的实际资格，也不授予 dispatch/deploy/migrate 权限。
+
+固定内容的 `admission-gate` 要先按现行准入规则把精确新模板散列登记到可信主线，再更新各工作流；不得同时推两阶段或移除散列检查。候选清单绑定了工作流字节时，临时入口变更也必须准确刷新该源码项的散列与字节数，并运行原完整性检查；这不继承历史资格或产生模型、发布等业务接受权限。
 
 当前已合入的 PR #691：应用 package 的 Node 测试命令与内容选择器通过 `scripts/run-tests.mjs` 运行，每次 suite 拥有独立 `clued-test-run-*` 子目录，测试和原生依赖子进程继承它；成功、失败、正常强制退出、启动失败和可处理的取消均在外层回收。取消只作用于该调用创建的进程组。quality job 的依赖安装前已经配置 runner 临时目录。其它 CI 直接测试、安装入口应以工作流覆盖检查及实际 job 的入口日志为验收证据，不能由某一套 unit tests 通过推定全入口覆盖。
 
 Runner 的 job 临时目录在 job 开始/结束时清理；这为安装中断、进程硬杀和机器故障留下的文件提供下一次作业的回收边界。硬杀本身不能执行 JavaScript `finally`，不能承诺取消瞬间零残留。作业账号无法删除的文件不保证由 runner 回收；出现清理失败必须留诊断并处理准确归属/权限，不能扩大 runner 权限或换成共享 `/tmp`。该目录不是安全沙箱，同机 runner 仍共享 WSL/用户/Docker。
 
-缓存与临时文件分别管理：npm 的既有持久缓存、Node 工具缓存、Docker 镜像/卷、数据库和明确保留的测试报告不进入这种临时清扫。promptfoo 的作业内配置/临时评测状态应放到该 job 的临时目录，不能把全机 `/tmp/promptfoo` 当跨 runner 共享配置。报告及需要保留的诊断先按现有流程上传/归档，再由 job 生命周期清理临时根。临时目录不是后续证据唯一存放位置。
+缓存与临时文件分别管理：npm/pip、Node/Python 工具缓存、Trivy 缓存、Docker 镜像/卷、数据库及已资格化构建/发布产物保留原位置和生命周期，不进入临时扫删。promptfoo 配置属于 job；Wrangler 临时调试日志放入 job 目录，保留默认敏感信息清理，不自动上传原始日志；已有受审、经脱敏的日志/证据路径与上传保持。临时报告先按原流程上传/归档，再由 job 生命周期回收。临时根不是证据唯一存放位置。[Wrangler 日志设置](https://developers.cloudflare.com/workers/wrangler/system-environment-variables/)
+
+固定 ICU 下载包与命名盘点源/输出只在该 job 根内暂存，安装退出删除自己的包、命名证据按原字段和保留期上传。生产备份的明文 dump/校验副本位于私有 job 子目录：成功、失败和可处理取消都清掉明文，只有加密备份与清单沿原路径保留；硬杀仍依赖 runner/平台回收，不能承诺物理安全擦除。稳定的 `/tmp/clued-ci-NAME.lock` 是现有跨 runner `flock` 的小型协调 inode，必须保留，不能移动到各 job 根或在释放时删除，否则破坏互斥；holder/PID 记录仍属于各 job。
 
 不得新增 `/tmp/*`、全部 ONNX/构建目录或全机 Docker prune 的定时清扫来代替归属治理。历史残留删除是独立操作：列明准确前缀/目录、保留条件和截止时间，确认没有在运行或已分配的作业使用目标，核对真实路径、目录身份、最新子项时间及文件系统边界；只删除明确批准的清单。不要根据目录名、字节相同或“看起来旧”推定删除授权。
 

@@ -28,7 +28,11 @@ export function configureTemporaryStorage(env = process.env) {
   } finally {
     try { unlinkSync(probe); } catch (error) { if (error.code !== "ENOENT") throw error; }
   }
-  const values = { TMPDIR: root, TMP: root, TEMP: root };
+  const values = {
+    TMPDIR: root, TMP: root, TEMP: root,
+    PYTHONPYCACHEPREFIX: path.join(root, "clued-pycache"),
+    WRANGLER_LOG_PATH: path.join(root, "clued-wrangler-logs"),
+  };
   if (env.CI_TEMP_ISOLATE_PROMPTFOO === "true") values.PROMPTFOO_CONFIG_DIR = path.join(root, "clued-promptfoo");
   else if (env.CI_TEMP_ISOLATE_PROMPTFOO && env.CI_TEMP_ISOLATE_PROMPTFOO !== "false") throw new Error("isolate-promptfoo must be true or false");
   appendFileSync(envFile, Object.entries(values).map(([key, value]) => `${key}=${value}\n`).join(""), "utf8");

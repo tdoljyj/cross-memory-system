@@ -11,9 +11,20 @@ runs:
       shell: bash
       env:
         CI_TEMP_ISOLATE_PROMPTFOO: ${{ inputs.isolate-promptfoo }}
-      run: node "$GITHUB_ACTION_PATH/setup.mjs"
+      run: |
+        if command -v node >/dev/null 2>&1; then
+          node "$GITHUB_ACTION_PATH/setup.mjs"
+        else
+          python3 "$GITHUB_ACTION_PATH/setup.py"
+        fi
     - if: runner.os == 'Windows'
-      shell: pwsh
+      shell: powershell
       env:
         CI_TEMP_ISOLATE_PROMPTFOO: ${{ inputs.isolate-promptfoo }}
-      run: node "$env:GITHUB_ACTION_PATH/setup.mjs"
+      run: |
+        if (Get-Command node -CommandType Application -ErrorAction SilentlyContinue) {
+          node "$env:GITHUB_ACTION_PATH/setup.mjs"
+        } else {
+          python "$env:GITHUB_ACTION_PATH/setup.py"
+        }
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

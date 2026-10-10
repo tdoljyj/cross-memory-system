@@ -54,6 +54,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -81,6 +83,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python3 -m unittest scripts/ci/test_check_design_refs.py
       - run: python3 scripts/ci/check_design_refs.py
 
@@ -106,5 +110,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python3 -m unittest scripts/ci/test_check_design_refs.py
       - run: python3 scripts/ci/check_design_refs.py

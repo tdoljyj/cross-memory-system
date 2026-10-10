@@ -44,6 +44,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python scripts/ci/self-hosted/validate_node_profiles.py
       - run: python tests/test_ci_health.py
       - name: Parse PowerShell onboarding scripts
@@ -83,6 +85,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python3 scripts/ci/self-hosted/validate_node_profiles.py
       - run: python3 tests/test_ci_health.py
       - run: bash -n scripts/ci/self-hosted/bootstrap-linux-runner.sh
@@ -106,6 +110,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python3 scripts/ci/self-hosted/validate_node_profiles.py
       - run: python3 tests/test_ci_health.py
       - run: bash -n scripts/ci/self-hosted/bootstrap-linux-runner.sh

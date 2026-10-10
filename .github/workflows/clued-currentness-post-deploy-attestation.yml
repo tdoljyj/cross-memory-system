@@ -32,11 +32,16 @@ jobs:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: npm ci --ignore-scripts
       - name: Install embedded PostgreSQL ICU compatibility runtime
         run: |
-          curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
-          sudo dpkg -i /tmp/libicu60.deb
+          set -euo pipefail
+          icu_deb=$(mktemp "$RUNNER_TEMP/clued-libicu60-XXXXXX.deb")
+          trap 'rm -f -- "$icu_deb"' EXIT
+          curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
+          sudo dpkg -i "$icu_deb"
           ldconfig -p | grep 'libicuuc.so.60'
       - name: Verify exact deployed source and install G6 transport attestation
         env:
