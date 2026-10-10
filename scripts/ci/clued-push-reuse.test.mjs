@@ -25,7 +25,7 @@ function proof() {
         'Upload the actual PR test tree'].map((name) => ({ name, conclusion: 'success' })) }] },
     report: { schema: 'clued.tested-tree/1', repository: 'owner/repo', workflow: file, run_id: 100, run_attempt: 2,
       pr_number: 12, pr_head_sha: H, checkout_sha: C, github_sha: C, tree: T,
-      isolation: { profile: 'fixed-seven-ports/1', run_id: 100,
+      isolation: { profile: 'fixed-seven-ports/2', run_id: 100, run_attempt: 2,
         source_config_digest: 'sha256:' + '1'.repeat(64), tested_config_digest: 'sha256:' + '2'.repeat(64) } } };
 }
 
@@ -81,6 +81,21 @@ test('closed-PR empty platform association still requires the exact report PR', 
   assert.equal((await evaluatePush(env, api(p).fetch)).run_heavy, true);
 });
 
+test('Information Flow keeps its run-only isolation qualification while G4 binds each attempt', () => {
+  const p = proof();
+  p.workflow = 'information-flow-e2e.yml';
+  p.run.path = `.github/workflows/${p.workflow}`;
+  p.jobs.jobs[0].name = TARGETS[p.workflow].job;
+  p.jobs.jobs[0].steps = [...TARGETS[p.workflow].steps, 'Checkout', 'Set up Node', 'Install', 'Stop runtime']
+    .map((name) => ({ name, conclusion: 'success' }));
+  p.report.workflow = p.workflow;
+  p.report.isolation.profile = 'fixed-seven-ports/1';
+  delete p.report.isolation.run_attempt;
+  assert.equal(validateEvidence(p).run_heavy, false);
+  p.report.isolation.profile = 'fixed-seven-ports/2';
+  assert.throws(() => validateEvidence(p));
+});
+
 test('PR, dispatch, untrusted, other branch and unknown target always execute with zero requests', async () => {
   for (const delta of [{ GITHUB_EVENT_NAME: 'pull_request' }, { GITHUB_EVENT_NAME: 'workflow_dispatch' },
     { GITHUB_ACTOR: 'someone' }, { GITHUB_REF: 'refs/heads/feature' }, { REUSE_WORKFLOW: 'public-mcp-behavior.yml' }]) {
@@ -97,6 +112,7 @@ test('wrong source, tree, workflow, attempt, PR or missing actual tests never re
     p => p.run.path = '.github/workflows/other.yml', p => p.run.pull_requests = [{ number: 99 }],
     p => p.report.run_attempt = 1, p => p.report.tree = H, p => p.report.checkout_sha = H,
     p => p.report.pr_head_sha = M, p => p.jobs.total_count = 100,
+    p => p.report.isolation.profile = 'fixed-seven-ports/1', p => p.report.isolation.run_attempt = 1,
     p => p.jobs.jobs[0].steps[0].conclusion = 'skipped', p => p.jobs.jobs[0].steps[0].conclusion = 'failure',
     p => p.jobs.jobs[0].conclusion = 'skipped', p => p.jobs.jobs[0].steps = []];
   for (const mutate of mutations) { const p = proof(); mutate(p); assert.throws(() => validateEvidence(p)); }
@@ -132,19 +148,24 @@ test('report binds the checkout actually tested and refuses dirty tracked bytes'
 });
 
 test('only the seven exact run-specific port/project changes qualify, never arbitrary dirty configuration', () => {
-  const source = 'project_id = "clued-cloud"\nport = 54321\nport = 54322\nshadow_port = 54320\nport = 54323\nport = 54324\nport = 54327\nport = 54329\nmajor_version = 17\n';
-  const expected = 'project_id = "clued-g4-100"\nport = 46001\nport = 46002\nshadow_port = 46000\nport = 46003\nport = 46004\nport = 46007\nport = 46009\nmajor_version = 17\n';
-  assert.equal(isolatedConfig(source, file, 100), expected);
+  const source = 'project_id = "clued-cloud"\nport = 54321\nport = 54322\nshadow_port = 54320\nport = 54323\nport = 54324\nport = 54327\nport = 54329\nmajor_version = 17\n[db.seed]\nenabled = false\n';
+  const expected = 'project_id = "clued-g4-100-2"\nport = 46011\nport = 46012\nshadow_port = 46010\nport = 46013\nport = 46014\nport = 46017\nport = 46019\nmajor_version = 17\n[db.seed]\nenabled = false\n';
+  assert.equal(isolatedConfig(source, file, 100, 2), expected);
   const event = { pull_request: { number: 12, user: { login: 'owner' }, head: { sha: H, repo: { full_name: 'owner/repo' } } } };
   const prEnv = { ...env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_SHA: C, GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '2' };
   const git = (verb, ref) => verb === 'status' ? 'M apps/clued-cloud/supabase/config.toml' :
     verb === 'show' ? source : ref === 'HEAD' ? C : T;
   const result = testedTreeReport(prEnv, event, git, () => expected);
-  assert.equal(result.isolation.profile, 'fixed-seven-ports/1');
+  assert.equal(result.isolation.profile, 'fixed-seven-ports/2');
+  assert.equal(result.isolation.run_attempt, 2);
   assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('major_version = 17', 'major_version = 18')));
-  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('46001', '46002')));
+  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('46011', '46012')));
   assert.throws(() => testedTreeReport(prEnv, event, (verb, ref) => verb === 'status' ? '' : git(verb, ref), () => expected));
-  assert.throws(() => isolatedConfig(source.replace('port = 54329\n', ''), file, 100));
+  assert.throws(() => isolatedConfig(source.replace('port = 54329\n', ''), file, 100, 2));
+  assert.throws(() => isolatedConfig(source, file, 100));
+  const ifConfig = isolatedConfig(source, 'information-flow-e2e.yml', 100);
+  assert.match(ifConfig, /project_id = "clued-ife2e-100"/);
+  assert.match(ifConfig, /port = 46001/);
 });
 
 test('workflow integration leaves the registered admission gate unchanged and records proof after tests', () => {
@@ -157,7 +178,11 @@ test('workflow integration leaves the registered admission gate unchanged and re
     const jobs = [...text.slice(text.indexOf('\njobs:\n')).matchAll(/^  [\w-]+:[ \t]*$/gm)];
     const start = text.indexOf('\njobs:\n');
     const trusted = text.slice(start + jobs[2].index, start + jobs[3].index);
-    assert.ok(trusted.lastIndexOf(TARGETS[file].steps[0]) < trusted.indexOf('Record the actual PR test tree'));
+    for (const required of TARGETS[file].steps) {
+      assert.ok(trusted.includes(required), `${file}: actual required step ${required} exists`);
+      assert.ok(trusted.lastIndexOf(required) < trusted.indexOf('Record the actual PR test tree'));
+    }
+    assert.match(text, /scripts\/ci\/clued-g4-fresh-start\.mjs/);
     assert.ok(text.indexOf('Record the actual PR test tree') > text.indexOf('Check out repository'));
     assert.match(text, /retention-days: 7/);
     assert.match(text, /if: success\(\) && github\.event_name == 'pull_request'/);

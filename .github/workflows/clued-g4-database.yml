@@ -14,6 +14,8 @@ on:
       - .github/workflows/clued-g4-database.yml
       - 'scripts/ci/clued-push-reuse.mjs'
       - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
@@ -22,6 +24,8 @@ on:
       - .github/workflows/clued-g4-database.yml
       - 'scripts/ci/clued-push-reuse.mjs'
       - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
@@ -148,39 +152,18 @@ jobs:
       - name: Build the application surfaces used by lifecycle tests
         run: npm run build
 
-      - name: Isolate local Supabase ports
-        env:
-          CLUED_G4_RUN_ID: ${{ github.run_id }}
-        run: |
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
+      - name: Verify fresh-start guard regressions
+        run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs
 
-          run_id = int(os.environ['CLUED_G4_RUN_ID'])
-          port_base = 45000 + (run_id % 1000) * 10
-          config = Path('supabase/config.toml')
-          source = config.read_text(encoding='utf-8')
-          project = 'project_id = "clued-cloud"'
-          if source.count(project) != 1:
-              raise RuntimeError('Unexpected Supabase project ID')
-          source = source.replace(project, f'project_id = "clued-g4-{run_id}"')
-          source, count = re.subn(
-              r'(?m)^([ \t]*(?:port|shadow_port)[ \t]*=[ \t]*)5432([0-9])$',
-              lambda match: match.group(1) + str(port_base + int(match.group(2))),
-              source,
-          )
-          if count != 7:
-              raise RuntimeError(f'Expected seven Supabase ports, found {count}')
-          config.write_text(source, encoding='utf-8')
-          print(f'G4 Supabase project and ports isolated for run {run_id}')
-          PY
+      - name: Prepare a fresh attempt-specific Supabase project
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
 
       - name: Start isolated Supabase runtime
         run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
 
-      - name: Reapply migrations from a clean database
-        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
+      - name: Verify fresh migration initialization
+        # start applies the complete migration chain once to a proven empty project.
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
         run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
@@ -198,14 +181,15 @@ jobs:
           docker system df
 
       - name: Stop isolated Supabase runtime
-        if: always()
+        if: always() && env.CLUED_G4_FRESH_PROJECT != ''
         run: |
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup
           # The CLI may return nonzero while pruning unrelated containers on
           # this persistent runner. The gate still requires this run's isolated
           # runtime to be stopped; Docker errors must not be mistaken for clean.
           npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || stop_status=$?
           running=$(docker ps --format '{{.Names}}') || exit 1
-          if grep -Eq '^supabase_.*_clued-g4-${{ github.run_id }}$' <<< "$running"; then
+          if grep -Eq "^supabase_.*_${CLUED_G4_FRESH_PROJECT}$" <<< "$running"; then
             echo '::error::Isolated Supabase containers remain running'
             exit 1
           fi
@@ -274,11 +258,18 @@ jobs:
       - name: Build the application surfaces used by lifecycle tests
         run: npm run build
 
+      - name: Verify fresh-start guard regressions
+        run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs
+
+      - name: Prepare a fresh attempt-specific Supabase project
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
+
       - name: Start isolated Supabase runtime
         run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
 
-      - name: Reapply migrations from a clean database
-        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
+      - name: Verify fresh migration initialization
+        # start applies the complete migration chain once to a proven empty project.
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
         run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
@@ -296,5 +287,7 @@ jobs:
           docker system df
 
       - name: Stop isolated Supabase runtime
-        if: always()
-        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
+        if: always() && env.CLUED_G4_FRESH_PROJECT != ''
+        run: |
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup
+          npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
