@@ -39,13 +39,23 @@ test('YAML aliases and duplicate fields cannot hide an execution role or trigger
   for(const source of [
     'on:\n  pull_request:\n  pull_request:\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps: []\n',
     'on:\n  pull_request:\nx: &steps [{run: node --test}]\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps: *steps\n'])
-    assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids:['main'],parseYaml}));
+    {
+      let called=false;
+      const accepted_roles=[{job_id:'main',definition_sha256:roleDefinitionDigest({'runs-on':'ubuntu-latest',steps:[{run:'node --test'}]})}];
+      assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids:['main'],accepted_roles,
+        parseYaml:text=>{called=true;return parseYaml(text);}}));
+      assert.equal(called,true,'negative case must reach the real locked YAML parser');
+    }
 });
 
 test('real YAML cannot omit a heavy role or replace it with a successful helper',()=>{
   const source='on:\n  pull_request:\njobs:\n  heavy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n  helper:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo helper\n';
-  for(const primary_ids of [['heavy'],['helper'],['heavy','helper']])
-    assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids,parseYaml}));
+  const parsed=parseYaml(source);
+  for(const primary_ids of [['heavy'],['helper'],['heavy','helper']]) {
+    const accepted_roles=primary_ids.map(job_id=>({job_id,definition_sha256:roleDefinitionDigest(parsed.jobs[job_id])}));
+    assert.throws(()=>compileRegisteredWorkflow(source,{primary_ids,parseYaml,accepted_roles}),
+      primary_ids.length===1?/unassigned job roles/:/multiple logical primaries or duplicate routes/);
+  }
 });
 
 test('Self heavy and Hosted helper are not implicitly accepted as one logical primary',()=>{
