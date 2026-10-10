@@ -14,7 +14,10 @@ const migration = '20260924120000_project_lifecycle_successor_v2.sql';
 const currentnessMigration = '20260924121000_project_lifecycle_successor_v2_frontier_invalidation.sql';
 const issuerMigration = '20261009070001_issuer_identity_credentials_v1.sql';
 const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
-const storageOwnerLifecycleMigration = '20261010055701_storage_owner_lifecycle_v1.sql';
+const storageOwnerLifecycleMigrations = [
+  '20261010055701_storage_owner_lifecycle_v1.sql',
+  '20261010150000_storage_owner_root_trash_scope_v2.sql',
+];
 const gatewayProbeMigrations = [
   '20261009160000_worker_gateway_request_context_probe_v1.sql',
   '20261009160100_close_worker_gateway_request_context_probe_v1.sql',
@@ -56,7 +59,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && name !== storageOwnerLifecycleMigration &&
+      name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -108,7 +111,28 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     // Native storage lifecycle uses the 2b issuer resolver and extends its RPC
     // inventory. Install it after that exact historical inventory cutover,
     // matching production, rather than replaying future functions before 2b.
-    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageOwnerLifecycleMigration), 'utf8'));
+    // The V2 successor upgrades this exact Native function, so both must follow
+    // the deferred prerequisites in their original timestamp order.
+    for (const name of storageOwnerLifecycleMigrations) {
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+    }
+
+    await t.test('deferred Native lifecycle includes its V2 successor with authenticated-only ACL and exact GW80', async () => {
+      const signature = 'public.clued_storage_owner_lifecycle_v1(text,jsonb)';
+      const native = (await admin.query(`select pg_get_userbyid(proowner) as owner,prosecdef,proconfig,
+        encode(sha256(convert_to(prosrc,'UTF8')),'hex') as source_hash
+        from pg_proc where oid=$1::regprocedure`, [signature])).rows[0];
+      assert.equal(native.source_hash, 'a6eb23ee9c69dae6e1f0ac709587f2b46f675478a326b30f2b3a909bf8170017');
+      assert.equal(native.owner, 'postgres');
+      assert.equal(native.prosecdef, true);
+      assert.deepEqual(native.proconfig, ['search_path=""']);
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed", [role, signature])).rows[0].allowed,
+          role === 'authenticated', role);
+      }
+      assert.equal((await admin.query(`select count(*)::int as count from pg_proc
+        where pronamespace='public'::regnamespace and has_function_privilege('clued_worker_gateway',oid,'EXECUTE')`)).rows[0].count, 80);
+    });
 
     await t.test('cutover advances and enqueues the dedicated Frontier currentness revision', async () => {
       const state = (await admin.query(`select h.invalidation_revision,h.resolved_through_revision,
