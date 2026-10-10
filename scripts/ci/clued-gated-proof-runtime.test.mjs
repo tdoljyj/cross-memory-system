@@ -114,12 +114,14 @@ test('shadow budget cancels a hung read and forbids follow-up requests after exp
   const completed={...run,path:file,status:'completed',conclusion:'success'};
   const pending=new Promise(resolve=>{resolveRead=resolve;});
   const options={env:{GITHUB_REPOSITORY:repository},eventName:'workflow_run',event:{workflow_run:{id:7}},
-    workspace:'.',workflows:new Map([[file,'c'.repeat(40)]]),budgetMs:5,
+    workspace:fileURLToPath(new URL('../..',import.meta.url)),workflows:new Map([[file,'c'.repeat(40)]]),budgetMs:5,
     read:async(route,options)=>{signal=options.signal;return pending;},graphRead:async()=>{graphs++;return payload();}};
   const seen=await observeCompletedSource(options);
   assert.equal(seen.reason,'source observation budget exhausted');assert.equal(signal.aborted,true);
   resolveRead(completed);await new Promise(resolve=>setImmediate(resolve));
   assert.equal(graphs,0);
+  await observeCompletedSource({...options,budgetMs:1000,read:async()=>completed});
+  assert.equal(graphs,1,'the valid registry path would reach GraphQL without a closed budget');
   assert.equal((await observeCompletedSource({...options,budgetMs:12001})).state,'unknown');
 });
 test('hung GraphQL response body is aborted within the independent shadow budget',async()=>{
