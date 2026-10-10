@@ -328,6 +328,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     // The holders of a repository's slot.
     const listed = await holders();
     assert.deepEqual(listed.holders.map((row) => [row.claim_id, row.bound_pr, row.merge_refs]), [[d.claim_id, PR, [SLOT]]]);
+    assert.equal(listed.holders[0].progress_ref, d.progress_ref);
     assert.deepEqual((await holders({ repository: 'other/repo' })).holders, []);
     await assert.rejects(() => holders({ repository: 'not a repo' }), /work_claim_repository_invalid/);
     await assert.rejects(() => holders({ pr_ref: PR }), /work_claim_merge_slot_holders_input_invalid/);
@@ -413,15 +414,83 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.ok((await view(d)).merge_slot_until);
 
     // failed returns the slot at once, with its Receipt.
-    const failed = await touch({ ci_state: 'failed' });
+    const failed = await touch({ ci_state: 'failed', reason: 'gitleaks concluded failure' });
     assert.deepEqual([failed.returned, failed.merge_slot_returned], [true, [d.claim_id]]);
+    assert.deepEqual(failed.notified, [d.claim_id]);
+    const notices = async () => (await admin.query(`select * from clued_private.agent_messages_v1
+      where to_claim_id=$1 and rate_limit_exempt order by created_at`, [d.claim_id])).rows;
+    let messages = await notices();
+    assert.equal(messages.length, 1);
+    const notice = messages[0];
+    assert.deepEqual([notice.kind, notice.to_binding_id, notice.to_session_ref, notice.thread_id],
+      ['info', d.holder_binding_id, d.holder_session_ref, notice.message_id]);
+    assert.match(notice.subject, /CI 失败：.*#20 合并位已退回/);
+    assert.ok(notice.body.includes(HEAD));
+    assert.match(notice.body, /gitleaks concluded failure.*\n下一步：修好后 push/);
+    assert.deepEqual(notice.refs, ['pr:20', `task:${d.task_id}`]);
+    assert.equal(notice.idempotency_key, `ci-failed:${d.claim_id}:${HEAD}`);
+    assert.match(notice.request_hash, /^[0-9a-f]{64}$/);
+    assert.equal(Date.parse(notice.expires_at) - Date.parse(notice.created_at), 14 * 86400000);
+    const messageReceipts = await admin.query(`select metadata from public.clued_audit_receipts
+      where object_type='agent_message' and object_id=$1`, [notice.message_id]);
+    assert.equal(messageReceipts.rows.length, 1);
+    assert.equal(messageReceipts.rows[0].metadata.receipt_kind, 'AGENT_MESSAGE_SENT');
+    assert.equal(JSON.stringify(messageReceipts.rows).includes('gitleaks concluded failure'), false);
+    const inbox = await agent('codex', 'clued_agent_inbox_v1', { scope: 'global', session_ref: d.holder_session_ref });
+    assert.ok(inbox.messages.some((m) => m.message_id === notice.message_id && m.body === notice.body));
     d = await view(d);
     assert.deepEqual([d.merge_slot_until, d.merge_slot_ci, d.trigger_refs], [null, null, []]);
     const failure = (await receipts(d, 'work_claim_merge_slot_return')).at(-1);
     assert.deepEqual([failure.receipt_kind, failure.why, failure.ref.head_sha, failure.merge_refs],
       ['WORK_CLAIM_MERGE_SLOT_RETURNED', 'ci_failed', HEAD, [SLOT]]);
     assert.equal((await touch({ ci_state: 'failed', hard_cap_minutes: 120 })).returned, false, 'nothing more to return');
+    assert.equal((await notices()).length, 1);
     await assert.rejects(() => touch({ ci_state: 'failed', hard_cap_minutes: 200 }), /work_claim_merge_slot_hard_cap_invalid/);
+
+    // Even when it takes the slot again, the same claim/head has one notice.
+    d = committed(await renew('codex', d, { trigger_refs: [SLOT], progress_ref: HEAD })).claim;
+    assert.equal((await holders()).holders.find((h) => h.claim_id === d.claim_id).progress_ref, HEAD);
+    assert.deepEqual((await touch({ ci_state: 'failed', reason: 'same head, another report' })).notified, []);
+    assert.equal((await notices()).length, 1);
+    d = committed(await renew('codex', await view(d), { trigger_refs: [SLOT] })).claim;
+    const newHead = '8'.repeat(40);
+    assert.deepEqual((await touch({ ci_state: 'failed', head_sha: newHead })).notified, [d.claim_id]);
+    assert.equal((await notices()).length, 2);
+
+    // Invalid reason never returns the slot or creates a notice.
+    d = committed(await renew('codex', await view(d), { trigger_refs: [SLOT] })).claim;
+    for (const reason of [null, 1, {}, '', 'x'.repeat(301), 'line\nbreak', 'tab\there']) {
+      await assert.rejects(() => touch({ ci_state: 'failed', reason }), /work_claim_merge_slot_reason_invalid/);
+    }
+    assert.ok((await view(d)).merge_slot_until);
+    // Revoked, expired, scope-denied and context-denied recipients are skipped;
+    // the failure still returns the slot. Restore the synthetic Binding each time.
+    for (const [column, value, restore] of [['revoked_at', new Date(), null],
+      ['expires_at', new Date(Date.now() - 1000), null], ['scopes', ['context:write'], ['context:read', 'context:write']],
+      ['context_keys', ['project:00000000-0000-4000-8000-000000000001'], ['*']]]) {
+      await admin.query(`update public.clued_agent_bindings set ${column}=$2 where id=$1`, [d.holder_binding_id, value]);
+      const skipped = await touch({ ci_state: 'failed', head_sha: '7'.repeat(40) });
+      assert.deepEqual([skipped.returned, skipped.notified], [true, []], column);
+      await admin.query(`update public.clued_agent_bindings set ${column}=$2 where id=$1`, [d.holder_binding_id, restore]);
+      d = committed(await renew('codex', await view(d), { trigger_refs: [SLOT] })).claim;
+    }
+    assert.equal((await notices()).length, 2);
+    // The account switch is preserved for these internal messages too.
+    const settingsReceipt = (await admin.query(`insert into public.clued_audit_receipts
+      (user_id,context_key,operation,object_type,object_id,metadata)
+      values($1,'global','fixture','fixture','switch','{}') returning id`, [userId])).rows[0].id;
+    await admin.query(`insert into clued_private.agent_message_settings_v1(user_id,enabled,version,updated_at,receipt_id)
+      values($1,false,1,clock_timestamp(),$2)`, [userId, settingsReceipt]);
+    assert.deepEqual((await touch({ ci_state: 'failed', head_sha: '6'.repeat(40) })).notified, []);
+    await admin.query('delete from clued_private.agent_message_settings_v1 where user_id=$1', [userId]);
+    // Exempt notices do not spend the normal sender's hourly limit.
+    await admin.query(`insert into clued_private.agent_messages_v1(user_id,context_key,thread_id,kind,
+      sender_binding_id,to_binding_id,subject,body,idempotency_key,request_hash,expires_at,rate_limit_exempt)
+      select user_id,context_key,message_id,'info',sender_binding_id,to_binding_id,'synthetic notice','fixture',
+        'synthetic-notice:'||g,request_hash,expires_at,true from clued_private.agent_messages_v1
+      cross join generate_series(1,120) g where message_id=$1`, [notice.message_id]);
+    committed(await agent('ci', 'clued_agent_message_send_v1', { scope: 'global', kind: 'info',
+      to: { binding_id: d.holder_binding_id }, subject: 'ordinary coordination', body: 'still within budget', idempotency_key: uuid() }));
 
     // --- An entry whose slot lapsed stays out when the head behind it leaves: no revival. ---
     let q1 = await claim('claude', 'Q1', { trigger_refs: [SLOT], holder_session_ref: 'queue-1' });
@@ -510,7 +579,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     for (const role of ['anon', 'authenticated', 'service_role']) {
       for (const fn of ['work_claim_merge_refs_v1', 'work_claim_merge_slot_until_v1', 'work_claim_merge_slot_live_v1',
         'work_claim_merge_slot_stamp_v1', 'work_claim_merge_slot_return_core_v1', 'work_claim_merge_slot_until_from_v1',
-        'work_claim_merge_queue_v1', 'work_claim_merge_queue_view_v1', 'work_claim_merge_slot_ci_view_v1']) {
+        'work_claim_merge_queue_v1', 'work_claim_merge_queue_view_v1', 'work_claim_merge_slot_ci_view_v1', 'work_claim_ci_notice_v1']) {
         const allowed = (await admin.query(`select bool_or(has_function_privilege($1,p.oid,'execute')) v
           from pg_proc p join pg_namespace n on n.oid=p.pronamespace
           where n.nspname='clued_private' and p.proname=$2`, [role, fn])).rows[0].v;
