@@ -161,7 +161,7 @@ test('gate identity log is bound to an authenticated attempt and qualified gate 
   const w={sourceQualified:true,run,job:gate,repository:'o/r',head:HEAD,prNumber:5,gateSource,
     log:{complete:true,job_id:1,run_id:7,run_attempt:1,text}};
   assert.equal(gateIdentityWitness(w).scope,'pr_identity');
-  for(const change of [{sourceQualified:false},{prNumber:6},{gateSource:'c'.repeat(40)},
+  for(const change of [{sourceQualified:false},{prNumber:6},{prNumber:0},{run:null},{gateSource:'c'.repeat(40)},
     {log:{...w.log,run_attempt:2}},{log:{...w.log,complete:false}},{log:{...w.log,text:text+'\n'+text}}])
     assert.equal(gateIdentityWitness({...w,...change}).state,'unknown');
 });

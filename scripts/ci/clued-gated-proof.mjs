@@ -11,6 +11,10 @@ const failed = reason => ({passed:false,state:'failed',reason,scopes:[]});
 // This is an identity witness only; it does not qualify the heavy execution.
 export function gateIdentityWitness({sourceQualified,log,run,job,repository,head,prNumber,gateSource}) {
   if(sourceQualified!==true || job?.name!=='admission-gate' ||
+    !Number.isSafeInteger(job?.id) || job.id<1 || !Number.isSafeInteger(run?.id) || run.id<1 ||
+    !Number.isSafeInteger(run?.run_attempt) || run.run_attempt<1 ||
+    !Number.isSafeInteger(prNumber) || prNumber<1 || !/^[a-f0-9]{40}$/.test(head??'') ||
+    typeof repository!=='string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
     log?.complete!==true || log.job_id!==job.id || log.run_id!==run?.id || log.run_attempt!==run.run_attempt ||
     typeof log.text!=='string' || log.text.length>524288 || !/^[a-f0-9]{40}$/.test(gateSource??''))
     return unknown('gate identity log/source descriptor missing');
