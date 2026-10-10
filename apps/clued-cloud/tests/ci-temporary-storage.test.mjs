@@ -22,8 +22,12 @@ function fixture(run) {
 
 test("sets all temporary variables, preserves existing environment and leaves no probe", () => fixture(({ root, envFile }) => {
   const values = configureTemporaryStorage({ RUNNER_TEMP: root, GITHUB_ENV: envFile });
-  assert.deepEqual(values, { TMPDIR: root, TMP: root, TEMP: root });
-  assert.equal(readFileSync(envFile, "utf8"), `EXISTING=preserved\nTMPDIR=${root}\nTMP=${root}\nTEMP=${root}\n`);
+  assert.deepEqual(values, {
+    TMPDIR: root, TMP: root, TEMP: root,
+    PYTHONPYCACHEPREFIX: path.join(root, "clued-pycache"),
+    WRANGLER_LOG_PATH: path.join(root, "clued-wrangler-logs"),
+  });
+  assert.equal(readFileSync(envFile, "utf8"), "EXISTING=preserved\n" + Object.entries(values).map(([key, value]) => `${key}=${value}\n`).join(""));
   assert.deepEqual(readdirSync(root), []);
 }));
 
@@ -62,6 +66,31 @@ test("CLI failure does not silently fall back to the operating-system temporary 
   const child = spawnSync(process.execPath, [cli], { env: { ...process.env, RUNNER_TEMP: "relative", GITHUB_ENV: envFile }, encoding: "utf8" });
   assert.equal(child.status, 1);
   assert.match(child.stderr, /refused/);
+  assert.equal(readFileSync(envFile, "utf8"), "EXISTING=preserved\n");
+}));
+
+test("Python-only bootstrap implements the same environment contract without installing Node", () => fixture(({ base, root, envFile }) => {
+  const python = process.platform === "win32" ? "python" : "python3";
+  const script = fileURLToPath(new URL("../../../.github/actions/ci-temporary-storage/setup.py", import.meta.url));
+  const env = { ...process.env, RUNNER_TEMP: root, GITHUB_ENV: envFile, CI_TEMP_ISOLATE_PROMPTFOO: "true" };
+  const child = spawnSync(python, [script], { env, encoding: "utf8" });
+  assert.equal(child.status, 0, child.stderr || child.error?.message);
+  const expected = configureTemporaryStorage({ RUNNER_TEMP: root, GITHUB_ENV: envFile, CI_TEMP_ISOLATE_PROMPTFOO: "true" });
+  const section = Object.entries(expected).map(([key, value]) => `${key}=${value}\n`).join("");
+  assert.equal(readFileSync(envFile, "utf8"), "EXISTING=preserved\n" + section + section);
+  assert.deepEqual(readdirSync(root), []);
+  writeFileSync(envFile, "EXISTING=preserved\n");
+  for (const invalid of ["relative", root + "\nBAD=value", path.parse(root).root, os.homedir()]) {
+    const refused = spawnSync(python, [script], { env: { ...env, RUNNER_TEMP: invalid }, encoding: "utf8" });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /refused/);
+    assert.equal(readFileSync(envFile, "utf8"), "EXISTING=preserved\n");
+  }
+  const alias = path.join(base, "python-alias");
+  symlinkSync(root, alias, process.platform === "win32" ? "junction" : "dir");
+  const refused = spawnSync(python, [script], { env: { ...env, RUNNER_TEMP: alias }, encoding: "utf8" });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /symlink/);
   assert.equal(readFileSync(envFile, "utf8"), "EXISTING=preserved\n");
 }));
 
