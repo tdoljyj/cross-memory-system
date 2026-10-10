@@ -41,11 +41,12 @@ test('Full app steps can qualify after a failed auxiliary classifier only when e
   assert.equal(qualifyPrimary(p,[gate,job],QUALITY).passed,true);
   job.steps.find(x=>x.name==='Run npm run test:unit').conclusion='skipped';assert.equal(qualifyPrimary(p,[gate,job],QUALITY).passed,false);
 });
-function world({runDelta={},jobs=[gate,primary()],readFailure=false,changedAttempt=false,newRun=false,source=true}={}) {
+function world({runDelta={},jobs=[gate,primary()],readFailure=false,changedAttempt=false,newRun=false,finalAttempt=false,source=true}={}) {
   const run={id:7,path:FILE,head_sha:HEAD,event:'pull_request',status:'completed',conclusion:'success',run_attempt:1,pull_requests:[{number:5}],...runDelta};
   let lists=0;const calls=[];
   const read=async url=>{calls.push(url);if(readFailure)throw new Error('read failed');
-    if(url.includes('/actions/runs?')){lists++;const rows=lists>1&&newRun?[run,{...run,id:8}]:[run];return{total_count:rows.length,workflow_runs:rows};}
+    if(url.includes('/actions/runs?')){lists++;const rows=lists>1&&newRun?[run,{...run,id:8}]:
+      lists>1&&finalAttempt?[{...run,run_attempt:2,status:'in_progress',conclusion:null}]:[run];return{total_count:rows.length,workflow_runs:rows};}
     if(url.includes('/attempts/'))return{total_count:jobs.length,jobs};
     if(url.endsWith('/actions/runs/7'))return{...run,run_attempt:changedAttempt?2:1};
     throw new Error('unexpected mocked read');};
@@ -57,7 +58,7 @@ test('qualified run is bound to head, PR, complete lists, actual steps and uncha
 });
 test('unknown/in-progress/source mismatch/retry/new run/ambiguous PR stay unknown',async()=>{
   for(const options of [{readFailure:true},{source:false},{changedAttempt:true},{newRun:true},
-    {runDelta:{status:'in_progress'}},{runDelta:{pull_requests:[]}},{runDelta:{pull_requests:[{number:5},{number:6}]}}])
+    {finalAttempt:true},{runDelta:{status:'in_progress'}},{runDelta:{pull_requests:[]}},{runDelta:{pull_requests:[{number:5},{number:6}]}}])
     assert.equal((await qualifiedCI(world(options))).state,'unknown');
 });
 test('truncated totals and duplicate job IDs never establish a completed sample',async()=>{
@@ -78,7 +79,28 @@ test('documentation requires an independent source/range qualifier',async()=>{
   const p=profiles.workflows[QUALITY],r=p.routes[0];
   const job={...primary(),name:r.name,steps:Object.keys(r.required_steps).map(name=>step(name,DOCUMENTATION_STEPS.includes(name)?'skipped':'success'))};
   const w=world({jobs:[gate,job]});w.workflows=new Map([[QUALITY,'quality-blob']]);const read=w.read;
-  w.read=async url=>{const b=await read(url);if(b.workflow_runs)b.workflow_runs=b.workflow_runs.map(x=>({...x,path:QUALITY}));return b;};
+  w.read=async url=>{const b=await read(url);if(b.workflow_runs)b.workflow_runs=b.workflow_runs.map(x=>({...x,path:QUALITY}));
+    if(b.id===7)b.path=QUALITY;return b;};
   assert.equal((await qualifiedCI(w)).state,'unknown');
   w.qualifyDocumentation=async()=>true;const result=await qualifiedCI(w);assert.equal(result.passed,true);assert.equal(result.scopes[0].scope,'documentation');
+});
+
+test('unqualified or wrong-PR failure is unknown; qualified failure is failed',async()=>{
+  assert.equal((await qualifiedCI(world({runDelta:{conclusion:'failure',pull_requests:[{number:6}]}}))).state,'unknown');
+  assert.equal((await qualifiedCI(world({runDelta:{conclusion:'failure'},source:false}))).state,'unknown');
+  assert.equal((await qualifiedCI(world({runDelta:{conclusion:'failure'}}))).state,'failed');
+});
+test('profile counts must be positive safe integers and recovery is first attempt only',async()=>{
+  for(const count of [0,-1,1.5,Number.MAX_SAFE_INTEGER+1]) {
+    const p=structuredClone(profile);p.routes[0].required_steps['Missing step']=count;
+    assert.equal(qualifyPrimary(p,[gate,primary()],FILE).state,'unknown');
+  }
+  const result=await qualifiedCI(world({runDelta:{run_attempt:2},jobs:[gate,primary({conclusion:'skipped'})]}));
+  assert.equal(result.state,'unknown');assert.equal(result.rerun,undefined);
+});
+test('out-of-scope workflows cannot provide or invalidate target execution proof',async()=>{
+  const w=world(),read=w.read;w.read=async url=>{const b=await read(url);
+    if(b.workflow_runs){b.workflow_runs.push({...b.workflow_runs[0],id:99,path:'.github/workflows/unrelated.yml',conclusion:'failure'});b.total_count++;}
+    return b;};
+  assert.equal((await qualifiedCI(w)).passed,true);
 });

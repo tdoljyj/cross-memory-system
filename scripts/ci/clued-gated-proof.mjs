@@ -28,6 +28,8 @@ export function qualifyPrimary(profile, jobs, file) {
   if(routes.length!==1) return unknown(`${file}: ambiguous primary route`);
   const required=routes[0].required_steps;
   if(!required || !Object.keys(required).length) return unknown(`${file}: empty execution profile`);
+  if(Object.values(required).some(count=>!Number.isSafeInteger(count) || count<1))
+    return unknown(`${file}: invalid execution profile count`);
   const resultFor=(name)=>job.steps.filter(x=>x.name===name);
   const docs=file===QUALITY && DOCUMENTATION_STEPS.every(name=>resultFor(name).length===1 &&
     resultFor(name)[0].status==='completed' && resultFor(name)[0].conclusion==='skipped') &&
@@ -76,15 +78,15 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
     for(const run of list) {
       if(run.head_sha!==head || run.event!=='pull_request') continue;
       const file=String(run.path??'').replace(/@.*$/,'');
+      if(!workflows.has(file)) continue;
       const old=latest.get(file);
       if(!old || run.id>old.id) latest.set(file,run);
     }
-    if(!latest.size) return unknown('no CI workflow observed on this head');
+    if(!latest.size || latest.size!==workflows.size) return unknown('required CI workflow set incomplete');
     const scopes=[],proofs=[];
     for(const [file,run] of [...latest].sort(([a],[b])=>a.localeCompare(b))) {
       if(run.status!=='completed') return unknown(`${file}: CI active`);
-      if(FAILED.has(run.conclusion)) return failed(`${file}: workflow failed`);
-      if(run.conclusion!=='success' || !Number.isInteger(run.run_attempt) || run.run_attempt<1)
+      if(!['success',...FAILED].includes(run.conclusion) || !Number.isInteger(run.run_attempt) || run.run_attempt<1)
         return unknown(`${file}: workflow outcome/attempt unknown`);
       // Ambiguous same-SHA PR membership is not a source binding.
       if(!Array.isArray(run.pull_requests) || run.pull_requests.length!==1 || run.pull_requests[0]?.number!==prNumber)
@@ -92,14 +94,15 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       const jobs=await completeList(read,`/repos/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`,'jobs');
       if(!jobs) return unknown(`${file}: job history incomplete`);
       if(!(await authorizeSource({file,run,jobs}))) return unknown(`${file}: candidate source not qualified`);
+      if(FAILED.has(run.conclusion)) return failed(`${file}: qualified workflow failed`);
       if(jobs.some(x=>x.status==='completed' && FAILED.has(x.conclusion))) return failed(`${file}: CI job failed`);
       if(jobs.some(x=>x.status!=='completed' || !['success','skipped','neutral'].includes(x.conclusion)))
         return unknown(`${file}: job outcome not terminal/valid`);
       let proof;
-      if(profiles.workflows[file]) proof=qualifyPrimary(profiles.workflows[file],jobs,file);
-      else if(jobs.some(x=>x.name==='admission-gate')) return unknown(`${file}: unknown gated workflow`);
-      else proof=jobs.some(x=>x.conclusion==='success')?{passed:true,state:'qualified',scope:'ungated_workflow_execution'}:unknown(`${file}: no ungated execution`);
-      if(proof.gate_only) return {...proof,rerun:{id:run.id,run_attempt:run.run_attempt,path:file}};
+      proof=qualifyPrimary(profiles.workflows[file],jobs,file);
+      if(proof.gate_only) return run.run_attempt===1?
+        {...proof,rerun:{id:run.id,run_attempt:run.run_attempt,path:file}}:
+        unknown(`${file}: gate-only recovery already attempted`);
       if(proof.state==='documentation_candidate') {
         if(typeof qualifyDocumentation!=='function' || !(await qualifyDocumentation({file,run,jobs})))
           return unknown(`${file}: documentation scope proof unavailable`);
@@ -112,7 +115,10 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
     // A queued or started retry, or a newer run, invalidates this observation.
     for(const proof of proofs) {
       const now=await read(`/repos/${repository}/actions/runs/${proof.id}`);
-      if(now?.head_sha!==head || now.run_attempt!==proof.run_attempt || now.status!=='completed' || now.conclusion!=='success')
+      if(now?.head_sha!==head || now.id!==proof.id || now.event!=='pull_request' ||
+        String(now.path??'').replace(/@.*$/,'')!==proof.file ||
+        !Array.isArray(now.pull_requests) || now.pull_requests.length!==1 || now.pull_requests[0]?.number!==prNumber ||
+        now.run_attempt!==proof.run_attempt || now.status!=='completed' || now.conclusion!=='success')
         return unknown(`${proof.file}: attempt changed while qualifying`);
     }
     const after=await completeList(read,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request`,'workflow_runs');
@@ -120,11 +126,17 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
     const afterLatest=new Map();
     for(const run of after) if(run.head_sha===head && run.event==='pull_request') {
       const file=String(run.path??'').replace(/@.*$/,'');
+      if(!workflows.has(file)) continue;
       if(!afterLatest.has(file) || run.id>afterLatest.get(file).id) afterLatest.set(file,run);
     }
     if(afterLatest.size!==proofs.length) return unknown('CI workflow set changed while qualifying');
-    for(const proof of proofs) if(after.some(x=>x.head_sha===head && x.event==='pull_request' &&
-      String(x.path??'').replace(/@.*$/,'')===proof.file && x.id>proof.id)) return unknown(`${proof.file}: newer run appeared`);
+    for(const proof of proofs) {
+      const final=afterLatest.get(proof.file);
+      if(!final || final.id!==proof.id || final.run_attempt!==proof.run_attempt ||
+        final.status!=='completed' || final.conclusion!=='success' ||
+        !Array.isArray(final.pull_requests) || final.pull_requests.length!==1 || final.pull_requests[0]?.number!==prNumber)
+        return unknown(`${proof.file}: final latest run/attempt changed`);
+    }
     return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs};
   } catch {return unknown('CI qualification read failed');}
 }
