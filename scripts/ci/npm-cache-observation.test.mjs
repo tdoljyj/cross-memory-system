@@ -81,7 +81,7 @@ test('missing serials and retry markers never imply unique request/retry totals'
 });
 
 test('actual workflow retains install/cache/timeout/trust and only observes that step',()=>{
-  const require=createRequire(import.meta.url),YAML=require('yaml');
+  const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),YAML=require('yaml');
   const root=fileURLToPath(new URL('../../',import.meta.url));
   const workflow=YAML.parse(fs.readFileSync(path.join(root,'.github/workflows/clued-cloud-quality-gate.yml'),'utf8'));
   const job=workflow.jobs['trusted-self-hosted'],install=job.steps.find(step=>step.id==='install');

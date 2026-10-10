@@ -41,6 +41,25 @@ test('Full app steps can qualify after a failed auxiliary classifier only when e
   assert.equal(qualifyPrimary(p,[gate,job],QUALITY).passed,true);
   job.steps.find(x=>x.name==='Run npm run test:unit').conclusion='skipped';assert.equal(qualifyPrimary(p,[gate,job],QUALITY).passed,false);
 });
+
+test('only the exact Self source docs telemetry exception may skip; Full still requires it',()=>{
+  const p=profiles.workflows[QUALITY];
+  for(const entry of [p,...(p.accepted_sources??[])])for(const r of entry.routes) {
+    const skip=[...DOCUMENTATION_STEPS,...(r.documentation_skipped_steps??[])];
+    const job={id:8,name:r.name,status:'completed',conclusion:'success',labels:r.self_hosted?['self-hosted']:['ubuntu-latest'],
+      steps:Object.entries(r.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>step(name,skip.includes(name)?'skipped':'success')))};
+    assert.equal(qualifyPrimary(entry,[gate,job],QUALITY).state,'documentation_candidate');
+    if(r.documentation_skipped_steps) {
+      const observer=job.steps.find(x=>x.name==='Observe npm HTTP cache events');
+      observer.conclusion='failure';assert.equal(qualifyPrimary(entry,[gate,job],QUALITY).state,'failed');
+      job.steps.forEach(x=>x.conclusion='success');observer.conclusion='skipped';
+      assert.equal(qualifyPrimary(entry,[gate,job],QUALITY).state,'unknown');
+      const altered=structuredClone(entry);altered.routes.find(x=>x.job_id===r.job_id).required_steps['Unreviewed helper']=1;
+      job.steps.push(step('Unreviewed helper','skipped'));
+      assert.equal(qualifyPrimary(altered,[gate,job],QUALITY).passed,false);
+    }
+  }
+});
 function world({runDelta={},jobs=[gate,primary()],readFailure=false,changedAttempt=false,newRun=false,finalAttempt=false,source=true}={}) {
   const run={id:7,path:FILE,head_sha:HEAD,event:'pull_request',status:'completed',conclusion:'success',run_attempt:1,pull_requests:[{number:5}],...runDelta};
   let lists=0;const calls=[];
