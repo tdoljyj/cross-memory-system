@@ -9,6 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Information Flow M0-D slice S3 (contract M0DCloseout.v0.1 sections 4.3,
 // 5.1, 6.3, 7): promotion, candidate_promotions, native_write_markers and the
@@ -117,6 +118,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    let workerCaller; // Native pre-S3 setup precedes creation of the gateway role.
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
@@ -125,7 +127,7 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       "select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
       [claims.sub ?? '', JSON.stringify(claims)]);
     const agent = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+      await workerGatewayRpc(workerCaller, name, token, input);
     const native = async (name, input, claims = fresh(userId)) => {
       await as(claims);
       return (await human.query(`select public.${name}($1,$2) v`, [input, sha256(JSON.stringify(input))])).rows[0].v;
@@ -150,6 +152,10 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     await apply(S3_MIGRATION);
     for (const name of migrations.slice(s3Index + 1)) await apply(name);
     await allowRawTestBindings(admin);
+    workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     assert.equal(await confirmed(preS3Record, 1), false, 'pre-S3 Native writes are not backfilled');
     const preS3Replay = await native('clued_user_record_mutate', preS3Input);
     assert.equal(preS3Replay.replayed, true);
@@ -849,9 +855,9 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
       const projectId = uuid();
       const mergeTarget = uuid();
       for (const id of [projectId, mergeTarget]) {
-        assert.equal((await agent(tokenA, 'clued_project_mutate', { operation: 'create', canonical_project_id: id,
-          project_schema_version: 1, base_version: null, idempotency_key: uuid(), mutation: { name: `S3 project ${id}`,
-            progress_status: 'active', certainty_status: 'confirmed', aliases: [] } })).status, 'committed');
+        assert.equal((await agent(tokenA, 'clued_project_mutate_v2', { operation: 'create', canonical_project_id: id,
+          project_schema_version: 2, base_version: null, idempotency_key: uuid(), mutation: { name: `S3 project ${id}`,
+            progress_status: 'active', aliases: [] } })).status, 'committed');
       }
       const projectCandidate = await submit([item('proj', 'fact')], { scope: `project:${projectId}` });
       const projectIssued = await issue({ tier: 'information', candidate_id: projectCandidate.ids.item_proj, base_version: 1,
@@ -1029,9 +1035,9 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     const cycleA = uuid();
     const cycleB = uuid();
     for (const id of [cycleA, cycleB]) {
-      assert.equal((await agent(tokenA, 'clued_project_mutate', { operation: 'create', canonical_project_id: id,
-        project_schema_version: 1, base_version: null, idempotency_key: uuid(), mutation: { name: `Cycle ${id}`,
-          progress_status: 'active', certainty_status: 'confirmed', aliases: [] } })).status, 'committed');
+      assert.equal((await agent(tokenA, 'clued_project_mutate_v2', { operation: 'create', canonical_project_id: id,
+        project_schema_version: 2, base_version: null, idempotency_key: uuid(), mutation: { name: `Cycle ${id}`,
+          progress_status: 'active', aliases: [] } })).status, 'committed');
     }
     const pendingForCycle = (await submit([item('cycle', 'fact')], { via: 'agent' })).ids.item_cycle;
     await admin.query('set session_replication_role=replica');
@@ -1044,6 +1050,13 @@ test('Information Flow S3: promotion, markers and the two-step Native confirmati
     const cycleWithdraw = await agent(tokenA, 'clued_intake_withdraw', { idempotency_key: 'if-s3-promo-0105',
       scope: `project:${cycleA}`, candidate_id: pendingForCycle, base_version: 1 });
     assert.deepEqual([cycleWithdraw.status, cycleWithdraw.error_code], ['rejected', 'project_redirect_cycle']);
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
 
 // Real isolated PostgreSQL and synthetic accounts/IDs only. No production,
 // real Owner approval, DomainAuthority, DataGate, M2 or model qualification.
@@ -54,7 +55,10 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const names = (await fs.readdir(path.join(app,'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort();
-    for (const name of names) {
+    const closeout = await findGatewayCloseoutMigration(app);
+    // The original request predates G6 and uses its now-retired project alias.
+    // Only that historical setup precedes closeout; all Native correction cases run after it.
+    for (const name of names.filter(name => name !== closeout)) {
       try { await db.query(await fs.readFile(path.join(app,'supabase/migrations',name),'utf8')); }
       catch (e) { throw new Error('Migration ' + name + ': ' + e.message, { cause: e }); }
     }
@@ -99,6 +103,12 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
     await db.query('update clued_private.owner_requests_v1 set grant_id=null where id=$1',[REQUEST]);
     await db.query('update clued_private.owner_grants_v1 set id=$1 where id=$2',[OLD,oldGrant.grant.grant_id]);
     await db.query('update clued_private.owner_requests_v1 set grant_id=$1 where id=$2',[OLD,REQUEST]);
+    await db.query(await fs.readFile(path.join(app,'supabase/migrations',closeout),'utf8'));
+    await assertGatewayCloseoutBoundary(db);
+    const callerCatalog = await snapshotCallerCatalog(db);
+    await db.query(await fs.readFile(path.join(app,'supabase/migrations',closeout),'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(db),callerCatalog,'G6 replay preserves the actual Native correction writer and caller ACLs');
+    await assertGatewayCloseoutBoundary(db);
     const count = async () => (await db.query('select count(*)::int n from clued_private.owner_grants_v1')).rows[0].n;
     const viewName = 'clued_dataset_split_grant_correction_view_v1';
     const issueName = 'clued_dataset_split_grant_correction_issue_v1';

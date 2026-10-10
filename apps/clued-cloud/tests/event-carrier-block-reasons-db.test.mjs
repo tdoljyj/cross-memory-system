@@ -8,6 +8,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import EmbeddedPostgres from "embedded-postgres";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -48,6 +49,9 @@ test("Event carrier blocks: decision-class Events rejected, blocks named with re
       try { await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8")); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
     await allowRawTestBindings(admin);
 
     const userId = uuid();
@@ -63,12 +67,12 @@ test("Event carrier blocks: decision-class Events rejected, blocks named with re
       values($1,'synthetic','Carrier block agent',$2,array['context:read','context:write'],array['*']),
             ($1,'synthetic','Project-only agent',$3,array['context:read','context:write'],array[$4])`,
     [userId, tokenHash, projectOnlyToken, projectScope]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query("set role anon");
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
     const rpc = async (name, input, token = tokenHash) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      (await gateway.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
     // Seeds an Event as written before the guard (the incident's Event 3951).
     const legacyAppend = async (input) => (await admin.query(
       "select clued_private.clued_mcp_append_event_unguarded($1,$2) value", [tokenHash, input])).rows[0].value;
@@ -76,7 +80,8 @@ test("Event carrier blocks: decision-class Events rejected, blocks named with re
     clients.push(user);
     await user.connect();
     await user.query("set role authenticated");
-    await user.query("select set_config('request.jwt.claim.sub',$1,false)", [userId]);
+    await user.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+      [userId, JSON.stringify({ sub: userId, role: "authenticated" })]);
     const createDecision = (title, extra = {}) => rpc("clued_record_mutate", {
       operation: "create", record_type: "decision", record_schema_version: 1,
       lifecycle_status: "active", scope: "global", idempotency_key: uuid(),
@@ -114,7 +119,7 @@ test("Event carrier blocks: decision-class Events rejected, blocks named with re
     "an unknown token fails authentication before the rule is disclosed");
     await assert.rejects(admin.query("select public.clued_mcp_append_event_unguarded($1,$2)", [tokenHash, {}]),
       /does not exist/, "the unguarded body is not public");
-    await assert.rejects(anon.query("select clued_private.clued_mcp_append_event_unguarded($1,$2)", [tokenHash, {}]),
+    await assert.rejects(gateway.query("select clued_private.clued_mcp_append_event_unguarded($1,$2)", [tokenHash, {}]),
       /permission denied/);
     const blocker = await rpc("clued_mcp_append_event", {
       context_key: projectScope, session_token: (await rpc("clued_mcp_restore", { context_key: projectScope })).session_token,

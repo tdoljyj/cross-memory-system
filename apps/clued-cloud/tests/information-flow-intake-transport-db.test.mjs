@@ -9,6 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const m0c = path.resolve(root, '../../development/contracts/information-flow/vendored/m0c');
@@ -116,6 +117,10 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
@@ -123,7 +128,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     await human.query("select set_config('request.jwt.claim.sub',$1,false)", [userId]);
 
     const agent = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+      await workerGatewayRpc(workerCaller, name, token, input);
     const native = async (name, input) =>
       (await human.query(`select public.${name}($1,$2) v`, [input, sha256(JSON.stringify(input))])).rows[0].v;
     const nativeRead = async (name, input) =>
@@ -154,7 +159,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     // An Agent-authored source (Binding write, even with user_confirmed) has no
     // Native marker, so it never reads human_confirmed (contract 6.3).
     const agentSource = uuid();
-    const agentWrite = (await anon.query('select public.clued_record_mutate($1,$2) v', [tokenA, {
+    const agentWrite = (await workerCaller.query('select public.clued_record_mutate($1,$2) v', [tokenA, {
       operation: 'create', id: agentSource, record_type: 'note', record_schema_version: 1, lifecycle_status: 'active',
       scope: 'global', idempotency_key: `if-s2-agent-note-${agentSource}`, authority: 'user_explicit', user_confirmed: true,
       confidence: 1, confidence_reason: 'S2 fixture', source_refs: [], source_unavailable_reason: 'Synthetic fixture',
@@ -333,9 +338,9 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       segment: { ...segment('seg_s2_exp'), padding: '__EXP__' }, candidates: documentOf('seg_s2_exp') })
       .replace('"__EXP__"', `[${Array(100).fill('1e100000').join(',')}]`);
     assert.ok((await admin.query('select pg_column_size($1::jsonb) n', [exponentBody])).rows[0].n < 64 * 1024);
-    await assert.rejects(anon.query('select public.clued_intake_submit($1,$2::jsonb) v', [tokenA, exponentBody]),
+    await assert.rejects(workerCaller.query('select public.clued_intake_submit($1,$2::jsonb) v', [tokenA, exponentBody]),
       /intake_payload_too_large/);
-    await assert.rejects(anon.query('select public.clued_intake_withdraw($1,$2::jsonb) v', [tokenA,
+    await assert.rejects(workerCaller.query('select public.clued_intake_withdraw($1,$2::jsonb) v', [tokenA,
       '{"idempotency_key":"if-s2-exp-wd-01","candidate_id":"00000000-0000-4000-8000-000000000000","base_version":1e-16000}']),
     /intake_payload_too_large/);
     const receiptsAfterExponent = await receipts();
@@ -345,7 +350,7 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     for (const name of ['clued_intake_submit', 'clued_intake_list', 'clued_intake_withdraw',
       'clued_knowledge_propose', 'clued_context_pack']) {
       for (const token of [hash(), tokenA]) {
-        await assert.rejects(anon.query(`select public.${name}($1,$2::jsonb)`, [token, numericScope]),
+        await assert.rejects(workerCaller.query(`select public.${name}($1,$2::jsonb)`, [token, numericScope]),
           /invalid_binding_or_context/, name);
       }
     }
@@ -393,7 +398,8 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     const gateway = server.getPgClient();
     clients.push(gateway);
     await gateway.connect();
-    await gateway.query('set role clued_worker_gateway');
+    await gateway.query('set session authorization authenticator');
+    await setWorkerGatewayCaller(gateway);
     await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
     const workerEnv = { PROJECT_VIEWS_V2: 'true', SUPABASE_URL: 'https://storage.clued.test',
       CLUED_DB_GATEWAY_TOKEN: gatewayToken,
@@ -467,10 +473,10 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
       workerEnv.CLUED_DB_GATEWAY_TOKEN = gatewayToken;
       // A project scope exercises the effective-project mapping end to end.
       const projectId = uuid();
-      assert.equal((await agent(tokenA, 'clued_project_mutate', {
-        operation: 'create', canonical_project_id: projectId, project_schema_version: 1, base_version: null,
+      assert.equal((await agent(tokenA, 'clued_project_mutate_v2', {
+        operation: 'create', canonical_project_id: projectId, project_schema_version: 2, base_version: null,
         idempotency_key: uuid(), mutation: { name: 'S2 transport project', progress_status: 'active',
-          certainty_status: 'confirmed', aliases: [] } })).status, 'committed');
+          aliases: [] } })).status, 'committed');
       const projectScope = `project:${projectId}`;
       const baseline = await snapshot();
 
@@ -639,16 +645,17 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     const entries = (await admin.query(`select p.proname,
         has_function_privilege('anon',p.oid,'execute') anon,
         has_function_privilege('authenticated',p.oid,'execute') authenticated,
-        has_function_privilege('service_role',p.oid,'execute') service_role
+        has_function_privilege('service_role',p.oid,'execute') service_role,
+        has_function_privilege('clued_worker_gateway',p.oid,'execute') gateway
       from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where n.nspname='public' and (p.proname like 'clued\\_%intake\\_%' or p.proname like 'clued\\_%knowledge\\_%'
         or p.proname like 'clued\\_%context\\_pack') order by 1`)).rows;
-    assert.deepEqual(entries.map((item) => [item.proname, item.anon, item.authenticated, item.service_role]), [
-      ['clued_context_pack', true, false, false], ['clued_intake_list', true, false, false],
-      ['clued_intake_submit', true, false, false], ['clued_intake_withdraw', true, false, false],
-      ['clued_knowledge_propose', true, false, false], ['clued_user_context_pack', false, true, false],
-      ['clued_user_intake_list', false, true, false], ['clued_user_intake_submit', false, true, false],
-      ['clued_user_intake_withdraw', false, true, false], ['clued_user_knowledge_propose', false, true, false]]);
+    assert.deepEqual(entries.map((item) => [item.proname, item.anon, item.authenticated, item.service_role, item.gateway]), [
+      ['clued_context_pack', false, false, false, true], ['clued_intake_list', false, false, false, true],
+      ['clued_intake_submit', false, false, false, true], ['clued_intake_withdraw', false, false, false, true],
+      ['clued_knowledge_propose', false, false, false, true], ['clued_user_context_pack', false, true, false, false],
+      ['clued_user_intake_list', false, true, false, false], ['clued_user_intake_submit', false, true, false, false],
+      ['clued_user_intake_withdraw', false, true, false, false], ['clued_user_knowledge_propose', false, true, false, false]]);
     await assert.rejects(anon.query('select clued_private.knowledge_propose_core_v1($1,null,$2,$3)',
       [userId, proposal(), hash()]), /permission denied/);
     await assert.rejects(human.query('select public.clued_knowledge_propose($1,$2)', [tokenA, proposal()]),
@@ -656,6 +663,13 @@ test('Information Flow S2: knowledge proposal, payload cap, fail-closed pack, OA
     await human.query(`select set_config('request.jwt.claims','{"client_id":"delegated-oauth"}',false)`);
     await assert.rejects(native('clued_user_knowledge_propose', proposal()), /direct_human_session_required/);
     await assert.rejects(nativeRead('clued_user_context_pack', { scope: 'global' }), /direct_human_session_required/);
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
