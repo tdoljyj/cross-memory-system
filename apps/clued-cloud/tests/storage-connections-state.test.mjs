@@ -236,3 +236,59 @@ test("known inactive state and picked provenance explain why preview is not disp
   assert.equal(f.requests.length,i);f.click("取消");await f.settle();assert.equal(f.requests.length,i);
  }
 });
+
+const wholePreview={...preview,confirmation_contract:"clued.storage-owner-confirmation/2",confirmation_mode:"whole_created_root_v2"};
+
+test("whole Root mode is advertised explicitly, unchecked by default and confirms execution-time scope with exact V2 fields",async()=>{
+ const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();f.respond(i,wholePreview);await f.settle();
+ assert.equal(f.nodes().find(n=>n.type==="input"&&n.props.type==="checkbox").props.checked,false);
+ assert.ok(f.text().includes("执行时的全部内容，包括确认后新放进去的内容"));
+ assert.ok(f.text().includes("显示的清单仅供参考；执行以这个文件夹标识为准"));
+ assert.ok(f.text().includes("名称、位置或内容在确认后发生变化，也会回收这个文件夹及当时其中的全部内容"));
+ assert.ok(!f.text().includes("删除连接并移入回收站"));assert.equal(f.requests.length,i+1);
+ f.check(0,true);await f.settle();
+ const confirm=f.nodes().find(n=>n.type==="button"&&n.props.children==="删除连接并移入回收站").props.onClick;
+ confirm();confirm();await f.settle();assert.equal(f.requests.length,i+2);
+ const body=JSON.parse(f.requests[i+1].init.body);
+ assert.equal(body.action,"delete");assert.equal(body.base_version,connection.version);assert.equal(body.profile_version,connection.profile_version);
+ assert.deepEqual(body.confirmation,{contract:"clued.storage-owner-confirmation/2",root_folder_id:connection.root_folder_id,
+  confirmed:true,trash_created_root:true,confirmation_mode:"whole_created_root_v2"});
+ assert.ok(!("metadata_digest"in body.confirmation));assert.ok(!("root_version"in body.confirmation));assert.ok(!("owner_id"in body));
+});
+
+test("an unchecked V2 preview still uses existing V1 connection-only delete, never silently opts into whole Root",async()=>{
+ const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();f.respond(i,wholePreview);await f.settle();
+ f.click("仅删除连接，保留文件夹");await f.settle();
+ assert.deepEqual(JSON.parse(f.requests[i+1].init.body).confirmation,{contract:"clued.storage-owner-confirmation/1",
+  root_folder_id:connection.root_folder_id,confirmed:true,trash_created_root:false});
+ assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==="delete").length,1);
+});
+
+test("incomplete, unknown or mismatched whole Root capability cannot offer trash confirmation",async()=>{
+ for(const response of [{...preview,confirmation_contract:"clued.storage-owner-confirmation/2"},
+  {...preview,confirmation_mode:"whole_created_root_v2"},{...wholePreview,confirmation_mode:"unknown"},
+  {...wholePreview,confirmation_contract:"clued.storage-owner-confirmation/1"},{...wholePreview,root_folder_id:"another-root"},
+  {...wholePreview,connection_version:2}]){
+  const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();f.respond(i,response);await f.settle();
+  assert.ok(!f.nodes().some(n=>n.type==="input"&&n.props.type==="checkbox"));
+  assert.ok(!f.text().includes("删除连接并移入回收站"));f.click("取消");await f.settle();assert.equal(f.requests.length,i+1);
+ }
+});
+
+test("V2 cancellation, account changes and lost result never resend or revive a whole Root confirmation",async()=>{
+ const cancelled=await ready([connection]),start=cancelled.requests.length;
+ cancelled.click("删除连接");await cancelled.settle();cancelled.respond(start,wholePreview);await cancelled.settle();
+ cancelled.check(0,true);cancelled.click("取消");await cancelled.settle();assert.equal(cancelled.requests.length,start+1);
+ cancelled.click("删除连接");await cancelled.settle();cancelled.respond(start+1,wholePreview);await cancelled.settle();
+ assert.equal(cancelled.nodes().find(n=>n.type==="input"&&n.props.type==="checkbox").props.checked,false);
+ const switched=await ready([connection]),i=switched.requests.length;
+ switched.click("删除连接");await switched.settle();switched.respond(i,wholePreview);await switched.settle();switched.check(0,true);
+ const release=switched.holdSession();switched.click("删除连接并移入回收站");switched.event("SIGNED_IN","b");
+ await switched.settle();release();await switched.settle();assert.equal(switched.requests.filter(r=>JSON.parse(r.init.body).action==="delete").length,0);
+ const lost=await ready([connection]),j=lost.requests.length;lost.click("删除连接");await lost.settle();lost.respond(j,wholePreview);await lost.settle();
+ lost.check(0,true);lost.click("删除连接并移入回收站");await lost.settle();
+ lost.respond(j+1,{status:"uncertain",attempt_id:connection.id,execution_permitted:false});await lost.settle();
+ lost.respond(j+2,listing([{...revoked,pending_lifecycle:{attempt_id:connection.id,operation:"delete",state:"uncertain",execution_permitted:false}}]));await lost.settle();
+ assert.ok(lost.text().includes("核对上次操作结果"));assert.equal(lost.requests.filter(r=>JSON.parse(r.init.body).action==="delete").length,1);
+ lost.click("核对上次操作结果");await lost.settle();assert.deepEqual(JSON.parse(lost.requests[j+3].init.body),{action:"recover",attempt_id:connection.id});
+});
