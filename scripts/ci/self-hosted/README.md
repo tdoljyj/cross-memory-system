@@ -2,6 +2,8 @@
 
 This directory is the canonical onboarding and lifecycle surface for trusted Clued self-hosted CI nodes.
 
+The maintained operating requirements and dated runtime evidence are in [Runner configuration and operations](../../../docs/maintenance/runner-configuration-and-operations.md). The JSON inventory declares desired identity/capacity; it is not online state, complete host qualification or a grant to install/stop nodes.
+
 The operating model is:
 
 ```text
@@ -38,7 +40,9 @@ The inventory currently declares two active physical hosts:
 company-primary / DESK-W-591
 ├─ clued-ci-company-win-01
 ├─ clued-ci-company-linux-01
-└─ clued-ci-company-linux-02   (additional Linux slot)
+├─ clued-ci-company-linux-02   (additional Linux slot)
+├─ clued-ci-company-linux-03   (additional Linux slot)
+└─ clued-ci-company-linux-04   (additional Linux slot)
    capacity: workstation-v1
 
 home-primary / Turing
@@ -51,17 +55,17 @@ Runtime online/busy state is intentionally **not** stored in Git. The inventory 
 
 ## Low-cost CI health monitor
 
-`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the five declared runners every 15 minutes (company Linux slots route by their own `runner-company-linux-NN` label). A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
+`.github/workflows/clued-ci-health.yml` checks the pool once an hour on a small GitHub-hosted runner (hourly bounds the hosted-minute cost). The hosted runner is deliberate: a monitor scheduled on the pool it watches could not report a total pool outage. `.github/workflows/clued-ci-runner-heartbeat.yml` separately sends a no-checkout, exact-label route probe to each of the five matrix runners every 15 minutes; the seven-node inventory additionally includes company Linux03/04, which this matrix does not probe (company Linux slots route by their own `runner-company-linux-NN` label). A successful probe proves that the named runner can accept its complete required-label contract. The healthy path is entirely deterministic and never invokes a model.
 
-The default path needs no extra secret. GitHub's workflow token can read workflow/job state but cannot list repository runner registrations, so the monitor falls back to the four exact-label heartbeat routes. If a deliberately scoped `CI_HEALTH_GITHUB_TOKEN` secret with repository Administration read access is later supplied, the same script also uses the direct runner API for registered name, OS, labels, online, and busy state. The secretless heartbeat path remains the default and treats inability to call the administrative endpoint as an observation-mode choice, not as an anomaly.
+The default path needs no extra secret. GitHub's workflow token can read workflow/job state but cannot list repository runner registrations, so the monitor falls back to the routes actually present in the heartbeat matrix. If a deliberately scoped `CI_HEALTH_GITHUB_TOKEN` secret with repository Administration read access is later supplied, the same script also uses the direct runner API for registered name, OS, labels, online, and busy state. The secretless heartbeat path remains the default and treats inability to call the administrative endpoint as an observation-mode choice, not as an anomaly.
 
 The monitor preserves the current alert thresholds:
 
-- all four active inventory routes retain their exact required labels; with the optional read token, registered name and OS drift are checked directly as well;
+- observed inventory routes retain their exact required labels; with the optional read token, registered name and OS drift are checked directly as well;
 - Windows and Linux capability-pool degradation is inferred from routability and queue delay; with the optional read token, current online/busy state is added and a single offline redundant runner is recorded without becoming a pool failure;
 - startup delay must exceed five minutes at least twice in the same capability pool during the 24-hour lookback before it becomes an anomaly.
 
-Startup latency is evaluated by the deterministic hourly schedule. Each scheduled run reads at most the 20 most recent general workflow runs plus the 20 most recent heartbeat runs and applies the two-occurrence rule; pull-request validation does not scan job history. Previously observed slow starts are carried forward from the machine-owned transport report until they leave the 24-hour window, so a busy repository cannot evict threshold evidence merely by creating newer runs. An exact runner route becomes unavailable only after two probes for that route each exceed five minutes. GitHub exposes `workflow_job` as a webhook event but not as a GitHub Actions workflow trigger, so the schedule plus repository-local heartbeat is the smallest secretless transport that covers every workflow and all four exact routes without external infrastructure.
+Startup latency is evaluated by the deterministic hourly schedule. Each scheduled run reads at most the 20 most recent general workflow runs plus the 20 most recent heartbeat runs and applies the two-occurrence rule; pull-request validation does not scan job history. Previously observed slow starts are carried forward from the machine-owned transport report until they leave the 24-hour window, so a busy repository cannot evict threshold evidence merely by creating newer runs. An exact runner route becomes unavailable only after two probes for that route each exceed five minutes. GitHub exposes `workflow_job` as a webhook event but not as a GitHub Actions workflow trigger, so the schedule plus repository-local heartbeat is the smallest secretless transport that covers the configured heartbeat routes without external infrastructure.
 
 For carried delays whose occupation is unresolved, the hourly scan re-reads their exact runs to recover runner assignment and collects older runs anchored around their wait windows. This recovery adds at most `--max-runs` job-list requests (20 in the workflow), with nearby waits sharing an hourly anchor. Fresh job objects replace historical entries, so a queued job is not invented as completed/successful. The bounded sample can still miss occupation; missing evidence never proves online/idleness or an outage.
 
@@ -90,7 +94,7 @@ Do not leave the ChatGPT Work path active when deliberately switching to `openai
 
 ## Current qualification status
 
-The two-host/four-runner pool is operational and qualification-complete through P14A, with Turing cold boot additionally qualified in P14B.
+The following P7/P8/P14 evidence concerns the historical four-runner subjects. It is not blanket qualification of today's seven inventory entries, later service-account/hook changes, or a current host readback. Revalidate its exact scope under the maintained runbook before using it for a change.
 
 - P7 dual Windows parallelism: PASS — Actions run `35411176126`
 - P8 dual Linux/Docker parallelism: PASS — Actions run `35413330672`
@@ -112,9 +116,9 @@ Required:
 - Python 3.12
 - custom labels: `clued,pool-general,trust-internal,site-<site>,cap-python312`
 - Node.js 24 is optional; advertise `cap-node24` only after verification
-- login-started runner priority: `BelowNormal`
+- dedicated standard `clued-runner` account and automatic Windows service; the host watchdog reports that service and never starts a personal-account listener
 
-The Windows bootstrap resolves the exact verified Python executable and writes local `python.cmd` / `python3.cmd` shims under `C:\clued-ci\tools`. If Node.js 24 is present it also pins `node.cmd`. This avoids WindowsApps aliases, UAC installer behavior, and runtime drift.
+The Windows bootstrap resolves Python and optional Node shims, but is a base installer rather than proof of the final dedicated-account/ACL/disable-update contract. Validate the actual service account and service-visible native runtimes before activation; personal WindowsApps aliases or an interactive terminal are not service evidence.
 
 ### linux-docker-wsl2-v1
 
@@ -131,7 +135,7 @@ Required:
 
 Docker Desktop WSL integration is not part of the CI capability contract. A node advertising `cap-docker-linux` must have a working native Linux engine.
 
-The bootstrap also installs a systemd drop-in with `KillMode=control-group`. This is a Clued containment invariant: stopping or capacity-suspending a Linux runner must terminate every process left in that runner service cgroup, including orphaned job descendants such as `worker-host` and `workerd`. The watchdog already defers capacity suspension while `Runner.Worker` is present, so process containment does not replace the busy-job safety check.
+The bootstrap installs `KillMode=control-group`; stopping a service can terminate all its descendants. The current watchdog's busy check is best-effort and has a dispatch race, so it is not a safe-draining guarantee. Follow the runbook's scheduling isolation, repeat local/API checks and supervised maintenance requirements.
 
 ## Capacity profiles
 
@@ -161,7 +165,7 @@ capacity resume:  host free memory >= 10 GB and C: free >= 80 GB
 watchdog interval 60 s
 ```
 
-Capacity suspension waits until the Linux runner is idle. An active job is never deliberately killed by the watchdog.
+Capacity suspension attempts to detect idle Linux runners, but its sampling is not atomic with dispatch or service stop. A newly assigned job can be terminated by `KillMode=control-group`; unreadable listener logs do not prevent suspension. Follow the runbook's restrictions on new deployment and safe draining; do not treat this mechanism as a guarantee that active jobs survive.
 
 ## Runner package pin
 
@@ -176,7 +180,7 @@ Linux x64 SHA-256:
 70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613
 ```
 
-Both bootstrap paths verify the package hash before extraction. Registered runners remain eligible for GitHub automatic runner updates.
+Both bootstrap paths verify the package hash before extraction. The historical inventory and base bootstrap permit automatic updates, while the protected persistent-runner standard requires administrator-managed updates with `--disableupdate`. This is an implementation gap, not an accepted hardened configuration; see runbook sections 2.3 and 12.
 
 A bootstrap-version change must update `node-profiles.json` and the affected bootstrap script in the same reviewed change; the validator rejects version or digest drift.
 
@@ -227,25 +231,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\apply-wsl-capa
 
 This preserves unrelated WSL settings such as mirrored networking and proxy behavior. It writes a timestamped backup before changing `.wslconfig`.
 
-Do **not** use `-RestartWsl` until all CI jobs on that physical host are drained.
+`-RestartWsl` shuts down the user's WSL VM. Do **not** use it until all affected distributions and other workloads, including non-CI work, are identified and drained, the entire supervision chain is stopped, and the shutdown scope is authorized. Follow runbook sections 6.4, 7 and 8; the default writes configuration without restarting WSL.
 
-Bootstrap Windows:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\bootstrap-windows-runner.ps1 `
-  -Site home `
-  -RunnerName clued-ci-home-win-02
-```
-
-Bootstrap Linux from inside the target WSL distribution:
-
-```bash
-bash scripts/ci/self-hosted/bootstrap-linux-runner.sh \
-  --site home \
-  --name clued-ci-home-linux-02
-```
-
-The Linux bootstrap requires native Docker and installs the runner as a systemd service.
+Use the reviewed installation procedure in runbook section 4.2. The [Windows base bootstrap](bootstrap-windows-runner.ps1) can start a personal-account listener without `-RunAsService`, and that flag alone does not select the required dedicated standard account. The [Linux base bootstrap](bootstrap-linux-runner.sh) requires sudo and installs/starts a service as the calling user; the final job account must have no sudo. Neither base script establishes the complete hardened activation contract. Do not activate a node until account, ACL, hooks, native runtimes and administrator-controlled updates are verified under an isolated route.
 
 Never paste a registration token into chat, a committed file, screenshots, logs, or shell history. Use the interactive hidden prompt.
 
@@ -259,16 +247,15 @@ Before activation, prove the advertised capabilities:
 - verify Windows and Linux jobs can run concurrently when both runners are present
 - verify the physical host remains responsive under the assigned capacity profile
 
-Render the standardized watchdog:
+Render a watchdog preview without installing or starting supervision:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\render-host-watchdog.ps1 `
   -HostId home-primary `
-  -InstallStartup `
-  -StartNow
+  -OutputPath "$env:TEMP\watchdog-home-primary.preview.ps1"
 ```
 
-For an existing host, the inventory's `watchdog_path`, Windows runner service name, WSL distro/user and Linux systemd unit are used. Run it from the host's login account: WSL distros belong to that account, so the watchdog has to run in its session.
+The current main renderer's `-InstallStartup` uses Startup/HKCU Run; it does not install the no-console supervised scheduled task actually deployed on company-primary. PR #615's installer remains unmerged. Deployment must follow runbook section 5, including its restriction on enabling or expanding automatic service suspension before safe draining is implemented. WSL distributions belong to the user's account; SYSTEM is not a substitute.
 
 ### active
 
@@ -280,10 +267,10 @@ A machine being temporarily offline is not a governance failure. Pool availabili
 
 Before maintenance or retirement:
 
-1. stop scheduling new work to the node by removing the relevant capability label or stopping its listener/service;
-2. allow any current job to finish;
-3. confirm GitHub reports the runner idle/offline as intended;
-4. only then restart WSL, update runtimes, move files, or remove registration.
+1. follow runbook section 7.1 to isolate every matching dispatch route; removing only a unique route label does not block general jobs, and stopping a service is not a draining method;
+2. stop the verified supervision chain in an authorized, manually monitored maintenance window;
+3. allow assigned and running jobs to finish, then repeat API, local Worker and listener checks, including a final read immediately before service stop;
+4. stop only the verified idle target, then carry out the separately authorized maintenance. Shared WSL/Docker or VM-wide changes require all affected workloads to be in scope and drained.
 
 Never terminate an in-progress CI job merely to perform routine maintenance.
 
@@ -313,12 +300,12 @@ Do not reuse a retired runner name for a different physical host.
 
 ## Watchdog behavior
 
-The rendered watchdog is intentionally conservative:
+The rendered watchdog has the following behavior and limitations:
 
 - keeps the declared WSL distro alive;
 - restores native Docker and the Linux systemd runner;
 - logs when the Windows runner service is not running, but never starts the Windows runner: it runs as a Windows service under the dedicated standard account `clued-runner`, and starting it from the login session would run jobs as the login account;
-- suspends Linux CI only after the current Linux job is idle and host memory/disk crosses the profile's danger threshold. It inspects the runner only when a suspend is due. A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. A missing or unreadable listener log no longer holds the suspend back. When WSL cannot be queried, the suspend is deferred. Each deferral reason is logged once per low-capacity episode;
+- attempts to suspend Linux CI when host memory/disk crosses the profile's danger threshold and idle sampling passes. A `Runner.Worker` process, sampled twice a few seconds apart, marks the runner busy; so does a listener log whose last event is `Running job:`. Missing/unreadable listener logs and journal failure do not reliably block suspension; Worker-query failure defers it. Sampling and stopping have a dispatch race, so this is not a safe-draining guarantee. Shared Docker stop affects every container in that distro; see runbook sections 2.2 and 12;
 - resumes Linux CI after the profile's recovery threshold is satisfied;
 - never changes GitHub Secrets, production deployment authority, DNS, database state, or production traffic.
 
@@ -326,15 +313,9 @@ The rendered watchdog is intentionally conservative:
 
 A host with spare WSL capacity can run more than one Linux runner in the same distro. Each extra slot is declared under the host's `additional_linux_runners` with its own `name`, `root`, `service_unit` and a `route_label` of the form `runner-<site>-linux-NN`; it shares the primary runner's `distro`, `user`, watchdog and Docker engine. While its `state` is `enrolling`, the health monitor treats it as known but not required and the watchdog leaves it alone.
 
-Jobs that bind fixed host ports (`public-mcp-protocol` and `public-mcp-behavior` share port 8787 and the default local Supabase ports) take the host-wide `host-port-lock.sh ... public-mcp-ports` lock, so two slots on one host never run them at the same time. Other Linux jobs use free or run-isolated ports and run in parallel.
+Both public MCP workflows allocate dynamic loopback MCP ports. The self-hosted behavior workflow still takes `host-port-lock.sh ... public-mcp-ports` for the shared default local Supabase ports and releases it in `if: always()` cleanup; protocol has no such lock. Other fixed-port consumers need their own accurate lock domain; dynamic MCP ports do not isolate shared databases or Docker workloads.
 
-Enroll the slot inside the host's WSL distro as the runner user, using a fresh registration token from GitHub → Settings → Actions → Runners → New self-hosted runner:
-
-```bash
-bash scripts/ci/self-hosted/bootstrap-linux-runner.sh --site company \
-  --name clued-ci-company-linux-02 --root "$HOME/actions-runner-02" \
-  --extra-labels runner-company-linux-02
-```
+Enroll through runbook section 4.2 with a fresh registration token from GitHub → Settings → Actions → Runners → New self-hosted runner, the assigned independent root and exact route label. The base Linux script requires sudo and starts a listener; do not grant the existing no-sudo `runner` account sudo or expose an unhardened slot to production routes. Registration and service installation must preserve the dedicated job identity.
 
 Then, in one change: set the slot's `state` to `active`, give the primary runner on the same host its own `route_label` (add that label to the primary runner in GitHub's runner settings first), add both route labels to the heartbeat matrix, and re-render the host watchdog with `render-host-watchdog.ps1 -HostId <host>` so it also supervises the new service.
 
