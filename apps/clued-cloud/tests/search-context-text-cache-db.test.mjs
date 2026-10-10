@@ -9,14 +9,14 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
-// search_context reads stored lower-cased texts (migration 20261010010000,
+// search_context reads stored lower-cased texts (migration 20261010030000,
 // Task 775a2292). The same searches answer exactly as before the migration;
 // the triggers keep the stored texts in step with records, checkpoints and
 // events; a row without a stored text is still found; nothing new is
 // callable or readable by the API roles.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MIGRATION = '20261010010000_search_context_text_cache_v1.sql';
+const MIGRATION = '20261010030000_search_context_text_cache_reapply.sql';
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 
@@ -132,7 +132,11 @@ test('search_context on stored lower-cased texts answers as before and stays in 
     for (const input of QUERIES) before.push(await answer(input));
     assert.ok(before.some((r) => r.results.length > 0), 'the fixture matches something');
 
+    // As production: the text it applied first (20261010013611, history-only), then this file on top,
+    // which must leave that state as it is; then this file once more.
+    await admin.query(await fs.readFile(path.join(root, 'supabase/ledger/history-only/20261010013611_search_context_text_cache_v1.sql'), 'utf8'));
     await apply(names.filter((name) => name >= MIGRATION));
+    await apply([MIGRATION]);
     // Backfill: one stored text per row of the three tables.
     const counts = (await admin.query(`select
       (select count(*) from public.clued_memories)::int records,
