@@ -186,13 +186,18 @@ function isTrashConfirmation(value: unknown): value is TrashConfirmation {
 const trashItemText = (item: TrashItem) => `${item.operation === "delete" ? "移入回收站" : "从回收站恢复"}${item.target_kind === "directory" ? "（空目录）" : ""}：`
   + `${item.path}（ID ${item.provider_file_id}，版本 ${item.provider_file_version}）`;
 type DeletePreview = { trash_available: true; root_folder_id: string; root_name: string; root_version: string;
-  metadata_digest: string; item_count: number; connection_version: number; profile_version: number };
+  metadata_digest: string; item_count: number; connection_version: number; profile_version: number;
+  confirmation_contract?: "clued.storage-owner-confirmation/2"; confirmation_mode?: "whole_created_root_v2" };
+const wholeRootPreview = (v: DeletePreview) => v.confirmation_contract === "clued.storage-owner-confirmation/2"
+  && v.confirmation_mode === "whole_created_root_v2";
 function isDeletePreview(v: unknown, c: Connection): v is DeletePreview {
   return isObject(v) && v.trash_available === true && v.root_folder_id === c.root_folder_id
     && typeof v.root_name === "string" && typeof v.root_version === "string" && /^[0-9]{1,30}$/.test(v.root_version)
     && typeof v.metadata_digest === "string" && /^[0-9a-f]{64}$/.test(v.metadata_digest)
     && Number.isSafeInteger(v.item_count) && Number(v.item_count) >= 0
-    && v.connection_version === c.version && v.profile_version === c.profile_version;
+    && v.connection_version === c.version && v.profile_version === c.profile_version
+    && ((v.confirmation_contract === undefined && v.confirmation_mode === undefined)
+      || (v.confirmation_contract === "clued.storage-owner-confirmation/2" && v.confirmation_mode === "whole_created_root_v2"));
 }
 const deletePreviewReasons = {
   picked_or_legacy_root: "这是已有或自行选择的文件夹，此次只删除连接，保留文件夹及全部内容。",
@@ -205,6 +210,7 @@ const deletePreviewReasons = {
   operation_deadline: "完整核对未能在限定时间内完成。本次只删除连接，保留 Drive 文件夹。",
   can_trash_unavailable: "未能确认 Google 允许把这个文件夹移入回收站。本次只删除连接，保留 Drive 文件夹。",
   conditional_capability_unavailable: "本次读取未取得删除所需的版本保护信息，暂时不能连带移入回收站。此连接无需因此重新连接。",
+  whole_root_trash_unavailable: "当前服务尚未确认支持整文件夹回收。本次只删除连接，保留 Drive 文件夹。",
   preview_version_conflict: "连接状态在核对期间发生了变化。请关闭窗口并刷新状态，再重新核对；本次保留 Drive 文件夹。",
   lifecycle_unavailable: "文件夹删除条件尚未确认，当前无法确定具体原因。本次只删除连接，保留 Drive 文件夹。",
 } as const;
@@ -696,7 +702,7 @@ export default function StorageConnections() {
       const value = await accountRequest({ action: "preview_delete", connection_id: c.id }, "/v1/storage/lifecycle", context);
       if (epoch !== revision.current) return;
       setDialog(current => current?.connection.id === c.id && current.kind === "delete"
-        ? { ...current, reading: false, ...(isDeletePreview(value, c) ? { preview: value, trashRoot: true }
+        ? { ...current, reading: false, ...(isDeletePreview(value, c) ? { preview: value, trashRoot: !wholeRootPreview(value) }
           : { previewReason: refusedDeletePreview(value, c) }) } : current);
     } catch (error) {
       if (epoch === revision.current) setDialog(current => current?.connection.id === c.id
@@ -717,8 +723,11 @@ export default function StorageConnections() {
       const result = await accountRequest(choice.kind === "reconnect"
         ? { action: "reconnect", ...common, root_stop_generation: c.root_stop_generation,
           confirmation: { ...confirmation, normal_use: choice.normalUse } }
-        : { action: "delete", ...common, confirmation: { ...confirmation, trash_created_root: choice.trashRoot,
-          ...(choice.trashRoot ? { metadata_digest: choice.preview!.metadata_digest, root_version: choice.preview!.root_version } : {}) } },
+        : { action: "delete", ...common, confirmation: choice.trashRoot && wholeRootPreview(choice.preview!)
+          ? { contract: "clued.storage-owner-confirmation/2", root_folder_id: c.root_folder_id, confirmed: true,
+            trash_created_root: true, confirmation_mode: "whole_created_root_v2" }
+          : { ...confirmation, trash_created_root: choice.trashRoot,
+            ...(choice.trashRoot ? { metadata_digest: choice.preview!.metadata_digest, root_version: choice.preview!.root_version } : {}) } },
         "/v1/storage/lifecycle", context);
       if (epoch !== revision.current) return;
       if (choice.kind === "reconnect") {
@@ -917,7 +926,11 @@ export default function StorageConnections() {
           {dialog.reading ? <p role="status">正在核对文件夹及其中内容……</p> : dialog.preview ? <>
             <label className="block"><input type="checkbox" disabled={busy} checked={dialog.trashRoot}
               onChange={event => { const trashRoot = event.target.checked; setDialog(current => current ? { ...current, trashRoot } : null); }} /> 同时把 Clued 新建的文件夹及其中全部内容移入 Drive 回收站</label>
-            <p className="my-2 text-sm">已核对其中 {dialog.preview.item_count} 个文件和子文件夹，包括你后来放进去的内容。可从 Google Drive 回收站恢复；Google 会在 30 天后自动永久删除。</p>
+            {wholeRootPreview(dialog.preview) ? <>
+              <p className="my-2 text-sm">刚才核对了其中 {dialog.preview.item_count} 个文件和子文件夹。勾选后，你确认回收上面标识的整个文件夹及执行时的全部内容，包括确认后新放进去的内容。</p>
+              <p className="my-2 text-sm">显示的清单仅供参考；执行以这个文件夹标识为准，即使其名称、位置或内容在确认后发生变化，也会回收这个文件夹及当时其中的全部内容。</p>
+              <p className="my-2 text-sm">可从 Google Drive 回收站恢复；Google 会在 30 天后自动永久删除。</p>
+            </> : <p className="my-2 text-sm">已核对其中 {dialog.preview.item_count} 个文件和子文件夹，包括你后来放进去的内容。可从 Google Drive 回收站恢复；Google 会在 30 天后自动永久删除。</p>}
           </> : <p className="my-2 text-sm">{deletePreviewReasons[dialog.previewReason ?? "lifecycle_unavailable"]}</p>}
         </>}
         <div className="mt-5 flex gap-4">
