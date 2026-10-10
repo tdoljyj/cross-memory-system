@@ -31,7 +31,7 @@ import "../owner.css";
 // for a bundle.
 type Json = Record<string, unknown>;
 type Choice = "once" | "grant";
-type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[] };
+type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[]; datasetSplitBootstrap?: boolean };
 type ScopeRow = { resource: string; options: string[] };
 type Issued = { confirmation_token: string; view_digest: string; expires_at: string; view: Json; options: Options };
 type Member = { id: string; issued: Issued | null };
@@ -83,6 +83,10 @@ async function rpc(name: string, input: Json): Promise<Json> {
 }
 
 function issueInput(requestId: string, options: Options, rows: ScopeRow[]): Json {
+  // The fixed bootstrap plan accepts only the requester, the original scope,
+  // at most one hour and one use. "once" is a different, 24-hour Native grant.
+  if (options.datasetSplitBootstrap) return { request_id: requestId, choice: "grant",
+    expires_seconds: 3600, max_uses: 1, grantee: "requester" };
   const grantee = options.anyAgent ? "any_agent" : "requester";
   if (options.choice === "once") return { request_id: requestId, choice: "once", grantee };
   const input: Json = { request_id: requestId, choice: "grant", expires_seconds: options.seconds, grantee };
@@ -181,10 +185,11 @@ export default function OwnerConfirmPage() {
       // a server without default_choice keeps "grant" and the view's duration.
       const seconds = Number(value.suggested_expires_seconds ?? view.expires_seconds);
       const others = bundleOthers(value.request, id).filter(member => member.status === "pending");
-      const offered = others.length ? [] : scopeRows(value.resource_options);
-      const initial: Options = { choice: value.default_choice === "once" ? "once" : "grant",
-        seconds: Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
-        anyAgent: false, scope: offered.map(row => row.resource) };
+      const datasetSplitBootstrap = value.request.action === "model.dataset_split.bootstrap";
+      const offered = others.length || datasetSplitBootstrap ? [] : scopeRows(value.resource_options);
+      const initial: Options = { choice: datasetSplitBootstrap ? "grant" : value.default_choice === "once" ? "once" : "grant",
+        seconds: datasetSplitBootstrap ? 3600 : Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
+        anyAgent: false, scope: offered.map(row => row.resource), datasetSplitBootstrap };
       setRows(offered); setOptions(initial);
       const next: Member[] = others.map(member => ({ id: String(member.request_id), issued: null }));
       setMembers(next); setSkipped([]);
@@ -205,6 +210,12 @@ export default function OwnerConfirmPage() {
     if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
       || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
       throw new RequestFailure("确认内容不完整，请刷新页面。");
+    }
+    if (next.datasetSplitBootstrap && (value.confirmation_view.action !== "model.dataset_split.bootstrap"
+      || value.confirmation_view.choice !== "grant" || value.confirmation_view.expires_seconds !== 3600
+      || value.confirmation_view.max_uses !== 1 || !object(value.confirmation_view.grantee)
+      || value.confirmation_view.grantee.any_agent !== false)) {
+      throw new RequestFailure("服务返回的授权范围或期限与这次请求不一致，暂时无法批准。");
     }
     const result = { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
       expires_at: value.expires_at, view: value.confirmation_view, options: next };
@@ -422,6 +433,7 @@ export default function OwnerConfirmPage() {
             <li key={String(member.request_id)}><Link href={"/confirm/" + String(member.request_id)}>{String(member.action ?? "")}</Link></li>)}</ul></>}</section>}
         {!done && status === "pending" && <>
           {!permission && <section aria-label="选择" className="owner-choice"><h2>怎么批</h2>
+            {options.datasetSplitBootstrap ? <p>仅给发起请求的 Agent，在 1 小时内使用 1 次，范围保持这份请求列出的对象。</p> : <>
             <div className="context-row">
               <button type="button" aria-pressed={options.choice === "once"} disabled={working}
                 onClick={() => void choose({ ...options, choice: "once" })}>只批这一次</button>
@@ -453,6 +465,7 @@ export default function OwnerConfirmPage() {
                 </div>;
               })}
             </fieldset>}
+            </>}
           </section>}
           {view && permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
             <p className="context-muted">以下内容由 Clued 生成，Agent 改不了。批准后权限加到这个连接上，不用重新连接。</p>

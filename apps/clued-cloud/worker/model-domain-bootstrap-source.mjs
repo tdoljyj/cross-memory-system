@@ -27,21 +27,28 @@ function recent(value,now){
 export class BootstrapInputDenied extends Error{constructor(){super('BOOTSTRAP_EXACT_INPUT_REQUIRED');this.name='BootstrapInputDenied';}}
 export class BootstrapExecutionDenied extends Error{constructor(){super('BOOTSTRAP_DATABASE_TRANSACTION_REJECTED');this.name='BootstrapExecutionDenied';}}
 export class BootstrapCompletionUnknown extends Error{constructor(){super('BOOTSTRAP_COMPLETION_UNVERIFIED_INSPECT_ORIGINAL_RECEIPTS_DO_NOT_RETRY');this.name='BootstrapCompletionUnknown';}}
-export class BootstrapReadinessDenied extends Error{constructor(){super('BOOTSTRAP_FIXED_SOURCE_READINESS_DENIED_OR_UNAVAILABLE');this.name='BootstrapReadinessDenied';}}
+const readinessReasons=new Set(['INPUT','RPC','RESULT_SCHEMA','FIXED_SOURCE','TIME_INVALID','TIME_FUTURE','TIME_STALE','UNSPECIFIED']);
+export class BootstrapReadinessDenied extends Error{constructor(reason='UNSPECIFIED'){super('BOOTSTRAP_FIXED_SOURCE_READINESS_DENIED_OR_UNAVAILABLE');this.name='BootstrapReadinessDenied';this.reason=readinessReasons.has(reason)?reason:'UNSPECIFIED';}}
 export async function readBootstrapReadiness(rpc,input,clock=()=>Date.now()){
- if(!exact(input,[])||typeof rpc!=='function')throw new BootstrapReadinessDenied();
- let result;try{result=await rpc(BOOTSTRAP_READINESS_RPC,{});}catch{throw new BootstrapReadinessDenied();}
+ if(!exact(input,[])||typeof rpc!=='function')throw new BootstrapReadinessDenied('INPUT');
+ let result;try{result=await rpc(BOOTSTRAP_READINESS_RPC,{});}catch{throw new BootstrapReadinessDenied('RPC');}
  const keys=['status','owner_adoption_server_ref','final_recognizer_server_ref','immutable_plan_resource','plan_sha256',
   'max_uses','max_window_seconds','evaluated_at','bootstrap_write_authorized','domain_permission','m2_verdict','private_actor_fields_exposed'];
- if(!exact(result,keys)||result.status!=='FIXED_OWNER_CHAIN_AND_PLAN_READINESS_ONLY'||
+ if(!exact(result,keys))throw new BootstrapReadinessDenied('RESULT_SCHEMA');
+ if(result.status!=='FIXED_OWNER_CHAIN_AND_PLAN_READINESS_ONLY'||
   !ref(result.owner_adoption_server_ref)||!ref(result.final_recognizer_server_ref)||
   result.owner_adoption_server_ref.id!==P.domain.owner_adoption.canonical_record_id||
   result.owner_adoption_server_ref.content_hash!==P.domain.owner_adoption.record_content_sha256||
   !sameRef(result.final_recognizer_server_ref,P.server.owner_final_recognizer.record_ref)||
   result.immutable_plan_resource!==EXACT_BOOTSTRAP_PLAN.resource||result.plan_sha256!==EXACT_BOOTSTRAP_PLAN.sha256||
   result.max_uses!==1||result.max_window_seconds!==3600||result.bootstrap_write_authorized!==false||
-  result.domain_permission!=='NOT_GRANTED'||result.m2_verdict!=='NOT_ISSUED'||result.private_actor_fields_exposed!==false||
-  !recent(result.evaluated_at,clock()))throw new BootstrapReadinessDenied();
+  result.domain_permission!=='NOT_GRANTED'||result.m2_verdict!=='NOT_ISSUED'||result.private_actor_fields_exposed!==false)throw new BootstrapReadinessDenied('FIXED_SOURCE');
+ const now=clock();
+ if(!recent(result.evaluated_at,now)){
+  const parsed=typeof result.evaluated_at==='string'?Date.parse(result.evaluated_at):NaN;
+  const valid=typeof result.evaluated_at==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(result.evaluated_at)&&Number.isSafeInteger(now)&&Number.isFinite(parsed);
+  throw new BootstrapReadinessDenied(!valid?'TIME_INVALID':parsed>now?'TIME_FUTURE':'TIME_STALE');
+ }
  return structuredClone(result);
 }
 export async function commitBootstrap(rpc,input,clock=()=>Date.now()){
