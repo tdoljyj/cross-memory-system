@@ -10,7 +10,7 @@ const dir=await mkdtemp(path.join(os.tmpdir(),'clued-owner-lifecycle-worker-'));
 const output=path.join(dir,'lifecycle.mjs'),vaultOutput=path.join(dir,'vault.mjs');
 await build({entryPoints:[fileURLToPath(new URL('../worker/storage-owner-lifecycle.ts',import.meta.url))],outfile:output,bundle:true,platform:'node',format:'esm'});
 await build({entryPoints:[fileURLToPath(new URL('../worker/storage-credential-vault.ts',import.meta.url))],outfile:vaultOutput,bundle:true,platform:'node',format:'esm'});
-const {createStorageOwnerLifecycle,STORAGE_OWNER_CONFIRMATION}=await import(pathToFileURL(output));
+const {createStorageOwnerLifecycle,STORAGE_OWNER_CONFIRMATION,STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION,STORAGE_OWNER_WHOLE_ROOT_MODE}=await import(pathToFileURL(output));
 const {createStorageCredentialVault}=await import(pathToFileURL(vaultOutput));
 test.after(()=>rm(dir,{recursive:true,force:true}));
 async function fixture(options={}){
@@ -18,12 +18,13 @@ async function fixture(options={}){
   const vault={current_key_id:'test',keys:{test:randomBytes(32).toString('base64url')}},storage=await createStorageCredentialVault(vault);
   const ctx={owner_id:owner,connection_id:connection,provider:'google-drive',provider_subject:'synthetic-provider-owner',oauth_client_id:'synthetic.apps.googleusercontent.com',credential_version:1};
   const envelope=await storage.seal(JSON.stringify({access_token:'synthetic-access-token',refresh_token:'synthetic-refresh-token',token_type:'Bearer',scope:'synthetic',expires_at_ms:Date.now()+(options.expired?-1:3600000)}),ctx);
-  const descriptor={...ctx,connection_version:2,profile_id:profile,profile_version:1,credential_envelope:envelope,root_folder_id:'synthetic-root',root_parent_id:'my-drive',created_by_clued:options.created!==false};
+  const descriptor={...ctx,connection_version:2,profile_id:profile,profile_version:1,credential_envelope:envelope,root_folder_id:'synthetic-root',root_parent_id:'my-drive',created_by_clued:options.created!==false,
+    ...(options.whole?{root_trash_confirmation_mode:STORAGE_OWNER_WHOLE_ROOT_MODE}:{})};
   const row={id:connection,version:2,provider:'google-drive',state:'active',auth_mode:'account_policy',profile_id:profile,profile_version:1,project_id:project,
     policy_active:true,actions:['inspect','create_file','create_topic'],database_execution_enabled:true,profile_current:true,access_digest_missing:{count:0,directories:[]},
     managed_root:'/clued-cloud/google-drive/synthetic-root',root_folder_id:'synthetic-root',root_parent_id:'my-drive',root_name:'Stale registered label',tracks:['资料'],
     created_by_clued:descriptor.created_by_clued,root_stop_generation:1,root_stopped:false,normal_use_enabled:false,refresh_enabled:false};
-  const calls=[],provider=[],oauthCalls=[];let state,rootVersion='3',trashed=false,patches=0,prepared=false;
+  const calls=[],provider=[],oauthCalls=[];let state,rootVersion='3',trashed=false,patches=0,prepared=false,savedConfirmation;
   const metadata=()=>({id:'synthetic-root',name:'Actual Drive folder',mimeType:'application/vnd.google-apps.folder',parents:['my-drive'],version:rootVersion,
     trashed,ownedByMe:true,isAppAuthorized:true,capabilities:{canTrash:true}});
   const lifecycle=await createStorageOwnerLifecycle({vault,oauth:{async start(...args){oauthCalls.push(args);return {authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic'};}},
@@ -34,7 +35,7 @@ async function fixture(options={}){
       if(input.action==='describe')return {...descriptor,...options.descriptor};
       if(input.action==='reconnect_begin')return {status:'prepared',connection_id:randomUUID(),attempt_id:randomUUID(),normal_use:input.confirmation.normal_use,refresh_enabled:false};
       if(input.action==='delete_prepare'){
-        if(prepared)return {status:state,attempt_id:attempt,execution_permitted:false};prepared=true;state='prepared';
+        if(prepared)return {status:state,attempt_id:attempt,execution_permitted:false};prepared=true;state='prepared';savedConfirmation=structuredClone(input.confirmation);
         return {status:'prepared',attempt_id:attempt,admission:attempt,expires_at:new Date(Date.now()+60000).toISOString()};
       }
       if(input.action==='delete_start'){if(state!=='prepared')throw new Error('storage_owner_lifecycle_replayed');state='started';return {status:'admitted',attempt_id:attempt};}
@@ -43,13 +44,14 @@ async function fixture(options={}){
         if(input.outcome==='uncertain'){state='uncertain';return {status:'uncertain',attempt_id:attempt,execution_permitted:false};}
         state='completed';return {status:'completed',receipt_id:attempt,attempt_id:attempt,connection_id:connection,root_trashed:input.outcome==='trashed'};
       }
-      if(input.action==='recover')return {status:state,attempt_id:attempt,execution_permitted:false,descriptor,snapshot:{root_version:'3'}};
+      if(input.action==='recover')return {status:state,attempt_id:attempt,execution_permitted:false,descriptor,snapshot:{root_version:'3'},
+        ...(savedConfirmation?.contract===STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION?{confirmation_contract:savedConfirmation.contract,confirmation_mode:savedConfirmation.confirmation_mode}:{})};
       throw new Error('unknown fixture action');
     },fetch:async(url,init)=>{
       const u=new URL(url);provider.push({url:u,method:init.method??'GET'});
       assert.equal(init.redirect,'manual');assert.equal(init.headers.authorization,'Bearer synthetic-access-token');
       if(init.method==='PATCH'){
-        patches++;assert.equal(init.headers['if-match'],'"synthetic-etag"');assert.deepEqual(JSON.parse(init.body),{trashed:true});
+        patches++;assert.equal(init.headers['if-match'],savedConfirmation?.contract===STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION?undefined:'"synthetic-etag"');assert.deepEqual(JSON.parse(init.body),{trashed:true});
         if(options.lost){trashed=true;rootVersion='4';throw new Error('synthetic-access-token MUST NOT LEAK');}
         trashed=true;rootVersion='4';return Response.json(metadata());
       }
@@ -205,4 +207,101 @@ test('root identity drift and bounded traversal deadline retain their reason wit
   await assert.rejects(timeout.lifecycle.previewDelete(timeout.owner,timeout.connection),e=>e.reason==='operation_deadline');
   t.mock.restoreAll();
   for(const f of [drift,timeout]){assert.equal(f.patches(),0);assert.ok(f.calls.every(c=>c.action==='describe'));}
+});
+
+const wholeValue=f=>({...f.base,confirmation:{contract:STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION,
+  root_folder_id:'synthetic-root',confirmed:true,trash_created_root:true,confirmation_mode:STORAGE_OWNER_WHOLE_ROOT_MODE}});
+const noEtag=(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')?Response.json(metadata()):undefined;
+
+test('V2 explicitly advertised whole Root supports no ETag, one Root PATCH and no shortcut target effects',async()=>{
+  const f=await fixture({whole:true,fetch:(u,init,ctx)=>u.pathname.endsWith('/files')
+    ?Response.json({files:[{id:'shortcut',name:'External shortcut',mimeType:'application/vnd.google-apps.shortcut',parents:['synthetic-root'],version:'2',trashed:false}],incompleteSearch:false})
+    :noEtag(u,init,ctx)});
+  const preview=await f.lifecycle.previewDelete(f.owner,f.connection);
+  assert.equal(preview.trash_available,true);assert.equal(preview.confirmation_contract,STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION);
+  assert.equal(preview.confirmation_mode,STORAGE_OWNER_WHOLE_ROOT_MODE);assert.equal(preview.item_count,1);
+  const result=await f.lifecycle.delete(f.owner,wholeValue(f));assert.equal(result.root_trashed,true);assert.equal(f.patches(),1);
+  const writes=f.provider.filter(r=>r.method!=='GET');assert.equal(writes.length,1);assert.equal(writes[0].method,'PATCH');
+  assert.equal(writes[0].url.pathname,'/drive/v3/files/synthetic-root');assert.equal(f.provider.some(r=>r.url.pathname.endsWith('/shortcut')),false);
+  assert.equal(f.calls.filter(c=>c.action==='delete_revalidate').length,1);
+  assert.deepEqual(f.calls.find(c=>c.action==='delete_prepare').confirmation,wholeValue(f).confirmation);
+  assert.doesNotMatch(JSON.stringify([preview,result]),/credential|admission|synthetic-access-token|synthetic-refresh-token/);
+});
+
+test('V2 missing or unknown backend capability cannot use a caller-selected mode, and V1 still requires strong ETag',async()=>{
+  for(const capability of [undefined,'whole_created_root_v3']){
+    const f=await fixture({descriptor:{root_trash_confirmation_mode:capability},fetch:noEtag});
+    const preview=await f.lifecycle.previewDelete(f.owner,f.connection);assert.equal(preview.trash_available,false);
+    assert.equal(preview.confirmation_mode,undefined);assert.equal(preview.reason,'conditional_capability_unavailable');
+    const before=f.provider.length;
+    await assert.rejects(f.lifecycle.delete(f.owner,wholeValue(f)),e=>e.reason==='whole_root_trash_unavailable');
+    assert.equal(f.provider.length,before);assert.equal(f.patches(),0);assert.ok(f.calls.every(c=>c.action==='describe'));
+  }
+  const f=await fixture({whole:true,fetch:noEtag});
+  await assert.rejects(f.lifecycle.delete(f.owner,await f.deletion()),e=>e.reason==='root_drift');
+  assert.equal(f.calls.some(c=>c.action==='delete_prepare'),false);assert.equal(f.patches(),0);
+  const oversized=await fixture({whole:true,fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')
+    ?Response.json(metadata(),{headers:{etag:'a'.repeat(205)}}):undefined});
+  await assert.rejects(oversized.lifecycle.previewDelete(oversized.owner,oversized.connection),e=>e.reason==='metadata_unavailable');
+  await assert.rejects(oversized.lifecycle.delete(oversized.owner,wholeValue(oversized)),e=>e.reason==='metadata_unavailable');
+  assert.equal(oversized.calls.some(c=>c.action==='delete_prepare'),false);assert.equal(oversized.patches(),0);
+});
+
+test('V2 confirmation cannot mix V1 snapshot fields, change mode, spoof Owner or request connection-only V2',async()=>{
+  const f=await fixture({whole:true});
+  for(const confirmation of [{...wholeValue(f).confirmation,metadata_digest:'a'.repeat(64),root_version:'3'},
+    {...wholeValue(f).confirmation,confirmation_mode:'exact_snapshot_v1'},
+    {...wholeValue(f).confirmation,confirmed:false},{...wholeValue(f).confirmation,trash_created_root:false}]){
+    await assert.rejects(f.lifecycle.delete(f.owner,{...f.base,confirmation}),e=>e.reason==='confirmation_required');
+  }
+  await assert.rejects(f.lifecycle.delete(f.owner,{...wholeValue(f),owner_id:randomUUID()}),e=>e.reason==='input_invalid');
+  assert.equal(f.calls.length,0);assert.equal(f.provider.length,0);
+});
+
+test('V2 preserves created provenance, connection/profile CAS and real canTrash checks before admission',async()=>{
+  for(const options of [{created:false},{descriptor:{connection_version:9}},{descriptor:{profile_version:9}},
+    {fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')?Response.json({...metadata(),capabilities:{canTrash:false}}):undefined}]){
+    const f=await fixture({whole:true,...options});await assert.rejects(f.lifecycle.delete(f.owner,wholeValue(f)));
+    assert.equal(f.patches(),0);assert.equal(f.calls.some(c=>c.action==='delete_prepare'),false);
+  }
+});
+
+test('V2 accepts content observed at execution after preview, but rejects drift between both pre-effect inventories',async()=>{
+  const f=await fixture({whole:true,fetch:noEtag});await f.lifecycle.previewDelete(f.owner,f.connection);f.drift();
+  assert.equal((await f.lifecycle.delete(f.owner,wholeValue(f))).root_trashed,true);assert.equal(f.patches(),1);
+  const g=await fixture({whole:true,fetch:(u,init,{calls,metadata})=>u.pathname.endsWith('/files')&&calls.some(c=>c.action==='delete_start')
+    ?Response.json({files:[{id:'new-item',name:'Concurrent item',mimeType:'text/plain',parents:['synthetic-root'],version:'1',trashed:false}],incompleteSearch:false})
+    :u.pathname.endsWith('/synthetic-root')?Response.json(metadata()):undefined});
+  assert.equal((await g.lifecycle.delete(g.owner,wholeValue(g))).status,'uncertain');assert.equal(g.patches(),0);
+  assert.equal(g.calls.some(c=>c.action==='delete_revalidate'),false);
+});
+
+test('V2 post-effect fixed Root observation tolerates later parent/name/version drift, while V1 keeps its guard',async()=>{
+  for(const whole of [true,false]){
+    const f=await fixture({whole,fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')&&metadata().trashed
+      ?Response.json({...metadata(),name:'Externally renamed',parents:['external-parent'],version:'99'}):undefined});
+    const result=await f.lifecycle.delete(f.owner,whole?wholeValue(f):await f.deletion());
+    assert.equal(result.status,whole?'completed':'uncertain');assert.equal(f.patches(),1);
+  }
+});
+
+test('V2 lost PATCH reply recovers by GET only with durable mode; repeating delete cannot PATCH again',async()=>{
+  const f=await fixture({whole:true,lost:true,fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')&&metadata().trashed
+    ?Response.json({...metadata(),name:'Changed after effect',parents:['external-parent'],version:'100'}):noEtag(u,init,{metadata})});
+  const result=await f.lifecycle.delete(f.owner,wholeValue(f));assert.equal(result.status,'uncertain');assert.equal(f.patches(),1);
+  const recovered=await f.lifecycle.recover(f.owner,result.attempt_id);assert.equal(recovered.root_trashed,true);assert.equal(f.patches(),1);
+  await assert.rejects(f.lifecycle.delete(f.owner,wholeValue(f)),e=>e.reason==='root_drift');assert.equal(f.patches(),1);
+});
+
+test('V2 fixed Root identity and incomplete durable mode refuse recovery without an effect',async()=>{
+  for(const mode of [{confirmation_contract:STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION},
+    {confirmation_contract:STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION,confirmation_mode:'unknown'}]){
+    const f=await fixture({whole:true,rpc:(input,{descriptor})=>input.action==='recover'
+      ?{status:'uncertain',descriptor,snapshot:{root_version:'3'},...mode}:undefined});
+    await assert.rejects(f.lifecycle.recover(f.owner,randomUUID()),e=>e.reason==='root_drift');assert.equal(f.patches(),0);
+  }
+  const f=await fixture({whole:true,fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')&&metadata().trashed
+    ?Response.json({...metadata(),id:'foreign-root'}):undefined});
+  const result=await f.lifecycle.delete(f.owner,wholeValue(f));assert.equal(result.status,'uncertain');assert.equal(f.patches(),1);
+  await assert.rejects(f.lifecycle.recover(f.owner,result.attempt_id),e=>e.reason==='root_drift');assert.equal(f.patches(),1);
 });
