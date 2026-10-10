@@ -57,6 +57,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { appJwt } from "./clued-work-admission.mjs";
+import { collectAttribution, attributionMetrics } from "./ci-usage-attribution.mjs";
 
 export const REQUEST_CAP = 200;
 export const APP_REQUEST_CAP = 2000;
@@ -480,7 +481,7 @@ export function runsOfPull(pr, runs) {
 const distribution = (values) => ({ count: values.length, p50: round(percentile(values, 50), 2), p95: round(percentile(values, 95), 2),
   mean: values.length ? round(sum(values) / values.length, 2) : null });
 
-export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budget }) {
+export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budget, attribution }) {
   const runById = new Map(runs.map((run) => [run.id, run]));
   const jobs = [];
   for (const [runId, list] of jobsByRun) {
@@ -532,6 +533,16 @@ export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budge
       not_measured: { by_layer: "needs each pull request's changed paths", by_state: "the Merge Admission state is not recorded on pull requests" } },
   };
   for (const [name, reason] of Object.entries(NOT_MEASURED)) metrics[name] = { status: "not_measured", value: null, reason };
+  if (attribution) {
+    const attributed = attributionMetrics({ runs, pulls, jobsByRun, attribution, isSelfHosted, durationMinutes, round });
+    metrics.attribution = attributed;
+    metrics.self_hosted_minutes.by_layer = attributed.self_hosted_minutes.by_layer;
+    metrics.self_hosted_minutes.by_state = attributed.self_hosted_minutes.by_state;
+    metrics.self_hosted_minutes.attribution_status = jobsComplete && !attributed.self_hosted_minutes.unknown_jobs ? "measured" : "partial";
+    metrics.self_hosted_minutes.not_measured = {};
+    metrics.self_hosted_minutes.attribution_note = attributed.self_hosted_minutes.note;
+    metrics.update_main_rounds = attributed.update_main_rounds;
+  }
   metrics.api_requests = {
     status: "measured", token_source: budget.source, used: budget.used, cap: budget.cap, remaining_seen: budget.remaining,
     limit_seen: budget.limit, stopped: budget.stopped, by_pool: null,
@@ -580,7 +591,7 @@ export function renderSummary(report) {
   lines.push(`| gate_minutes | ${metrics.gate_minutes.status} | ${metrics.gate_minutes.total} min in ${metrics.gate_minutes.jobs} ${GATE_JOB} jobs |`);
   lines.push(`| gate_queue_minutes | ${metrics.gate_queue_minutes.status} | ${dist(metrics.gate_queue_minutes, " min")} |`);
   lines.push(`| time_to_merge_minutes | ${metrics.time_to_merge_minutes.status} | ${dist(metrics.time_to_merge_minutes, " min")} |`);
-  for (const name of Object.keys(NOT_MEASURED)) lines.push(`| ${name} | not_measured | – |`);
+  for (const name of Object.keys(NOT_MEASURED)) lines.push(`| ${name} | ${metrics[name].status} | ${show(metrics[name].value)} |`);
   const pool = metrics.api_requests.token_source === "app" ? "measurement App" : "GITHUB_TOKEN";
   lines.push(`| api_requests | ${metrics.api_requests.status} | ${metrics.api_requests.used} of ${metrics.api_requests.cap} (${pool}); remaining ${show(metrics.api_requests.remaining_seen)} |`);
   const byWorkflow = Object.entries(metrics.self_hosted_minutes.by_workflow);
@@ -589,7 +600,10 @@ export function renderSummary(report) {
     for (const [workflow, minutes] of byWorkflow) lines.push(`| \`${workflow}\` | ${minutes} |`);
   }
   lines.push("", `${metrics.runs_per_merged_pr.note}.`, "", "Not measured in version 1:", "");
-  for (const [name, reason] of Object.entries(NOT_MEASURED)) lines.push(`- \`${name}\`: ${reason}`);
+  for (const [name, reason] of Object.entries(NOT_MEASURED)) if (metrics[name].status === "not_measured") lines.push(`- \`${name}\`: ${reason}`);
+  if (metrics.attribution) lines.push("", "Merged-PR attribution coverage:", "",
+    `\`\`\`json\n${JSON.stringify(metrics.attribution, null, 2)}\n\`\`\``,
+    "Cancellation observations and failure verdicts are not causal reasons. Unobserved layer/state remain unknown; no Clued historical queue depth or unclaimed-admission count is inferred.");
   return `${lines.join("\n")}\n`;
 }
 
@@ -617,6 +631,14 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
       : createBudget({ deadline, clock });
     const request = budgetedFetch(fetchImpl, env, budget, access.token);
     const collected = await collectUsage({ request, repository, window, cache });
+    // Extra attribution uses only the independent measurement App pool, after
+    // the existing run/job collection. No new secret or workflow privilege.
+    if (access.source === "app") {
+      try { collected.attribution = await collectAttribution({ request, repository, ...collected, runsOfPull }); }
+      catch { collected.attribution = { heads: new Map(), updates: [], coverage: {
+        scope: "merged-PR samples", heads_requested: null, heads_complete: 0,
+        pulls_requested: collected.pulls.length, pulls_complete: 0, errors: 1 } }; }
+    }
     const report = buildReport({ repository, window, collected, budget, now });
     writeFile(env.CI_USAGE_REPORT_PATH || path.join(workspace, REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`);
     log(JSON.stringify({ window: report.window, coverage: report.coverage, api_requests: report.metrics.api_requests }, null, 2));
