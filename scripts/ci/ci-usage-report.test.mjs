@@ -6,6 +6,8 @@ import { generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+// Keep the existing default-branch workflow self-test exercising attribution.
+import "./ci-usage-attribution.test.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
