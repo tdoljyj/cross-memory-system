@@ -104,3 +104,16 @@ test('out-of-scope workflows cannot provide or invalidate target execution proof
     return b;};
   assert.equal((await qualifiedCI(w)).passed,true);
 });
+test('failure and recovery results recheck the latest attempt and run before driving writes',async()=>{
+  for(const change of [{changedAttempt:true},{finalAttempt:true},{newRun:true}]) {
+    assert.equal((await qualifiedCI(world({...change,runDelta:{conclusion:'failure'}}))).state,'unknown');
+    const recovery=await qualifiedCI(world({...change,jobs:[gate,primary({conclusion:'skipped'})]}));
+    assert.equal(recovery.state,'unknown');assert.equal(recovery.rerun,undefined);
+  }
+  const job=primary();job.steps[0].conclusion='failure';
+  assert.equal((await qualifiedCI(world({jobs:[gate,job],finalAttempt:true}))).state,'unknown');
+});
+test('source qualification does not accept truthy failed objects',async()=>{
+  const w=world();w.authorizeSource=async()=>({passed:false});
+  assert.equal((await qualifiedCI(w)).state,'unknown');
+});

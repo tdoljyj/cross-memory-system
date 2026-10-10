@@ -83,6 +83,27 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       if(!old || run.id>old.id) latest.set(file,run);
     }
     if(!latest.size || latest.size!==workflows.size) return unknown('required CI workflow set incomplete');
+    // Failures and recovery metadata can drive writes too. Never return a
+    // stale terminal result just because only successful proofs reach the end.
+    const sameRun=(a,b)=>a?.id===b.id && a.head_sha===head && a.event==='pull_request' &&
+      String(a.path??'').replace(/@.*$/,'')===String(b.path??'').replace(/@.*$/,'') &&
+      a.run_attempt===b.run_attempt && a.status===b.status && a.conclusion===b.conclusion &&
+      Array.isArray(a.pull_requests) && a.pull_requests.length===1 && a.pull_requests[0]?.number===prNumber;
+    const terminal=async(run,result)=>{
+      if(!sameRun(await read(`/repos/${repository}/actions/runs/${run.id}`),run))
+        return unknown('terminal proof attempt changed');
+      const final=await completeList(read,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request`,'workflow_runs');
+      if(!final)return unknown('terminal latest run recheck incomplete');
+      const finalLatest=new Map();
+      for(const row of final) {
+        const file=String(row.path??'').replace(/@.*$/,'');
+        if(row.head_sha!==head || row.event!=='pull_request' || !workflows.has(file))continue;
+        if(!finalLatest.has(file)||row.id>finalLatest.get(file).id)finalLatest.set(file,row);
+      }
+      if(finalLatest.size!==latest.size || [...latest].some(([file,row])=>!sameRun(finalLatest.get(file),row)))
+        return unknown('terminal latest workflow set changed');
+      return result;
+    };
     const scopes=[],proofs=[];
     for(const [file,run] of [...latest].sort(([a],[b])=>a.localeCompare(b))) {
       if(run.status!=='completed') return unknown(`${file}: CI active`);
@@ -93,22 +114,22 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
         return unknown(`${file}: PR run membership unavailable or ambiguous`);
       const jobs=await completeList(read,`/repos/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`,'jobs');
       if(!jobs) return unknown(`${file}: job history incomplete`);
-      if(!(await authorizeSource({file,run,jobs}))) return unknown(`${file}: candidate source not qualified`);
-      if(FAILED.has(run.conclusion)) return failed(`${file}: qualified workflow failed`);
-      if(jobs.some(x=>x.status==='completed' && FAILED.has(x.conclusion))) return failed(`${file}: CI job failed`);
+      if((await authorizeSource({file,run,jobs}))!==true) return unknown(`${file}: candidate source not qualified`);
+      if(FAILED.has(run.conclusion)) return terminal(run,failed(`${file}: qualified workflow failed`));
+      if(jobs.some(x=>x.status==='completed' && FAILED.has(x.conclusion))) return terminal(run,failed(`${file}: CI job failed`));
       if(jobs.some(x=>x.status!=='completed' || !['success','skipped','neutral'].includes(x.conclusion)))
         return unknown(`${file}: job outcome not terminal/valid`);
       let proof;
       proof=qualifyPrimary(profiles.workflows[file],jobs,file);
       if(proof.gate_only) return run.run_attempt===1?
-        {...proof,rerun:{id:run.id,run_attempt:run.run_attempt,path:file}}:
+        terminal(run,{...proof,rerun:{id:run.id,run_attempt:run.run_attempt,path:file}}):
         unknown(`${file}: gate-only recovery already attempted`);
       if(proof.state==='documentation_candidate') {
-        if(typeof qualifyDocumentation!=='function' || !(await qualifyDocumentation({file,run,jobs})))
+        if(typeof qualifyDocumentation!=='function' || (await qualifyDocumentation({file,run,jobs}))!==true)
           return unknown(`${file}: documentation scope proof unavailable`);
         proof={...proof,passed:true,state:'qualified'};
       }
-      if(!proof.passed) return proof;
+      if(!proof.passed) return proof.state==='failed'?terminal(run,proof):proof;
       scopes.push({file,scope:proof.scope});
       proofs.push({file,id:run.id,run_attempt:run.run_attempt});
     }
