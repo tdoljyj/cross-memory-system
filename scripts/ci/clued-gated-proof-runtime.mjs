@@ -1,8 +1,8 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
-import {applicableCI} from './clued-gated-proof.mjs';
-import {workflowIsGated,workflowFormFindings,gateFindings} from './clued-work-admission.mjs';
+import {applicableCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
+import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs} from './clued-work-admission.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -69,6 +69,119 @@ function decodedWorkflow(content,file,blob) {
     !Number.isSafeInteger(content.size) || content.size<1 || content.size>524288)return null;
   const bytes=Buffer.from(content.content.replace(/[\r\n]/g,''),'base64'),text=bytes.toString('utf8');
   return bytes.length===content.size && Buffer.from(text,'utf8').equals(bytes) && workflowBlob(text)===blob?text:null;
+}
+
+const CHECKOUT='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
+function pinnedJobCheckout(profile,jobId,gate) {
+  const jobs=workflowJobs(profile?.source_yaml),matches=jobs.filter(job=>job.name===jobId);
+  if(matches.length!==1)return false;
+  const lines=matches[0].lines.map(line=>line.replace(/\s+#.*$/,''));
+  const indices=lines.flatMap((line,index)=>/^      - uses: actions\/checkout@/.test(line)?[index]:[]);
+  if(indices.length!==1 || lines[indices[0]].trim()!==`- uses: ${CHECKOUT}`)return false;
+  const block=[];
+  for(const line of lines.slice(indices[0]+1)) {
+    if(/^      - /.test(line))break;
+    block.push(line);
+  }
+  if(block.some(line=>/^          (repository|path):/.test(line)))return false;
+  const refs=block.filter(line=>/^          ref:/.test(line));
+  return gate?refs.length===1 && refs[0].trim()==='ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}':
+    refs.length===0;
+}
+
+function logLines(log,run,job) {
+  if(log?.complete!==true || log.job_id!==job?.id || log.run_id!==run?.id || log.run_attempt!==run?.run_attempt ||
+    job?.run_id!==run?.id || job?.run_attempt!==run?.run_attempt ||
+    typeof log.text!=='string' || Buffer.byteLength(log.text)>524288)return null;
+  return log.text.replace(/\x1b\[[0-9;]*[A-Za-z]/g,'').split(/\r?\n/)
+    .map(line=>line.replace(/^\d{4}-\d\d-\d\dT\S+ /,''));
+}
+function uniqueLogCommit(lines) {
+  if(!lines)return null;
+  const values=[];
+  for(let i=0;i<lines.length-1;i++)if(/^\[command\].*\/git log -1 --format=%H$/.test(lines[i]))values.push(lines[i+1]);
+  return values.length===1 && SHA.test(values[0])?values[0]:null;
+}
+function resultObjects(lines,predicate) {
+  const values=[];let chunk=[];
+  for(const line of lines??[]) {
+    if(chunk.length) {
+      chunk.push(line);
+      if(line==='}') {try{const value=JSON.parse(chunk.join('\n'));if(predicate(value))values.push(value);}catch{}chunk=[];}
+    } else if(line.trim()==='{')chunk=[line];
+    else {try{const value=JSON.parse(line);if(predicate(value))values.push(value);}catch{}}
+  }
+  return chunk.length?[]:values;
+}
+function sourcePrimary(source,jobs) {
+  const matches=[];
+  for(const job of jobs??[]) {
+    if(job?.status!=='completed' || job.conclusion!=='success' || !Array.isArray(job.labels))continue;
+    const routes=source?.profile?.routes?.filter(route=>route.name===job.name && route.self_hosted===job.labels.includes('self-hosted'))??[];
+    if(routes.length===1)matches.push({job,route:routes[0]});
+  }
+  return matches.length===1?matches[0]:null;
+}
+
+// Empty native membership gets no guessed PR association. A gate witness
+// uses the actual pinned base checkout and trusted gate-script bytes; an
+// ungated witness uses the actual pinned merge checkout and both parents.
+export async function boundRunIdentity({read,readLog,source,run,jobs,repository,head,prNumber,trustedGateBlob}) {
+  try {
+    if(source?.passed!==true || source.repository!==repository || source.file!==String(run?.path??'').replace(/@.*$/,'') ||
+      source.run_id!==run?.id || source.run_attempt!==run?.run_attempt ||
+      typeof read!=='function' || typeof readLog!=='function')return unknown('attempt source/log reader missing');
+    if(source.profile.gated) {
+      const gates=jobs.filter(job=>job.name==='admission-gate');
+      if(gates.length!==1 || gates[0].status!=='completed' || gates[0].conclusion!=='success' ||
+        !pinnedJobCheckout(source.profile,'admission-gate',true) || !SHA.test(trustedGateBlob??''))
+        return unknown('trusted gate checkout missing');
+      const job=gates[0],log=await readLog(job,run),lines=logLines(log,run,job),checkout=uniqueLogCommit(lines);
+      const results=resultObjects(lines,value=>value?.mode==='gate');
+      if(results.length!==1 || checkout!==results[0].base_sha)return unknown('gate event base/actual checkout differ');
+      const file='scripts/ci/clued-work-admission.mjs';
+      const text=decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${checkout}`),file,trustedGateBlob);
+      if(text===null)return unknown('gate script has no current trusted source');
+      return gateIdentityWitness({sourceQualified:true,log,run,job,repository,head,prNumber,gateSource:checkout});
+    }
+    const primary=sourcePrimary(source,jobs);
+    if(!primary || !pinnedJobCheckout(source.profile,primary.route.job_id,false))return unknown('pinned primary checkout missing');
+    const log=await readLog(primary.job,run),checkout=uniqueLogCommit(logLines(log,run,primary.job));
+    if(!checkout)return unknown('primary checkout commit ambiguous');
+    const commit=await read(`/repos/${repository}/git/commits/${checkout}`);
+    return checkoutIdentityWitness({sourceQualified:true,log,run,job:primary.job,repository,head,prNumber,
+      commit,base:commit?.parents?.[0]?.sha});
+  } catch {return unknown('attempt identity read failed');}
+}
+
+export async function boundDocumentationAttempt({read,readLog,source,run,jobs,repository,head,prNumber,trustedSources}) {
+  try {
+    if(source?.passed!==true || source.repository!==repository || source.file!==QUALITY ||
+      source.file!==String(run?.path??'').replace(/@.*$/,'') || source.run_id!==run?.id || source.run_attempt!==run?.run_attempt ||
+      typeof read!=='function' || typeof readLog!=='function')return unknown('documentation source/log reader missing');
+    const primary=sourcePrimary(source,jobs);
+    if(!primary || !pinnedJobCheckout(source.profile,primary.route.job_id,false))return unknown('documentation primary ambiguous');
+    const job=primary.job;
+    const actualStep=(name,conclusion)=>{
+      if(!Array.isArray(job.steps))return false;
+      const steps=job.steps.filter(step=>step.name===name);
+      return steps.length===1 && steps[0].status==='completed' && steps[0].conclusion===conclusion;
+    };
+    if(DOCUMENTATION_STEPS.some(name=>!actualStep(name,'skipped')) ||
+      !actualStep('Qualify ordinary documentation changes','success'))
+      return unknown('documentation classifier/skip sequence differs');
+    const log=await readLog(job,run),lines=logLines(log,run,job),checkout=uniqueLogCommit(lines);
+    const results=resultObjects(lines,value=>value?.qualification==='DOCUMENTATION_ONLY');
+    if(results.length!==1 || !checkout || results[0].checkout_sha!==checkout || results[0].repository!==repository ||
+      results[0].run_full!==false || results[0].full_app_tests!==false)return unknown('documentation result/checkout differs');
+    const result=results[0],commit=await read(`/repos/${repository}/git/commits/${checkout}`);
+    const identity=checkoutIdentityWitness({sourceQualified:true,log,run,job,repository,head,prNumber,
+      commit,base:commit?.parents?.[0]?.sha});
+    const range=await boundDocumentationRange({read,repository,head,eventBase:result.base_sha,checkout,
+      checkoutQualified:identity.passed===true,trustedSources});
+    if(!range.passed || range.changed_count!==result.changed_count)return unknown('documentation actual range/count differs');
+    return range;
+  } catch {return unknown('documentation attempt read failed');}
 }
 
 // Default-branch counted workflows stay in the set even if the PR deletes

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange,
-  explicitNonPrWorkflow,boundWorkflowCatalog} from './clued-gated-proof-runtime.mjs';
+  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,12 +10,66 @@ import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSour
 import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 const repository='o/r',headRepository='fork/r',file='.github/workflows/fixture.yml';
 const sha='a'.repeat(40),head='b'.repeat(40);
-const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,
+const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,path:file,
   repository:{full_name:repository},head_repository:{full_name:headRepository}};
 const payload=()=>({data:{node:{databaseId:7,runAttempt:2,event:'pull_request',file:{path:file,
   repositoryName:repository,repositoryFileUrl:`https://github.com/${repository}/blob/${sha}/${file}`,
   run:{databaseId:7,runAttempt:2}}}}});
 const options={repository,headRepository,file,run};
+const pinned='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
+test('empty membership gate identity requires pinned actual base checkout and current gate script bytes',async()=>{
+  const base='1'.repeat(40),code='trusted gate script',blob=workflowBlob(code);
+  const profile={gated:true,source_yaml:`jobs:\n  admission-gate:\n    steps:\n      - uses: ${pinned}\n        with:\n          ref: \${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - run: node scripts/ci/clued-work-admission.mjs`};
+  const source={passed:true,repository,file,run_id:run.id,run_attempt:run.run_attempt,profile};
+  const job={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'admission-gate',status:'completed',conclusion:'success'};
+  const result={mode:'gate',event:'pull_request',head_sha:head,base_sha:base,pr_ref:repository+'#5',
+    enforced:true,admitted:false,verdict:'NO_ADMISSION_RUN'};
+  const text=`[command]/usr/bin/git log -1 --format=%H\n${base}\n${JSON.stringify(result,null,2)}`;
+  const log={complete:true,text,job_id:job.id,run_id:run.id,run_attempt:run.run_attempt};
+  const content={type:'file',path:'scripts/ci/clued-work-admission.mjs',sha:blob,encoding:'base64',size:Buffer.byteLength(code),content:Buffer.from(code).toString('base64')};
+  const opts={read:async()=>content,readLog:async()=>log,source,run,jobs:[job],repository,head,prNumber:5,trustedGateBlob:blob};
+  assert.equal((await boundRunIdentity(opts)).scope,'pr_identity');
+  for(const extra of [{trustedGateBlob:'2'.repeat(40)},{source:{...source,passed:false}},
+    {source:{...source,run_attempt:1}},{prNumber:6},{jobs:[job,job]},
+    {jobs:[{...job,run_attempt:1}]},{readLog:async()=>({...log,job_id:99})},
+    {readLog:async()=>({...log,text:text+'\n'+JSON.stringify(result,null,2)})},
+    {readLog:async()=>({...log,text:text.replace(base,'2'.repeat(40))})},
+    {source:{...source,profile:{...profile,source_yaml:profile.source_yaml.replace(pinned,'actions/checkout@untrusted')}}},
+    {source:{...source,profile:{...profile,source_yaml:profile.source_yaml.replace('        with:','        with:\n          path: foreign')}}}])
+    assert.equal((await boundRunIdentity({...opts,...extra})).state,'unknown');
+});
+test('ungated source identity binds one pinned primary and the actual merge checkout parents',async()=>{
+  const base='1'.repeat(40),merge='2'.repeat(40);
+  const profile={gated:false,source_yaml:`jobs:\n  scan:\n    steps:\n      - uses: ${pinned}\n      - run: scan`,
+    routes:[{job_id:'scan',name:'scan',self_hosted:false}]};
+  const source={passed:true,repository,file,run_id:run.id,run_attempt:run.run_attempt,profile};
+  const job={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'scan',status:'completed',conclusion:'success',labels:['ubuntu-latest']};
+  const text=`[command]/usr/bin/git checkout --progress --force refs/remotes/pull/5/merge\n[command]/usr/bin/git log -1 --format=%H\n${merge}`;
+  const log={complete:true,text,job_id:job.id,run_id:run.id,run_attempt:run.run_attempt};
+  const commit={sha:merge,parents:[{sha:base},{sha:head}]};
+  const opts={read:async()=>commit,readLog:async()=>log,source,run,jobs:[job],repository,head,prNumber:5};
+  assert.equal((await boundRunIdentity(opts)).scope,'pr_identity');
+  for(const extra of [{jobs:[job,job]},{read:async()=>({...commit,parents:[{sha:head},{sha:base}]})},
+    {readLog:async()=>({...log,complete:false})},{prNumber:6},
+    {source:{...source,profile:{...profile,source_yaml:profile.source_yaml.replace('      - run: scan','        with:\n          ref: other\n      - run: scan')}}}])
+    assert.equal((await boundRunIdentity({...opts,...extra})).state,'unknown');
+});
+test('documentation attempt cannot infer scope from skipped tests or an unbound result log',async()=>{
+  const profile={source_yaml:`jobs:\n  quality:\n    steps:\n      - uses: ${pinned}\n      - run: app`,routes:[{job_id:'quality',name:'quality',self_hosted:true}]};
+  const quality='.github/workflows/clued-cloud-quality-gate.yml';
+  const source={passed:true,repository,file:quality,run_id:run.id,run_attempt:run.run_attempt,profile};
+  const job={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'quality',status:'completed',conclusion:'success',labels:['self-hosted'],
+    steps:[...['Install from lockfile','Run npm run lint','Run npm run ledger:verify','Run npm run typecheck','Run npm run build','Run npm run test:unit']
+      .map(name=>({name,status:'completed',conclusion:'skipped'})),{name:'Qualify ordinary documentation changes',status:'completed',conclusion:'success'}]};
+  let reads=0;
+  const opts={read:async()=>{reads++;throw Error('unexpected');},readLog:async()=>({complete:true,text:'unbound result',job_id:8,run_id:7,run_attempt:2}),
+    source,run:{...run,path:quality},jobs:[job],repository,head,prNumber:5};
+  assert.equal((await boundDocumentationAttempt(opts)).state,'unknown');assert.equal(reads,0);
+  const failed=structuredClone(job);failed.steps.at(-1).conclusion='failure';
+  assert.equal((await boundDocumentationAttempt({...opts,jobs:[failed]})).state,'unknown');
+  const partial=structuredClone(job);partial.steps[0].conclusion='success';
+  assert.equal((await boundDocumentationAttempt({...opts,jobs:[partial]})).state,'unknown');
+});
 test('unregistered workflow classification admits explicit non-PR events, but no hidden or new CI trigger',()=>{
   for(const text of ['on: workflow_dispatch\njobs:\n  work: {}',
     "name: housekeeping\non:\n  schedule:\n    - cron: '17 */6 * * *'\n  workflow_dispatch:\njobs:\n  work: {}",
@@ -94,6 +148,29 @@ test('documentation independently reconstructs old event-base to actual merge ch
   const opts={repository,head,eventBase,checkout,checkoutQualified:true,trustedSources};
   const call=extra=>boundDocumentationRange({...opts,read:async route=>structuredClone(replies[route]),...extra});
   assert.equal((await call()).passed,true);
+  const quality='.github/workflows/clued-cloud-quality-gate.yml';
+  const docRun={...run,path:quality},docProfile={source_yaml:`jobs:\n  quality:\n    steps:\n      - uses: ${pinned}\n      - run: app`,
+    routes:[{job_id:'quality',name:'quality',self_hosted:true}]};
+  const docSource={passed:true,repository,file:quality,run_id:run.id,run_attempt:run.run_attempt,profile:docProfile};
+  const docJob={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'quality',status:'completed',conclusion:'success',labels:['self-hosted'],
+    steps:['Install from lockfile','Run npm run lint','Run npm run ledger:verify','Run npm run typecheck','Run npm run build','Run npm run test:unit']
+      .map(name=>({name,status:'completed',conclusion:'skipped'})).concat({name:'Qualify ordinary documentation changes',status:'completed',conclusion:'success'})};
+  const docResult={qualification:'DOCUMENTATION_ONLY',run_full:false,full_app_tests:false,repository,base_sha:eventBase,checkout_sha:checkout,changed_count:1};
+  const docLog={complete:true,job_id:8,run_id:run.id,run_attempt:run.run_attempt,
+    text:`[command]/usr/bin/git checkout --progress --force refs/remotes/pull/5/merge\n[command]/usr/bin/git log -1 --format=%H\n${checkout}\n${JSON.stringify(docResult)}`};
+  const attempt={read:async route=>structuredClone(replies[route]),readLog:async()=>docLog,source:docSource,run:docRun,jobs:[docJob],
+    repository,head,prNumber:5,trustedSources};
+  assert.equal((await boundDocumentationAttempt(attempt)).scope,'documentation');
+  for(const edit of [r=>r.changed_count=2,r=>r.full_app_tests=true,r=>r.repository='other/repo',r=>r.checkout_sha=head]) {
+    const result=structuredClone(docResult);edit(result);
+    assert.equal((await boundDocumentationAttempt({...attempt,readLog:async()=>({...docLog,
+      text:docLog.text.replace(JSON.stringify(docResult),JSON.stringify(result))})})).state,'unknown');
+  }
+  const duplicate=structuredClone(docJob);duplicate.steps.push({...duplicate.steps[0],conclusion:'success'});
+  assert.equal((await boundDocumentationAttempt({...attempt,jobs:[duplicate]})).state,'unknown');
+  assert.equal((await boundDocumentationAttempt({...attempt,readLog:async()=>({...docLog,run_attempt:1})})).state,'unknown');
+  assert.equal((await boundDocumentationAttempt({...attempt,readLog:async()=>({...docLog,
+    text:docLog.text+'\n'+JSON.stringify(docResult)})})).state,'unknown');
   assert.equal((await call({checkoutQualified:false})).state,'unknown');
   assert.equal((await call({trustedSources:{}})).state,'unknown');
   const treeRoute=`/repos/${repository}/git/trees/${mergeTree}?recursive=1`;
