@@ -158,3 +158,20 @@ test('post-start source or target changes prevent any history query and cleanup 
     assert.equal(f.calls.some((args) => args[0] === 'exec'), false);
   } finally { f.dispose(); }
 });
+
+test('both G4 routes prove freshness before start, keep every database test, and guard cleanup', () => {
+  const text = fs.readFileSync(new URL('../../.github/workflows/clued-g4-database.yml', import.meta.url), 'utf8');
+  const routes = text.split(/^  database-gate-(?:trusted-self-hosted|untrusted-hosted):$/m).slice(1);
+  assert.equal(routes.length, 2);
+  for (const route of routes) {
+    assert.ok(route.indexOf('--prepare') >= 0 && route.indexOf('--prepare') < route.indexOf('supabase start'));
+    assert.ok(route.indexOf('--verify') > route.indexOf('supabase start'));
+    assert.equal(route.includes('supabase db reset'), false);
+    for (const command of ['supabase db lint --local', 'supabase test db supabase/tests/m1_runtime_contracts.test.sql',
+      'npm run test:project:lifecycle:v2']) assert.ok(route.includes(command));
+    assert.ok(route.indexOf('--verify') < route.indexOf('supabase db lint'));
+    assert.match(route, /if: always\(\) && env\.CLUED_G4_FRESH_PROJECT != ''/);
+    assert.ok(route.indexOf('--guard-cleanup') < route.indexOf('supabase stop --no-backup'));
+    assert.match(route, /uses: \.\/\.github\/actions\/ci-temporary-storage/);
+  }
+});

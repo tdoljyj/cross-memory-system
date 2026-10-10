@@ -22,6 +22,8 @@ on:
       - .github/workflows/information-flow-e2e.yml
       - 'scripts/ci/clued-push-reuse.mjs'
       - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - apps/clued-cloud/supabase/migrations/**
       - apps/clued-cloud/worker/**
       - apps/clued-cloud/evals/information-flow-e2e/**
@@ -35,6 +37,8 @@ on:
       - .github/workflows/information-flow-e2e.yml
       - 'scripts/ci/clued-push-reuse.mjs'
       - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - apps/clued-cloud/supabase/migrations/**
       - apps/clued-cloud/worker/**
       - apps/clued-cloud/evals/information-flow-e2e/**

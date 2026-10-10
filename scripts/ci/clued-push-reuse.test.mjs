@@ -178,7 +178,11 @@ test('workflow integration leaves the registered admission gate unchanged and re
     const jobs = [...text.slice(text.indexOf('\njobs:\n')).matchAll(/^  [\w-]+:[ \t]*$/gm)];
     const start = text.indexOf('\njobs:\n');
     const trusted = text.slice(start + jobs[2].index, start + jobs[3].index);
-    assert.ok(trusted.lastIndexOf(TARGETS[file].steps[0]) < trusted.indexOf('Record the actual PR test tree'));
+    for (const required of TARGETS[file].steps) {
+      assert.ok(trusted.includes(required), `${file}: actual required step ${required} exists`);
+      assert.ok(trusted.lastIndexOf(required) < trusted.indexOf('Record the actual PR test tree'));
+    }
+    assert.match(text, /scripts\/ci\/clued-g4-fresh-start\.mjs/);
     assert.ok(text.indexOf('Record the actual PR test tree') > text.indexOf('Check out repository'));
     assert.match(text, /retention-days: 7/);
     assert.match(text, /if: success\(\) && github\.event_name == 'pull_request'/);
