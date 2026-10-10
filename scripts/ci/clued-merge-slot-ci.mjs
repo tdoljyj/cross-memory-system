@@ -239,12 +239,12 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
       if (seen.state !== "idle") {
         const response = await cluedRpc(fetchImpl, env, workspace, TOUCH_RPC, {
           scope, pr_ref: prRef, head_sha: pr.head.sha, ci_state: seen.state,
-          ...(seen.state === "failed" ? {} : { hard_cap_minutes: hardCap }),
+          ...(seen.state === "failed" ? { reason: [...seen.reason.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 300).join("") } : { hard_cap_minutes: hardCap }),
         });
         const error = rpcError(TOUCH_RPC, response);
         if (error) throw new Error(error);
         Object.assign(report, seen.state === "failed"
-          ? { returned: Boolean(response.body.returned) }
+          ? { returned: Boolean(response.body.returned), notified: response.body.notified ?? [] }
           : { touched: Boolean(response.body.touched), merge_slot_until: response.body.merge_slot_until ?? null });
         // The head's clued-merge-slot check may still be green: fail it, so a
         // re-run that turns CI green cannot let auto-merge merge without the
@@ -281,7 +281,7 @@ export function renderSummary(result) {
     const outcome = report.ci_state === "idle" ? "not reported"
       : report.ci_state === "failed" ? (report.returned ? "slot returned" : "nothing to return")
         : report.touched ? `slot kept until ${report.merge_slot_until}` : "no live slot to keep";
-    lines.push(`- #${report.pr} \`${report.head_sha.slice(0, 12)}\`: **${report.ci_state}** (${report.reason}); ${outcome}`);
+    lines.push(`- #${report.pr} \`${report.head_sha.slice(0, 12)}\`: **${report.ci_state}** (${report.reason}); ${outcome}${report.ci_state === "failed" ? `; notified ${(report.notified ?? []).length} claim(s)` : ""}`);
   }
   for (const error of result.errors) lines.push(`- error: ${error}`);
   return `${lines.join("\n")}\n`;
