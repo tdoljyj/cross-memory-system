@@ -7,6 +7,19 @@ export const roleDefinitionDigest=job=>digest(JSON.stringify(canonical(job)));
 export const workflowBlob=text=>createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
 const reject=reason=>{throw new Error(`unregistered workflow definition: ${reason}`);};
 
+// Independent roles are keyed by the exact source blob. A future source must
+// never inherit the current source's job definitions merely by sharing a path.
+export function rolesForSource(specs,file,blob) {
+  if(specs?.schema!=='clued.gated-proof-role-specs/2' || !/^[a-f0-9]{40}$/.test(blob??''))return null;
+  const sources=specs.workflows?.[file]?.sources;
+  if(!sources || !Object.hasOwn(sources,blob))return null;
+  const roles=sources[blob];
+  if(!Array.isArray(roles) || !roles.length || roles.some(role=>!role ||
+    typeof role.job_id!=='string' || !role.job_id || !/^[a-f0-9]{64}$/.test(role.definition_sha256??'')) ||
+    new Set(roles.map(role=>role.job_id)).size!==roles.length)return null;
+  return roles;
+}
+
 // Registration-time compiler only. parseYaml must be the locked, independently
 // checked YAML parser. Consumers use default-branch registered data, never a
 // pull request's asserted profile or executable parser.
@@ -70,13 +83,10 @@ export function compileRegisteredWorkflow(text,{primary_ids,parseYaml,accepted_r
 // Map contains the complete, authenticated set of CI sources on this head.
 // Registry comes only from the trusted default-branch checkout. A new head
 // cannot register itself by sending a profile in its own JSON.
-export function selectRegisteredProfiles(registry,sources,{sourceApproved,directoryComplete}={}) {
+export function registeredWorkflowSource(registry,file,blob) {
   const unknown=reason=>({passed:false,state:'unknown',reason});
   try {
-  if(registry?.schema!=='clued.gated-proof-profiles/2' || !(sources instanceof Map) ||
-    directoryComplete!==true || sourceApproved!==true || !sources.size)return unknown('source approval/directory/registry missing');
-  const selected={schema:registry.schema,workflows:{}};
-  for(const [file,blob] of sources) {
+    if(registry?.schema!=='clued.gated-proof-profiles/2')return unknown('source registry schema missing');
     if(!/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file) || !/^[a-f0-9]{40}$/.test(blob))
       return unknown('CI source identity invalid');
     const root=registry.workflows?.[file];
@@ -98,8 +108,19 @@ export function selectRegisteredProfiles(registry,sources,{sourceApproved,direct
           !Array.isArray(route.command_digests?.[name]) || route.command_digests[name].length!==count ||
           route.command_digests[name].some(hash=>!/^[a-f0-9]{64}$/.test(hash)))))
       return unknown(`${file}: registered source/profile integrity invalid`);
-    selected.workflows[file]=entry;
+    return {passed:true,state:'qualified',profile:entry};
+  } catch {return unknown('registered source/profile schema invalid');}
+}
+
+export function selectRegisteredProfiles(registry,sources,{sourceApproved,directoryComplete}={}) {
+  if(registry?.schema!=='clued.gated-proof-profiles/2' || !(sources instanceof Map) ||
+    directoryComplete!==true || sourceApproved!==true || !sources.size)
+    return {passed:false,state:'unknown',reason:'source approval/directory/registry missing'};
+  const selected={schema:registry.schema,workflows:{}};
+  for(const [file,blob] of sources) {
+    const result=registeredWorkflowSource(registry,file,blob);
+    if(!result.passed)return result;
+    selected.workflows[file]=result.profile;
   }
   return {passed:true,state:'qualified',profiles:selected};
-  } catch {return unknown('registered source/profile schema invalid');}
 }
