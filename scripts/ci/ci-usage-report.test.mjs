@@ -38,7 +38,8 @@ import {
   runsOfPull,
   sumBy,
   daysOf,
-  quartersOf,
+  halvesOf,
+  rangeOf,
   windowOf,
 } from "./ci-usage-report.mjs";
 import { gateFindings, workflowFormFindings } from "./clued-work-admission.mjs";
@@ -202,9 +203,10 @@ test("budget: a rate-limited answer stops without retry; any other failure is an
     const github = fakeGitHub({ runs, jobs, answer: (route, n, headers) => (n === 4 ? limited(headers) : null) });
     const { code, report } = await runMain(github);
     assert.equal(code, 0);
-    assert.equal(github.calls.length, 4, "no retry, no further request");
+    // The three job lists are read at once (JOB_CONCURRENCY): the one already sent finishes, nothing is retried or sent after.
+    assert.equal(github.calls.length, 5, "no retry, no further request");
     assert.equal(report.metrics.api_requests.stopped, "rate_limited");
-    assert.deepEqual([report.coverage.runs_with_jobs, report.coverage.runs_completed], [1, 3]);
+    assert.deepEqual([report.coverage.runs_with_jobs, report.coverage.runs_completed], [2, 3]);
   }
   // A plain 403 (no rate-limit headers) or a 500 is unexpected: exit 1, no report.
   for (const status of [403, 500]) {
@@ -348,22 +350,28 @@ test("run list: a window over GitHub's 1,000-run limit is listed day by day; a d
     daysOf(WINDOW));
   assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_by_day, report.coverage.run_list_complete, report.coverage.run_list_days_capped],
     [1200, true, true, []]);
-  // 1,100 runs on one day: that day is listed again in 6-hour windows, each under the limit (Owner Decision 5ca9ecc5).
-  assert.deepEqual(quartersOf("2026-10-05"), ["2026-10-05T00:00:00Z..2026-10-05T05:59:59Z", "2026-10-05T06:00:00Z..2026-10-05T11:59:59Z",
-    "2026-10-05T12:00:00Z..2026-10-05T17:59:59Z", "2026-10-05T18:00:00Z..2026-10-05T23:59:59Z"]);
+  // 1,100 runs on one day: that day is halved, each half under the limit (Owner Decision 5ca9ecc5).
+  const day = Date.parse("2026-10-05T00:00:00Z");
+  assert.deepEqual(halvesOf(day, day + 86399000).map(([a, b]) => rangeOf(a, b)),
+    ["2026-10-05T00:00:00Z..2026-10-05T11:59:59Z", "2026-10-05T12:00:00Z..2026-10-05T23:59:59Z"]);
   const spread = (day, from, count) => Array.from({ length: count }, (_, i) => run(from + i,
     { created_at: `${day}T${String((i % 4) * 6 + 1).padStart(2, "0")}:00:00Z` }));
   runs = spread("2026-10-05", 1, 1100);
   github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
   ({ report } = await runMain(github, memoryFs(), APP_ENV));
   assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_complete, report.coverage.run_list_days_capped], [1100, true, []]);
-  // 1,100 runs in one 6-hour window: that window is cut short at 1,000 and the report says so.
+  // 1,100 runs at one instant: halved down to 30 minutes (22.5), still over, cut short and named.
   runs = on("2026-10-05", 1, 1100);
   github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
   ({ report } = await runMain(github, memoryFs(), APP_ENV));
   assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_complete, report.coverage.run_list_days_capped, report.coverage.partial],
-    [1000, false, ["2026-10-05T06:00:00Z..2026-10-05T11:59:59Z"], true]);
-  assert.match(renderSummary(report), /run list cut short \(over GitHub's 1,000-run limit on 2026-10-05T06:00:00Z\.\.2026-10-05T11:59:59Z\)/);
+    [1000, false, ["2026-10-05T09:45:00Z..2026-10-05T10:07:29Z"], true]);
+  assert.match(renderSummary(report), /run list cut short \(over GitHub's 1,000-run limit on 2026-10-05T09:45:00Z\.\.2026-10-05T10:07:29Z\)/);
+  // 1,100 runs spread over one 3-hour stretch: halved until each range is under the limit.
+  runs = Array.from({ length: 1100 }, (_, i) => run(i + 1, { created_at: `2026-10-05T${String(6 + (i % 3)).padStart(2, "0")}:15:00Z` }));
+  github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
+  ({ report } = await runMain(github, memoryFs(), APP_ENV));
+  assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_complete, report.coverage.run_list_days_capped], [1100, true, []]);
 });
 
 test("cache: a completed run's jobs are fetched once; running runs are not cached; a re-run is read again", async () => {

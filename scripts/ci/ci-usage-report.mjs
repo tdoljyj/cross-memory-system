@@ -39,11 +39,13 @@
 // closed pull requests until the first one updated before the window (one per
 // 100), and one jobs list (filter=all, every attempt) for each completed run
 // that is not cached yet. GitHub returns at most 1,000 runs for a created
-// filter, so a window that reaches that many is listed again day by day, a day
-// that reaches it again in 6-hour windows, and a 6-hour window that reaches it
-// marks the list cut short. About 1,000 runs a day (run 37964426548 listed
-// 7,302 in 7 days) is more job lists than one run can read in its time
-// budget, so the workflow runs daily and the cache fills up over the days
+// filter, so a window that reaches that many is listed again day by day, and a
+// day that reaches it is halved again and again down to 30 minutes; only a
+// 30-minute range that still reaches it marks the list cut short (run
+// 37975919780 found 6-hour ranges over the limit). The job lists of runs not
+// cached yet are read four at a time, within the same budget: about 1,600 runs
+// a day (11,504 listed in 7 days) is more than one run reads one by one in its
+// time budget. The workflow runs daily and the cache fills up over the days
 // (Owner Decision 5ca9ecc5). New runs arriving while the
 // list is paged shift its pages, so runs are counted once by id (run
 // 37959346703 listed 12 runs twice).
@@ -68,6 +70,10 @@ export const MAX_DAYS = 14;
 export const PAGE_SIZE = 100;
 // GitHub's limit on the results of one created-filtered run list.
 export const RUN_LIST_CAP = 1000;
+// The shortest created range a list over the limit is halved down to.
+export const MIN_RANGE_MS = 30 * 60 * 1000;
+// Job lists read at once.
+export const JOB_CONCURRENCY = 4;
 export const CACHE_DIR = ".ci-usage-cache";
 export const CACHE_FILE = "runs.json";
 export const CACHE_SCHEMA = "clued.ci-usage-cache/v1";
@@ -288,13 +294,14 @@ export function daysOf(window) {
   return days;
 }
 
-// A day's four 6-hour created ranges, in GitHub's range syntax.
-export function quartersOf(day) {
-  return [0, 6, 12, 18].map((hour) => {
-    const from = String(hour).padStart(2, "0");
-    const to = String(hour + 5).padStart(2, "0");
-    return `${day}T${from}:00:00Z..${day}T${to}:59:59Z`;
-  });
+// A created range in GitHub's syntax, whole seconds, both ends included.
+const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+export const rangeOf = (fromMs, toMs) => `${iso(fromMs)}..${iso(toMs)}`;
+
+// The two halves of [fromMs, toMs] (inclusive, whole seconds).
+export function halvesOf(fromMs, toMs) {
+  const mid = fromMs + Math.floor((toMs - fromMs + 1000) / 2000) * 1000;
+  return [[fromMs, mid - 1000], [mid, toMs]];
 }
 
 // The window's runs, once each by id. complete is false when the budget
@@ -306,22 +313,26 @@ export async function listRuns(request, repository, window) {
   if (!whole.capped) return { items: once(whole.items), complete: whole.complete, by_day: false, day_capped: [] };
   const items = [];
   const dayCapped = [];
+  let stopped = false;
+  // A range over the limit is halved down to MIN_RANGE_MS; false when the budget stopped it.
+  const listRange = async (fromMs, toMs) => {
+    const listed = await fetchPaged(request, route(rangeOf(fromMs, toMs)), "workflow_runs", { maxItems: RUN_LIST_CAP });
+    if (!listed.complete) { items.push(...listed.items); return false; }
+    if (!listed.capped) { items.push(...listed.items); return true; }
+    if (toMs - fromMs + 1000 <= MIN_RANGE_MS) { items.push(...listed.items); dayCapped.push(rangeOf(fromMs, toMs)); return true; }
+    for (const [a, b] of halvesOf(fromMs, toMs)) if (!(await listRange(a, b))) return false;
+    return true;
+  };
   for (const day of daysOf(window)) {
     const listed = await fetchPaged(request, route(day), "workflow_runs", { maxItems: RUN_LIST_CAP });
-    if (!listed.complete) return { items: once([...items, ...listed.items]), complete: false, by_day: true, day_capped: dayCapped };
-    if (!listed.capped) {
-      items.push(...listed.items);
-      continue;
-    }
-    // A day over the limit: its four 6-hour windows (Owner Decision 5ca9ecc5).
-    for (const quarter of quartersOf(day)) {
-      const part = await fetchPaged(request, route(quarter), "workflow_runs", { maxItems: RUN_LIST_CAP });
-      items.push(...part.items);
-      if (part.capped) dayCapped.push(quarter);
-      if (!part.complete) return { items: once(items), complete: false, by_day: true, day_capped: dayCapped };
-    }
+    if (!listed.complete) { items.push(...listed.items); stopped = true; break; }
+    if (!listed.capped) { items.push(...listed.items); continue; }
+    const start = Date.parse(`${day}T00:00:00Z`);
+    let whole = true;
+    for (const [a, b] of halvesOf(start, start + DAY_MS - 1000)) if (!(await listRange(a, b))) { whole = false; break; }
+    if (!whole) { stopped = true; break; }
   }
-  return { items: once(items), complete: dayCapped.length === 0, by_day: true, day_capped: dayCapped };
+  return { items: once(items), complete: !stopped && dayCapped.length === 0, by_day: true, day_capped: dayCapped };
 }
 
 // --- The cache of completed runs' jobs, keyed by run id.
@@ -399,6 +410,7 @@ export async function collectUsage({ request, repository, window, cache }) {
   const coverage = { runs_listed: runs.length, runs_completed: 0, runs_in_progress: 0, runs_with_jobs: 0, runs_from_cache: 0,
     runs_fetched_now: 0, run_list_complete: listed.complete, run_list_by_day: listed.by_day, run_list_days_capped: listed.day_capped,
     pull_list_complete: closed.complete };
+  const pending = [];
   for (const run of [...runs].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id - b.id)) {
     if (run.status !== "completed") { coverage.runs_in_progress += 1; continue; }
     coverage.runs_completed += 1;
@@ -408,13 +420,23 @@ export async function collectUsage({ request, repository, window, cache }) {
       coverage.runs_from_cache += 1;
       continue;
     }
-    const jobs = await fetchPaged(request, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=all`, "jobs");
-    // A run whose job pages were cut short is neither counted nor cached.
-    if (!jobs.complete) continue;
-    mergeCache(cache, run, jobs.items);
-    jobsByRun.set(run.id, cachedJobs(cache, run));
-    coverage.runs_fetched_now += 1;
+    pending.push(run);
   }
+  // Oldest first, JOB_CONCURRENCY at a time; every request still goes through the budget.
+  let next = 0;
+  const worker = async () => {
+    while (next < pending.length) {
+      const run = pending[next];
+      next += 1;
+      const jobs = await fetchPaged(request, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=all`, "jobs");
+      // A run whose job pages were cut short is neither counted nor cached.
+      if (!jobs.complete) continue;
+      mergeCache(cache, run, jobs.items);
+      jobsByRun.set(run.id, cachedJobs(cache, run));
+      coverage.runs_fetched_now += 1;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(JOB_CONCURRENCY, pending.length) }, worker));
   coverage.runs_with_jobs = jobsByRun.size;
   return { runs, pulls, jobsByRun, coverage };
 }
