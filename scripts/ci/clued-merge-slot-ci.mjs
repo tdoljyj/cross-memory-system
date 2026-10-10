@@ -64,7 +64,7 @@ import {
   workflowIsGated,
 } from "./clued-work-admission.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
-import { githubGraphReader, observeCompletedSource, createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
+import { githubGraphReader, githubAttemptLogReader, observeCompletedSource, createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
 import {cleanupManagedAutoMerge} from "./clued-managed-auto-merge.mjs";
 
@@ -263,7 +263,8 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
     result.source_observation = await observeCompletedSource({ env, event, eventName, workspace, workflows,
       budgetMs: sourceObservationBudgetMs,
       read: (route, { signal }) => githubJson((url, init) => fetchImpl(url, { ...init, signal, redirect: "error" }), env, route),
-      graphRead: githubGraphReader(fetchImpl, env) });
+      graphRead: githubGraphReader(fetchImpl, env),
+      readLog: githubAttemptLogReader(fetchImpl, env) });
   }
   const pulls = openPulls.filter(pr=>!cleanup.blocked.has(pr.number))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch);

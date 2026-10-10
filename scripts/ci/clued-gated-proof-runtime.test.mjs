@@ -397,6 +397,65 @@ test('shadow source observation reads the API rather than trusting event fields,
     fs.rmSync(target,{recursive:true,force:true});
   }
 });
+test('source shadow observes a bounded identity log without granting execution or disclosing source text',async()=>{
+  const temporaryRoot=fs.realpathSync(os.tmpdir()),workspace=fs.mkdtempSync(path.join(temporaryRoot,'clued-identity-observation-'));
+  try {
+    fs.mkdirSync(path.join(workspace,'scripts/ci'),{recursive:true});
+    const code='trusted gate script',blob=workflowBlob(code),base='1'.repeat(40);
+    fs.writeFileSync(path.join(workspace,'scripts/ci/clued-work-admission.mjs'),code);
+    const text=`on:\n  pull_request:\njobs:\n  admission-gate:\n    steps:\n      - uses: ${pinned}\n        with:\n          ref: \${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - run: node scripts/ci/clued-work-admission.mjs\n  main:\n    runs-on: ubuntu-latest\n    steps:\n      - run: node --test\n`;
+    const parsed={on:{pull_request:null},jobs:{'admission-gate':{steps:[]},main:{'runs-on':'ubuntu-latest',steps:[{run:'node --test'}]}}};
+    const roles=[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
+    const profile=compileRegisteredWorkflow(text,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:roles});
+    fs.writeFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json'),JSON.stringify({schema:'clued.gated-proof-profiles/2',workflows:{[file]:profile}}));
+    fs.writeFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-role-specs.json'),JSON.stringify({schema:'clued.gated-proof-role-specs/2',workflows:{[file]:{sources:{[profile.workflow_blob]:roles}}}}));
+    const completed={...run,path:file,status:'completed',conclusion:'success',pull_requests:[{number:5}]};
+    const job={id:8,run_id:run.id,run_attempt:run.run_attempt,name:'admission-gate',status:'completed',conclusion:'success'};
+    const result={mode:'gate',event:'pull_request',head_sha:head,base_sha:base,pr_ref:repository+'#5',enforced:true,admitted:true,verdict:'ADMITTED'};
+    const log={complete:true,text:`synthetic-private-log\n[command]/usr/bin/git log -1 --format=%H\n${base}\n${JSON.stringify(result,null,2)}`,job_id:job.id,run_id:run.id,run_attempt:run.run_attempt};
+    const content=(file,text,sha)=>({type:'file',path:file,sha,size:Buffer.byteLength(text),encoding:'base64',content:Buffer.from(text).toString('base64')});
+    const read=async route=>route.includes('/attempts/')?{total_count:1,jobs:[job]}:
+      route.includes('/contents/scripts/ci/clued-work-admission.mjs')?content('scripts/ci/clued-work-admission.mjs',code,blob):
+      route.includes('/contents/')?content(file,text,profile.workflow_blob):structuredClone(completed);
+    const options={env:{GITHUB_REPOSITORY:repository},workspace,eventName:'workflow_run',event:{workflow_run:{id:run.id}},
+      workflows:new Map([[file,profile.workflow_blob]]),graphRead:async()=>payload(),read,readLog:async()=>log};
+    const seen=await observeCompletedSource(options);
+    assert.equal(seen.state,'qualified');assert.equal(seen.identity_observation.state,'qualified');
+    assert.equal(seen.identity_observation.scope,'pr_identity');assert.equal(seen.execution_qualified,false);
+    assert.doesNotMatch(JSON.stringify(seen),/synthetic-private-log|trusted gate script|repositoryFileUrl/);
+    for(const readLog of [async()=>({...log,complete:false}),async()=>({...log,job_id:99}),
+      async()=>({...log,text:log.text.replace(repository+'#5',repository+'#6')}),
+      async()=>{throw Error('https://storage.invalid/private?sig=synthetic-private-log');}]) {
+      const value=await observeCompletedSource({...options,readLog});
+      assert.equal(value.state,'qualified');assert.equal(value.identity_observation.state,'unknown');
+      assert.equal(value.execution_qualified,false);assert.doesNotMatch(JSON.stringify(value),/storage.invalid|synthetic-private-log/);
+    }
+    let logReads=0;
+    for(const pull_requests of [[],[{number:5},{number:6}]]) {
+      const value=await observeCompletedSource({...options,read:async route=>route.includes('/actions/runs/')?{...completed,pull_requests}:read(route),
+        readLog:async()=>{logReads++;return log;}});
+      assert.equal(value.identity_observation.state,'not_observed');assert.equal(logReads,0);
+    }
+    const incomplete=await observeCompletedSource({...options,read:async route=>route.includes('/attempts/')?{total_count:2,jobs:[job]}:read(route)});
+    assert.equal(incomplete.identity_observation.state,'unknown');
+    const changed=await observeCompletedSource({...options,readLog:async()=>{completed.run_attempt=3;return log;}});
+    assert.equal(changed.state,'unknown');assert.equal(changed.reason,'source observation attempt changed');
+    completed.run_attempt=2;
+    let finishLog,logSignal,calls=0;
+    const pendingLog=new Promise(resolve=>{finishLog=resolve;});
+    const expired=await observeCompletedSource({...options,budgetMs:10,
+      read:async route=>{calls++;return read(route);},
+      readLog:async(job,run,{signal})=>{logSignal=signal;return pendingLog;}});
+    assert.equal(expired.reason,'source observation budget exhausted');assert.equal(logSignal.aborted,true);
+    const atExpiry=calls;finishLog(log);await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls,atExpiry,'late log cannot issue a trusted-script or native revalidation request');
+  } finally {
+    const target=fs.realpathSync(workspace);assert.equal(path.dirname(target),temporaryRoot);
+    assert.equal(target,path.resolve(workspace));assert.ok(path.basename(target).startsWith('clued-identity-observation-'));
+    fs.rmSync(target,{recursive:true,force:true});
+  }
+});
+
 test('shadow budget cancels a hung read and forbids follow-up requests after expiry',async()=>{
   let resolveRead,signal,graphs=0;
   const completed={...run,path:file,status:'completed',conclusion:'success'};

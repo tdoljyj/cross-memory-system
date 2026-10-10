@@ -578,11 +578,12 @@ export async function observeCompletedSource(options) {
   },budgetMs);});
   try {
     return await Promise.race([observeSourceWithinBudget({...options,
-      read:guarded(options.read),graphRead:guarded(options.graphRead)}),budget]);
+      read:guarded(options.read),graphRead:guarded(options.graphRead),
+      readLog:typeof options.readLog==='function'?guarded(options.readLog):undefined}),budget]);
   } finally {closed=true;clearTimeout(timer);controller.abort();}
 }
 
-async function observeSourceWithinBudget({env,event,eventName,workspace,workflows,read,graphRead}) {
+async function observeSourceWithinBudget({env,event,eventName,workspace,workflows,read,graphRead,readLog}) {
   if(eventName!=='workflow_run' || !Number.isSafeInteger(event?.workflow_run?.id) || event.workflow_run.id<1)
     return {state:'not_observed',reason:'no workflow-run signal'};
   try {
@@ -596,6 +597,31 @@ async function observeSourceWithinBudget({env,event,eventName,workspace,workflow
     const roleSpecs=JSON.parse(fs.readFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'));
     const source=await workflowSourceOf({read,graphRead,repository,headRepository:run.head_repository?.full_name,
       file,run,registry,roleSpecs,serverURL:env.GITHUB_SERVER_URL});
+    // This uses the same bounded attempt-log reader as execution qualification,
+    // but proves only this run's PR identity. It never qualifies heavy tests.
+    let identity={state:'not_observed',scope:'pr_identity',reason:'qualified source, unique native PR and log reader required'};
+    if(source.passed===true && typeof readLog==='function' && Array.isArray(run.pull_requests) &&
+      run.pull_requests.length===1 && Number.isSafeInteger(run.pull_requests[0]?.number) && run.pull_requests[0].number>0) {
+      try {
+        const jobs=await read(`/repos/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`);
+        if(!Array.isArray(jobs?.jobs) || !Number.isSafeInteger(jobs.total_count) || jobs.total_count!==jobs.jobs.length ||
+          jobs.jobs.length>100 || new Set(jobs.jobs.map(job=>job.id)).size!==jobs.jobs.length ||
+          jobs.jobs.some(job=>!Number.isSafeInteger(job.id) || job.id<1 || job.run_id!==run.id || job.run_attempt!==run.run_attempt))
+          identity={state:'unknown',scope:'pr_identity',reason:'attempt job list incomplete or differs'};
+        else {
+          const gateFile=path.join(workspace,'scripts/ci/clued-work-admission.mjs');
+          const bytes=fs.readFileSync(gateFile),text=bytes.toString('utf8');
+          if(bytes.length>524288 || !Buffer.from(text).equals(bytes))throw Error('trusted gate file unavailable');
+          identity=await boundRunIdentity({read,readLog,source,run,jobs:jobs.jobs,repository,head:run.head_sha,
+            prNumber:run.pull_requests[0].number,trustedGateBlob:workflowBlob(text)});
+          // Keep only the fixed diagnostic envelope; never retain log text or
+          // storage URLs returned by a reader, even on an unknown result.
+          identity={state:identity.passed===true?'qualified':'unknown',scope:'pr_identity',
+            reason:identity.reason??null,run_id:run.id,run_attempt:run.run_attempt,
+            pr_number:run.pull_requests[0].number,job_id:identity.job_id??null};
+        }
+      } catch {identity={state:'unknown',scope:'pr_identity',reason:'bounded identity log observation unavailable'};}
+    }
     // A started retry invalidates even this read-only observation.
     const latest=await read(`/repos/${repository}/actions/runs/${run.id}`);
     if(latest?.id!==run.id || latest.run_attempt!==run.run_attempt || latest.head_sha!==run.head_sha ||
@@ -603,7 +629,7 @@ async function observeSourceWithinBudget({env,event,eventName,workspace,workflow
       return unknown('source observation attempt changed');
     return {state:source.state,scope:'source_observation_only',run_id:run.id,run_attempt:run.run_attempt,
       head:run.head_sha,file,source_sha:source.source_sha??null,workflow_blob:source.workflow_blob??null,
-      reason:source.reason??null,execution_qualified:false};
+      reason:source.reason??null,identity_observation:identity,execution_qualified:false};
   } catch {return unknown('source observation unavailable');}
 }
 
