@@ -173,6 +173,14 @@ test('complete three-dot PR diff binds head/base and both rename paths',async()=
   let prReads=0;
   assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?compare:
     ++prReads===1?pr:{...pr,base:{...pr.base,sha:head}}})).state,'unknown');
+  for(const edit of [p=>delete p.base.ref,p=>delete p.base.repo.default_branch,
+    p=>{delete p.base.ref;delete p.base.repo.default_branch;},p=>{p.base.ref='';p.base.repo.default_branch='';}]) {
+    const missing=structuredClone(pr);edit(missing);
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?compare:missing})).state,'unknown');
+    let count=0;
+    assert.equal((await boundPullDiff({...options,read:async route=>route.includes('/compare/')?compare:
+      ++count===1?pr:missing})).state,'unknown');
+  }
 });
 test('PR commit pagination must be complete and fixed across all pages',async()=>{
   const commits=Array.from({length:100},(_,i)=>({sha:(i+1).toString(16).padStart(40,'0')}));

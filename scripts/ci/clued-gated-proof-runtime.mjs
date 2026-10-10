@@ -13,7 +13,9 @@ const safePath=name=>typeof name==='string' && name.length>0 && name.length<=409
 
 function pullDescriptor(pr,repository,prNumber,head) {
   if(pr?.number!==prNumber || pr.state!=='open' || pr.draft!==false || pr.head?.sha!==head ||
-    pr.base?.repo?.full_name!==repository || pr.base.ref!==pr.base.repo.default_branch ||
+    pr.base?.repo?.full_name!==repository || typeof pr.base.ref!=='string' || !pr.base.ref ||
+    typeof pr.base.repo.default_branch!=='string' || !pr.base.repo.default_branch ||
+    /[\u0000-\u0020\u007f]/.test(pr.base.ref) || pr.base.ref!==pr.base.repo.default_branch ||
     !SHA.test(pr.base.sha??'') || !REPO.test(pr.head.repo?.full_name??'') ||
     !Number.isSafeInteger(pr.changed_files) || pr.changed_files<0 || pr.changed_files>300 ||
     !Number.isSafeInteger(pr.commits) || pr.commits<1 || pr.commits>1000)return null;
