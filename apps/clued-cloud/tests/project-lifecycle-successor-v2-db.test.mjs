@@ -14,6 +14,7 @@ const migration = '20260924120000_project_lifecycle_successor_v2.sql';
 const currentnessMigration = '20260924121000_project_lifecycle_successor_v2_frontier_invalidation.sql';
 const issuerMigration = '20261009070001_issuer_identity_credentials_v1.sql';
 const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
+const storageOwnerLifecycleMigration = '20261010055701_storage_owner_lifecycle_v1.sql';
 const gatewayProbeMigrations = [
   '20261009160000_worker_gateway_request_context_probe_v1.sql',
   '20261009160100_close_worker_gateway_request_context_probe_v1.sql',
@@ -55,7 +56,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration &&
+      name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && name !== storageOwnerLifecycleMigration &&
       !gatewayProbeMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -104,6 +105,10 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     for (const name of gatewayProbeMigrations) {
       await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
     }
+    // Native storage lifecycle uses the 2b issuer resolver and extends its RPC
+    // inventory. Install it after that exact historical inventory cutover,
+    // matching production, rather than replaying future functions before 2b.
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageOwnerLifecycleMigration), 'utf8'));
 
     await t.test('cutover advances and enqueues the dedicated Frontier currentness revision', async () => {
       const state = (await admin.query(`select h.invalidation_revision,h.resolved_through_revision,

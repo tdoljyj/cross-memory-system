@@ -119,6 +119,6 @@ test('IPC Worker host supplies a real signed gateway JWT to the loopback HTTP bo
     } finally {
       await host?.stop();
       await new Promise((resolve) => server.close(resolve));
-      await fs.rm(directory, { recursive: true, force: true });
+      await fs.rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
