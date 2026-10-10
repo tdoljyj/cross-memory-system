@@ -54,6 +54,7 @@ import {
   ADMISSION_APP_ID,
   MERGE_SLOT_CHECK_NAME,
   appChecksOnHead,
+  checkNamesPullRequest,
   cluedRpc,
   githubJson,
   githubPaged,
@@ -63,7 +64,7 @@ import {
   workflowIsGated,
 } from "./clued-work-admission.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
-import { githubGraphReader, observeCompletedSource } from "./clued-gated-proof-runtime.mjs";
+import { githubGraphReader, observeCompletedSource, createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
 export const TOUCH_RPC = "clued_work_merge_slot_touch_v1";
 export const HOLDERS_RPC = "clued_work_merge_slot_holders_v1";
@@ -84,7 +85,7 @@ export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.ym
 // the slot; cancelled is not one: the admission run of an edited pull request
 // cancels the previous one on the same head, and the next run's check may not
 // exist yet (review NIT).
-const PASSING = new Set(["success", "neutral", "skipped"]);
+const PASSING = new Set(["success"]);
 const FAILING = new Set(["failure", "timed_out", "action_required", "startup_failure"]);
 const ACTIVE = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
 export const DEFAULT_HARD_CAP_MINUTES = 120;
@@ -122,12 +123,14 @@ async function newestCheck(fetchImpl, env, repository, headSha, { name, app_id: 
 // admission check's failure that completed before slotSince (when the claim
 // became head of the merge queue, ms) is not reported.
 const STALE_OK = new Set(["clued-work-admission", "clued-admission-verified"]);
-export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null) {
+export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null, { pr, qualifyExecution } = {}) {
   const checks = [];
   let before = null;
   for (const required of CI_REQUIRED_CHECKS) {
     const check = await newestCheck(fetchImpl, env, repository, headSha, required);
     checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
+    if (check && required.name === "clued-admission-verified" && pr && !checkNamesPullRequest(check, pr.number))
+      return { state: "idle", reason: "the newest admission check does not bind this pull request", checks };
     if (check && check.status === "completed" && FAILING.has(check.conclusion)) {
       const completed = Date.parse(check.completed_at ?? "");
       // Only the admission checks: they fail when the head falls behind while the claim waits. A
@@ -159,7 +162,15 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
   }
   if (before) return { state: "idle", reason: before, checks };
   if (checks.every((check) => check.status === "completed" && PASSING.has(check.conclusion))) {
-    return { state: "green", reason: "all CI required checks passed", checks };
+    if (!pr || pr.head?.sha !== headSha || typeof qualifyExecution !== "function")
+      return { state: "idle", reason: "required checks passed; execution qualification context unavailable", checks };
+    const proof = await qualifyExecution(pr);
+    if (proof?.head !== headSha || proof.pr_number !== pr.number)
+      return { state: "idle", reason: proof?.reason ?? "execution proof identity missing", checks };
+    if (proof.state === "failed") return { state: "failed", reason: proof.reason, checks, execution: proof };
+    if (proof.passed === true && proof.state === "qualified")
+      return { state: "green", reason: proof.reason, checks, execution: proof };
+    return { state: "idle", reason: proof.reason ?? "execution scope remains unknown", checks, execution: proof };
   }
   return { state: "idle", reason: "no CI result yet and no CI run active", checks };
 }
@@ -179,7 +190,7 @@ function rpcError(name, response) {
 }
 
 export async function reportMergeSlots({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync,
-  sourceObservationBudgetMs }) {
+  sourceObservationBudgetMs, qualifyExecution }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const hardCap = (mode.policy && mode.policy.merge_slot_hard_cap_minutes) || DEFAULT_HARD_CAP_MINUTES;
@@ -190,6 +201,7 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   }
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   const workflows = ciWorkflows(workspace);
+  const qualify = qualifyExecution ?? createExecutionQualifier({ env, fetchImpl, workspace, workflows });
   if (eventName === "workflow_run" && Number.isSafeInteger(event?.workflow_run?.id)) {
     result.source_observation = await observeCompletedSource({ env, event, eventName, workspace, workflows,
       budgetMs: sourceObservationBudgetMs,
@@ -242,9 +254,19 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   for (const { pr, scope, since } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {
-      const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
+      const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution: qualify });
       const report = { pr: pr.number, head_sha: pr.head.sha, ci_state: seen.state, reason: seen.reason };
       if (seen.state !== "idle") {
+        const current = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
+        const tip = seen.execution?.tip ? await githubJson(fetchImpl, env,
+          `/repos/${repository}/branches/${encodeURIComponent(pr.base.repo.default_branch)}`) : null;
+        if (current?.number !== pr.number || current.state !== "open" || current.draft !== false || current.head?.sha !== pr.head.sha ||
+          current.base?.ref !== pr.base.ref || current.base?.repo?.full_name !== repository ||
+          current.base.repo.default_branch !== pr.base.repo.default_branch ||
+          (seen.execution?.tip && tip?.commit?.sha !== seen.execution.tip)) {
+          Object.assign(report, { ci_state: "idle", reason: "PR or default tip changed before reporting CI" });
+          result.reports.push(report);continue;
+        }
         const response = await cluedRpc(fetchImpl, env, workspace, TOUCH_RPC, {
           scope, pr_ref: prRef, head_sha: pr.head.sha, ci_state: seen.state,
           ...(seen.state === "failed" ? { reason: [...seen.reason.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 300).join("") } : { hard_cap_minutes: hardCap }),

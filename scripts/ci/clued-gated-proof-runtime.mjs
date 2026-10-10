@@ -2,7 +2,7 @@
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
-import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs} from './clued-work-admission.mjs';
+import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -32,6 +32,25 @@ export function loadProofSnapshot(workspace,tip,workflows) {
 }
 
 export const EXECUTION_PROOF_BUDGET_MS=90000;
+export function createExecutionQualifier({env,fetchImpl,workspace,workflows}) {
+  return async(pr,expectedTip)=>{
+    try {
+      const branch=pr?.base?.repo?.default_branch;
+      if(!branch || pr.base.ref!==branch || pr.base.repo.full_name!==env.GITHUB_REPOSITORY)
+        return unknown('qualification PR default branch missing');
+      const initialSignal=AbortSignal.timeout(12000);
+      const current=await githubJson((url,init)=>fetchImpl(url,{...init,signal:initialSignal,redirect:'error'}),env,
+        `/repos/${env.GITHUB_REPOSITORY}/branches/${encodeURIComponent(branch)}`);
+      const tip=current?.commit?.sha;
+      if(expectedTip && tip!==expectedTip)return unknown('default tip changed before qualification');
+      const snapshot=loadProofSnapshot(workspace,tip,workflows);
+      return await qualifyPrExecution({repository:env.GITHUB_REPOSITORY,prNumber:pr.number,head:pr.head.sha,snapshot,
+        serverURL:env.GITHUB_SERVER_URL,
+        read:(route,{signal})=>githubJson((url,init)=>fetchImpl(url,{...init,signal,redirect:'error'}),env,route),
+        graphRead:githubGraphReader(fetchImpl,env),readLog:githubAttemptLogReader(fetchImpl,env)});
+    } catch {return unknown('default-branch execution qualification unavailable');}
+  };
+}
 // The budget covers every request and response body, including final checks.
 // A late response cannot resume issuing requests after the observation closes.
 export async function qualifyPrExecution(options={}) {

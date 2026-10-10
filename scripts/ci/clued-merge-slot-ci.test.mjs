@@ -13,7 +13,7 @@ import {
   HOLDERS_RPC,
   REQUIRED_CHECK_WORKFLOWS,
   TOUCH_RPC,
-  ciStateOf,
+  ciStateOf as actualCiStateOf,
   ciWorkflows,
   gitBlobSha,
   main,
@@ -36,8 +36,12 @@ const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.expor
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
   CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", ...extra });
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
-  ({ number, body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main" } } });
+  ({ number, state: "open", body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main", full_name:REPO } } });
+const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.head.sha,pr_number:pr.number,reason:'fixture execution observed'});
+const ciStateOf=(fetch,env,repo,head,workflows,since=null)=>actualCiStateOf(fetch,env,repo,head,workflows,since,
+  {pr:pull(5),qualifyExecution:fixtureQualification});
 const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
+  external_id: name==='clued-admission-verified'?'pr:5:run:9001':undefined,
   app: { id: name === "clued-admission-verified" ? ADMISSION_APP_ID : 15368 }, ...extra });
 const run = (pathName, status = "in_progress", extra = {}) => ({ id: 7, path: pathName, status, event: "pull_request", head_sha: HEAD, ...extra });
 
@@ -151,7 +155,7 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "skipped" })], trivy: [check("trivy", { conclusion: "neutral" })] }),
     ...runsRoute(HEAD, []) });
-  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   // A same-named check from another app, or on another head, is not the required check.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [check("clued-admission-verified", { app: { id: 15368 }, conclusion: "failure", id: 99 }),
     check("clued-admission-verified", { id: 98, head_sha: OTHER, conclusion: "failure" }), check("clued-admission-verified")] }), ...runsRoute(HEAD, []) });
@@ -228,6 +232,7 @@ function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_
   touch = (input) => ({ status: "ok", touched: true, claims: [CLAIM], merge_slot_until: "2026-10-08T12:45:00Z", ci_state: input.ci_state, returned: input.ci_state === "failed" }) } = {}) {
   return fakeFetch({
     [`/repos/${REPO}/pulls?state=open`]: pulls,
+    ...Object.fromEntries(pulls.map(pr=>[`/repos/${REPO}/pulls/${pr.number}`,pr])),
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", repository: REPO, holders }),
     [`rpc:${TOUCH_RPC}`]: touch,
     [`/repos/${REPO}/installation`]: { id: 99 },
@@ -237,7 +242,28 @@ function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_
   });
 }
 const report = (fetch, more = {}) => reportMergeSlots({ env: env(more.env), event: more.event ?? null, eventName: more.eventName ?? "schedule",
-  fetchImpl: fetch.fetchImpl, workspace: ROOT });
+  fetchImpl: fetch.fetchImpl, workspace: ROOT, qualifyExecution:more.qualifyExecution??fixtureQualification });
+
+test('required green cannot extend a slot with gate-only, unknown, wrong-identity or skipped execution',async()=>{
+  const props=[{passed:false,state:'unknown',reason:'gate only',rerun:{id:7,run_attempt:1}},
+    {passed:false,state:'unknown',reason:'unregistered source'},
+    {passed:true,state:'qualified',head:OTHER,pr_number:5,reason:'other head'},
+    {passed:true,state:'qualified',head:HEAD,pr_number:6,reason:'other PR'}];
+  for(const proof of props) {
+    const fetch=slotWorld({extra:{...allGreen(),...runsRoute(HEAD,[])}});
+    const result=await report(fetch,{qualifyExecution:async()=>({head:HEAD,pr_number:5,...proof})});
+    assert.equal(result.reports[0].ci_state,'idle');
+    assert.equal(fetch.calls.some(call=>call.route===`rpc:${TOUCH_RPC}`),false);
+  }
+  const wrong=slotWorld({extra:{...allGreen(),...checksRoute(HEAD,{'clued-admission-verified':[check('clued-admission-verified',{external_id:'pr:6:run:9'})]}),...runsRoute(HEAD,[])}});
+  assert.equal((await report(wrong)).reports[0].ci_state,'idle');
+  const moved=slotWorld({extra:{...allGreen(),...runsRoute(HEAD,[]),[`/repos/${REPO}/pulls/5`]:{...pull(5),head:{sha:OTHER}}}});
+  assert.equal((await report(moved)).reports[0].ci_state,'idle');
+  assert.equal(moved.calls.some(call=>call.route===`rpc:${TOUCH_RPC}`),false);
+  const failed=slotWorld({extra:{...allGreen(),...runsRoute(HEAD,[])}});
+  const outcome=await report(failed,{qualifyExecution:async()=>({head:HEAD,pr_number:5,passed:false,state:'failed',reason:'actual primary failed'})});
+  assert.equal(outcome.reports[0].ci_state,'failed');assert.equal(outcome.reports[0].returned,true);
+});
 
 test("reportMergeSlots: reports the holder's CI state with the policy's hard cap", async () => {
   let fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, [run(GITLEAKS)]), ...sameAsMain() } });
@@ -375,7 +401,10 @@ test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits
   console.error = () => {};
   try {
     assert.equal(await main(base, slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } }).fetchImpl), 0);
-    assert.equal(await main(base, fetch.fetchImpl), 1);
+    assert.equal(await main(base, fetch.fetchImpl), 0, 'no touch until real default-branch qualification is available');
+    const refused=fakeFetch({[`/repos/${REPO}/pulls?state=open`]:[pull(5)],
+      [`rpc:${HOLDERS_RPC}`]:()=>({status:'ok',reason:'admission_binding_required',holders:[]})});
+    assert.equal(await main(base, refused.fetchImpl), 1);
   } finally {
     console.log = quiet;
     console.error = loud;
