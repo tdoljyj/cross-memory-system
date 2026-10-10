@@ -63,6 +63,7 @@ import {
   workflowIsGated,
 } from "./clued-work-admission.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
+import { githubGraphReader, observeCompletedSource } from "./clued-gated-proof-runtime.mjs";
 
 export const TOUCH_RPC = "clued_work_merge_slot_touch_v1";
 export const HOLDERS_RPC = "clued_work_merge_slot_holders_v1";
@@ -177,7 +178,8 @@ function rpcError(name, response) {
   return null;
 }
 
-export async function reportMergeSlots({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync }) {
+export async function reportMergeSlots({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync,
+  sourceObservationBudgetMs }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const hardCap = (mode.policy && mode.policy.merge_slot_hard_cap_minutes) || DEFAULT_HARD_CAP_MINUTES;
@@ -188,6 +190,12 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   }
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   const workflows = ciWorkflows(workspace);
+  if (eventName === "workflow_run" && Number.isSafeInteger(event?.workflow_run?.id)) {
+    result.source_observation = await observeCompletedSource({ env, event, eventName, workspace, workflows,
+      budgetMs: sourceObservationBudgetMs,
+      read: (route, { signal }) => githubJson((url, init) => fetchImpl(url, { ...init, signal, redirect: "error" }), env, route),
+      graphRead: githubGraphReader(fetchImpl, env) });
+  }
   const pulls = (await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch);
   const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
