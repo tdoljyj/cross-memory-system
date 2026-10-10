@@ -56,6 +56,8 @@ jobs:
         with:
           node-version: 24.19.0
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
       - name: Hydrate embedded PostgreSQL bundled library symlinks
         # --ignore-scripts skips the platform package's postinstall, which links the
