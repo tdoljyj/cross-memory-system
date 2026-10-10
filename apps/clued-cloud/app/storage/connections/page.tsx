@@ -194,8 +194,35 @@ function isDeletePreview(v: unknown, c: Connection): v is DeletePreview {
     && Number.isSafeInteger(v.item_count) && Number(v.item_count) >= 0
     && v.connection_version === c.version && v.profile_version === c.profile_version;
 }
+const deletePreviewReasons = {
+  picked_or_legacy_root: "这是已有或自行选择的文件夹，此次只删除连接，保留文件夹及全部内容。",
+  connection_inactive: "这个连接目前未处于已连接状态，无法核对文件夹。需要连带处理文件夹时，请先重新连接。",
+  storage_connection_unavailable: "当前连接的有效状态或访问资格未能确认。请关闭窗口并刷新状态后核对。",
+  fresh_authorization_required: "当前 Google 授权无法用于核对文件夹，需要核查授权状态。本次只删除连接，保留 Drive 文件夹。",
+  metadata_unavailable: "未能读取 Google 的文件夹信息，暂时无法核对删除条件。本次只删除连接，保留 Drive 文件夹。",
+  root_drift: "文件夹的位置、所有权或访问资格与登记信息不一致。本次保留 Drive 文件夹，请先核对连接与文件夹。",
+  inventory_unavailable: "未能完整核对文件夹内的文件和子文件夹。本次只删除连接，保留 Drive 文件夹。",
+  operation_deadline: "完整核对未能在限定时间内完成。本次只删除连接，保留 Drive 文件夹。",
+  can_trash_unavailable: "未能确认 Google 允许把这个文件夹移入回收站。本次只删除连接，保留 Drive 文件夹。",
+  conditional_capability_unavailable: "本次读取未取得删除所需的版本保护信息，暂时不能连带移入回收站。此连接无需因此重新连接。",
+  preview_version_conflict: "连接状态在核对期间发生了变化。请关闭窗口并刷新状态，再重新核对；本次保留 Drive 文件夹。",
+  lifecycle_unavailable: "文件夹删除条件尚未确认，当前无法确定具体原因。本次只删除连接，保留 Drive 文件夹。",
+} as const;
+type DeletePreviewReason = keyof typeof deletePreviewReasons;
+function knownDeletePreviewReason(value: unknown): DeletePreviewReason {
+  return typeof value === "string" && Object.hasOwn(deletePreviewReasons, value) ? value as DeletePreviewReason : "lifecycle_unavailable";
+}
+function refusedDeletePreview(v: unknown, c: Connection): DeletePreviewReason {
+  if (isObject(v) && v.trash_available === true) {
+    if (v.root_folder_id !== c.root_folder_id) return "root_drift";
+    if (Number.isSafeInteger(v.connection_version) && Number.isSafeInteger(v.profile_version)
+      && (v.connection_version !== c.version || v.profile_version !== c.profile_version)) return "preview_version_conflict";
+    return "lifecycle_unavailable";
+  }
+  return isObject(v) && v.trash_available === false ? knownDeletePreviewReason(v.reason) : "lifecycle_unavailable";
+}
 type LifecycleDialog = { kind: "reconnect" | "delete"; connection: Connection; normalUse: boolean;
-  trashRoot: boolean; reading: boolean; preview?: DeletePreview };
+  trashRoot: boolean; reading: boolean; preview?: DeletePreview; previewReason?: DeletePreviewReason };
 const folderHref = (c: Connection) => `https://drive.google.com/drive/folders/${encodeURIComponent(c.root_folder_id)}`;
 const folderName = (c: Connection) => c.physical_location.status === "verified" ? c.physical_location.root_name! : c.root_name;
 const registeredLocation = (c: Connection) => c.managed_root.startsWith("/clued-cloud/") ? null : c.managed_root;
@@ -657,7 +684,9 @@ export default function StorageConnections() {
     if (operation.current || busy || c.pending_lifecycle) return;
     if (kind === "reconnect" && (c.state !== "revoked" || !c.root_stopped || c.root_stop_generation < 1)) return;
     const next: LifecycleDialog = { kind, connection: c, normalUse: false, trashRoot: false,
-      reading: kind === "delete" && c.created_by_clued && c.state === "active" };
+      reading: kind === "delete" && c.created_by_clued && c.state === "active",
+      ...(kind === "delete" ? { previewReason: !c.created_by_clued ? "picked_or_legacy_root" as const
+        : c.state !== "active" ? "connection_inactive" as const : "lifecycle_unavailable" as const } : {}) };
     setDialog(next);
     if (!next.reading) return;
     operation.current = true; setBusy(true);
@@ -667,10 +696,12 @@ export default function StorageConnections() {
       const value = await accountRequest({ action: "preview_delete", connection_id: c.id }, "/v1/storage/lifecycle", context);
       if (epoch !== revision.current) return;
       setDialog(current => current?.connection.id === c.id && current.kind === "delete"
-        ? { ...current, reading: false, ...(isDeletePreview(value, c) ? { preview: value, trashRoot: true } : {}) } : current);
-    } catch {
+        ? { ...current, reading: false, ...(isDeletePreview(value, c) ? { preview: value, trashRoot: true }
+          : { previewReason: refusedDeletePreview(value, c) }) } : current);
+    } catch (error) {
       if (epoch === revision.current) setDialog(current => current?.connection.id === c.id
-        ? { ...current, reading: false } : current);
+        ? { ...current, reading: false, previewReason: knownDeletePreviewReason(error instanceof RequestFailure
+          ? error.reason === "storage_owner_lifecycle_conflict" ? "preview_version_conflict" : error.reason : undefined) } : current);
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function submitLifecycle() {
@@ -887,9 +918,7 @@ export default function StorageConnections() {
             <label className="block"><input type="checkbox" disabled={busy} checked={dialog.trashRoot}
               onChange={event => { const trashRoot = event.target.checked; setDialog(current => current ? { ...current, trashRoot } : null); }} /> 同时把 Clued 新建的文件夹及其中全部内容移入 Drive 回收站</label>
             <p className="my-2 text-sm">已核对其中 {dialog.preview.item_count} 个文件和子文件夹，包括你后来放进去的内容。可从 Google Drive 回收站恢复；Google 会在 30 天后自动永久删除。</p>
-          </> : <p className="my-2 text-sm">{dialog.connection.created_by_clued
-            ? "当前无法核实文件夹的完整内容或删除条件，此次只删除连接，保留 Drive 文件夹。需要连带处理文件夹时，请先恢复连接后重新核对。"
-            : "这是已有或自行选择的文件夹，此次只删除连接，保留文件夹及全部内容。"}</p>}
+          </> : <p className="my-2 text-sm">{deletePreviewReasons[dialog.previewReason ?? "lifecycle_unavailable"]}</p>}
         </>}
         <div className="mt-5 flex gap-4">
           <button onClick={() => setDialog(null)}>取消</button>
