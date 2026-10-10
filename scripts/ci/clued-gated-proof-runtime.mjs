@@ -625,7 +625,8 @@ async function observeSourceWithinBudget({env,event,eventName,workspace,workflow
     // A started retry invalidates even this read-only observation.
     const latest=await read(`/repos/${repository}/actions/runs/${run.id}`);
     if(latest?.id!==run.id || latest.run_attempt!==run.run_attempt || latest.head_sha!==run.head_sha ||
-      latest.event!==run.event || latest.status!==run.status || latest.conclusion!==run.conclusion)
+      latest.event!==run.event || latest.status!==run.status || latest.conclusion!==run.conclusion ||
+      JSON.stringify(latest.pull_requests)!==JSON.stringify(run.pull_requests))
       return unknown('source observation attempt changed');
     return {state:source.state,scope:'source_observation_only',run_id:run.id,run_attempt:run.run_attempt,
       head:run.head_sha,file,source_sha:source.source_sha??null,workflow_blob:source.workflow_blob??null,

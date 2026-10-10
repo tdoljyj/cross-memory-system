@@ -438,6 +438,11 @@ test('source shadow observes a bounded identity log without granting execution o
     }
     const incomplete=await observeCompletedSource({...options,read:async route=>route.includes('/attempts/')?{total_count:2,jobs:[job]}:read(route)});
     assert.equal(incomplete.identity_observation.state,'unknown');
+    for(const changedMembership of [[],[{number:5},{number:6}],[{number:6}]]) {
+      const value=await observeCompletedSource({...options,readLog:async()=>{completed.pull_requests=changedMembership;return log;}});
+      assert.equal(value.state,'unknown');assert.notEqual(value.identity_observation?.state,'qualified');
+      completed.pull_requests=[{number:5}];
+    }
     const changed=await observeCompletedSource({...options,readLog:async()=>{completed.run_attempt=3;return log;}});
     assert.equal(changed.state,'unknown');assert.equal(changed.reason,'source observation attempt changed');
     completed.run_attempt=2;
