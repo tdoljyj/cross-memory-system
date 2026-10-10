@@ -32,6 +32,8 @@ test('failed, partial, unknown, empty or ambiguous logs never establish cache hi
     npmCacheObservation(log(['http fetch GET 200 https://registry.invalid/a 1ms (cache future)'])),
     npmCacheObservation(log([])),npmCacheObservation(null),npmCacheObservation('x'.repeat(5*1024*1024+1))])
     assert.equal(value.request_cache_hit_ratio,null);
+  const multibyte=npmCacheObservation(log(['verbose '+ '\u6d4b'.repeat(21846)]));
+  assert.equal(multibyte.complete,false);assert.equal(multibyte.reason,'debug line exceeds bound');
 });
 
 function fixture(t) {

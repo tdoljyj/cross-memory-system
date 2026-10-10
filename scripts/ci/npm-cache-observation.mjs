@@ -14,7 +14,7 @@ export function npmCacheObservation(text,{readComplete=true}={}) {
     return {...result,reason:'debug input missing or exceeds bound'};
   const lines=text.split(/\r?\n/),serials=new Set();let duplicate=false,ci=0,exits=0,nextSerial=0,gap=false;
   for(const line of lines) {
-    if(line.length>65536)return {...result,reason:'debug line exceeds bound'};
+    if(Buffer.byteLength(line)>65536)return {...result,reason:'debug line exceeds bound'};
     const numbered=/^(\d+)\s+(.+)$/.exec(line);if(!numbered)continue;
     if(serials.has(numbered[1]))duplicate=true;serials.add(numbered[1]);
     if(Number(numbered[1])!==nextSerial || String(nextSerial)!==numbered[1])gap=true;
