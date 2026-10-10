@@ -338,8 +338,10 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       // Unlike merge/update-branch, the rerun API has no expected-head CAS.
       // Recheck both the PR and attempt just before using the workflow token.
       const current = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${plan.pr.number}`);
+      const latest = await gatedCiOf(fetchImpl, env, repository, plan.pr.head.sha, workflows);
       const run = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${plan.run.id}`);
       if (current?.head?.sha !== plan.pr.head.sha || current.state !== "open" || current.draft
+          || latest.rerun?.id !== plan.run.id || latest.rerun?.run_attempt !== plan.run.run_attempt
           || run.head_sha !== plan.pr.head.sha || run.event !== "pull_request"
           || run.run_attempt !== plan.run.run_attempt || run.status !== "completed" || run.conclusion !== "success") {
         entry.action = "none";

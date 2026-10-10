@@ -402,3 +402,14 @@ test("a rerun refusal is reported without merging or requesting App actions perm
   assert.equal(result.actions[0].status, 403);
   assert.equal(writes(fetch).length, 1);
 });
+
+test("a newer workflow run created after planning prevents rerunning the old gate-only run", async () => {
+  let reads = 0;
+  const fetch = rerunWorld({ extra: {
+    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: () => ({ workflow_runs:
+      ++reads < 3 ? [gateOnlyRun()] : [gateOnlyRun(), gateOnlyRun({ id: 701, conclusion: 'failure' })] }),
+  } });
+  const result = await run(fetch);
+  assert.equal(result.actions[0].action, 'none');
+  assert.deepEqual(writes(fetch), []);
+});
