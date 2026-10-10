@@ -1,3 +1,4 @@
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -107,11 +108,25 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowTestIssuerCredentials(admin);
-    // the loop above includes the stage C grant migration, so the §5.13 target grants are the real ones
+    // The entire chain includes G6: current Binding RPCs are GW-only, while Native remains authenticated.
     for (const rpc of BINDING_RPCS) {
-      const { rows } = await admin.query(`select has_function_privilege('anon', $1::regprocedure, 'execute') ok`, [`public.${rpc}(text, jsonb)`]);
-      assert.equal(rows[0].ok, true, rpc);
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway']) {
+        const {rows}=await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') ok",[role,`public.${rpc}(text,jsonb)`]);
+        assert.equal(rows[0].ok,role==='clued_worker_gateway',role+': '+rpc);
+      }
     }
+    for(const fn of ['clued_user_integration_v1','clued_admin_integration_v1']) {
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway']) {
+        const {rows}=await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') ok",[role,`public.${fn}(jsonb)`]);
+        assert.equal(rows[0].ok,role==='authenticated',role+': '+fn);
+      }
+    }
+    const closeout=await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    const callerCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',closeout),'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog);
+    await assertGatewayCloseoutBoundary(admin);
     // test-only registry rows (§13.0)
     await admin.query(`insert into clued_private.integration_hosts_v1(host, tenant_dimension, account_dimension,
         tenant_evidence_kinds, account_evidence_kinds, first_authorization_required, registry_version, capability_snapshot_ref)
