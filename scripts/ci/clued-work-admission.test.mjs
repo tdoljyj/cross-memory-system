@@ -943,7 +943,13 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
 
 const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filter((name) => /\.ya?ml$/.test(name))
   .filter((name) => workflowIsGated(fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8")));
-const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-database.yml"), "utf8");
+// Keep the historical one-dependency attack fixtures below in their original
+// spelling. The all-workflows test reads the actual new dependency graph;
+// clued-push-reuse.test.mjs checks the additional proof dependency itself.
+const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-database.yml"), "utf8")
+  .replace("needs: [admission-gate, push-reuse]", "needs: admission-gate")
+  .replace("(!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((", "((")
+  .replace("github.actor == github.repository_owner)))\n    name:", "github.actor == github.repository_owner))\n    name:");
 
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   // No pinned list (see "gate job digest"); the workflow this file reads below must stay gated.
