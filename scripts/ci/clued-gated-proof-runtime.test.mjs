@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange,
-  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt} from './clued-gated-proof-runtime.mjs';
+  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +17,71 @@ const payload=()=>({data:{node:{databaseId:7,runAttempt:2,event:'pull_request',f
   run:{databaseId:7,runAttempt:2}}}}});
 const options={repository,headRepository,file,run};
 const pinned='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
+function executionWorld({conclusion='success',moveTip=false,moveSource=false,changedPR=false}={}) {
+  const tip='c'.repeat(40),base='d'.repeat(40),sourceSha='a'.repeat(40);
+  const text='name: fixture\non:\n  pull_request:\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Real primary\n        run: node actual-tests.mjs\n';
+  const parsed={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{name:'Real primary',run:'node actual-tests.mjs'}]}}};
+  const roles=[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
+  const profile=compileRegisteredWorkflow(text,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:roles});
+  const profiles={schema:'clued.gated-proof-profiles/2',workflows:{[file]:profile}};
+  const roleSpecs={schema:'clued.gated-proof-role-specs/2',workflows:{[file]:{sources:{[profile.workflow_blob]:roles}}}};
+  const texts={'scripts/ci/clued-gated-proof-profiles.json':JSON.stringify(profiles),
+    'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(roleSpecs),
+    'scripts/ci/clued-work-admission.mjs':'trusted gate',
+    'scripts/ci/clued-docs-only.py':'trusted classifier',
+    'scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
+    'config/merge-admission-policy.json':'trusted policy'};
+  const snapshot={tip,checkout:tip,profiles,roleSpecs,workflows:new Map([[file,profile.workflow_blob]]),
+    files:Object.fromEntries(Object.entries(texts).map(([file,text])=>[file,workflowBlob(text)]))};
+  const native={...run,status:'completed',conclusion,pull_requests:[{number:5}]};
+  const pr={number:5,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
+    base:{sha:base,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:1,commits:1};
+  const calls=[];let branches=0,pulls=0,graphs=0;
+  const content=(path,text)=>({path,sha:workflowBlob(text),type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});
+  const read=async route=>{
+    calls.push(route);
+    if(route.endsWith('/pulls/5'))return ++pulls>2&&changedPR?{...pr,draft:true}:pr;
+    if(route.includes('/branches/main'))return {commit:{sha:++branches>1&&moveTip?base:tip}};
+    if(route.includes('/compare/'))return {base_commit:{sha:base},merge_base_commit:{sha:base},total_commits:1,
+      commits:[{sha:head}],files:[{filename:'docs/guide.md',status:'modified'}]};
+    if(route.includes('/contents/.github/workflows?'))return [{path:file,sha:profile.workflow_blob,type:'file'}];
+    if(route.includes('/contents/')) {
+      const path=route.split('/contents/')[1].split('?')[0];
+      return content(path,path===file?text:texts[path]);
+    }
+    if(route.includes('/actions/runs?'))return {total_count:1,workflow_runs:[native]};
+    if(route.includes('/attempts/'))return {total_count:1,jobs:[{id:8,run_id:native.id,run_attempt:native.run_attempt,
+      name:'main',labels:['ubuntu-latest'],status:'completed',conclusion:'success',
+      steps:[{name:'Real primary',status:'completed',conclusion:'success'}]}]};
+    if(route.endsWith('/actions/runs/7'))return native;
+    throw Error('unexpected read');
+  };
+  const graphRead=async()=>{
+    const p=payload();p.data.node.file.repositoryFileUrl=`https://github.com/${repository}/blob/${++graphs>1&&moveSource?base:sourceSha}/${file}`;return p;
+  };
+  return {repository,head,prNumber:5,snapshot,read,graphRead,readLog:async()=>{throw Error('native association requires no log');},calls,pr};
+}
+test('shared execution bridge binds native full execution to one trusted snapshot and final source authority',async()=>{
+  const good=executionWorld();assert.equal((await qualifyPrExecution(good)).passed,true);
+  assert.equal((await qualifyPrExecution(executionWorld({conclusion:'failure'}))).state,'failed');
+  for(const changes of [{moveTip:true},{moveSource:true},{changedPR:true},
+    {conclusion:'failure',moveTip:true},{conclusion:'failure',moveSource:true},{conclusion:'failure',changedPR:true}])
+    assert.equal((await qualifyPrExecution(executionWorld(changes))).state,'unknown');
+  const missing=executionWorld();delete missing.snapshot.files['config/merge-admission-policy.json'];
+  assert.equal((await qualifyPrExecution(missing)).state,'unknown');
+  const mismatch=executionWorld();mismatch.snapshot.profiles={...mismatch.snapshot.profiles,extra:'candidate assertion'};
+  assert.equal((await qualifyPrExecution(mismatch)).state,'unknown');
+});
+test('execution bridge aborts the whole read budget and forbids late continuation requests',async()=>{
+  const w=executionWorld();let resolve,calls=0,signal;
+  const pending=new Promise(r=>{resolve=r;});
+  const read=async(route,options)=>{calls++;signal=options.signal;return pending;};
+  const result=await qualifyPrExecution({...w,read,budgetMs:5});
+  assert.equal(result.state,'unknown');assert.equal(signal.aborted,true);assert.equal(calls,1);
+  resolve(w.pr);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls,1);
+  for(const budgetMs of [0,-1,90001,1.5])assert.equal((await qualifyPrExecution({...w,budgetMs})).state,'unknown');
+});
 test('empty membership gate identity requires pinned actual base checkout and current gate script bytes',async()=>{
   const base='1'.repeat(40),code='trusted gate script',blob=workflowBlob(code);
   const profile={gated:true,source_yaml:`jobs:\n  admission-gate:\n    steps:\n      - uses: ${pinned}\n        with:\n          ref: \${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - run: node scripts/ci/clued-work-admission.mjs`};

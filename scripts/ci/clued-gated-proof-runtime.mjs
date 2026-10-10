@@ -1,10 +1,11 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
-import {applicableCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
+import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs} from './clued-work-admission.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
 
 const SHA=/^[a-f0-9]{40}$/;
 const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -12,6 +13,101 @@ const unknown=reason=>({passed:false,state:'unknown',reason});
 const safePath=name=>typeof name==='string' && name.length>0 && name.length<=4096 &&
   !/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(name) && !name.startsWith('/') &&
   !name.split('/').some(part=>!part || part==='.' || part==='..');
+
+const SNAPSHOT_FILES=['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
+  'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py',
+  'config/merge-admission-policy.json'];
+export function loadProofSnapshot(workspace,tip,workflows) {
+  const checkout=execFileSync('git',['rev-parse','HEAD'],{cwd:workspace,encoding:'utf8',maxBuffer:1024}).trim();
+  const dirty=execFileSync('git',['status','--porcelain','--untracked-files=no'],{cwd:workspace,encoding:'utf8',maxBuffer:65536});
+  if(!SHA.test(tip??'') || checkout!==tip || dirty.trim() || !(workflows instanceof Map))throw Error('trusted default checkout unavailable');
+  const files={},texts={};
+  for(const file of SNAPSHOT_FILES) {
+    const bytes=fs.readFileSync(path.join(workspace,file)),text=bytes.toString('utf8');
+    if(bytes.length>524288 || !Buffer.from(text,'utf8').equals(bytes))throw Error('trusted snapshot file exceeds bounds');
+    files[file]=workflowBlob(text);texts[file]=text;
+  }
+  return {tip,checkout,files,profiles:JSON.parse(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),
+    workflows:new Map(workflows)};
+}
+
+export const EXECUTION_PROOF_BUDGET_MS=90000;
+// The budget covers every request and response body, including final checks.
+// A late response cannot resume issuing requests after the observation closes.
+export async function qualifyPrExecution(options={}) {
+  if(!options || typeof options!=='object')return unknown('execution proof options missing');
+  const budgetMs=options.budgetMs??EXECUTION_PROOF_BUDGET_MS;
+  if(!Number.isSafeInteger(budgetMs) || budgetMs<1 || budgetMs>EXECUTION_PROOF_BUDGET_MS)
+    return unknown('invalid execution proof budget');
+  if(['read','graphRead','readLog'].some(key=>typeof options[key]!=='function'))return unknown('authenticated proof readers missing');
+  const controller=new AbortController();let closed=false,timer,requests=0;
+  const guarded=fn=>async(...args)=>{
+    if(closed || controller.signal.aborted || ++requests>160)throw Error('execution proof read budget exhausted');
+    return fn(...args,{signal:controller.signal});
+  };
+  const timeout=new Promise(resolve=>{timer=setTimeout(()=>{
+    closed=true;resolve(unknown('execution proof budget exhausted'));controller.abort();
+  },budgetMs);});
+  try {
+    return await Promise.race([executionWithinBudget({...options,read:guarded(options.read),
+      graphRead:guarded(options.graphRead),readLog:guarded(options.readLog)}),timeout]);
+  } finally {closed=true;clearTimeout(timer);controller.abort();}
+}
+
+async function executionWithinBudget({read,graphRead,readLog,repository,prNumber,head,snapshot,serverURL}) {
+  try {
+    if(!REPO.test(repository??'') || !SHA.test(head??'') || !SHA.test(snapshot?.tip??'') || snapshot.checkout!==snapshot.tip ||
+      !(snapshot.workflows instanceof Map) || SNAPSHOT_FILES.some(file=>!SHA.test(snapshot.files?.[file]??'')))
+      return unknown('trusted execution snapshot missing');
+    const diff=await boundPullDiff({read,repository,prNumber,head});
+    if(!diff.passed)return diff;
+    const tipRoute=`/repos/${repository}/branches/${encodeURIComponent(diff.descriptor.default_branch)}`;
+    const snapshotCurrent=async()=>{
+      if((await read(tipRoute))?.commit?.sha!==snapshot.tip)return false;
+      for(const file of SNAPSHOT_FILES) {
+        const content=await read(`/repos/${repository}/contents/${file}?ref=${snapshot.tip}`);
+        const text=decodedWorkflow(content,file,snapshot.files[file]);
+        if(text===null)return false;
+        if(file===SNAPSHOT_FILES[0] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.profiles))return false;
+        if(file===SNAPSHOT_FILES[1] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.roleSpecs))return false;
+      }
+      return true;
+    };
+    if(!await snapshotCurrent())return unknown('trusted snapshot/default tip differs');
+    const catalog=await boundWorkflowCatalog({read,repository,tip:snapshot.tip,head,
+      defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,diff});
+    if(!catalog.passed)return catalog;
+    const sources=new Map();
+    const sourceFor=async(file,run)=>workflowSourceOf({read,graphRead,repository,
+      headRepository:diff.descriptor.head_repository,file,run,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,serverURL});
+    const proof=await qualifiedCI({read,repository,head,prNumber,workflows:catalog.workflows,profiles:catalog.profiles,
+      authorizeSource:async({file,run})=>{
+        const source=await sourceFor(file,run);
+        if(!source.passed || source.workflow_blob!==catalog.workflows.get(file))return false;
+        sources.set(run.id,source);return true;
+      },
+      qualifyRunIdentity:async({run,jobs})=>(await boundRunIdentity({read,readLog,source:sources.get(run.id),run,jobs,
+        repository,head,prNumber,trustedGateBlob:snapshot.files['scripts/ci/clued-work-admission.mjs']})).passed===true,
+      qualifyDocumentation:async({run,jobs})=>(await boundDocumentationAttempt({read,readLog,source:sources.get(run.id),run,jobs,
+        repository,head,prNumber,trustedSources:Object.fromEntries(DOC_SOURCES.map(file=>[file,snapshot.files[file]]))})).passed===true,
+      revalidateSources:async({runs})=>{
+        if(!await snapshotCurrent())return false;
+        const finalDiff=await boundPullDiff({read,repository,prNumber,head});
+        if(!finalDiff.passed || JSON.stringify(finalDiff)!==JSON.stringify(diff))return false;
+        const finalCatalog=await boundWorkflowCatalog({read,repository,tip:snapshot.tip,head,
+          defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,diff:finalDiff});
+        if(!finalCatalog.passed || JSON.stringify(finalCatalog.default_directory)!==JSON.stringify(catalog.default_directory) ||
+          JSON.stringify(finalCatalog.head_directory)!==JSON.stringify(catalog.head_directory))return false;
+        for(const {file,run} of runs) {
+          const current=await sourceFor(file,run),before=sources.get(run.id);
+          if(!current.passed || current.workflow_blob!==before?.workflow_blob || current.source_sha!==before.source_sha ||
+            current.source_repository!==before.source_repository)return false;
+        }
+        return true;
+      }});
+    return {...proof,tip:snapshot.tip,pr_number:prNumber,head};
+  } catch {return unknown('execution proof read failed');}
+}
 
 function workflowDirectory(body) {
   if(!Array.isArray(body) || !body.length || body.length>=1000)return null;
