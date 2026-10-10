@@ -351,16 +351,21 @@
 
 基线取 2026-10-01 至 10-08（研究报告 §4）；目标值由 Owner 在接受时定，建议：每个合并 PR 的自托管分钟中位 ↓30%，自托管排队 p95 < 5 分钟，`wasted_final_rounds` ≈ 0（`normal`）。实施：Task `f70546e5`。
 
-### 12.2 削减项（各一个 PR；先按 n=3 样本的量级初排，§12.1 全量度量后再排）
+### 12.2 削减项（各一个 PR；2026-10-10 按 §12.1 全量度量重排）
 
-| 编号 | 项 | 依据 | 预期 | Task |
-| --- | --- | --- | --- | --- |
-| R1 | `admission-gate` job 占用自托管槽位等 App check（最多 480 秒），10 个加闸 workflow（多数有路径过滤，`clued-cloud-quality` 无）每个触发的运行各一个 | gate 分钟与排队数据 | 把等待上限按准入运行的实际时长（约 1–2 分钟）下调；或把 gate 改回托管 runner（需 Owner 撤回 Decision `f86179b3`）；或合并为一个 gate workflow 由 `workflow_run` 触发重任务 | `f52ca0dd` |
-| R2 | `clued-cloud-quality` 无路径过滤，文档 PR 也跑 `npm ci`+lint+build+test | 按层分组的自托管分钟 | job 内按改动路径判断，无 `apps/clued-cloud/**` 改动时跳过重步骤、仍以同一 check 名成功 | `77e4b00f` |
-| R3 | `gitleaks`、`trivy` 在自托管、25 分钟超时、每个 head 都跑 | 两者的分钟与排队 | 评估改回托管 runner 或缓存 trivy 数据库；它们是必需检查，不能加路径过滤 | `c9a8d57b` |
-| R4 | 最后一轮被插队白跑 | `wasted_final_rounds` | §7 的队列 | 第 3、4 步（`3576d10d`、`38e0c90d`） |
-| R5 | 同 head 重复运行 | `cancel-in-progress` 覆盖情况 | 已覆盖多数 PR workflow；补齐缺的 | `c2a3853f` |
-| R6 | `npm ci` 8 分钟超时（#578） | 失败原因 | runner 本机 npm 缓存已在用；度量命中率后决定是否预热 | `513b73ec` |
+| 顺序 | 编号 | 项 | 7 天度量 | 预期 | Task |
+| --- | --- | --- | --- | --- | --- |
+| 1 | R7 | 合入 main 后的 push 事件把重测试再跑一遍：合入要求 head 含 main tip，合并提交的树与刚通过的 PR head 相同 | 5 个重测试 workflow 的运行里约 24% 是 push（`information-flow-e2e` 99/424、`public-mcp-behavior` 127/513、`clued-connection-authorization` 114/475、`clued-g4-database` 90/385、`public-mcp-protocol` 127/513），push 运行墙钟约 7,200 分钟 | push 时树与某个已成功的 PR head 相同就跳过重步骤、以同名 check 成功；或去掉 push 触发、改为每天在 main 上跑一次。先核对谁读 main 上这些运行的结果（`public-mcp-gate-receipt` 按 head_sha 出回执、`kernel/qualification/local-assurance`） | `543a79f0` |
+| 2 | R8 | 四个重测试各自启动本地栈（npm ci、本地 Supabase 与迁移、Worker） | 自托管 20,012 分钟中 `information-flow-e2e` 4,237、`public-mcp-behavior` 3,395、`clued-connection-authorization` 3,339、`clued-g4-database` 2,150，合计约 66%；PR 运行平均单次约 11–15 分钟墙钟；四者都已有路径过滤与 `cancel-in-progress` | 先按步骤测耗时，再定共享一次栈启动、缓存镜像或迁移快照、或合并 job | `ab74187a` |
+| 3 | R1 | `admission-gate` job 占用自托管槽位等 App check（最多 480 秒），10 个加闸 workflow 每个触发的运行各一个 | gate 共 2,681 分钟，3,966 个 gate job 中 3,087 个在自托管、879 个在托管，所以自托管份额低于 13%；gate 排队 p50 0.5、p95 14.7 分钟 | 把等待上限按准入运行的实际时长（约 1–2 分钟）下调；或把 gate 改回托管 runner（需 Owner 撤回 Decision `f86179b3`）；或合并为一个 gate workflow 由 `workflow_run` 触发重任务 | `f52ca0dd` |
+| 4 | R3 | `gitleaks`、`trivy` 在自托管、25 分钟超时、每个 head 都跑 | `trivy` 663 + `gitleaks` 565 = 1,228 分钟（约 6%） | 评估改回托管 runner 或缓存 trivy 数据库；它们是必需检查，不能加路径过滤 | `c9a8d57b` |
+| 5 | R2 | `clued-cloud-quality` 无路径过滤，文档 PR 也跑 `npm ci`+lint+build+test | 1,026 分钟（约 5%）；能省的只是其中仅文档 PR 的部分，按层分组尚未测（R9） | job 内按改动路径判断，无 `apps/clued-cloud/**` 改动时跳过重步骤、仍以同一 check 名成功 | `77e4b00f` |
+| 6 | R5 | 同 head 重复运行与被取消的运行 | 自托管按结论：success 15,873、cancelled 2,988（约 15%）、failure 1,151 分钟；上面的重测试都已设 `cancel-in-progress`，被取消的多是新 head 取代旧 head，原因拆分尚未测（R9） | 补齐仍缺 `cancel-in-progress` 的 PR workflow；按 R9 的原因拆分再定其余 | `c2a3853f` |
+| 7 | R4 | 最后一轮被插队白跑 | `wasted_final_rounds` 尚未测（R9）；§7 的队列（第 3、4 步）与执行器（第 5 步）已上线 | 用 R9 的数核对队列的效果 | 第 3、4 步（`3576d10d`、`38e0c90d`） |
+| 8 | R6 | `npm ci` 8 分钟超时（#578） | 全部失败合计 1,151 分钟（约 6%），其中 `npm ci` 超时的份额未拆 | runner 本机 npm 缓存已在用；度量命中率后决定是否预热 | `513b73ec` |
+| 9 | R9 | 周报 v1 未测的指标：`by_layer`、`by_state`、`update_main_rounds`、`wasted_final_rounds`、`queue_depth_p95`、`unclaimed_admitted`、`admission_failures_by_reason`，以及取消与失败的原因 | 报告里均为 `not_measured` | 在 2,000 次请求预算内按合入 PR 读 files / commits、按 head 读 check 标题，Clued 回执另走只读接口；R2、R4、R5、R6 的量级依赖这些数 | `c20f91d3` |
+
+**重排说明（2026-10-10，Task `c98bc357`，Owner Decision `e24c0906`）**：上表按周报运行 38032057300 重排，它覆盖 2026-10-03 至 10-10 的全部 12,583 个已完成运行（`partial=false`）：自托管 20,012 分钟、10,629 个 job，托管 2,495 分钟；窗口内合入 169 个 PR，每个 PR 的运行数中位 17、p95 60，不同 head 数中位 2；合入耗时中位 47 分钟、p95 487 分钟；自托管排队 p50 0.35、p95 13.8 分钟。R7 的 push 占比取自同一窗口（截至报告结束时刻）的运行列表，分钟是运行墙钟，含 gate 等待，不等于自托管 job 分钟；R7 中四个 workflow 的 push 运行也计在 R8 的 13,121 分钟里，两项的节省不能相加。初排时（n=3 样本）的 R1–R6 没有覆盖最大的两项（R7、R8），编号保持不变，顺序列给出新的先后；每项仍各一个 PR，改 workflow 或 `scripts/ci/**` 属受保护路径，需 Owner 单独批准。
 
 ---
 
