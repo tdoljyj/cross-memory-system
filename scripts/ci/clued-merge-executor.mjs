@@ -17,9 +17,13 @@
 //               also changes, the merge needs a new Owner Grant, so its
 //               holder brings the branch in (review MINOR-4).
 //   up to date  the executor turns on GitHub auto-merge (merge commit,
-//               expectedHeadOid) and GitHub waits for the five required
-//               checks (§7.4; GitHub refuses auto-merge on a pull request
-//               that is already mergeable, review MAJOR-1). Only when
+//               expectedHeadOid) and GitHub waits for the required checks
+//               still running (§7.4; GitHub refuses auto-merge on a pull
+//               request that is already mergeable, review MAJOR-1). Only
+//               once every CI workflow that ran on the head passed with no
+//               job skipped (no gated workflow is a required check, so
+//               auto-merge alone would not wait for them; Task 114d43cf),
+//               and only when
 //               - the body has a line "Clued-Auto-Merge: <head sha>" naming
 //                 this head, or an ancestor such that every file changed
 //                 since is identical to the default branch's (the Agent
@@ -210,7 +214,13 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, work
   if (rules.auto_merge !== "allowed") return { action: "none", reason: `auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer` };
   const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
   if (seen.state === "failed") return { action: "none", reason: `CI failed: ${seen.reason}` };
-  return { action: "enable_auto_merge", reason: `up to date, admitted and opted in; CI is ${seen.state}` };
+  // GitHub's auto-merge waits only for the ruleset's required checks, and no gated workflow is
+  // required: act only once every CI workflow that ran on the head passed with no job skipped,
+  // as the direct merge does (Task 114d43cf). The executor runs after each slot report, that is
+  // after each CI run on the head, so it acts when the last one passes.
+  const gated = await gatedCiOf(fetchImpl, env, repository, pr.head.sha, workflows);
+  if (!gated.passed) return { action: "none", reason: `waiting for CI on this head: ${gated.reason}` };
+  return { action: "enable_auto_merge", reason: `up to date, admitted, opted in and ${gated.reason}` };
 }
 
 export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = fs.readFileSync, now = () => Date.now() }) {
