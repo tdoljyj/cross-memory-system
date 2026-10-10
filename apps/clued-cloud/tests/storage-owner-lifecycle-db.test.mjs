@@ -7,10 +7,12 @@ import net from 'node:net';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
 import {fileURLToPath,pathToFileURL} from 'node:url';
+import DefaultEmbeddedPostgres from 'embedded-postgres';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 const runtime=createRequire(process.env.CLUED_POSTGRES_TEST_RUNTIME || import.meta.url);
-const {default:EmbeddedPostgres}=await import(pathToFileURL(runtime.resolve('embedded-postgres')));
+const EmbeddedPostgres=process.env.CLUED_POSTGRES_TEST_RUNTIME
+  ?(await import(pathToFileURL(runtime.resolve('embedded-postgres')))).default:DefaultEmbeddedPostgres;
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const sha=v=>crypto.createHash('sha256').update(v).digest('hex'),id=()=>crypto.randomUUID();
 const envelope=()=>({contract:'clued.storage-credential/1',key_id:'synthetic',nonce:'N'.repeat(16),ciphertext:'X'.repeat(64)});

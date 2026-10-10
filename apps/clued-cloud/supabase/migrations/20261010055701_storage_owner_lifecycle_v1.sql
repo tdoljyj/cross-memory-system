@@ -25,7 +25,7 @@ create table clued_private.storage_owner_connection_hidden_v1 (
 alter table clued_private.storage_owner_lifecycle_v1 enable row level security;
 alter table clued_private.storage_owner_connection_hidden_v1 enable row level security;
 revoke all on clued_private.storage_owner_lifecycle_v1,clued_private.storage_owner_connection_hidden_v1
-  from public,anon,authenticated,service_role,clued_worker_gateway;
+  from public,anon,authenticated,service_role;
 
 -- Provenance is not a name/prefix or browser assertion. The exact completed
 -- onboard result must link this profile, root and immutable created effect.
@@ -38,7 +38,7 @@ language sql stable security definer set search_path='' as $$
       and o.effects->'root'->'created'='true'::jsonb and o.effects->'root' ? 'result_at')
 $$;
 revoke all on function clued_private.storage_owner_created_root_v1(uuid,uuid,text)
-  from public,anon,authenticated,service_role,clued_worker_gateway;
+  from public,anon,authenticated,service_role;
 
 create function public.clued_storage_owner_lifecycle_v1(p_issuer_hash text,p_input jsonb) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
@@ -453,7 +453,17 @@ exception when invalid_text_representation or numeric_value_out_of_range then
   raise exception 'storage_owner_lifecycle_denied' using errcode='42501';
 end $$;
 revoke all on function public.clued_storage_owner_lifecycle_v1(text,jsonb)
-  from public,anon,authenticated,service_role,clued_worker_gateway;
+  from public,anon,authenticated,service_role;
+-- Older isolated fixtures and installations may not have the optional Worker
+-- role. PUBLIC stays revoked regardless; an existing gateway stays denied.
+do $deny_gateway$
+begin
+  if exists(select 1 from pg_catalog.pg_roles where rolname='clued_worker_gateway') then
+    revoke all on clued_private.storage_owner_lifecycle_v1,clued_private.storage_owner_connection_hidden_v1 from clued_worker_gateway;
+    revoke all on function clued_private.storage_owner_created_root_v1(uuid,uuid,text) from clued_worker_gateway;
+    revoke all on function public.clued_storage_owner_lifecycle_v1(text,jsonb) from clued_worker_gateway;
+  end if;
+end $deny_gateway$;
 grant execute on function public.clued_storage_owner_lifecycle_v1(text,jsonb) to authenticated;
 notify pgrst,'reload schema';
 
