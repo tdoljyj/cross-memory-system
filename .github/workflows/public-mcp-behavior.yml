@@ -75,7 +75,6 @@ jobs:
       run:
         working-directory: apps/clued-cloud
     env:
-      PROMPTFOO_CONFIG_DIR: /tmp/promptfoo
       PROMPTFOO_DISABLE_TELEMETRY: "true"
       MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -89,6 +88,10 @@ jobs:
           node-version: 24.19.0
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;
           # restoring the ~860 MB Actions cache on top of it only adds download time.
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+        with:
+          isolate-promptfoo: 'true'
       - run: npm ci --cache "$HOME/.npm" --prefer-offline --fetch-retries=5
       - name: Serialize fixed public MCP ports with other runners on this host
         run: |
@@ -146,7 +149,6 @@ jobs:
       run:
         working-directory: apps/clued-cloud
     env:
-      PROMPTFOO_CONFIG_DIR: /tmp/promptfoo
       PROMPTFOO_DISABLE_TELEMETRY: "true"
       MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -160,6 +162,10 @@ jobs:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+        with:
+          isolate-promptfoo: 'true'
       - run: npm ci
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
