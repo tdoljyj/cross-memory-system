@@ -66,6 +66,7 @@ export const PLATFORM_TEMP_ENVIRONMENT = Object.freeze({
 const ACTION = /^(?:\.\/(?:[a-zA-Z0-9_-]+\/)?\.github\/actions\/ci-temporary-storage)$/;
 const VENDOR_ACTION = /^actions\/(?:checkout|setup-node|setup-python|cache|upload-artifact)@/;
 const GOVERNED_KEYS = Object.keys(PLATFORM_TEMP_ENVIRONMENT);
+const SHARED_TEMP_ROOT = /^(?:\/(?:var\/)?tmp(?:\/|$)|[A-Za-z]:[\\/](?:Windows[\\/])?(?:Temp|tmp)(?:[\\/]|$))/i;
 const condition = (value) => String(value).replace(/^\$\{\{\s*|\s*\}\}$/g, "").trim();
 const inlineBound = (step) => GOVERNED_KEYS.every((key) => step.env?.[key] === PLATFORM_TEMP_ENVIRONMENT[key]);
 
@@ -104,7 +105,7 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
     const steps = job.steps ?? [];
     if (job.container || Object.keys(job.services ?? {}).length) findings.push(`${label}: container ownership and temporary mounts need explicit review`);
     const workingDirectories = [document.defaults?.run?.["working-directory"], job.defaults?.run?.["working-directory"], ...steps.map(s => s["working-directory"])];
-    if (workingDirectories.some(value => /^\/(?:var\/)?tmp(?:\/|$)/.test(String(value ?? "")))) findings.push(`${label}: shared temporary working directory`);
+    if (workingDirectories.some(value => SHARED_TEMP_ROOT.test(String(value ?? "")))) findings.push(`${label}: shared temporary working directory`);
     if (classification.mode === "no-temp-writes") {
       if (name !== "clued-ci-runner-heartbeat.yml" || !["windows-route", "linux-route"].includes(id) ||
           stepFingerprint(steps) !== classification.step_sha256) {
@@ -128,6 +129,7 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
     }
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index];
+      if (Object.values(step.env ?? {}).some(value => SHARED_TEMP_ROOT.test(String(value)))) findings.push(`${label}: shared temporary path in step environment ${index + 1}`);
       const injected = Object.entries(step.env ?? {}).filter(([key]) => GOVERNED_KEYS.includes(key.toUpperCase()));
       const independent = inlineBound(step) && injected.every(([key]) => GOVERNED_KEYS.includes(key));
       if (injected.length && !independent) findings.push(`${label}: partial or overridden temporary environment in step ${index + 1}`);
@@ -162,7 +164,7 @@ export function repositoryTemporaryStorageFindings(document, name, audit) {
       findings.push(`${label}: persistent cache staging changed and needs review`);
     }
     for (const [key, value] of Object.entries({ ...document.env, ...job.env })) {
-      if (/^\/tmp(?:\/|$)|^\/var\/tmp(?:\/|$)/.test(String(value))) findings.push(`${label}: shared temporary path in ${key}`);
+      if (SHARED_TEMP_ROOT.test(String(value))) findings.push(`${label}: shared temporary path in ${key}`);
     }
   }
   return findings;

@@ -136,6 +136,9 @@ test("repository coverage includes Python/control jobs and preserves the trusted
   assert.ok(check([checkout, setup, run], { container: "python:3.12" }).length);
   assert.match(check([checkout, setup, run], { services: { database: { image: "postgres" } } }).join("\n"), /container ownership/);
   assert.match(check([checkout, setup, run], { defaults: { run: { "working-directory": "/tmp/shared" } } }).join("\n"), /working directory/);
+  assert.match(check([checkout, setup, { ...run, env: { REPORT_DIR: "/tmp/shared" } }]).join("\n"), /step environment/);
+  assert.match(check([checkout, setup, { ...run, env: { REPORT_DIR: "C:\\Windows\\Temp\\shared" } }]).join("\n"), /step environment/);
+  assert.match(check([checkout, setup, run], { defaults: { run: { "working-directory": "C:\\Temp\\shared" } } }).join("\n"), /working directory/);
   assert.ok(check([checkout, setup, { uses: "vendor/unknown@commit" }, run]).length);
   const trustedCheckout = { ...checkout, with: { path: "trusted", ref: "main", repository: "owner/repo" } };
   const trustedAudit = { jobs: { control: { ...audit.jobs.control, action: "./trusted/.github/actions/ci-temporary-storage", checkout_sources: checkoutSources([trustedCheckout]) } } };
