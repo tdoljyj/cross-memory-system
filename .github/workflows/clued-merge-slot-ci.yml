@@ -48,7 +48,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
+  # This job also executes the queue and reruns admitted gate-only runs.
+  actions: write
   checks: read
   contents: read
   pull-requests: read

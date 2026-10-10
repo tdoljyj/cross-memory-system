@@ -7,6 +7,7 @@ name: clued-merge-executor
 # branch in when the head is behind, and once the head is up to date,
 # admitted, opted in for that head ("Clued-Auto-Merge: <head sha>" in the
 # body) and every CI workflow that ran on it passed, its gated jobs run
+# (non-protected claims may also opt in by renewing at the full head SHA),
 # (Task 114d43cf), turns on auto-merge, or merges it itself when GitHub can
 # already merge it (Task ff476b06). It acts as
 # the clued-admission App and needs Contents: write and Pull requests: write;
@@ -31,7 +32,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
+  # Full reruns of admitted gate-only runs use this workflow token, not the App.
+  actions: write
   checks: read
   contents: read
   pull-requests: read
