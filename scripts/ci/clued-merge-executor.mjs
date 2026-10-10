@@ -1,74 +1,17 @@
 #!/usr/bin/env node
-// Merge Admission v0.1 §7.2–§7.4, step 5 of §13 (Task 91039d74; Owner
-// Decisions 661f8c36 and 5aa668e3): the executor does the head of the merge
-// queue's work while its Agent keeps the claim live. The clued-merge-executor
-// workflow runs this on the default branch after each clued-merge-slot-ci
-// run, after each push to main and by hand. For each open pull request into the default branch
-// whose claim heads a merge queue (clued_work_merge_slot_holders_v1 lists
-// only heads since migration 20261009080000):
-//
-//   behind      the head does not contain the default branch's tip: the
-//               executor brings it in with GitHub's "update branch" (a merge
-//               commit, expected_head_sha bound to the head it read). A head
-//               that only merges the default branch in keeps an Owner grant
-//               (Decision a0d93cd0), and the App's push starts CI, which a
-//               GITHUB_TOKEN push would not. Not for a protected-layer pull
-//               request: when the default branch changed a protected file it
-//               also changes, the merge needs a new Owner Grant, so its
-//               holder brings the branch in (review MINOR-4).
-//   up to date  the executor turns on GitHub auto-merge (merge commit,
-//               expectedHeadOid) and GitHub waits for the required checks
-//               still running (§7.4; GitHub refuses auto-merge on a pull
-//               request that is already mergeable, review MAJOR-1). Only
-//               once every CI workflow that ran on the head passed, its
-//               gated jobs run (no gated workflow is a required check, so
-//               auto-merge alone would not wait for them; Task 114d43cf),
-//               and only when
-//               - a non-protected claim renewal names the complete current
-//                 head SHA, or the body has "Clued-Auto-Merge: <head sha>" naming
-//                 this head, or an ancestor such that every file changed
-//                 since is identical to the default branch's (the Agent
-//                 writes it once the merge of that head is approved; any
-//                 other change needs a new line, review MAJOR-2),
-//               - the head's clued-admission-verified check, posted for this
-//                 pull request, admitted it and the policy allows auto-merge
-//                 for its state and layer (never in frozen; a protected
-//                 layer is under Owner review, which is always enforced since
-//                 Merge Admission step 6, review MINOR-1),
-//               - no CI required check has finally failed on the head,
-//               - auto-merge is not on already.
-//               When the line names another head and auto-merge is on, the
-//               executor turns it off. Without a line it leaves auto-merge
-//               alone: the Agent merges as before.
-//   mergeable   GitHub refuses auto-merge on a pull request that can merge
-//               now ("clean status"). Under the same conditions, and only when
-//               the newest pull_request run of every CI workflow on the head
-//               succeeded with its gate and gated jobs run (GitHub counts a skipped gated
-//               job as passing, and none of the gated workflows is required by
-//               the ruleset; review MAJOR-1), the executor merges it itself
-//               (merge commit, sha bound to the head it read); the ruleset
-//               still requires every required check. The opt-in line is the
-//               merge approval, so nobody has to click merge (Owner, Task
-//               ff476b06). "unstable status" (a check that is not required
-//               failed or is pending) is never merged. A merge the executor
-//               does is a material outcome its holder records in Clued on its
-//               next resume. The state is read when the job starts: a switch
-//               to frozen during a run of at most five minutes does not stop
-//               a merge already decided (review MINOR-1).
-//   otherwise   nothing: the pull request has a conflict the holder must
-//               resolve, or CI failed (clued-merge-slot-ci returns the slot).
-//   gate only   after admission, rerun all jobs of a successful run whose
-//               gate passed and every other job skipped, once within the
-//               admission title's rerun limit. Use the workflow GITHUB_TOKEN;
-//               the App's permissions are unchanged. Both trusted entry points
-//               serialize the executor, and the run attempt is rechecked.
-//
-// It acts as the clued-admission App, with an installation token for
-// Contents: write and Pull requests: write. Until the Owner grants those
-// permissions the token request fails and the executor only reports that,
-// changing nothing. In frozen it does nothing at all. It merges only an
-// opted-in head GitHub can merge now, never pushes to the default branch (the
-// ruleset forbids it) and trusts nothing in the triggering event.
+// Merge Admission v0.1 §7.2–§7.4; original executor Tasks 91039d74,
+// 114d43cf, ff476b06 and R1 f52ca0dd. Default-branch code only.
+// Clean executor-managed waiting requests before Clued/proof reads. A cleaned
+// PR is not processed again in this invocation. Manual non-opted auto-merge
+// is left to its Owner. The executor does not create waiting auto requests.
+// For the live FIFO head, the normal platform match-head merge requires
+// exact current permission/withdrawal gates, opt-in, complete source-qualified
+// real CI, final native run/check barriers and GitHub's clean PR state.
+// Behind non-protected heads may use the existing expected-head update API.
+// Source-qualified gate-only attempt 1 may rerun all jobs within its limit;
+// neither recovery nor skipped jobs authorizes merge. GITHUB_TOKEN performs
+// that rerun; the existing App installation token performs merge/update.
+// Pure proof tests and consumer tests run offline; main never injects a bypass.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -86,12 +29,13 @@ import {
   evaluate,
   withTokenHint,
 } from "./clued-work-admission.mjs";
-import { HOLDERS_RPC, ciStateOf, ciWorkflows } from "./clued-merge-slot-ci.mjs";
+import { cleanupManagedAutoMerge,managedAutoMerge,executorToken,appRequest } from "./clued-managed-auto-merge.mjs";
+export {executorToken,managedAutoMerge,EXECUTOR_PERMISSIONS} from "./clued-managed-auto-merge.mjs";
+import { HOLDERS_RPC, ciStateOf, ciWorkflows,requiredBarrier } from "./clued-merge-slot-ci.mjs";
 import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-policy.mjs";
 import { createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
 export const OPT_IN = /^\s*Clued-Auto-Merge:\s*([0-9a-f]{40})\s*$/im;
-export const EXECUTOR_PERMISSIONS = Object.freeze({ contents: "write", pull_requests: "write" });
 const VERIFIED_CHECK = "clued-admission-verified";
 
 // The head the pull request body opts in to auto-merge for, or null.
@@ -120,60 +64,12 @@ export async function optInCovers(fetchImpl, env, repository, optedSha, headSha,
   return changed.every((file) => file && !fromTip.has(file.filename) && !(file.previous_filename && fromTip.has(file.previous_filename)));
 }
 
-async function appRequest(fetchImpl, env, method, route, bearer, body) {
-  const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
-  const response = await fetchImpl(`${base}${route}`, {
-    method,
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${bearer}`,
-      "x-github-api-version": "2022-11-28",
-      "user-agent": "clued-merge-executor",
-      ...(body ? { "content-type": "application/json" } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  let parsed = null;
-  try { parsed = await response.json(); } catch { parsed = null; }
-  return { status: response.status, body: parsed };
-}
-
-// An installation token with the executor's permissions, or the reason there
-// is none (the App is not configured, or the installation lacks a permission).
-export async function executorToken({ env, fetchImpl, now = () => Date.now() }) {
-  const appId = (env.CLUED_ADMISSION_APP_ID ?? "").trim();
-  const key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
-  if (!appId || !key) return { token: null, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
-  const repository = env.GITHUB_REPOSITORY;
-  const jwt = appJwt(appId, key, Math.floor(now() / 1000));
-  const installation = await appRequest(fetchImpl, env, "GET", `/repos/${repository}/installation`, jwt);
-  if (installation.status !== 200 || !installation.body || !installation.body.id) {
-    return { token: null, reason: `GitHub API GET /repos/${repository}/installation returned ${installation.status}` };
-  }
-  const minted = await appRequest(fetchImpl, env, "POST", `/app/installations/${installation.body.id}/access_tokens`, jwt,
-    { repositories: [repository.split("/")[1]], permissions: EXECUTOR_PERMISSIONS });
-  if (minted.status === 201 && minted.body && minted.body.token) return { token: minted.body.token, reason: null };
-  if (minted.status === 422 || minted.status === 403) {
-    return { token: null, reason: "the clued-admission App does not have Contents: write and Pull requests: write on this repository yet; the executor changed nothing (Owner Decision 5aa668e3)" };
-  }
-  return { token: null, reason: `GitHub API POST /app/installations/…/access_tokens returned ${minted.status}` };
-}
-
-// The newest clued-admission-verified check on the head posted for this pull
-// request (review MINOR-2): admitted, and its mode.
 async function admissionOf(fetchImpl, env, repository, headSha, prNumber) {
   const [newest] = await appChecksOnHead(fetchImpl, env, repository, headSha, VERIFIED_CHECK);
   if (!newest || !checkNamesPullRequest(newest, prNumber) || newest.status !== "completed" || newest.conclusion !== "success" || !newest.app || Number(newest.app.id) !== ADMISSION_APP_ID) {
     return { admitted: false, mode: null };
   }
   return { admitted: true, mode: parseModeLabel(newest.output && newest.output.title) };
-}
-
-const ENABLE_AUTO_MERGE = "mutation($id: ID!, $oid: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $oid}) { pullRequest { number autoMergeRequest { enabledAt } } } }";
-const DISABLE_AUTO_MERGE = "mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { pullRequest { number } } }";
-export function managedAutoMerge(pr) {
-  return Boolean(pr?.auto_merge) && (Boolean(optInSha(pr.body)) ||
-    pr.auto_merge.enabled_by?.login === 'clued-admission[bot]');
 }
 
 // What to do for one head pull request, without doing it.
@@ -219,7 +115,7 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
     const attempt = gated.rerun.run_attempt;
     const limit = admission.mode.reruns_per_head;
     if (Number.isInteger(attempt) && Number.isInteger(limit) && attempt < 1 + limit && attempt === 1) {
-      return { action: "rerun_gated", run: gated.rerun,
+      return { action: "rerun_gated", run: gated.rerun, execution:gated,
         reason: `${gated.reason}; admitted, rerunning all jobs once (attempt ${attempt + 1}, reruns ${limit})` };
     }
     return { action: "none", reason: `waiting for CI on this head: ${gated.reason}; no automatic rerun: attempt ${attempt ?? "unknown"}, reruns ${limit ?? "unknown"} (limit reached or already retried)` };
@@ -228,7 +124,7 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
   if (pr.auto_merge) return { action: "none", reason: "auto-merge is already on with current qualified execution" };
   if (!opted && !renewed) return { action: "none", reason: "the pull request did not opt in to auto-merge (Clued-Auto-Merge: <head sha> or a claim renewal naming this head)" };
   if (!covered) return { action: "none", reason: `the opt-in names ${opted.slice(0, 12)}, not this head or a merge of the default branch into it` };
-  return { action: "enable_auto_merge", reason: `up to date, admitted, ${renewed ? `opted in by the claim renewal at ${pr.head.sha}` : "opted in"} and ${gated.reason}` };
+  return { action: "merge_pull_request", execution:gated, reason: `up to date, admitted, ${renewed ? `opted in by the claim renewal at ${pr.head.sha}` : "opted in"} and ${gated.reason}` };
 }
 
 export async function currentOperationAuthority({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action}) {
@@ -255,7 +151,9 @@ export async function currentOperationAuthority({env,fetchImpl,workspace,readPol
     if(outcome.admitted!==true || outcome.head_sha!==current.head.sha || outcome.scope!==scope || outcome.claim_id!==reference.claim_id ||
       outcome.merge_slot?.tip!==tip ||
       outcome.admission_mode?.state!==mode.state || outcome.admission_mode.rules?.auto_merge!=='allowed')return {valid:false};
-    if(action!=='update_branch' && outcome.merge_slot?.state!=='held')return {valid:false};
+    const held=outcome.merge_slot?.state==='held' ||
+      (outcome.admission_mode.rules?.merge_slot==='advise' && outcome.merge_slot?.state==='not_required' && outcome.merge_slot.observed==='held');
+    if(action!=='update_branch' && !held)return {valid:false};
     if(action==='update_branch' && outcome.admission_mode.layer==='protected')return {valid:false};
     const freshAdmission=await admissionOf(fetchImpl,env,repository,current.head.sha,current.number);
     if(!freshAdmission.admitted || !freshAdmission.mode || freshAdmission.mode.state!==mode.state)return {valid:false};
@@ -273,15 +171,18 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const result = { state: mode.state, heads: [], actions: [], notices: [], errors: [] };
-  if (!(env.CLUED_CONTEXT_READ_TOKEN ?? "").trim()) {
-    result.errors.push(withTokenHint("CLUED_CONTEXT_READ_TOKEN is not set."));
-    return result;
-  }
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   // Only pull requests whose body names their claim: an update-branch merge commit carries no
   // trailer, so a claim named only in a commit would be lost (review MINOR-3).
   const openPulls = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`);
-  const pulls = openPulls
+  const cleanup=await cleanupManagedAutoMerge({env,fetchImpl,pulls:openPulls,now});
+  result.actions.push(...cleanup.actions);result.notices.push(...cleanup.notices);result.errors.push(...cleanup.errors);
+  if (!(env.CLUED_CONTEXT_READ_TOKEN ?? "").trim()) {
+    result.errors.push(withTokenHint("CLUED_CONTEXT_READ_TOKEN is not set."));
+    return result;
+  }
+
+  const pulls = openPulls.filter(pr=>!cleanup.blocked.has(pr.number))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch
       && pr.head.repo && pr.head.repo.full_name === repository && !pr.draft && parseClaimReference(pr.body));
   const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
@@ -307,12 +208,6 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       heads.push({ scope, pr, progress_ref: holder.progress_ref, since: Number.isFinite(since) ? since : null });
     }
   }
-  // A released/expired queue claim must not leave an executor-managed request
-  // active. Manual, non-opted-in Owner auto-merge is not taken over here.
-  for (const pr of openPulls.filter(managedAutoMerge))if(!heads.some(entry=>entry.pr===pr)) {
-    const reference=parseClaimReference(pr.body);
-    heads.push({scope:reference?.scope,pr,progress_ref:null,since:null,orphaned:true});
-  }
   result.heads = heads.map(({ pr }) => ({ pr: pr.number, head_sha: pr.head.sha }));
   if (!heads.length) return result;
 
@@ -331,7 +226,7 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       let plan=orphaned?{action:'disable_auto_merge',reason:'managed auto-merge no longer holds a live FIFO slot'}:
         await planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy: mode.policy, state: mode.state,qualifyExecution:qualify });
       if(managedAutoMerge(pr) && plan.action==='none') {
-        const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action:'enable_auto_merge'});
+        const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action:'merge_pull_request'});
         if(authority?.valid!==true)plan={action:'disable_auto_merge',reason:'managed request lost current permission, withdrawal or FIFO eligibility'};
       }
       plans.push({pr,scope,since,progress_ref,...plan});
@@ -392,8 +287,7 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
         entry.action = "none";
         entry.reason = "the pull request head or gate-only run changed before rerunning; nothing rerun";
       } else {
-        const last=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,scope:plan.scope,action:plan.action});
-        if(last?.valid!==true) {result.actions.push({...entry,action:'none',reason:'live rerun authority changed'});continue;}
+        if(!await requiredBarrier(fetchImpl,env,repository,plan.pr.head.sha,plan.pr.number,plan.execution)){result.actions.push({...entry,action:'none',reason:'native latest state changed after authority'});continue;}
         const response = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/actions/runs/${plan.run.id}/rerun`, env.GITHUB_TOKEN);
         entry.run_id = plan.run.id;
         entry.status = response.status;
@@ -405,53 +299,19 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       entry.status = response.status;
       // 422: the head moved since it was read, or the merge has a conflict the holder must resolve.
       if (response.status !== 202) entry.error = response.body && response.body.message ? String(response.body.message) : `HTTP ${response.status}`;
-    } else {
-      const enable = plan.action === "enable_auto_merge";
-      const response = await appRequest(fetchImpl, env, "POST", "/graphql", token, enable
-        ? { query: ENABLE_AUTO_MERGE, variables: { id: plan.pr.node_id, oid: plan.pr.head.sha } }
-        : { query: DISABLE_AUTO_MERGE, variables: { id: plan.pr.node_id } });
-      entry.status = response.status;
-      const errors = response.body && Array.isArray(response.body.errors) ? response.body.errors : [];
-      if (response.status !== 200 || errors.length) entry.error = errors.map((e) => e && e.message).filter(Boolean).join("; ") || `HTTP ${response.status}`;
-      // GitHub refuses auto-merge on a pull request that can merge now. On "clean status" the
-      // plan's conditions hold, so the executor merges it, bound to the head it read, once every
-      // CI workflow ran and passed on it (Task ff476b06; review MAJOR-1). "unstable status" (a
-      // check that is not required failed or is pending) is left to its holder.
-      if (enable && entry.error && /(clean|unstable) status/i.test(entry.error)) {
-        const unstable = /unstable status/i.test(entry.error);
-        delete entry.error;
-        entry.result = "mergeable_now";
-        let gated = { passed: false, reason: "a check that is not required failed or is still pending (unstable status)" };
-        if (!unstable) {
-          try {
-            const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,
-              scope:plan.scope,action:'enable_auto_merge'});
-            const final=authority?.valid===true?await planFor({env,fetchImpl,repository,pr:authority.pr,tip,since:plan.since,
-              progress_ref:authority.progress_ref,workflows,policy:authority.mode.policy,state:authority.mode.state,qualifyExecution:qualify}):null;
-            const last=final?.action==='enable_auto_merge'?await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,
-              pr:plan.pr,tip,scope:plan.scope,action:'enable_auto_merge'}):null;
-            gated={passed:last?.valid===true && last.progress_ref===authority.progress_ref && last.pr.body===authority.pr.body,
-              reason:final?.reason??'current permission or execution refused direct merge'};
-          } catch (error) {
-            gated = { passed: false, reason: `the CI runs could not be read: ${error instanceof Error ? error.message : String(error)}` };
-          }
-        }
-        if (!gated.passed) {
-          result.notices.push(`#${plan.pr.number}: already mergeable, but not merged: ${gated.reason}`);
-        } else {
-          const merged = await appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/merge`, token,
-            { merge_method: "merge", sha: plan.pr.head.sha });
-          entry.merge_status = merged.status;
-          if (merged.status === 200 && merged.body && merged.body.merged === true) {
-            entry.result = "merged";
-            entry.merge_commit = merged.body.sha ?? null;
-            result.notices.push(`#${plan.pr.number}: already mergeable, so GitHub does not take auto-merge; the executor merged it (${String(entry.merge_commit).slice(0, 12)})`);
-          } else {
-            // 405: not mergeable after all (a required check, the ruleset); 409: the head moved.
-            if (merged.status !== 405 && merged.status !== 409) entry.result = "merge_refused";
-            entry.error = `merge refused: ${merged.body && merged.body.message ? String(merged.body.message) : `HTTP ${merged.status}`}`;
-          }
-        }
+    } else if (plan.action==='merge_pull_request') {
+      const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
+      if(current?.head?.sha!==plan.pr.head.sha || current.state!=='open' || current.draft || current.auto_merge || current.mergeable_state!=='clean') {
+        entry.action='none';entry.reason='native PR is not clean, current and free of waiting auto-merge';
+      } else if(!await requiredBarrier(fetchImpl,env,repository,plan.pr.head.sha,plan.pr.number,plan.execution)) {
+        entry.action='none';entry.reason='native latest state changed after authority';
+      } else {
+        const merged=await appRequest(fetchImpl,env,'PUT',`/repos/${repository}/pulls/${plan.pr.number}/merge`,token,
+          {merge_method:'merge',sha:plan.pr.head.sha});
+        entry.merge_status=merged.status;
+        if(merged.status===200 && merged.body?.merged===true){entry.result='merged';entry.merge_commit=merged.body.sha??null;}
+        else {entry.result=merged.status===405||merged.status===409?'mergeable_now':'merge_refused';
+          entry.error=`merge refused: ${merged.body?.message??`HTTP ${merged.status}`}`;}
       }
     }
     if (entry.error) result.notices.push(`#${plan.pr.number}: ${plan.action} was refused: ${entry.error}`);

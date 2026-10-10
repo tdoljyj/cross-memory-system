@@ -202,6 +202,9 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       if(current.size!==latest.size || [...latest].some(([file,row])=>!sameRun(current.get(file),row)))return false;
       return true;
     };
+    const nativeRuns=()=>[...latest.values()].map(run=>({id:run.id,head_sha:run.head_sha,event:run.event,
+      path:String(run.path??'').replace(/@.*$/,''),run_attempt:run.run_attempt,status:run.status,conclusion:run.conclusion,
+      pull_requests:run.pull_requests.map(pr=>pr.number)}));
     const terminal=async(run,result)=>{
       try {
       if(!sameRun(await read(`/repos/${repository}/actions/runs/${run.id}`),run))
@@ -218,7 +221,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
         return unknown('terminal latest workflow set changed');
       if(!await sourceStillCurrent())return unknown('terminal source authority changed');
       if(!await nativeBarrier())return unknown('terminal native state changed during source recheck');
-      return result;
+      return {...result,native_runs:nativeRuns()};
       } catch {return unknown('terminal proof recheck read failed');}
     };
     const scopes=[],proofs=[];
@@ -287,6 +290,6 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
     }
     if(!await sourceStillCurrent())return unknown('source authority changed while qualifying');
     if(!await nativeBarrier())return unknown('native state changed during source recheck');
-    return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs};
+    return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs,native_runs:nativeRuns()};
   } catch {return unknown('CI qualification read failed');}
 }

@@ -36,8 +36,8 @@ const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.expor
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
   CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", ...extra });
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
-  ({ number, state: "open", body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main", full_name:REPO } } });
-const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.head.sha,pr_number:pr.number,reason:'fixture execution observed'});
+  ({ number, node_id:`PR_${number}`, state: "open", body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main", full_name:REPO } } });
+const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.head.sha,pr_number:pr.number,reason:'fixture execution observed',native_runs:[]});
 const ciStateOf=(fetch,env,repo,head,workflows,since=null)=>actualCiStateOf(fetch,env,repo,head,workflows,since,
   {pr:pull(5),qualifyExecution:fixtureQualification});
 const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
@@ -56,7 +56,7 @@ function fakeFetch(routes) {
     const key = rpc ? `rpc:${rpc[1]}` : Object.keys(routes).find((prefix) => route.startsWith(prefix));
     if (!key || !(key in routes)) return new Response("not found", { status: 404 });
     const answer = typeof routes[key] === "function" ? routes[key](body && body.p_input) : routes[key];
-    return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(answer?.__status?answer.body:answer), { status: answer?.__status??200, headers: { "content-type": "application/json" } });
   };
   return { fetchImpl, calls };
 }
@@ -383,7 +383,7 @@ test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits
   let fetch = slotWorld();
   let result = await report(fetch, { env: { CLUED_CONTEXT_READ_TOKEN: "" } });
   assert.match(result.errors[0], /CLUED_CONTEXT_READ_TOKEN is not set.*CLUED_ADMISSION_CLUED_TOKEN/);
-  assert.equal(fetch.calls.length, 0);
+  assert.equal(fetch.calls.length, 1, "cleanup checks open PRs before returning for a missing Clued token");
   fetch = fakeFetch({ [`/repos/${REPO}/pulls?state=open`]: [pull(5)],
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", holders: [], reason: "admission_binding_required" }) });
   result = await report(fetch);
@@ -424,4 +424,16 @@ test("qualification cannot retain old required success or miss a newly queued un
     assert.equal(result.reports[0].ci_state,"idle");
     assert.equal(fetch.calls.some(c=>c.route===`rpc:${TOUCH_RPC}`),false);
   }
+});
+
+test("report cleans a managed waiting request before source observation, Clued or slow proof",async()=>{
+  const pr={...pull(5),auto_merge:{enabled_by:{login:"clued-admission[bot]"}}};
+  const fetch=slotWorld({pulls:[pr],extra:{[`/repos/${REPO}/pulls/5`]:pr,
+    "/graphql":{data:{disablePullRequestAutoMerge:{pullRequest:{number:5}}}},
+    "/app/installations/99/access_tokens":{__status:201,body:{token:"ghs_app"}}}});
+  let proofCalls=0;const result=await report(fetch,{env:{CLUED_CONTEXT_READ_TOKEN:""},qualifyExecution:async()=>{proofCalls++;throw Error("must not run")}});
+  assert.equal(proofCalls,0);assert.equal(result.managed_cleanup[0].action,"disable_auto_merge");
+  assert.equal(result.managed_cleanup[0].error,undefined);
+  assert.equal(fetch.calls.some(c=>c.route.startsWith("rpc:")),false);
+  assert.equal(fetch.calls.some(c=>c.route.includes("/actions/runs")),false);
 });
