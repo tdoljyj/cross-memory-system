@@ -6,7 +6,7 @@ on:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
-      - 'skills/clued/references/agent-contract.md'
+      - 'protocol/agent/**'
       - 'kernel/policy/resource-center-mutation-policy.mjs'
       - 'kernel/host/resource-center-*.mjs'
   push:
@@ -15,7 +15,7 @@ on:
       - '.github/workflows/public-mcp-*.yml'
       - 'apps/clued-cloud/**'
       - 'protocol/continuity/v1/**'
-      - 'skills/clued/references/agent-contract.md'
+      - 'protocol/agent/**'
       - 'kernel/policy/resource-center-mutation-policy.mjs'
       - 'kernel/host/resource-center-*.mjs'
 

@@ -21,7 +21,7 @@ Skill 迁移不创建账户、不修改 MCP Binding、不增加权限，也不�
 
 ## 组件版本
 
-Skill、Agent 合同、Claude Code hooks、本地脚本和 MCP 服务的版本统一登记在 `config/clued-components.json`（规则见 `development/contracts/components/ComponentVersioning.v0.1.md`）。每个组件的文件内容有摘要；内容变了版本必须升，CI 的 `clued-components` 检查会拒绝没升版本的改动。
+Skill、Agent 合同、Claude Code hooks、本地脚本和 MCP 服务的版本统一登记在 `config/clued-components.json`（规则见 `development/contracts/components/ComponentVersioning.v0.2.md`）。每个组件的文件内容有摘要；内容变了版本必须升，CI 的 `clued-components` 检查会拒绝没升版本的改动。
 
 改动一个组件：
 
@@ -34,6 +34,8 @@ python3 scripts/clued_components.py check --base origin/main
 
 查看本机各组件版本：`python3 scripts/clued_components.py versions`。
 
-版本与 git tag：根 `VERSION` 的值就是产品版本 tag 名（如 `Clued-v1.6`），指向把 VERSION 改成该值的提交；每次生产发布成功会打 `release/<日期>-r<run 编号>`，说明里写明 VERSION 和各组件版本。两者都由 `clued-release-tags` 工作流自动创建，规则见 `ComponentVersioning.v0.1.md` §5。
+版本与 git tag：根 `VERSION` 的值就是产品版本 tag 名（如 `Clued-v1.6`），指向把 VERSION 改成该值的提交；每次生产发布成功会打 `release/<日期>-r<run 编号>`，说明里写明 VERSION 和各组件版本。两者都由 `clued-release-tags` 工作流自动创建，规则见 `ComponentVersioning.v0.2.md` §6。
 
-过期检测：Claude Code 开会话时，`scripts/hooks/clued_version_check.py` 读取服务的 `/.well-known/clued-continuity` 中的组件版本，与本 checkout 和本机安装的 Clued Skill 副本（`~/.claude/skills`、claude.ai 同步副本、`$CODEX_HOME/skills`）比对，旧版本、无版本号或文件不全都会提示；`clued_session_resume` 返回后再比对一次合同版本与组件版本。只在会话开始和 resume 时检查，不定时运行；`CLUED_VERSION_CHECK=off` 关闭，`=offline` 不读服务。
+过期检测：Claude Code 开会话时，`scripts/hooks/clued_version_check.py` 读取服务的 `/.well-known/clued-continuity` 中的组件版本，与本 checkout 和本机安装的 Clued Skill 副本（`~/.claude/skills`、claude.ai 同步副本、`$CODEX_HOME/skills`）比对，旧版本、无版本号或文件不全都会提示；`clued_session_resume` 返回后再比对一次组件版本；合同变化只要求通过 `clued_agent_bootstrap`（全部分段）或 `/clued-agent.md` 读取当前全文，不作为 Skill 过期或重装的理由。仍携带 `references/agent-contract.md` 的安装副本属于旧 Skill 包。只在会话开始和 resume 时检查，不定时运行；`CLUED_VERSION_CHECK=off` 关闭，`=offline` 不读服务。
+
+Agent 合同只有仓库源 `protocol/agent/agent-contract.md`，由服务交付，Skill 和插件包不携带原文。合同独立升版本，合同变化不再导致 Skill 升版本或重装。首次换成不含合同的 Skill 需要按既有安装流程更新一次；后续自动安装改进仍由其独立任务负责。

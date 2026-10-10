@@ -60,7 +60,7 @@ class HookTest(unittest.TestCase):
     def run_hook(self, payload: dict, **env: str) -> dict | None:
         environment = {k: v for k, v in os.environ.items()
                        if k not in {"CLUED_VERSION_CHECK", "CLUED_ORIGIN", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}}
-        environment.update({"HOME": str(self.home), "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}, **env)
+        environment.update({"HOME": str(self.home), "USERPROFILE": str(self.home), "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}, **env)
         result = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
                                 capture_output=True, env=environment, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -149,7 +149,23 @@ class HookTest(unittest.TestCase):
     def test_resume_with_newer_contract_tells_the_agent_to_follow_it(self):
         text = self.context(self.resume({"status": "restored",
                                          "contract_version": int(LOCAL["agent-contract"]) + 1}))
-        self.assertIn("Read the served contract (/clued-agent.md) and follow it", text)
+        self.assertIn("clued_agent_bootstrap (all parts) or /clued-agent.md", text)
+        self.assertIn("needs no Skill reinstall", text)
+
+    def test_bundled_contract_is_an_old_package_even_with_a_current_version(self):
+        path = self.install_skill(".claude/skills/clued", LOCAL["skill.clued"])
+        (path / "references" / "agent-contract.md").write_text("legacy\n", encoding="utf-8")
+        text = self.context({"hook_event_name": "SessionStart"}, CLUED_VERSION_CHECK="offline")
+        self.assertIn("carries a bundled agent contract", text)
+
+    def test_contract_change_does_not_make_a_current_skill_stale(self):
+        self.install_skill(".claude/skills/clued", LOCAL["skill.clued"])
+        text = self.context(self.resume({"status": "restored",
+                            "contract_version": int(LOCAL["agent-contract"]) + 1,
+                            "clued_components": {"versions": dict(LOCAL, **{
+                                "agent-contract": str(int(LOCAL["agent-contract"]) + 1)})}}))
+        self.assertNotIn("Reinstall", text)
+        self.assertNotIn("Skill at", text)
 
     def test_resume_with_newer_hook_versions_reports_the_checkout_stale(self):
         versions = dict(LOCAL, **{"hook.capture-guard": bump(LOCAL["hook.capture-guard"])})

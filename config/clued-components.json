@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.17",
+      "version": "1.0.18",
       "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "5cab87affde634477aa80d6c8d78d1113f75c0a8846a2bb3dae766fc5c755ac6",
+      "content_sha256": "8a5c241306193f50a6232ba0832fcd7621a24c7cec5cfd9f94ddabd818436c47",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -37,7 +37,7 @@
       "kind": "contract",
       "version": "45",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
-      "root": "skills/clued/references",
+      "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
@@ -56,13 +56,13 @@
     {
       "id": "hook.capture-guard",
       "kind": "hook",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Claude Code Stop hook enforcing Clued capture.",
       "root": "scripts/hooks",
       "files": [
         "clued_capture_guard.py"
       ],
-      "content_sha256": "33c198fb9d3a900b3f17b0c611263ff4fcb248a9b15016609ae95258949ebbcf",
+      "content_sha256": "9bc24c569f67b64ba5b7047745a8c3b89a3b6f96a56918389c62a3cf80322bbe",
       "version_marker": {
         "file": "clued_capture_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -71,13 +71,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "8db59c81e47a95626818cfdd047aea8a6456c563bbf8ccbf491fca80a120ddf0",
+      "content_sha256": "6034bce1f0a89f587c7d4994d9825c65d4e053f6b4d85a798ffbe5f6cbc068f0",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -86,13 +86,13 @@
     {
       "id": "hook.version-check",
       "kind": "hook",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Claude Code hook comparing component versions with the service.",
       "root": "scripts/hooks",
       "files": [
         "clued_version_check.py"
       ],
-      "content_sha256": "9c6f6e515945b0b35f081fdb6c3c9d3f62d3b6a567f120bdeaefd1e9d7df9fdb",
+      "content_sha256": "f10fea2884fa00d8306ae4938adbe95f8192b13e52e7c076d737b208f36305e7",
       "version_marker": {
         "file": "clued_version_check.py",
         "pattern": "__version__ = \"{version}\""
