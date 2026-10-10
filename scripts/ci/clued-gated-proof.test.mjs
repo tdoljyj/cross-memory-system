@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import test from 'node:test';
+import {qualifyPrimary,qualifiedCI,QUALITY,DOCUMENTATION_STEPS} from './clued-gated-proof.mjs';
+const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+const FILE='.github/workflows/clued-components.yml',HEAD='a'.repeat(40);
+const profile=profiles.workflows[FILE],route=profile.routes[0];
+const step=(name,conclusion='success')=>({name,status:'completed',conclusion});
+const primary=(extra={})=>({id:2,name:route.name,status:'completed',conclusion:'success',labels:['self-hosted'],
+  steps:Object.entries(route.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>step(name))),...extra});
+const gate={id:1,name:'admission-gate',status:'completed',conclusion:'success',labels:['self-hosted']};
+test('auxiliary success, primary skipped and missing/duplicate execution steps cannot qualify',()=>{
+  for(const jobs of [[gate,{id:4,name:'helper',status:'completed',conclusion:'success'}],
+    [gate,primary({conclusion:'skipped'}),{id:4,name:'helper',status:'completed',conclusion:'success'}],
+    [gate,primary({steps:[]})],[gate,primary(),primary({id:3})]]) assert.equal(qualifyPrimary(profile,jobs,FILE).passed,false);
+  const good=qualifyPrimary(profile,[gate,primary(),{id:3,name:'alternate',status:'completed',conclusion:'skipped'}],FILE);
+  assert.equal(good.state,'qualified');
+});
+test('critical skipped/neutral never passes; actual test failure is typed failed',()=>{
+  const name=Object.keys(route.required_steps)[0];
+  for(const conclusion of ['skipped','neutral','failure']) {
+    const job=primary();job.steps.find(x=>x.name===name).conclusion=conclusion;
+    const result=qualifyPrimary(profile,[gate,job],FILE);assert.equal(result.passed,false);
+    assert.equal(result.state,conclusion==='failure'?'failed':'unknown');
+  }
+});
+test('only all-skipped primary jobs beside a successful gate preserve the accepted recovery case',()=>{
+  assert.equal(qualifyPrimary(profile,[gate,primary({conclusion:'skipped'})],FILE).gate_only,true);
+  assert.equal(qualifyPrimary(profile,[gate,primary({conclusion:'skipped'}),{name:'helper',status:'completed',conclusion:'success'}],FILE).gate_only,false);
+});
+test('documentation produces a candidate scope and never Full application execution',()=>{
+  const p=profiles.workflows[QUALITY],r=p.routes[0];
+  const job={...primary(),name:r.name,steps:Object.keys(r.required_steps).map(name=>step(name,DOCUMENTATION_STEPS.includes(name)?'skipped':'success'))};
+  const result=qualifyPrimary(p,[gate,job],QUALITY);
+  assert.equal(result.passed,false);assert.equal(result.state,'documentation_candidate');assert.equal(result.scope,'documentation');
+  job.steps[0].conclusion='failure';assert.equal(qualifyPrimary(p,[gate,job],QUALITY).passed,false);
+});
+test('Full app steps can qualify after a failed auxiliary classifier only when every app step actually succeeds',()=>{
+  const p=profiles.workflows[QUALITY],r=p.routes[0];
+  const job={...primary(),name:r.name,steps:Object.keys(r.required_steps).map(name=>step(name,name==='Qualify ordinary documentation changes'?'failure':'success'))};
+  assert.equal(qualifyPrimary(p,[gate,job],QUALITY).passed,true);
+  job.steps.find(x=>x.name==='Run npm run test:unit').conclusion='skipped';assert.equal(qualifyPrimary(p,[gate,job],QUALITY).passed,false);
+});
+function world({runDelta={},jobs=[gate,primary()],readFailure=false,changedAttempt=false,newRun=false,source=true}={}) {
+  const run={id:7,path:FILE,head_sha:HEAD,event:'pull_request',status:'completed',conclusion:'success',run_attempt:1,pull_requests:[{number:5}],...runDelta};
+  let lists=0;const calls=[];
+  const read=async url=>{calls.push(url);if(readFailure)throw new Error('read failed');
+    if(url.includes('/actions/runs?')){lists++;const rows=lists>1&&newRun?[run,{...run,id:8}]:[run];return{total_count:rows.length,workflow_runs:rows};}
+    if(url.includes('/attempts/'))return{total_count:jobs.length,jobs};
+    if(url.endsWith('/actions/runs/7'))return{...run,run_attempt:changedAttempt?2:1};
+    throw new Error('unexpected mocked read');};
+  return{read,calls,repository:'o/r',head:HEAD,prNumber:5,workflows:new Map([[FILE,'default-blob']]),profiles,authorizeSource:async()=>source};
+}
+test('qualified run is bound to head, PR, complete lists, actual steps and unchanged latest attempt',async()=>{
+  const w=world();const result=await qualifiedCI(w);assert.equal(result.passed,true);assert.equal(result.scopes[0].scope,'workflow_execution');
+  assert.ok(w.calls.some(x=>x.includes('/attempts/1/jobs')));assert.ok(w.calls.some(x=>x.endsWith('/actions/runs/7')));
+});
+test('unknown/in-progress/source mismatch/retry/new run/ambiguous PR stay unknown',async()=>{
+  for(const options of [{readFailure:true},{source:false},{changedAttempt:true},{newRun:true},
+    {runDelta:{status:'in_progress'}},{runDelta:{pull_requests:[]}},{runDelta:{pull_requests:[{number:5},{number:6}]}}])
+    assert.equal((await qualifiedCI(world(options))).state,'unknown');
+});
+test('truncated totals and duplicate job IDs never establish a completed sample',async()=>{
+  for(const count of [null,3]) {
+    const w=world(),read=w.read;w.read=async url=>url.includes('/attempts/')?{jobs:[gate,primary()],total_count:count}:read(url);
+    assert.equal((await qualifiedCI(w)).state,'unknown');
+  }
+  assert.equal((await qualifiedCI(world({jobs:[gate,primary({id:1})]}))).state,'unknown');
+});
+test('new unprofiled gated workflows fail closed rather than borrowing another profile',async()=>{
+  const w=world();w.workflows.set('.github/workflows/new.yml','new-blob');assert.equal((await qualifiedCI(w)).state,'unknown');
+});
+test('a successful gate-only run returns typed recovery and not qualified execution',async()=>{
+  const result=await qualifiedCI(world({jobs:[gate,primary({conclusion:'skipped'})]}));
+  assert.equal(result.passed,false);assert.equal(result.rerun.run_attempt,1);
+});
+test('documentation requires an independent source/range qualifier',async()=>{
+  const p=profiles.workflows[QUALITY],r=p.routes[0];
+  const job={...primary(),name:r.name,steps:Object.keys(r.required_steps).map(name=>step(name,DOCUMENTATION_STEPS.includes(name)?'skipped':'success'))};
+  const w=world({jobs:[gate,job]});w.workflows=new Map([[QUALITY,'quality-blob']]);const read=w.read;
+  w.read=async url=>{const b=await read(url);if(b.workflow_runs)b.workflow_runs=b.workflow_runs.map(x=>({...x,path:QUALITY}));return b;};
+  assert.equal((await qualifiedCI(w)).state,'unknown');
+  w.qualifyDocumentation=async()=>true;const result=await qualifiedCI(w);assert.equal(result.passed,true);assert.equal(result.scopes[0].scope,'documentation');
+});
