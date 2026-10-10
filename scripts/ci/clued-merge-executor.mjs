@@ -31,7 +31,7 @@ import {
 } from "./clued-work-admission.mjs";
 import { cleanupManagedAutoMerge,managedAutoMerge,executorToken,appRequest } from "./clued-managed-auto-merge.mjs";
 export {executorToken,managedAutoMerge,EXECUTOR_PERMISSIONS} from "./clued-managed-auto-merge.mjs";
-import { HOLDERS_RPC, ciStateOf, ciWorkflows,requiredBarrier } from "./clued-merge-slot-ci.mjs";
+import { HOLDERS_RPC, ciStateOf, ciWorkflows,requiredBarrier,matchesOperationPR } from "./clued-merge-slot-ci.mjs";
 import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-policy.mjs";
 import { createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
@@ -253,6 +253,7 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       continue;
     }
     const entry = { pr: plan.pr.number, head_sha: plan.pr.head.sha, action: plan.action, reason: plan.reason };
+    let lastPr=plan.pr,lastExecution=plan.execution;
     if(plan.action==='disable_auto_merge') {
       const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
       if(current?.node_id!==plan.pr.node_id || current.state!=='open' || !managedAutoMerge(current)) {
@@ -277,6 +278,7 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
         lastAuthority.pr.body!==authority.pr.body || lastAuthority.mode.state!==authority.mode.state) {
         result.actions.push({...entry,action:'none',reason:'live authority changed during execution qualification'});continue;
       }
+      lastPr=lastAuthority.pr;lastExecution=final.execution;
     }
     if (plan.action === "rerun_gated") {
       // Unlike merge/update-branch, the rerun API has no expected-head CAS.
@@ -289,13 +291,15 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
         entry.action = "none";
         entry.reason = "the pull request head or gate-only run changed before rerunning; nothing rerun";
       } else {
-        if(!await requiredBarrier(fetchImpl,env,repository,plan.pr.head.sha,plan.pr.number,plan.execution)){result.actions.push({...entry,action:'none',reason:'native latest state changed after authority'});continue;}
+        if(!await requiredBarrier(fetchImpl,env,repository,plan.pr.head.sha,plan.pr.number,lastExecution,{expectedPR:lastPr,action:plan.action})){result.actions.push({...entry,action:'none',reason:'native latest state changed after authority'});continue;}
         const response = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/actions/runs/${plan.run.id}/rerun`, env.GITHUB_TOKEN);
         entry.run_id = plan.run.id;
         entry.status = response.status;
         if (response.status !== 201) entry.error = response.body?.message ?? `HTTP ${response.status}`;
       }
     } else if (plan.action === "update_branch") {
+      const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
+      if(!matchesOperationPR(current,lastPr,plan.action)) {result.actions.push({...entry,action:'none',reason:'native PR permission changed before update'});continue;}
       const response = await appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/update-branch`, token,
         { expected_head_sha: plan.pr.head.sha });
       entry.status = response.status;
@@ -305,7 +309,7 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
       if(current?.head?.sha!==plan.pr.head.sha || current.state!=='open' || current.draft || current.auto_merge || current.mergeable_state!=='clean') {
         entry.action='none';entry.reason='native PR is not clean, current and free of waiting auto-merge';
-      } else if(!await requiredBarrier(fetchImpl,env,repository,plan.pr.head.sha,plan.pr.number,plan.execution)) {
+      } else if(!await requiredBarrier(fetchImpl,env,repository,plan.pr.head.sha,plan.pr.number,lastExecution,{expectedPR:lastPr,action:plan.action})) {
         entry.action='none';entry.reason='native latest state changed after authority';
       } else {
         const merged=await appRequest(fetchImpl,env,'PUT',`/repos/${repository}/pulls/${plan.pr.number}/merge`,token,

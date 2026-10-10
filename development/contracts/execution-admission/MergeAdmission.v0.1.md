@@ -263,7 +263,7 @@
 
 **R1 执行资格守卫的实施边界（2026-10-10，原 Task f52ca0dd）**：下面的 auto-merge 推荐与旧实施记录保留历史依据。执行器的后继只在完整适用 CI、可信工作流/独立角色、真实主 job/关键 steps、当前许可/撤销/精确 head/FIFO/opt-in 均通过后，以 GitHub 原生 `clean` 状态和 match-head 的普通 merge API 合并；不再创建一个只等待 ruleset 必需检查的托管 auto-merge 请求。它保留策略 `auto_merge: allowed` 的自动执行许可语义，没有放宽保护层或引入新的合并权限。
 
-报告入口与执行器在任何慢资格观察、Clued 重验之前，先关闭由 executor 管理的遗留请求（App 启用，或正文有精确 `Clued-Auto-Merge` 标记）；该 PR 本次只清理，后续自然事件重新核完整资格。手动且没有该标记的 Owner auto-merge 不被接管。这样不会形成每次 report 都关闭再打开请求的事件循环。清理失败或权限未知时，不继续该 PR 的资格/执行，也不冒关闭成功。
+报告入口与执行器在任何慢资格观察、Clued 重验之前，先关闭由 executor 管理的遗留请求（App 启用，或正文有精确 `Clued-Auto-Merge` 标记）；该 PR 在本入口函数调用中只清理；同 job 的下一独立入口或后续自然事件必须重新读取 auto-off 状态，并重新核完整资格。手动且没有该标记的 Owner auto-merge 不被接管。这样不会形成每次 report 都关闭再打开请求的事件循环。清理失败或权限未知时，不继续该 PR 的资格/执行，也不冒关闭成功。
 
 未知、未登记源、gate/helper 成功而主步骤 skipped 不算完整执行；未知不写永久失败/pending 必需检查，只不上报 green。真正失败仍还位。授权慢读结束后，最后轻量重验 Native PR/head/main、latest run/attempt、全部必需检查及未完结运行；不以旧 head/旧 attempt CI 合并。尚未登记的合法 workflow 与 fixture 可以在同一 PR 独立审阅、精确 Owner Grant、全部适用真实 CI、FIFO、没有等待请求后正常平台合入，合入后才成为 trusted main 的自动资格来源。普通 protected-change Grant 不自行变成新的 Role 语义接受；没有强制先登记的两阶段治理或让所有非 CI workflow 登记为测试。
 

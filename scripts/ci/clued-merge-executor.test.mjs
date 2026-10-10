@@ -495,3 +495,20 @@ test("cleanup with withdrawn opt-in, empty claim or missing Clued token never st
     assert.equal(fetch.calls.some(c=>c.route.startsWith("rpc:")),false);
   }
 });
+
+test("final Native PR binding refuses body/opt-in withdrawal, new auto request, non-clean state and retargeting",async()=>{
+  for(const mutation of [pr=>({...pr,body:BODY}),pr=>({...pr,body:""}),
+    pr=>({...pr,auto_merge:{enabled_by:{login:"tdoljyj"}}}),pr=>({...pr,mergeable_state:"unstable"}),
+    pr=>({...pr,base:{...pr.base,repo:{...pr.base.repo,default_branch:"release"}}})]) {
+    let lastNative=false;
+    const fetch=world({extra:{[`/repos/${REPO}/pulls/5`]:()=>{
+      const pr=pull();return lastNative?mutation(pr):pr;
+    }}});
+    let authorities=0;
+    const result=await run(fetch,{}, {authorizeOperation:async({pr,env})=>{
+      const current=pull();if(++authorities===2)lastNative=true;
+      return {valid:true,pr:current,mode:resolveMode({env,workspace:ROOT,readFile:fs.readFileSync}),progress_ref:fetch.progress_ref};
+    }});
+    assert.equal(result.actions[0].action,"none");assert.deepEqual(writes(fetch),[]);
+  }
+});

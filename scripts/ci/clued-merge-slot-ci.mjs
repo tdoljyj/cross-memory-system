@@ -120,15 +120,26 @@ async function newestCheck(fetchImpl, env, repository, headSha, { name, app_id: 
       && check.app && Number(check.app.id) === appId)
     .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
 }
-export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,proof) {
+export function matchesOperationPR(current,expected,action) {
+  return Boolean(current && expected && current.number===expected.number && current.state==='open' && current.draft===false &&
+    current.head?.sha===expected.head?.sha && current.body===expected.body &&
+    current.base?.ref===expected.base?.ref && current.base?.repo?.full_name===expected.base?.repo?.full_name &&
+    current.base?.repo?.default_branch===expected.base?.repo?.default_branch &&
+    (!action || current.auto_merge===null) && (action!=='merge_pull_request' || current.mergeable_state==='clean'));
+}
+export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,proof,{expectedPR,action}={}) {
   const signal=AbortSignal.timeout(12000);
   const bounded=(url,init)=>fetchImpl(url,{...init,signal,redirect:'error'});
-  if(proof?.tip) {
+  if(proof?.tip || expectedPR) {
     const current=await githubJson(bounded,env,`/repos/${repository}/pulls/${prNumber}`);
-    if(!proof.default_branch || current?.number!==prNumber || current.state!=='open' || current.draft!==false ||
-      current.head?.sha!==head || current.base?.ref!==proof.default_branch || current.base?.repo?.full_name!==repository)return false;
-    const branch=await githubJson(bounded,env,`/repos/${repository}/branches/${encodeURIComponent(proof.default_branch)}`);
-    if(branch?.commit?.sha!==proof.tip)return false;
+    if(expectedPR && !matchesOperationPR(current,expectedPR,action))return false;
+    if(proof?.tip) {
+      if(!proof.default_branch || current?.number!==prNumber || current.state!=='open' || current.draft!==false ||
+        current.head?.sha!==head || current.base?.ref!==proof.default_branch || current.base?.repo?.full_name!==repository ||
+        current.base?.repo?.default_branch!==proof.default_branch)return false;
+      const branch=await githubJson(bounded,env,`/repos/${repository}/branches/${encodeURIComponent(proof.default_branch)}`);
+      if(branch?.commit?.sha!==proof.tip)return false;
+    }
   }
   for(const required of CI_REQUIRED_CHECKS) {
     const check=await newestCheck(bounded,env,repository,head,required);
