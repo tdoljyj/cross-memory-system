@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.15",
+      "version": "1.0.16",
       "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "fd5d76e523241b62b6df2b99eeac533dbdc23ddd5c32cbd271db99735a87df71",
+      "content_sha256": "425939717d3227da78b82cd0b09f560e0f934fb1fc2fb59c7e10e08d10f6e661",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "43",
+      "version": "44",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "skills/clued/references",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "d4238a80b4c7793d07820b5b243871fac39edde31c24fae1338d1c036dbea734",
+      "content_sha256": "7700a43c9ef38ac13b325d18bf2403bcf91538d9af10d2e11de35c6f459e951c",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
