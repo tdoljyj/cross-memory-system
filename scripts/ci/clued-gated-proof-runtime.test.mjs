@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {platformWorkflowSource,workflowSourceOf} from './clued-gated-proof-runtime.mjs';
+import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource} from './clued-gated-proof-runtime.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource} from './clued-workflow-profile.mjs';
 const repository='o/r',headRepository='fork/r',file='.github/workflows/fixture.yml';
 const sha='a'.repeat(40),head='b'.repeat(40);
@@ -55,4 +58,52 @@ test('executed source requires exact trusted registration and per-source roles',
   assert.equal((await call({roleSpecs:{schema:'clued.gated-proof-role-specs/1',workflows:{[file]:roles}}})).state,'unknown');
   assert.equal((await call({registry:{...registry,workflows:{}}})).state,'unknown');
   assert.equal((await call({graphRead:async()=>{throw Error('unavailable');}})).state,'unknown');
+});
+test('GraphQL uses the existing token on a trusted POST endpoint only',async()=>{
+  const calls=[];const fetchImpl=async(url,init)=>{calls.push({url,init});return {status:200,json:async()=>payload()};};
+  const reader=githubGraphReader(fetchImpl,{GITHUB_TOKEN:'mock-token'});
+  await reader('query fixture',{node:'WFR_fixture'});
+  assert.equal(calls[0].url,'https://api.github.com/graphql');assert.equal(calls[0].init.method,'POST');
+  assert.deepEqual(JSON.parse(calls[0].init.body),{query:'query fixture',variables:{node:'WFR_fixture'}});
+  for(const extra of [{GITHUB_TOKEN:''},{GITHUB_GRAPHQL_URL:'https://evil.example/graphql'},
+    {GITHUB_GRAPHQL_URL:'https://user@api.github.com/graphql'},{GITHUB_GRAPHQL_URL:'https://api.github.com/graphql?token=x'},
+    {GITHUB_API_URL:'http://api.github.com'}]) {
+    const before=calls.length;
+    await assert.rejects(githubGraphReader(fetchImpl,{GITHUB_TOKEN:'mock-token',...extra})('query',{}));
+    assert.equal(calls.length,before);
+  }
+  await assert.rejects(githubGraphReader(async()=>({status:403}),{GITHUB_TOKEN:'mock-token'})('query',{}));
+});
+test('shadow source observation reads the API rather than trusting event fields, and never grants execution',async()=>{
+  const temporaryRoot=fs.realpathSync(os.tmpdir());
+  const workspace=fs.mkdtempSync(path.join(temporaryRoot,'clued-source-observation-'));
+  try {
+    fs.mkdirSync(path.join(workspace,'scripts/ci'),{recursive:true});
+    const text='shadow source',parsed={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{run:'node --test'}]}}};
+    const roles=[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
+    const profile=compileRegisteredWorkflow(text,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:roles});
+    fs.writeFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json'),JSON.stringify({
+      schema:'clued.gated-proof-profiles/2',workflows:{[file]:profile}}));
+    fs.writeFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-role-specs.json'),JSON.stringify({
+      schema:'clued.gated-proof-role-specs/2',workflows:{[file]:{sources:{[profile.workflow_blob]:roles}}}}));
+    const completed={...run,path:file,status:'completed',conclusion:'success'};
+    const content={type:'file',path:file,sha:profile.workflow_blob,size:Buffer.byteLength(text),encoding:'base64',content:Buffer.from(text).toString('base64')};
+    const options={env:{GITHUB_REPOSITORY:repository},workspace,eventName:'workflow_run',
+      event:{workflow_run:{id:run.id,head_sha:'forged',conclusion:'failure'}},workflows:new Map([[file,profile.workflow_blob]]),
+      graphRead:async()=>payload(),read:async route=>route.includes('/contents/')?content:completed};
+    const seen=await observeCompletedSource(options);
+    assert.equal(seen.state,'qualified');assert.equal(seen.execution_qualified,false);assert.equal(seen.head,head);
+    let reads=0;
+    assert.equal((await observeCompletedSource({...options,read:async route=>route.includes('/contents/')?content:
+      ++reads===1?completed:{...completed,run_attempt:3}})).state,'unknown');
+    assert.equal((await observeCompletedSource({...options,read:async()=>({...completed,id:8})})).state,'not_observed');
+    assert.equal((await observeCompletedSource({...options,graphRead:async()=>({errors:[{}]})})).state,'unknown');
+    assert.equal((await observeCompletedSource({...options,eventName:'push',read:async()=>{throw Error('must not read');}})).state,'not_observed');
+  } finally {
+    const target=fs.realpathSync(workspace);
+    assert.equal(path.dirname(target),temporaryRoot);
+    assert.equal(target,path.resolve(workspace));
+    assert.ok(path.basename(target).startsWith('clued-source-observation-'));
+    fs.rmSync(target,{recursive:true,force:true});
+  }
 });

@@ -1,6 +1,8 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const SHA=/^[a-f0-9]{40}$/;
 const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -8,6 +10,50 @@ const unknown=reason=>({passed:false,state:'unknown',reason});
 export const RUN_FILE_QUERY=`query($node:ID!){node(id:$node){...on WorkflowRun{
   databaseId runAttempt event file{path repositoryName repositoryFileUrl
   run{databaseId runAttempt}}}}}`;
+
+export function githubGraphReader(fetchImpl,env) {
+  return async(query,variables)=>{
+    const api=new URL(env.GITHUB_API_URL||'https://api.github.com');
+    const target=new URL(env.GITHUB_GRAPHQL_URL||
+      (api.pathname.startsWith('/api/v3')?'/api/graphql':'/graphql'),api);
+    if(!env.GITHUB_TOKEN || api.protocol!=='https:' || api.username || api.password ||
+      target.protocol!=='https:' || target.origin!==api.origin || target.username || target.password ||
+      target.search || target.hash || !['/graphql','/api/graphql'].includes(target.pathname))
+      throw Error('trusted GitHub GraphQL endpoint/token unavailable');
+    const response=await fetchImpl(target.href,{method:'POST',headers:{
+      Authorization:`Bearer ${env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','Content-Type':'application/json'},
+      body:JSON.stringify({query,variables})});
+    if(response.status!==200)throw Error('platform source metadata unavailable');
+    return response.json();
+  };
+}
+
+// A bounded shadow observation exercises the existing CI token's read access.
+// It never qualifies tests, touches a slot, or changes admission/merge behavior.
+export async function observeCompletedSource({env,event,eventName,workspace,workflows,read,graphRead}) {
+  if(eventName!=='workflow_run' || !Number.isSafeInteger(event?.workflow_run?.id) || event.workflow_run.id<1)
+    return {state:'not_observed',reason:'no workflow-run signal'};
+  try {
+    const repository=env.GITHUB_REPOSITORY;
+    if(!REPO.test(repository??''))return unknown('repository unavailable');
+    const run=await read(`/repos/${repository}/actions/runs/${event.workflow_run.id}`);
+    const file=String(run?.path??'').replace(/@.*$/,'');
+    if(run?.id!==event.workflow_run.id || run.event!=='pull_request' || run.status!=='completed' || !workflows.has(file))
+      return {state:'not_observed',reason:'not a completed counted PR workflow'};
+    const registry=JSON.parse(fs.readFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'));
+    const roleSpecs=JSON.parse(fs.readFileSync(path.join(workspace,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'));
+    const source=await workflowSourceOf({read,graphRead,repository,headRepository:run.head_repository?.full_name,
+      file,run,registry,roleSpecs,serverURL:env.GITHUB_SERVER_URL});
+    // A started retry invalidates even this read-only observation.
+    const latest=await read(`/repos/${repository}/actions/runs/${run.id}`);
+    if(latest?.id!==run.id || latest.run_attempt!==run.run_attempt || latest.head_sha!==run.head_sha ||
+      latest.event!==run.event || latest.status!==run.status || latest.conclusion!==run.conclusion)
+      return unknown('source observation attempt changed');
+    return {state:source.state,scope:'source_observation_only',run_id:run.id,run_attempt:run.run_attempt,
+      head:run.head_sha,file,source_sha:source.source_sha??null,workflow_blob:source.workflow_blob??null,
+      reason:source.reason??null,execution_qualified:false};
+  } catch {return unknown('source observation unavailable');}
+}
 
 export function platformWorkflowSource(body,{repository,headRepository,file,run,serverURL='https://github.com'}) {
   try {
