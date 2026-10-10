@@ -203,7 +203,7 @@ test("budget: a rate-limited answer stops without retry; any other failure is an
     const github = fakeGitHub({ runs, jobs, answer: (route, n, headers) => (n === 4 ? limited(headers) : null) });
     const { code, report } = await runMain(github);
     assert.equal(code, 0);
-    // The three job lists are read at once (JOB_CONCURRENCY): the one already sent finishes, nothing is retried or sent after.
+    // The three job lists are read at once (JOB_CONCURRENCY): the two already sent besides it finish, nothing is retried or sent after.
     assert.equal(github.calls.length, 5, "no retry, no further request");
     assert.equal(report.metrics.api_requests.stopped, "rate_limited");
     assert.deepEqual([report.coverage.runs_with_jobs, report.coverage.runs_completed], [2, 3]);
@@ -345,7 +345,7 @@ test("run list: a window over GitHub's 1,000-run limit is listed day by day; a d
   let github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
   let { report } = await runMain(github, memoryFs(), APP_ENV);
   const lists = github.calls.filter((call) => call.route.includes("actions/runs?created="));
-  assert.equal(lists.filter((call) => call.route.includes("created=%3E%3D")).length, RUN_LIST_CAP / 100, "the whole window: 10 full pages, no 11th");
+  assert.equal(lists.filter((call) => call.route.includes("created=%3E%3D")).length, 1, "the whole window: its first page says 1,200, so it is split at once");
   assert.deepEqual([...new Set(lists.map((call) => new URL(`https://x${call.route}`).searchParams.get("created")).filter((c) => !c.startsWith(">=")))],
     daysOf(WINDOW));
   assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_by_day, report.coverage.run_list_complete, report.coverage.run_list_days_capped],
@@ -372,6 +372,45 @@ test("run list: a window over GitHub's 1,000-run limit is listed day by day; a d
   github = fakeGitHub({ runs, jobs: {}, pulls: [pr(1)], answer: withApp() });
   ({ report } = await runMain(github, memoryFs(), APP_ENV));
   assert.deepEqual([report.coverage.runs_listed, report.coverage.run_list_complete, report.coverage.run_list_days_capped], [1100, true, []]);
+});
+
+test("review: secondary rate limit, a job-phase error, a budget stop while halving, and contiguous halves", async () => {
+  // A 403 secondary rate limit without rate-limit headers stops the run; it is not an error.
+  const runs = [run(1), run(2), run(3)];
+  const jobs = { 1: [job(1)], 2: [job(2)], 3: [job(3)] };
+  let github = fakeGitHub({ runs, jobs, answer: (route, n, headers) => (n === 3
+    ? new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit." }), { status: 403, headers: { "content-type": "application/json" } })
+    : null) });
+  let { code, report } = await runMain(github);
+  assert.deepEqual([code, report.metrics.api_requests.stopped], [0, "rate_limited"]);
+  // A 500 in the job phase fails the run; the other workers stop taking runs and end first.
+  const many = Array.from({ length: 40 }, (_, i) => run(i + 1));
+  github = fakeGitHub({ runs: many, jobs: Object.fromEntries(many.map((r) => [r.id, [job(r.id)]])),
+    answer: (route, n, headers) => (n === 5 ? new Response("{}", { status: 500, headers }) : null) });
+  const errors = [];
+  ({ code } = await runMain(github, { ...memoryFs(), logError: (line) => errors.push(line) }));
+  const callsAtReturn = github.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual([code, github.calls.length], [1, callsAtReturn], "no request after main returned");
+  assert.ok(callsAtReturn <= 5 + 3, `at most the in-flight requests finish (${callsAtReturn})`);
+  assert.match(errors.join("\n"), /returned 500/);
+  // A stop while a dense day is halved keeps the runs already listed (the first pages of the capped ranges).
+  const dense = Array.from({ length: 1100 }, (_, i) => run(i + 1, { created_at: "2026-10-05T10:00:00Z" }));
+  github = fakeGitHub({ runs: dense, jobs: {}, pulls: [pr(1)],
+    answer: (route, n, headers) => (n === 8 ? new Response("{}", { status: 429, headers }) : null) });
+  ({ report } = await runMain(github));
+  assert.equal(report.metrics.api_requests.stopped, "rate_limited");
+  assert.equal(report.coverage.run_list_complete, false);
+  assert.equal(report.coverage.runs_listed, 100, "the first page of the capped ranges is kept, once each");
+  // Halving a day covers every second once.
+  const day = Date.parse("2026-10-05T00:00:00Z");
+  const leaves = [];
+  const walk = (a, b) => { if (b - a + 1000 <= 30 * 60 * 1000) leaves.push([a, b]); else for (const [x, y] of halvesOf(a, b)) walk(x, y); };
+  walk(day, day + 86399000);
+  assert.equal(leaves[0][0], day);
+  assert.equal(leaves.at(-1)[1], day + 86399000);
+  for (let i = 1; i < leaves.length; i += 1) assert.equal(leaves[i][0], leaves[i - 1][1] + 1000, `leaf ${i}`);
+  assert.throws(() => halvesOf(day, day), /at least two seconds/);
 });
 
 test("cache: a completed run's jobs are fetched once; running runs are not cached; a re-run is read again", async () => {

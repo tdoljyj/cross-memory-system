@@ -40,8 +40,10 @@
 // 100), and one jobs list (filter=all, every attempt) for each completed run
 // that is not cached yet. GitHub returns at most 1,000 runs for a created
 // filter, so a window that reaches that many is listed again day by day, and a
-// day that reaches it is halved again and again down to 30 minutes; only a
-// 30-minute range that still reaches it marks the list cut short (run
+// day that reaches it is halved while its ranges are longer than 30 minutes
+// (they end at 22.5); only such a range that still reaches it marks the list
+// cut short, and a list whose first page reports more than 1,000 is split
+// without reading its other pages (run
 // 37975919780 found 6-hour ranges over the limit). The job lists of runs not
 // cached yet are read four at a time, within the same budget: about 1,600 runs
 // a day (11,504 listed in 7 days) is more than one run reads one by one in its
@@ -70,7 +72,7 @@ export const MAX_DAYS = 14;
 export const PAGE_SIZE = 100;
 // GitHub's limit on the results of one created-filtered run list.
 export const RUN_LIST_CAP = 1000;
-// The shortest created range a list over the limit is halved down to.
+// A created range over the limit is halved while it is longer than this.
 export const MIN_RANGE_MS = 30 * 60 * 1000;
 // Job lists read at once.
 export const JOB_CONCURRENCY = 4;
@@ -171,10 +173,12 @@ const headerNumber = (headers, name) => {
 };
 
 // A response GitHub sends when a rate limit (primary or secondary) is hit.
-export function isRateLimited(response) {
+export function isRateLimited(response, bodyText = "") {
   if (response.status === 429) return true;
   if (response.status !== 403) return false;
-  return headerNumber(response.headers, "x-ratelimit-remaining") === 0 || headerNumber(response.headers, "retry-after") !== null;
+  return headerNumber(response.headers, "x-ratelimit-remaining") === 0 || headerNumber(response.headers, "retry-after") !== null
+    // A secondary rate limit can come without either header (review MAJOR-1).
+    || /secondary rate limit|abuse detection/i.test(bodyText);
 }
 
 // request(route) -> { ok: true, body }, or { ok: false, stopped } when the
@@ -206,10 +210,12 @@ export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) 
       },
     });
     const remaining = headerNumber(response.headers, "x-ratelimit-remaining");
-    if (remaining !== null) budget.remaining = remaining;
+    // Responses finish out of order: keep the lowest remaining seen (review NIT).
+    if (remaining !== null) budget.remaining = budget.remaining === null ? remaining : Math.min(budget.remaining, remaining);
     budget.limit = headerNumber(response.headers, "x-ratelimit-limit") ?? budget.limit;
     budget.reset = headerNumber(response.headers, "x-ratelimit-reset") ?? budget.reset;
-    if (isRateLimited(response)) {
+    const refusedBody = response.status === 403 ? await response.text().catch(() => "") : "";
+    if (isRateLimited(response, refusedBody)) {
       budget.stopped = "rate_limited";
       return { ok: false, stopped: budget.stopped };
     }
@@ -271,7 +277,7 @@ async function mintMeasureToken({ env, fetchImpl, now, appId, key, fallback }) {
 // The pages of a list until a short page, until `done(chunk)`, until
 // `maxItems` (capped: true), or until the budget stops it; complete is false
 // in the last case.
-export async function fetchPaged(request, route, key, { done = () => false, maxItems = Infinity } = {}) {
+export async function fetchPaged(request, route, key, { done = () => false, maxItems = Infinity, splitOnTotal = false } = {}) {
   const items = [];
   const sep = route.includes("?") ? "&" : "?";
   for (let page = 1; ; page += 1) {
@@ -280,6 +286,11 @@ export async function fetchPaged(request, route, key, { done = () => false, maxI
     const chunk = key ? answer.body && answer.body[key] : answer.body;
     if (!Array.isArray(chunk)) throw new Error(`GitHub API ${route} returned no ${key ?? "list"}`);
     items.push(...chunk);
+    // With splitOnTotal, a list whose first page says it holds more than maxItems is capped at once (review m3).
+    const total = key && answer.body ? Number(answer.body.total_count) : NaN;
+    if (splitOnTotal && page === 1 && Number.isFinite(total) && total > maxItems && chunk.length === PAGE_SIZE) {
+      return { items, complete: true, capped: true };
+    }
     if (chunk.length < PAGE_SIZE || done(chunk)) return { items, complete: true, capped: false };
     if (items.length >= maxItems) return { items, complete: true, capped: true };
   }
@@ -300,6 +311,7 @@ export const rangeOf = (fromMs, toMs) => `${iso(fromMs)}..${iso(toMs)}`;
 
 // The two halves of [fromMs, toMs] (inclusive, whole seconds).
 export function halvesOf(fromMs, toMs) {
+  if (toMs - fromMs < 1000) throw new Error("halvesOf needs a range of at least two seconds");
   const mid = fromMs + Math.floor((toMs - fromMs + 1000) / 2000) * 1000;
   return [[fromMs, mid - 1000], [mid, toMs]];
 }
@@ -309,29 +321,36 @@ export function halvesOf(fromMs, toMs) {
 export async function listRuns(request, repository, window) {
   const route = (created) => `/repos/${repository}/actions/runs?created=${encodeURIComponent(created)}`;
   const once = (items) => [...new Map(items.map((run) => [run.id, run])).values()];
-  const whole = await fetchPaged(request, route(`>=${window.start_date}`), "workflow_runs", { maxItems: RUN_LIST_CAP });
+  const whole = await fetchPaged(request, route(`>=${window.start_date}`), "workflow_runs", { maxItems: RUN_LIST_CAP, splitOnTotal: true });
   if (!whole.capped) return { items: once(whole.items), complete: whole.complete, by_day: false, day_capped: [] };
   const items = [];
   const dayCapped = [];
   let stopped = false;
   // A range over the limit is halved down to MIN_RANGE_MS; false when the budget stopped it.
   const listRange = async (fromMs, toMs) => {
-    const listed = await fetchPaged(request, route(rangeOf(fromMs, toMs)), "workflow_runs", { maxItems: RUN_LIST_CAP });
+    // A range too short to halve is read in full, up to the limit.
+    const leaf = toMs - fromMs + 1000 <= MIN_RANGE_MS;
+    const listed = await fetchPaged(request, route(rangeOf(fromMs, toMs)), "workflow_runs", { maxItems: RUN_LIST_CAP, splitOnTotal: !leaf });
     if (!listed.complete) { items.push(...listed.items); return false; }
     if (!listed.capped) { items.push(...listed.items); return true; }
-    if (toMs - fromMs + 1000 <= MIN_RANGE_MS) { items.push(...listed.items); dayCapped.push(rangeOf(fromMs, toMs)); return true; }
-    for (const [a, b] of halvesOf(fromMs, toMs)) if (!(await listRange(a, b))) return false;
+    if (leaf) { items.push(...listed.items); dayCapped.push(rangeOf(fromMs, toMs)); return true; }
+    for (const [a, b] of halvesOf(fromMs, toMs)) {
+      // Stopped part-way: keep what this range already listed (review m2); once() drops repeats.
+      if (!(await listRange(a, b))) { items.push(...listed.items); return false; }
+    }
     return true;
   };
   for (const day of daysOf(window)) {
-    const listed = await fetchPaged(request, route(day), "workflow_runs", { maxItems: RUN_LIST_CAP });
+    const listed = await fetchPaged(request, route(day), "workflow_runs", { maxItems: RUN_LIST_CAP, splitOnTotal: true });
     if (!listed.complete) { items.push(...listed.items); stopped = true; break; }
     if (!listed.capped) { items.push(...listed.items); continue; }
     const start = Date.parse(`${day}T00:00:00Z`);
     let whole = true;
     for (const [a, b] of halvesOf(start, start + DAY_MS - 1000)) if (!(await listRange(a, b))) { whole = false; break; }
-    if (!whole) { stopped = true; break; }
+    if (!whole) { items.push(...listed.items); stopped = true; break; }
   }
+  // Stopped: the whole window's first pages are kept as well (review m2).
+  if (stopped) items.push(...whole.items);
   return { items: once(items), complete: !stopped && dayCapped.length === 0, by_day: true, day_capped: dayCapped };
 }
 
@@ -424,19 +443,26 @@ export async function collectUsage({ request, repository, window, cache }) {
   }
   // Oldest first, JOB_CONCURRENCY at a time; every request still goes through the budget.
   let next = 0;
+  let failure = null;
   const worker = async () => {
-    while (next < pending.length) {
+    while (next < pending.length && !failure) {
       const run = pending[next];
       next += 1;
-      const jobs = await fetchPaged(request, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=all`, "jobs");
-      // A run whose job pages were cut short is neither counted nor cached.
-      if (!jobs.complete) continue;
-      mergeCache(cache, run, jobs.items);
-      jobsByRun.set(run.id, cachedJobs(cache, run));
-      coverage.runs_fetched_now += 1;
+      try {
+        const jobs = await fetchPaged(request, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=all`, "jobs");
+        // A run whose job pages were cut short is neither counted nor cached.
+        if (!jobs.complete || failure) continue;
+        mergeCache(cache, run, jobs.items);
+        jobsByRun.set(run.id, cachedJobs(cache, run));
+        coverage.runs_fetched_now += 1;
+      } catch (error) {
+        // The others stop taking runs; every worker ends before the error is thrown (review m1).
+        failure ??= error;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(JOB_CONCURRENCY, pending.length) }, worker));
+  if (failure) throw failure;
   coverage.runs_with_jobs = jobsByRun.size;
   return { runs, pulls, jobsByRun, coverage };
 }
