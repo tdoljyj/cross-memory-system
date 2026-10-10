@@ -111,3 +111,12 @@ test('zero metadata coverage remains null rather than a measured zero',()=>{
     attribution:{heads:new Map(),updates:[],coverage:{pulls_complete:0}},isSelfHosted,durationMinutes,round});
   assert.equal(metric.main_parent_merge_candidates.value,null);
 });
+test('same-head dispatch and push jobs do not borrow a PR admission observation',async()=>{
+  const attribution=await collect(github());
+  const runs=['workflow_dispatch','push'].map((event,i)=>({...own()[0],event,id:i+1}));
+  const job={status:'completed',labels:['self-hosted'],conclusion:'success',started_at:'2026-10-05T10:01:00Z',completed_at:'2026-10-05T10:10:00Z'};
+  const metric=attributionMetrics({runs,pulls:[{number:1,head_ref:'feature',created_at:'2026-10-05T00:00:00Z',merged_at:'2026-10-05T12:00:00Z'}],
+    jobsByRun:new Map([[1,[job]],[2,[job]]]),attribution,isSelfHosted,durationMinutes,round});
+  assert.deepEqual(metric.self_hosted_minutes.by_state,{unknown:18});
+  assert.equal(metric.self_hosted_minutes.observed_jobs,0);
+});
