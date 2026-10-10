@@ -1,6 +1,6 @@
 {
   "schema": "clued.gated-proof-role-specs/1",
-  "audit_source": "8c8b816cec51acdceeb2197b0f16b50f266957d7",
+  "audit_source": "d21f15888a8a0656e8f594c0ac619b6f4cda01f9",
   "workflows": {
     ".github/workflows/clued-cloud-node22-install.yml": [
       {
@@ -15,21 +15,21 @@
     ".github/workflows/clued-cloud-quality-gate.yml": [
       {
         "job_id": "trusted-self-hosted",
-        "definition_sha256": "be1b3d6a2e78152647fe7926385ffb56607ff69b4085646c92f1b826ba7efc5d"
+        "definition_sha256": "76e6222c9438a138abe59bead2eb0b6ec2cece86dee44b00497a7f0f711df335"
       },
       {
         "job_id": "untrusted-hosted",
-        "definition_sha256": "d76bcf2595d182c594253a28c9e4579308b07ec4344bb4f3c958f67258469aea"
+        "definition_sha256": "320c37faad0f913908820086992eab536abd93742c77a11c7b1972e1f26d39b4"
       }
     ],
     ".github/workflows/clued-components.yml": [
       {
         "job_id": "trusted-self-hosted",
-        "definition_sha256": "b4036d19eed2c90b0c5ffb27dab61f0dc7bb9dc2281699d5a93901bbdbec2ff1"
+        "definition_sha256": "35efc46f269251726f25ba95d86e8cf62de38d8b14a1e8ae5b4e875b0838c838"
       },
       {
         "job_id": "untrusted-hosted",
-        "definition_sha256": "3ef21cc1dd042332b40463b991e7da0871626cc652d0a69dc1b304dafac5a15d"
+        "definition_sha256": "6834cf80f5612e6dd1dd1516adbe75871c455cb1ff228558578c1acec065941d"
       }
     ],
     ".github/workflows/clued-connection-authorization.yml": [
@@ -39,7 +39,7 @@
       },
       {
         "job_id": "isolated-candidate-untrusted-hosted",
-        "definition_sha256": "3a9c227ed1d493dccfc01eb8c072849f03eccae9a0134b89c021865fedf7d6f4"
+        "definition_sha256": "e0203dc254798cf57298dad21757857373626fbdb2b96fd9d7753829197a052a"
       }
     ],
     ".github/workflows/clued-g4-database.yml": [
@@ -55,27 +55,27 @@
     ".github/workflows/contract-placement.yml": [
       {
         "job_id": "contract-placement",
-        "definition_sha256": "be5758fb64e41b8d5f9b719f2342c79012000d66c9e540070fc3eff92c72c51a"
+        "definition_sha256": "7c78109f3c1d4448a33147ed28ef048ae6578fe96bc4abaf4ce0ecf032c05f98"
       }
     ],
     ".github/workflows/design-refs.yml": [
       {
         "job_id": "design-refs-trusted-self-hosted",
-        "definition_sha256": "7911983fbe50b81094ebae2c2169701a4febcfd37b7a3569847b6cfe7b1f3e36"
+        "definition_sha256": "5ecc628ffdfd0ff03a02a25e3bf1895f15f73e6bbb806deec548109813c0524f"
       },
       {
         "job_id": "design-refs-untrusted-hosted",
-        "definition_sha256": "3a813f493079a53fedc6421944a23a1458a2ea2ec77ff212bbfaaeaf84956fab"
+        "definition_sha256": "7b6618632196ea0b9e89a001a8ff126b8248ffb7c6d03920546c0f002ebfcc09"
       }
     ],
     ".github/workflows/gitleaks.yml": [
       {
         "job_id": "gitleaks-trusted-self-hosted",
-        "definition_sha256": "471374b29bb96a47fd07d6f049066435514a2e2996800ae390d2f6be3c868ab6"
+        "definition_sha256": "37fd01c0faff9785a944600a5752985161b8ffd6639cce768b0447bcbd767534"
       },
       {
         "job_id": "gitleaks-untrusted-hosted",
-        "definition_sha256": "e75416c9ed761287012b78f676bd6ad8271d6b514972a5e90f52468322e8cf02"
+        "definition_sha256": "2cd1646ce2ee525e6d4af7d396e06af0c006e982897124a3bcf1e1cc6d96cbcf"
       }
     ],
     ".github/workflows/information-flow-e2e.yml": [
@@ -91,11 +91,11 @@
     ".github/workflows/model-program-m2-scoped-consumer.yml": [
       {
         "job_id": "trusted-windows",
-        "definition_sha256": "c75e405d6a11603e98c4e2e2a11bd0f40cdc315ccccc6a5da7ce323f3dba6f50"
+        "definition_sha256": "7f6c5f8d933ebfea52bc765c4867c2b1ad461c5a715c8da0046bf182158437a8"
       },
       {
         "job_id": "untrusted-linux",
-        "definition_sha256": "d348fde162eb83c6c2a508ebffd1679abd57d1e677cb936fa62613166a283992"
+        "definition_sha256": "64d577a93366bfde9622d48c8c4f59171181dd8770dc3be93c27a890afbae2e6"
       }
     ],
     ".github/workflows/public-mcp-behavior.yml": [
@@ -121,11 +121,11 @@
     ".github/workflows/trivy.yml": [
       {
         "job_id": "trivy-trusted-self-hosted",
-        "definition_sha256": "d6cca45a3266b3868b2086976001d40c3fc3ac2f519d35a56389007232de1269"
+        "definition_sha256": "f32f0334e7bdab2313e5f06346d99f96eed51974a631d778cdf8d5197240ba46"
       },
       {
         "job_id": "trivy-untrusted-hosted",
-        "definition_sha256": "dda6e391e6e9ee25a92c8c79c8fd264e3bac07c7e652936f0e3b7e8c830dd196"
+        "definition_sha256": "f56385fee7bb60ae1f4b80615cb83a460eead28cd2ce58b2304a456e289cb3e0"
       }
     ]
   }
