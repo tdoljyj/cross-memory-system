@@ -313,15 +313,103 @@ test("a refused update (head moved, conflict) is a notice, not an error", async 
   assert.match(result.notices[0], /#5: update_branch was refused: merge conflict/);
 });
 
-test("the independent executor workflow runs default-branch code on main push and by hand, read-only, in the admission environment", () => {
+test("the independent executor uses actions write for full reruns and otherwise read-only workflow permissions", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-merge-executor.yml"), "utf8");
   assert.match(text, /on:\n  # [^\n]*\n  push:\n    branches: \[main\]\n  workflow_dispatch:\n/);
   assert.doesNotMatch(text, /^  workflow_run:/m, "slot reports execute inline, without another hosted run");
   assert.doesNotMatch(text, /^  schedule:/m, "executor recovery is event driven, not another hourly hosted run");
   assert.doesNotMatch(text, /pull_request/);
-  assert.match(text, /permissions:\n  actions: read\n  checks: read\n  contents: read\n  pull-requests: read\n\n/);
-  assert.doesNotMatch(text, /^\s+[a-z-]+: write$/m);
+  assert.match(text, /permissions:\n(?:  #[^\n]*\n)?  actions: write\n  checks: read\n  contents: read\n  pull-requests: read\n\n/);
+  assert.deepEqual(text.match(/^\s+[a-z-]+: write$/gm), ['  actions: write']);
   assert.match(text, /name: clued-merge-executor\n    runs-on: ubuntu-slim\n    timeout-minutes: 10\n    environment: clued-admission\n/);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false/);
   assert.doesNotMatch(text, /_ENFORCE/);
+});
+
+test("claim renewal opts in only a full matching head of a non-protected layer", async () => {
+  for (const [layer, progress, expected] of [['code', HEAD, 'enable_auto_merge'], ['docs', HEAD.toUpperCase(), 'enable_auto_merge'],
+    ['protected', HEAD, 'none'], ['code', HEAD.slice(0, 12), 'none'], ['code', APPROVED, 'none'], ['code', `receipt:${HEAD}`, 'none']]) {
+    const fetch = world({ pulls: [pull({ body: BODY })],
+      holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [SLOT], progress_ref: progress }],
+      extra: checksRoute({ 'clued-admission-verified': [verified({ output: { title: `ADMITTED [normal · ${layer} · reruns 1]` } })] }) });
+    const result = await run(fetch);
+    assert.equal(result.actions[0].action, expected, `${layer}: ${progress}`);
+    if (expected === 'enable_auto_merge') assert.match(result.actions[0].reason, new RegExp(`opted in by the claim renewal at ${HEAD}`));
+  }
+});
+
+const gateOnlyRun = (extra = {}) => ({ id: 700, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD,
+  event: 'pull_request', status: 'completed', conclusion: 'success', run_attempt: 1, ...extra });
+const rerunWorld = ({ attempt = 1, limit = 1, admitted = true, jobs = [['admission-gate', 'success'], ['clued-components', 'skipped']],
+  runs, currentHead = HEAD, currentAttempt = attempt, extra = {} } = {}) => world({
+  pulls: [pull({ body: BODY })], extra: {
+    ...checksRoute({ 'clued-admission-verified': [verified({ conclusion: admitted ? 'success' : 'failure',
+      output: { title: `${admitted ? 'ADMITTED' : 'REJECTED'} [normal · code · reruns ${limit}]` } })] }),
+    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: runs ?? [gateOnlyRun({ run_attempt: attempt })] },
+    [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: jobs.map(([name, conclusion]) => ({ name, conclusion })) },
+    [`/repos/${REPO}/pulls/5`]: { ...pull(), state: 'open', head: { sha: currentHead } },
+    [`/repos/${REPO}/actions/runs/700`]: gateOnlyRun({ run_attempt: currentAttempt }),
+    [`POST /repos/${REPO}/actions/runs/700/rerun`]: { __status: 201, body: {} },
+    ...extra,
+  },
+});
+
+test("an admitted gate-only run is rerun with all jobs once using GITHUB_TOKEN, with no App token or merge opt-in", async () => {
+  const fetch = rerunWorld();
+  const result = await run(fetch, { CLUED_ADMISSION_APP_ID: '', CLUED_ADMISSION_APP_PRIVATE_KEY: '' });
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual([result.actions[0].action, result.actions[0].run_id, result.actions[0].status], ['rerun_gated', 700, 201]);
+  assert.deepEqual(writes(fetch).map((c) => [c.method, c.route, c.authorization, c.body]),
+    [['POST', `/repos/${REPO}/actions/runs/700/rerun`, 'Bearer t', null]]);
+  assert.equal(fetch.calls.some((c) => c.route.includes('access_tokens')), false);
+});
+
+test("only exactly gate-only successful pull_request runs qualify for automatic reruns", async () => {
+  for (const options of [{ jobs: [['admission-gate', 'success'], ['clued-components', 'success']] },
+    { jobs: [['admission-gate', 'success']] }, { jobs: [['clued-components', 'skipped']] },
+    { jobs: [['admission-gate', 'success'], ['clued-components', 'neutral']] },
+    { jobs: [['admission-gate', 'failure'], ['clued-components', 'skipped']] },
+    { runs: [gateOnlyRun({ conclusion: 'failure' })] }, { runs: [gateOnlyRun({ event: 'push' })] },
+    { runs: [gateOnlyRun({ head_sha: APPROVED })] }]) {
+    const fetch = rerunWorld(options);
+    assert.notEqual((await run(fetch)).actions[0].action, 'rerun_gated', JSON.stringify(options));
+    assert.equal(writes(fetch).some((c) => c.route.endsWith('/rerun')), false);
+  }
+});
+
+test("reruns are bounded by admission, attempt metadata and the one automatic retry", async () => {
+  for (const options of [{ admitted: false }, { limit: 0 }, { attempt: 2 }, { attempt: 2, limit: 2 }, { attempt: undefined }, { attempt: '1' }]) {
+    if (options.attempt === undefined && 'attempt' in options) options.attempt = null;
+    const fetch = rerunWorld(options);
+    assert.equal((await run(fetch)).actions[0].action, 'none', JSON.stringify(options));
+    assert.deepEqual(writes(fetch), []);
+  }
+});
+
+test("a newer run, a moved PR head or a changed attempt prevents rerunning the stale run", async () => {
+  for (const options of [{ currentHead: APPROVED }, { currentAttempt: 2 },
+    { runs: [gateOnlyRun(), gateOnlyRun({ id: 701, conclusion: 'failure' })] }]) {
+    const fetch = rerunWorld(options);
+    assert.equal((await run(fetch)).actions[0].action, 'none', JSON.stringify(options));
+    assert.deepEqual(writes(fetch), []);
+  }
+});
+
+test("a rerun refusal is reported without merging or requesting App actions permissions", async () => {
+  const fetch = rerunWorld({ extra: { [`POST /repos/${REPO}/actions/runs/700/rerun`]: { __status: 403, body: { message: 'Resource not accessible' } } } });
+  const result = await run(fetch);
+  assert.match(result.notices[0], /rerun_gated was refused/);
+  assert.equal(result.actions[0].status, 403);
+  assert.equal(writes(fetch).length, 1);
+});
+
+test("a newer workflow run created after planning prevents rerunning the old gate-only run", async () => {
+  let reads = 0;
+  const fetch = rerunWorld({ extra: {
+    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: () => ({ workflow_runs:
+      ++reads < 3 ? [gateOnlyRun()] : [gateOnlyRun(), gateOnlyRun({ id: 701, conclusion: 'failure' })] }),
+  } });
+  const result = await run(fetch);
+  assert.equal(result.actions[0].action, 'none');
+  assert.deepEqual(writes(fetch), []);
 });
