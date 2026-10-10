@@ -2215,7 +2215,7 @@ async function callModelDomainTool(request: Request, env: ContinuityEnv,
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
     }
     if (error instanceof BootstrapInputDenied) throw new HttpError(400, "Exact DatasetSplit bootstrap input required.");
-    if (error instanceof BootstrapReadinessDenied) throw new HttpError(403, "DatasetSplit bootstrap readiness denied or unavailable.");
+    if (error instanceof BootstrapReadinessDenied) throw new HttpError(403, "DatasetSplit bootstrap readiness denied or unavailable. Reason: " + error.reason + ".");
     if (error instanceof ModelDomainToolDenied) throw new HttpError(403, "Model domain source denied or unavailable.");
     throw error;
   }

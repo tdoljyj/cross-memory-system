@@ -30,6 +30,18 @@ test('readiness denies changed bytes, elevated result, stale source and private 
   const s=stub(mutate);await assert.rejects(readBootstrapReadiness(s.rpc,{},()=>now),BootstrapReadinessDenied);assert.equal(s.calls.length,1);
  }
 });
+test('readiness reason is bounded and time gates retain exact future/stale boundaries',async()=>{
+ for(const [value,reason] of [[new Date(now+1).toISOString(),'TIME_FUTURE'],[new Date(now-300001).toISOString(),'TIME_STALE'],['not-a-time','TIME_INVALID']]){
+  const s=stub(v=>({...v,evaluated_at:value}));
+  await assert.rejects(readBootstrapReadiness(s.rpc,{},()=>now),e=>e instanceof BootstrapReadinessDenied&&e.reason===reason);
+  assert.deepEqual(s.calls.map(v=>v.name),[BOOTSTRAP_READINESS_RPC]);
+ }
+ for(const offset of [0,-300000]){
+  const s=stub(v=>({...v,evaluated_at:new Date(now+offset).toISOString()}));
+  assert.equal((await readBootstrapReadiness(s.rpc,{},()=>now)).bootstrap_write_authorized,false);
+ }
+ assert.equal(new BootstrapReadinessDenied('private detail').reason,'UNSPECIFIED');
+});
 test('one failed dispatch is completion unknown and never retried',async()=>{
  const s=stub(v=>v,()=>{throw Error('lost response');});await assert.rejects(commitBootstrap(s.rpc,input(),()=>now),BootstrapCompletionUnknown);assert.equal(s.calls.length,1);
 });

@@ -23,6 +23,9 @@ export interface BootstrapCommitResult {
 export class BootstrapInputDenied extends Error { constructor(); }
 export class BootstrapExecutionDenied extends Error { constructor(); }
 export class BootstrapCompletionUnknown extends Error { constructor(); }
-export class BootstrapReadinessDenied extends Error { constructor(); }
+export class BootstrapReadinessDenied extends Error {
+  constructor(reason?: string);
+  reason: 'INPUT' | 'RPC' | 'RESULT_SCHEMA' | 'FIXED_SOURCE' | 'TIME_INVALID' | 'TIME_FUTURE' | 'TIME_STALE' | 'UNSPECIFIED';
+}
 export function readBootstrapReadiness(rpc:ExistingBindingRpc,input:unknown,clock?:()=>number):Promise<Readonly<BootstrapReadiness>>;
 export function commitBootstrap(rpc:ExistingBindingRpc,input:unknown,clock?:()=>number):Promise<Readonly<BootstrapCommitResult>>;
