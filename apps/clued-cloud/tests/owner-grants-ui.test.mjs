@@ -391,6 +391,73 @@ test('DatasetSplit bootstrap cannot approve an incompatible server confirmation 
   }
 });
 
+const CORRECTION_REQUEST = 'af1cabdb-5259-4ca3-94d3-133f1af122c8';
+const CORRECTION_GRANT = '4970e492-d26e-4974-adaa-757b2146b171';
+async function openCorrection(f, grantChange = {}) {
+  f.emit('INITIAL_SESSION',session('owner'));
+  f.calls[0].resolve({data:{status:'ok',request:{...request('approved_once'),request_id:CORRECTION_REQUEST,
+    action:'model.dataset_split.bootstrap',grant:{grant_id:CORRECTION_GRANT,uses:0,max_uses:1,revoked:false,
+      expires_at:new Date(Date.now()+86400_000).toISOString(),...grantChange}},
+    view:{action:'model.dataset_split.bootstrap',expires_seconds:86400}},error:null});
+  await f.settle();
+}
+function correctionIssue(options = {}) {
+  const result = issued({seconds:3600,...options});
+  result.data.confirmation_view.action='model.dataset_split.bootstrap';
+  result.data.confirmation_view.max_uses=1;
+  result.data.confirmation_view.correction={request_id:CORRECTION_REQUEST,previous_grant_id:CORRECTION_GRANT,
+    previous_expires_at:'2099-01-01T00:00:00Z'};
+  return result;
+}
+test('the original decided request offers a Native correction view and never mutates a grant before explicit confirmation',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  assert.equal(f.calls.length,1,'loading a decided request never issues or commits a token');
+  assert.match(f.text(),/原批准已保留/);
+  f.button('查看限时修正').props.onClick();
+  assert.deepEqual(plain([f.calls[1].name,f.calls[1].args.p_input]),
+    ['clued_dataset_split_grant_correction_issue_v1',{request_id:CORRECTION_REQUEST}]);
+  f.calls[1].resolve(correctionIssue());await f.settle();
+  assert.equal(f.calls.length,2);assert.match(f.text(),/确认收窄授权期限/);
+  assert.match(f.text(),/不超过原期限/);assert.ok(f.text().includes(CORRECTION_GRANT));
+  assert.equal(f.nodes('select').length,0);
+  f.button('确认限时修正').props.onClick();
+  assert.deepEqual(plain([f.calls[2].name,f.calls[2].args.p_input]),
+    ['clued_owner_grant_v1',{confirmation_token:'clued_ogr_a',view_digest:'d'.repeat(64)}]);
+  f.calls[2].resolve(committed);await f.settle();
+  assert.match(f.text(),/授权期限已修正/);assert.match(f.text(),/旧授权已撤销，原申请和批准历史保留/);
+});
+test('spent, revoked or wrong original grants offer no correction; cancel changes no authorization',async t=>{
+  for(const change of [{uses:1},{revoked:true},{grant_id:'another-grant'}]){
+    const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f,change);
+    assert.ok(!f.nodes('button').some(n=>f.text(n)==='查看限时修正'));assert.equal(f.calls.length,1);
+  }
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  f.button('查看限时修正').props.onClick();f.calls[1].resolve(correctionIssue());await f.settle();
+  f.button('返回原批准').props.onClick();f.render();assert.equal(f.calls.length,2);
+  assert.ok(!f.nodes('button').some(n=>f.text(n)==='确认限时修正'));
+});
+test('an expiring correction token refreshes through the same correction door, and unknown completion uses the original token',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  f.button('查看限时修正').props.onClick();
+  f.calls[1].resolve(correctionIssue({expires:new Date(Date.now()+5000).toISOString()}));await f.settle();
+  f.button('确认限时修正').props.onClick();
+  assert.equal(f.calls[2].name,'clued_dataset_split_grant_correction_issue_v1');
+  f.calls[2].resolve(correctionIssue({token:'clued_ogr_fresh'}));await f.settle();
+  assert.equal(f.calls[3].name,'clued_owner_grant_v1');
+  f.calls[3].reject(new TypeError('network'));await f.settle();
+  f.button('核对原操作').props.onClick();
+  assert.deepEqual(plain(f.calls[4].args),plain(f.calls[3].args));
+  f.calls[4].resolve({data:{...committed.data,replayed:true},error:null});await f.settle();
+  assert.match(f.text(),/授权期限已修正/);
+});
+test('a correction view naming another original cannot be submitted',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  f.button('查看限时修正').props.onClick();const answer=correctionIssue();
+  answer.data.confirmation_view.correction.previous_grant_id='other-grant';
+  f.calls[1].resolve(answer);await f.settle();assert.equal(f.calls.length,2);
+  assert.ok(!f.nodes('button').some(n=>f.text(n)==='确认限时修正'));assert.match(f.text(),/与原申请不一致/);
+});
+
 test('the Agent\'s suggested duration is the default; changing the options issues a new token', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount());
   await open(f, 'pending', 86400);
