@@ -1,5 +1,6 @@
 // Read-only attribution of merged-PR samples. Unknown evidence stays unknown;
 // a later head or a cancelled run is not proof of why GitHub cancelled it.
+import {ADMISSION_APP_ID} from './clued-work-admission.mjs';
 const SHA = /^[a-f0-9]{40}$/;
 const time = (value) => Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
 
@@ -57,7 +58,7 @@ export async function collectAttribution({request,repository,runs,pulls,runsOfPu
     heads_complete:0,pulls_requested:pulls.length,pulls_complete:0,errors:0};
   if(!relevant.size) return {heads,updates,coverage};
   const app=await request('/apps/clued-admission');
-  const appId=app.ok && app.body?.slug==='clued-admission' && Number.isInteger(app.body.id)?app.body.id:null;
+  const appId=app.ok && app.body?.slug==='clued-admission' && app.body.id===ADMISSION_APP_ID?app.body.id:null;
   if(!appId) return {heads,updates,coverage};
   for(const head of relevant.keys()) {
     try {

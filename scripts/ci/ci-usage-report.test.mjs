@@ -580,8 +580,9 @@ test("the workflow: daily and by hand, hosted, read-only, the measurement App's 
   assert.match(text, /timeout-minutes: 20/);
   // Every action is pinned to a full commit SHA.
   const uses = [...text.matchAll(/uses: (\S+)/g)].map((match) => match[1]);
-  assert.deepEqual(uses.map((u) => u.split("@")[0]), ["actions/checkout", "actions/cache", "actions/upload-artifact"]);
-  for (const u of uses) assert.match(u, /@[0-9a-f]{40}$/, u);
+  assert.deepEqual(uses.map((u) => u.split("@")[0]), ["actions/checkout", "./.github/actions/ci-temporary-storage", "actions/cache", "actions/upload-artifact"]);
+  for (const u of uses.filter(x=>!x.startsWith('./'))) assert.match(u, /@[0-9a-f]{40}$/, u);
+  assert.ok(text.indexOf('uses: ./.github/actions/ci-temporary-storage') < text.indexOf('run: node --test scripts/ci/ci-usage-report.test.mjs'));
   assert.match(text, /path: \.ci-usage-cache\n/);
   assert.match(text, /path: ci-usage-report\.json\n/);
   assert.match(text, /run: node scripts\/ci\/ci-usage-report\.mjs\n/);

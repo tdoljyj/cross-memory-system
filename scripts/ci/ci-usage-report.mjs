@@ -31,9 +31,11 @@
 //   - jobs of completed runs are cached by run id (and attempt) in
 //     .ci-usage-cache/, which the workflow restores and saves, so a run's jobs
 //     are fetched once and later runs fetch only new runs;
-//   - per pull request commits, files and events are not read in version 1:
-//     the metrics that need them, Clued receipts or check titles are reported
-//     as null with the reason.
+//   - after this baseline collection, the independent measurement App may
+//     read admission-check history and merged-PR commit ancestry within the
+//     same remaining budget. Unknown state/layer stays unknown, ancestry is
+//     only a candidate proxy, and Clued historical queue/claim metrics and
+//     causal cancellation reasons remain unmeasured.
 //
 // GitHub requests per run: the run list of the window (one per 100 runs), the
 // closed pull requests until the first one updated before the window (one per

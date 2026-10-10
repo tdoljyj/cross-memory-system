@@ -1,12 +1,17 @@
 name: clued-ci-usage-report
 
 # Merge Admission v0.1 §12.1 (Task f70546e5): CI usage measurement, version 1.
-# Once a week, and by hand, this reads the workflow runs, their jobs and the
+# Daily, and by hand, this reads the workflow runs, their jobs and the
 # merged pull requests of a window (scripts/ci/ci-usage-report.mjs) and
 # reports self-hosted minutes by workflow, queue times, runs and heads per
 # merged pull request, re-runs and admission-gate minutes, as a JSON artifact
-# and a step summary. Metrics that need per pull request commits, check
-# titles or Clued receipts are reported as not measured, with the reason.
+# and a step summary. Metrics not proven by the available scoped evidence
+# are reported as not measured, with the reason.
+# After job collection, the measurement App also reads complete admission
+# histories for heads associated with merged PRs and their commit ancestry.
+# Unknown attribution stays unknown; ancestry candidates and later-head
+# cancellation observations do not prove update-main rounds or cancellation
+# causes. Historical Clued queue/claim metrics remain explicitly unmeasured.
 #
 # The measurement runs only here, never on a laptop: on 2026-10-07 a local
 # collector spent an account's whole hourly API quota and a pull request's
@@ -60,6 +65,8 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Self-test the usage report (no network, mocked fetch)
         run: node --test scripts/ci/ci-usage-report.test.mjs
       # Cache entries are immutable, so each run saves under its own key and

@@ -2,28 +2,29 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {admissionObservation,observationAt,collectAttribution,attributionMetrics} from './ci-usage-attribution.mjs';
 import {computeMetrics,createBudget,isSelfHosted,durationMinutes,round} from './ci-usage-report.mjs';
+import {ADMISSION_APP_ID as APP} from './clued-work-admission.mjs';
 const sha=n=>String(n).padStart(40,'0');
-const check=(extra={})=>({id:1,name:'clued-admission-verified',app:{id:9},head_sha:sha(1),status:'completed',
+const check=(extra={})=>({id:1,name:'clued-admission-verified',app:{id:APP},head_sha:sha(1),status:'completed',
   external_id:'pr:1:run:123',
   conclusion:'success',completed_at:'2026-10-05T10:00:00Z',output:{title:'ADMITTED [normal · protected · reruns 1]'},...extra});
 const own=()=>[{id:1,head_sha:sha(1),event:'pull_request',pull_requests:[1],head_branch:'feature',created_at:'2026-10-05T10:00:00Z'}];
 test('bind observation to exact App, head, completed verdict and fixed title grammar',()=>{
-  assert.equal(admissionObservation(check(),9,sha(1)).state,'normal');
+  assert.equal(admissionObservation(check(),APP,sha(1)).state,'normal');
   for(const delta of [{app:{id:10}},{head_sha:sha(2)},{status:'in_progress'}])
-    assert.equal(admissionObservation(check(delta),9,sha(1)),null);
+    assert.equal(admissionObservation(check(delta),APP,sha(1)),null);
   for(const delta of [{output:{title:'ADMITTED [normal · anything · reruns 1]'}},
-    {output:{title:'REJECTED: invented private failure reason'}}]) assert.equal(admissionObservation(check(delta),9,sha(1)).state,null);
+    {output:{title:'REJECTED: invented private failure reason'}}]) assert.equal(admissionObservation(check(delta),APP,sha(1)).state,null);
 });
 test('later re-verification never rewrites earlier job state',()=>{
-  const first=admissionObservation(check(),9,sha(1));
-  const later=admissionObservation(check({id:2,completed_at:'2026-10-05T11:00:00Z',output:{title:'RE-VERIFIED (state change): REJECTED [frozen · protected · reruns 0]'}}),9,sha(1));
+  const first=admissionObservation(check(),APP,sha(1));
+  const later=admissionObservation(check({id:2,completed_at:'2026-10-05T11:00:00Z',output:{title:'RE-VERIFIED (state change): REJECTED [frozen · protected · reruns 0]'}}),APP,sha(1));
   assert.equal(observationAt([later,first],'2026-10-05T10:30:00Z',1).state,'normal');
   assert.equal(observationAt([first,later],'2026-10-05T11:01:00Z',1).state,'frozen');
   assert.equal(observationAt([first,later],'2026-10-05T09:00:00Z',1),null);
 });
 test('unknown newer title, identity or timestamp blocks an older mode; other PRs never assign it',()=>{
-  const first=admissionObservation(check(),9,sha(1));
-  const later=extra=>admissionObservation(check({id:2,completed_at:'2026-10-05T11:00:00Z',...extra}),9,sha(1));
+  const first=admissionObservation(check(),APP,sha(1));
+  const later=extra=>admissionObservation(check({id:2,completed_at:'2026-10-05T11:00:00Z',...extra}),APP,sha(1));
   assert.equal(observationAt([first,later({output:{title:'NEW FORMAT'}})],'2026-10-05T11:01:00Z',1).state,null);
   for(const extra of [{external_id:''},{completed_at:null}])
     assert.equal(observationAt([first,later(extra)],'2026-10-05T11:01:00Z',1),null);
@@ -33,7 +34,7 @@ function github({mainRelation='ahead',firstRelation='diverged',finalParents=[{sh
   const calls=[];
   const request=async route=>{calls.push(route);if(cap && calls.length>2)return{ok:false,stopped:'request_cap'};
     let body;
-    if(route==='/apps/clued-admission')body={slug:'clued-admission',id:9};
+    if(route==='/apps/clued-admission')body={slug:'clued-admission',id:APP};
     else if(route.includes('/check-runs?'))body={total_count:1,check_runs:[check(foreign?{app:{id:99}}:{})]};
     else if(route.endsWith('/pulls/1'))body={number:1,merged_at:'2026-10-05T12:00:00Z',merge_commit_sha:sha(5),head:{sha:sha(3)},commits:2};
     else if(route.includes('/pulls/1/commits?'))body=[{sha:sha(1),parents:[{sha:sha(6)}]},{sha:sha(3),parents:[{sha:sha(1)},{sha:sha(2)}]}];
@@ -45,7 +46,7 @@ function github({mainRelation='ahead',firstRelation='diverged',finalParents=[{sh
   return{request,calls};
 }
 const collect=g=>collectAttribution({request:g.request,repository:'o/r',runs:own(),pulls:[{number:1}],runsOfPull:own});
-test('count main incorporation only with actual pre-merge DAG proof',async()=>{
+test('count source merge candidates with pre-merge main ancestry, not historical update rounds',async()=>{
   const data=await collect(github());assert.equal(data.updates[0].count,1);assert.equal(data.coverage.pulls_complete,1);
   assert.equal((await collect(github({mainRelation:'diverged'}))).updates[0].count,0);
   assert.equal((await collect(github({firstRelation:'ahead'}))).updates[0].count,0);
@@ -121,7 +122,7 @@ test('same-head dispatch and push jobs do not borrow a PR admission observation'
   assert.equal(metric.self_hosted_minutes.observed_jobs,0);
 });
 test('unsampled and multiply-associated PRs remain unknown on a sampled SHA',()=>{
-  const checks=[admissionObservation(check(),9,sha(1)),admissionObservation(check({id:2,external_id:'pr:999:run:123'}),9,sha(1))];
+  const checks=[admissionObservation(check(),APP,sha(1)),admissionObservation(check({id:2,external_id:'pr:999:run:123'}),APP,sha(1))];
   const attribution={heads:new Map([[sha(1),checks]]),updates:[],coverage:{pulls_complete:0}};
   const runs=[[999],[1,999]].map((pull_requests,i)=>({...own()[0],id:i+1,pull_requests}));
   const job={status:'completed',labels:['self-hosted'],conclusion:'success',started_at:'2026-10-05T10:01:00Z',completed_at:'2026-10-05T10:10:00Z'};
