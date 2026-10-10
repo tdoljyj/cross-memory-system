@@ -8,10 +8,10 @@
 // keeps its own suite (test:v2:red) and helper files are never tests.
 //
 // Usage: node scripts/select-tests.mjs <unit|db|all> [--list] [--] [node --test args]
-import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runNodeTests } from "./run-tests.mjs";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TESTS_DIR = path.join(APP_ROOT, "tests");
@@ -92,7 +92,7 @@ export function classifyTests(testsDir = TESTS_DIR) {
   return result;
 }
 
-function main(argv) {
+async function main(argv) {
   const [mode, ...rest] = argv;
   if (!MODES.has(mode)) {
     console.error(USAGE);
@@ -116,12 +116,15 @@ function main(argv) {
   }
   let status = 0;
   for (const args of nodeTestRuns(mode, { unit, db }, extraArgs, relative)) {
-    const child = spawnSync(process.execPath, args, { cwd: APP_ROOT, stdio: "inherit" });
-    if (child.error) {
-      console.error(`select-tests: ${child.error.message}`);
+    let code;
+    try {
+      code = await runNodeTests(args, { cwd: APP_ROOT });
+    } catch (error) {
+      console.error(`select-tests: ${error.message}`);
       return 1;
     }
-    if (child.status !== 0) status = child.status ?? 1; // a null status means the child was killed by a signal
+    if (code !== 0) status = code;
+    if (code >= 128) break; // a cancelled suite must not start another one
   }
   return status;
 }
@@ -154,5 +157,5 @@ function invokedDirectly() {
 }
 
 if (invokedDirectly()) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2));
 }

@@ -84,6 +84,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      # Job-owned temporary storage also covers npm/native-package extraction.
+      - name: Use runner-owned temporary storage
+        run: |
+          test -d "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install from lockfile
         run: >-
           timeout --signal=TERM --kill-after=15s 8m
@@ -124,6 +129,11 @@ jobs:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+      # Job-owned temporary storage also covers npm/native-package extraction.
+      - name: Use runner-owned temporary storage
+        run: |
+          test -d "$RUNNER_TEMP"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install from lockfile
         run: npm ci --ignore-scripts
       - run: npm run lint
