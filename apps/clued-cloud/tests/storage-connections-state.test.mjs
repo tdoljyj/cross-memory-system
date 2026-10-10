@@ -176,3 +176,63 @@ test("account switch before lifecycle dispatch prevents stale consent from using
  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==="delete").length,0);assert.equal(f.navigation.length,0);
  }
 });
+
+test("unavailable delete previews explain provider conditions without suggesting an active connection needs reconnect",async()=>{
+ for(const [reason,expected] of [["can_trash_unavailable","未能确认 Google 允许"],
+  ["conditional_capability_unavailable","未取得删除所需的版本保护信息"]]){
+  const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();
+  f.respond(i,{...preview,trash_available:false,reason});await f.settle();
+  assert.ok(f.text().includes(expected));assert.ok(!f.text().includes("请先恢复连接"));
+  assert.ok(!f.text().includes("删除连接并移入回收站"));assert.equal(f.requests.length,i+1);
+  f.click("仅删除连接，保留文件夹");await f.settle();
+  const body=JSON.parse(f.requests[i+1].init.body);
+  assert.equal(body.action,"delete");assert.equal(body.confirmation.trash_created_root,false);
+  assert.ok(!("metadata_digest"in body.confirmation));assert.ok(!("root_version"in body.confirmation));
+ }
+});
+
+test("safe read failures remain distinct, do not leak responses or retry, and cancel leaves zero mutations",async()=>{
+ for(const [reason,expected] of [["fresh_authorization_required","当前 Google 授权无法"],
+  ["metadata_unavailable","未能读取 Google 的文件夹信息"],
+  ["inventory_unavailable","未能完整核对"],["operation_deadline","限定时间内"],
+  ["root_drift","登记信息不一致"],["storage_connection_unavailable","访问资格未能确认"],
+  ["storage_owner_lifecycle_conflict","核对期间发生了变化"]]){
+  const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();
+  f.respond(i,{reason,error:"private provider reply synthetic-secret"},409);await f.settle();
+  assert.ok(f.text().includes(expected));assert.ok(!f.text().includes("synthetic-secret"));
+  assert.ok(!f.text().includes("删除连接并移入回收站"));assert.equal(f.requests.length,i+1);
+  f.click("取消");await f.settle();assert.equal(f.requests.length,i+1);
+  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==="delete").length,0);
+ }
+});
+
+test("unknown or malformed preview reasons stay generic and never acquire destructive confirmation",async()=>{
+ for(const [value,status] of [[{trash_available:false,reason:"private_provider_body"},200],
+  [{reason:"synthetic-secret provider reply"},409],[{...preview,item_count:-1},200],
+  [{...preview,trash_available:"true"},200]]){
+  const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();
+  f.respond(i,value,status);await f.settle();assert.ok(f.text().includes("当前无法确定具体原因"));
+  assert.ok(!f.text().includes("private_provider_body"));assert.ok(!f.text().includes("synthetic-secret"));
+  assert.ok(!f.text().includes("删除连接并移入回收站"));assert.equal(f.requests.length,i+1);
+  f.click("取消");await f.settle();assert.equal(f.requests.length,i+1);
+ }
+});
+
+test("connection and profile CAS drift explain refreshing the list while a foreign root stays refused",async()=>{
+ for(const changed of [{connection_version:2},{profile_version:2},{root_folder_id:"foreign-root"}]){
+  const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();
+  f.respond(i,{...preview,...changed});await f.settle();
+  assert.ok(f.text().includes(changed.root_folder_id?"登记信息不一致":"关闭窗口并刷新状态"));
+  assert.ok(!f.text().includes("删除连接并移入回收站"));assert.equal(f.requests.length,i+1);
+  f.click("取消");await f.settle();assert.equal(f.requests.length,i+1);
+ }
+});
+
+test("known inactive state and picked provenance explain why preview is not dispatched",async()=>{
+ for(const [row,expected] of [[revoked,"目前未处于已连接状态"],
+  [{...connection,created_by_clued:false},"已有或自行选择的文件夹"]]){
+  const f=await ready([row]),i=f.requests.length;f.click("删除连接");await f.settle();
+  assert.ok(f.text().includes(expected));assert.ok(!f.text().includes("删除连接并移入回收站"));
+  assert.equal(f.requests.length,i);f.click("取消");await f.settle();assert.equal(f.requests.length,i);
+ }
+});
