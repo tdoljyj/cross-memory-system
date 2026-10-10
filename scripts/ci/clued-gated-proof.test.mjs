@@ -117,3 +117,16 @@ test('source qualification does not accept truthy failed objects',async()=>{
   const w=world();w.authorizeSource=async()=>({passed:false});
   assert.equal((await qualifiedCI(w)).state,'unknown');
 });
+test('terminal-only detail or final-list read failures remain unknown without rejection',async()=>{
+  for(const terminalResult of [{runDelta:{conclusion:'failure'}},{jobs:[gate,primary({conclusion:'skipped'})]}]) {
+    for(const stage of ['detail','list']) {
+      const w=world(terminalResult),read=w.read;let lists=0;
+      w.read=async url=>{
+        if(url.includes('/actions/runs?') && ++lists===2 && stage==='list')throw Error('terminal list');
+        if(url.endsWith('/actions/runs/7') && stage==='detail')throw Error('terminal detail');
+        return read(url);
+      };
+      assert.equal((await qualifiedCI(w)).state,'unknown');
+    }
+  }
+});

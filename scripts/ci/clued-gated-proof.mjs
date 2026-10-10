@@ -90,6 +90,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       a.run_attempt===b.run_attempt && a.status===b.status && a.conclusion===b.conclusion &&
       Array.isArray(a.pull_requests) && a.pull_requests.length===1 && a.pull_requests[0]?.number===prNumber;
     const terminal=async(run,result)=>{
+      try {
       if(!sameRun(await read(`/repos/${repository}/actions/runs/${run.id}`),run))
         return unknown('terminal proof attempt changed');
       const final=await completeList(read,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request`,'workflow_runs');
@@ -103,6 +104,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       if(finalLatest.size!==latest.size || [...latest].some(([file,row])=>!sameRun(finalLatest.get(file),row)))
         return unknown('terminal latest workflow set changed');
       return result;
+      } catch {return unknown('terminal proof recheck read failed');}
     };
     const scopes=[],proofs=[];
     for(const [file,run] of [...latest].sort(([a],[b])=>a.localeCompare(b))) {
