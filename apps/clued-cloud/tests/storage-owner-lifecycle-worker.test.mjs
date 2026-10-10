@@ -153,3 +153,56 @@ test('reconnect recovery projects waiting/cancelled read-only state, never start
     assert.equal(f.oauthCalls.length,0);assert.equal(f.provider.length,0);assert.equal(f.calls.length,1);
   }
 });
+
+test('missing or weak provider ETag has a safe explicit reason and never qualifies a trash write',async()=>{
+  for(const etag of [undefined,'W/"provider-version"','unquoted']){
+    const f=await fixture({fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')
+      ?Response.json(metadata(),{headers:etag===undefined?{}:{etag}}):undefined});
+    const preview=await f.lifecycle.previewDelete(f.owner,f.connection);
+    assert.equal(preview.trash_available,false);assert.equal(preview.reason,'conditional_capability_unavailable');
+    assert.equal(preview.connection_version,2);assert.equal(preview.profile_version,1);
+    await assert.rejects(f.lifecycle.delete(f.owner,{...f.base,confirmation:{...f.confirmation,
+      root_version:preview.root_version,metadata_digest:preview.metadata_digest}}),e=>e.reason==='root_drift');
+    assert.equal(f.calls.some(c=>c.action==='delete_prepare'),false);assert.equal(f.patches(),0);
+    assert.doesNotMatch(JSON.stringify(preview),/provider-version|etag|credential|synthetic-access-token|synthetic-refresh-token/);
+  }
+});
+
+test('Google canTrash refusal is distinct from missing conditional capability, without admission',async()=>{
+  for(const capabilities of [{canTrash:false},{}]){
+    const f=await fixture({fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')
+      ?Response.json({...metadata(),capabilities}):undefined});
+    const preview=await f.lifecycle.previewDelete(f.owner,f.connection);
+    assert.equal(preview.trash_available,false);assert.equal(preview.reason,'can_trash_unavailable');
+    assert.equal(f.patches(),0);assert.ok(f.calls.every(c=>c.action==='describe'));
+  }
+});
+
+test('root metadata and full inventory failures preserve distinct fixed reasons, never upstream text',async()=>{
+  for(const [path,reason] of [['/synthetic-root','metadata_unavailable'],['/files','inventory_unavailable']]){
+    const f=await fixture({fetch:u=>u.pathname.endsWith(path)?new Response('synthetic-refresh-token private provider details',{status:503}):undefined});
+    await assert.rejects(f.lifecycle.previewDelete(f.owner,f.connection),e=>e.reason===reason
+      &&e.message==='storage_owner_lifecycle_unavailable'&&!e.message.includes('private'));
+    assert.equal(f.patches(),0);assert.ok(f.calls.every(c=>c.action==='describe'));
+  }
+});
+
+test('authorization and current connection qualification failures are safe and make no provider request',async()=>{
+  const expired=await fixture({expired:true});
+  await assert.rejects(expired.lifecycle.previewDelete(expired.owner,expired.connection),e=>e.reason==='fresh_authorization_required');
+  const stale=await fixture({rpc:input=>{if(input.action==='describe')throw new Error('storage_connection_unavailable');}});
+  await assert.rejects(stale.lifecycle.previewDelete(stale.owner,stale.connection),e=>e.reason==='storage_connection_unavailable');
+  for(const f of [expired,stale]){assert.equal(f.provider.length,0);assert.equal(f.patches(),0);assert.ok(f.calls.every(c=>c.action==='describe'));}
+});
+
+test('root identity drift and bounded traversal deadline retain their reason without authorizing effects',async t=>{
+  const drift=await fixture({fetch:(u,init,{metadata})=>u.pathname.endsWith('/synthetic-root')
+    ?Response.json({...metadata(),parents:['moved-parent']}):undefined});
+  await assert.rejects(drift.lifecycle.previewDelete(drift.owner,drift.connection),e=>e.reason==='root_drift');
+  const before=Date.now();let now=before;
+  const timeout=await fixture({fetch:()=>{now=before+26000;return undefined;}});
+  t.mock.method(Date,'now',()=>now);
+  await assert.rejects(timeout.lifecycle.previewDelete(timeout.owner,timeout.connection),e=>e.reason==='operation_deadline');
+  t.mock.restoreAll();
+  for(const f of [drift,timeout]){assert.equal(f.patches(),0);assert.ok(f.calls.every(c=>c.action==='describe'));}
+});
