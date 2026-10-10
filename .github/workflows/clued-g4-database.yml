@@ -90,6 +90,9 @@ jobs:
         if: github.event_name == 'push'
         with:
           node-version: 22.23.3
+      - name: Configure job temporary storage
+        if: github.event_name == 'push'
+        uses: ./.github/actions/ci-temporary-storage
       - name: Verify duplicate-push proof regressions
         if: github.event_name == 'push'
         run: node --test scripts/ci/clued-push-reuse.test.mjs
@@ -134,6 +137,8 @@ jobs:
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;
           # restoring the ~860 MB Actions cache on top of it only adds download time.
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
         # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
         env:
@@ -258,6 +263,8 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
         # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
         env:

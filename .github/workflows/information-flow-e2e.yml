@@ -108,6 +108,9 @@ jobs:
         if: github.event_name == 'push'
         with:
           node-version: 22.23.3
+      - name: Configure job temporary storage
+        if: github.event_name == 'push'
+        uses: ./.github/actions/ci-temporary-storage
       - name: Verify duplicate-push proof regressions
         if: github.event_name == 'push'
         run: node --test scripts/ci/clued-push-reuse.test.mjs
@@ -151,6 +154,8 @@ jobs:
           node-version: 24.19.0
           # Self-hosted runners keep a persistent ~/.npm; no Actions npm cache.
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
         run: npm ci --cache "$HOME/.npm" --prefer-offline
 
@@ -280,6 +285,8 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
         run: npm ci
 
