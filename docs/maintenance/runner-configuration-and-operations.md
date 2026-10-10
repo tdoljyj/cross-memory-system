@@ -1,6 +1,6 @@
 # Runner 配置与运维规范
 
-版本：v1.0；适用仓库：`tdoljyj/cross-memory-system`。编写基线：2026-10-07，主线提交 `4765da25502ec1ff0da92e1098ea3535b80a4d19`。
+版本：v1.1；适用仓库：`tdoljyj/cross-memory-system`。初版基线：2026-10-07；本次无窗口启动修订基线：2026-10-08，主线提交 `5345dfdc552d54c89a5f004d761afc831c562f44`。实施与验收跟踪 Task `a015cee8`，采用范围见 Canonical Decision `3b196eb8-f02e-48b3-82c8-d46c2e0955ea`。
 
 本文件是工程 Runbook，规定配置、上线验收、日常维护、增减与回退的操作要求。它不声明某台机器此刻在线，也不代替操作授权、Clued 当前任务或 GitHub 准入。下文的“必须”是执行本规范的要求；“现状”只说明编写时已核对的实现。未实现的要求见第 12 节，不得据此宣称已达标。
 
@@ -137,15 +137,34 @@ $tokens = $null; $parseErrors = $null
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 ```
 
-现有 renderer 的 `-InstallStartup` 只写 Startup 和 HKCU Run，不能保证退出后自动恢复；`-StartNow` 只请求一次启动。新部署必须单独安装受审的调度定义，并验证退出恢复。不得在带现有 runner 的机器上直接执行文档中的安装操作。
+### 5.1 无窗口启动与唯一入口
+
+后台看门狗必须使用真正不分配控制台的启动方式。单独设置 `start /min`、PowerShell `-WindowStyle Hidden` 或把终端改成最小化都不算验收：它们可能仍创建终端，并显示 WSL 的错误输出。不得通过修改全机默认终端、禁用 WSL、放宽受控文件夹访问或关闭 runner 来消除弹窗。
+
+实现入口为 [launcher](../../scripts/ci/self-hosted/launch-host-watchdog.py) 与 [installer](../../scripts/ci/self-hosted/install-host-watchdog-launcher.ps1)。installer 在 WSL 所属日常用户的 `%LOCALAPPDATA%\CluedCIWatchdog\<HostId>` 保存独立启动器、控制台日志和非秘密回退材料；计划任务运行真实绝对路径的 `pythonw.exe -I -S`。启动器以 `CREATE_NO_WINDOW` 创建 PowerShell，关闭标准输入，将标准输出和错误写入同一日志，等待守护脚本退出并保留其退出码。它不修改生成的守护脚本、WSL/runner 服务或容量保护逻辑。日志超过 5 MiB 时保留一份上一轮输出；业务运行日志仍由原守护脚本保留。日志按诊断材料保护，不写秘密，不靠可见窗口观察后台错误。日志文件成功打开后的进程创建失败和退出会写日志；路径、解释器、日志创建/轮换等更早的失败须核对任务 LastTaskResult 和诊断运行结果，不能承诺日志不可写时仍能落盘。
+
+每台主机只启用一个自动入口：`Clued-CI-Watchdog-<HostId>` 计划任务。保留任务 IgnoreNew 和脚本 mutex；单实例锁不能替代入口去重。不得同时保留 Startup cmd、HKCU Run 和计划任务；旧 cmd 外层也可能闪窗。现有 renderer 的 `-InstallStartup` 名称为兼容旧调用保留，行为改为调用 installer 安装这一任务，不再创建两处登录入口；`-StartNow` 单独用于 renderer 时只启动已核对 action、启动器和脚本路径的任务，须先在验证切换后手动 Enable 已暂存的任务；它不自行启用 Disabled 任务，不回退到直接启动 PowerShell。解释器缺失、陌生旧入口、其他账号的任务或现有任务仍 Running 时停止安装并保留现场。
+
+```powershell
+# 仅在明确批准的目标主机维护窗口执行；不是预览命令。
+# 先确认已有看门狗/任务状态，按下文切换流程处理运行中的旧实例。
+$pythonw = 'C:\Python312\pythonw.exe' # 替换为本机已核验的真实绝对路径
+.\scripts\ci\self-hosted\install-host-watchdog-launcher.ps1 `
+  -HostId company-primary -WatchdogPath 'C:\clued-ci\watchdog-clued-ci.ps1' `
+  -PythonwPath $pythonw
+```
+
+先用 installer 的 `-ValidateOnly` 只读核对解释器、脚本和准确旧入口；该选项不写文件、任务或启动项。安装器注册任务时保持 Disabled，核对并停用旧入口后仍默认 Disabled，避免一分钟触发器抢在切换完成前启动。确认旧守护已结束、资源稳定后，操作者才明确 Enable-ScheduledTask 和 Start-ScheduledTask；`-StartNow` 只用于已无旧守护的批准窗口，在迁移完成后启用并启动。不得在带现有 runner 的机器上直接照抄路径或越过以下维护边界。
 
 调度定义最低要求：WSL 所属日常账号，Interactive/Limited；登录触发 + 每分钟无限重复；IgnoreNew；ExecutionTimeLimit=0；失败后间隔一分钟重启三次；电池供电不停。沿用脚本的 mutex；不能让不同启动入口竞争管理同一主机。不得改成 SYSTEM 来“保证开机”，SYSTEM 看不到同一用户的 WSL 发行版。
 
-基线现状：家里的 `Clued-CI-Watchdog-home-primary` 已安装上述计划任务并实测 53 秒自动恢复；公司只确认原看门狗运行，未在此次规范工作中安装相同计划任务。登录会话退出后的无人值守能力不在已验范围，不能称不登录也可用。
+初版基线（2026-10-07）的验收范围仅包括家里计划任务的 53 秒自动恢复，公司当时只核对原守护运行。本修订后的端点部署与验收结果查询 Task `a015cee8` 及其 Clued Receipt，不把这份文档当实时状态。登录会话退出后的无人值守能力不在已验范围，不能称不登录也可用。
 
-安装/替换时：保存已有任务定义和启动项；核对已有路径与当前账号；启动新任务、确认唯一进程和新日志；再可逆停用重复 Startup/Run 入口。renderer 实际注册的 HKCU 属性名是 `CluedCIWatchdog-<HostId>`，与计划任务 `Clued-CI-Watchdog-<HostId>` 不同，必须按真实值核对，不能仅删除一个看起来相似的名称。
+安装/替换时，先确认资源稳定、现有看门狗没有处于容量暂停阶段，并在短窗口人工监护容量。备份已有任务 XML、准确 HKCU Run 值、Startup cmd、启动器及脚本散列；只停目标看门狗任务/准确 PID，不停 runner、Docker 或 WSL。installer 保存时间戳备份，注册并核对新 action 后，仅停用与备份完全一致的旧 Run/Startup：HKCU 属性名是 `CluedCIWatchdog-<HostId>`，旧 Startup/任务名是 `Clued-CI-Watchdog-<HostId>`。陌生值或中途变化不得覆盖。已有登录模式守护仍运行时，在新任务安装完成后只结束核对过路径与开始时间的旧守护，再启动新任务。旧 cmd 可逆改名并保留备份，不递归清理目录。任务或入口迁移任何一步失败，先 Disable 并 Stop 新任务，核对并结束该任务的 pythonw→PowerShell 子链，确认没有遗留新实例，才恢复旧入口。备份 `startup.json.task_existed=true` 时恢复准确任务 XML；为 false 时注销这次新增任务。按备份恢复准确 Run 值、cmd 和旧启动器；无旧启动器时保留新文件为停用诊断材料，不作为入口。遇到并发更改先保留现场，不覆盖新值。最后恢复并验证旧守护，避免恢复旧入口后新任务仍在拉起。不得在半迁移状态宣称完成。
 
-部署验收必须包含：Task=Running、准确进程命令与单实例、日志新增 started、阈值/单位列表正确、Windows 服务账号未变，以及受控结束**看门狗自身**后在 90 秒内自动恢复。应先确认资源稳定且停止看门狗不会影响正在依赖其保护的任务；不杀 runner/Docker/WSL。失败立即恢复原受审入口并排查，不能留下看门狗停止。
+监督进程与守护进程生命周期分开：只结束 pythonw 不保证其 PowerShell 子进程已结束。维护和回退必须核对整条进程链；遗留守护由原 mutex 限制为一份，但不能据此称已完成监督切换。退出恢复验收针对守护本身；仅杀启动器不能替代该验收。
+
+部署验收必须包含：Task=Running、pythonw→PowerShell 的准确命令链与单实例、控制台日志和业务日志新增 started、阈值/单位列表正确、Windows 服务账号未变；观察至少两个完整采样周期，实际 WSL 检查没有创建可见终端或新增终端承载进程。退出码非零和启动异常须写日志，任务保留失败恢复；受控结束**看门狗自身**后须在 90 秒内自动恢复。无窗口、恢复和登录冷启动是独立验收，未实测登录冷启动不得写为通过。应先确认资源稳定且停止看门狗不会影响正在依赖其保护的任务；不杀 runner/Docker/WSL。失败立即恢复原受审入口并排查，不能留下看门狗停止。
 
 维护停机时先暂停计划任务和所有旧入口并结束看门狗，确认无监督进程；仅 Disable-ScheduledTask 不会停止已运行实例。否则手动 stop Linux 服务后，看门狗会立即拉回。
 
@@ -261,7 +280,7 @@ wsl.exe -d Ubuntu-24.04 -u runner -e systemctl show actions.runner.tdoljyj-cross
 | self-hosted README 仍含四/五节点及登录模式、默认自动更新的历史描述 | 以当前清单、钩子加固说明及本文件的验收要求核对，数量/资格仍需实时证据 |
 | 清单 auto_update_after_registration=true；bootstrap 没有 --disableupdate/完整标准账号加固入口 | 不以基础安装成功直接上线；使用受审管理员安装/加固方案并验收，代码统一另走 PR |
 | 心跳 matrix 仅覆盖五节点，未列公司 Linux03/04 | 保留 API/实际定点 job 核对；新增/退役流程必须安排 matrix 对应变更，不能称完整覆盖 |
-| renderer 只安装 Startup/HKCU Run，未生成持久计划任务 | 新部署另提供受审的调度定义与退出恢复验收；家里已实例化，公司未在此规范工作中升级 |
+| 旧 renderer 用 cmd/隐藏 PowerShell 并同时安装 Startup/HKCU Run，可能闪窗且重复触发 | 本修订改为 pythonw/CREATE_NO_WINDOW 单一恢复任务；每个端点须独立验证无窗口、90 秒退出恢复和冷启动，不从另一个端点继承 PASS |
 | 清单 draining/maintenance/retired 不自动阻断 GitHub 或停止 primary 服务 | 必须按第 7 节隔离派单、停监督并排空，不能只改状态 |
 | 自动容量检查缺少阻断派单/停止的原子边界，listener 日志异常也不阻止暂停 | 仅是尽力检测；未闭合安全停机实现前限制新启用/扩大自动停服务模式，不能作排空或不误伤保证 |
 | capacitySuspended 只存在进程内，重启看门狗不保留此前暂停阶段 | 恢复测试在资源稳定窗口进行；若需跨进程恢复状态保证，先独立修复并验收，不宣称已有该能力 |
