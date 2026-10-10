@@ -719,6 +719,15 @@ test("R1: wait overrides cannot restore the old eight-minute polling budget", as
     fetchImpl: fakeFetch({ ...SELF_RUN, [CHECKS]: { body: { check_runs: [] } } }).fetchImpl,
     sleep: async ms => { waited += ms / 1000; } });
   assert.deepEqual([waited, outcome.admitted], [0, false], "the existing immediate fail-closed test mode stays available");
+  for (const limit of [1, 179]) {
+    const sleeps = [];
+    const expired = await gate({ env: env({ CLUED_ADMISSION_GATE_WAIT_SECONDS: String(limit) }), event: withClaim(), eventName: "pull_request",
+      fetchImpl: fakeFetch({ ...SELF_RUN, [CHECKS]: { body: { check_runs: [] } } }).fetchImpl,
+      sleep: async ms => { sleeps.push(ms / 1000); } });
+    assert.equal(sleeps.reduce((a, b) => a + b, 0), limit, "last sleep consumes only the remaining shorter budget");
+    assert.equal(sleeps.at(-1), limit % 10);
+    assert.deepEqual([expired.admitted, expired.verdict], [false, "ADMISSION_PENDING"]);
+  }
 });
 
 test("gate: deadlines, errors and fork pull requests, without Clued", async () => {
