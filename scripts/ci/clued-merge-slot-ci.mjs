@@ -118,6 +118,30 @@ async function newestCheck(fetchImpl, env, repository, headSha, { name, app_id: 
       && check.app && Number(check.app.id) === appId)
     .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
 }
+async function requiredBarrier(fetchImpl,env,repository,head,prNumber) {
+  const signal=AbortSignal.timeout(12000);
+  const bounded=(url,init)=>fetchImpl(url,{...init,signal,redirect:'error'});
+  for(const required of CI_REQUIRED_CHECKS) {
+    const check=await newestCheck(bounded,env,repository,head,required);
+    if(!check || check.status!=='completed' || check.conclusion!=='success' ||
+      (required.name==='clued-admission-verified' && !checkNamesPullRequest(check,prNumber)))return false;
+  }
+  let total=null;const seen=new Set();
+  for(let page=1;page<=20;page++) {
+    const body=await githubJson(bounded,env,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request&per_page=100&page=${page}`);
+    if(!Array.isArray(body.workflow_runs) || !Number.isSafeInteger(body.total_count) || body.total_count<0 ||
+      (total!==null && total!==body.total_count))return false;
+    total=body.total_count;
+    for(const run of body.workflow_runs) {
+      if(!Number.isSafeInteger(run.id) || seen.has(run.id) || run.head_sha!==head || run.event!=='pull_request' ||
+        run.status!=='completed')return false;
+      seen.add(run.id);
+    }
+    if(seen.size===total)return true;
+    if(seen.size>total || body.workflow_runs.length!==100)return false;
+  }
+  return false;
+}
 
 // failed, running, green, or idle (not reported), with what was seen. An
 // admission check's failure that completed before slotSince (when the claim
@@ -168,7 +192,7 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
     if (proof?.head !== headSha || proof.pr_number !== pr.number)
       return { state: "idle", reason: proof?.reason ?? "execution proof identity missing", checks };
     if (proof.state === "failed") return { state: "failed", reason: proof.reason, checks, execution: proof };
-    if (proof.passed === true && proof.state === "qualified")
+    if (proof.passed === true && proof.state === "qualified" && await requiredBarrier(fetchImpl,env,repository,headSha,pr.number))
       return { state: "green", reason: proof.reason, checks, execution: proof };
     return { state: "idle", reason: proof.reason ?? "execution scope remains unknown", checks, execution: proof };
   }
@@ -254,7 +278,7 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   for (const { pr, scope, since } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {
-      const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution: qualify });
+      let seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution: qualify });
       const report = { pr: pr.number, head_sha: pr.head.sha, ci_state: seen.state, reason: seen.reason };
       if (seen.state !== "idle") {
         const current = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
@@ -265,6 +289,10 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
           current.base.repo.default_branch !== pr.base.repo.default_branch ||
           (seen.execution?.tip && tip?.commit?.sha !== seen.execution.tip)) {
           Object.assign(report, { ci_state: "idle", reason: "PR or default tip changed before reporting CI" });
+          result.reports.push(report);continue;
+        }
+        if(seen.state==='green' && !await requiredBarrier(fetchImpl,env,repository,pr.head.sha,pr.number)) {
+          Object.assign(report,{ci_state:'idle',reason:'required checks or active runs changed before reporting CI'});
           result.reports.push(report);continue;
         }
         const response = await cluedRpc(fetchImpl, env, workspace, TOUCH_RPC, {

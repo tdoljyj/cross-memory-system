@@ -83,10 +83,12 @@ import {
   githubJson,
   githubPaged,
   parseClaimReference,
+  evaluate,
   withTokenHint,
 } from "./clued-work-admission.mjs";
 import { HOLDERS_RPC, ciStateOf, ciWorkflows } from "./clued-merge-slot-ci.mjs";
 import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-policy.mjs";
+import { createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
 export const OPT_IN = /^\s*Clued-Auto-Merge:\s*([0-9a-f]{40})\s*$/im;
 export const EXECUTOR_PERMISSIONS = Object.freeze({ contents: "write", pull_requests: "write" });
@@ -160,66 +162,34 @@ export async function executorToken({ env, fetchImpl, now = () => Date.now() }) 
 // The newest clued-admission-verified check on the head posted for this pull
 // request (review MINOR-2): admitted, and its mode.
 async function admissionOf(fetchImpl, env, repository, headSha, prNumber) {
-  const [newest] = (await appChecksOnHead(fetchImpl, env, repository, headSha, VERIFIED_CHECK))
-    .filter((check) => checkNamesPullRequest(check, prNumber));
-  if (!newest || newest.status !== "completed" || newest.conclusion !== "success" || !newest.app || Number(newest.app.id) !== ADMISSION_APP_ID) {
+  const [newest] = await appChecksOnHead(fetchImpl, env, repository, headSha, VERIFIED_CHECK);
+  if (!newest || !checkNamesPullRequest(newest, prNumber) || newest.status !== "completed" || newest.conclusion !== "success" || !newest.app || Number(newest.app.id) !== ADMISSION_APP_ID) {
     return { admitted: false, mode: null };
   }
   return { admitted: true, mode: parseModeLabel(newest.output && newest.output.title) };
 }
 
-// Every CI workflow's newest pull_request run on the head: completed and
-// successful, no job failed, the admission gate (where there is one) passed,
-// and at least one job besides the gate ran and passed. Each workflow runs one
-// of a pair of jobs (trusted-self-hosted / untrusted-hosted, so the other is
-// always skipped), and a refused gate skips every job after it (review
-// MAJOR-1 of #675; confirmation review of #684).
-export async function gatedCiOf(fetchImpl, env, repository, headSha, workflows) {
-  const listed = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${headSha}&event=pull_request&per_page=100`);
-  const newest = new Map();
-  for (const run of Array.isArray(listed && listed.workflow_runs) ? listed.workflow_runs : []) {
-    if (!run || run.head_sha !== headSha || run.event !== "pull_request") continue;
-    const file = String(run.path ?? "").replace(/@.*$/, "");
-    if (!workflows.has(file)) continue;
-    const seen = newest.get(file);
-    if (!seen || Number(run.id) > Number(seen.id)) newest.set(file, run);
-  }
-  if (!newest.size) return { passed: false, reason: "no CI workflow ran on this head" };
-  for (const [file, run] of [...newest].sort(([a], [b]) => a.localeCompare(b))) {
-    if (run.status !== "completed" || run.conclusion !== "success") {
-      return { passed: false, reason: `${file} is ${run.status}${run.conclusion ? ` (${run.conclusion})` : ""}` };
-    }
-    const listedJobs = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
-    const jobs = (Array.isArray(listedJobs && listedJobs.jobs) ? listedJobs.jobs : []).filter(Boolean);
-    if (Number(listedJobs?.total_count) > jobs.length) return { passed: false, reason: `${file} jobs may be truncated` };
-    const unfinished = jobs.find((job) => !["success", "skipped", "neutral"].includes(job.conclusion));
-    if (unfinished) return { passed: false, reason: `${file} job ${unfinished.name} is ${unfinished.conclusion ?? unfinished.status}` };
-    const gate = jobs.find((job) => job.name === GATE_JOB);
-    if (gate && gate.conclusion !== "success") return { passed: false, reason: `${file} ${GATE_JOB} was ${gate.conclusion}` };
-    if (!jobs.some((job) => job.name !== GATE_JOB && job.conclusion === "success")) {
-      const otherJobs = jobs.filter((job) => job.name !== GATE_JOB);
-      const gateOnly = gate?.conclusion === "success" && otherJobs.length > 0
-        && otherJobs.every((job) => job.conclusion === "skipped");
-      return { passed: false, reason: `${file} ran no job besides its gate (all skipped)`,
-        ...(gateOnly ? { rerun: { id: run.id, run_attempt: run.run_attempt, path: file } } : {}) };
-    }
-  }
-  return { passed: true, reason: `${newest.size} CI workflow run(s) passed on this head` };
-}
-
-const GATE_JOB = "admission-gate";
 const ENABLE_AUTO_MERGE = "mutation($id: ID!, $oid: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $oid}) { pullRequest { number autoMergeRequest { enabledAt } } } }";
 const DISABLE_AUTO_MERGE = "mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { pullRequest { number } } }";
+export function managedAutoMerge(pr) {
+  return Boolean(pr?.auto_merge) && (Boolean(optInSha(pr.body)) ||
+    pr.auto_merge.enabled_by?.login === 'clued-admission[bot]');
+}
 
 // What to do for one head pull request, without doing it.
-export async function planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy, state }) {
+export async function planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy, state, qualifyExecution }) {
+  if (pr.auto_merge && !managedAutoMerge(pr)) return {action:'none',reason:'manual auto-merge is not managed by this executor'};
+  const managed = managedAutoMerge(pr);
+  const stop = reason => ({ action: managed ? 'disable_auto_merge' : 'none', reason });
+  if (state === 'frozen') return stop('auto-merge is forbidden in frozen state');
   const admission = await admissionOf(fetchImpl, env, repository, pr.head.sha, pr.number);
   const layer = admission.mode ? admission.mode.layer : null;
   const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${pr.head.sha}`);
   if (Number(compare && compare.behind_by) > 0) {
     if (layer === "protected" || !layer) {
-      return { action: "none", reason: `the head is ${compare.behind_by} commit(s) behind; ${layer ? "a protected-layer pull request is brought up to date by its holder" : "its admission check has no mode yet"}` };
+      return stop(`the head is ${compare.behind_by} commit(s) behind; ${layer ? "a protected-layer pull request is brought up to date by its holder" : "its admission check has no mode yet"}`);
     }
+    if (managed) return stop('the managed auto-merge head is behind the default branch');
     return { action: "update_branch", reason: `the head is ${compare.behind_by} commit(s) behind the default branch` };
   }
   const opted = optInSha(pr.body);
@@ -231,18 +201,21 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
   }
   // A fully admitted queue head may recover a gate-only run even before
   // opting in to merge. Rerunning CI never grants permission to merge.
-  if (!admission.admitted || !admission.mode) return { action: "none", reason: "the head's clued-admission-verified check for this pull request has not admitted it" };
+  if (!admission.admitted || !admission.mode) return stop("the head's clued-admission-verified check for this pull request has not admitted it");
   // The executor's own state wins over the title's: a switch to frozen applies at once.
   const rules = effectiveRules(policy, state, layer);
-  if (rules.auto_merge !== "allowed") return { action: "none", reason: `auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer` };
-  const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
-  if (seen.state === "failed") return { action: "none", reason: `CI failed: ${seen.reason}` };
+  if (rules.auto_merge !== "allowed") return stop(`auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer`);
+  const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution });
+  if (seen.state === "failed" || seen.state === "running") return stop(`CI ${seen.state}: ${seen.reason}`);
   // GitHub's auto-merge waits only for the ruleset's required checks, and no gated workflow is
   // required: act only once every CI workflow that ran on the head passed, its gated jobs run,
   // as the direct merge does (Task 114d43cf). The executor runs after each slot report, that is
   // after each CI run on the head, so it acts when the last one passes.
-  const gated = await gatedCiOf(fetchImpl, env, repository, pr.head.sha, workflows);
+  const gated = seen.execution ?? (typeof qualifyExecution === 'function' ? await qualifyExecution(pr, tip) :
+    {passed:false,state:'unknown',reason:'execution qualification unavailable'});
+  if (gated.head !== pr.head.sha || gated.pr_number !== pr.number) return stop(gated.reason ?? 'execution proof identity unavailable');
   if (gated.rerun) {
+    if (managed) return stop('gate-only execution invalidates managed auto-merge before recovery');
     const attempt = gated.rerun.run_attempt;
     const limit = admission.mode.reruns_per_head;
     if (Number.isInteger(attempt) && Number.isInteger(limit) && attempt < 1 + limit && attempt === 1) {
@@ -251,21 +224,55 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
     }
     return { action: "none", reason: `waiting for CI on this head: ${gated.reason}; no automatic rerun: attempt ${attempt ?? "unknown"}, reruns ${limit ?? "unknown"} (limit reached or already retried)` };
   }
-  if (pr.auto_merge) return { action: "none", reason: "auto-merge is already on" };
+  if (!gated.passed || gated.state !== 'qualified' || seen.state !== 'green') return stop(`waiting for CI execution on this head: ${gated.reason}`);
+  if (pr.auto_merge) return { action: "none", reason: "auto-merge is already on with current qualified execution" };
   if (!opted && !renewed) return { action: "none", reason: "the pull request did not opt in to auto-merge (Clued-Auto-Merge: <head sha> or a claim renewal naming this head)" };
   if (!covered) return { action: "none", reason: `the opt-in names ${opted.slice(0, 12)}, not this head or a merge of the default branch into it` };
-  if (!gated.passed) return { action: "none", reason: `waiting for CI on this head: ${gated.reason}` };
   return { action: "enable_auto_merge", reason: `up to date, admitted, ${renewed ? `opted in by the claim renewal at ${pr.head.sha}` : "opted in"} and ${gated.reason}` };
 }
 
-export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = fs.readFileSync, now = () => Date.now() }) {
+export async function currentOperationAuthority({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action}) {
+  try {
+    const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`);
+    const mode=resolveMode({env,workspace,readFile:readPolicyFile});
+    const reference=parseClaimReference(current?.body),expected=parseClaimReference(pr.body);
+    if(current?.number!==pr.number || current.state!=='open' || current.draft!==false || current.head?.sha!==pr.head.sha ||
+      current.base?.ref!==pr.base.ref || current.base?.repo?.full_name!==repository ||
+      current.base.repo.default_branch!==pr.base.repo.default_branch || !reference ||
+      reference.claim_id!==expected?.claim_id || reference.scope!==scope || mode.state==='frozen')return {valid:false};
+    const branch=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(current.base.ref)}`);
+    if(branch?.commit?.sha!==tip)return {valid:false};
+    const holders=await cluedRpc(fetchImpl,env,workspace,HOLDERS_RPC,{scope,repository});
+    const ref=`merge:${repository}:${current.base.ref}`.toLowerCase();
+    const holder=holders.body?.status==='ok' && holders.body.holders?.find(row=>row.claim_id===reference.claim_id &&
+      String(row.bound_pr).toLowerCase()===`${repository}#${current.number}`.toLowerCase() &&
+      row.merge_refs?.some(value=>String(value).toLowerCase()===ref));
+    if(!holder)return {valid:false};
+    // This reuses admission's existing live permission/withdrawal verifier;
+    // execution qualification never enters the ADMITTED evaluator.
+    const outcome=await evaluate({env,event:{pull_request:current},eventName:'pull_request_target',fetchImpl,workspace,
+      withSummary:false,readPolicyFile});
+    if(outcome.admitted!==true || outcome.head_sha!==current.head.sha || outcome.scope!==scope || outcome.claim_id!==reference.claim_id ||
+      outcome.merge_slot?.tip!==tip ||
+      outcome.admission_mode?.state!==mode.state || outcome.admission_mode.rules?.auto_merge!=='allowed')return {valid:false};
+    if(action!=='update_branch' && outcome.merge_slot?.state!=='held')return {valid:false};
+    if(action==='update_branch' && outcome.admission_mode.layer==='protected')return {valid:false};
+    const freshAdmission=await admissionOf(fetchImpl,env,repository,current.head.sha,current.number);
+    if(!freshAdmission.admitted || !freshAdmission.mode || freshAdmission.mode.state!==mode.state)return {valid:false};
+    const final=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`);
+    const finalBranch=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(current.base.ref)}`);
+    if(final?.number!==current.number || final.state!=='open' || final.draft!==false || final.head?.sha!==current.head.sha ||
+      final.body!==current.body || final.base?.ref!==current.base.ref || final.base?.repo?.full_name!==repository ||
+      finalBranch?.commit?.sha!==tip)return {valid:false};
+    return {valid:true,pr:current,mode,progress_ref:holder.progress_ref};
+  } catch {return {valid:false};}
+}
+
+export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = fs.readFileSync, now = () => Date.now(),
+  qualifyExecution, authorizeOperation = currentOperationAuthority }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const result = { state: mode.state, heads: [], actions: [], notices: [], errors: [] };
-  if (mode.state === "frozen") {
-    result.notices.push("the merge admission state is frozen: only the Owner merges, so the executor does nothing");
-    return result;
-  }
   if (!(env.CLUED_CONTEXT_READ_TOKEN ?? "").trim()) {
     result.errors.push(withTokenHint("CLUED_CONTEXT_READ_TOKEN is not set."));
     return result;
@@ -273,7 +280,8 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   // Only pull requests whose body names their claim: an update-branch merge commit carries no
   // trailer, so a claim named only in a commit would be lost (review MINOR-3).
-  const pulls = (await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`))
+  const openPulls = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`);
+  const pulls = openPulls
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch
       && pr.head.repo && pr.head.repo.full_name === repository && !pr.draft && parseClaimReference(pr.body));
   const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
@@ -299,6 +307,12 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       heads.push({ scope, pr, progress_ref: holder.progress_ref, since: Number.isFinite(since) ? since : null });
     }
   }
+  // A released/expired queue claim must not leave an executor-managed request
+  // active. Manual, non-opted-in Owner auto-merge is not taken over here.
+  for (const pr of openPulls.filter(managedAutoMerge))if(!heads.some(entry=>entry.pr===pr)) {
+    const reference=parseClaimReference(pr.body);
+    heads.push({scope:reference?.scope,pr,progress_ref:null,since:null,orphaned:true});
+  }
   result.heads = heads.map(({ pr }) => ({ pr: pr.number, head_sha: pr.head.sha }));
   if (!heads.length) return result;
 
@@ -310,12 +324,20 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
     return result;
   }
   const workflows = ciWorkflows(workspace);
+  const qualify = qualifyExecution ?? createExecutionQualifier({env,fetchImpl,workspace,workflows});
   const plans = [];
-  for (const { pr, since, progress_ref } of heads) {
+  for (const { pr, since, progress_ref, scope, orphaned } of heads) {
     try {
-      plans.push({ pr, ...(await planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy: mode.policy, state: mode.state })) });
+      let plan=orphaned?{action:'disable_auto_merge',reason:'managed auto-merge no longer holds a live FIFO slot'}:
+        await planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy: mode.policy, state: mode.state,qualifyExecution:qualify });
+      if(managedAutoMerge(pr) && plan.action==='none') {
+        const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action:'enable_auto_merge'});
+        if(authority?.valid!==true)plan={action:'disable_auto_merge',reason:'managed request lost current permission, withdrawal or FIFO eligibility'};
+      }
+      plans.push({pr,scope,since,progress_ref,...plan});
     } catch (error) {
-      result.errors.push(`#${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
+      if(managedAutoMerge(pr))plans.push({pr,scope,action:'disable_auto_merge',reason:'execution eligibility could not be revalidated'});
+      else result.errors.push(`#${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   const work = plans.filter((plan) => plan.action !== "none");
@@ -334,19 +356,44 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       continue;
     }
     const entry = { pr: plan.pr.number, head_sha: plan.pr.head.sha, action: plan.action, reason: plan.reason };
+    if(plan.action==='disable_auto_merge') {
+      const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
+      if(current?.node_id!==plan.pr.node_id || current.state!=='open' || !managedAutoMerge(current)) {
+        result.actions.push({...entry,action:'none',reason:'managed request is no longer present'});continue;
+      }
+    } else {
+      const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,
+        scope:plan.scope,action:plan.action});
+      if(authority?.valid!==true) {
+        result.actions.push({...entry,action:'none',reason:'current permission, withdrawal, policy or FIFO gate refused the operation'});continue;
+      }
+      const final=await planFor({env,fetchImpl,repository,pr:authority.pr,tip,since:plan.since,progress_ref:authority.progress_ref,
+        workflows,policy:authority.mode.policy,state:authority.mode.state,qualifyExecution:qualify});
+      if(final.action!==plan.action || (plan.run && (final.run?.id!==plan.run.id || final.run.run_attempt!==plan.run.run_attempt))) {
+        result.actions.push({...entry,action:'none',reason:'execution or opt-in eligibility changed before the operation'});continue;
+      }
+      // Qualification may take time: recheck live authority after it, rather
+      // than retaining the permission/withdrawal decision from before it.
+      const lastAuthority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,
+        scope:plan.scope,action:plan.action});
+      if(lastAuthority?.valid!==true || lastAuthority.progress_ref!==authority.progress_ref ||
+        lastAuthority.pr.body!==authority.pr.body || lastAuthority.mode.state!==authority.mode.state) {
+        result.actions.push({...entry,action:'none',reason:'live authority changed during execution qualification'});continue;
+      }
+    }
     if (plan.action === "rerun_gated") {
       // Unlike merge/update-branch, the rerun API has no expected-head CAS.
       // Recheck both the PR and attempt just before using the workflow token.
       const current = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${plan.pr.number}`);
-      const latest = await gatedCiOf(fetchImpl, env, repository, plan.pr.head.sha, workflows);
       const run = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${plan.run.id}`);
       if (current?.head?.sha !== plan.pr.head.sha || current.state !== "open" || current.draft
-          || latest.rerun?.id !== plan.run.id || latest.rerun?.run_attempt !== plan.run.run_attempt
           || run.head_sha !== plan.pr.head.sha || run.event !== "pull_request"
           || run.run_attempt !== plan.run.run_attempt || run.status !== "completed" || run.conclusion !== "success") {
         entry.action = "none";
         entry.reason = "the pull request head or gate-only run changed before rerunning; nothing rerun";
       } else {
+        const last=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,scope:plan.scope,action:plan.action});
+        if(last?.valid!==true) {result.actions.push({...entry,action:'none',reason:'live rerun authority changed'});continue;}
         const response = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/actions/runs/${plan.run.id}/rerun`, env.GITHUB_TOKEN);
         entry.run_id = plan.run.id;
         entry.status = response.status;
@@ -377,7 +424,14 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
         let gated = { passed: false, reason: "a check that is not required failed or is still pending (unstable status)" };
         if (!unstable) {
           try {
-            gated = await gatedCiOf(fetchImpl, env, repository, plan.pr.head.sha, workflows);
+            const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr:plan.pr,tip,
+              scope:plan.scope,action:'enable_auto_merge'});
+            const final=authority?.valid===true?await planFor({env,fetchImpl,repository,pr:authority.pr,tip,since:plan.since,
+              progress_ref:authority.progress_ref,workflows,policy:authority.mode.policy,state:authority.mode.state,qualifyExecution:qualify}):null;
+            const last=final?.action==='enable_auto_merge'?await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,
+              pr:plan.pr,tip,scope:plan.scope,action:'enable_auto_merge'}):null;
+            gated={passed:last?.valid===true && last.progress_ref===authority.progress_ref && last.pr.body===authority.pr.body,
+              reason:final?.reason??'current permission or execution refused direct merge'};
           } catch (error) {
             gated = { passed: false, reason: `the CI runs could not be read: ${error instanceof Error ? error.message : String(error)}` };
           }

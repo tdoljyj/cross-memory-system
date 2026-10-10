@@ -65,7 +65,7 @@ function fakeFetch(routes) {
 const checksRoute = (sha, byName) => Object.fromEntries(Object.entries(byName).map(([name, checks]) =>
   [`/repos/${REPO}/commits/${sha}/check-runs?check_name=${name}&`, { check_runs: checks }]));
 const allGreen = (sha = HEAD) => checksRoute(sha, Object.fromEntries(CI_REQUIRED_CHECKS.map(({ name }) => [name, [check(name, { head_sha: sha })]])));
-const runsRoute = (sha, runs) => ({ [`/repos/${REPO}/actions/runs?head_sha=${sha}`]: { workflow_runs: runs } });
+const runsRoute = (sha, runs) => ({ [`/repos/${REPO}/actions/runs?head_sha=${sha}`]: { total_count:runs.length,workflow_runs: runs } });
 const listing = (sha, entries) => ({ [`/repos/${REPO}/contents/.github/workflows?ref=${sha}`]: entries });
 const sameAsMain = (sha = HEAD) => listing(sha, [...WORKFLOWS].map(([p, blob]) => ({ path: p, sha: blob })));
 
@@ -173,10 +173,10 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(".github/workflows/pr-added.yml")]) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   assert.ok(!fetch.calls.some((call) => call.route.includes("/contents/")), "no listing when nothing counted runs");
-  // A push run, another head's run and a finished run are not this pull request's CI.
+  // A filtered native PR listing with wrong event/head is inconsistent, not green.
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY, "in_progress", { event: "push" }),
     run(QUALITY, "in_progress", { head_sha: OTHER }), run(QUALITY, "completed")]) });
-  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   // A required check not posted yet, with nothing running: not reported.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "clued-work-admission": [check("clued-work-admission")],
     "clued-admission-verified": [] }),
@@ -411,4 +411,17 @@ test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits
   }
   assert.match(fs.readFileSync(summary, "utf8"), /## clued-merge-slot-ci/);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("qualification cannot retain old required success or miss a newly queued uncounted workflow",async()=>{
+  for(const change of ["required","queued"]){
+    let changed=false;
+    const fetch=slotWorld({extra:{...allGreen(),
+      [`/repos/${REPO}/commits/${HEAD}/check-runs?check_name=clued-admission-verified&`]:()=>({check_runs:[check("clued-admission-verified",{conclusion:changed&&change==="required"?"failure":"success"})]}),
+      [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:()=>({total_count:changed&&change==="queued"?1:0,
+        workflow_runs:changed&&change==="queued"?[run(".github/workflows/other.yml","queued")]:[]})}});
+    const result=await report(fetch,{qualifyExecution:async pr=>{changed=true;return fixtureQualification(pr)}});
+    assert.equal(result.reports[0].ci_state,"idle");
+    assert.equal(fetch.calls.some(c=>c.route===`rpc:${TOUCH_RPC}`),false);
+  }
 });
