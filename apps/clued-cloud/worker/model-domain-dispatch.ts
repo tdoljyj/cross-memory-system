@@ -57,7 +57,7 @@ export async function dispatchModelDomainTool(env: ModelDomainFeatureEnv, name: 
     // Keep the already-supported, private-data-free readiness denial so the
     // Worker can distinguish this pre-submission failure from a generic source
     // denial. Validation and all Native write/claim gates stay unchanged.
-    if (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL && error instanceof BootstrapReadinessDenied) throw error;
+    if ((name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_READINESS_TOOL) && error instanceof BootstrapReadinessDenied) throw error;
     throw new ModelDomainToolDenied();
   }
   throw new ModelDomainToolDenied();
