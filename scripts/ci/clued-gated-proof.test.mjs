@@ -50,8 +50,29 @@ function world({runDelta={},jobs=[gate,primary()],readFailure=false,changedAttem
     if(url.includes('/attempts/'))return{total_count:jobs.length,jobs:jobs.map(job=>({run_id:run.id,run_attempt:run.run_attempt,...job}))};
     if(url.endsWith('/actions/runs/7'))return{...run,run_attempt:changedAttempt?2:1};
     throw new Error('unexpected mocked read');};
-  return{read,calls,repository:'o/r',head:HEAD,prNumber:5,workflows:new Map([[FILE,'default-blob']]),profiles,authorizeSource:async()=>source};
+  return{read,calls,repository:'o/r',head:HEAD,prNumber:5,workflows:new Map([[FILE,'default-blob']]),profiles,
+    authorizeSource:async()=>source,revalidateSources:async()=>true};
 }
+
+test('all actionable terminal results require a fresh strict source-authority recheck',async()=>{
+  for(const result of [{},{runDelta:{conclusion:'failure'}},{jobs:[gate,primary({conclusion:'skipped'})]}]) {
+    for(const callback of [undefined,async()=>false,async()=>({passed:false}),async()=>{throw Error('final source read');}]) {
+      const w=world(result);w.revalidateSources=callback;
+      const proof=await qualifiedCI(w);
+      assert.equal(proof.state,'unknown');assert.equal(proof.passed,false);assert.equal(proof.rerun,undefined);
+    }
+    const w=world(result);let count=0;
+    w.revalidateSources=async descriptor=>{
+      count++;assert.equal(descriptor.head,HEAD);assert.equal(descriptor.prNumber,5);
+      assert.equal(descriptor.runs.length,1);assert.equal(descriptor.runs[0].run.id,7);
+      assert.equal(descriptor.runs[0].run.run_attempt,1);return true;
+    };
+    const proof=await qualifiedCI(w);
+    if(result.jobs)assert.equal(proof.rerun?.id,7);
+    else assert.equal(proof.state,result.runDelta?'failed':'qualified');
+    assert.equal(count,1);
+  }
+});
 test('qualified run is bound to head, PR, complete lists, actual steps and unchanged latest attempt',async()=>{
   const w=world();const result=await qualifiedCI(w);assert.equal(result.passed,true);assert.equal(result.scopes[0].scope,'workflow_execution');
   assert.ok(w.calls.some(x=>x.includes('/attempts/1/jobs')));assert.ok(w.calls.some(x=>x.endsWith('/actions/runs/7')));
