@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff} from './clued-gated-proof-runtime.mjs';
+import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +15,48 @@ const payload=()=>({data:{node:{databaseId:7,runAttempt:2,event:'pull_request',f
   repositoryName:repository,repositoryFileUrl:`https://github.com/${repository}/blob/${sha}/${file}`,
   run:{databaseId:7,runAttempt:2}}}}});
 const options={repository,headRepository,file,run};
+test('documentation independently reconstructs old event-base to actual merge checkout and regular file modes',async()=>{
+  const eventBase='1'.repeat(40),firstParent='2'.repeat(40),checkout='3'.repeat(40);
+  const baseTree='4'.repeat(40),mergeTree='5'.repeat(40),blob='6'.repeat(40);
+  const trustedSources={'scripts/ci/clued-docs-only.py':'7'.repeat(40),'scripts/ci/test_clued_docs_only.py':'8'.repeat(40)};
+  const sourceEntries=Object.entries(trustedSources).map(([path,sha])=>({path,sha,type:'blob',mode:'100644'}));
+  const normal={path:'docs/guide.md',sha:blob,type:'blob',mode:'100644'};
+  const replies={
+    [`/repos/${repository}/git/commits/${checkout}`]:{sha:checkout,parents:[{sha:firstParent},{sha:head}],tree:{sha:mergeTree}},
+    [`/repos/${repository}/git/commits/${eventBase}`]:{sha:eventBase,tree:{sha:baseTree}},
+    [`/repos/${repository}/compare/${eventBase}...${firstParent}?per_page=1`]:{base_commit:{sha:eventBase},merge_base_commit:{sha:eventBase}},
+    [`/repos/${repository}/compare/${eventBase}...${checkout}?per_page=1`]:{base_commit:{sha:eventBase},merge_base_commit:{sha:eventBase},total_commits:2,
+      files:[{filename:normal.path,status:'modified'}]},
+    [`/repos/${repository}/git/trees/${baseTree}?recursive=1`]:{sha:baseTree,truncated:false,tree:[normal,...sourceEntries]},
+    [`/repos/${repository}/git/trees/${mergeTree}?recursive=1`]:{sha:mergeTree,truncated:false,tree:[normal,...sourceEntries]}
+  };
+  const opts={repository,head,eventBase,checkout,checkoutQualified:true,trustedSources};
+  const call=extra=>boundDocumentationRange({...opts,read:async route=>structuredClone(replies[route]),...extra});
+  assert.equal((await call()).passed,true);
+  assert.equal((await call({checkoutQualified:false})).state,'unknown');
+  assert.equal((await call({trustedSources:{}})).state,'unknown');
+  const treeRoute=`/repos/${repository}/git/trees/${mergeTree}?recursive=1`;
+  const compareRoute=`/repos/${repository}/compare/${eventBase}...${checkout}?per_page=1`;
+  for(const edit of [r=>r[treeRoute].truncated=true,r=>r[treeRoute].tree[0].mode='100755',
+    r=>r[treeRoute].tree[0].mode='120000',r=>r[treeRoute].tree[1].sha=blob,
+    r=>r[treeRoute].tree.push(normal),r=>r[compareRoute].files=[],
+    r=>r[compareRoute].files[0].filename='docs/contracts/authority.md',
+    r=>r[compareRoute].files[0]={filename:normal.path,status:'renamed',previous_filename:'src/secret.js'},
+    r=>r[`/repos/${repository}/compare/${eventBase}...${firstParent}?per_page=1`].merge_base_commit.sha=firstParent,
+    r=>r[`/repos/${repository}/git/commits/${checkout}`].parents[1].sha=firstParent]) {
+    const changed=structuredClone(replies);edit(changed);
+    assert.equal((await call({read:async route=>changed[route]})).state,'unknown');
+  }
+  for(const absentSide of [baseTree,mergeTree]) {
+    const changed=structuredClone(replies);
+    changed[`/repos/${repository}/git/trees/${absentSide}?recursive=1`].tree=sourceEntries;
+    assert.equal((await call({read:async route=>changed[route]})).passed,true);
+  }
+  const renamed=structuredClone(replies);
+  renamed[compareRoute].files[0]={filename:normal.path,status:'renamed',previous_filename:'docs/old.md'};
+  renamed[`/repos/${repository}/git/trees/${baseTree}?recursive=1`].tree[0]={...normal,path:'docs/old.md'};
+  assert.equal((await call({read:async route=>renamed[route]})).changed_count,2);
+});
 test('platform executed file binds run, attempt, repository, path and immutable commit',()=>{
   assert.equal(platformWorkflowSource(payload(),options).source_sha,sha);
   const fork=payload();fork.data.node.file.repositoryName=headRepository;

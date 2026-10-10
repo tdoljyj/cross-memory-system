@@ -72,6 +72,77 @@ export async function boundPullDiff({read,repository,prNumber,head}) {
       changedFiles:[...names].sort(),commits:commits.length,diffComplete:true};
   } catch {return unknown('PR diff read failed');}
 }
+
+const documentationPath=name=>safePath(name) && (name==='README.md' ||
+  name==='scripts/ci/self-hosted/README.md' || name.startsWith('docs/') && name.endsWith('.md') &&
+  !['docs/execution-plans/','docs/clued-','docs/contracts/'].some(prefix=>name.startsWith(prefix)) &&
+  !['docs/maintenance/database-security.md','docs/maintenance/migration-ledger.md'].includes(name));
+const DOC_SOURCES=['scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py'];
+
+// Reconstruct the classifier's event-base to actual merge-checkout comparison.
+// The independently observed, source-qualified checkout/log witness is supplied
+// by the caller. Three-dot target selection is a separate proof.
+export async function boundDocumentationRange({read,repository,head,eventBase,checkout,
+  checkoutQualified,trustedSources}) {
+  try {
+    if(typeof read!=='function' || !REPO.test(repository??'') ||
+      ![head,eventBase,checkout].every(value=>SHA.test(value??'')) || checkoutQualified!==true ||
+      DOC_SOURCES.some(file=>!SHA.test(trustedSources?.[file]??'')))
+      return unknown('documentation checkout/source witness missing');
+    const merge=await read(`/repos/${repository}/git/commits/${checkout}`);
+    if(merge?.sha!==checkout || !Array.isArray(merge.parents) || merge.parents.length!==2 ||
+      !SHA.test(merge.parents[0]?.sha??'') || merge.parents[1]?.sha!==head || !SHA.test(merge.tree?.sha??''))
+      return unknown('documentation checkout is not the bound PR merge');
+    // A recorded event base may precede the first parent after main advances.
+    const ancestor=await read(`/repos/${repository}/compare/${eventBase}...${merge.parents[0].sha}?per_page=1`);
+    if(ancestor?.base_commit?.sha!==eventBase || ancestor.merge_base_commit?.sha!==eventBase)
+      return unknown('documentation event base is not a merge-parent ancestor');
+    const diff=await read(`/repos/${repository}/compare/${eventBase}...${checkout}?per_page=1`);
+    if(diff?.base_commit?.sha!==eventBase || diff.merge_base_commit?.sha!==eventBase ||
+      !Number.isSafeInteger(diff.total_commits) || diff.total_commits<1 || diff.total_commits>1000 ||
+      !Array.isArray(diff.files) || !diff.files.length || diff.files.length>200)
+      return unknown('documentation comparison incomplete or outside bounds');
+    const names=new Set(),seen=new Set();
+    for(const file of diff.files) {
+      if(!documentationPath(file?.filename) || seen.has(file.filename) ||
+        !['added','removed','modified','renamed'].includes(file.status))return unknown('non-documentation change');
+      seen.add(file.filename);names.add(file.filename);
+      if(file.status==='renamed') {
+        if(!documentationPath(file.previous_filename) || file.previous_filename===file.filename)
+          return unknown('documentation rename origin differs');
+        names.add(file.previous_filename);
+      } else if(file.previous_filename!==undefined)return unknown('unexpected documentation rename metadata');
+    }
+    if(names.size>200)return unknown('documentation no-rename comparison exceeds bounds');
+    const base=await read(`/repos/${repository}/git/commits/${eventBase}`);
+    if(base?.sha!==eventBase || !SHA.test(base.tree?.sha??''))return unknown('documentation base tree missing');
+    const trees=[];
+    for(const treeSha of [base.tree.sha,merge.tree.sha]) {
+      const tree=await read(`/repos/${repository}/git/trees/${treeSha}?recursive=1`);
+      if(tree?.sha!==treeSha || tree.truncated!==false || !Array.isArray(tree.tree) || tree.tree.length>100000)
+        return unknown('documentation tree incomplete');
+      const entries=new Map();
+      for(const entry of tree.tree) {
+        if(!safePath(entry?.path) || entries.has(entry.path) || !SHA.test(entry.sha??''))
+          return unknown('documentation tree identity invalid');
+        entries.set(entry.path,entry);
+      }
+      trees.push(entries);
+    }
+    for(const name of names) {
+      const entries=trees.map(tree=>tree.get(name));
+      if(entries.every(entry=>!entry) || entries.some(entry=>entry &&
+        (entry.mode!=='100644' || entry.type!=='blob')))return unknown('nonregular documentation');
+    }
+    // The actual checkout executes these bytes; a changed classifier or its
+    // tests cannot qualify itself by emitting a DOCUMENTATION_ONLY result.
+    if(DOC_SOURCES.some(file=>trees[1].get(file)?.type!=='blob' ||
+      trees[1].get(file)?.mode!=='100644' || trees[1].get(file)?.sha!==trustedSources[file]))
+      return unknown('documentation classifier/test source differs');
+    return {passed:true,state:'qualified',scope:'documentation',event_base:eventBase,
+      checkout,head,changedFiles:[...names].sort(),changed_count:names.size};
+  } catch {return unknown('documentation comparison read failed');}
+}
 export const RUN_FILE_QUERY=`query($node:ID!){node(id:$node){...on WorkflowRun{
   databaseId runAttempt event file{path repositoryName repositoryFileUrl
   run{databaseId runAttempt}}}}}`;
