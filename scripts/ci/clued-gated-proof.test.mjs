@@ -134,6 +134,8 @@ test('audited complete documentation diff selects only five unconditional workfl
   const workflows=new Map(Object.entries(profiles.workflows).map(([file,p])=>[file,p.workflow_blob]));
   const w={workflows,profiles,changedFiles:['docs/README.md'],commits:1,diffComplete:true,sourceQualified:true};
   const result=applicableCI(w);assert.equal(result.passed,true);assert.equal(result.workflows.size,5);
+  assert.equal(applicableCI({...w,changedFiles:[]}).workflows.size,5);
+  assert.equal(applicableCI({...w,changedFiles:[],diffComplete:false}).state,'unknown');
   assert.ok(result.workflows.has(QUALITY));assert.equal(result.workflows.has('.github/workflows/clued-g4-database.yml'),false);
   w.changedFiles=['apps/clued-cloud/worker/nested/file.ts'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
   w.changedFiles=['apps/clued-cloud/tests/owner-authorization-db.test.mjs'];assert.ok(applicableCI(w).workflows.has('.github/workflows/clued-connection-authorization.yml'));
