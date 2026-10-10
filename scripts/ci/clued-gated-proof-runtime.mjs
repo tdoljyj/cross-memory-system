@@ -12,7 +12,7 @@ export const RUN_FILE_QUERY=`query($node:ID!){node(id:$node){...on WorkflowRun{
   run{databaseId runAttempt}}}}}`;
 
 export function githubGraphReader(fetchImpl,env) {
-  return async(query,variables)=>{
+  return async(query,variables,{signal}={})=>{
     const api=new URL(env.GITHUB_API_URL||'https://api.github.com');
     const target=new URL(env.GITHUB_GRAPHQL_URL||
       (api.pathname.startsWith('/api/v3')?'/api/graphql':'/graphql'),api);
@@ -20,7 +20,7 @@ export function githubGraphReader(fetchImpl,env) {
       target.protocol!=='https:' || target.origin!==api.origin || target.username || target.password ||
       target.search || target.hash || !['/graphql','/api/graphql'].includes(target.pathname))
       throw Error('trusted GitHub GraphQL endpoint/token unavailable');
-    const response=await fetchImpl(target.href,{method:'POST',headers:{
+    const response=await fetchImpl(target.href,{method:'POST',signal,redirect:'error',headers:{
       Authorization:`Bearer ${env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json','Content-Type':'application/json'},
       body:JSON.stringify({query,variables})});
     if(response.status!==200)throw Error('platform source metadata unavailable');
@@ -30,7 +30,31 @@ export function githubGraphReader(fetchImpl,env) {
 
 // A bounded shadow observation exercises the existing CI token's read access.
 // It never qualifies tests, touches a slot, or changes admission/merge behavior.
-export async function observeCompletedSource({env,event,eventName,workspace,workflows,read,graphRead}) {
+export const SOURCE_OBSERVATION_BUDGET_MS=12000;
+export async function observeCompletedSource(options) {
+  if(options.eventName!=='workflow_run' || !Number.isSafeInteger(options.event?.workflow_run?.id) || options.event.workflow_run.id<1)
+    return {state:'not_observed',reason:'no workflow-run signal'};
+  const budgetMs=options.budgetMs??SOURCE_OBSERVATION_BUDGET_MS;
+  if(!Number.isSafeInteger(budgetMs) || budgetMs<1 || budgetMs>SOURCE_OBSERVATION_BUDGET_MS)
+    return unknown('invalid bounded source observation budget');
+  const controller=new AbortController();let closed=false,timer;
+  const guarded=fn=>async(...args)=>{
+    if(closed || controller.signal.aborted)throw Error('source observation closed');
+    return fn(...args,{signal:controller.signal});
+  };
+  const budget=new Promise(resolve=>{timer=setTimeout(()=>{
+    closed=true;
+    resolve({state:'unknown',scope:'source_observation_only',execution_qualified:false,
+      reason:'source observation budget exhausted'});
+    controller.abort();
+  },budgetMs);});
+  try {
+    return await Promise.race([observeSourceWithinBudget({...options,
+      read:guarded(options.read),graphRead:guarded(options.graphRead)}),budget]);
+  } finally {closed=true;clearTimeout(timer);controller.abort();}
+}
+
+async function observeSourceWithinBudget({env,event,eventName,workspace,workflows,read,graphRead}) {
   if(eventName!=='workflow_run' || !Number.isSafeInteger(event?.workflow_run?.id) || event.workflow_run.id<1)
     return {state:'not_observed',reason:'no workflow-run signal'};
   try {

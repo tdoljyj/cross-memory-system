@@ -178,7 +178,8 @@ function rpcError(name, response) {
   return null;
 }
 
-export async function reportMergeSlots({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync }) {
+export async function reportMergeSlots({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync,
+  sourceObservationBudgetMs }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const hardCap = (mode.policy && mode.policy.merge_slot_hard_cap_minutes) || DEFAULT_HARD_CAP_MINUTES;
@@ -191,7 +192,9 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   const workflows = ciWorkflows(workspace);
   if (eventName === "workflow_run" && Number.isSafeInteger(event?.workflow_run?.id)) {
     result.source_observation = await observeCompletedSource({ env, event, eventName, workspace, workflows,
-      read: (route) => githubJson(fetchImpl, env, route), graphRead: githubGraphReader(fetchImpl, env) });
+      budgetMs: sourceObservationBudgetMs,
+      read: (route, { signal }) => githubJson((url, init) => fetchImpl(url, { ...init, signal, redirect: "error" }), env, route),
+      graphRead: githubGraphReader(fetchImpl, env) });
   }
   const pulls = (await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch);

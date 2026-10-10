@@ -4,7 +4,9 @@ import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeComplet
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource} from './clued-workflow-profile.mjs';
+import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 const repository='o/r',headRepository='fork/r',file='.github/workflows/fixture.yml';
 const sha='a'.repeat(40),head='b'.repeat(40);
 const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,
@@ -106,4 +108,49 @@ test('shadow source observation reads the API rather than trusting event fields,
     assert.ok(path.basename(target).startsWith('clued-source-observation-'));
     fs.rmSync(target,{recursive:true,force:true});
   }
+});
+test('shadow budget cancels a hung read and forbids follow-up requests after expiry',async()=>{
+  let resolveRead,signal,graphs=0;
+  const completed={...run,path:file,status:'completed',conclusion:'success'};
+  const pending=new Promise(resolve=>{resolveRead=resolve;});
+  const options={env:{GITHUB_REPOSITORY:repository},eventName:'workflow_run',event:{workflow_run:{id:7}},
+    workspace:'.',workflows:new Map([[file,'c'.repeat(40)]]),budgetMs:5,
+    read:async(route,options)=>{signal=options.signal;return pending;},graphRead:async()=>{graphs++;return payload();}};
+  const seen=await observeCompletedSource(options);
+  assert.equal(seen.reason,'source observation budget exhausted');assert.equal(signal.aborted,true);
+  resolveRead(completed);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(graphs,0);
+  assert.equal((await observeCompletedSource({...options,budgetMs:12001})).state,'unknown');
+});
+test('hung GraphQL response body is aborted within the independent shadow budget',async()=>{
+  let signal;
+  const graphRead=githubGraphReader(async(url,options)=>{signal=options.signal;return {
+    status:200,json:async()=>new Promise(()=>{})};},{GITHUB_TOKEN:'mock-token'});
+  const completed={...run,path:file,status:'completed',conclusion:'success'};
+  const root=fs.realpathSync(os.tmpdir()),workspace=fs.mkdtempSync(path.join(root,'clued-source-budget-'));
+  try {
+    fs.mkdirSync(path.join(workspace,'scripts/ci'),{recursive:true});
+    for(const name of ['profiles','role-specs'])fs.writeFileSync(path.join(workspace,`scripts/ci/clued-gated-proof-${name}.json`),'{}');
+    const seen=await observeCompletedSource({env:{GITHUB_REPOSITORY:repository},eventName:'workflow_run',
+      event:{workflow_run:{id:7}},workspace,workflows:new Map([[file,'c'.repeat(40)]]),budgetMs:5,
+      read:async()=>completed,graphRead});
+    assert.equal(seen.reason,'source observation budget exhausted');assert.equal(signal.aborted,true);
+  } finally {
+    const target=fs.realpathSync(workspace);assert.equal(path.dirname(target),root);
+    assert.equal(target,path.resolve(workspace));assert.ok(path.basename(target).startsWith('clued-source-budget-'));
+    fs.rmSync(target,{recursive:true,force:true});
+  }
+});
+test('original slot report continues after a hanging shadow request',async()=>{
+  let observedSignal,pulls=0;
+  const fetchImpl=async(url,options)=>{
+    if(url.endsWith('/actions/runs/7')){observedSignal=options.signal;return new Promise(()=>{});}
+    if(url.includes('/pulls?')){pulls++;return {ok:true,status:200,headers:{get:()=>null},json:async()=>[]};}
+    throw Error('unexpected request');
+  };
+  const result=await reportMergeSlots({env:{GITHUB_REPOSITORY:repository,GITHUB_TOKEN:'mock-token',
+    CLUED_CONTEXT_READ_TOKEN:'mock-context-token'},workspace:fileURLToPath(new URL('../..',import.meta.url)),
+    eventName:'workflow_run',event:{workflow_run:{id:7}},fetchImpl,sourceObservationBudgetMs:5});
+  assert.equal(result.source_observation.reason,'source observation budget exhausted');
+  assert.equal(observedSignal.aborted,true);assert.equal(pulls,1);assert.deepEqual(result.errors,[]);
 });
