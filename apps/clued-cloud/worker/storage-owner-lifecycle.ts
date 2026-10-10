@@ -12,6 +12,8 @@ const VERSION = /^[0-9]{1,30}$/;
 const FOLDER = "application/vnd.google-apps.folder";
 const DRIVE = "https://www.googleapis.com/drive/v3/files";
 export const STORAGE_OWNER_CONFIRMATION = "clued.storage-owner-confirmation/1";
+export const STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION = "clued.storage-owner-confirmation/2";
+export const STORAGE_OWNER_WHOLE_ROOT_MODE = "whole_created_root_v2";
 export class StorageOwnerLifecycleError extends Error {
   constructor(readonly reason: string) { super("storage_owner_lifecycle_unavailable"); }
 }
@@ -23,14 +25,16 @@ type Budget = { deadline: number };
 const budget = (): Budget => ({ deadline: Date.now() + 25000 });
 function remaining(b: Budget) { const ms = b.deadline - Date.now(); if (ms <= 0) deny("operation_deadline"); return Math.min(ms, 10000); }
 type Descriptor = StorageCredentialContext & { connection_version: number; profile_id: string; profile_version: number;
-  credential_envelope: StorageCredentialEnvelope; root_folder_id: string; root_parent_id: string; created_by_clued: boolean };
+  credential_envelope: StorageCredentialEnvelope; root_folder_id: string; root_parent_id: string; created_by_clued: boolean;
+  root_trash_confirmation_mode?: typeof STORAGE_OWNER_WHOLE_ROOT_MODE };
 type Snapshot = { root_folder_id: string; root_parent_id: string; root_version: string; metadata_digest: string;
   etag: string; owned_by_me: boolean; can_trash: boolean; trashed: boolean; root_name: string; item_count: number };
 export type OwnerReconnectInput = { connection_id: string; base_version: number; profile_version: number; root_stop_generation: number;
   request_id: string; confirmation: { contract: typeof STORAGE_OWNER_CONFIRMATION; root_folder_id: string; confirmed: true; normal_use: boolean } };
 export type OwnerDeleteInput = { connection_id: string; base_version: number; profile_version: number; request_id: string;
   confirmation: { contract: typeof STORAGE_OWNER_CONFIRMATION; root_folder_id: string; confirmed: true; trash_created_root: boolean;
-    metadata_digest?: string; root_version?: string } };
+    metadata_digest?: string; root_version?: string } | { contract: typeof STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION;
+    root_folder_id: string; confirmed: true; trash_created_root: true; confirmation_mode: typeof STORAGE_OWNER_WHOLE_ROOT_MODE } };
 
 function descriptor(v: Data, owner: string): Descriptor {
   if (v.owner_id !== owner || !UUID.test(String(v.connection_id)) || !UUID.test(String(v.profile_id)) ||
@@ -154,6 +158,13 @@ export async function createStorageOwnerLifecycle(configuration: {
       owned_by_me: true, can_trash: object(m.value.capabilities) && m.value.capabilities.canTrash === true,
       trashed: false, root_name: String(m.value.name), item_count: rows.length };
   }
+  // V2 observes the fixed Root effect, not an atomic lock of its earlier name,
+  // parent or contents. Both full pre-effect snapshots still enforce those.
+  async function wholeRootObservation(d: Descriptor, access: string, b: Budget) {
+    const v = (await json(`${DRIVE}/${encodeURIComponent(d.root_folder_id)}?fields=id,mimeType,trashed,version`, access, b)).value;
+    if (v.id !== d.root_folder_id || v.mimeType !== FOLDER || typeof v.trashed !== "boolean" || !VERSION.test(String(v.version))) deny("root_drift");
+    return v;
+  }
   async function location(d: Descriptor, access: string, b: Budget) {
     const root = (await metadata(d, access, b)).value, parts = [String(root.name)], seen = new Set([d.root_folder_id]);
     // Only the provider's authenticated root alias establishes the terminal
@@ -242,8 +253,11 @@ export async function createStorageOwnerLifecycle(configuration: {
       const d = await load(owner, connectionId); if (!d.created_by_clued) return { trash_available: false, reason: "picked_or_legacy_root" };
       const s = await snapshot(d, await token(d), budget());
       const conditional = /^"[^"\r\n]{1,200}"$/.test(s.etag);
-      return { trash_available: s.can_trash && conditional,
-        ...(!s.can_trash ? { reason: "can_trash_unavailable" } : !conditional ? { reason: "conditional_capability_unavailable" } : {}), root_folder_id: s.root_folder_id,
+      const whole = d.root_trash_confirmation_mode === STORAGE_OWNER_WHOLE_ROOT_MODE;
+      if (whole && (s.etag.length > 204 || /[\r\n]/.test(s.etag))) deny("metadata_unavailable");
+      return { trash_available: s.can_trash && (whole || conditional),
+        ...(whole ? { confirmation_contract: STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION, confirmation_mode: STORAGE_OWNER_WHOLE_ROOT_MODE } : {}),
+        ...(!s.can_trash ? { reason: "can_trash_unavailable" } : !whole && !conditional ? { reason: "conditional_capability_unavailable" } : {}), root_folder_id: s.root_folder_id,
         root_name: s.root_name, root_version: s.root_version, metadata_digest: s.metadata_digest, item_count: s.item_count,
         connection_version: d.connection_version, profile_version: d.profile_version };
     },
@@ -251,14 +265,21 @@ export async function createStorageOwnerLifecycle(configuration: {
       ownerValid(owner); const b = budget(); input(value, ["connection_id","base_version","profile_version","request_id","confirmation"]);
       if (typeof value.confirmation.trash_created_root !== "boolean") deny("input_invalid");
       const trash = value.confirmation.trash_created_root;
-      confirm(value.confirmation, value.confirmation.root_folder_id, trash ? ["trash_created_root","metadata_digest","root_version"] : ["trash_created_root"]);
+      const confirmation = value.confirmation, whole = confirmation.contract === STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION;
+      if (whole) {
+        if (!exact(confirmation,["contract","root_folder_id","confirmed","trash_created_root","confirmation_mode"]) ||
+          confirmation.confirmed !== true || confirmation.trash_created_root !== true || confirmation.confirmation_mode !== STORAGE_OWNER_WHOLE_ROOT_MODE) deny("confirmation_required");
+      } else confirm(confirmation, confirmation.root_folder_id, trash ? ["trash_created_root","metadata_digest","root_version"] : ["trash_created_root"]);
       let d: Descriptor | undefined, s: Snapshot | undefined, access: string | undefined;
       if (trash) {
         d = await load(owner, value.connection_id); if (!d.created_by_clued) deny("picked_or_legacy_root");
+        if (whole && d.root_trash_confirmation_mode !== STORAGE_OWNER_WHOLE_ROOT_MODE) deny("whole_root_trash_unavailable");
         if (d.connection_version !== value.base_version || d.profile_version !== value.profile_version) deny("root_drift");
         access = await token(d); s = await snapshot(d, access, b);
-        if (!s.can_trash || !/^"[^"\r\n]{1,200}"$/.test(s.etag) || s.root_folder_id !== value.confirmation.root_folder_id ||
-          s.metadata_digest !== value.confirmation.metadata_digest || s.root_version !== value.confirmation.root_version) deny("root_drift");
+        if (whole && (s.etag.length > 204 || /[\r\n]/.test(s.etag))) deny("metadata_unavailable");
+        if (!s.can_trash || s.root_folder_id !== confirmation.root_folder_id ||
+          (confirmation.contract === STORAGE_OWNER_CONFIRMATION && (!/^"[^"\r\n]{1,200}"$/.test(s.etag) ||
+            s.metadata_digest !== confirmation.metadata_digest || s.root_version !== confirmation.root_version))) deny("root_drift");
       }
       let prepared: Data;
       try { prepared = await rpc({ action: "delete_prepare", ...value, ...(s ? { snapshot: s } : {}) }); }
@@ -288,9 +309,9 @@ export async function createStorageOwnerLifecycle(configuration: {
           // Local one-shot capability is never returned or serialized. A lost
           // PATCH reply cannot enter this path again: DB start is consumed.
           await request(`${DRIVE}/${encodeURIComponent(d!.root_folder_id)}?fields=id,version,trashed,parents`, {
-            method: "PATCH", headers: { authorization: "Bearer " + access, "content-type": "application/json", "if-match": s!.etag },
+            method: "PATCH", headers: { authorization: "Bearer " + access, "content-type": "application/json", ...(!whole ? { "if-match": s!.etag } : {}) },
             body: JSON.stringify({ trashed: true }), signal: AbortSignal.timeout(remaining(b)), cache: "no-store" }).then(async r => { await r.body?.cancel(); });
-          const observed = (await metadata(d!, access!, b, true)).value;
+          const observed = whole ? await wholeRootObservation(d!, access!, b) : (await metadata(d!, access!, b, true)).value;
           if (observed.trashed !== true) deny("provider_completion_unknown");
           return publicResult(await rpc({ action: "delete_observe", attempt_id: attempt, root_folder_id: d!.root_folder_id,
             root_version: observed.version, outcome: "trashed" }));
@@ -308,7 +329,11 @@ export async function createStorageOwnerLifecycle(configuration: {
       if (!object(raw.descriptor) || !object(raw.snapshot)) return { status: String(raw.status), attempt_id: attemptId,
         ...(raw.operation === "reconnect" ? { operation: "reconnect" } : {}),
         ...(typeof raw.expires_at === "string" && Number.isFinite(Date.parse(raw.expires_at)) ? { expires_at: raw.expires_at } : {}), execution_permitted: false };
-      const d = descriptor(raw.descriptor, owner), access = await token(d), observed = (await metadata(d, access, budget(), true)).value;
+      const d = descriptor(raw.descriptor, owner), access = await token(d);
+      const whole = raw.confirmation_contract === STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION && raw.confirmation_mode === STORAGE_OWNER_WHOLE_ROOT_MODE;
+      if ((raw.confirmation_contract !== undefined && raw.confirmation_contract !== STORAGE_OWNER_CONFIRMATION || raw.confirmation_mode !== undefined) && !whole) deny("root_drift");
+      if (whole && (!d.created_by_clued || d.root_trash_confirmation_mode !== STORAGE_OWNER_WHOLE_ROOT_MODE)) deny("whole_root_trash_unavailable");
+      const observed = whole ? await wholeRootObservation(d, access, budget()) : (await metadata(d, access, budget(), true)).value;
       if (observed.trashed !== true) return { status: "uncertain", attempt_id: attemptId, execution_permitted: false };
       return publicResult(await rpc({ action: "delete_observe", attempt_id: attemptId, root_folder_id: d.root_folder_id, root_version: observed.version, outcome: "trashed" }));
     },

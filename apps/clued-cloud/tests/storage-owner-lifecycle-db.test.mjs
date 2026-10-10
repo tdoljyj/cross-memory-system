@@ -17,6 +17,7 @@ const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const sha=v=>crypto.createHash('sha256').update(v).digest('hex'),id=()=>crypto.randomUUID();
 const envelope=()=>({contract:'clued.storage-credential/1',key_id:'synthetic',nonce:'N'.repeat(16),ciphertext:'X'.repeat(64)});
 const rpcName='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
+const wholeRootMigration='20261010150000_storage_owner_root_trash_scope_v2.sql';
 async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 test('Native owner lifecycle, real migrations and synthetic Google observations',{timeout:240000},async t=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'clued-owner-lifecycle-'));
@@ -83,6 +84,41 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       finally{await db.query('revoke execute on function public.clued_storage_owner_lifecycle_v1(text,jsonb) from clued_worker_gateway');}
       await native.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,role:'clued_worker_gateway',session_id:session})]);
       await assert.rejects(listing(),e=>e.code==='42501');await login(native);
+    });
+    await t.test('whole-root forward upgrade pins source, Owner/definer/config/ACL; replay is idempotent and drift fails without side effects',async()=>{
+      const sql=await fs.readFile(path.join(cloud,'supabase/migrations',wholeRootMigration),'utf8');
+      const catalog=async()=>(await db.query(`select pg_get_userbyid(proowner) owner,prosecdef,proconfig,proacl::text acl,
+        encode(sha256(convert_to(prosrc,'UTF8')),'hex') source_hash from pg_proc where oid=$1::regprocedure`,[rpcName])).rows[0];
+      const baseline=await catalog();assert.equal(baseline.source_hash,'a6eb23ee9c69dae6e1f0ac709587f2b46f675478a326b30f2b3a909bf8170017');
+      assert.equal(baseline.owner,'postgres');assert.equal(baseline.prosecdef,true);assert.deepEqual(baseline.proconfig,['search_path=""']);
+      await db.query(sql);assert.deepEqual(await catalog(),baseline);
+      const source=await fs.readFile(path.join(cloud,'supabase/migrations','20261010055701_storage_owner_lifecycle_v1.sql'),'utf8');
+      const original=source.slice(source.indexOf('create function public.clued_storage_owner_lifecycle_v1('));
+      const definition=original.slice(0,original.indexOf('end $$;')+'end $$;'.length).replace('create function','create or replace function');
+      await db.query('begin');
+      try{
+        await db.query(definition);assert.equal((await catalog()).source_hash,'e0aaaeef216f736fca47cc3523a5d6c690dcd5cf6711f755411104c96eb7ba04');
+        await db.query(sql);assert.deepEqual(await catalog(),baseline);
+      }finally{await db.query('rollback');}
+      for(const tamper of [
+        'alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) owner to authenticated',
+        'alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) security invoker',
+        'alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) set search_path=public',
+        'grant execute on function public.clued_storage_owner_lifecycle_v1(text,jsonb) to anon',
+        'source',
+      ]){
+        await db.query('begin');
+        try{
+          if(tamper==='source'){
+            const v=(await db.query('select pg_get_functiondef($1::regprocedure) def,prosrc from pg_proc where oid=$1::regprocedure',[rpcName])).rows[0];
+            await db.query(v.def.replace(v.prosrc,()=>v.prosrc+'\n-- synthetic source drift\n'));
+          }else await db.query(tamper);
+          const before=await catalog();await db.query('savepoint drift');
+          await assert.rejects(db.query(sql),e=>e.code==='42501'&&e.message==='storage_owner_root_trash_upgrade_unqualified');
+          await db.query('rollback to savepoint drift');assert.deepEqual(await catalog(),before);
+        }finally{await db.query('rollback');}
+      }
+      assert.deepEqual(await catalog(),baseline);
     });
     const original=await root();
     await t.test('actual Native onboard provenance and true registered identities; no fabricated physical path',async()=>{
@@ -316,6 +352,89 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
         await db.query('set local role authenticated');await login(db);
         await assert.rejects(call({action:'list'},db),e=>e.code==='42501'&&e.message==='storage_owner_lifecycle_list_incomplete');
       }finally{await db.query('rollback');}
+    });
+    const wholeConfirm=r=>({contract:'clued.storage-owner-confirmation/2',root_folder_id:r.rootId,confirmed:true,
+      trash_created_root:true,confirmation_mode:'whole_created_root_v2'});
+    const wholeDeletion=async(r,etag='')=>({action:'delete_prepare',...await connectionInput(r.connection),request_id:id(),
+      confirmation:wholeConfirm(r),snapshot:{...snapshot(r),etag}});
+    await t.test('V2 requires exact whole-created-root consent; V1 cannot silently lose its strong ETag or preview digest binding',async()=>{
+      const r=await root();
+      const d=await call({action:'describe',connection_id:r.connection});assert.equal(d.root_trash_confirmation_mode,'whole_created_root_v2');
+      const old=await deletion(r);old.snapshot.etag='';await assert.rejects(call(old),e=>e.code==='42501');
+      const malformed=await wholeDeletion(r);
+      for(const confirmation of [
+        {...wholeConfirm(r),confirmed:false}, {...wholeConfirm(r),trash_created_root:false},
+        {...wholeConfirm(r),confirmation_mode:'exact_snapshot_v1'}, {...wholeConfirm(r),root_folder_id:'wrong-root'},
+        {...wholeConfirm(r),root_version:'3'}, {...wholeConfirm(r),metadata_digest:sha('preview')},
+        {...confirm(r,{trash_created_root:true,root_version:'3',metadata_digest:sha('synthetic inventory')}),confirmation_mode:'whole_created_root_v2'},
+      ])await assert.rejects(call({...malformed,confirmation}),e=>e.code==='42501');
+      for(const patch of [{can_trash:false},{owned_by_me:false},{trashed:true},{root_parent_id:'wrong-parent'},
+        {root_version:''},{metadata_digest:'bad'},{etag:null},{etag:'bad\r\nheader'}])
+        await assert.rejects(call({...malformed,snapshot:{...malformed.snapshot,...patch}}),e=>e.code==='42501');
+      await assert.rejects(call({...malformed,base_version:malformed.base_version-1}),e=>e.code==='40001');
+      await assert.rejects(call({...malformed,profile_version:malformed.profile_version+1}),e=>e.code==='40001');
+      await login(native,otherOwner,otherSession);await assert.rejects(call(malformed),e=>e.code==='42501');await login(native);
+      await assert.rejects(call(await wholeDeletion(selected)),e=>e.code==='42501');
+      assert.equal((await db.query('select count(*)::int n from clued_private.storage_owner_lifecycle_v1 where profile_id=$1',[r.profile])).rows[0].n,0);
+    });
+    await t.test('V2 weak/absent ETag preparation stores mode and whole-Root authority; replay cannot change mode or snapshots',async()=>{
+      const r=await root(),request=await wholeDeletion(r,'W/"synthetic-weak"'),prepared=await call(request);
+      const stored=(await db.query(`select l.confirmation,l.request_digest,m.exact_request,m.authority_request
+        from clued_private.storage_owner_lifecycle_v1 l join clued_private.resource_center_mutations_v1 m on m.id=l.intent_id where l.id=$1`,[prepared.attempt_id])).rows[0];
+      assert.deepEqual(stored.exact_request,wholeConfirm(r));assert.equal(stored.confirmation.snapshot.etag,'W/"synthetic-weak"');
+      assert.equal(stored.authority_request.contract,'clued.storage-owner-root-lifecycle/2');assert.equal(stored.authority_request.confirmation_mode,'whole_created_root_v2');
+      assert.equal((await call(request)).execution_permitted,false);assert.ok(!Object.hasOwn(await call(request),'admission'));
+      await assert.rejects(call({...request,snapshot:{...request.snapshot,metadata_digest:sha('different inventory')}}),e=>e.code==='40001');
+      const v1=await deletion(r);await assert.rejects(call({...v1,request_id:request.request_id}),e=>e.code==='40001');
+      await db.query('update clued_private.storage_owner_lifecycle_v1 set expires_at=clock_timestamp()-interval \'1 second\' where id=$1',[prepared.attempt_id]);
+      assert.equal((await call({action:'recover',attempt_id:prepared.attempt_id})).status,'cancelled');
+      await db.query('select clued_private.storage_root_quiet_v1($1,$2)',[owner,r.rootId]);
+      assert.equal((await row(r.connection)).state,'active');
+    });
+    await t.test('V2 durable mode, capability and exact request cannot be changed before start/revalidate or GET recovery',async()=>{
+      const r=await root(),prepared=await call(await wholeDeletion(r));
+      const start={action:'delete_start',attempt_id:prepared.attempt_id,admission:prepared.admission};
+      for(const tamper of [
+        "update clued_private.storage_owner_lifecycle_v1 set confirmation=jsonb_set(confirmation,'{confirmation_mode}','\"exact_snapshot_v1\"') where id=$1",
+        "update clued_private.storage_owner_lifecycle_v1 set confirmation=jsonb_set(confirmation,'{contract}','\"clued.storage-owner-confirmation/1\"') where id=$1",
+        "update clued_private.storage_owner_lifecycle_v1 set confirmation=jsonb_set(confirmation,'{snapshot,can_trash}','false') where id=$1",
+        "update clued_private.resource_center_mutations_v1 set exact_request=exact_request-'confirmation_mode' where id=(select intent_id from clued_private.storage_owner_lifecycle_v1 where id=$1)",
+      ]){
+        await db.query('begin');
+        try{await db.query(tamper,[prepared.attempt_id]);await db.query('set local role authenticated');await login(db);
+          await db.query('savepoint native_drift');
+          await assert.rejects(call(start,db),e=>e.code==='42501');
+          await db.query('rollback to savepoint native_drift');
+          await assert.rejects(call({action:'recover',attempt_id:prepared.attempt_id},db),e=>e.code==='42501');
+        }finally{await db.query('rollback');}
+      }
+      await call(start);await assert.rejects(call({...start,action:'delete_revalidate',confirmation_mode:'whole_created_root_v2'}),e=>e.code==='42501');
+      await call({...start,action:'delete_revalidate'});
+      await assert.rejects(call({...start,action:'delete_revalidate',admission:null}),e=>e.code==='42501');
+      await call({action:'delete_observe',attempt_id:prepared.attempt_id,root_folder_id:r.rootId,outcome:'uncertain'});
+      const newerSession=id();await db.query('insert into auth.sessions(id,user_id) values($1,$2)',[newerSession,owner]);await login(native,owner,newerSession);
+      const recovered=await call({action:'recover',attempt_id:prepared.attempt_id});assert.equal(recovered.execution_permitted,false);
+      assert.equal(recovered.confirmation_contract,'clued.storage-owner-confirmation/2');assert.equal(recovered.confirmation_mode,'whole_created_root_v2');
+      assert.equal(recovered.descriptor.root_trash_confirmation_mode,'whole_created_root_v2');
+      assert.ok(!Object.hasOwn(recovered,'admission'));
+      await assert.rejects(call(start),e=>e.code==='42501');
+      const done=await call({action:'delete_observe',attempt_id:prepared.attempt_id,root_folder_id:r.rootId,root_version:'9',outcome:'trashed'});
+      assert.equal(done.root_trashed,true);assert.deepEqual(await call({action:'recover',attempt_id:prepared.attempt_id}),done);await login(native);
+      assert.equal((await db.query('select state from clued_private.resource_center_profiles_v1 where id=$1',[r.profile])).rows[0].state,'revoked');
+    });
+    await t.test('V2 same-Root confirmations serialize and expired/revoked Native authority cannot produce another admission',async()=>{
+      const r=await root(),request=await wholeDeletion(r),contender=server.getPgClient();clients.push(contender);
+      await contender.connect();await contender.query('set role authenticated');await login(contender);
+      const results=await Promise.allSettled([call(request),call({...request,request_id:id()},contender)]);
+      assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal(results.filter(x=>x.status==='rejected'&&x.reason.code==='42501').length,1);
+      const prepared=results.find(x=>x.status==='fulfilled').value;
+      await db.query('update clued_private.storage_owner_lifecycle_v1 set expires_at=clock_timestamp()-interval \'1 second\' where id=$1',[prepared.attempt_id]);
+      await assert.rejects(call({action:'delete_start',attempt_id:prepared.attempt_id,admission:prepared.admission}),e=>e.code==='42501');
+      assert.equal((await call({action:'recover',attempt_id:prepared.attempt_id})).status,'cancelled');
+      await disconnect(r.connection);const revoked=await row(r.connection),stopped=(await listing()).connections.find(x=>x.id===r.connection);
+      await assert.rejects(call(await wholeDeletion(r)),e=>e.code==='42501');assert.deepEqual(await row(r.connection),revoked);
+      assert.equal((await listing()).connections.find(x=>x.id===r.connection).root_stop_generation,stopped.root_stop_generation);
+      assert.equal((await db.query("select count(*)::int n from pg_proc where pronamespace='public'::regnamespace and has_function_privilege('clued_worker_gateway',oid,'EXECUTE')")).rows[0].n,80);
     });
     await t.test('issuer retirement rejects even read-only recovery; no identity/verifier fallback',async()=>{
       await db.query("update clued_private.issuer_credentials_v1 set state='retired',retired_at=clock_timestamp() where issuer_id=(select id from clued_private.issuer_identities_v1 where legacy_key=$1 and kind='storage')",[proof]);
