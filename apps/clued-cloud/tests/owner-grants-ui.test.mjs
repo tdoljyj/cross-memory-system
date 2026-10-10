@@ -350,6 +350,47 @@ test('a routine action opens on 这一类管一段时间 with the suggested dura
   assert.equal(f.button('这一类管一段时间').props['aria-pressed'], true);
 });
 
+test('DatasetSplit bootstrap uses only the fixed one-hour, one-use requester grant despite the high-risk once default', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', default_choice: 'once', suggested_expires_seconds: 86400,
+    request: { ...request(), action: 'model.dataset_split.bootstrap' },
+    view: { action: 'model.dataset_split.bootstrap', choice: 'once', expires_seconds: 86400, max_uses: 1 },
+    resource_options: [{ resource: 'repo:o/n/**', options: ['repo:o/n/**', 'repo:o/**'] }] }, error: null });
+  await f.settle();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { request_id: REQUEST, choice: 'grant',
+    expires_seconds: 3600, max_uses: 1, grantee: 'requester' });
+  const answer = issued({ seconds: 3600 });
+  answer.data.confirmation_view.action = 'model.dataset_split.bootstrap';
+  answer.data.confirmation_view.max_uses = 1;
+  f.calls[1].resolve(answer); await f.settle();
+  assert.equal(f.nodes('select').length, 0);
+  assert.equal(f.nodes('input').filter(n => n.props.type === 'checkbox').length, 0);
+  assert.ok(!f.nodes('button').some(n => f.text(n) === '只批这一次'));
+  assert.match(f.text(), /1 小时内使用 1 次/);
+  f.button('批准').props.onClick();
+  assert.deepEqual(plain(f.calls[2].args.p_input), { confirmation_token: 'clued_ogr_a', view_digest: 'd'.repeat(64) });
+});
+
+test('DatasetSplit bootstrap cannot approve an incompatible server confirmation view', async t => {
+  for (const change of [v => { v.choice = 'once'; }, v => { v.expires_seconds = 86400; },
+    v => { v.max_uses = null; }, v => { v.grantee.any_agent = true; }]) {
+    const f = fixture(CONFIRM); t.after(() => f.unmount());
+    f.emit('INITIAL_SESSION', session('owner'));
+    f.calls[0].resolve({ data: { status: 'ok', request: { ...request(), action: 'model.dataset_split.bootstrap' },
+      view: { action: 'model.dataset_split.bootstrap', expires_seconds: 3600 } }, error: null });
+    await f.settle();
+    const answer = issued({ seconds: 3600 });
+    answer.data.confirmation_view.action = 'model.dataset_split.bootstrap';
+    answer.data.confirmation_view.max_uses = 1;
+    change(answer.data.confirmation_view);
+    f.calls[1].resolve(answer); await f.settle();
+    assert.equal(f.button('批准').props.disabled, true);
+    assert.match(f.text(), /暂时无法批准/);
+    assert.equal(f.calls.length, 2);
+  }
+});
+
 test('the Agent\'s suggested duration is the default; changing the options issues a new token', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount());
   await open(f, 'pending', 86400);

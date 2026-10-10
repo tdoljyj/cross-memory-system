@@ -29,18 +29,18 @@ const readiness = () => ({
   bootstrap_write_authorized: false, domain_permission: 'NOT_GRANTED', m2_verdict: 'NOT_ISSUED', private_actor_fields_exposed: false,
 });
 
-for (const [label, produce] of [
-  ['unavailable readiness RPC', () => { throw new Error('private fixture detail'); }],
-  ['invalid readiness shape', () => ({ ...readiness(), private_actor: 'private fixture detail' })],
-  ['expired readiness timestamp', () => ({ ...readiness(), evaluated_at: new Date(Date.now() - 300001).toISOString() })],
-  ['future readiness timestamp', () => ({ ...readiness(), evaluated_at: new Date(Date.now() + 60000).toISOString() })],
+for (const [label, produce, reason] of [
+  ['unavailable readiness RPC', () => { throw new Error('private fixture detail'); }, 'RPC'],
+  ['invalid readiness shape', () => ({ ...readiness(), private_actor: 'private fixture detail' }), 'RESULT_SCHEMA'],
+  ['expired readiness timestamp', () => ({ ...readiness(), evaluated_at: new Date(Date.now() - 300001).toISOString() }), 'TIME_STALE'],
+  ['future readiness timestamp', () => ({ ...readiness(), evaluated_at: new Date(Date.now() + 60000).toISOString() }), 'TIME_FUTURE'],
 ]) {
   test(`request preserves typed ${label} and never submits`, async () => {
     let submissions = 0;
     await assert.rejects(dispatchModelDomainTool(flags, 'clued_model_dataset_split_bootstrap_request', input, {
       rpc: async name => name === 'clued_model_dataset_split_owner_anchor_refs_candidate' ? anchors() : produce(),
       submitOwnerRequest: async () => { submissions++; },
-    }), error => error instanceof BootstrapReadinessDenied && !error.message.includes('private fixture detail'));
+    }), error => error instanceof BootstrapReadinessDenied && error.reason === reason && !error.message.includes('private fixture detail'));
     assert.equal(submissions, 0);
   });
 }
@@ -64,7 +64,7 @@ test('successful readiness still submits the original exact Owner request once',
 
 test('the existing Worker already maps the preserved typed readiness denial', () => {
   const worker = readFileSync(new URL('../worker/continuity.ts', import.meta.url), 'utf8');
-  assert.match(worker, /error instanceof BootstrapReadinessDenied\) throw new HttpError\(403, "DatasetSplit bootstrap readiness denied or unavailable\."\)/);
+  assert.match(worker, /error instanceof BootstrapReadinessDenied\) throw new HttpError\(403, "DatasetSplit bootstrap readiness denied or unavailable\. Reason: " \+ error.reason \+ "\."\)/);
 });
 
 test('actual Worker reports readiness rejection without an Owner request or private detail', async () => {
@@ -87,10 +87,47 @@ test('actual Worker reports readiness rejection without an Owner request or priv
     const response = await worker.fetch(request, { CLUED_DB_GATEWAY_TOKEN: 'test-worker-gateway', PROJECT_VIEWS_V2: 'true', ...flags, CLUED_OWNER_REQUESTS_V1: 'true' }, { waitUntil() {} });
     assert.equal(response.status, 403);
     const body = await response.json();
-    assert.equal(body.error.message, 'DatasetSplit bootstrap readiness denied or unavailable.');
+    assert.equal(body.error.message, 'DatasetSplit bootstrap readiness denied or unavailable. Reason: TIME_FUTURE.');
     assert.equal(calls.length, 2);
     assert(!calls.some(path => path.includes('owner_request')));
     assert(!JSON.stringify(body).includes(token));
     assert(!JSON.stringify(body).includes(P.domain.owner_adoption.canonical_record_id));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('actual read-only readiness Worker route preserves bounded failure reasons without writes', async () => {
+  const worker = await loadContinuityWorker();
+  const originalFetch = globalThis.fetch;
+  const token = 'clued_bnd_' + 'fixture'.repeat(10);
+  try {
+    for (const [reply, reason] of [
+      [() => Response.json({ code: '42501', message: 'private SQL detail' }, { status: 403 }), 'RPC'],
+      [() => Response.json({ ...readiness(), private_actor: 'private fixture detail' }), 'RESULT_SCHEMA'],
+      [() => Response.json({ ...readiness(), plan_sha256: 'f'.repeat(64) }), 'FIXED_SOURCE'],
+      [() => Response.json({ ...readiness(), evaluated_at: new Date(Date.now() + 60000).toISOString() }), 'TIME_FUTURE'],
+    ]) {
+      const calls = [];
+      globalThis.fetch = async url => {
+        const path = new URL(String(url)).pathname;
+        calls.push(path);
+        assert(path.endsWith('/clued_model_dataset_split_bootstrap_readiness_candidate'));
+        return reply();
+      };
+      const request = new Request('https://clued.test/mcp', {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+          name: 'clued_model_dataset_split_bootstrap_readiness', arguments: {},
+        } }),
+      });
+      const response = await worker.fetch(request, { CLUED_DB_GATEWAY_TOKEN: 'test-worker-gateway',
+        PROJECT_VIEWS_V2: 'true', ...flags, CLUED_OWNER_REQUESTS_V1: 'true' }, { waitUntil() {} });
+      assert.equal(response.status, 403);
+      const body = await response.json();
+      assert.equal(body.error.message, `DatasetSplit bootstrap readiness denied or unavailable. Reason: ${reason}.`);
+      assert.equal(calls.length, 1);
+      assert(!JSON.stringify(body).includes('private'));
+      assert(!JSON.stringify(body).includes(token));
+      assert(!JSON.stringify(body).includes(P.domain.owner_adoption.canonical_record_id));
+    }
   } finally { globalThis.fetch = originalFetch; }
 });
