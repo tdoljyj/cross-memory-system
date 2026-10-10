@@ -188,7 +188,7 @@ export default function StorageOnboard() {
         <textarea aria-label="子目录" rows={4} value={tracksText} disabled={busy} onChange={event => setTracksText(event.target.value)} /></label>
       <label className="block"><input type="checkbox" checked={normalUse} disabled={busy} onChange={event => setNormalUse(event.target.checked)} />正常使用（Agent 可读取目录内全部文件并按内容搜索）</label>
       <label className="block"><input type="checkbox" checked={defaultRefresh} disabled={busy || !config.refresh_available}
-        onChange={event => setDefaultRefresh(event.target.checked)} />后台自动续期授权</label>
+        onChange={event => setDefaultRefresh(event.target.checked)} />连接后后台自动续签（默认选中，可随时停用）</label>
       {!defaultRefresh && <p className="text-sm">不开启后台续期时，连接约 1 小时后读写都不可用，需要回到本页重新授权。</p>}
       {(config.refresh_token_count ?? 0) >= 50 && <p className="text-sm">该账号在 Clued 中的 Google 授权次数已较多。Google 超过上限时会静默作废最早的授权。</p>}
       {choice ? <div className="my-4 whitespace-pre-wrap rounded-xl border p-3 text-sm" aria-label="说明">{renderOnboardDisclosure(choice)}</div>
