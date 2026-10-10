@@ -1,4 +1,6 @@
 -- Candidate implementation of Owner-accepted proposal ece45d7e...424b8f.
+-- Task 1502fd80-8ff8-4adc-b4f5-da6d462f4f8a; implementation-only acceptance
+-- Decision f9d4b125-a639-4c70-9d87-261923c4afb0, Receipt 449c94d5-1d38-408e-8f01-299a85c17cce.
 -- Native only. No request reset, schema relaxation, new request/key, model
 -- record write, DomainAuthority, DataGate, M2 or training permission.
 -- Reuse the existing owner_grant token, writer and receipt protocol.
