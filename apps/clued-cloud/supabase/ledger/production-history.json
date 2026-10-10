@@ -1850,7 +1850,7 @@
       "name": "search_context_text_cache_v1",
       "statements_md5": "2b555747d91324dcd21aecc05086942d",
       "statements_length": 9989,
-      "source": "migrations/20261010010000_search_context_text_cache_v1.sql",
+      "source": "history-only/20261010013611_search_context_text_cache_v1.sql",
       "transform": "identical"
     }
   ],
