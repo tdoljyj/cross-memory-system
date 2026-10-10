@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { configureTemporaryStorage } from "../../../.github/actions/ci-temporary-storage/setup.mjs";
-import { checkApplicationWorkflows, temporaryStorageFindings } from "../../../.github/actions/ci-temporary-storage/check-workflows.mjs";
+import { checkApplicationWorkflows, checkRepositoryWorkflows, PLATFORM_TEMP_ENVIRONMENT, repositoryTemporaryStorageFindings, stepFingerprint, temporaryStorageFindings } from "../../../.github/actions/ci-temporary-storage/check-workflows.mjs";
+import { createRequire } from "node:module";
 
 const cli = fileURLToPath(new URL("../../../.github/actions/ci-temporary-storage/setup.mjs", import.meta.url));
+const require = createRequire(import.meta.url);
+const { parse } = require("yaml");
 
 function fixture(run) {
   const base = mkdtempSync(path.join(os.tmpdir(), "ci-temp-storage-test-"));
@@ -114,4 +117,192 @@ test("coverage rejects absent, late or partial setup and shared promptfoo state"
 test("the real eight application workflows configure temporary storage before every consumer", () => {
   const workflows = fileURLToPath(new URL("../../../.github/workflows", import.meta.url));
   assert.deepEqual(checkApplicationWorkflows(workflows), []);
+});
+
+test("repository coverage includes Python/control jobs and preserves the trusted checkout", () => {
+  const checkout = { uses: "actions/checkout@pinned" };
+  const setup = { uses: "./.github/actions/ci-temporary-storage" };
+  const run = { run: "python3 -m unittest example" };
+  const audit = { jobs: { control: { mode: "job-temp", action: setup.uses, retained_artifacts: [], persistent_action_caches: [] } } };
+  const check = (steps, job = {}) => repositoryTemporaryStorageFindings({ jobs: { control: { steps, ...job } } }, "control.yml", audit);
+  assert.deepEqual(check([checkout, setup, run]), []);
+  assert.ok(check([checkout, run]).length);
+  assert.ok(check([setup, checkout, run]).length);
+  assert.ok(check([checkout, { ...setup, if: false }, run]).length);
+  assert.ok(check([checkout, { ...setup, if: "github.event_name == 'push'" }, run]).length);
+  assert.deepEqual(check([checkout, { ...setup, if: "github.event_name == 'push'" }, { ...run, if: "github.event_name == 'push'" }]), []);
+  assert.ok(check([checkout, setup, { run: "curl -o /tmp/shared-package url" }]).length);
+  assert.ok(check([checkout, setup, { ...run, env: { temp: "/tmp" } }]).length);
+  assert.ok(check([checkout, setup, run], { container: "python:3.12" }).length);
+  assert.ok(check([checkout, setup, { uses: "vendor/unknown@commit" }, run]).length);
+  const trustedAudit = { jobs: { control: { ...audit.jobs.control, action: "./trusted/.github/actions/ci-temporary-storage" } } };
+  const trusted = { jobs: { control: { steps: [{ ...checkout, with: { path: "trusted" } }, { uses: trustedAudit.jobs.control.action }, run] } } };
+  assert.deepEqual(repositoryTemporaryStorageFindings(trusted, "control.yml", trustedAudit), []);
+  trusted.jobs.control.steps[1].uses = "./candidate/.github/actions/ci-temporary-storage";
+  assert.ok(repositoryTemporaryStorageFindings(trusted, "control.yml", trustedAudit).length);
+});
+
+test("no-checkout production control binds every runtime step without loading repository code", () => {
+  const run = { run: "npx --yes example-command", env: { ...PLATFORM_TEMP_ENVIRONMENT } };
+  const audit = { jobs: { control: { mode: "step-env", retained_artifacts: [], persistent_action_caches: [] } } };
+  const check = (steps) => repositoryTemporaryStorageFindings({ jobs: { control: { steps } } }, "control.yml", audit);
+  assert.deepEqual(check([run, { ...run, if: "always()" }]), []);
+  assert.ok(check([run, { ...run, env: { TMPDIR: "${{ runner.temp }}" } }]).length);
+  assert.ok(check([run, { ...run, env: { ...run.env, WRANGLER_LOG_PATH: "/tmp/logs" } }]).length);
+  assert.ok(check([run, { uses: "actions/upload-artifact@v4", with: { path: "evidence.json" } }]).length);
+});
+
+test("route-only review is invalidated by changed behavior and cannot exempt another job", () => {
+  const steps = [{ run: "echo route observed" }];
+  const audit = { jobs: { "linux-route": { mode: "no-temp-writes", step_sha256: stepFingerprint(steps) } } };
+  assert.deepEqual(repositoryTemporaryStorageFindings({ jobs: { "linux-route": { steps } } }, "clued-ci-runner-heartbeat.yml", audit), []);
+  assert.ok(repositoryTemporaryStorageFindings({ jobs: { "linux-route": { steps: [{ run: "mkdir /tmp/other" }] } } }, "clued-ci-runner-heartbeat.yml", audit).length);
+  assert.ok(repositoryTemporaryStorageFindings({ jobs: { "linux-route": { steps } } }, "new.yml", audit).length);
+});
+
+test("repository discovery rejects new workflows, jobs, composite actions and stale review entries", () => fixture(({ base }) => {
+  const workflows = path.join(base, ".github", "workflows");
+  mkdirSync(workflows, { recursive: true });
+  mkdirSync(path.join(base, ".github", "actions"), { recursive: true });
+  const source = "jobs:\n  control:\n    steps:\n      - run: python check.py\n        env:\n" + Object.entries(PLATFORM_TEMP_ENVIRONMENT).map(([key, value]) => `          ${key}: ${value}\n`).join("");
+  writeFileSync(path.join(workflows, "control.yml"), source);
+  const catalog = { schema: "clued.ci-temporary-storage-coverage/1", workflows: { "control.yml": { jobs: { control: { mode: "step-env", retained_artifacts: [], persistent_action_caches: [] } } } }, local_actions: {} };
+  assert.deepEqual(checkRepositoryWorkflows(workflows, catalog), []);
+  writeFileSync(path.join(workflows, "new.yaml"), source);
+  assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /no reviewed/);
+  rmSync(path.join(workflows, "new.yaml"));
+  writeFileSync(path.join(workflows, "control.yml"), source + "  unexpected:\n    steps: []\n");
+  assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /new job/);
+  writeFileSync(path.join(workflows, "control.yml"), source);
+  mkdirSync(path.join(base, ".github", "actions", "new"));
+  writeFileSync(path.join(base, ".github", "actions", "new", "action.yml"), "runs:\n  using: composite\n  steps: []\n");
+  assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /no temporary lifecycle/);
+  catalog.workflows["removed.yml"] = { jobs: {} };
+  assert.match(checkRepositoryWorkflows(workflows, catalog).join("\n"), /no longer exists/);
+}));
+
+test("every repository workflow and job has a valid temporary-data lifecycle", () => {
+  const workflows = fileURLToPath(new URL("../../../.github/workflows", import.meta.url));
+  assert.deepEqual(checkRepositoryWorkflows(workflows), []);
+});
+
+test("production plaintext backup uses job scratch and retains only its encrypted artifact", () => {
+  const source = readFileSync(new URL("../../../.github/workflows/clued-cloud-production-release.yml", import.meta.url), "utf8");
+  const step = parse(source).jobs.release.steps.find(s => s.name === "Create and verify encrypted pre-migration backup");
+  assert.match(step.run, /mktemp -d "\$RUNNER_TEMP\//);
+  assert.match(step.run, /trap cleanup_plaintext EXIT/);
+  assert.match(step.run, /trap 'exit 143' TERM/);
+  assert.match(step.run, /dump_path="\$backup_tmp\//);
+  assert.match(step.run, /verified_path="\$backup_tmp\//);
+  assert.match(step.run, /encrypted_path="\$evidence_dir\/clued-production-pre-migration\.dump\.enc"/);
+  assert.match(step.run, /-v "\$backup_tmp:\/backup"/);
+});
+
+function mockCommand(bin, name, source) {
+  const file = path.join(bin, name);
+  writeFileSync(file, "#!/bin/bash\nset -euo pipefail\n" + source + "\n");
+  chmodSync(file, 0o700);
+}
+
+test("backup failure cleans plaintext while successful encrypted evidence is retained (mocked tools)", { skip: process.platform !== "linux" }, () => fixture(({ base, root }) => {
+  const source = parse(readFileSync(new URL("../../../.github/workflows/clued-cloud-production-release.yml", import.meta.url), "utf8"));
+  const script = source.jobs.release.steps.find(s => s.name === "Create and verify encrypted pre-migration backup").run;
+  const bin = path.join(base, "bin");
+  mkdirSync(bin);
+  mockCommand(bin, "node", "printf '%s' 'postgresql://fixture:fixture@invalid.test/db'");
+  mockCommand(bin, "docker", 'while [ "$#" -gt 0 ]; do if [ "$1" = -v ]; then shift; backup="${1%:/backup}"; fi; shift; done\nprintf "fixture-only backup data\\n" > "$backup/clued-production-pre-migration.dump"');
+  mockCommand(bin, "openssl", 'decrypt=false; input=""; output=""; while [ "$#" -gt 0 ]; do case "$1" in -d) decrypt=true;; -in) shift; input="$1";; -out) shift; output="$1";; esac; shift; done\nif [ "$MOCK_FAILURE" = encrypt ] && [ "$decrypt" = false ]; then exit 42; fi\ncp -- "$input" "$output"\nif [ "$MOCK_FAILURE" = verify ] && [ "$decrypt" = true ]; then printf corruption >> "$output"; fi');
+  for (const failure of ["none", "encrypt", "verify"]) {
+    const cwd = path.join(base, "backup-" + failure);
+    mkdirSync(cwd);
+    const child = spawnSync("bash", ["-c", script], { cwd, encoding: "utf8", env: {
+      ...process.env, PATH: bin + ":/usr/bin:/bin", RUNNER_TEMP: root,
+      CLUED_ATTESTATION_DATABASE_URL: "postgresql://fixture:fixture@invalid.test/db", CLUED_PRODUCTION_BACKUP_KEY: "fixture-only-key",
+      GITHUB_SHA: "fixture-source", MOCK_FAILURE: failure,
+    } });
+    assert.equal(child.status === 0, failure === "none", child.stderr);
+    assert.deepEqual(readdirSync(root), [], failure + ": plaintext scratch survived");
+    const evidence = path.join(cwd, ".sites-runtime/release-evidence");
+    assert.ok(!existsSync(path.join(evidence, "clued-production-pre-migration.dump")));
+    assert.ok(!existsSync(path.join(evidence, "clued-production-pre-migration.dump.verified")));
+    if (failure === "none") {
+      assert.ok(existsSync(path.join(evidence, "clued-production-pre-migration.dump.enc")));
+      const manifest = JSON.parse(readFileSync(path.join(evidence, "production-backup-manifest.json"), "utf8"));
+      assert.equal(manifest.source_commit, "fixture-source");
+      assert.ok(manifest.dump_bytes > 0);
+    }
+  }
+}));
+
+test("ICU downloads in all three workflows clean their own job package on installer failure", { skip: process.platform !== "linux" }, () => fixture(({ base, root }) => {
+  const bin = path.join(base, "bin"); mkdirSync(bin);
+  mockCommand(bin, "curl", 'printf fixture-package > "$2"');
+  mockCommand(bin, "sudo", "exit 42");
+  for (const name of ["clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml", "clued-connection-authorization.yml"]) {
+    const workflow = parse(readFileSync(new URL("../../../.github/workflows/" + name, import.meta.url), "utf8"));
+    const steps = Object.values(workflow.jobs).flatMap(job => job.steps ?? []);
+    const install = steps.find(step => step.name === "Install embedded PostgreSQL ICU compatibility runtime");
+    assert.ok(install, name);
+    const child = spawnSync("bash", ["-c", install.run], { cwd: base, encoding: "utf8", env: { ...process.env, PATH: bin + ":/usr/bin:/bin", RUNNER_TEMP: root } });
+    assert.equal(child.status, 42, child.stderr);
+    assert.deepEqual(readdirSync(root), [], name + ": downloaded package survived");
+  }
+}));
+
+test("the actual composite bootstrap works with Python and no Node on PATH", () => fixture(({ base, root, envFile }) => {
+  const action = parse(readFileSync(new URL("../../../.github/actions/ci-temporary-storage/action.yml", import.meta.url), "utf8"));
+  const python = process.platform === "win32" ? "python" : "python3";
+  const executable = spawnSync(python, ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" });
+  assert.equal(executable.status, 0, executable.stderr);
+  let shell, argv, search;
+  if (process.platform === "win32") {
+    shell = path.join(process.env.SystemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe");
+    argv = ["-NoProfile", "-NonInteractive", "-Command", action.runs.steps[1].run];
+    search = [path.dirname(executable.stdout.trim()), path.join(process.env.SystemRoot, "System32")].join(path.delimiter);
+  } else {
+    shell = "/bin/bash";
+    argv = ["-c", action.runs.steps[0].run];
+    search = path.join(base, "python-only-bin"); mkdirSync(search);
+    symlinkSync(executable.stdout.trim(), path.join(search, "python3"));
+  }
+  const child = spawnSync(shell, argv, { encoding: "utf8", env: { ...process.env, PATH: search,
+    RUNNER_TEMP: root, GITHUB_ENV: envFile, CI_TEMP_ISOLATE_PROMPTFOO: "false",
+    GITHUB_ACTION_PATH: fileURLToPath(new URL("../../../.github/actions/ci-temporary-storage/", import.meta.url)),
+  } });
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(readFileSync(envFile, "utf8"), /PYTHONPYCACHEPREFIX=/);
+  assert.match(readFileSync(envFile, "utf8"), /WRANGLER_LOG_PATH=/);
+  assert.deepEqual(readdirSync(root), []);
+}));
+
+test("backup cancellation removes plaintext scratch without a real database or deployment", { skip: process.platform !== "linux" }, async () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), "ci-backup-cancel-test-"));
+  const root = path.join(base, "job-temp"), bin = path.join(base, "bin"), marker = path.join(base, "encrypt-started");
+  mkdirSync(root); mkdirSync(bin);
+  const source = parse(readFileSync(new URL("../../../.github/workflows/clued-cloud-production-release.yml", import.meta.url), "utf8"));
+  const script = source.jobs.release.steps.find(s => s.name === "Create and verify encrypted pre-migration backup").run;
+  mockCommand(bin, "node", "printf '%s' 'postgresql://fixture:fixture@invalid.test/db'");
+  mockCommand(bin, "docker", 'while [ "$#" -gt 0 ]; do if [ "$1" = -v ]; then shift; backup="${1%:/backup}"; fi; shift; done\nprintf "fixture-only backup data\\n" > "$backup/clued-production-pre-migration.dump"');
+  mockCommand(bin, "openssl", 'touch "$MOCK_READY"\nsleep 30');
+  const child = spawn("bash", ["-c", script], { cwd: base, detached: true, stdio: ["ignore", "ignore", "pipe"], env: {
+    ...process.env, PATH: bin + ":/usr/bin:/bin", RUNNER_TEMP: root, MOCK_READY: marker,
+    CLUED_ATTESTATION_DATABASE_URL: "postgresql://fixture:fixture@invalid.test/db", CLUED_PRODUCTION_BACKUP_KEY: "fixture-only-key", GITHUB_SHA: "fixture-source",
+  } });
+  let finished = false, stderr = "";
+  child.stderr.on("data", chunk => { stderr += chunk; });
+  const exited = new Promise((resolve, reject) => {
+    child.once("error", reject); child.once("exit", (code, signal) => { finished = true; resolve({ code, signal }); });
+  });
+  try {
+    const deadline = Date.now() + 5000;
+    while (!existsSync(marker) && !finished && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(existsSync(marker), "mock encrypt did not start: " + stderr);
+    process.kill(-child.pid, "SIGTERM");
+    const result = await exited;
+    assert.notEqual(result.code, 0);
+    assert.deepEqual(readdirSync(root), [], "plaintext survived cancellation: " + stderr);
+  } finally {
+    if (!finished) { try { process.kill(-child.pid, "SIGKILL"); } catch {} await exited; }
+    rmSync(base, { recursive: true, force: true });
+  }
 });

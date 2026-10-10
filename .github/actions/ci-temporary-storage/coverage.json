@@ -1,0 +1,818 @@
+{
+  "schema": "clued.ci-temporary-storage-coverage/1",
+  "reviewed_source": "repository candidate; exact commit is bound by its PR",
+  "policy": {
+    "temporary": "TMPDIR/TMP/TEMP, Python bytecode and Wrangler logs are job-owned; built-in job lifecycle handles hard-kill leftovers subject to permissions.",
+    "retained": "Builds, qualification bundles, encrypted backups and evidence keep their existing artifact paths and retention.",
+    "caches": "Existing npm/pip/tool caches and explicit action/Trivy caches remain persistent; no host-wide sweep or prune.",
+    "shared_lock": "scripts/ci/self-hosted/host-port-lock.sh deliberately keeps the stable /tmp/clued-ci-NAME.lock inode for cross-runner flock; a tiny coordination file, not transient extraction data.",
+    "vendor_bootstrap": "Official checkout/setup-node/setup-python/cache/upload-artifact actions manage workspace, tool cache and runner temporary transfers; they may run before repository bootstrap."
+  },
+  "local_actions": {
+    ".github/actions/ci-temporary-storage/action.yml": {
+      "kind": "self-bootstrap",
+      "producer_sources": [
+        ".github/actions/ci-temporary-storage/setup.mjs",
+        ".github/actions/ci-temporary-storage/setup.py"
+      ],
+      "scope": "Validates the job directory; exports environment only; removes its own exclusive write probe; never sweeps other jobs."
+    }
+  },
+  "workflows": {
+    "active-doc-links.yml": {
+      "jobs": {
+        "links-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "links-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-capture-guard.yml": {
+      "jobs": {
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-ci-health.yml": {
+      "jobs": {
+        "deterministic-health-check": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-ci-runner-heartbeat.yml": {
+      "jobs": {
+        "windows-route": {
+          "mode": "no-temp-writes",
+          "purpose": "application or repository control",
+          "reason": "Only compares the assigned runner name and emits a route observation; no checkout, subprocess or filesystem writer.",
+          "step_sha256": "f49aec9671914f4109fd0d6baaf21511e3bad585f1b590294606c6f1720b6d73"
+        },
+        "linux-route": {
+          "mode": "no-temp-writes",
+          "purpose": "application or repository control",
+          "reason": "Only compares the assigned runner name and emits a route observation; no checkout, subprocess or filesystem writer.",
+          "step_sha256": "fa3ab6422d227cd8295fda53a27bdffd02f92d550b3e390fafbac720bb70e205"
+        }
+      }
+    },
+    "clued-ci-usage-report.yml": {
+      "jobs": {
+        "report": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "ci-usage-report.json"
+          ],
+          "persistent_action_caches": [
+            ".ci-usage-cache"
+          ]
+        }
+      }
+    },
+    "clued-cloud-node22-install.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-cloud-production-release.yml": {
+      "jobs": {
+        "release": {
+          "mode": "job-temp",
+          "purpose": "production control/source review only",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json\napps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json\napps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json\napps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json\napps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc\napps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json\napps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json\napps/clued-cloud/.sites-runtime/storage-client-source/registration.json\n"
+          ],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-cloud-quality-gate.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-components.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-connection-authorization.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "push-reuse": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "isolated-candidate-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "${{ runner.temp }}/integration-runtime-gate-evidence.json",
+            "${{ runner.temp }}/clued-tested-tree.json"
+          ],
+          "persistent_action_caches": []
+        },
+        "isolated-candidate-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "${{ runner.temp }}/integration-runtime-gate-evidence.json"
+          ],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-currentness-post-deploy-attestation.yml": {
+      "jobs": {
+        "verify-and-attest": {
+          "mode": "job-temp",
+          "purpose": "production control/source review only",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "apps/clued-cloud/currentness-attestation.json"
+          ],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-g4-database.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "push-reuse": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "database-gate-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "${{ runner.temp }}/clued-tested-tree.json"
+          ],
+          "persistent_action_caches": []
+        },
+        "database-gate-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-information-flow-prod-e2e.yml": {
+      "jobs": {
+        "prod-e2e": {
+          "mode": "job-temp",
+          "purpose": "production control/source review only",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "apps/clued-cloud/prod-e2e-evidence.json"
+          ],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-integration-runtime-config.yml": {
+      "jobs": {
+        "configure": {
+          "mode": "step-env",
+          "purpose": "production control/source review only",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-integration-runtime-nightly.yml": {
+      "jobs": {
+        "nightly-property-run": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-merge-executor.yml": {
+      "jobs": {
+        "execute": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-merge-slot-ci.yml": {
+      "jobs": {
+        "report": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-release-tags.yml": {
+      "jobs": {
+        "tag": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-storage-executor-window.yml": {
+      "jobs": {
+        "open-window": {
+          "mode": "step-env",
+          "purpose": "production control/source review only",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "open": {
+          "mode": "step-env",
+          "purpose": "production control/source review only",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "close": {
+          "mode": "step-env",
+          "purpose": "production control/source review only",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-storage-read-config.yml": {
+      "jobs": {
+        "configure": {
+          "mode": "step-env",
+          "purpose": "production control/source review only",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-work-admission-dispatch.yml": {
+      "jobs": {
+        "admit": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-work-admission-reverify.yml": {
+      "jobs": {
+        "reverify": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "clued-work-admission.yml": {
+      "jobs": {
+        "clued-work-admission": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "clued-work-adopt": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "contract-placement.yml": {
+      "jobs": {
+        "contract-placement": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "design-refs.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "design-refs-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "design-refs-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "gitleaks.yml": {
+      "jobs": {
+        "gitleaks-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "gitleaks-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "information-flow-e2e.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "push-reuse": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "e2e-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "${{ runner.temp }}/ife2e",
+            "${{ runner.temp }}/clued-tested-tree.json"
+          ],
+          "persistent_action_caches": []
+        },
+        "e2e-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "${{ runner.temp }}/ife2e"
+          ],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "memory-publication-gate.yml": {
+      "jobs": {
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "model-program-m0.yml": {
+      "jobs": {
+        "validate-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "validate-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "model-program-m1-entry.yml": {
+      "jobs": {
+        "validate-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "validate-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "model-program-m1-harness.yml": {
+      "jobs": {
+        "validate-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "validate-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "model-program-m1-package.yml": {
+      "jobs": {
+        "validate-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "validate-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "model-program-m2-scoped-consumer.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trusted-windows": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-linux": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "mps03-native-agent.yml": {
+      "jobs": {
+        "mps03-local-reference-and-static": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "mps04-live-native-nonprod-g6": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "multitrack-governance-projection.yml": {
+      "jobs": {
+        "validate-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "validate-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "node-profile-policy.yml": {
+      "jobs": {
+        "trusted-windows": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trusted-linux": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "phase2-naming-surface-inventory.yml": {
+      "jobs": {
+        "inventory": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryManifest.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryFindings.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventorySummary.md\n${{ runner.temp }}/clued-naming-surface-inventory/GenerationResult.json\n${{ runner.temp }}/clued-naming-surface-inventory/CheckoutNormalizationEvidence.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryConsolidated.json\n${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryRecords.jsonl\n${{ runner.temp }}/clued-naming-surface-inventory/Step3Summary.md\n"
+          ],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "phase2-v027-validation.yml": {
+      "jobs": {
+        "validate-v027": {
+          "mode": "job-temp",
+          "purpose": "qualification/validation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [
+            "${{ env.RECEIPT_PATH }}\nartifacts/clued-validation/phase2-v027/receipt/GateExecution.json\nartifacts/clued-validation/phase2-v027/receipt/NamingReceipt.json\nartifacts/clued-validation/phase2-v027/receipt/NamingExecution.json\nartifacts/clued-validation/phase2-v027/receipt/PostMigrationBoundary.json\nartifacts/clued-validation/phase2-v027/receipt/BoundaryControls.json\n",
+            "${{ env.RECEIPT_PATH }}\n${{ env.NEGATIVE_MANIFEST_PATH }}\n"
+          ],
+          "persistent_action_caches": []
+        },
+        "permission-check": {
+          "mode": "step-env",
+          "purpose": "qualification/validation",
+          "retained_artifacts": [
+            "${{ runner.temp }}/PermissionObservation.json"
+          ],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "public-mcp-behavior.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "public-mcp-gate-receipt.yml": {
+      "jobs": {
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted-gate/.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted-gate/.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "public-mcp-protocol.yml": {
+      "jobs": {
+        "admission-gate": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "runner-budget-policy.yml": {
+      "jobs": {
+        "trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
+    "trivy.yml": {
+      "jobs": {
+        "trivy-trusted-self-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trivy-untrusted-hosted": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    }
+  }
+}

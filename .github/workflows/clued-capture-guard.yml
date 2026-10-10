@@ -49,6 +49,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python3 --version
       - run: python3 -m unittest tests.test_clued_capture_guard tests.test_clued_work_claim_guard -v
 
@@ -71,5 +73,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python3 --version
       - run: python3 -m unittest tests.test_clued_capture_guard tests.test_clued_work_claim_guard -v

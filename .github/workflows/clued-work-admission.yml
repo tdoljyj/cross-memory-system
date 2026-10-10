@@ -86,6 +86,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Self-test the admission script (no network, mocked fetch)
         run: |
           node --version
@@ -162,6 +164,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Report the merge or close to Clued (adoption, merge slot)
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
