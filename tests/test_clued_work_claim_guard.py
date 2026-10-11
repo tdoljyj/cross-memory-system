@@ -450,6 +450,98 @@ class AgentInboxTest(unittest.TestCase):
                     self.assertIn("clued_agent_message_send reply_to", context["additionalContext"])
                     self.assertIn("reconnect the Clued connector", context["additionalContext"])
 
+    def test_disabled_inbox_reminder_requires_reading_without_replies(self):
+        disabled = {**INBOX, "messages_enabled": False}
+        for name, body in (("clued_session_resume", {"session_token": "t", "agent_inbox": disabled}),
+                           ("clued_work_renew", {"status": "committed", "claim": claim(), "agent_inbox": disabled})):
+            for response in (body, {"structuredContent": body}, [{"type": "text", "text": json.dumps(body)}]):
+                with self.subTest(name=name, shape=type(response).__name__):
+                    out = self.post(name, response)
+                    self.assertEqual(out.returncode, 0, out.stderr)
+                    text = json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"]
+                    self.assertIn("read them with clued_agent_inbox", text)
+                    self.assertIn("do not send or reply", text)
+                    self.assertIn("Tell the Owner in one line whom you need to reach and why", text)
+                    self.assertIn("Do not ask the Owner to turn the switch on", text)
+                    self.assertNotIn("clued_agent_message_send", text)
+                    self.assertNotIn("answer each request", text)
+
+    def test_disabled_unread_or_open_requests_still_need_a_read(self):
+        for unread in (0, 1):
+            for name in ("clued_session_resume", "clued_work_renew"):
+                with self.subTest(unread=unread, name=name):
+                    use_id = f"disabled-{name}-{unread}"
+                    inbox = {**INBOX, "unread_count": unread, "messages_enabled": False}
+                    body = {"status": "committed", "claim": claim(), "agent_inbox": inbox}
+                    entries = [call(use_id, name), result(use_id, body)]
+                    out = self.stop(entries)
+                    self.assertEqual(out.returncode, 2, out.stderr)
+                    self.assertIn("you have not read them", out.stderr)
+                    self.assertIn("do not send or reply", out.stderr)
+                    self.assertNotIn("clued_agent_message_send", out.stderr)
+                    self.assertNotIn("answered them in another way", out.stderr)
+                    read = entries + [call("i1", "clued_agent_inbox"), result("i1", {"status": "ok"})]
+                    self.assertIsNone(GUARD.inbox_finding(read), "disabled open requests need no reply")
+                    self.assertEqual(self.stop(read).returncode, 0)
+
+    def test_disabled_failed_reads_do_not_settle_unread_messages(self):
+        for index, (body, is_error) in enumerate((( {"error": "insufficient_scope"}, True),
+                                                 ({"status": "rejected", "error_code": "insufficient_scope"}, False))):
+            with self.subTest(body=body):
+                use_id = f"disabled-read-{index}"
+                inbox = {**INBOX, "messages_enabled": False}
+                entries = [call(use_id, "clued_session_resume"),
+                           result(use_id, {"session_token": "t", "agent_inbox": inbox}),
+                           call("i1", "clued_agent_inbox"), result("i1", body, is_error)]
+                out = self.stop(entries)
+                self.assertEqual(out.returncode, 2, out.stderr)
+                self.assertIn("you have not read them", out.stderr)
+                self.assertNotIn("clued_agent_message_send", out.stderr)
+
+    def test_disabled_send_overrides_a_prior_enabled_summary(self):
+        rejection = {"status": "rejected", "error_code": "agent_messages_disabled"}
+        responses = (rejection, {"error": "agent_messages_disabled"},
+                     {"error": {"code": "agent_messages_disabled"}},
+                     {"structuredContent": rejection, "isError": True},
+                     {"content": [{"type": "text", "text": json.dumps(rejection)}], "isError": True})
+        for response in responses:
+            with self.subTest(response=response):
+                entries = [call("r1", "clued_session_resume"),
+                           result("r1", {"session_token": "t", "agent_inbox": {**INBOX, "messages_enabled": True}}),
+                           call("i1", "clued_agent_inbox"), result("i1", {"status": "ok"}),
+                           call("s1", "clued_agent_message_send", {"reply_to": "m1"}), result("s1", response, True)]
+                self.assertIsNone(GUARD.inbox_finding(entries))
+                self.assertEqual(self.stop(entries).returncode, 0)
+                unread = entries[:2] + entries[4:]
+                finding = GUARD.inbox_finding(unread)
+                self.assertIsNotNone(finding, "a refused send does not settle an unread inbox")
+                self.assertIn("do not send or reply", finding[1])
+                self.assertNotIn("clued_agent_message_send", finding[1])
+
+    def test_newest_enabled_summary_requires_replies_again(self):
+        disabled = {**INBOX, "messages_enabled": False}
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit):
+                enabled = {**INBOX, **({"messages_enabled": True} if explicit else {})}
+                use_id = f"reenabled-{explicit}"
+                entries = [call("r1", "clued_session_resume"),
+                           result("r1", {"session_token": "t", "agent_inbox": disabled}),
+                           call("i1", "clued_agent_inbox"), result("i1", {"status": "ok"}),
+                           call("s1", "clued_agent_message_send", {"reply_to": "m1"}),
+                           result("s1", {"status": "rejected", "error_code": "agent_messages_disabled"}),
+                           call(use_id, "clued_work_renew"),
+                           result(use_id, {"status": "committed", "claim": claim(), "agent_inbox": enabled}),
+                           call("i2", "clued_agent_inbox"), result("i2", {"status": "ok"})]
+                out = self.stop(entries)
+                self.assertEqual(out.returncode, 2, out.stderr)
+                self.assertIn("you have not answered any of the requests", out.stderr)
+                self.assertIn("clued_agent_message_send reply_to", out.stderr)
+                self.assertNotIn("Agent messages are disabled", out.stderr)
+                replied = entries + [call("s2", "clued_agent_message_send", {"reply_to": "m1"}),
+                                     result("s2", {"status": "committed"})]
+                self.assertIsNone(GUARD.inbox_finding(replied))
+                self.assertEqual(self.stop(replied).returncode, 0)
+
     def test_nothing_waiting_adds_nothing(self):
         for body in ({"session_token": "t", "agent_inbox": EMPTY_INBOX},
                      {"session_token": "t", "agent_inbox": None, "agent_inbox_unavailable": True},
