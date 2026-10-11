@@ -1546,12 +1546,22 @@ const tools = [
   {
     name: "clued_audit_receipts",
     description:
-      "Read recent immutable receipts plus a server-derived restore → append → checkpoint compliance view and checkpoint reminders.",
+      "Read recent immutable receipts and session compliance. With measurement, read fixed-watermark private merge-admission journal pages under existing audit:read authority; every contributing context must be authorized. Pages are raw transaction fragments, not official metrics or complete wall-clock history.",
     inputSchema: {
       type: "object",
       properties: {
         context_key: { type: "string" },
         limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+        measurement: {
+          type: "object",
+          properties: {
+            after_sequence: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+            end_sequence: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+            stream_id: { type: "string", format: "uuid" },
+            limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },
