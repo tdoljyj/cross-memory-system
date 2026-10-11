@@ -3,16 +3,19 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
-import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
+const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
+const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
+const { findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog } = await import(pathToFileURL(path.join(sourceApp,'tests/worker-gateway-caller-fixture.mjs')));
 
 // Real isolated PostgreSQL and synthetic accounts/IDs only. No production,
 // real Owner approval, DomainAuthority, DataGate, M2 or model qualification.
-const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const candidateFile = '20261011041300_dataset_split_native_grant_binding_successor_v1.sql';
 const repo = path.resolve(app, '../..');
+const sourceRepo = path.resolve(sourceApp,'../..');
 const REQUEST = 'af1cabdb-5259-4ca3-94d3-133f1af122c8';
 const OLD = '4970e492-d26e-4974-adaa-757b2146b171';
 const TASK = '1502fd80-8ff8-4adc-b4f5-da6d462f4f8a';
@@ -28,14 +31,14 @@ async function freePort() {
 
 for (const scene of ['boundaries','consume-race']) test(`Native correction (${scene}): isolated real token/receipt transaction`,
   { timeout: 300000 }, async t => {
-  const root = path.resolve(repo, 'work/host-harness/dataset-split-native-correction');
+  const root = path.resolve(repo, 'work/host-harness/ngc');
   await fs.mkdir(root, { recursive: true });
   assert.equal((await fs.realpath(root)).toLowerCase(), root.toLowerCase());
-  const dir = await fs.mkdtemp(path.join(root, 'native-correction-'));
+  const dir = await fs.mkdtemp(path.join(root, 'p-'));
   const ownership = { run_id: uid(), root, dir };
   await fs.writeFile(path.join(dir, 'Ownership.json'), JSON.stringify(ownership), { flag: 'wx' });
   const port = await freePort();
-  const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'database'), user: 'postgres',
+  const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'db'), user: 'postgres',
     password: hash(), port, persistent: true, createPostgresUser: false,
     postgresFlags: ['-c', 'io_method=sync', '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, proc;
@@ -54,12 +57,12 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    const names = (await fs.readdir(path.join(app,'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort();
-    const closeout = await findGatewayCloseoutMigration(app);
+    const names = (await fs.readdir(path.join(sourceApp,'supabase/migrations'))).filter(n => n.endsWith('.sql') && n !== candidateFile).sort();
+    const closeout = await findGatewayCloseoutMigration(sourceApp);
     // The original request predates G6 and uses its now-retired project alias.
     // Only that historical setup precedes closeout; all Native correction cases run after it.
     for (const name of names.filter(name => name !== closeout)) {
-      try { await db.query(await fs.readFile(path.join(app,'supabase/migrations',name),'utf8')); }
+      try { await db.query(await fs.readFile(path.join(sourceApp,'supabase/migrations',name),'utf8')); }
       catch (e) { throw new Error('Migration ' + name + ': ' + e.message, { cause: e }); }
     }
     await allowRawTestBindings(db);
@@ -88,7 +91,7 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
       record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)
       values($1,$2,'Synthetic correction task','Ephemeral SQL fixture','project',$3,'task','active',1,'active',$4,
       '{"execution_bucket":"next"}','{}','{}','observed','Synthetic fixture')`,[TASK,owner,PROJECT,scope]);
-    const plan = JSON.parse(await fs.readFile(path.join(repo,'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'),'utf8'));
+    const plan = JSON.parse(await fs.readFile(path.join(sourceRepo,'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'),'utf8'));
     const resources = [...Object.values(plan.targets).map(id => 'record:'+id),
       ...Object.values(plan.owner_anchor_refs).map(r => `record:${r.id}@${r.version}#${r.content_hash}`),planResource].sort();
     const req = await rpc('clued_owner_request_v1',{action:'model.dataset_split.bootstrap',scope,task_id:TASK,resources,
@@ -103,12 +106,24 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
     await db.query('update clued_private.owner_requests_v1 set grant_id=null where id=$1',[REQUEST]);
     await db.query('update clued_private.owner_grants_v1 set id=$1 where id=$2',[OLD,oldGrant.grant.grant_id]);
     await db.query('update clued_private.owner_requests_v1 set grant_id=$1 where id=$2',[OLD,REQUEST]);
-    await db.query(await fs.readFile(path.join(app,'supabase/migrations',closeout),'utf8'));
+    await db.query(await fs.readFile(path.join(sourceApp,'supabase/migrations',closeout),'utf8'));
     await assertGatewayCloseoutBoundary(db);
     const callerCatalog = await snapshotCallerCatalog(db);
-    await db.query(await fs.readFile(path.join(app,'supabase/migrations',closeout),'utf8'));
+    await db.query(await fs.readFile(path.join(sourceApp,'supabase/migrations',closeout),'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(db),callerCatalog,'G6 replay preserves the actual Native correction writer and caller ACLs');
     await assertGatewayCloseoutBoundary(db);
+
+    // The fixed Native correction now also requires the actual exclusive
+    // execution candidate. Seed it through the real G6 claim RPC after
+    // closeout, with all three fixed Record targets; no gate is weakened.
+    const ownClaim=await roleCall('clued_worker_gateway','select public.clued_work_claim_v1($1,$2) v',
+      [token,{scope,task_id:TASK,holder_label:'Synthetic same-Binding correction holder',
+        holder_client:'isolated Node test',holder_session_ref:'same-binding-correction-'+uid(),
+        write_set:Object.values(plan.targets).map(id=>'record:'+id),idempotency_key:'same-binding-claim-'+uid()}],
+      {...claims(),role:'clued_worker_gateway'});
+    assert.equal(ownClaim.status,'committed');
+    await db.query(await fs.readFile(path.join(app,'supabase/migrations',candidateFile),'utf8'));
+
     const count = async () => (await db.query('select count(*)::int n from clued_private.owner_grants_v1')).rows[0].n;
     const viewName = 'clued_dataset_split_grant_correction_view_v1';
     const issueName = 'clued_dataset_split_grant_correction_issue_v1';

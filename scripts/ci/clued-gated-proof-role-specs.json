@@ -75,6 +75,16 @@
             "job_id": "isolated-candidate-untrusted-hosted",
             "definition_sha256": "e0203dc254798cf57298dad21757857373626fbdb2b96fd9d7753829197a052a"
           }
+        ],
+        "46939bb50dd33184fe16511a5e0e21d01ab19414": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "f7b6f2b34c1a8e2e6768393d50376d7dbd1e7e91186e9d8140b2440f48c99f9a"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "57133a69ff75999c0d64f951a81d4245c7d94631c8c17dc22021f61c51638d92"
+          }
         ]
       }
     },
@@ -98,6 +108,16 @@
           {
             "job_id": "database-gate-untrusted-hosted",
             "definition_sha256": "e27b4973c288bef1b272d9b3d12160fb405deaa67ec660af4185a426330da818"
+          }
+        ],
+        "3600b05da1be32ea15ffaaa18aa4497d67414feb": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "ffa28967725a3ed90d7643bf9097be1e1fd29f24041911471c9166c8ca33fc8e"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "5e7cf82312a36a98310477815f9ae1c0d21c9d228e7d254b7e83f8fc4de1469a"
           }
         ]
       }

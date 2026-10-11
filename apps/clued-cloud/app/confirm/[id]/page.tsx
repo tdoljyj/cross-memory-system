@@ -62,6 +62,62 @@ const STATUS: Record<string, string> = {
 };
 class RequestFailure extends Error { constructor(message: string, readonly uncertain = false) { super(message); } }
 
+type BindingContinuation = {
+  binding_changed: boolean;
+  previous_binding: { binding_id: string; agent_name: string; vendor: string; revoked: boolean; session_ref: string | null };
+  current_binding: { binding_id: string; agent_name: string; vendor: string; session_ref: string };
+  execution_claim: { claim_id: string; task_id: string; context_key: string; holder_binding_id: string;
+    holder_session_ref: string; holder_label_self_reported: string; fence: number; lease_version: number;
+    expires_at: string; hard_deadline_at: string };
+  task: { task_id: string; title: string; version: number; content_hash: string };
+};
+const CORRECTION_TASK = "1502fd80-8ff8-4adc-b4f5-da6d462f4f8a";
+const CORRECTION_SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
+const SAME_BINDING_EFFECT = "REPLACE_UNUSED_GRANT_WITH_ONE_HOUR_SINGLE_USE_KEEP_ORIGINAL_APPROVAL_HISTORY";
+const CONTINUATION_EFFECT = "REAUTHORIZE_CURRENT_CLAIM_HOLDER_ONE_HOUR_SINGLE_USE_KEEP_ORIGINAL_APPROVAL_HISTORY";
+
+// Older same-Binding views have none of these fields. A successor must carry
+// the whole server-rendered subject and agree with its exact grantee/scope;
+// a partial successor never falls back to the older confirmation wording.
+function bindingContinuation(view: Json, request: Json | null): BindingContinuation | null {
+  const correction = object(view.correction) ? view.correction : null;
+  if (!correction) return null;
+  const successor = "binding_continuation" in correction || "previous_binding_id" in correction
+    || "new_binding_id" in correction || (typeof correction.effect === "string" && correction.effect !== SAME_BINDING_EFFECT);
+  if (!successor) return null;
+  const c = correction.binding_continuation;
+  const bad = () => { throw new RequestFailure("接续会话或认领信息不完整、不一致，暂时无法确认。请刷新页面重新核对。"); };
+  if (!object(c) || c.schema !== "clued.dataset-split-native-binding-continuation.v1"
+    || typeof c.binding_changed !== "boolean" || !object(c.previous_binding) || !object(c.current_binding)
+    || !object(c.execution_claim) || !object(c.task) || !object(view.grantee) || !object(view.task)) return bad();
+  const previous = c.previous_binding, next = c.current_binding, claim = c.execution_claim, task = c.task;
+  const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 500;
+  const uuid = (value: unknown): value is string => typeof value === "string" && REQUEST_ID.test(value);
+  const positive = (value: unknown) => Number.isSafeInteger(value) && Number(value) > 0;
+  const date = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value));
+  const resources = view.resources, original = request?.resources;
+  if (!uuid(previous.binding_id) || !uuid(next.binding_id) || typeof previous.revoked !== "boolean"
+    || !text(previous.agent_name) || !text(previous.vendor) || !text(next.agent_name) || !text(next.vendor)
+    || !(previous.session_ref === null || text(previous.session_ref)) || !text(next.session_ref)
+    || !uuid(claim.claim_id) || !text(claim.holder_session_ref) || !text(claim.holder_label_self_reported)
+    || !positive(claim.fence) || !positive(claim.lease_version) || !date(claim.expires_at) || !date(claim.hard_deadline_at)
+    || Date.parse(String(claim.expires_at)) > Date.parse(String(claim.hard_deadline_at))
+    || task.task_id !== CORRECTION_TASK || claim.task_id !== CORRECTION_TASK || view.task.task_id !== CORRECTION_TASK
+    || claim.context_key !== CORRECTION_SCOPE || !positive(task.version) || !text(task.title)
+    || typeof task.content_hash !== "string" || !/^[0-9a-f]{64}$/.test(task.content_hash)
+    || correction.previous_binding_id !== previous.binding_id || correction.new_binding_id !== next.binding_id
+    || c.binding_changed !== (previous.binding_id !== next.binding_id)
+    || correction.effect !== (c.binding_changed ? CONTINUATION_EFFECT : SAME_BINDING_EFFECT)
+    || view.grantee.binding_id !== next.binding_id || view.grantee.any_agent !== false
+    || claim.holder_binding_id !== next.binding_id || next.session_ref !== claim.holder_session_ref
+    || view.action !== "model.dataset_split.bootstrap" || view.choice !== "grant" || view.max_uses !== 1
+    || !Number.isInteger(view.expires_seconds) || Number(view.expires_seconds) < 60 || Number(view.expires_seconds) > 3600
+    || !Array.isArray(resources) || !Array.isArray(original) || resources.length !== 6 || original.length !== 6
+    || !resources.every(text) || !original.every(text) || new Set(resources).size !== 6 || new Set(original).size !== 6
+    || [...resources].sort().some((resource, index) => resource !== [...original].sort()[index])) return bad();
+  return c as unknown as BindingContinuation;
+}
+
 async function rpc(name: string, input: Json): Promise<Json> {
   let result: { data: unknown; error: { message?: string; code?: string } | null };
   try {
@@ -140,7 +196,7 @@ export default function OwnerConfirmPage() {
   const [rows, setRows] = useState<ScopeRow[]>([]);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [pending, setPending] = useState<Issued | null>(null);
-  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number; left?: Left[]; corrected?: boolean } | null>(null);
+  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number; left?: Left[]; corrected?: boolean; subjectChanged?: boolean } | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   // Bundle members (the request on the page included) the Owner unticked.
   const [skipped, setSkipped] = useState<string[]>([]);
@@ -150,18 +206,31 @@ export default function OwnerConfirmPage() {
   const [password, setPassword] = useState("");
   const current = useRef<Session | null>(null);
   const epoch = useRef(0);
+  // Only a changed-Binding preview pins this signed-in session. A new auth
+  // token requires a fresh preview; older same-Binding semantics are kept.
+  const continuationSession = useRef<string | null>(null);
+  // The first correction response has not yet told us whether its Binding
+  // changes. Pin its issuer while it is pending as well as the shown view.
+  const correctionIssueSession = useRef<{ owner_id: string; access_token: string } | null>(null);
 
   useEffect(() => {
     const lifetime = epoch;
     let disposed = false;
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       if (disposed) return;
-      const changed = current.current?.user.id !== next?.user.id;
+      const pinnedToken = correctionIssueSession.current?.access_token ?? continuationSession.current;
+      const strictSessionChanged = pinnedToken !== null
+        && current.current?.user.id === next?.user.id
+        && pinnedToken !== next?.access_token;
+      const changed = current.current?.user.id !== next?.user.id || strictSessionChanged;
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
+      continuationSession.current = null;
+      correctionIssueSession.current = null;
       ++epoch.current;
       setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setWorking(false); setRows([]); setMembers([]);
       setSkipped([]);
+      if (strictSessionChanged && next && requestId) void load(requestId);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -205,29 +274,42 @@ export default function OwnerConfirmPage() {
   // Step 1: a token over exactly the view these options produce. A newer
   // issue revokes the older token, so only what is on screen can be approved.
   async function issue(id: string, next: Options, generation: number, offered = rows): Promise<Issued | null> {
-    const value = next.datasetSplitCorrection
-      ? await rpc("clued_dataset_split_grant_correction_issue_v1", { request_id: id })
-      : await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
-    if (epoch.current !== generation) return null;
-    if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
-      || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
-      throw new RequestFailure("确认内容不完整，请刷新页面。");
+    const issuer = next.datasetSplitCorrection && current.current
+      ? { owner_id: current.current.user.id, access_token: current.current.access_token } : null;
+    if (next.datasetSplitCorrection && !issuer) return null;
+    if (issuer) correctionIssueSession.current = issuer;
+    try {
+      const value = next.datasetSplitCorrection
+        ? await rpc("clued_dataset_split_grant_correction_issue_v1", { request_id: id })
+        : await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
+      if (epoch.current !== generation || (issuer && (current.current?.user.id !== issuer.owner_id
+        || current.current?.access_token !== issuer.access_token))) return null;
+      if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
+        || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
+        throw new RequestFailure("确认内容不完整，请刷新页面。");
+      }
+      if (next.datasetSplitBootstrap && (value.confirmation_view.action !== "model.dataset_split.bootstrap"
+        || value.confirmation_view.choice !== "grant" || value.confirmation_view.expires_seconds !== 3600
+        || value.confirmation_view.max_uses !== 1 || !object(value.confirmation_view.grantee)
+        || value.confirmation_view.grantee.any_agent !== false)) {
+        throw new RequestFailure("服务返回的授权范围或期限与这次请求不一致，暂时无法批准。");
+      }
+      if (next.datasetSplitCorrection && (!object(value.confirmation_view.correction)
+        || value.confirmation_view.correction.request_id !== id
+        || value.confirmation_view.correction.previous_grant_id !== "4970e492-d26e-4974-adaa-757b2146b171")) {
+        throw new RequestFailure("修正内容与原申请不一致，暂时无法确认。");
+      }
+      if (next.datasetSplitCorrection) {
+        const continuation = bindingContinuation(value.confirmation_view, request);
+        continuationSession.current = continuation?.binding_changed ? issuer?.access_token ?? null : null;
+      }
+      const result = { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
+        expires_at: value.expires_at, view: value.confirmation_view, options: next };
+      setIssued(result);
+      return result;
+    } finally {
+      if (correctionIssueSession.current === issuer) correctionIssueSession.current = null;
     }
-    if (next.datasetSplitBootstrap && (value.confirmation_view.action !== "model.dataset_split.bootstrap"
-      || value.confirmation_view.choice !== "grant" || value.confirmation_view.expires_seconds !== 3600
-      || value.confirmation_view.max_uses !== 1 || !object(value.confirmation_view.grantee)
-      || value.confirmation_view.grantee.any_agent !== false)) {
-      throw new RequestFailure("服务返回的授权范围或期限与这次请求不一致，暂时无法批准。");
-    }
-    if (next.datasetSplitCorrection && (!object(value.confirmation_view.correction)
-      || value.confirmation_view.correction.request_id !== id
-      || value.confirmation_view.correction.previous_grant_id !== "4970e492-d26e-4974-adaa-757b2146b171")) {
-      throw new RequestFailure("修正内容与原申请不一致，暂时无法确认。");
-    }
-    const result = { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
-      expires_at: value.expires_at, view: value.confirmation_view, options: next };
-    setIssued(result);
-    return result;
   }
 
   // The same choice for every other pending member of the bundle.
@@ -284,6 +366,10 @@ export default function OwnerConfirmPage() {
     try {
       let grant: Json | undefined;
       if (mine && target) {
+        if (target.options.datasetSplitCorrection && bindingContinuation(target.view, request)?.binding_changed
+          && continuationSession.current !== current.current?.access_token) {
+          throw new RequestFailure("登录会话已经变化，请重新预览接续授权后再确认。");
+        }
         if (!retry && Date.parse(target.expires_at) - Date.now() < REFRESH_MS) {
           const shown = target.view_digest;
           const fresh = await issue(requestId, target.options, generation);
@@ -306,7 +392,8 @@ export default function OwnerConfirmPage() {
         ...members.filter(member => skipped.includes(member.id))
           .map(member => ({ id: member.id, action: actionText(member.issued?.view) }))];
       setDone({ kind: "granted", grant: grant ?? result.grant, count: result.count + (mine ? 1 : 0), left,
-        corrected: Boolean(target?.options.datasetSplitCorrection) });
+        corrected: Boolean(target?.options.datasetSplitCorrection),
+        subjectChanged: Boolean(target?.options.datasetSplitCorrection && bindingContinuation(target.view, request)?.binding_changed) });
     } catch (failure) {
       if (epoch.current !== generation) return;
       const uncertain = !(failure instanceof RequestFailure) || failure.uncertain;
@@ -379,6 +466,8 @@ export default function OwnerConfirmPage() {
 
   async function signOut() {
     ++epoch.current; current.current = null; setSession(null);
+    continuationSession.current = null;
+    correctionIssueSession.current = null;
     setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setMembers([]); setSkipped([]);
     try { await supabase.auth.signOut(); } catch { setError("退出尚未确认，请重新加载页面后检查登录状态。"); }
   }
@@ -392,6 +481,8 @@ export default function OwnerConfirmPage() {
     && oldGrant.uses === 0 && oldGrant.max_uses === 1 && oldGrant.revoked === false
     && Date.parse(String(oldGrant.expires_at)) > Date.now() + 3600_000;
   const correction = view && object(view.correction) ? view.correction : null;
+  const continuation = view && options.datasetSplitCorrection ? bindingContinuation(view, request) : null;
+  const subjectChanged = continuation?.binding_changed === true;
   const viewRequest = view && object(view.request) ? view.request : null;
   const note = viewRequest && typeof viewRequest.agent_note_unverified === "string" ? viewRequest.agent_note_unverified : "";
   // Re-review 9: a note the admission check wrote (repo.protected_change) is
@@ -435,8 +526,10 @@ export default function OwnerConfirmPage() {
         {done?.kind === "granted" && permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
           <p>权限已加到这个连接上。Agent 重试刚才被拒的操作即可，不用重新连接。</p>
           <p>可以在 <Link href="/oauth/connections">连接管理</Link> 随时收窄或撤销这个连接的权限。</p></section>}
-        {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>{done.corrected ? "授权期限已修正" : "已批准"}</h2>
-          {done.corrected && <p>旧授权已撤销，原申请和批准历史保留；新授权仅给原发起者，在 1 小时内使用 1 次。</p>}
+        {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>{done.subjectChanged ? "接续会话授权已确认" : done.corrected ? "授权期限已修正" : "已批准"}</h2>
+          {done.corrected && <p>{done.subjectChanged
+            ? "旧授权已撤销，原申请和批准历史保留；新授权仅给刚才确认的接续会话，在 1 小时内使用 1 次。"
+            : "旧授权已撤销，原申请和批准历史保留；新授权仅给原发起者，在 1 小时内使用 1 次。"}</p>}
           {(done.count ?? 1) > 1 && <p>同一批 {done.count} 项已批准，每项各自生成一个授权。</p>}
           <p>{done.grant?.max_uses === 1 ? "只允许这一次" : "授权已生效"}，有效期至 {new Date(String(done.grant?.expires_at)).toLocaleString()}。</p>
           <p>Agent 重试时会自动用上这次批准。可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p>
@@ -448,22 +541,35 @@ export default function OwnerConfirmPage() {
           {leftover.length > 0 && <><p>同一批还有 {leftover.length} 项等你确认：</p><ul>{leftover.map(member =>
             <li key={String(member.request_id)}><Link href={"/confirm/" + String(member.request_id)}>{String(member.action ?? "")}</Link></li>)}</ul></>}</section>}
         {!done && canCorrect && !pending && !correction && <section aria-label="修正授权期限">
-          <p>保留这份申请、原发起者和范围。确认后，系统会一次性撤销未使用的旧授权并给出 1 小时、1 次的新授权。</p>
+          <p>先核对这份申请的限时修正。页面会显示新授权给谁；如接续会话改变，需要你本人明确确认。预览不会修改授权。</p>
           <button type="button" disabled={working} onClick={() => void choose({ ...options, choice: "grant",
             seconds: 3600, anyAgent: false, scope: [], datasetSplitBootstrap: true, datasetSplitCorrection: true })}>查看限时修正</button>
         </section>}
         {!done && !pending && correction && view && <section aria-label="确认限时修正">
-          <h2>确认收窄授权期限</h2>
-          <p>原申请和批准历史保留，动作、原发起者和范围保持一致。</p>
+          <h2>{subjectChanged ? "确认授权给当前接续会话" : "确认收窄授权期限"}</h2>
+          <p>{subjectChanged ? "原申请和批准历史保留，动作和六个对象的范围不变。这次新授权将给下面的当前接续会话，需要你本人确认。"
+            : "原申请和批准历史保留，动作、原发起者和范围保持一致。"}</p>
           <dl><dt>动作</dt><dd>{actionText(view)}</dd>
             <dt>范围</dt><dd><ul>{list(view.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd>
             <dt>原授权</dt><dd>{String(correction.previous_grant_id)}</dd>
             <dt>原期限</dt><dd>{new Date(String(correction.previous_expires_at)).toLocaleString()}</dd>
             <dt>新期限</dt><dd>确认后 1 小时内有效，且不超过原期限</dd>
-            <dt>次数</dt><dd>1 次</dd><dt>给谁</dt><dd>{String(grantee?.agent_name ?? "原发起请求的 Agent")}</dd>
+            <dt>次数</dt><dd>1 次</dd><dt>给谁</dt><dd>{subjectChanged ? "当前接续会话：" : ""}{String(grantee?.agent_name ?? "原发起请求的 Agent")}</dd>
+            {continuation && <>
+              <dt>原申请的连接</dt><dd>{continuation.previous_binding.agent_name}（{continuation.previous_binding.vendor}） {continuation.previous_binding.binding_id}</dd>
+              <dt>原申请会话</dt><dd>{continuation.previous_binding.session_ref ?? "原申请未记录会话"}</dd>
+              <dt>当前接续连接</dt><dd>{continuation.current_binding.agent_name}（{continuation.current_binding.vendor}） {continuation.current_binding.binding_id}</dd>
+              <dt>当前接续会话</dt><dd>{continuation.execution_claim.holder_session_ref}</dd>
+              <dt>任务与版本</dt><dd>{continuation.task.title} {continuation.task.task_id} · 版本 {continuation.task.version}</dd>
+              <dt>任务内容摘要</dt><dd>{continuation.task.content_hash}</dd>
+              <dt>当前认领</dt><dd>{continuation.execution_claim.claim_id} · fence {continuation.execution_claim.fence} · lease {continuation.execution_claim.lease_version}</dd>
+              <dt>认领有效期</dt><dd>{new Date(continuation.execution_claim.expires_at).toLocaleString()}（最长至 {new Date(continuation.execution_claim.hard_deadline_at).toLocaleString()}）</dd>
+              <dt>会话自报说明（未核实）</dt><dd>{continuation.execution_claim.holder_label_self_reported}</dd>
+            </>}
           </dl>
-          <button type="button" disabled={working || !issued} onClick={() => void approve()}>确认限时修正</button>
+          <button type="button" disabled={working || !issued} onClick={() => void approve()}>{subjectChanged ? "确认授权给当前接续会话" : "确认限时修正"}</button>
           <button type="button" disabled={working} onClick={() => { setIssued(null); setError("");
+            continuationSession.current = null;
             setOptions({ ...options, datasetSplitCorrection: false }); }}>返回原批准</button>
         </section>}
         {!done && status === "pending" && <>

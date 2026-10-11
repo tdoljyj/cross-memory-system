@@ -313,6 +313,14 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       const envelope = await mcp('tools/call', { name, arguments: args }, token);
       return envelope.result?.structuredContent ?? envelope.error ?? envelope;
     };
+    const assertMcpPolicyRefusal = async (args, reason) => {
+      const envelope = await mcp('tools/call', { name: 'clued_context_pack', arguments: args });
+      assert.equal(envelope.result.isError, true);
+      assert.deepEqual(envelope.result.structuredContent, { ...S2_OBJECT,
+        ...(reason === undefined ? {} : { reason }),
+        error: { code: 'CONTEXT_POLICY_REQUIRED', category: 'canonical_result', status: 'rejected' } }, reason);
+      assert.deepEqual(JSON.parse(envelope.result.content[0].text), envelope.result.structuredContent);
+    };
     const project = async (name) => {
       const id = uuid();
       const created = await agent(tokenA, 'clued_project_mutate_v2', { operation: 'create', canonical_project_id: id,
@@ -353,13 +361,14 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
     };
 
     try {
-      // ---- No-policy compatibility (S2 response kept byte-identical).
+      // ---- Raw and REST S2 responses stay byte-identical; MCP also carries
+      // the canonical code through connector error normalization.
       for (const result of [await agent(tokenA, 'clued_context_pack', { scope: 'global' }),
-        await nativeOne('clued_user_context_pack', { scope: 'global' }),
-        await call('clued_context_pack', { scope: 'global' }),
-        await call('clued_context_pack', { scope: 'global', task_class: 'no.policy.yet' })]) {
+        await nativeOne('clued_user_context_pack', { scope: 'global' })]) {
         assert.deepEqual(result, S2_OBJECT);
       }
+      await assertMcpPolicyRefusal({ scope: 'global' });
+      await assertMcpPolicyRefusal({ scope: 'global', task_class: 'no.policy.yet' });
       const restNoPolicy = await post('/v1/context/pack', { scope: 'global' });
       assert.deepEqual([restNoPolicy.status, restNoPolicy.body], [422, S2_OBJECT]);
       assert.equal(await count('clued_private.context_pack_manifests'), 0, 'a refused compile stores no manifest');
@@ -583,7 +592,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
             task_class: 'tc.forged', policy_version: 1, policy_digest: 'd'.repeat(64) } }, relations: {} } });
       assert.equal(forgedDecision.status, 'committed', JSON.stringify(forgedDecision));
       assert.equal(await count('clued_private.context_policies'), 1);
-      assert.deepEqual(await call('clued_context_pack', { scope: 'global', task_class: 'tc.forged' }), S2_OBJECT);
+      await assertMcpPolicyRefusal({ scope: 'global', task_class: 'tc.forged' });
 
       // ---- E2E-01: Native capture -> Candidate -> token -> Authority
       // Information -> policy -> MSCP consumed by the third-party Agent.
@@ -666,8 +675,8 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
         [userId, 'context_pack%']), 0, 'compiles write no Receipt');
       // A foreign policy id reads like no policy (no existence oracle).
       const otherPolicy = await accept(policyDoc('other.user', ['global']), 0, 'other-jwt');
-      assert.deepEqual(await call('clued_context_pack', { scope: p1, policy_id: otherPolicy.policyId }), S2_OBJECT);
-      assert.deepEqual(await call('clued_context_pack', { scope: p1, policy_id: uuid() }), S2_OBJECT);
+      await assertMcpPolicyRefusal({ scope: p1, policy_id: otherPolicy.policyId });
+      await assertMcpPolicyRefusal({ scope: p1, policy_id: uuid() });
       // A Binding cannot revalidate a manifest through MCP.
       const bindingRevalidate = await call('clued_context_pack', { manifest_id: e01Pack.manifest.id });
       assert.equal(bindingRevalidate.error_code, 'manifest_revalidation_native_only');
@@ -1125,8 +1134,8 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       const pDos = await project('dos');
       await nativeNote('DoS scope note', { scope: pDos });
       const compileDos = async (taskClass = 'dos.check') => call('clued_context_pack', { scope: pDos, task_class: taskClass });
-      const refusedWith = async (reason, taskClass) =>
-        assert.deepEqual(await compileDos(taskClass), { ...S2_OBJECT, reason }, reason);
+      const refusedWith = async (reason, taskClass = 'dos.check') =>
+        assertMcpPolicyRefusal({ scope: pDos, task_class: taskClass }, reason);
       const decisionOf = async (policyId) => {
         const row = (await admin.query('select decision_record_id id from clued_private.context_policies where id=$1',
           [policyId])).rows[0];
@@ -1148,8 +1157,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       assert.equal(dos.accepted.supplemental.decision_version, 3);
       packOk(await compileDos(), 'dos v2');
       // (h) The v1 policy id now fails; its manifests are stale.
-      assert.deepEqual(await call('clued_context_pack', { scope: pDos, policy_id: dosV1.pack.policy.id }),
-        { ...S2_OBJECT, reason: 'policy_superseded' });
+      await assertMcpPolicyRefusal({ scope: pDos, policy_id: dosV1.pack.policy.id }, 'policy_superseded');
       const v1Manifest = await manifest(dosV1.manifest.id);
       assert.deepEqual([v1Manifest.stale, v1Manifest.stale_reason], [true, 'policy_version_changed']);
       assert.equal(dos.accepted.supplemental.stale_manifests, 1);

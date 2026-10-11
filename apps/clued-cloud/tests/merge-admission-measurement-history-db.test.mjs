@@ -1,3 +1,4 @@
+import './merge-admission-measurement-capabilities-db.test.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -54,8 +55,41 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort();
-    const candidate = migrations.find(n => n.endsWith('_merge_admission_measurement_history_v1.sql'));
+    const candidate = migrations.find(n => n.endsWith('_merge_admission_measurement_history_atomic_v1.sql'));
     assert.ok(candidate);
+    assert.equal(migrations.some(n => n.endsWith('_merge_admission_measurement_history_v1.sql')), false);
+    const original = await fs.readFile(path.join(root,
+      'supabase/history-only/20261011005515_merge_admission_measurement_history_v1.sql'), 'utf8');
+    const candidateText = await fs.readFile(path.join(root, 'supabase/migrations', candidate), 'utf8');
+    // Keep the never-applied source byte-for-byte as a negative-control fixture.
+    // It is not a production-history ledger row or an active reset migration.
+    assert.equal(candidateText, original.replace(/^begin;$/m, 'do $r9_atomic$ begin')
+      .replace(/^commit;$/m, 'end $r9_atomic$;'));
+    const publisher = await fs.readFile(path.join(root, '../../.github/workflows/clued-cloud-production-release.yml'), 'utf8');
+    assert.match(publisher, /execute s;/);
+    assert.match(publisher, /insert into supabase_migrations\.schema_migrations/);
+    await admin.query(`create schema supabase_migrations;
+      create table supabase_migrations.schema_migrations(version text primary key,name text,statements text[]);
+      create temp table migration_lines(n bigserial primary key,line text);`);
+    const applyPublished = async (text, version) => {
+      assert.equal(text.includes('\r'), false); assert.ok(text.endsWith('\n'));
+      await admin.query('truncate migration_lines restart identity');
+      await admin.query('insert into migration_lines(line) select unnest($1::text[])', [text.split('\n').slice(0, -1)]);
+      const expected = crypto.createHash('md5').update(text).digest('hex');
+      // The configured publisher runs this DO/EXECUTE and history insert in
+      // one outer transaction. Preserve that shape, including its byte guard.
+      await admin.query(`begin;
+        do $apply$ declare s text := (select string_agg(coalesce(line, ''), e'\\n' order by n) from migration_lines) || e'\\n';
+        begin
+          if md5(s) is distinct from '${expected}' then raise exception 'migration text differs from the file'; end if;
+          execute s;
+          insert into supabase_migrations.schema_migrations(version, name, statements)
+            values ('${version}', 'measurement_history_test', array[s]);
+        end $apply$;
+        commit;`);
+      assert.equal((await admin.query(`select md5(array_to_string(statements,'')) value
+        from supabase_migrations.schema_migrations where version=$1`, [version])).rows[0].value, expected);
+    };
     const seedUser = uuid(), seedToken = hash(); let seedClaim, seedQueue;
     for (const name of migrations) {
       if (name === candidate) {
@@ -84,7 +118,30 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
           [seedClaim.claim_id, uuid()]);
         seedQueue = (await admin.query(`select clued_private.work_claim_merge_queue_v1($1,'merge:owner/repo:main') v`, [seedUser])).rows[0].v;
       }
-      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      try {
+        if (name === candidate) {
+          await t.test('publisher refuses the original and rolls back schema and history together', async () => {
+            await assert.rejects(applyPublished(original, 'original_negative'),
+              /EXECUTE of transaction commands is not implemented/);
+            await admin.query('rollback');
+            assert.equal((await admin.query("select to_regclass('clued_private.merge_measurement_stream_v1') value")).rows[0].value, null);
+            assert.equal((await admin.query('select count(*)::int n from supabase_migrations.schema_migrations')).rows[0].n, 0);
+          });
+          await t.test('atomic successor applies through unchanged publisher with exact history bytes', async () => {
+            // Fail AFTER the candidate's DDL: the history write must roll the
+            // entire schema change back, rather than leave an unrecorded install.
+            await admin.query("alter table supabase_migrations.schema_migrations add constraint test_history_failure check (version <> 'fault_injected')");
+            await assert.rejects(applyPublished(candidateText, 'fault_injected'), /test_history_failure/);
+            await admin.query('rollback');
+            assert.equal((await admin.query("select to_regclass('clued_private.merge_measurement_stream_v1') value")).rows[0].value, null);
+            assert.equal((await admin.query('select count(*)::int n from supabase_migrations.schema_migrations')).rows[0].n, 0);
+            await applyPublished(candidateText, 'atomic_positive');
+            assert.equal((await admin.query('select count(*)::int n from supabase_migrations.schema_migrations')).rows[0].n, 1);
+          });
+        } else {
+          await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+        }
+      }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);

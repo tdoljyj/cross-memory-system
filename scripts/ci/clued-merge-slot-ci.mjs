@@ -40,7 +40,7 @@
 //
 // GitHub requests per run: one list of open pull requests, one commit for
 // each open pull request whose body names no claim, and for each pull request
-// that holds a slot one check-run list per required check, one run list and, while something
+// that holds a slot one complete check-run snapshot, one complete PR run list and, while something
 // runs, one directory listing. Every run looks at every slot, whichever pull
 // request's run completed: concurrency keeps one run pending and drops the
 // others, so a run must not skip a holder (confirmation review MINOR-A).
@@ -111,10 +111,37 @@ export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.r
   return out;
 }
 
-// The newest check run of a required check on the head, or null.
-async function newestCheck(fetchImpl, env, repository, headSha, { name, app_id: appId }) {
-  const checks = await githubPaged(fetchImpl, env,
-    `/repos/${repository}/commits/${headSha}/check-runs?check_name=${encodeURIComponent(name)}&filter=all`, "check_runs");
+// A snapshot belongs to one observation only. Every final barrier reads again.
+const SNAPSHOT_PAGE_CAP = 20;
+async function completeHeadSnapshot(fetchImpl, env, repository, headSha, kind) {
+  const checks = kind === 'check_runs';
+  const route = checks ? `/repos/${repository}/commits/${headSha}/check-runs?filter=all`
+    : `/repos/${repository}/actions/runs?head_sha=${headSha}&event=pull_request`;
+  const key = checks ? 'check_runs' : 'workflow_runs';
+  const rows = [], ids = new Set(); let total = null;
+  for (let page = 1; page <= SNAPSHOT_PAGE_CAP; page++) {
+    const body = await githubJson(fetchImpl, env, `${route}&per_page=100&page=${page}`);
+    if (!body || !Array.isArray(body[key]) || !Number.isSafeInteger(body.total_count) || body.total_count < 0 ||
+      body.total_count > SNAPSHOT_PAGE_CAP * 100 || (total !== null && body.total_count !== total) || body[key].length > 100)
+      throw Error(`incomplete ${key} snapshot`);
+    total = body.total_count;
+    for (const row of body[key]) {
+      if (!row || !Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) || row.head_sha !== headSha ||
+        typeof row.status !== 'string' || !(ACTIVE.has(row.status) || row.status === 'completed') ||
+        (checks ? typeof row.name !== 'string' || !row.name || !Number.isSafeInteger(row.app?.id) || row.app.id <= 0 ||
+          !(row.conclusion === null || typeof row.conclusion === 'string') :
+          row.event !== 'pull_request' || typeof row.path !== 'string' || !row.path))
+        throw Error(`invalid ${key} snapshot row`);
+      ids.add(row.id); rows.push(row);
+    }
+    if (rows.length === total) return rows;
+    if (rows.length > total || body[key].length !== 100) throw Error(`incomplete ${key} snapshot`);
+  }
+  throw Error(`incomplete ${key} snapshot`);
+}
+
+// The newest check run of a required check on an already complete snapshot.
+function newestCheck(checks, headSha, { name, app_id: appId }) {
   return checks
     .filter((check) => check && check.name === name && check.head_sha === headSha
       && check.app && Number(check.app.id) === appId)
@@ -141,8 +168,11 @@ export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,pro
       if(branch?.commit?.sha!==proof.tip)return false;
     }
   }
+  let checkSnapshot;
+  try { checkSnapshot=await completeHeadSnapshot(bounded,env,repository,head,'check_runs'); }
+  catch { return false; }
   for(const required of CI_REQUIRED_CHECKS) {
-    const check=await newestCheck(bounded,env,repository,head,required);
+    const check=newestCheck(checkSnapshot,head,required);
     if(!check || check.status!=='completed' || check.conclusion!=='success' ||
       (required.name==='clued-admission-verified' && !checkNamesPullRequest(check,prNumber)))return false;
   }
@@ -179,8 +209,9 @@ const STALE_OK = new Set(["clued-work-admission", "clued-admission-verified"]);
 export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null, { pr, qualifyExecution } = {}) {
   const checks = [];
   let before = null;
+  const checkSnapshot = await completeHeadSnapshot(fetchImpl, env, repository, headSha, 'check_runs');
   for (const required of CI_REQUIRED_CHECKS) {
-    const check = await newestCheck(fetchImpl, env, repository, headSha, required);
+    const check = newestCheck(checkSnapshot, headSha, required);
     checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
     if (check && required.name === "clued-admission-verified" && pr && !checkNamesPullRequest(check, pr.number))
       return { state: "idle", reason: "the newest admission check does not bind this pull request", checks };
@@ -195,9 +226,9 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
       return { state: "failed", reason: `${required.name} concluded ${check.conclusion}`, checks };
     }
   }
-  const runs = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${headSha}&per_page=100`);
-  const anyActive = (Array.isArray(runs && runs.workflow_runs) ? runs.workflow_runs : [])
-    .filter((run) => run && run.head_sha === headSha && run.event === "pull_request" && ACTIVE.has(run.status))
+  const runs = await completeHeadSnapshot(fetchImpl, env, repository, headSha, 'workflow_runs');
+  const anyActive = runs
+    .filter((run) => ACTIVE.has(run.status))
     .map((run) => ({ id: run.id, path: String(run.path ?? "").replace(/@.*$/, ""), status: run.status }));
   const active = anyActive.filter((run) => workflows.has(run.path));
   if (active.length) {
@@ -211,7 +242,7 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
   // keeps nothing alive, but it is CI the pull request still waits for: not
   // green yet (confirmation review MINOR-C).
   if (anyActive.length) {
-    return { state: "idle", reason: `only runs that are not counted are active: ${anyActive.map((run) => `${run.path} ${run.status}`).join(", ")}`, checks };
+    return { state: "idle", reason: `only runs that are not counted are active: ${anyActive.map((run) => `${run.path} ${run.status}`).join(", ")}`, checks, active_runs: anyActive };
   }
   if (before) return { state: "idle", reason: before, checks };
   if (checks.every((check) => check.status === "completed" && PASSING.has(check.conclusion))) {
