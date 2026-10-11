@@ -17,6 +17,72 @@ const request = token => new Request('https://clued.example/mcp', {
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'clued_project_list', arguments: { limit: 10 } } }),
 });
 
+function mutateRequest() {
+  return new Request('https://clued.example/mcp', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer clued_bnd_isolated-fixture' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 19, method: 'tools/call', params: {
+      name: 'clued_record_mutate', arguments: { operation: 'update', scope: 'global' },
+    } }),
+  });
+}
+
+test('an ambiguous binding refusal requests permissions only for a live connection', async () => {
+  const original = globalThis.fetch;
+  const recordsEnv = { ...env, PROJECT_VIEWS_V2: 'true' };
+  try {
+    for (const active of [false, true]) {
+      const calls = [];
+      globalThis.fetch = async (url, init) => {
+        const endpoint = new URL(url).pathname;
+        const input = JSON.parse(init.body);
+        calls.push(endpoint);
+        assert.match(input.p_token_hash, /^[a-f0-9]{64}$/);
+        if (endpoint === '/rest/v1/rpc/clued_authorization_status_v12') return Response.json({ active });
+        assert.equal(endpoint, '/rest/v1/rpc/clued_record_mutate');
+        return Response.json({ code: '42501', message: 'binding_not_authorized' }, { status: 401 });
+      };
+      const response = await handle(mutateRequest(), recordsEnv);
+      assert.equal(response.status, active ? 200 : 403);
+      assert.equal(response.headers.has('www-authenticate'), false);
+      const body = await response.json();
+      if (active) {
+        assert.equal(body.result.isError, true);
+        assert.deepEqual(body.result.structuredContent.error.suggested_request.resources, ['permission:global/write']);
+      } else {
+        assert.equal(body.error.message, 'authorization_revoked_or_expired');
+        assert.equal(JSON.stringify(body).includes('suggested_request'), false);
+        assert.equal(JSON.stringify(body).includes('clued_owner_request'), false);
+      }
+      assert.deepEqual(calls, [
+        '/rest/v1/rpc/clued_record_mutate', '/rest/v1/rpc/clued_authorization_status_v12',
+      ]);
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+test('an unavailable live-connection check never guesses a permission request', async () => {
+  const original = globalThis.fetch;
+  try {
+    const calls = [];
+    globalThis.fetch = async url => {
+      const endpoint = new URL(url).pathname;
+      calls.push(endpoint);
+      if (endpoint === '/rest/v1/rpc/clued_authorization_status_v12') return Response.json({}, { status: 503 });
+      assert.equal(endpoint, '/rest/v1/rpc/clued_record_mutate');
+      return Response.json({ code: '42501', message: 'binding_not_authorized' }, { status: 401 });
+    };
+    const response = await handle(mutateRequest(), { ...env, PROJECT_VIEWS_V2: 'true' });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.equal(JSON.stringify(body).includes('suggested_request'), false);
+    assert.equal(JSON.stringify(body).includes('clued_owner_request'), false);
+    assert.deepEqual(calls, [
+      '/rest/v1/rpc/clued_record_mutate', '/rest/v1/rpc/clued_authorization_status_v12',
+    ]);
+  } finally { globalThis.fetch = original; }
+});
+
 test('a revoked or expired connection stays an HTTP 403 without an OAuth challenge', async () => {
   const original = globalThis.fetch;
   try {
@@ -47,7 +113,9 @@ test('a missing context or action is a tool error that says what to request (Per
   });
   try {
     for (const message of ['binding_not_authorized', 'resource_action_not_authorized']) {
-      globalThis.fetch = async () => Response.json({ code: '42501', message }, { status: 401 });
+      globalThis.fetch = async url => new URL(url).pathname === '/rest/v1/rpc/clued_authorization_status_v12'
+        ? Response.json({ active: true })
+        : Response.json({ code: '42501', message }, { status: 401 });
       const response = await handle(mutate({ operation: 'update', scope: `project:${project}` }), recordsEnv);
       assert.equal(response.status, 200);
       assert.equal(response.headers.has('www-authenticate'), false);
