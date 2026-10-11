@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Task 32dbbd35: reusable Owner-approved exact-manifest continuity-only resolution.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,6 +53,9 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
     await allowRawTestBindings(admin);
 
     // The entry is private to the database owner.
@@ -68,11 +72,11 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
       values($1,'owner@example.invalid',now()),($2,'other@example.invalid',now())`, [userId, otherUser]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Owner host',$2,array['context:read','context:write'],array['global'])`, [userId, token]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query('set role anon');
-    const mutate = async (input) => (await anon.query('select public.clued_record_mutate($1,$2) v', [token, input])).rows[0].v;
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
+    const mutate = async (input) => (await gateway.query('select public.clued_record_mutate($1,$2) v', [token, input])).rows[0].v;
     const decision = async (title, relations = {}) => {
       const result = await mutate({
         operation: 'create', record_type: 'decision', record_schema_version: 1, lifecycle_status: 'active',
@@ -173,7 +177,7 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
     const otherToken = hash();
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Other host',$2,array['context:read','context:write'],array['global'])`, [otherUser, otherToken]);
-    const foreign = (await anon.query('select public.clued_record_mutate($1,$2) v', [otherToken, {
+    const foreign = (await gateway.query('select public.clued_record_mutate($1,$2) v', [otherToken, {
       operation: 'create', record_type: 'decision', record_schema_version: 1, lifecycle_status: 'active',
       scope: 'global', authority: 'user_explicit', user_confirmed: true, idempotency_key: uuid(),
       confidence_reason: 'Synthetic fixture', source_refs: [], source_unavailable_reason: 'fixture',
@@ -238,7 +242,7 @@ test('event continuity manifest resolves only an exact, Owner-approved, unchange
     assert.equal(await payloadSha(9275), manifest.events[1].payload_sha256);
 
     // 5. An ordinary Canonical write Receipt cannot stand in for the proof on the MCP path.
-    await assert.rejects(() => anon.query('select public.clued_mcp_event_carrier_transition($1,$2) v', [token, {
+    await assert.rejects(() => gateway.query('select public.clued_mcp_event_carrier_transition($1,$2) v', [token, {
       context_key: 'global', transition: 'resolve', source_event_id: 9270, expected_transition_version: 1,
       idempotency_key: uuid(), proof_receipt_id: approval.receipt }]), /continuity_only_proof_required/);
     assert.deepEqual(await carrier(9270), { carrier_state: 'ACTIVE_UNSTRUCTURED', v: 1 });

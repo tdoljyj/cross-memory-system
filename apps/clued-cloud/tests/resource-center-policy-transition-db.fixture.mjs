@@ -1,6 +1,7 @@
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { setWorkerGatewayCaller } from './worker-gateway-caller-fixture.mjs';
 
 const hash = value => createHash("sha256").update(value).digest("hex");
 const ACTIONS = ["inspect", "create_file", "create_topic"];
@@ -304,12 +305,16 @@ export async function testStoragePolicyTransition(t, admin, server, user, decisi
         base_version: Number(stored.version), authorization_version: 1, actions: ACTIONS, expires_at: new Date(Date.now() + 3600000).toISOString(), idempotency_key: randomUUID() }), /storage_legacy_mode_denied/);
     });
     await t.test("account-policy jobs need no legacy client grant and pin one immutable authority snapshot with exact job replay", async () => {
+      // Historical jobs_v2 semantics run before the outer fixture's final G6
+      // apply/replay. This retired alias is never added to the gateway's 80 RPCs.
       const target = await root(), client = await binding(target), item = await manifest(target);
       assert.equal((await rpc(transition(item))).status, "committed");
       const caller = await connect("anon"), jobId = randomUUID();
       const input = { action: "submit", connection_id: target.connection, job_id: jobId, mutation: { operation: "create", target_kind: "file",
         destination_path: target.managedRoot + "/20_P_产品与体验/queued-policy-fixture.txt", content: "queued only; no provider effect" } };
       const submit = async (request, database = caller) => (await database.query("select public.clued_storage_jobs_v2($1,$2::jsonb) value", [client.token, JSON.stringify(request)])).rows[0].value;
+      const gateway = await connect(); await setWorkerGatewayCaller(gateway);
+      await assert.rejects(submit(input,gateway),/permission denied/);
       const before = await effects(), result = await submit(input);
       assert.equal(result.status, "queued"); assert.equal(result.execution_permitted, false); assert.equal(result.intent_id, null);
       assert.equal(result.replayed, false); assert.equal(result.authority_snapshot_v2, undefined);

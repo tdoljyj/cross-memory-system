@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migration = '20260924120000_project_lifecycle_successor_v2.sql';
@@ -59,7 +60,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -401,6 +402,25 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       const revisions = (await admin.query(`select canonical_scope,snapshot_revision from clued_private.scope_currentness_heads
         where user_id=$1 and canonical_scope like 'project:%'`, [userId])).rows;
       assert.ok(revisions.every((row) => Number(row.snapshot_revision) > 0));
+    });
+    await t.test('historical legacy assertions are followed by actual G6 closeout, replay and current Worker access',async()=>{
+      const sql=await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8');
+      const before=await snapshotCallerCatalog(admin);
+      await admin.query(sql);
+      await assertGatewayCloseoutBoundary(admin);
+      const after=await snapshotCallerCatalog(admin);
+      const fixed=rows=>rows.filter(r=>r.nspname!=='public'||!r.signature.replace(/^public\./,'').startsWith('clued_mcp_currentness_g6_gate(')).map(({acl,...r})=>r);
+      assert.deepEqual(fixed(after),fixed(before),'all original non-G6 business definitions remain');
+      const native=rows=>rows.filter(r=>r.nspname==='auth'||r.nspname==='clued_private'||r.signature.includes('clued_storage_owner_lifecycle_v1('));
+      assert.deepEqual(native(after),native(before),'Native V2 and platform/private ACL preserved');
+      await admin.query(sql);
+      assert.deepEqual(await snapshotCallerCatalog(admin),after);
+      await assertGatewayCloseoutBoundary(admin);
+      await assert.rejects(rpc('clued_project_mutate',{operation:'create'}),e=>e.code==='42501');
+      await assert.rejects(rpc('clued_project_list_v2',{limit:200}),e=>e.code==='42501');
+      const gateway=server.getPgClient();clients.push(gateway);await gateway.connect();
+      const listed=await workerGatewayRpc(gateway,'clued_project_list_v2',tokenHash,{limit:200});
+      assert.ok(listed.projects.some(p=>p.id===compatId),'current v2 business reads remain available through GW');
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

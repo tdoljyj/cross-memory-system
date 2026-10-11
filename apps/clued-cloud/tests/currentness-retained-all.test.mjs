@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, CLOSEOUT_MIGRATION, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -47,7 +48,9 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
-      .filter((name) => name.endsWith('.sql')).sort()) {
+      .filter((name) => name.endsWith('.sql') && name !== CLOSEOUT_MIGRATION).sort()) {
+      // This matrix deliberately replays historical entrypoints. Apply the
+      // formal closeout after that historical phase, then verify its replay.
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -57,6 +60,10 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
 
     async function fixture() {
       const userId = uuid();
@@ -67,7 +74,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         (user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'synthetic','T-CUR retained',$2,array['context:read','context:write','audit:read'],array['*'])
         returning id`, [userId, token])).rows[0].id;
-      const rpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      const rpc = async (name, input) => await workerGatewayRpc(workerCaller, name, token, input);
       // Decision-class Events are rejected by the public adapter; fixtures seed
       // them through the unguarded body, as rows written before that guard.
       const legacyAppend = async (input) => (await admin.query(
@@ -127,8 +134,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
             values($1,$2,'global','global.priority_frontier','test-worker'),
                   ($1,$2,'global','global.__aggregate__','test-worker')`, [workerId, userId]);
         }
-        const worker = async (name, input = {}) => (await anon.query(
-          `select public.${name}($1,$2) value`, [workerToken, input])).rows[0].value;
+        const worker = async (name, input = {}) => await workerGatewayRpc(workerCaller, name, workerToken, input);
         for (let round = 0; round < 6; round += 1) {
           await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
             where user_id=$1 and status in ('queued','failed')`, [userId]);
@@ -201,7 +207,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       const lowToken = hash();
       await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'synthetic','Project-only resume',$2,array['context:read'],array[$3])`, [f.userId, lowToken, p.scope]);
-      const lowRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [lowToken, input])).rows[0].value;
+      const lowRpc = async (name, input) => await workerGatewayRpc(workerCaller, name, lowToken, input);
       const limited = await lowRpc('clued_mcp_restore', { context_key: p.scope, response_view: 'work_log' });
       assert.deepEqual(limited.active_constraints, []);
       assert.doesNotMatch(limited.work_log.split('## Events not yet absorbed')[0], /AUTHORIZED_GLOBAL_CONSTRAINT|SHADOWED_RESIDENT_CONSTRAINT/);
@@ -225,7 +231,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       const sessionId = (await admin.query(`select id from public.clued_continuity_sessions
         where token_hash=encode(extensions.digest($1,'sha256'),'hex')`, [session.session_token])).rows[0].id;
       const writer = server.getPgClient(), reader = server.getPgClient(); clients.push(writer, reader);
-      await writer.connect(); await reader.connect(); await reader.query('set role anon');
+      await writer.connect(); await reader.connect(); await setWorkerGatewayCaller(reader);
       const readerPid = (await reader.query('select pg_backend_pid() pid')).rows[0].pid;
       let pending;
       try {
@@ -408,8 +414,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         (user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'synthetic','No audit',$2,array['context:read','context:write'],array['global'])`,
       [f.userId, lowToken]);
-      const lowRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`,
-        [lowToken, input])).rows[0].value;
+      const lowRpc = async (name, input) => await workerGatewayRpc(workerCaller, name, lowToken, input);
       const lowSession = await lowRpc('clued_mcp_restore', { context_key: 'global', response_view: 'structured' });
       const lowSearch = await lowRpc('clued_mcp_search_context', {
         context_key: 'global', session_token: lowSession.session_token, query: 'SECRET',
@@ -1056,8 +1061,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         values($1,'synthetic','Second host fixture',$2,
           array['context:read','context:write'],array['global'])`,
       [f.userId, secondToken]);
-      const secondRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`,
-        [secondToken, input])).rows[0].value;
+      const secondRpc = async (name, input) => await workerGatewayRpc(workerCaller, name, secondToken, input);
       const decision = await f.record('global', 'decision', 'Before append',
         { rationale: 'two host fixture' });
       const read = (rpc) => rpc('clued_record_list', {
@@ -1168,7 +1172,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       const firstClient = server.getPgClient(), secondClient = server.getPgClient();
       clients.push(firstClient, secondClient);
       await firstClient.connect(); await secondClient.connect();
-      await firstClient.query('set role anon'); await secondClient.query('set role anon');
+      await setWorkerGatewayCaller(firstClient); await setWorkerGatewayCaller(secondClient);
       const commandA = make(intentA), competingA = make(intentA);
       const [first, duplicate] = await Promise.all([
         firstClient.query('select public.clued_record_mutate($1,$2) value', [f.token, commandA]),
@@ -1284,7 +1288,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)`, [restricted]);
       await assert.rejects(async () => anon.query('select public.clued_mcp_projection_rebuild($1,$2)',
         [restricted, await rebuildInput()]), /frontier_source_coverage_not_authorized/);
-      const readRestricted = async () => (await anon.query('select public.clued_mcp_restore($1,$2) value',
+      const readRestricted = async () => (await workerCaller.query('select public.clued_mcp_restore($1,$2) value',
         [restricted, { context_key: 'global' }])).rows[0].value.authoritative_current_action;
       const hiddenBefore = await readRestricted();
       assert.equal(hiddenBefore.status, 'PROJECTION_REQUIRED');
@@ -1325,8 +1329,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         values($1,'synthetic','Fresh Binding B',$2,
           array['context:read','context:write'],array[$3])`,
       [f.userId, secondToken, p.scope]);
-      const secondRpc = async (name, input) => (await anon.query(
-        `select public.${name}($1,$2) value`, [secondToken, input])).rows[0].value;
+      const secondRpc = async (name, input) => await workerGatewayRpc(workerCaller, name, secondToken, input);
       const fresh = await secondRpc('clued_mcp_restore', {
         context_key: p.scope, response_view: 'structured',
       });
@@ -1409,7 +1412,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
           [issuer, prepared.request_id, prepared.version, JSON.stringify([{
             resource_kind: 'scope', resource_id: p.scope, environment: 'canonical', actions: ['read'],
           }]), delegatedToken, new Date(Date.now() + 3600000).toISOString()]);
-        const delegatedRead = async (value) => (await anon.query(
+        const delegatedRead = async (value) => (await workerCaller.query(
           'select public.clued_record_list($1,$2) value', [delegatedToken, value])).rows[0].value;
         assert.deepEqual((await delegatedRead(input)).records, []);
         assert.equal((await delegatedRead({ ...input, include_history: true })).records[0].id, task);
@@ -1433,6 +1436,14 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
         await admin.query(entrypointMigration);
       }
     });
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
