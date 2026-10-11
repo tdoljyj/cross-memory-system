@@ -85,6 +85,41 @@ test('reconnect creates new CID via Native RPC, always refresh OFF; browser owne
   const r=await f.lifecycle.reconnect(f.owner,value);assert.notEqual(r.connection_id,f.connection);assert.deepEqual(f.oauthCalls[0],[r.connection_id,false,'keep']);
   const count=f.calls.length;await assert.rejects(f.lifecycle.reconnect(f.owner,{...value,owner_id:randomUUID()}));assert.equal(f.calls.length,count);assert.equal(f.patches(),0);
 });
+
+test('master reconnect has its own confirmation and requests full Google scope, without carrying stopped legacy permissions',async()=>{
+  const f=await fixture(),value={...f.base,root_stop_generation:1,confirmation:{
+    contract:'clued.storage-owner-confirmation/3',root_folder_id:'synthetic-root',confirmed:true,
+    master_enabled:true,disclosure_version:'clued.storage-master-disclosure/1'}};
+  const r=await f.lifecycle.reconnect(f.owner,value);
+  assert.notEqual(r.connection_id,f.connection);
+  assert.deepEqual(f.oauthCalls[0],[r.connection_id,false,'full',{disclosure_version:'clued.storage-master-disclosure/1'}]);
+  assert.deepEqual(f.calls.find(x=>x.action==='reconnect_begin').confirmation,value.confirmation);
+  assert.equal('normal_use' in value.confirmation,false);
+  assert.equal(f.patches(),0);
+  const count=f.calls.length;
+  for(const confirmation of [
+    {...value.confirmation,disclosure_version:'clued.storage-full-scope-disclosure/1'},
+    {...value.confirmation,normal_use:true},
+    {...value.confirmation,confirmed:false},
+    {...value.confirmation,master_enabled:'true'},
+  ]) await assert.rejects(f.lifecycle.reconnect(f.owner,{...value,confirmation}));
+  assert.equal(f.calls.length,count,'invalid consent is refused before RPC or another OAuth attempt');
+  const g=await fixture();
+  const off=await g.lifecycle.reconnect(g.owner,{...g.base,root_stop_generation:1,confirmation:{...value.confirmation,master_enabled:false}});
+  assert.deepEqual(g.oauthCalls[0],[off.connection_id,false,'keep']);
+});
+
+test('reconnect completion projects master truth only with an actual matching full scope',async()=>{
+  for(const provider_scope_profile of ['normal','full']){
+    const f=await fixture({rpc:input=>input.action==='reconnect_activate'?{
+      status:'completed',receipt_id:randomUUID(),connection_id:input.connection_id??'10000000-0000-4000-8000-000000000001',
+      master_state:'on',provider_scope_profile}:undefined});
+    const state='a'.repeat(43);
+    if(provider_scope_profile==='normal') await assert.rejects(f.lifecycle.completeReconnect(f.owner,state));
+    else assert.equal((await f.lifecycle.completeReconnect(f.owner,state)).master_state,'on');
+    assert.equal(f.oauthCalls.length,0,'projection never starts authorization or replays token exchange');
+  }
+});
 test('picked/legacy root provenance cannot issue a trash request; connection-only hide makes no Drive request',async()=>{
   const f=await fixture({created:false});assert.deepEqual(await f.lifecycle.previewDelete(f.owner,f.connection),{trash_available:false,reason:'picked_or_legacy_root'});
   await assert.rejects(f.lifecycle.delete(f.owner,{...f.base,confirmation:{...f.confirmation,root_version:'3',metadata_digest:'a'.repeat(64)}}));assert.equal(f.patches(),0);
