@@ -8,6 +8,85 @@ import { fileURLToPath } from 'node:url';
 export const BACKUP_SCHEMAS = Object.freeze(['public', 'clued_private', 'clued_watchdog', 'supabase_migrations']);
 const selected = "('public','clued_private','clued_watchdog','supabase_migrations')";
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
+const failureMetadata = new WeakMap();
+const diagnosticStages = new Set(['setup','snapshot_begin','snapshot_export','catalog_query','catalog_parse',
+  'inventory_validate','archive_dump','archive_list','toc_verify','holder_check','transaction_rollback',
+  'rollback_cleanup','session_close','proof_write','unknown']);
+const diagnosticReasons = new Set(['INTERNAL_ERROR','ASSERTION_REFUSED','JSON_INVALID','TOOL_START_FAILED',
+  'TOOL_NONZERO','SNAPSHOT_START_FAILED','SNAPSHOT_HOLDER_EXIT','PSQL_SERVER_ERROR','SNAPSHOT_QUERY_TIMEOUT',
+  'SNAPSHOT_IO_ERROR','SNAPSHOT_CLOSE_FAILED','SNAPSHOT_CLOSE_FORCED','SNAPSHOT_CLOSE_UNCONFIRMED']);
+const diagnosticSignals = new Set(['SIGINT','SIGTERM','SIGKILL','SIGHUP','SIGABRT','SIGPIPE','SIGQUIT','SIGSEGV']);
+const sqlstateClasses = new Set(['00','01','02','03','08','09','0A','0B','0F','0L','0P','0Z','20','21','22',
+  '23','24','25','26','27','28','2B','2D','2F','34','38','39','3B','3D','3F','40','42','44','53','54','55',
+  '57','58','72','F0','HV','P0','XX']);
+const safeSqlstate = value => typeof value === 'string' && /^[0-9A-Z]{5}$/.test(value) &&
+  sqlstateClasses.has(value.slice(0,2)) ? value : null;
+function failure(reason, message, details = {}) {
+  const error = new Error(message);
+  failureMetadata.set(error, { reason_code:reason, ...details });
+  return error;
+}
+export function backupFailureDiagnostic(error) {
+  const metadata = error && typeof error === 'object' ? failureMetadata.get(error) ?? {} : {};
+  const reason = metadata.reason_code ?? (error instanceof SyntaxError ? 'JSON_INVALID' :
+    error?.name === 'AssertionError' ? 'ASSERTION_REFUSED' : 'INTERNAL_ERROR');
+  return {
+    contract:'clued.production-backup-diagnostic.v1',
+    stage:diagnosticStages.has(metadata.stage) ? metadata.stage : 'unknown',
+    phase:metadata.phase === 'cleanup' ? 'cleanup' : 'primary',
+    elapsed_ms:Number.isFinite(metadata.elapsed_ms) ? Math.max(0,Math.round(metadata.elapsed_ms)) : 0,
+    reason_code:diagnosticReasons.has(reason) ? reason : 'INTERNAL_ERROR',
+    exit_code:Number.isInteger(metadata.exit_code) && Math.abs(metadata.exit_code) <= 255 ? metadata.exit_code : null,
+    signal:diagnosticSignals.has(metadata.signal) ? metadata.signal : null,
+    sqlstate:safeSqlstate(metadata.sqlstate),
+    observed_close:metadata.observed_close === true,
+    termination_requested:metadata.termination_requested === true,
+  };
+}
+class DiagnosticTracker {
+  constructor(report = () => {}) { this.report = report; this.stage = 'unknown'; this.phase = 'primary'; this.started = performance.now(); }
+  emit(record) {
+    // An observer never controls backup guards or cleanup. Handle both a
+    // synchronous throw and a rejected Promise without serializing either.
+    try { Promise.resolve(this.report(record)).catch(() => {}); } catch {}
+  }
+  begin(stage, phase = 'primary') {
+    this.stage = stage; this.phase = phase; this.started = performance.now();
+    this.emit({ contract:'clued.production-backup-diagnostic.v1', event:'begin', stage, phase, elapsed_ms:0 });
+  }
+  success() { this.emit({ contract:'clued.production-backup-diagnostic.v1', event:'success', stage:this.stage,
+    phase:this.phase, elapsed_ms:Math.max(0,Math.round(performance.now()-this.started)) }); }
+  rejected(error) {
+    const metadata = { ...backupFailureDiagnostic(error), stage:this.stage, phase:this.phase,
+      elapsed_ms:Math.max(0,Math.round(performance.now()-this.started)) };
+    if (error && typeof error === 'object' && !failureMetadata.get(error)?.stage) failureMetadata.set(error,metadata);
+    this.emit({ ...metadata, event:'error' });
+  }
+}
+
+// Only psql's explicitly selected SQLSTATE-only severity line is accepted.
+// No stderr text, object name, query, connection detail or stack is retained.
+export function sqlstateCollector() {
+  let line = '', discarded = false, value = null;
+  return {
+    get value() { return value; },
+    reset() { line = ''; discarded = false; value = null; },
+    accept(chunk) {
+      for (const character of chunk) {
+        if (character === '\n') {
+          if (!discarded) {
+            const match = /^(?:psql:<stdin>:\d+: )?(?:ERROR|FATAL|PANIC):\s+([0-9A-Z]{5})\r?$/.exec(line);
+            if (match && safeSqlstate(match[1])) value = match[1];
+          }
+          line = ''; discarded = false;
+        } else if (!discarded) {
+          if (line.length >= 128) { line = ''; discarded = true; }
+          else line += character;
+        }
+      }
+    },
+  };
+}
 
 // This inventory and pg_dump use one exported READ ONLY snapshot. Definitions
 // stay in process memory; only digests/counts are published. OIDs, rather than
@@ -167,23 +246,47 @@ export const backupDumpArguments = (snapshot, destination) => ['--format=custom'
 // session.query returns the single text result (or '' for transaction commands).
 // An adapter keeps the production CLI dependency-free and lets regression tests
 // use the same publisher with real local PostgreSQL client programs.
-export async function createVerifiedBackup({ session, runPg, dumpPath }) {
-  let begun = false;
+export async function createVerifiedBackup({ session, runPg, dumpPath, onDiagnostic }) {
+  let begun = false, primaryError, cleanupError, result, hasPrimary = false, hasCleanup = false;
+  const tracker = new DiagnosticTracker(onDiagnostic);
   try {
+    tracker.begin('snapshot_begin');
     await session.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'); begun = true;
+    tracker.success(); tracker.begin('snapshot_export');
     const snapshot = await session.query('SELECT pg_export_snapshot()');
     assert.match(snapshot, /^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9]+$/, 'Invalid exported snapshot');
-    const inventory = validateInventory(JSON.parse(await session.query(BACKUP_INVENTORY_SQL)));
+    tracker.success(); tracker.begin('catalog_query');
+    const catalog = await session.query(BACKUP_INVENTORY_SQL);
+    tracker.success(); tracker.begin('catalog_parse');
+    const inventory = JSON.parse(catalog);
+    tracker.success(); tracker.begin('inventory_validate');
+    validateInventory(inventory);
+    tracker.success(); tracker.begin('archive_dump');
     await runPg('pg_dump', backupDumpArguments(snapshot, dumpPath));
+    tracker.success(); tracker.begin('archive_list');
     const toc = await runPg('pg_restore', ['--list', dumpPath]);
+    tracker.success(); tracker.begin('toc_verify');
     const proof = verifyArchiveScope(inventory, toc);
+    tracker.success(); tracker.begin('holder_check');
     await session.query('SELECT 1'); // A lost snapshot holder is a refusal, too.
+    tracker.success(); tracker.begin('transaction_rollback');
     await session.query('ROLLBACK'); begun = false;
-    return { ...proof, snapshot_sha256: digest(snapshot) };
+    tracker.success(); result = { ...proof, snapshot_sha256: digest(snapshot) };
+  } catch (error) {
+    hasPrimary = true; primaryError = error; tracker.rejected(error);
   } finally {
-    if (begun) await session.query('ROLLBACK').catch(() => {});
-    await session.close();
+    if (begun) {
+      tracker.begin('rollback_cleanup','cleanup');
+      try { await session.query('ROLLBACK'); tracker.success(); }
+      catch (error) { if (!hasCleanup) cleanupError = error; hasCleanup = true; tracker.rejected(error); }
+    }
+    tracker.begin('session_close','cleanup');
+    try { await session.close(); tracker.success(); }
+    catch (error) { if (!hasCleanup) cleanupError = error; hasCleanup = true; tracker.rejected(error); }
   }
+  if (hasPrimary) throw primaryError;
+  if (hasCleanup) throw cleanupError;
+  return result;
 }
 
 export function runBackupTool(command, args) {
@@ -193,59 +296,123 @@ export function runBackupTool(command, args) {
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', chunk => { output += chunk; });
     child.stderr.resume(); // Do not echo connection strings or server details.
-    child.once('error', () => reject(new Error('PostgreSQL backup tool could not start')));
+    child.once('error', () => reject(failure('TOOL_START_FAILED','PostgreSQL backup tool could not start')));
     // exit can arrive before the last stdout chunk. A complete TOC is evidence
     // only after the pipes have closed and the producer has succeeded.
-    child.once('close', code => code === 0 ? resolve(output) : reject(new Error('PostgreSQL backup tool failed')));
+    child.once('close', (code,signal) => code === 0 && !signal ? resolve(output) : reject(failure('TOOL_NONZERO',
+      'PostgreSQL backup tool failed', { exit_code:code,signal,observed_close:true })));
   });
 }
 
 export class SnapshotSession {
-  constructor(container) {
+  constructor(container, { graceMs = 5000, termMs = 2000, killMs = 2000 } = {}) {
+    assert.ok([graceMs,termMs,killMs].every(v => Number.isInteger(v) && v > 0 && v <= 5000), 'Invalid bounded close window');
     this.child = spawn('docker', ['exec','-i',container,'sh','-ceu',
-      'exec psql "$DATABASE_URL" -X -A -t -q -v ON_ERROR_STOP=1'], { stdio: ['pipe','pipe','pipe'] });
-    this.output = ''; this.failed = false;
-    this.child.stderr.resume();
-    this.child.stdin.on('error', () => { this.failed = true; this.deliver?.(); });
+      'exec psql "$DATABASE_URL" -X -A -t -q -v ON_ERROR_STOP=1 -v VERBOSITY=sqlstate -v SHOW_CONTEXT=never'], { stdio: ['pipe','pipe','pipe'] });
+    this.output = ''; this.failed = false; this.closed = false;
+    this.closeWindows = { graceMs,termMs,killMs }; this.state = sqlstateCollector();
+    this.child.stderr.setEncoding('utf8');
+    this.child.stderr.on('data', chunk => this.state.accept(chunk));
+    this.child.stdin.on('error', () => { this.failed = true;
+      this.failure = failure('SNAPSHOT_IO_ERROR','Backup snapshot input failed'); this.deliver?.(); });
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', chunk => { this.output += chunk; this.deliver?.(); });
-    this.child.on('error', () => { this.failed = true; this.deliver?.(); });
-    this.child.on('close', () => { this.failed = true; this.deliver?.(); });
+    this.child.on('error', () => { this.failed = true;
+      this.failure = failure('SNAPSHOT_START_FAILED','Backup snapshot holder could not start'); this.deliver?.(); });
+    this.child.on('close', (code,signal) => {
+      this.closed = true; this.closeVerdict = { exit_code:code,signal,observed_close:true,sqlstate:this.state.value };
+      this.failed = true; this.failure = failure(this.state.value ? 'PSQL_SERVER_ERROR' : 'SNAPSHOT_HOLDER_EXIT',
+        'Backup snapshot holder failed',this.closeVerdict); this.deliver?.();
+    });
   }
   query(sql) {
     return new Promise((resolve, reject) => {
       const marker = 'clued_backup_' + crypto.randomBytes(12).toString('hex');
-      const timer = setTimeout(() => { this.failed = true; this.child.kill('SIGTERM');
-        finish(new Error('Backup snapshot query timed out')); }, 60000);
+      const timer = setTimeout(() => { this.failed = true;
+        const timeoutError = failure('SNAPSHOT_QUERY_TIMEOUT','Backup snapshot query timed out', { termination_requested:true });
+        this.terminationRequested = true; finish(timeoutError);
+        try { this.child.kill('SIGTERM'); } catch {}
+      }, 60000);
       const finish = error => { clearTimeout(timer); this.deliver = undefined;
         if (error) reject(error); else { const end = this.output.indexOf(marker); const result = this.output.slice(0,end).trim();
           this.output = this.output.slice(end + marker.length).replace(/^\r?\n/, ''); resolve(result); } };
-      this.deliver = () => { if (this.failed) finish(new Error('Backup snapshot holder failed'));
+      this.deliver = () => { if (this.failed) finish(this.failure ?? failure('SNAPSHOT_HOLDER_EXIT','Backup snapshot holder failed'));
         else if (this.output.includes(marker)) finish(); };
+      if (!this.failed) this.state.reset();
       this.child.stdin.write(sql + ';\n\\echo ' + marker + '\n'); this.deliver();
     });
   }
-  async close() {
-    if (!this.child.pid || this.child.exitCode !== null || this.child.signalCode !== null) return;
-    await new Promise(resolve => {
-      const timer = setTimeout(() => this.child.kill('SIGTERM'), 5000);
-      this.child.once('close', () => { clearTimeout(timer); resolve(); });
-      this.child.stdin.end('\\q\n');
+  waitForClose(milliseconds) {
+    if (this.closed) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const finish = closed => { clearTimeout(timer); this.child.off('close',closedListener); resolve(closed); };
+      const closedListener = () => finish(true);
+      const timer = setTimeout(() => finish(false),milliseconds);
+      this.child.once('close',closedListener);
     });
+  }
+  close() {
+    this.closeResult ??= this.closeBounded();
+    return this.closeResult;
+  }
+  releaseClientHandles() {
+    // These are this Node process's owned docker-exec client handles only.
+    // Releasing them lets a refused CLI exit; it does not prove that psql or
+    // the container stopped. The workflow must still stop its owned producer.
+    for (const stream of [this.child.stdin,this.child.stdout,this.child.stderr]) {
+      try { stream.destroy(); } catch {}
+    }
+    try { this.child.unref(); } catch {}
+  }
+  async closeBounded() {
+    let forced = this.terminationRequested === true, inputFailed = false;
+    const grace = this.waitForClose(this.closeWindows.graceMs);
+    if (!this.closed) try { this.child.stdin.end('\\q\n'); } catch { inputFailed = true; }
+    if (!await grace) {
+      forced = true;
+      const term = this.waitForClose(this.closeWindows.termMs);
+      try { this.child.kill('SIGTERM'); } catch {}
+      if (!await term) {
+        const killed = this.waitForClose(this.closeWindows.killMs);
+        try { this.child.kill('SIGKILL'); } catch {}
+        if (!await killed) {
+          this.releaseClientHandles();
+          throw failure('SNAPSHOT_CLOSE_UNCONFIRMED','Backup snapshot close was not observed',
+            { termination_requested:true,observed_close:false });
+        }
+      }
+    }
+    if (forced) throw failure('SNAPSHOT_CLOSE_FORCED','Backup snapshot needed forced termination',
+      { ...this.closeVerdict,termination_requested:true });
+    if (inputFailed || this.closeVerdict?.exit_code !== 0 || this.closeVerdict?.signal) {
+      throw failure('SNAPSHOT_CLOSE_FAILED','Backup snapshot did not close gracefully',this.closeVerdict);
+    }
   }
 }
 
 async function main() {
+  const onDiagnostic = record => console.log(JSON.stringify(record));
+  const tracker = new DiagnosticTracker(onDiagnostic);
+  tracker.begin('setup');
+  try {
   const [container, scratch] = process.argv.slice(2);
   assert.match(container ?? '', /^clued-production-backup-[a-zA-Z0-9-]+$/, 'Unexpected backup container');
   assert.ok(scratch && path.isAbsolute(scratch), 'Backup needs allocated absolute scratch');
   assert.equal(await fs.realpath(scratch), path.resolve(scratch), 'Backup scratch must not be a symlink');
+  tracker.success();
   const session = new SnapshotSession(container);
   const runPg = (tool, args) => runBackupTool('docker', ['exec',container,'sh','-ceu',
     tool === 'pg_dump' ? 'exec pg_dump --dbname="$DATABASE_URL" "$@"' : 'exec pg_restore "$@"', 'sh', ...args]);
-  const proof = await createVerifiedBackup({ session, runPg, dumpPath: '/backup/clued-production-pre-migration.dump' });
+  const proof = await createVerifiedBackup({ session, runPg, dumpPath: '/backup/clued-production-pre-migration.dump', onDiagnostic });
+  tracker.begin('proof_write');
   await fs.writeFile(path.join(scratch, 'scope-proof.json'), JSON.stringify(proof) + '\n', { flag: 'wx', mode: 0o600 });
+  tracker.success();
+  } catch (error) {
+    if (!failureMetadata.get(error)?.stage) tracker.rejected(error);
+    throw error;
+  }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch(() => { console.error('::error::Production backup scope verification refused; no verified backup evidence'); process.exitCode = 1; });
+  main().catch(error => { console.error('::error::Production backup scope verification refused; no verified backup evidence');
+    console.error(JSON.stringify({ ...backupFailureDiagnostic(error),event:'refused' })); process.exitCode = 1; });
 }
