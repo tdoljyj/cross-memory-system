@@ -125,7 +125,8 @@ for (const transport of ['REST', 'MCP']) {
       version: 7, updated_at: timestamp, projection_currentness: 'CURRENT', authoritative: true };
     const fixture = { status: 'ok', level: 'global', record_type: 'state', project_id: null, records: [record] };
     const { data, text } = await resultFor(recordList, transport, fixture);
-    const { user_id: _user, ...publicRecord } = record;
+    const publicRecord = { ...record };
+    delete publicRecord.user_id;
     assert.deepEqual(data.records, [publicRecord]);
     assert.equal(data.records[0].id, RECORD);
     assert.equal(text.includes(USER), false, 'the full returned response contains no authenticated user ID');
@@ -136,7 +137,8 @@ for (const transport of ['REST', 'MCP']) {
       version: 7, binding_id: BINDING, metadata: { client_session_id: 'fixture-client' }, created_at: timestamp };
     const fixture = { status: 'ok', context_key: 'global', receipts: [receipt], session_compliance: [], checkpoint_reminder: false };
     const { data, text } = await resultFor(audit, transport, fixture);
-    const { binding_id: _binding, ...publicReceipt } = receipt;
+    const publicReceipt = { ...receipt };
+    delete publicReceipt.binding_id;
     assert.deepEqual(data.receipts, [publicReceipt]);
     assert.equal(data.receipts[0].id, RECEIPT);
     assert.equal(data.receipts[0].object_id, SESSION);
@@ -181,7 +183,8 @@ for (const transport of ['REST', 'MCP']) {
       legacy_projects: [], legacy_records: [], legacy_events: [], legacy_evidence: [], excluded_evidence_counts: { unlinked: 0 },
     } };
     const { data, text } = await resultFor(canonicalExport, transport, fixture);
-    const { actor_binding_id: _binding, ...publicEvent } = event;
+    const publicEvent = { ...event };
+    delete publicEvent.actor_binding_id;
     assert.deepEqual(data.snapshot.events, [publicEvent]);
     assert.equal(data.snapshot.events[0].event_id, '17');
     assert.equal(data.snapshot.events[0].receipt_id, RECEIPT);
