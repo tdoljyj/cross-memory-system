@@ -564,6 +564,30 @@ test('a new auth session discards the changed-Binding preview and an in-flight u
     assert.equal(f.calls.filter(c => c.name === 'clued_owner_grant_v1').length, pending ? 1 : 0);
   }
 });
+test('a pending correction issue cannot attach its old response to a refreshed same-Owner session', async t => {
+  const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+  await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
+  f.button('查看限时修正').props.onClick();
+  assert.equal(f.calls[1].name, 'clued_dataset_split_grant_correction_issue_v1');
+  f.emit('TOKEN_REFRESHED', { ...session('owner'), access_token: 'fixture-owner-new-session' });
+  f.emit('TOKEN_REFRESHED', { ...session('owner'), access_token: 'fixture-owner-newer-session' });
+  f.calls[1].resolve(continuationIssue({ token: 'clued_ogr_old_session' })); await f.settle();
+  assert.ok(!f.text().includes('当前接续连接'), 'the old response is not displayed in the new session');
+  assert.ok(!f.nodes('button').some(n => ['确认限时修正', '确认授权给当前接续会话', '核对原操作'].includes(f.text(n))));
+  assert.equal(f.calls.filter(c => c.name === 'clued_owner_grant_v1').length, 0);
+});
+test('a pending correction response after sign-out, another Owner or unmount never shows an approvable view', async t => {
+  for (const leave of [f => f.emit('SIGNED_OUT', null), f => f.emit('SIGNED_IN', session('other')), f => f.unmount()]) {
+    const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+    await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
+    f.button('查看限时修正').props.onClick();
+    leave(f);
+    f.calls[1].resolve(continuationIssue({ token: 'clued_ogr_departed_session' })); await f.settle();
+    assert.ok(!f.text().includes('当前接续连接'));
+    assert.ok(!f.nodes('button').some(n => ['确认限时修正', '确认授权给当前接续会话', '核对原操作'].includes(f.text(n))));
+    assert.equal(f.calls.filter(c => c.name === 'clued_owner_grant_v1').length, 0);
+  }
+});
 test('the original decided request offers a Native correction view and never mutates a grant before explicit confirmation',async t=>{
   const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
   assert.equal(f.calls.length,1,'loading a decided request never issues or commits a token');

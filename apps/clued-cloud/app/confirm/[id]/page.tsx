@@ -209,19 +209,24 @@ export default function OwnerConfirmPage() {
   // Only a changed-Binding preview pins this signed-in session. A new auth
   // token requires a fresh preview; older same-Binding semantics are kept.
   const continuationSession = useRef<string | null>(null);
+  // The first correction response has not yet told us whether its Binding
+  // changes. Pin its issuer while it is pending as well as the shown view.
+  const correctionIssueSession = useRef<{ owner_id: string; access_token: string } | null>(null);
 
   useEffect(() => {
     const lifetime = epoch;
     let disposed = false;
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       if (disposed) return;
-      const strictSessionChanged = continuationSession.current !== null
+      const pinnedToken = correctionIssueSession.current?.access_token ?? continuationSession.current;
+      const strictSessionChanged = pinnedToken !== null
         && current.current?.user.id === next?.user.id
-        && continuationSession.current !== next?.access_token;
+        && pinnedToken !== next?.access_token;
       const changed = current.current?.user.id !== next?.user.id || strictSessionChanged;
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
       continuationSession.current = null;
+      correctionIssueSession.current = null;
       ++epoch.current;
       setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setWorking(false); setRows([]); setMembers([]);
       setSkipped([]);
@@ -269,33 +274,42 @@ export default function OwnerConfirmPage() {
   // Step 1: a token over exactly the view these options produce. A newer
   // issue revokes the older token, so only what is on screen can be approved.
   async function issue(id: string, next: Options, generation: number, offered = rows): Promise<Issued | null> {
-    const value = next.datasetSplitCorrection
-      ? await rpc("clued_dataset_split_grant_correction_issue_v1", { request_id: id })
-      : await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
-    if (epoch.current !== generation) return null;
-    if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
-      || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
-      throw new RequestFailure("确认内容不完整，请刷新页面。");
+    const issuer = next.datasetSplitCorrection && current.current
+      ? { owner_id: current.current.user.id, access_token: current.current.access_token } : null;
+    if (next.datasetSplitCorrection && !issuer) return null;
+    if (issuer) correctionIssueSession.current = issuer;
+    try {
+      const value = next.datasetSplitCorrection
+        ? await rpc("clued_dataset_split_grant_correction_issue_v1", { request_id: id })
+        : await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
+      if (epoch.current !== generation || (issuer && (current.current?.user.id !== issuer.owner_id
+        || current.current?.access_token !== issuer.access_token))) return null;
+      if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
+        || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
+        throw new RequestFailure("确认内容不完整，请刷新页面。");
+      }
+      if (next.datasetSplitBootstrap && (value.confirmation_view.action !== "model.dataset_split.bootstrap"
+        || value.confirmation_view.choice !== "grant" || value.confirmation_view.expires_seconds !== 3600
+        || value.confirmation_view.max_uses !== 1 || !object(value.confirmation_view.grantee)
+        || value.confirmation_view.grantee.any_agent !== false)) {
+        throw new RequestFailure("服务返回的授权范围或期限与这次请求不一致，暂时无法批准。");
+      }
+      if (next.datasetSplitCorrection && (!object(value.confirmation_view.correction)
+        || value.confirmation_view.correction.request_id !== id
+        || value.confirmation_view.correction.previous_grant_id !== "4970e492-d26e-4974-adaa-757b2146b171")) {
+        throw new RequestFailure("修正内容与原申请不一致，暂时无法确认。");
+      }
+      if (next.datasetSplitCorrection) {
+        const continuation = bindingContinuation(value.confirmation_view, request);
+        continuationSession.current = continuation?.binding_changed ? issuer?.access_token ?? null : null;
+      }
+      const result = { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
+        expires_at: value.expires_at, view: value.confirmation_view, options: next };
+      setIssued(result);
+      return result;
+    } finally {
+      if (correctionIssueSession.current === issuer) correctionIssueSession.current = null;
     }
-    if (next.datasetSplitBootstrap && (value.confirmation_view.action !== "model.dataset_split.bootstrap"
-      || value.confirmation_view.choice !== "grant" || value.confirmation_view.expires_seconds !== 3600
-      || value.confirmation_view.max_uses !== 1 || !object(value.confirmation_view.grantee)
-      || value.confirmation_view.grantee.any_agent !== false)) {
-      throw new RequestFailure("服务返回的授权范围或期限与这次请求不一致，暂时无法批准。");
-    }
-    if (next.datasetSplitCorrection && (!object(value.confirmation_view.correction)
-      || value.confirmation_view.correction.request_id !== id
-      || value.confirmation_view.correction.previous_grant_id !== "4970e492-d26e-4974-adaa-757b2146b171")) {
-      throw new RequestFailure("修正内容与原申请不一致，暂时无法确认。");
-    }
-    if (next.datasetSplitCorrection) {
-      const continuation = bindingContinuation(value.confirmation_view, request);
-      continuationSession.current = continuation?.binding_changed ? current.current?.access_token ?? null : null;
-    }
-    const result = { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
-      expires_at: value.expires_at, view: value.confirmation_view, options: next };
-    setIssued(result);
-    return result;
   }
 
   // The same choice for every other pending member of the bundle.
@@ -453,6 +467,7 @@ export default function OwnerConfirmPage() {
   async function signOut() {
     ++epoch.current; current.current = null; setSession(null);
     continuationSession.current = null;
+    correctionIssueSession.current = null;
     setRequest(null); setIssued(null); setPending(null); setDone(null); setError(""); setMembers([]); setSkipped([]);
     try { await supabase.auth.signOut(); } catch { setError("退出尚未确认，请重新加载页面后检查登录状态。"); }
   }
