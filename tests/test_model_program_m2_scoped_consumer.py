@@ -240,4 +240,14 @@ class ScopedConsumerIntegration(unittest.TestCase):
             self.assertEqual(result["m2_verdict"],"NOT_ISSUED")
             self.assertTrue(relocated.resolve().is_relative_to(temporary_root))
 
+def load_tests(loader, tests, pattern):
+    """Append metric specifications to the existing source-fixture CI suite."""
+    path = ROOT / "tests/test_model_program_m2_saved_output_metrics.py"
+    spec = importlib.util.spec_from_file_location("m2_metric_specifications", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    tests.addTests(loader.loadTestsFromModule(module, pattern=pattern))
+    return tests
+
+
 if __name__=="__main__":unittest.main()
