@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+
 import { fileURLToPath } from "node:url";
 
 import { EXECUTOR_PERMISSIONS, currentOperationAuthority, optInSha, renderSummary, runExecutor } from "./clued-merge-executor.mjs";
@@ -29,7 +30,7 @@ const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\n
 const verified = (extra = {}) => ({ id: 20, name: "clued-admission-verified", head_sha: HEAD, status: "completed", conclusion: "success",
   app: { id: ADMISSION_APP_ID }, external_id: "pr:5:run:900", output: { title: "ADMITTED [normal · code · reruns 1]" }, ...extra });
 const check = (name, extra = {}) => (name === "clued-admission-verified" ? verified(extra)
-  : { id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success", app: { id: 15368 }, ...extra });
+  : { id: CI_REQUIRED_CHECKS.findIndex(row=>row.name===name)+1, name, head_sha: HEAD, status: "completed", conclusion: "success", app: { id: 15368 }, ...extra });
 
 // Routes are matched by "METHOD prefix" (GET when no method); an RPC route answers with a function of its input.
 function fakeFetch(routes) {
@@ -41,6 +42,14 @@ function fakeFetch(routes) {
     const method = init.method ?? "GET";
     calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, method, input: body && body.p_input, body,
       authorization: init.headers && init.headers.authorization });
+    const snapshot = /^(.*\/check-runs)\?filter=all&/.exec(route);
+    if (snapshot && !Object.keys(routes).some(key=>key.startsWith(`${snapshot[1]}?filter=all`) && route.startsWith(key))) {
+      const chunks = Object.entries(routes).filter(([key])=>key.startsWith(`${snapshot[1]}?check_name=`))
+        .map(([,value])=>typeof value==='function'?value(null):value);
+      const checks = chunks.flatMap(chunk=>chunk.check_runs);
+      const page = Number(new URL(`https://api.github.com${route}`).searchParams.get('page'));
+      return new Response(JSON.stringify({total_count:checks.length,check_runs:checks.slice((page-1)*100,page*100)}));
+    }
     const key = rpc ? `rpc:${rpc[1]}` : Object.keys(routes).sort((a,b)=>b.length-a.length).find((prefix) => {
       const [m, p] = prefix.includes(" ") ? prefix.split(" ") : ["GET", prefix];
       return m === method && route.startsWith(p);
@@ -511,4 +520,30 @@ test("final Native PR binding refuses body/opt-in withdrawal, new auto request, 
     }});
     assert.equal(result.actions[0].action,"none");assert.deepEqual(writes(fetch),[]);
   }
+});
+
+test('explicit uncounted active CI waits without qualification; missing checks still permit qualified gate-only recovery',async()=>{
+  const active={id:701,path:'.github/workflows/unregistered.yml',head_sha:HEAD,event:'pull_request',status:'queued',conclusion:null};
+  let proofs=0;
+  const busy=world({extra:{[`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:{total_count:1,workflow_runs:[active]}}});
+  const waited=await run(busy,{}, {qualifyExecution:async()=>{proofs++;throw Error('must not qualify while explicitly active');}});
+  assert.equal(proofs,0);assert.equal(waited.actions[0].action,'none');assert.match(waited.actions[0].reason,/active CI/);
+  assert.deepEqual(writes(busy),[]);
+  const behind=world({behindBy:2,extra:{[`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:{total_count:1,workflow_runs:[active]}}});
+  assert.equal((await run(behind,{}, {qualifyExecution:async()=>{throw Error('update must stay before qualification');}})).actions[0].action,'update_branch');
+  // Missing required check is idle, not the new active-wait branch. The existing
+  // recovery planner still runs; its final barrier refuses until required checks arrive.
+  const recovering=rerunWorld({extra:checksRoute({trivy:[]})});
+  let recoverProofs=0;
+  const observed=await run(recovering,{}, {qualifyExecution:async pr=>{
+    recoverProofs++; return {...fixtureProof(pr),passed:false,state:'unknown',rerun:{id:700,run_attempt:1,path:GATED}};
+  }});
+  assert.ok(recoverProofs>0);assert.equal(observed.actions[0].action,'none');assert.deepEqual(writes(recovering),[]);
+  // Without an active run, the usual successful one-all-jobs recovery is unchanged.
+  assert.equal((await run(rerunWorld())).actions[0].action,'rerun_gated');
+});
+test('partial active listings never enable an operation or manufacture a clean head',async()=>{
+  const fetch=world({extra:{[`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:{total_count:2,workflow_runs:[]}}});
+  let proofs=0;const result=await run(fetch,{}, {qualifyExecution:async()=>{proofs++;return fixtureProof(pull());}});
+  assert.equal(proofs,0);assert.deepEqual(writes(fetch),[]);assert.match(result.errors[0],/incomplete workflow_runs snapshot/);
 });
