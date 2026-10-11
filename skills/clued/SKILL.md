@@ -2,14 +2,14 @@
 name: clued
 description: Use Clued to recall or maintain authorized personal and project context, or develop, review and maintain Clued itself. Required for any question about the current or latest state of the user's projects, records or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) — even when host memory or an earlier reply seems to already hold the answer, that answer must come from Clued. Covers Clued memory operations and Clued engineering; do not activate for unrelated software work merely mentioning a project.
 metadata:
-  version: "1.0.17"
+  version: "1.0.18"
 ---
 
 # Clued
 
 Use one entry point and load only the workflow needed for the requested operation. A Skill, its selected workflow, and an optional mode hint never establish identity, grant permissions, or isolate the privileges of a shared MCP connection.
 
-[references/agent-contract.md](references/agent-contract.md) is the single normative contract for every Clued call: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. Read it whenever this Skill touches Clued context, whichever workflow you select. Where this Skill or a workflow seems to differ from it, the contract wins.
+The service delivers the single normative Agent Contract for every Clued call: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. Obtain its full text through `clued_agent_bootstrap`, reading all parts in order; when the Host cannot pass `part`, read [the served contract](https://clued.pixelgrav.com/clued-agent.md). Every part must identify the same version and SHA-256; restart from part 1 if either changes. Read it whenever this Skill touches Clued context, whichever workflow you select. The served contract wins over this Skill and its workflows. If neither path delivers the full text, tell the Owner and stop.
 
 ## Choose the operation
 
@@ -39,6 +39,6 @@ As the contract's §3.6 says, write each outcome as it happens and never right a
 
 Preserve already explicit user intent and authority; do not request duplicate confirmation for the same authorized action. Scope expansion, protected writes and production changes still require the authority applicable to that operation.
 
-This Skill's version is `metadata.version` above. `clued_session_resume` returns `clued_components.versions`; when its `skill.clued` is higher than this Skill's version, or its `agent-contract` differs from the contract you follow, tell the Owner which Clued Skill or contract version is out of date before relying on this copy (`config/clued-components.json`).
+This Skill's version is `metadata.version` above. `clued_session_resume` returns `clued_components.versions`; when its `skill.clued` is higher than this Skill's version, tell the Owner which Skill copy is out of date before relying on it (`config/clued-components.json`). A different `contract_version` requires reading the current full served contract, not reinstalling the Skill or reporting a stale Skill. Contract text is never shipped in this package.
 
 Use the minimum relevant data. Authentication failure, missing capability, version conflict and uncertain completion are different failures. Preserve existing evidence, do one useful diagnosis or change the failing approach, and continue independent authorized work. Never turn a local failure into a blanket halt or an unsupported PASS.

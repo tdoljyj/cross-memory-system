@@ -57,7 +57,7 @@ on:
       - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
       - 'apps/clued-cloud/scripts/production-release-*'
       - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
-      - 'skills/clued/references/agent-contract.md'
+      - 'protocol/agent/**'
       - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   push:
@@ -117,7 +117,7 @@ on:
       - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
       - 'apps/clued-cloud/scripts/production-release-*'
       - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
-      - 'skills/clued/references/agent-contract.md'
+      - 'protocol/agent/**'
       - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
