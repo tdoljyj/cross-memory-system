@@ -264,6 +264,63 @@ test('MCP: a committed work claim returns the user-declared budget unchanged wit
   assert.equal(data.claim.holder_binding_id, FROM);
 });
 
+for (const transport of ['REST', 'MCP']) {
+  test(`${transport}: resume preserves budgets from the real active-work-claims fold-in`, async () => {
+    const worker = await loadContinuityWorker();
+    const previous = globalThis.fetch;
+    const calls = [];
+    const hashes = [];
+    const snapshot = userContent('resumed checkpoint');
+    const resume = { status: 'restored', context_key: 'global', version: 7,
+      session_token: 'fixture-session', snapshot, active_constraints: [] };
+    const budget = { estimated_model_tokens: 1000, ...userContent('active claim budget'), profile_id: 'work-claim-v1-default' };
+    const claim = { claim_id: CLAIM, task_id: TASK, context_key: 'global', holder_binding_id: FROM,
+      holder_session_ref: 'fixture-session', fence: 1, lease_version: 1, status: 'ACTIVE', budget };
+    // clued_work_claims_active_v1 returns active_work_claims, as consumed by
+    // withWorkClaimContext; it does not return a root claims array.
+    const active = { status: 'ok', observed_at: timestamp, scope: 'global', active_work_claims: [claim],
+      work_claim_profile: { profile_id: 'work-claim-v1-default', lease_seconds: 7200 } };
+    const spec = { tool: 'clued_session_resume', path: '/v1/continuity/resume', args: { context_key: 'global' } };
+    globalThis.fetch = async (input, init = {}) => {
+      const url = String(input);
+      const body = JSON.parse(init.body);
+      calls.push(url);
+      hashes.push(body.p_token_hash);
+      assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
+      if (url === `${env.SUPABASE_URL}/rest/v1/rpc/clued_mcp_restore`) {
+        assert.deepEqual(body.p_input, spec.args);
+        return Response.json(resume);
+      }
+      assert.equal(url, `${env.SUPABASE_URL}/rest/v1/rpc/clued_work_claims_active_v1`);
+      assert.deepEqual(body.p_input, { scope: 'global' });
+      return Response.json(active);
+    };
+    try {
+      const response = await worker.fetch(request(spec, transport), { ...env, CLUED_WORK_CLAIMS_V1: 'true' }, ctx);
+      const text = await response.text();
+      assert.equal(response.status, 200, text);
+      assert.deepEqual(calls, [
+        `${env.SUPABASE_URL}/rest/v1/rpc/clued_mcp_restore`,
+        `${env.SUPABASE_URL}/rest/v1/rpc/clued_work_claims_active_v1`,
+      ]);
+      assert.equal(hashes[0], hashes[1], 'the fold-in uses the same authenticated binding');
+      const body = JSON.parse(text);
+      const data = transport === 'REST' ? body : body.result.structuredContent;
+      if (transport === 'MCP') {
+        assert.equal(body.result.isError, false);
+        assert.deepEqual(JSON.parse(body.result.content[0].text), data);
+      }
+      assert.equal(data.active_work_claim_count, 1);
+      assert.equal(data.active_work_claims[0].claim_id, CLAIM);
+      assert.equal(data.active_work_claims[0].holder_binding_id, FROM);
+      assert.deepEqual({ active_work_claims: data.active_work_claims, snapshot: data.snapshot },
+        { active_work_claims: [claim], snapshot }, 'neither the private read nor the resume response may delete user JSON');
+    } finally {
+      globalThis.fetch = previous;
+    }
+  });
+}
+
 test('module: Canonical relations remain opaque inside a service export snapshot', () => {
   const relations = Object.freeze(userContent('record relations'));
   const input = { snapshot: { records: [{ id: RECORD, relations }], events: [{ event_id: '17', actor_binding_id: BINDING }] } };
@@ -284,11 +341,11 @@ test('module: budget is opaque at each known work-claim result location', () => 
     assert.equal(output.claim.budget, budget, `${tool}: preserve the user JSON branch`);
   }
   const resume = { status: 'restored', active_work_claims: [claim] };
-  const active = { status: 'ok', claims: [claim] };
+  const active = { status: 'ok', active_work_claims: [claim] };
   assert.deepEqual(sanitizeCluedResult(resume, 'clued_session_resume'), resume);
   assert.equal(sanitizeCluedResult(resume, 'clued_session_resume').active_work_claims[0].budget, budget);
   assert.deepEqual(sanitizeCluedResult(active, 'clued_work_claims_active'), active);
-  assert.equal(sanitizeCluedResult(active, 'clued_work_claims_active').claims[0].budget, budget);
+  assert.equal(sanitizeCluedResult(active, 'clued_work_claims_active').active_work_claims[0].budget, budget);
 });
 
 test('module: unknown service budget and metadata still hide authentication identities', () => {
@@ -303,5 +360,7 @@ test('module: unknown service budget and metadata still hide authentication iden
   }
   assert.deepEqual(sanitizeCluedResult({ claim: { budget: serviceBudget } }, 'clued_work_unknown'),
     { claim: { budget: publicBudget } }, 'an unknown work-prefixed tool does not create a claim boundary');
+  assert.deepEqual(sanitizeCluedResult({ claims: [{ claim_id: CLAIM, budget: serviceBudget }] }, 'clued_work_claims_active'),
+    { claims: [{ claim_id: CLAIM, budget: publicBudget }] }, 'the incorrect claims field does not create an opaque budget boundary');
   assert.equal(serviceBudget.user_id, USER, 'the input remains unchanged');
 });

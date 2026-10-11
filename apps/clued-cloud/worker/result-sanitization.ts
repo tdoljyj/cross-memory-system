@@ -39,8 +39,8 @@ export function sanitizeCluedResult(value: unknown, toolName?: string): unknown 
         if (workClaimTools.has(toolName ?? '') && key === 'claim') {
           return [[key, envelope(child, 'work_claim')]];
         }
-        const claimRows = (toolName === 'clued_session_resume' && key === 'active_work_claims') ||
-          (toolName === 'clued_work_claims_active' && key === 'claims');
+        const claimRows = (toolName === 'clued_session_resume' || toolName === 'clued_work_claims_active') &&
+          key === 'active_work_claims';
         if (claimRows && Array.isArray(child)) {
           return [[key, child.map(claim => envelope(claim, 'work_claim'))]];
         }
