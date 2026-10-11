@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 // Independent claim-helper regression, using real authorization, intent and
 // work-claim functions in a temporary database. No fixed Owner-chain substitute,
@@ -64,6 +65,7 @@ test('Bootstrap claim admits a Global intent only with the same Binding actual G
       catch (error) { throw new Error('Migration ' + name + ': ' + error.message, { cause: error }); }
     }
     await allowRawTestBindings(db);
+    await allowTestIssuerCredentials(db);
     const owner = uuid(), foreignOwner = uuid(), token = hash(), otherToken = hash(), foreignToken = hash();
     await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'claim-scope@example.invalid',now()),($2,'foreign-claim-scope@example.invalid',now())", [owner, foreignOwner]);
     async function bindingFor(user, credential) {
