@@ -2,9 +2,9 @@ import { createStorageCredentialVault, type StorageCredentialContext, type Stora
 import { createStorageFetch } from "./storage-fetch";
 import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 import { bytesToBase64Url } from "./storage-base64";
-import { isStorageScopeProfile, scopeProfile, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
+import { isStorageScopeProfile, scopeProfile, scopeProfileCovers, scopeString, type StorageScopeProfile } from "./storage-google-scopes";
 import { StorageGoogleConnectionError } from "./storage-google-oauth";
-import { ONBOARD_DISCLOSURE_VERSION, onboardChoiceValid, renderOnboardDisclosure, type OnboardChoice } from "./storage-onboard-disclosure";
+import { ONBOARD_DISCLOSURE_VERSION, ONBOARD_LEGACY_DISCLOSURE_VERSION, onboardChoiceValid, renderOnboardDisclosure, type OnboardChoice } from "./storage-onboard-disclosure";
 
 /** StorageNormalUse.v0.1 N0 (§8.1): self-service onboarding, Worker side.
  *
@@ -73,6 +73,7 @@ export type OnboardResult = {
   status: "completed"; purpose: "onboard"; receipt_id: string; onboard_attempt_id: string; connection_id: string;
   provider_scope_profile: StorageScopeProfile; requested_scope_profile: StorageScopeProfile;
   normal_use_enabled: boolean; refresh_enabled: boolean;
+  master_state?: "on" | "off" | "partial";
 };
 type Staged = {
   onboard_attempt_id: string; run_token: string; root: { mode: "new" | "picked"; name: string; folder_id?: string }; tracks: string[];
@@ -82,11 +83,14 @@ type Staged = {
 export function onboardResult(raw: RecordValue): OnboardResult {
   if (raw.status !== "completed" || raw.purpose !== "onboard" || !id.test(String(raw.receipt_id)) || !id.test(String(raw.onboard_attempt_id)) ||
     !id.test(String(raw.connection_id)) || !isStorageScopeProfile(raw.provider_scope_profile) || !isStorageScopeProfile(raw.requested_scope_profile) ||
-    typeof raw.normal_use_enabled !== "boolean" || typeof raw.refresh_enabled !== "boolean") refuse("activation_unconfirmed");
+    typeof raw.normal_use_enabled !== "boolean" || typeof raw.refresh_enabled !== "boolean" ||
+    (raw.master_state !== undefined && !["on", "off", "partial"].includes(String(raw.master_state))) ||
+    (raw.master_state === "on" && raw.provider_scope_profile !== "full")) refuse("activation_unconfirmed");
   return { status: "completed", purpose: "onboard", receipt_id: String(raw.receipt_id), onboard_attempt_id: String(raw.onboard_attempt_id),
     connection_id: String(raw.connection_id), provider_scope_profile: raw.provider_scope_profile as StorageScopeProfile,
     requested_scope_profile: raw.requested_scope_profile as StorageScopeProfile, normal_use_enabled: raw.normal_use_enabled as boolean,
-    refresh_enabled: raw.refresh_enabled as boolean };
+    refresh_enabled: raw.refresh_enabled as boolean,
+    ...(raw.master_state === undefined ? {} : { master_state: raw.master_state as "on" | "off" | "partial" }) };
 }
 function staged(raw: RecordValue): Staged {
   const root = raw.root as RecordValue | undefined;
@@ -268,11 +272,11 @@ export async function createStorageGoogleOnboard(configuration: {
       try {
         if (!id.test(owner) || !input || typeof input !== "object") refuse("onboard_input_invalid");
         const { disclosure_version: version, ...choice } = input;
-        if (version !== ONBOARD_DISCLOSURE_VERSION) refuse("onboard_disclosure_changed");
+        if (version !== ONBOARD_DISCLOSURE_VERSION && version !== ONBOARD_LEGACY_DISCLOSURE_VERSION) refuse("onboard_disclosure_changed");
         if (!onboardChoiceValid(choice)) refuse("onboard_input_invalid");
         if (choice.root.mode === "picked" && !configuration.picker_configured) refuse("picker_unconfigured");
         if (choice.default_refresh && !configuration.refresh_available) refuse("refresh_unavailable");
-        const text = renderOnboardDisclosure(choice);
+        const text = renderOnboardDisclosure(choice, version);
         const attempt = crypto.randomUUID(), oauthAttempt = crypto.randomUUID(), connection = crypto.randomUUID();
         const state = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
         const verifier = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
@@ -287,7 +291,8 @@ export async function createStorageGoogleOnboard(configuration: {
         } catch (error) { return refuse(known(error) ?? "onboard_unavailable"); }
         if (begun.status !== "begun" || begun.onboard_attempt_id !== attempt || begun.oauth_client_id !== client || begun.redirect_uri !== redirect)
           refuse("onboard_unavailable");
-        const requested: StorageScopeProfile = choice.normal_use ? "normal" : "legacy";
+        const requested: StorageScopeProfile = choice.normal_use
+          ? version === ONBOARD_DISCLOSURE_VERSION ? "full" : "normal" : "legacy";
         if (begun.requested_scope_profile !== requested) refuse("onboard_unavailable");
         const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
         url.search = new URLSearchParams({ client_id: client, redirect_uri: redirect, response_type: "code", scope: scopeString(requested),
@@ -325,7 +330,7 @@ export async function createStorageGoogleOnboard(configuration: {
         // §8.1 step 4: an allowed profile; normal requested may come back legacy (§2.3).
         stage = "scope_mismatch";
         const granted = scopeProfile(tokens.scope);
-        if (granted === null || (granted !== requested && granted !== "legacy")) refuse(stage);
+        if (granted === null || !scopeProfileCovers(requested, granted)) refuse(stage);
         stage = "provider_identity_unconfirmed";
         const about = await request("https://www.googleapis.com/drive/v3/about?fields=user(permissionId,me)",
           { headers: { authorization: "Bearer " + tokens.access_token } }, stage);

@@ -10,7 +10,8 @@ async function fixture(result,ok=false,inspection,options={}) {
   let message, callback; const calls=[],effects=[],history=[];
   const exports={};
   vm.runInNewContext(compiled,{exports,URL,Error,AbortSignal:{timeout(ms){assert.ok(ms>0&&ms<=15000);return AbortSignal.timeout(options.fastTimeout?1:ms);}},
-    window:{location:{href:"https://clued.invalid/storage/google/callback?state=fixture-state&code=fixture-secret-code"},
+    window:{location:{href:options.cancelled?"https://clued.invalid/storage/google/callback?state=fixture-state&error=access_denied":
+      "https://clued.invalid/storage/google/callback?state=fixture-state&code=fixture-secret-code"},
       history:{replaceState:(_a,_b,url)=>history.push(url)}},
     fetch:async(url,init)=>{calls.push({url,init});assert.ok(init.signal);
       if(url.endsWith('/inspect')&&options.hangInspect)return new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));
@@ -33,6 +34,12 @@ async function fixture(result,ok=false,inspection,options={}) {
   return {message:()=>message,calls,history,remount:async()=>{exports.default();effects.shift()();await settle();},
     change:()=>callback("SIGNED_OUT",null)};
 }
+test("cancelled Google consent never exchanges a code or enables Agent file operations",async()=>{
+  const f=await fixture({},false,undefined,{cancelled:true});
+  assert.match(f.message(),/Google 授权未完成/);assert.equal(f.calls.length,0);
+  assert.deepEqual(f.history,["/storage/google/callback"]);
+  await f.remount();assert.equal(f.calls.length,0);
+});
 test("callback shows fixed actionable root diagnosis and strips code before exchange",async()=>{
   const f=await fixture({reason:"root_not_authorized",error:"fixture-provider-secret"});
   assert.ok(f.message().includes("尚未将已登记根目录授权"));
@@ -44,7 +51,7 @@ test("callback shows fixed actionable root diagnosis and strips code before exch
 test("unknown/prototype reasons cannot render arbitrary server text",async()=>{
   for(const reason of ["fixture-private-error","toString","__proto__",{},null]){
     const f=await fixture({reason,error:"fixture-secret"});
-    assert.equal(f.message(),"连接未确认，请返回连接页检查状态。此操作不会开启文件写入；不会自动重试或放宽权限。");
+    assert.equal(f.message(),"连接未确认，请返回连接页检查状态。请核对连接状态和原回执；不会自动重试或放宽权限。");
   }
 });
 
@@ -71,9 +78,35 @@ test("N0 onboard callback: connection established message, partial grant, refres
     assert.match(f.message(),text,reason); assert.equal(f.message().includes("fixture-private"),false);
   }
 });
+test("onboarding and reconnect callbacks claim all permissions only for explicit ON with actual full Google scope",async()=>{
+  for(const purpose of ["onboard","reconnect"]){
+    const f=await fixture({status:"completed",receipt_id:"master-receipt",purpose,requested_scope_profile:"full",provider_scope_profile:"full",
+      master_state:"on",normal_use_enabled:true,refresh_enabled:true},true);
+    assert.match(f.message(),/全部 Agent 文件操作已开启/);assert.equal(f.calls.length,1);await f.remount();assert.equal(f.calls.length,1);
+    f.change();assert.match(f.message(),/登录账号已变化/);
+  }
+  for(const profile of ["normal","legacy",undefined]){
+    const f=await fixture({status:"completed",receipt_id:"partial-scope-receipt",purpose:"onboard",requested_scope_profile:"full",
+      provider_scope_profile:profile,master_state:"on",normal_use_enabled:true},true);
+    assert.ok(!f.message().includes("全部 Agent 文件操作已开启"));assert.match(f.message(),/全部 Agent 文件操作尚未确认/);
+    assert.equal(f.calls.length,1);
+  }
+});
+test("partial, OFF and older narrower receipts never imply master ON",async()=>{
+  for(const [state,expected] of [["partial",/部分开启/],["off",/全部 Agent 文件操作已停止/]]){
+    const f=await fixture({status:"completed",receipt_id:"configured-receipt",requested_scope_profile:"full",provider_scope_profile:"full",master_state:state},true);
+    assert.match(f.message(),expected);assert.ok(!f.message().includes("全部 Agent 文件操作已开启"));
+  }
+  for(const result of [{normal_use_enabled:true,provider_scope_profile:"full",requested_scope_profile:"full"},
+    {normal_use_enabled:true,provider_scope_profile:"normal"},{master_state:"unknown",provider_scope_profile:"full",requested_scope_profile:"full"}]){
+    const f=await fixture({status:"completed",receipt_id:"older-receipt",...result},true);
+    assert.ok(!f.message().includes("全部 Agent 文件操作已开启"));assert.ok(f.message().includes("older-receipt"));
+    assert.equal(f.calls.length,1);await f.remount();assert.equal(f.calls.length,1);
+  }
+});
 test("confirmed callback displays receipt but does not claim file execution; account change wins",async()=>{
   const f=await fixture({status:"completed",receipt_id:"fixture-receipt"},true);
-  assert.ok(f.message().includes("fixture-receipt"));assert.ok(f.message().includes("文件操作仍需独立授权"));
+  assert.ok(f.message().includes("fixture-receipt"));assert.ok(f.message().includes("执行仍须通过目录和客户端检查"));
   f.change();assert.ok(f.message().includes("登录账号已变化"));
 });
 test("callback reports only confirmed server refresh state, never assumes the default succeeded",async()=>{
@@ -81,7 +114,7 @@ test("callback reports only confirmed server refresh state, never assumes the de
     const f=await fixture({status:'completed',receipt_id:'fixture-receipt',...(enabled===undefined?{}:{refresh_enabled:enabled})},true);
     assert.equal(f.message().includes('后台续签已开启'),enabled===true);
     assert.equal(f.message().includes('后台续签保持关闭'),enabled===false);
-    assert.ok(f.message().includes('文件操作仍需独立授权'));
+    assert.ok(f.message().includes('执行仍须通过目录和客户端检查'));
     await f.remount(); assert.equal(f.calls.length,1);
   }
 });
