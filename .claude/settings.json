@@ -10,6 +10,8 @@
       "mcp__Clued__clued_search_context",
       "mcp__Clued__clued_read_log",
       "mcp__Clued__clued_record_mutate",
+      "mcp__Clued__clued_agent_message_send",
+      "mcp__Clued__clued_agent_inbox",
       "mcp__Clued__clued_work_claim",
       "mcp__Clued__clued_work_renew",
       "mcp__Clued__clued_work_release",
