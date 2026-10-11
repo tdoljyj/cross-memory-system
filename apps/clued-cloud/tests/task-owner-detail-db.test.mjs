@@ -63,6 +63,9 @@ test('Owner record detail: Native tenancy, typed links, exact currentness and re
       await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
         values($1,$2,$3,$3,$4)`, [id, user, `project-${id}`, `project:${id}`]);
     }
+    // raw-binding-grants: these inert Bindings only provide claim-holder foreign keys and labels.
+    // Every detail call uses a direct Native human session; no call resolves or authenticates a Binding.
+    // Keep them ungranted so the fixture does not invent Agent execution authority.
     const binding = (await admin.query(`insert into public.clued_agent_bindings
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Detail fixture',$2,array['context:read'],array['*']) returning id`,
