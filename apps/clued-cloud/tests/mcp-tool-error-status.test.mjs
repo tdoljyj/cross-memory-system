@@ -50,6 +50,8 @@ for (const [status, code] of [['rejected', 'RECORD_VERSION_CONFLICT'], ['failed'
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.status, status);
     assert.equal(result.structuredContent.error_code, code);
+    assert.equal(result.structuredContent.error.code, code);
+    assert.equal(result.structuredContent.error.status, status);
     assert.equal(JSON.parse(result.content[0].text).error_code, code);
   });
 }
@@ -139,7 +141,9 @@ test('an Owner Request that failed is a tool error, like one that was rejected',
     const args = { request_id: '55555555-5555-4555-8555-555555555555', scope: 'global' };
     const failed = await callTool('clued_owner_request', args, { status: 'failed', error_code: 'P0001' });
     assert.equal(failed.isError, true);
+    assert.equal(failed.structuredContent.error.code, 'P0001');
     const rejected = await callTool('clued_owner_request', args, { status: 'rejected', error_code: 'owner_request_not_found' });
     assert.equal(rejected.isError, true);
+    assert.equal(rejected.structuredContent.error.code, 'owner_request_not_found');
   } finally { for (const key of Object.keys(env)) delete env[key]; Object.assign(env, saved); }
 });
