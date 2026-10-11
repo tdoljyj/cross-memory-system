@@ -16,6 +16,8 @@ on:
       - 'scripts/ci/clued-push-reuse.test.mjs'
       - 'scripts/ci/clued-g4-fresh-start.mjs'
       - 'scripts/ci/clued-g4-fresh-start.test.mjs'
+      - 'scripts/ci/merge-admission-measurement-history*.mjs'
+      - 'apps/clued-cloud/tests/merge-admission-measurement-history-db.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
@@ -26,6 +28,8 @@ on:
       - 'scripts/ci/clued-push-reuse.test.mjs'
       - 'scripts/ci/clued-g4-fresh-start.mjs'
       - 'scripts/ci/clued-g4-fresh-start.test.mjs'
+      - 'scripts/ci/merge-admission-measurement-history*.mjs'
+      - 'apps/clued-cloud/tests/merge-admission-measurement-history-db.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
@@ -176,6 +180,11 @@ jobs:
       - name: Run Project Lifecycle Successor v2 database and surface tests
         run: npm run test:project:lifecycle:v2
 
+      - name: Verify measurement journal transactions and FIFO replay
+        run: |
+          node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
+          node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
+
       - name: Capture safe failure diagnostics
         if: failure()
         run: |
@@ -281,6 +290,11 @@ jobs:
 
       - name: Run Project Lifecycle Successor v2 database and surface tests
         run: npm run test:project:lifecycle:v2
+
+      - name: Verify measurement journal transactions and FIFO replay
+        run: |
+          node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
+          node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
 
       - name: Capture safe failure diagnostics
         if: failure()
