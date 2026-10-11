@@ -2,11 +2,12 @@
 
 Status: implementation candidate, not deployed or accepted as complete R9 measurement.
 Task: `c20f91d3-baf9-4e2c-ac69-d1455ed4c57c`.
-Owner forward-window decision: `40904bf6-2217-4c5f-b372-471cc8a8acee@1`.
+Original forward-window decision (historical seven-day duration): `40904bf6-2217-4c5f-b372-471cc8a8acee@1`.
+Current duration successor: `af3f6be2-c025-4ecb-bb84-48b0c13fd7d0@1` (continuous 72 hours).
 
 ## Acceptance boundary
 
-Retain original historical results and NOT_MEASURED gaps. Only after all five qualified sources are installed and continuity is proven does T0 start a continuous seven-day R9 window. Hosted fees use complete UTC days, by workflow/SKU/gross/discount/net with workload attribution. This decision grants neither production installation nor broader access, and never turns a candidate, mock test or elapsed duration into acceptance.
+Retain original historical results and NOT_MEASURED gaps. The original seven-day duration is historical; the successor changes only that duration to continuous 72 hours. All five sources must be formally installed, with source qualification, actual authentication/permissions, a complete denominator and natural continuity verified before T0 starts the 72-hour R9 window. T0 remains null until these prerequisites pass; the Owner's duration choice, a commit or a synthetic test does not start it. Hosted fees use complete UTC days, by workflow/SKU/gross/discount/net with workload attribution. These decisions grant neither production installation nor broader access, and never turn a candidate, mock test or elapsed duration into acceptance. The original frozen acceptance-options file and its accepted bytes remain unchanged.
 
 ## Private evidence core
 
