@@ -90,6 +90,7 @@ import {
 } from "./integrations";
 import { measurePack } from "./context-pack";
 import { permissionDenial, permissionDenialResult } from "./permission-guidance";
+import { sanitizeCluedResult } from "./result-sanitization";
 import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION, AGENT_CONTRACT_SHA256 } from "./generated/agent-contract";
 import { renderAgentContractBootstrap } from "./agent-contract-bootstrap.mjs";
 import { CLUED_COMPONENTS_SCHEMA, CLUED_COMPONENT_VERSIONS, MCP_SERVER_VERSION } from "./generated/components";
@@ -556,17 +557,6 @@ async function handleResourceCenterWrite(request: Request, env: ContinuityEnv) {
   }
   return json({ contract: body.contract, nonce: body.nonce,
     request: body.request, request_sha256: body.request_sha256, outcome });
-}
-
-function sanitizeCluedResult(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitizeCluedResult);
-  if (!value || typeof value !== "object") return value;
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (["user_id", "actor_user_id", "binding_id", "actor_binding_id"].includes(key)) continue;
-    result[key] = sanitizeCluedResult(child);
-  }
-  return result;
 }
 
 function validateOrigin(request: Request, env: ContinuityEnv) {
@@ -2097,11 +2087,32 @@ function recordValidationRejection(error: unknown) {
 // PermissionSimplification §3.2: the connection lacks a context or action the
 // call needs. Returned as a tool error carrying what to request; a revoked or
 // expired connection stays an HTTP 403, since only reconnecting helps there.
-function permissionRejection(error: unknown, name: string, args: unknown) {
+async function permissionRejection(error: unknown, name: string, args: unknown,
+  request: Request, env: ContinuityEnv) {
   if (!(error instanceof HttpError) || error.status !== 403) return null;
   const details = error.details as Record<string, unknown> | null | undefined;
   if (details?.code !== "42501") return null;
   if (error.message !== "binding_not_authorized" && error.message !== "resource_action_not_authorized") return null;
+  if (error.message === "binding_not_authorized") {
+    // resolve_binding uses this code for both a missing permission and a
+    // dead/unknown Binding. Only a live connection can request more access.
+    // Delegated OAuth has already replaced its bearer with this Binding.
+    const token = bearerToken(request);
+    if (!token?.startsWith("clued_bnd_")) return null;
+    let status: unknown;
+    try {
+      status = await supabaseRequest(env, "/rest/v1/rpc/clued_authorization_status_v12", {
+        method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token) }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      });
+    } catch {
+      throw new HttpError(503, "Connection authorization status is unavailable.");
+    }
+    const active = status && typeof status === "object" && !Array.isArray(status)
+      ? (status as Record<string, unknown>).active : undefined;
+    if (active === false) throw new HttpError(403, "authorization_revoked_or_expired", { code: "42501" });
+    if (active !== true) throw new HttpError(503, "Connection authorization status is unavailable.");
+  }
   const policy = publicToolPolicies[name as keyof typeof publicToolPolicies] as { scopes: readonly string[] } | undefined;
   return permissionDenial(error.message, name, args, policy ? policy.scopes : null);
 }
@@ -2492,7 +2503,7 @@ async function callTool(
   try {
     rawResult = await callRpc(request, env, name as keyof typeof rpcByTool, args);
   } catch (error) {
-    const denial = permissionRejection(error, name, args);
+    const denial = await permissionRejection(error, name, args, request, env);
     if (denial) return permissionDenialResult(denial);
     const rejection = (name === "clued_record_mutate" ? recordValidationRejection(error) : null)
       ?? searchInputRejection(error, name) ?? requestRuleRejection(error);
@@ -2511,7 +2522,7 @@ async function callTool(
     rawResult = measured.result;
     measurementRefused = measured.httpStatus !== undefined;
   }
-  const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
+  const sanitized = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult, name);
   const sourceCommit = buildSourceCommit();
   const gated = name === "clued_currentness_g6_gate" &&
     (sanitized as Record<string, unknown> | null)?.status === "transport_precheck_ready"
@@ -2600,7 +2611,7 @@ async function withWorkClaims(request: Request, env: ContinuityEnv, name: string
     ? (args as Record<string, string>).context_key : "global";
   let claims: unknown = null;
   try {
-    claims = sanitizeCluedResult(await callWorkClaimsActive(request, env, scope));
+    claims = sanitizeCluedResult(await callWorkClaimsActive(request, env, scope), WORK_CLAIMS_ACTIVE_OAUTH_TOOL);
   } catch {
     claims = null;
   }
@@ -2779,7 +2790,7 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
   const tool = restToolByPath[path];
   const input = await parseBody(request);
   const result = await withWorkClaims(request, env, tool, input,
-    withAuthorityCapture(tool, await callRpc(request, env, tool, input)));
+    withAuthorityCapture(tool, sanitizeCluedResult(await callRpc(request, env, tool, input), tool)));
   return json(result, 200, corsHeaders(request));
 }
 
@@ -2917,7 +2928,7 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
     }
     validateRecordListInput(input);
     return json(
-      await callUserRecordRpc(request, env, "clued_user_record_list", input),
+      sanitizeCluedResult(await callUserRecordRpc(request, env, "clued_user_record_list", input), "clued_record_list"),
       200,
       corsHeaders(request),
     );
@@ -2925,7 +2936,7 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
   if (url.pathname === "/v1/records" && request.method === "POST") {
     const { input, receivedPayloadHash } = await parseCanonicalBody(request);
     const result = await callUserRecordRpc(request, env, "clued_user_record_mutate", input, receivedPayloadHash);
-    return json(result, m1HttpStatus(result), corsHeaders(request));
+    return json(sanitizeCluedResult(result, "clued_record_mutate"), m1HttpStatus(result), corsHeaders(request));
   }
   const mutationRoutes: Record<string, UserRecordRpc> = {
     "/v1/decisions/supersede": "clued_user_decision_supersede",
@@ -2937,7 +2948,8 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
   if (rpc && request.method === "POST") {
     const { input, receivedPayloadHash } = await parseCanonicalBody(request);
     const result = await callUserRecordRpc(request, env, rpc, input, receivedPayloadHash);
-    return json(result, m1HttpStatus(result), corsHeaders(request));
+    return json(sanitizeCluedResult(result, url.pathname === "/v1/export" ? "clued_canonical_export" : undefined),
+      m1HttpStatus(result), corsHeaders(request));
   }
   return json({ error: "Method not allowed." }, 405, {
     ...corsHeaders(request),

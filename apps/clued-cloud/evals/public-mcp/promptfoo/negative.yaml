@@ -33,8 +33,15 @@ tests:
       - type: is-json
       - type: not-contains
         value: 'OWNER_B_PRIVATE_MARKER_MUST_NOT_LEAK'
-      - type: contains-any
-        value: ['binding_not_authorized', 'Clued continuity failed']
+      # The synthetic raw Binding has no v12 lifecycle. Its refusal must be
+      # exact; a generic transport failure or a successful result is not a pass.
+      - type: javascript
+        value: |
+          const response = JSON.parse(output);
+          return response.jsonrpc === '2.0' && response.id === 2 &&
+            response.error?.code === -32000 &&
+            response.error?.message === 'authorization_revoked_or_expired' &&
+            response.error?.data?.code === '42501' && !response.result;
   - description: Internal or unknown tools expose no private schema
     options: { runSerially: true }
     vars:
