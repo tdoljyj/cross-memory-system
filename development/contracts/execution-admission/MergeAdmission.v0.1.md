@@ -113,13 +113,13 @@
 
 1. **只由 Owner 切**，通过仓库变量（Settings → Variables）。Agent 不得改这个变量，不得请求 Owner 改它来放过自己的 PR（与 GitConnectorWriteContract「An Agent never disables the ruleset…」同一精神）。Agent 用 Owner 身份能改它，是 WorkClaimAdmission §4.7 已写明的信任前提，本文不改变。
 2. **每次切换写一条 Clued Decision**（`user_explicit`）：切到什么、为什么、预计持续多久、切回的条件。切回也写。Decision 由 Owner 口述、任一在场 Agent 记录，或 Owner 自己在 Clued 页面写。
-3. **切换后立即重判所有打开的 PR**：Owner 在默认分支 `workflow_dispatch` 复核 workflow（`clued-work-admission-reverify.yml`），输入 `reason=state_change`；由 Agent 代劳时按合同 §1.7 先认领切换所对应的 Task（dispatch 是启动 CI）。复核在这个模式下对**每个**打开、非草稿、发往 main 的 PR 重新判定，并在其 head 上发一条新的 App check（成功或失败都发，与现行「只发失败」不同，见 §10）。每小时的定时复核兜底。边界：复核发出的 check 的 `external_id` 指向复核运行，加闸 workflow 的 gate 只认本事件准入运行的 check，所以切到更宽松状态后某个 head 若因此由红转绿，它的加闸重任务在该 head 上并未运行过；对普通层与文档层这是 §2 接受的（main 的 push CI 兜底），受保护层的判定不随状态变所以不会出现。gate 绑定本事件的准入运行，复核开始发成功 check 不重开复审 3 N-R1。
+3. **切换后立即重判所有打开的 PR**：Owner 在默认分支 `workflow_dispatch` 复核 workflow（`clued-work-admission-reverify.yml`），输入 `reason=state_change`；由 Agent 代劳时按[现行合同](../../../protocol/agent/agent-contract.md#appendix-a7) §1.7 与 Appendix A.7 先认领切换所对应的 Task（dispatch 是启动 CI）。复核在这个模式下对**每个**打开、非草稿、发往 main 的 PR 重新判定，并在其 head 上发一条新的 App check（成功或失败都发，与现行「只发失败」不同，见 §10）。每小时的定时复核兜底。边界：复核发出的 check 的 `external_id` 指向复核运行，加闸 workflow 的 gate 只认本事件准入运行的 check，所以切到更宽松状态后某个 head 若因此由红转绿，它的加闸重任务在该 head 上并未运行过；对普通层与文档层这是 §2 接受的（main 的 push CI 兜底），受保护层的判定不随状态变所以不会出现。gate 绑定本事件的准入运行，复核开始发成功 check 不重开复审 3 N-R1。
 4. **GitHub 规则集的必需检查列表不随状态变**：始终是 `gitleaks`、`trivy`、`clued-work-admission`、`clued-admission-verified`、`clued-merge-slot`。状态只改检查内部的判定：例如 `clued-merge-slot` 在不需要合并位的层 / 状态下以 `not_required(<layer>, <state>)` 通过，与现行 `not_needed` 直接通过同一做法；`clued-admission-verified` 在认领为 `advise` 的层下，缺认领时仍成功，摘要写 `claim_advisory_missing`。
 5. **切换不改 `strict`**、不改必需检查、不改 environment 与 secret。规则集改动期本身就是 `frozen` 的用途之一。
 
 ### 4.2 `frozen` 的两条说明
 
-- 「只有 Owner 合并」在 GitHub 侧**不可强制**：Agent 与 Owner 共用同一 GitHub 身份。可强制的部分是：`auto_merge: forbidden`（准入运行与每小时复核都读 PR 的 `auto_merge`，非空即判 `clued-merge-slot` 失败并在摘要里要求关闭；准入 workflow 的 `pull_request_target` 类型需加 `auto_merge_enabled`、`auto_merge_disabled`，否则 check 变绿后再打开 auto-merge 要到下次复核才被发现）、每个 head 都要 Owner 授权（授权本身就是 Owner 看过这个精确提交；`frozen` 下即便被自动化合并，合入的也是 Owner 授权过的精确 head，失守的是 `merge_actor` 规则而不是 G2/G3）。「Agent 不在 frozen 下点合并」是合规规则（合同 §1.7），写进 Decision 与检查摘要。
+- 「只有 Owner 合并」在 GitHub 侧**不可强制**：Agent 与 Owner 共用同一 GitHub 身份。可强制的部分是：`auto_merge: forbidden`（准入运行与每小时复核都读 PR 的 `auto_merge`，非空即判 `clued-merge-slot` 失败并在摘要里要求关闭；准入 workflow 的 `pull_request_target` 类型需加 `auto_merge_enabled`、`auto_merge_disabled`，否则 check 变绿后再打开 auto-merge 要到下次复核才被发现）、每个 head 都要 Owner 授权（授权本身就是 Owner 看过这个精确提交；`frozen` 下即便被自动化合并，合入的也是 Owner 授权过的精确 head，失守的是 `merge_actor` 规则而不是 G2/G3）。「Agent 不在 frozen 下点合并」是合规规则（[现行合同 Appendix A.5](../../../protocol/agent/agent-contract.md#appendix-a5)），写进 Decision 与检查摘要。
 - `frozen` 下每个 PR 都要 Owner 授权，Owner 的工作量就是 `frozen` 的成本，这也是它只用于短期窗口的原因。切回 `normal` 时所有 PR 由复核重判，授权只对受保护层继续需要。
 
 ---
@@ -416,6 +416,7 @@
 ## 15. 引用
 
 - 现行实现：`scripts/ci/clued-work-admission.mjs`（`PROTECTED_PATHS`、`evaluate`、`ownerReview`、`carriedApprovalSource`、`baseTipCompare`、`mergeSlotState`、`mergeSlotCheck`、`reverify`、`gate`、`rerunAttempt`、`appCheck`）、`.github/workflows/clued-work-admission.yml`、`clued-work-admission-reverify.yml`、迁移 `20261006120000_work_claims_merge_slot.sql`（`20261006180000_work_claims_continuation.sql` 只作认领续接的背景，不在本文范围）。
-- 合同：`skills/clued/references/agent-contract.md` §1.7（v38，第 2 步改写为 v39）；`development/contracts/repository/GitConnectorWriteContract.v0.1.md`；`CONTRIBUTING.md`。
+- 现行合同：[Agent Contract](../../../protocol/agent/agent-contract.md) §1.7（核心）；[Appendix A.5](../../../protocol/agent/agent-contract.md#appendix-a5)（PR 分层与受保护改动）、[A.6](../../../protocol/agent/agent-contract.md#appendix-a6)（合并队列）、[A.7](../../../protocol/agent/agent-contract.md#appendix-a7)（CI 重跑与手动 workflow）；`development/contracts/repository/GitConnectorWriteContract.v0.1.md`；`CONTRIBUTING.md`。
+- 历史合同基线：`skills/clued/references/agent-contract.md` §1.7（v38，第 2 步改写为 v39）。
 - GitHub 文档：Managing a merge queue（merge group、CI 失败移出、与「Require branches to be up to date」等价）；Automatically merging a pull request（可用范围、自动关闭条件）；Available rules for rulesets（`strict`）；Re-running workflows and jobs（重跑沿用原 `GITHUB_SHA` 与 workflow 文件）；Update a pull request branch（App 需要 head 仓库的 contents 写权限）。
 - 他山之石：Mergify（speculative checks / batch、免费至 5 个私有仓库用户、`$21`/seat）、Trunk Merge Queue（impacted targets 并行队列、乐观合并、二分、免费至 5 committers）、Bors-ng（已停止维护，指向 GitHub merge queue）、Zuul（dependent pipeline、推测执行、失败减半窗口）。具体链接在研究报告附录。
