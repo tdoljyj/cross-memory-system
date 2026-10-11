@@ -120,6 +120,7 @@ export default function WorkClaimsPage() {
   const [notice, setNotice] = useState("");
   const current = useRef<Session | null>(null);
   const epoch = useRef(0);
+  const loadSerial = useRef(0);
 
   useEffect(() => {
     const lifetime = epoch;
@@ -143,30 +144,32 @@ export default function WorkClaimsPage() {
 
   async function load(withEnded = showEnded) {
     const generation = epoch.current;
-    setWorking(true); setError("");
+    const serial = ++loadSerial.current;
+    const stillCurrent = () => epoch.current === generation && loadSerial.current === serial;
+    setWorking(true); setError(""); setHandoverSetting(null);
     try {
-      const [listed, setting] = await Promise.allSettled([
-        rpc("clued_work_claims_owner_list_v1", withEnded ? { ended_within_hours: ENDED_HOURS } : {}),
-        rpc("clued_work_free_handover_setting_v1", {}),
-      ]);
-      if (epoch.current !== generation) return;
-      if (listed.status === "rejected") throw listed.reason;
-      const value = listed.value;
+      const listed = rpc("clued_work_claims_owner_list_v1", withEnded ? { ended_within_hours: ENDED_HOURS } : {});
+      // Settings may be unavailable during a staged rollout. Their read must
+      // never hold the existing claim list or Task links behind it.
+      void rpc("clued_work_free_handover_setting_v1", {}).then(setting => {
+        if (!stillCurrent()) return;
+        if (typeof setting.enabled !== "boolean" || !Number.isSafeInteger(setting.version)) throw new Error("setting unknown");
+        setHandoverSetting({ enabled: setting.enabled, version: Number(setting.version), available: setting.available === true });
+      }).catch(() => {
+        if (!stillCurrent()) return;
+        setHandoverSetting(null); setNotice("自由交接设置暂时无法读取，请稍后刷新。");
+      });
+      const value = await listed;
+      if (!stillCurrent()) return;
       const currentClaims = Array.isArray(value.claims) ? value.claims.filter(object) : [];
       setClaims(currentClaims);
       const resumable = currentClaims.find(claim => claim.execution_handover_pending === true
         && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(text(claim.handover_pending_delivery_id)));
       if (resumable) setPendingHandover({ delivery_id: text(resumable.handover_pending_delivery_id), receipt_id: text(resumable.receipt_id) });
       setEnded(withEnded && Array.isArray(value.ended) ? value.ended.filter(object) : []);
-      if (setting.status === "fulfilled" && typeof setting.value.enabled === "boolean"
-        && Number.isSafeInteger(setting.value.version)) {
-        setHandoverSetting({ enabled: setting.value.enabled, version: Number(setting.value.version), available: setting.value.available === true });
-      } else {
-        setHandoverSetting(null); setNotice("自由交接设置暂时无法读取，请稍后刷新。");
-      }
     } catch (failure) {
-      if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取认领。");
-    } finally { if (epoch.current === generation) setWorking(false); }
+      if (stillCurrent()) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取认领。");
+    } finally { if (stillCurrent()) setWorking(false); }
   }
 
   async function changeHandoverSetting(enabled: boolean) {

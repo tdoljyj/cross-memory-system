@@ -209,6 +209,25 @@ export async function testAccountCloud(t, admin, server, user, decision, {handov
   try {
     if(handoverOnly){
       await admin.query("update clued_private.work_claim_execution_policy_v1 set activated_at=clock_timestamp(),qualification_commit=$1",['f'.repeat(40)]);
+      await t.test('activation refuses an unmapped old job; an unclaimed new job keeps its original collision proof',async()=>{
+        const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
+        const job=await submit(target,client);
+        const proof=(await admin.query('select * from clued_private.work_claim_storage_authorizations_v1 where owner_id=$1 and job_id=$2',
+          [user,job.reference.job_id])).rows[0];
+        assert.ok(proof);assert.equal(proof.claim_id,null);assert.equal(proof.execution_epoch,null);
+        assert.ok(proof.resources.length>0);await cloud({action:'load',...job.reference});
+        // Removing the synthetic capture models a job that predates the
+        // staging migration. No backfill manufactures execution authority.
+        await admin.query('delete from clued_private.work_claim_storage_authorizations_v1 where owner_id=$1 and job_id=$2',
+          [user,job.reference.job_id]);
+        const before=await counters();
+        await assert.rejects(cloud({action:'load',...job.reference}),/work_claim_job_authorization_missing/);
+        await assert.rejects(admin.query('select clued_private.storage_job_begin_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_job_authorization_missing/);
+        await assert.rejects(admin.query('select clued_private.storage_job_provider_attempt_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_job_authorization_missing/);
+        assert.equal((await jobRow(job)).intent_id,null);assert.deepEqual(await counters(),before);
+      });
       const claimFor=async(target,client)=>{
         const task=randomUUID();
         await admin.query(`insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status,
@@ -232,6 +251,25 @@ export async function testAccountCloud(t, admin, server, user, decision, {handov
           [{confirmation_token:preview.confirmation_token,view_digest:preview.view_digest}])).rows[0].v;
         assert.equal(result.status,'committed');return result;
       };
+      await t.test('a later claim colliding with an unclaimed job prevents new execution under its frozen resources',async()=>{
+        const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
+        const job=await submit(target,client);await cloud({action:'load',...job.reference});
+        await claimFor(target,client);
+        const before=await counters();
+        await assert.rejects(cloud({action:'load',...job.reference}),/work_claim_job_resources_changed/);
+        assert.equal((await jobRow(job)).intent_id,null);assert.deepEqual(await counters(),before);
+      });
+      await t.test('closing the declared Task refuses its queued job before a new journal or provider attempt',async()=>{
+        const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
+        const original=await claimFor(target,client),job=await submit(target,client,randomUUID(),{work_claim:original.ref});
+        await cloud({action:'load',...job.reference});
+        await admin.query("update public.clued_memories set lifecycle_status='completed' where id=$1",[original.claim.task_id]);
+        const before=await counters();
+        await assert.rejects(cloud({action:'load',...job.reference}),/work_claim_task_unavailable/);
+        await assert.rejects(admin.query('select clued_private.storage_job_provider_attempt_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_task_unavailable/);
+        assert.equal((await jobRow(job)).intent_id,null);assert.deepEqual(await counters(),before);
+      });
       await t.test('handover invalidates queued job load, begin and provider_attempt before any new journal or provider effect',async()=>{
         const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
         const original=await claimFor(target,client),job=await submit(target,client,randomUUID(),{work_claim:original.ref});

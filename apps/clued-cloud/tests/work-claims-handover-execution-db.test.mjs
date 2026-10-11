@@ -131,6 +131,7 @@ test('handed-over claim: exact head authorization requires the new private key, 
       [ciToken,{scope:'global',...input}])).rows[0].v;
     const ticket=await command({action:'publication_begin',claim_id:claim.claim_id,...wanted,run_id:'42',publication_key:uuid()});
     assert.equal(ticket.publication_required,true);assert.ok(ticket.publication_id);
+    assert.ok(ticket.receipt_id);
     const againPreview=(await native.query('select public.clued_work_claim_handover_confirmation_issue_v1($1::jsonb) v',
       [{claim_id:claim.claim_id}])).rows[0].v;
     const handoverInput={confirmation_token:againPreview.confirmation_token,view_digest:againPreview.view_digest};
@@ -141,6 +142,41 @@ test('handed-over claim: exact head authorization requires the new private key, 
     const batch=await command({action:'revocations_list'});
     assert.deepEqual([...new Set(batch.revocations.map(x=>x.head_sha).filter(Boolean))].sort(),['a'.repeat(40),'b'.repeat(40)]);
     assert.equal(batch.publications[0].publication_id,ticket.publication_id);
+    assert.deepEqual((await command({action:'revocations_contexts'})).context_keys,['global']);
+    // Discovery comes from durable pending work, even without a live claim.
+    await admin.query('update clued_private.work_claims_v1 set issued_at=least(issued_at,clock_timestamp()-interval \'2 seconds\'),expires_at=clock_timestamp()-interval \'1 second\' where claim_id=$1',[claim.claim_id]);
+    assert.deepEqual((await command({action:'revocations_contexts'})).context_keys,['global']);
+    assert.equal((await command({action:'revocations_list'})).publications[0].publication_id,ticket.publication_id);
+    await admin.query('update clued_private.work_claims_v1 set expires_at=clock_timestamp()+interval \'1 hour\' where claim_id=$1',[claim.claim_id]);
+    // More than 100 durable rows must not disappear behind a truncated page.
+    const syntheticOutboxes=[];
+    for(let n=0;n<105;n++){
+      const id=uuid();syntheticOutboxes.push(id);
+      await admin.query(`insert into clued_private.work_claim_revocation_outbox_v1
+        (outbox_id,user_id,claim_id,context_key,execution_epoch,repository,head_sha)
+        values($1,$2,$3,'global',3,'pagination/repo',$4)`,[id,user,claim.claim_id,n.toString(16).padStart(40,'0')]);
+    }
+    let cursor;const allOutboxes=[];
+    do{
+      const page=await command({action:'revocations_list',...(cursor?{outbox_cursor:cursor}:{})});
+      assert.ok(page.revocations.length<=100);allOutboxes.push(...page.revocations.map(x=>x.outbox_id));cursor=page.next_outbox_cursor;
+    }while(cursor);
+    assert.equal(new Set(allOutboxes).size,batch.revocations.length+105);
+    await admin.query('delete from clued_private.work_claim_revocation_outbox_v1 where outbox_id=any($1::uuid[])',[syntheticOutboxes]);
+    const syntheticPublications=[];
+    for(let n=0;n<105;n++){
+      const id=uuid();syntheticPublications.push(id);
+      await admin.query(`insert into clued_private.work_claim_publications_v1
+        (publication_id,user_id,claim_id,execution_epoch,repository,head_sha,pr_ref,run_id,publication_key)
+        values($1,$2,$3,2,'owner/repository',$4,'owner/repository#7','123',$5)`,[id,user,claim.claim_id,'a'.repeat(40),uuid()]);
+    }
+    cursor=undefined;const allPublications=[];
+    do{
+      const page=await command({action:'revocations_list',...(cursor?{publication_cursor:cursor}:{})});
+      assert.ok(page.publications.length<=100);allPublications.push(...page.publications.map(x=>x.publication_id));cursor=page.next_publication_cursor;
+    }while(cursor);
+    assert.equal(new Set(allPublications).size,106);
+    await admin.query('delete from clued_private.work_claim_publications_v1 where publication_id=any($1::uuid[])',[syntheticPublications]);
     assert.equal((await call('clued_work_verify_v1',{scope:'global',action:'revocations_list'})).error_code,'admission_binding_required');
     const acknowledgment={action:'revocation_ack',outbox_id:batch.revocations[0].outbox_id,execution_epoch:3,
       evidence:{checks_revoked:true,auto_merge_disabled:true,dispatch_revoked:true}};
@@ -148,16 +184,28 @@ test('handed-over claim: exact head authorization requires the new private key, 
     const collect=async()=> (await native.query('select public.clued_work_claim_handover_v1($1::jsonb) v',
       [{action:'collect',delivery_id:pending.delivery_id}])).rows[0].v;
     assert.equal((await collect()).status,'pending');
+    const ownerList=async()=>(await native.query('select public.clued_work_claims_owner_list_v1($1::jsonb) v',[{}])).rows[0].v;
+    assert.equal((await ownerList()).claims.find(x=>x.claim_id===claim.claim_id).handover_pending_delivery_id,pending.delivery_id);
+    await native.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({...jwt,session_id:'other-owner-session'})]);
+    assert.equal((await ownerList()).claims.find(x=>x.claim_id===claim.claim_id).handover_pending_delivery_id,null);
+    assert.equal((await collect()).error_code,'work_claim_handover_stale');
+    await native.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify(jwt)]);
     const late=await command({action:'publication_finish',publication_id:ticket.publication_id,check_run_id:'99'});
     assert.equal(late.must_revoke,true,'a late green publisher must revoke its own check');
     assert.equal((await command(acknowledgment)).error_code,'work_claim_publications_unresolved');
     assert.equal((await command({action:'publication_reconcile',publication_id:ticket.publication_id,
       publisher_stopped:true,checks_revoked:true})).error_code,'work_claim_publication_unresolved');
+    const reconciled=await command({action:'publication_reconcile',publication_id:ticket.publication_id,
+      check_run_id:'99',publisher_stopped:true,checks_revoked:true});
+    assert.equal(reconciled.status,'committed');assert.ok(reconciled.receipt_id);
     assert.equal((await command({action:'publication_reconcile',publication_id:ticket.publication_id,
-      check_run_id:'99',publisher_stopped:true,checks_revoked:true})).status,'committed');
+      check_run_id:'99',publisher_stopped:true,checks_revoked:true})).receipt_id,reconciled.receipt_id);
     assert.equal((await command({...acknowledgment,evidence:{checks_revoked:true}})).error_code,'work_claim_revocation_incomplete');
-    for(const item of batch.revocations)
-      assert.equal((await command({...acknowledgment,outbox_id:item.outbox_id})).status,'committed');
+    for(const item of batch.revocations){
+      const ack=await command({...acknowledgment,outbox_id:item.outbox_id});
+      assert.equal(ack.status,'committed');assert.ok(ack.receipt_id);
+      assert.equal((await command({...acknowledgment,outbox_id:item.outbox_id})).receipt_id,ack.receipt_id);
+    }
     const replayPending=(await native.query('select public.clued_work_claim_handover_v1($1::jsonb) v',[handoverInput])).rows[0].v;
     assert.equal(replayPending.status,'pending');assert.equal('lease_key' in replayPending,false);
     const completed=await collect();assert.equal(completed.status,'committed');assert.match(completed.lease_key,/^clued_lk_/);

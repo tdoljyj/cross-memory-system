@@ -60,6 +60,9 @@ declare c clued_private.work_claims_v1%rowtype; b public.clued_agent_bindings%ro
 begin
   if p_mode not in ('collision_only','require_claim') or p_door is null or p_operation is null then
     raise exception 'work_claim_gate_invalid' using errcode='22023'; end if;
+  -- Collision-only submits also serialize against a new claim/handover.
+  -- The storage composition already holds its original locks before this.
+  perform clued_private.work_claim_lock(p_user);
   if p_claim is not null then
     if not clued_private.work_claim_ref_valid_v1(p_claim) then
       raise exception 'work_claim_gate_invalid' using errcode='22023'; end if;
@@ -513,11 +516,12 @@ revoke all on function clued_private.work_claim_execution_current_v1(jsonb)
 create table clued_private.work_claim_storage_authorizations_v1 (
   owner_id uuid not null references auth.users(id),
   job_id uuid not null,
-  claim_id uuid not null references clued_private.work_claims_v1(claim_id),
-  execution_epoch bigint not null,
+  claim_id uuid references clued_private.work_claims_v1(claim_id),
+  execution_epoch bigint,
   request_digest text not null check (request_digest ~ '^[0-9a-f]{64}$'),
   resources text[] not null,
   captured_at timestamptz not null default clock_timestamp(),
+  check ((claim_id is null)=(execution_epoch is null)),
   primary key(owner_id,job_id),
   foreign key(owner_id,job_id) references clued_private.storage_jobs_v1(owner_id,job_id)
     deferrable initially deferred
@@ -531,7 +535,14 @@ create function clued_private.work_claim_storage_capture_v1(
 ) returns void language plpgsql volatile security definer set search_path='' as $$
 declare c clued_private.work_claims_v1;
 begin
-  if p_ref is null then return; end if;
+  if p_ref is null then
+    -- An unclaimed submit still freezes the resources checked by the gate.
+    -- An old job with no capture is not silently upgraded to this proof.
+    insert into clued_private.work_claim_storage_authorizations_v1
+      (owner_id,job_id,request_digest,resources)
+    values(p_owner,p_job,p_digest,coalesce(p_resources,'{}'::text[]));
+    return;
+  end if;
   if not clued_private.work_claim_ref_valid_v1(p_ref) then
     raise exception 'work_claim_gate_invalid' using errcode='22023'; end if;
   perform clued_private.work_claim_lock(p_owner);
@@ -555,7 +566,8 @@ begin
   if not clued_private.work_claim_execution_enabled_v1() then return; end if;
   select * into a from clued_private.work_claim_storage_authorizations_v1
     where owner_id=p_owner and job_id=p_job;
-  if a.job_id is null then return; end if;
+  if a.job_id is null then
+    raise exception 'work_claim_job_authorization_missing' using errcode='42501'; end if;
   -- The claim lock is also held by handover. An admitted provider attempt
   -- and a handover therefore have one transaction order, not two snapshots.
   perform clued_private.work_claim_lock(p_owner);
@@ -563,6 +575,13 @@ begin
     where user_id=p_owner and claim_id=a.claim_id;
   select * into j from clued_private.storage_jobs_v1
     where owner_id=p_owner and job_id=p_job;
+  if j.job_id is null or a.request_digest is distinct from j.request_digest then
+    raise exception 'work_claim_job_epoch_stale' using errcode='42501'; end if;
+  if a.claim_id is null then
+    if jsonb_array_length(clued_private.work_claim_conflicts(p_owner,null,a.resources,'{}'::text[],null))>0 then
+      raise exception 'work_claim_job_resources_changed' using errcode='42501'; end if;
+    return;
+  end if;
   if c.claim_id is null or j.job_id is null or a.request_digest is distinct from j.request_digest
     or c.execution_epoch is distinct from a.execution_epoch or c.execution_handover_pending
     or c.status<>'ACTIVE' or c.expires_at<=clock_timestamp()
@@ -571,6 +590,7 @@ begin
   if exists(select 1 from unnest(a.resources) resource
       where not clued_private.work_claim_resource_covered_v1(resource,c.write_set)) then
     raise exception 'work_claim_job_resources_changed' using errcode='42501'; end if;
+  perform clued_private.work_claim_task(c.user_id,c.context_key,c.task_id::text);
 end $$;
 
 -- Patch only the exact existing composition point. If a source moved, do
@@ -626,6 +646,8 @@ create table clued_private.work_claim_publications_v1 (
   publication_key uuid not null,
   state text not null default 'open' check(state in ('open','published','reconciled')),
   check_run_id text,
+  started_receipt_id uuid references public.clued_audit_receipts(id),
+  finished_receipt_id uuid references public.clued_audit_receipts(id),
   started_at timestamptz not null default clock_timestamp(),
   finished_at timestamptz,
   unique(claim_id,execution_epoch,publication_key)
@@ -644,11 +666,29 @@ create table clued_private.work_claim_revocation_outbox_v1 (
   created_at timestamptz not null default clock_timestamp(),
   acknowledged_at timestamptz,
   evidence jsonb,
+  acknowledged_receipt_id uuid references public.clued_audit_receipts(id),
   unique(claim_id,execution_epoch,repository,head_sha,pr_ref,workflow)
 );
+create index work_claim_revocation_pending_v1 on clued_private.work_claim_revocation_outbox_v1(user_id,context_key,outbox_id)
+  where state='pending';
+create index work_claim_publication_open_v1 on clued_private.work_claim_publications_v1(user_id,claim_id,publication_id)
+  where state='open';
 alter table clued_private.work_claim_publications_v1 enable row level security;
 alter table clued_private.work_claim_revocation_outbox_v1 enable row level security;
 revoke all on clued_private.work_claim_publications_v1,clued_private.work_claim_revocation_outbox_v1
+  from public,anon,authenticated,service_role,clued_worker_gateway;
+
+create function clued_private.work_claim_ci_receipt_v1(b public.clued_agent_bindings,
+  p_scope text,p_operation text,p_claim uuid,p_epoch bigint,p_metadata jsonb) returns uuid
+language plpgsql volatile security definer set search_path='' as $$
+declare receipt uuid;
+begin
+  insert into public.clued_audit_receipts(user_id,binding_id,context_key,operation,object_type,object_id,version,metadata)
+  values(b.user_id,b.id,p_scope,p_operation,'work_claim',p_claim,p_epoch,
+    p_metadata||jsonb_build_object('claim_id',p_claim,'execution_epoch',p_epoch)) returning id into receipt;
+  return receipt;
+end $$;
+revoke all on function clued_private.work_claim_ci_receipt_v1(public.clued_agent_bindings,text,text,uuid,bigint,jsonb)
   from public,anon,authenticated,service_role,clued_worker_gateway;
 
 create function clued_private.work_claim_revocations_capture_v1() returns trigger
@@ -687,7 +727,8 @@ returns jsonb language plpgsql volatile security definer set search_path='' as $
 declare b public.clued_agent_bindings; c clued_private.work_claims_v1;
   o clued_private.work_claim_revocation_outbox_v1; p clued_private.work_claim_publications_v1;
   op text:=p_input->>'action'; scope text:=coalesce(p_input->>'scope','global');
-  epoch bigint; result jsonb; id uuid; verification_input jsonb;
+  epoch bigint; result jsonb; id uuid; verification_input jsonb; receipt uuid;
+  contexts text[]:='{}'::text[]; context_row text; context_page text[]; outboxes uuid[]; publications uuid[];
 begin
   perform clued_private.intake_payload_cap_v1(p_input);
   b:=clued_private.resolve_binding(p_token_hash,'context:read',scope);
@@ -697,20 +738,62 @@ begin
       and r.binding_id=b.id and r.role='ci-admission' and r.revoked_at is null) then
     return jsonb_build_object('status','rejected','error_code','admission_binding_required'); end if;
   perform clued_private.work_claim_lock(b.user_id);
-  if op='revocations_list' then
-    if p_input-array['action','scope']<>'{}'::jsonb then
+  if op='revocations_contexts' then
+    if p_input-array['action','scope','cursor']<>'{}'::jsonb or scope<>'global'
+      or (p_input ? 'cursor' and (jsonb_typeof(p_input->'cursor') is distinct from 'string'
+        or p_input->>'cursor' !~ '^(global|project:[0-9a-f-]{36})$')) then
       raise exception 'work_claim_ci_command_invalid' using errcode='22023'; end if;
+    select array_agg(x.context_key order by x.context_key) into context_page from (
+      select context_key from (
+        select context_key from clued_private.work_claim_revocation_outbox_v1 where user_id=b.user_id and state='pending'
+        union
+        select claim_row.context_key from clued_private.work_claim_publications_v1 pubs
+          join clued_private.work_claims_v1 claim_row on claim_row.claim_id=pubs.claim_id
+          where pubs.user_id=b.user_id and pubs.state='open' and (pubs.execution_epoch<claim_row.execution_epoch
+            or claim_row.status<>'ACTIVE' or claim_row.expires_at<=clock_timestamp() or claim_row.execution_handover_pending)
+      ) known where context_key>coalesce(p_input->>'cursor','') order by context_key limit 101
+    ) x;
+    foreach context_row in array coalesce(context_page[1:100],'{}'::text[]) loop
+      begin
+        perform clued_private.resolve_binding(p_token_hash,'context:read',context_row);
+        contexts:=array_append(contexts,context_row);
+      exception when insufficient_privilege then null;
+      end;
+    end loop;
+    return jsonb_build_object('status','ok','context_keys',to_jsonb(contexts),
+      'next_cursor',case when cardinality(context_page)>100 then context_page[100] else null end);
+  end if;
+  if op='revocations_list' then
+    if p_input-array['action','scope','outbox_cursor','publication_cursor']<>'{}'::jsonb
+      or (p_input ? 'outbox_cursor' and coalesce(p_input->>'outbox_cursor','') !~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$')
+      or (p_input ? 'publication_cursor' and coalesce(p_input->>'publication_cursor','') !~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$') then
+      raise exception 'work_claim_ci_command_invalid' using errcode='22023'; end if;
+    select array_agg(x.outbox_id order by x.outbox_id) into outboxes from (
+      select outbox_id from clued_private.work_claim_revocation_outbox_v1 where user_id=b.user_id
+        and context_key=scope and state='pending'
+        and (not(p_input ? 'outbox_cursor') or outbox_id>(p_input->>'outbox_cursor')::uuid)
+      order by outbox_id limit 101) x;
+    select array_agg(x.publication_id order by x.publication_id) into publications from (
+      select pubs.publication_id from clued_private.work_claim_publications_v1 pubs
+        join clued_private.work_claims_v1 claim_row on claim_row.claim_id=pubs.claim_id
+      where pubs.user_id=b.user_id and claim_row.context_key=scope and pubs.state='open'
+        and (pubs.execution_epoch<claim_row.execution_epoch or claim_row.status<>'ACTIVE'
+          or claim_row.expires_at<=clock_timestamp() or claim_row.execution_handover_pending)
+        and (not(p_input ? 'publication_cursor') or pubs.publication_id>(p_input->>'publication_cursor')::uuid)
+      order by pubs.publication_id limit 101) x;
     return jsonb_build_object('status','ok','revocations',coalesce((select jsonb_agg(to_jsonb(x))
       from (select outbox_id,claim_id,execution_epoch,repository,head_sha,pr_ref,workflow
         from clued_private.work_claim_revocation_outbox_v1 where user_id=b.user_id
-          and context_key=scope and state='pending' order by created_at,outbox_id limit 100) x),'[]'::jsonb),
+          and outbox_id=any(coalesce(outboxes[1:100],'{}'::uuid[])) order by outbox_id) x),'[]'::jsonb),
       'publications',coalesce((select jsonb_agg(to_jsonb(x)) from (
         select pubs.publication_id,pubs.claim_id,pubs.execution_epoch,pubs.repository,pubs.head_sha,pubs.pr_ref,pubs.run_id,pubs.check_run_id
         from clued_private.work_claim_publications_v1 pubs
           join clued_private.work_claims_v1 claim_row on claim_row.claim_id=pubs.claim_id
         where pubs.user_id=b.user_id and claim_row.context_key=scope and pubs.state='open'
-          and pubs.execution_epoch<claim_row.execution_epoch
-        order by pubs.started_at,pubs.publication_id limit 100) x),'[]'::jsonb));
+          and pubs.publication_id=any(coalesce(publications[1:100],'{}'::uuid[]))
+        order by pubs.publication_id) x),'[]'::jsonb),
+      'next_outbox_cursor',case when cardinality(outboxes)>100 then outboxes[100] else null end,
+      'next_publication_cursor',case when cardinality(publications)>100 then publications[100] else null end);
   end if;
   if op='revocation_ack' then
     if p_input-array['action','scope','outbox_id','execution_epoch','evidence']<>'{}'::jsonb
@@ -723,6 +806,9 @@ begin
     select * into c from clued_private.work_claims_v1 where claim_id=o.claim_id and user_id=b.user_id;
     if c.execution_epoch<>o.execution_epoch then
       return jsonb_build_object('status','rejected','error_code','work_claim_revocation_stale'); end if;
+    if o.state='acknowledged' then
+      return jsonb_build_object('status','committed','replayed',true,'receipt_id',o.acknowledged_receipt_id,
+        'outbox_id',o.outbox_id,'execution_epoch',o.execution_epoch); end if;
     if exists(select 1 from clued_private.work_claim_publications_v1 where claim_id=c.claim_id
         and execution_epoch<c.execution_epoch and state='open') then
       return jsonb_build_object('status','rejected','error_code','work_claim_publications_unresolved'); end if;
@@ -730,9 +816,12 @@ begin
       or p_input->'evidence'->'auto_merge_disabled' is distinct from 'true'::jsonb
       or p_input->'evidence'->'dispatch_revoked' is distinct from 'true'::jsonb then
       return jsonb_build_object('status','rejected','error_code','work_claim_revocation_incomplete'); end if;
+    receipt:=clued_private.work_claim_ci_receipt_v1(b,scope,'work_claim_revocation_ack',c.claim_id,c.execution_epoch,
+      jsonb_build_object('outbox_id',o.outbox_id,'repository',o.repository,'head_sha',o.head_sha,
+        'pr_ref',o.pr_ref,'workflow',o.workflow,'evidence',p_input->'evidence'));
     update clued_private.work_claim_revocation_outbox_v1 set state='acknowledged',
-      acknowledged_at=clock_timestamp(),evidence=p_input->'evidence' where outbox_id=o.outbox_id;
-    return jsonb_build_object('status','committed','outbox_id',o.outbox_id,'execution_epoch',o.execution_epoch);
+      acknowledged_at=clock_timestamp(),evidence=p_input->'evidence',acknowledged_receipt_id=receipt where outbox_id=o.outbox_id;
+    return jsonb_build_object('status','committed','receipt_id',receipt,'outbox_id',o.outbox_id,'execution_epoch',o.execution_epoch);
   end if;
   if op='publication_reconcile' or op='publication_finish' then
     if p_input-array['action','scope','publication_id','check_run_id','checks_revoked','publisher_stopped']<>'{}'::jsonb then
@@ -742,12 +831,17 @@ begin
     if p.publication_id is null then return jsonb_build_object('status','rejected','error_code','work_claim_publication_not_found'); end if;
     select * into c from clued_private.work_claims_v1 where user_id=b.user_id and claim_id=p.claim_id and context_key=scope;
     if c.claim_id is null then return jsonb_build_object('status','rejected','error_code','work_claim_publication_not_found'); end if;
+    if p.check_run_id is not null and p.check_run_id is distinct from p_input->>'check_run_id' then
+      return jsonb_build_object('status','rejected','error_code','work_claim_publication_unresolved'); end if;
     if op='publication_reconcile' then
       if p_input->'checks_revoked' is distinct from 'true'::jsonb
         or p_input->'publisher_stopped' is distinct from 'true'::jsonb
         or coalesce(p_input->>'check_run_id','') !~ '^[0-9]{1,20}$'
         or (p.check_run_id is not null and p.check_run_id<>p_input->>'check_run_id') then
         return jsonb_build_object('status','rejected','error_code','work_claim_publication_unresolved'); end if;
+      if p.state='reconciled' then
+        return jsonb_build_object('status','committed','replayed',true,'receipt_id',p.finished_receipt_id,
+          'execution_epoch',p.execution_epoch,'must_revoke',true); end if;
       update clued_private.work_claim_publications_v1 set state='reconciled',check_run_id=p_input->>'check_run_id',finished_at=clock_timestamp()
         where publication_id=p.publication_id;
     else
@@ -755,12 +849,22 @@ begin
         return jsonb_build_object('status','rejected','error_code','work_claim_publication_reconciled'); end if;
       if coalesce(p_input->>'check_run_id','') !~ '^[0-9]{1,20}$' then
         raise exception 'work_claim_ci_command_invalid' using errcode='22023'; end if;
+      if p.finished_receipt_id is not null and p.check_run_id=p_input->>'check_run_id'
+        and ((p.state='published' and p.execution_epoch=c.execution_epoch and not c.execution_handover_pending
+          and c.status='ACTIVE' and c.expires_at>clock_timestamp()) or p.state='open') then
+        return jsonb_build_object('status','committed','replayed',true,'receipt_id',p.finished_receipt_id,
+          'execution_epoch',p.execution_epoch,'must_revoke',p.state='open'); end if;
       update clued_private.work_claim_publications_v1 set state=case
         when p.execution_epoch<>c.execution_epoch or c.execution_handover_pending
           or c.status<>'ACTIVE' or c.expires_at<=clock_timestamp() then 'open' else 'published' end,
         check_run_id=p_input->>'check_run_id',finished_at=clock_timestamp() where publication_id=p.publication_id;
     end if;
-    return jsonb_build_object('status','committed','execution_epoch',p.execution_epoch,
+    receipt:=clued_private.work_claim_ci_receipt_v1(b,scope,'work_claim_'||op,c.claim_id,p.execution_epoch,
+      jsonb_build_object('publication_id',p.publication_id,'repository',p.repository,'head_sha',p.head_sha,
+        'pr_ref',p.pr_ref,'run_id',p.run_id,'check_run_id',p_input->>'check_run_id',
+        'checks_revoked',p_input->'checks_revoked','publisher_stopped',p_input->'publisher_stopped'));
+    update clued_private.work_claim_publications_v1 set finished_receipt_id=receipt where publication_id=p.publication_id;
+    return jsonb_build_object('status','committed','receipt_id',receipt,'execution_epoch',p.execution_epoch,
       'must_revoke',p.execution_epoch<>c.execution_epoch or c.execution_handover_pending
         or c.status<>'ACTIVE' or c.expires_at<=clock_timestamp());
   end if;
@@ -776,7 +880,11 @@ begin
       return jsonb_build_object('status','rejected','error_code','work_claim_publication_unresolved'); end if;
     update clued_private.work_claim_publications_v1 set state='reconciled',finished_at=clock_timestamp()
       where publication_id=p.publication_id;
-    return jsonb_build_object('status','committed','publication_id',p.publication_id);
+    receipt:=clued_private.work_claim_ci_receipt_v1(b,scope,'work_claim_publication_abort',p.claim_id,p.execution_epoch,
+      jsonb_build_object('publication_id',p.publication_id,'repository',p.repository,'head_sha',p.head_sha,
+        'pr_ref',p.pr_ref,'run_id',p.run_id,'not_sent',true));
+    update clued_private.work_claim_publications_v1 set finished_receipt_id=receipt where publication_id=p.publication_id;
+    return jsonb_build_object('status','committed','receipt_id',receipt,'publication_id',p.publication_id);
   end if;
   if op='publication_begin' then
     if coalesce(p_input->>'run_id','') !~ '^[0-9]{1,20}$'
@@ -809,11 +917,17 @@ begin
       select * into p from clued_private.work_claim_publications_v1 where claim_id=c.claim_id
         and execution_epoch=c.execution_epoch and publication_key=(p_input->>'publication_key')::uuid;
       if p.head_sha is distinct from p_input->>'head_sha' or p.pr_ref is distinct from p_input->>'pr_ref'
-        or p.run_id is distinct from p_input->>'run_id' then
+        or p.run_id is distinct from p_input->>'run_id' or p.state<>'open' then
         return jsonb_build_object('status','rejected','error_code','work_claim_publication_idempotency_conflict'); end if;
       id:=p.publication_id;
+      receipt:=p.started_receipt_id;
+    else
+      receipt:=clued_private.work_claim_ci_receipt_v1(b,c.context_key,'work_claim_publication_begin',c.claim_id,c.execution_epoch,
+        jsonb_build_object('publication_id',id,'repository',lower(split_part(p_input->>'pr_ref','#',1)),
+          'head_sha',p_input->>'head_sha','pr_ref',p_input->>'pr_ref','run_id',p_input->>'run_id'));
+      update clued_private.work_claim_publications_v1 set started_receipt_id=receipt where publication_id=id;
     end if;
-    return result||jsonb_build_object('publication_required',true,'publication_id',id,'scope',c.context_key);
+    return result||jsonb_build_object('publication_required',true,'publication_id',id,'scope',c.context_key,'receipt_id',receipt);
   end if;
   raise exception 'work_claim_ci_command_invalid' using errcode='22023';
 end $$;
