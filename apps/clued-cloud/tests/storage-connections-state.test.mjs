@@ -5,7 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 const compiled=ts.transpileModule(readFileSync(new URL("../app/storage/connections/page.tsx",import.meta.url),"utf8"),{
  compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText;
-function fixture(){
+function fixture(options={}){
  const hooks=[],effects=[],requests=[],navigation=[];let owner="a",callback,cursor=0,tree,sessionHold;
  const equal=(a,b)=>a&&b&&a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
  const React={
@@ -17,13 +17,20 @@ function fixture(){
   window:{confirm:()=>true,location:{assign:url=>navigation.push(url)}},
   require(name){
    if(name==="react")return React;
-   if(name==="react/jsx-runtime")return{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};
+   if(name==="react/jsx-runtime"){const jsx=(type,props)=>typeof type==="function"?type(props):({type,props});return{jsx,jsxs:jsx};}
    if(name==="next/link")return{__esModule:true,default:"a"};
+   if(name.endsWith("/worker/storage-master-disclosure")){
+    const exports={};vm.runInNewContext(ts.transpileModule(readFileSync(new URL("../worker/storage-master-disclosure.ts",import.meta.url),"utf8"),{
+     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{exports});return exports;
+   }
    if(name.endsWith("/supabase-browser"))return{supabase:{auth:{
     getSession:async()=>{if(sessionHold){const hold=sessionHold;sessionHold=null;await hold.promise}return{data:{session:owner?{user:{id:owner},access_token:"synthetic-owner-"+owner}:null},error:null}},
     onAuthStateChange(cb){callback=cb;return{data:{subscription:{unsubscribe(){}}}}}}}};
    throw Error(name)},
-  fetch(url,init){return new Promise(resolve=>requests.push({url,init,resolve}))}});
+  fetch(url,init){return new Promise(resolve=>{requests.push({url,init,resolve});
+   if(url==="/v1/storage/owner"&&JSON.parse(init.body).action==="master_status")resolve({ok:true,status:200,json:async()=>"master"in options?
+    typeof options.master==="function"?options.master(JSON.parse(init.body).connection_id):options.master:{...master,connection_id:JSON.parse(init.body).connection_id}});
+  })}});
  const text=n=>Array.isArray(n)?n.map(text).join(""):n==null||typeof n==="boolean"?"":typeof n==="object"?text(n.props?.children):String(n);
  const render=()=>{cursor=0;tree=exports.default();while(effects.length)effects.shift()()};
  const settle=async()=>{for(let i=0;i<30;i++)await Promise.resolve();render()};
@@ -32,7 +39,7 @@ function fixture(){
  return{requests,settle,navigation,text:()=>text(tree),nodes:()=>nodes(tree),
   holdSession(){let release;sessionHold={promise:new Promise(resolve=>{release=resolve})};return release},
   click(label){const node=nodes(tree).find(n=>n.type==="button"&&text(n.props.children)===label);assert.ok(node,`missing button ${label}`);if(!node.props.disabled)node.props.onClick();render()},
-  check(index,checked){const node=nodes(tree).filter(n=>n.type==="input"&&n.props.type==="checkbox")[index];assert.ok(node);node.props.onChange({target:{checked}});render()},
+  check(index,checked){const dialog=nodes(tree).find(n=>n.props.role==="dialog");const node=nodes(dialog??tree).filter(n=>n.type==="input"&&n.props.type==="checkbox")[index];assert.ok(node);node.props.onChange({target:{checked}});render()},
   event(event,id=owner){owner=id;callback(event,id?{user:{id}}:null);render()},
   respond(i,data,status=200){requests[i].resolve({ok:status<400,status,json:async()=>data})}};
 }
@@ -49,12 +56,15 @@ const read={active:true,read_generation:1,disclosure_version:"clued.storage-read
  content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:["read","read_content"]};
 const write={active:true,policy_generation:1,disclosure_version:"clued.storage-modify-disclosure/1",
  overwrite_disclosure_version:"clued.storage-overwrite-disclosure/1",classes:[]};
+const master={contract:"clued.storage-master-control/1",connection_id:connection.id,state:"partial",master_generation:1,status_digest:"a".repeat(64),
+ disclosure_version:"clued.storage-master-disclosure/1",provider_scope_profile:"normal",reconsent_required:true,
+ read_classes:["read","read_content"],read_content:true,normal_use:true,write_classes:[],agent_enabled:true,create_enabled:true,read_enabled:true,write_enabled:true};
 const replySettings=(f,start=1,n=normal,r=read,w=write)=>{f.respond(start,n);f.respond(start+1,r);f.respond(start+2,w)};
 test("initial list reads the range and read/write classes once, and waits for effective truth",async()=>{
  const f=fixture();await f.settle();f.respond(0,listing([connection]));await f.settle();
- assert.equal(f.requests.length,4);assert.deepEqual(f.requests.slice(1).map(r=>r.url),[
+ assert.equal(f.requests.length,5);assert.deepEqual(f.requests.slice(1).filter(r=>r.url!=="/v1/storage/owner").map(r=>r.url),[
   "/v1/storage/normal-use","/v1/storage/read-access","/v1/storage/write-access"]);
- for(const request of f.requests.slice(1)){
+ for(const request of f.requests.slice(1).filter(r=>r.url!=="/v1/storage/owner")){
   assert.deepEqual(JSON.parse(request.init.body),{action:"status",connection_id:connection.id});
   assert.equal(request.init.headers.authorization,"Bearer synthetic-owner-a");
   assert.equal(request.init.method,"POST");assert.equal(request.init.redirect,"error");
@@ -62,53 +72,56 @@ test("initial list reads the range and read/write classes once, and waits for ef
  assert.match(f.text(),/正在读取实际状态/);assert.ok(!f.text().includes("已允许读取目录内全部文件"));
  f.respond(1,normal);await f.settle();assert.ok(!f.text().includes("已允许读取目录内全部文件"));
  f.respond(2,read);f.respond(3,write);await f.settle();assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);
- assert.equal(f.requests.length,4);
+ assert.equal(f.requests.length,5);
 });
 test("a failed range read stays unknown and explicit retry rereads the range and actual read classes",async()=>{
- const f=fixture();await f.settle();f.respond(0,listing([connection]));await f.settle();
+ let masterReads=0;const f=fixture({master:()=>masterReads++===0?null:master});await f.settle();f.respond(0,listing([connection]));await f.settle();
  f.respond(1,{error:"private upstream details"},403);f.respond(2,read);f.respond(3,write);await f.settle();
- assert.match(f.text(),/读取与搜索状态未确认/);assert.match(f.text(),/重新读取读取与搜索状态/);
- assert.ok(!f.text().includes("private upstream"));assert.equal(f.requests.length,4);
- f.click("重新读取读取与搜索状态");await f.settle();assert.equal(f.requests.length,6);
- assert.deepEqual(f.requests.slice(4).map(r=>r.url),["/v1/storage/normal-use","/v1/storage/read-access"]);
- f.respond(4,normal);f.respond(5,read);await f.settle();assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);
+ assert.match(f.text(),/读取与搜索总开关状态未确认/);assert.match(f.text(),/重新读取读取与搜索状态/);
+ assert.ok(!f.text().includes("private upstream"));assert.equal(f.requests.length,5);
+ f.click("重新读取读取与搜索状态");await f.settle();assert.equal(f.requests.length,8);
+ assert.deepEqual(f.requests.slice(5).filter(r=>r.url!=="/v1/storage/owner").map(r=>r.url),["/v1/storage/normal-use","/v1/storage/read-access"]);
+ f.respond(5,normal);f.respond(6,read);await f.settle();assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);
 });
 test("same-owner token refresh preserves all pending settings reads; relogin invalidates them",async()=>{
  for(const event of ["TOKEN_REFRESHED","SIGNED_IN"]){
   const f=fixture();await f.settle();f.respond(0,listing([connection]));await f.settle();
   f.event(event);await f.settle();replySettings(f);await f.settle();
-  if(event==="TOKEN_REFRESHED"){assert.equal(f.requests.length,4);assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/)}
-  else{assert.equal(f.requests.length,5);assert.ok(!f.text().includes("已允许读取目录内全部文件"));f.respond(4,listing([]));await f.settle()}
+  if(event==="TOKEN_REFRESHED"){assert.equal(f.requests.length,5);assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/)}
+  else{assert.equal(f.requests.length,6);assert.ok(!f.text().includes("已允许读取目录内全部文件"));f.respond(5,listing([]));await f.settle()}
  }
 });
 test("an account switch clears old range and class settings and discards every late read",async()=>{
  const f=fixture();await f.settle();f.respond(0,listing([connection]));await f.settle();
- f.event("SIGNED_IN","b");await f.settle();f.respond(4,listing([]));await f.settle();
+ f.event("SIGNED_IN","b");await f.settle();f.respond(5,listing([]));await f.settle();
  replySettings(f);await f.settle();assert.ok(!f.text().includes("Clued_資料中心"));
- assert.ok(!f.text().includes("已允许读取目录内全部文件"));assert.ok(!f.text().includes("写入权限"));assert.equal(f.requests.length,5);
+ assert.ok(!f.text().includes("已允许读取目录内全部文件"));assert.ok(!f.text().includes("写入权限"));assert.equal(f.requests.length,6);
 });
-test("inactive policies dispatch no capability reads or acquire effective settings",async()=>{
- const f=fixture();await f.settle();f.respond(0,listing([{...connection,state:"revoked"},{...connection,id:"second",policy_active:false}]));
- await f.settle();assert.equal(f.requests.length,1);assert.ok(!f.text().includes("已允许读取目录内全部文件"));
+test("revoked connections have no reads while a stopped active connection reports the closed master gate",async()=>{
+ const off={...master,connection_id:"11111111-1111-4111-8111-111111111112",state:"off",agent_enabled:false,create_enabled:false,read_enabled:false,write_enabled:false,normal_use:false,read_content:false,read_classes:[],write_classes:[]};
+ const f=fixture({master:off});await f.settle();f.respond(0,listing([{...connection,state:"revoked"},{...connection,id:"11111111-1111-4111-8111-111111111112",policy_active:false}]));
+ await f.settle();assert.equal(f.requests.length,5);replySettings(f);await f.settle();
+ assert.ok(!f.text().includes("已允许读取目录内全部文件"));assert.equal(f.nodes().find(n=>n.props["aria-label"]==="Agent 文件操作总开关").props["aria-checked"],false);
+ assert.ok(f.requests.slice(1).every(r=>JSON.parse(r.init.body).connection_id==="11111111-1111-4111-8111-111111111112"));
 });
 test("each live connection receives only its own range and class truth",async()=>{
- const f=fixture();await f.settle();f.respond(0,listing([connection,{...connection,id:"second",root_name:"Another root"}]));await f.settle();
- assert.equal(f.requests.length,7);replySettings(f,4,{...normal,normal_use:false});replySettings(f);await f.settle();
+ const f=fixture({master:id=>({...master,connection_id:id,normal_use:id!=="11111111-1111-4111-8111-111111111112"})});await f.settle();f.respond(0,listing([connection,{...connection,id:"11111111-1111-4111-8111-111111111112",root_name:"Another root"}]));await f.settle();
+ assert.equal(f.requests.length,9);replySettings(f,5,{...normal,normal_use:false});replySettings(f);await f.settle();
  assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);assert.match(f.text(),/仅允许读取 Clued 创建的文本文件/);
- assert.deepEqual(f.requests.slice(1).map(x=>JSON.parse(x.init.body).connection_id),[connection.id,connection.id,connection.id,"second","second","second"]);
+ assert.deepEqual(f.requests.slice(1).map(x=>JSON.parse(x.init.body).connection_id),[connection.id,connection.id,connection.id,connection.id,...Array(4).fill("11111111-1111-4111-8111-111111111112")]);
 });
 test("all-file range cannot advertise content search when directory or body reading is stopped",async()=>{
  for(const r of [{...read,active:false,classes:[]},{...read,classes:["read"]}]){
-  const f=fixture();await f.settle();f.respond(0,listing([connection]));await f.settle();replySettings(f,1,normal,r);await f.settle();
+  const f=fixture({master:{...master,read_classes:r.classes,read_enabled:r.active,read_content:r.active&&r.classes.includes("read_content")}});await f.settle();f.respond(0,listing([connection]));await f.settle();replySettings(f,1,normal,r);await f.settle();
   assert.ok(!f.text().includes("已允许读取目录内全部文件并按内容搜索"));
   assert.ok(!f.text().includes("已允许（目录内全部文件）"));
   assert.match(f.text(),r.active?/当前仅允许查看文件名和目录结构/:/目录结构和正文读取均已停止/);
-  assert.equal(f.requests.length,4);
+  assert.equal(f.requests.length,5);
  }
 });
 test("unavailable or differing-generation read truth never advertises all-file capability",async()=>{
  for(const [r,status] of [[{error:"private read reply"},403],[{...read,read_generation:2},200]]){
-  const f=fixture();await f.settle();f.respond(0,listing([connection]));await f.settle();
+  const f=fixture({master:null});await f.settle();f.respond(0,listing([connection]));await f.settle();
   f.respond(1,normal);f.respond(2,r,status);f.respond(3,write);await f.settle();
   assert.match(f.text(),/实际读取权限未确认/);assert.ok(!f.text().includes("已允许读取目录内全部文件并按内容搜索"));
   assert.ok(!f.text().includes("已允许（目录内全部文件）"));assert.ok(!f.text().includes("private read reply"));
@@ -117,7 +130,8 @@ test("unavailable or differing-generation read truth never advertises all-file c
 test("a write-status failure leaves reading available but no enabled write operation",async()=>{
  const f=fixture();await f.settle();f.respond(0,listing([connection]));await f.settle();
  f.respond(1,normal);f.respond(2,read);f.respond(3,{error:"private write reply"},403);await f.settle();
- assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);assert.match(f.text(),/写入权限状态未确认/);
+ assert.match(f.text(),/已允许读取目录内全部文件并按内容搜索/);assert.match(f.text(),/已有文件修改已全部停止/);
+ assert.ok(f.nodes().some(n=>n.type==="button"&&n.props.children==="重新读取写入权限"));
  assert.ok(!f.text().includes("private write reply"));assert.ok(!f.nodes().some(n=>n.type==="button"&&n.props.children==="允许全部修改操作"));
 });
 
@@ -125,7 +139,7 @@ const revoked={...connection,state:"revoked",policy_active:false,refresh_enabled
 const preview={trash_available:true,root_folder_id:connection.root_folder_id,root_name:"Verified exact root",
  root_version:"42",metadata_digest:"a".repeat(64),item_count:3,connection_version:1,profile_version:1};
 async function ready(rows=[revoked]){const f=fixture();await f.settle();f.respond(0,listing(rows));await f.settle();
- if(rows.some(c=>c.state==="active"&&c.policy_active)){for(let i=1;i<f.requests.length;i++)f.respond(i,f.requests[i].url==="/v1/storage/normal-use"?normal:f.requests[i].url==="/v1/storage/read-access"?read:write);await f.settle()}
+ if(rows.some(c=>c.state==="active"&&c.policy_active)){for(let i=1;i<f.requests.length;i++)if(f.requests[i].url!=="/v1/storage/owner")f.respond(i,f.requests[i].url==="/v1/storage/normal-use"?normal:f.requests[i].url==="/v1/storage/read-access"?read:write);await f.settle()}
  return f;}
 
 test("same-name roots show physical paths and exact Drive links; internal namespaces never become paths",async()=>{
@@ -136,22 +150,33 @@ test("same-name roots show physical paths and exact Drive links; internal namesp
  "https://drive.google.com/drive/folders/synthetic-root","https://drive.google.com/drive/folders/other-root"]);
 });
 
-test("revoked-root reconnect uses exact CAS, fresh confirmation and never requests a new folder or silent normal use",async()=>{
+test("revoked-root reconnect uses exact CAS and disclosed master consent without creating a new folder",async()=>{
  const f=await ready();f.click("重新连接这个文件夹");await f.settle();assert.equal(f.requests.length,1);
  assert.match(f.text(),/不会另建同名文件夹/);assert.match(f.text(),/后台续签保持关闭/);
  f.click("取消");await f.settle();assert.equal(f.requests.length,1);
  f.click("重新连接这个文件夹");f.click("确认并前往 Google 授权");await f.settle();
  const b=JSON.parse(f.requests[1].init.body);assert.equal(f.requests[1].url,"/v1/storage/lifecycle");
  assert.equal(b.action,"reconnect");assert.equal(b.base_version,1);assert.equal(b.profile_version,1);assert.equal(b.root_stop_generation,1);
- assert.equal(b.confirmation.root_folder_id,connection.root_folder_id);assert.equal(b.confirmation.normal_use,false);
+ assert.equal(b.confirmation.root_folder_id,connection.root_folder_id);assert.equal(b.confirmation.master_enabled,true);assert.equal(b.confirmation.contract,"clued.storage-owner-confirmation/3");assert.equal(b.confirmation.disclosure_version,"clued.storage-master-disclosure/1");assert.ok(!("normal_use"in b.confirmation));
  assert.ok(!("owner_id"in b));assert.ok(!("root_name"in b));assert.ok(!("default_refresh"in b));
  f.respond(1,{authorization_url:"https://accounts.google.com/o/oauth2/v2/auth?synthetic=true"});await f.settle();assert.equal(f.navigation.length,1);
 });
 
-test("normal use on reconnect requires its displayed disclosure and explicit checkbox",async()=>{
- const f=await ready();f.click("重新连接这个文件夹");f.check(0,true);await f.settle();
+test("reconnect enables all Agent file operations by default under its displayed master disclosure",async()=>{
+ const f=await ready();f.click("重新连接这个文件夹");await f.settle();
+ assert.equal(f.nodes().find(n=>n.type==="input"&&n.props.type==="checkbox").props.checked,true);
+ assert.match(f.text(),/重新连接后开启全部 Agent 文件操作（默认）/);
  assert.match(f.text(),/读取到的内容会发送给该 Agent 所用的模型服务/);
- f.click("确认并前往 Google 授权");await f.settle();assert.equal(JSON.parse(f.requests[1].init.body).confirmation.normal_use,true);
+ assert.match(f.text(),/查看、修改、创建和删除你 Google 云端硬盘中的所有文件/);
+ f.click("确认并前往 Google 授权");await f.settle();assert.equal(JSON.parse(f.requests[1].init.body).confirmation.master_enabled,true);
+});
+test("explicitly disabling the reconnect default sends master OFF and cancellation preserves the stopped connection",async()=>{
+ const f=await ready();f.click("重新连接这个文件夹");f.check(0,false);await f.settle();
+ f.click("取消");await f.settle();assert.equal(f.requests.length,1);assert.equal(f.navigation.length,0);
+ f.click("重新连接这个文件夹");f.check(0,false);f.click("确认并前往 Google 授权");await f.settle();
+ const body=JSON.parse(f.requests[1].init.body);assert.equal(body.confirmation.master_enabled,false);
+ assert.equal(body.confirmation.contract,"clued.storage-owner-confirmation/3");assert.ok(!("normal_use"in body.confirmation));
+ assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==="master_set").length,0);assert.equal(f.navigation.length,0);
 });
 
 test("created-root deletion first reads a snapshot; cancel makes no mutation; confirmation is one-shot and exact",async()=>{
@@ -307,7 +332,7 @@ test("incomplete, unknown or mismatched whole Root capability cannot offer trash
   {...wholePreview,confirmation_contract:"clued.storage-owner-confirmation/1"},{...wholePreview,root_folder_id:"another-root"},
   {...wholePreview,connection_version:2}]){
   const f=await ready([connection]),i=f.requests.length;f.click("删除连接");await f.settle();f.respond(i,response);await f.settle();
-  assert.ok(!f.nodes().some(n=>n.type==="input"&&n.props.type==="checkbox"));
+  assert.ok(!f.nodes().filter(n=>n.props.role==="dialog").some(n=>{const visit=v=>Array.isArray(v)?v.some(visit):v&&typeof v==="object"?(v.type==="input"&&v.props.type==="checkbox")||visit(v.props.children):false;return visit(n)}));
   assert.ok(!f.text().includes("删除连接并移入回收站"));f.click("取消");await f.settle();assert.equal(f.requests.length,i+1);
  }
 });

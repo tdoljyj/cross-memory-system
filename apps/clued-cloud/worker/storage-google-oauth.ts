@@ -147,19 +147,24 @@ export async function createStorageGoogleOAuth(configuration: {
     },
     async complete(input: { state: string; code: string }): Promise<{ status: "completed"; receipt_id: string; refresh_enabled?: boolean;
       purpose?: "credential_recovery" | "onboard"; provider_scope_profile?: StorageScopeProfile; requested_scope_profile?: StorageScopeProfile;
-      normal_use_enabled?: boolean; connection_id?: string; onboard_attempt_id?: string }> {
+      normal_use_enabled?: boolean; master_state?: "on" | "off" | "partial"; connection_id?: string; onboard_attempt_id?: string }> {
       // Only these fixed local stage names leave this boundary. Never expose an
       // upstream body, exception, code, state, token, subject or provider file ID.
       let stage = "callback_invalid";
       // A completion, or its replay after a lost reply: only typed, known fields.
-      const completed = (result: RecordValue) => ({ status: "completed" as const, receipt_id: String(result.receipt_id),
+      const completed = (result: RecordValue) => {
+        if (result.master_state !== undefined && (!["on", "off", "partial"].includes(String(result.master_state)) ||
+          (result.master_state === "on" && result.provider_scope_profile !== "full"))) fail();
+        return { status: "completed" as const, receipt_id: String(result.receipt_id),
         ...(result.purpose === "onboard" && id.test(String(result.connection_id)) && id.test(String(result.onboard_attempt_id))
           ? { purpose: "onboard" as const, connection_id: String(result.connection_id), onboard_attempt_id: String(result.onboard_attempt_id) } : {}),
         ...(result.purpose === "credential_recovery" ? { purpose: "credential_recovery" as const } : {
           ...(typeof result.refresh_enabled === "boolean" ? { refresh_enabled: result.refresh_enabled } : {}),
           ...(isStorageScopeProfile(result.provider_scope_profile) ? { provider_scope_profile: result.provider_scope_profile } : {}),
           ...(isStorageScopeProfile(result.requested_scope_profile) ? { requested_scope_profile: result.requested_scope_profile } : {}),
-          ...(typeof result.normal_use_enabled === "boolean" ? { normal_use_enabled: result.normal_use_enabled } : {}) }) });
+          ...(typeof result.normal_use_enabled === "boolean" ? { normal_use_enabled: result.normal_use_enabled } : {}),
+          ...(result.master_state === undefined ? {} : { master_state: result.master_state as "on" | "off" | "partial" }) }) };
+      };
       try {
         if (!input || Object.keys(input).length !== 2 || !/^[A-Za-z0-9_-]{43}$/.test(input.state) ||
             typeof input.code !== "string" || input.code.length < 8 || input.code.length > 4096 || /[\r\n]/.test(input.code)) fail();

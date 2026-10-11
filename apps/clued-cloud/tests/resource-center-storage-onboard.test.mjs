@@ -22,12 +22,17 @@ await build({ stdin: { contents: 'export * from "./storage-google-onboard.ts"; e
   resolveDir: fileURLToPath(new URL("../worker/", import.meta.url)), loader: "ts" }, outfile: onboardOut, bundle: true, platform: "node", format: "esm" });
 const { createStorageGoogleOnboard, ONBOARD_PAGE_REASONS, createStorageGoogleOAuth } = await import(pathToFileURL(onboardOut));
 const { createStorageCredentialVault } = await bundle("vault", "../worker/storage-credential-vault.ts");
-const { renderOnboardDisclosure, ONBOARD_DISCLOSURE_VERSION } = await bundle("disclosure", "../worker/storage-onboard-disclosure.ts");
+const { renderOnboardDisclosure: renderVersionedOnboardDisclosure,
+  ONBOARD_DISCLOSURE_VERSION: ONBOARD_MASTER_DISCLOSURE_VERSION,
+  ONBOARD_LEGACY_DISCLOSURE_VERSION: ONBOARD_DISCLOSURE_VERSION } = await bundle("disclosure", "../worker/storage-onboard-disclosure.ts");
+// Keep the original consent regressions separate from the new master default.
+const renderOnboardDisclosure = choice => renderVersionedOnboardDisclosure(choice, ONBOARD_DISCLOSURE_VERSION);
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const CLIENT = "fixture.apps.googleusercontent.com", REDIRECT = "https://clued.example.invalid/storage/google/callback";
 const LEGACY = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const NORMAL = LEGACY + " https://www.googleapis.com/auth/drive.readonly";
+const FULL = NORMAL + " https://www.googleapis.com/auth/drive";
 const FOLDER = "application/vnd.google-apps.folder";
 const OWNER = randomUUID();
 const vaultConfig = { current_key_id: "k1", keys: { k1: randomBytes(32).toString("base64url") } };
@@ -78,6 +83,8 @@ function drive(options = {}) {
 // A synthetic database implementing the clued_storage_onboard_v1 contract.
 function database(options = {}) {
   const attempts = new Map(), calls = [];
+  const requestedProfile = value => value.normal_use_requested
+    ? value.disclosure_version === ONBOARD_MASTER_DISCLOSURE_VERSION ? "full" : "normal" : "legacy";
   const rpc = async input => {
     calls.push(structuredClone(input));
     if (options.refuse?.[input.action]) throw new Error(options.refuse[input.action]);
@@ -91,7 +98,7 @@ function database(options = {}) {
       case "begin":
         attempts.set(input.onboard_attempt_id, { ...input, id: input.onboard_attempt_id, effects: {}, orphans: [], strays: [], state: "begun" });
         return { status: "begun", onboard_attempt_id: input.onboard_attempt_id, oauth_client_id: CLIENT, redirect_uri: REDIRECT,
-          requested_scope_profile: input.normal_use_requested ? "normal" : "legacy" };
+          requested_scope_profile: requestedProfile(input) };
       case "stage_credential":
         Object.assign(a, { state: "credential_staged", provider_subject: input.provider_subject, credential_envelope: input.credential_envelope,
           granted: input.provider_scope_profile });
@@ -118,8 +125,11 @@ function database(options = {}) {
         if ((options.activeRoots ?? []).some(r => input.ancestors.includes(r))) throw new Error("storage_onboard_root_overlaps_existing");
         a.state = "completed"; a.ancestors = input.ancestors; a.run_token = undefined;
         return { status: "completed", purpose: "onboard", receipt_id: randomUUID(), onboard_attempt_id: a.id, connection_id: a.connection_id,
-          provider_scope_profile: a.granted, requested_scope_profile: a.normal_use_requested ? "normal" : "legacy",
-          normal_use_enabled: a.normal_use_requested && a.granted === "normal", refresh_enabled: a.default_refresh_requested };
+          provider_scope_profile: a.granted, requested_scope_profile: requestedProfile(a),
+          normal_use_enabled: a.normal_use_requested && ["normal", "full"].includes(a.granted), refresh_enabled: a.default_refresh_requested,
+          ...(a.disclosure_version === ONBOARD_MASTER_DISCLOSURE_VERSION
+            ? { master_state: !a.normal_use_requested ? "off" : a.granted === "full" ? "on" : "partial" } : {}),
+          ...options.activationResult };
       case "fail":
         if (a.state === "credential_staged") holds();
         a.state = "failed"; a.failure = input.code; a.retryable = input.retryable; a.run_token = undefined; a.lease = false;
@@ -150,7 +160,9 @@ async function fixture(options = {}) {
     const stored = db.attempts.get(begun.onboard_attempt_id);
     return { status: "claimed", purpose: "onboard", attempt_id: stored.oauth_attempt_id, verifier_envelope: stored.verifier_envelope,
       owner_id: OWNER, connection_id: stored.connection_id, credential_version: 1, provider_subject: null, oauth_client_id: CLIENT,
-      redirect_uri: REDIRECT, requested_scope_profile: stored.normal_use_requested ? "normal" : "legacy", onboard_attempt_id: begun.onboard_attempt_id, ...attempt };
+      redirect_uri: REDIRECT, requested_scope_profile: stored.normal_use_requested
+        ? stored.disclosure_version === ONBOARD_MASTER_DISCLOSURE_VERSION ? "full" : "normal" : "legacy",
+      onboard_attempt_id: begun.onboard_attempt_id, ...attempt };
   };
   const run = async (choice = {}) => {
     const input = { root: { mode: "new", name: "Clued_资料中心" }, tracks: ["资料", "项目", "归档"], normal_use: true, default_refresh: true,
@@ -162,6 +174,50 @@ async function fixture(options = {}) {
   return { google, db, onboard, vault, run, claim };
 }
 const reasonOf = async promise => { try { await promise; } catch (error) { return error.reason; } assert.fail("expected a refusal"); };
+
+test("master onboarding requests the full scope under its own disclosure and returns all-on only after actual full grant", async () => {
+  const f = await fixture({ drive: { scope: FULL } });
+  const flow = await f.run({ disclosure_version: ONBOARD_MASTER_DISCLOSURE_VERSION });
+  assert.equal(f.google.calls.length, 0);
+  assert.equal(new URL(flow.begun.authorization_url).searchParams.get("scope"), FULL.split(" ").sort().join(" "));
+  const { disclosure_version, ...choice } = flow.input;
+  assert.equal(disclosure_version, "clued.storage-onboard-disclosure/2");
+  assert.equal(flow.stored.disclosure_text, renderVersionedOnboardDisclosure(choice));
+  assert.equal(flow.stored.disclosure_sha256, sha(flow.stored.disclosure_text));
+  assert.match(flow.stored.disclosure_text, /总开关默认全开/);
+  assert.match(flow.stored.disclosure_text, /纳管/);
+  assert.match(flow.stored.disclosure_text, /覆盖文本内容、移入回收站和恢复/);
+  const done = await flow.complete();
+  assert.equal(done.master_state, "on");
+  assert.equal(done.provider_scope_profile, "full");
+  assert.equal(done.requested_scope_profile, "full");
+});
+
+test("a lower Google scope never becomes a fully enabled master; an explicitly unchecked master stays off", async () => {
+  for (const scope of [NORMAL, LEGACY]) {
+    const f = await fixture({ drive: { scope } });
+    const flow = await f.run({ disclosure_version: ONBOARD_MASTER_DISCLOSURE_VERSION });
+    const done = await flow.complete();
+    assert.equal(done.master_state, "partial");
+    assert.equal(done.requested_scope_profile, "full");
+    assert.notEqual(done.provider_scope_profile, "full");
+  }
+  const f = await fixture({ drive: { scope: LEGACY } });
+  const flow = await f.run({ disclosure_version: ONBOARD_MASTER_DISCLOSURE_VERSION, normal_use: false });
+  assert.equal(new URL(flow.begun.authorization_url).searchParams.get("scope"), LEGACY.split(" ").sort().join(" "));
+  assert.match(flow.stored.disclosure_text, /总开关关闭，全部 Agent 文件操作停止/);
+  const done = await flow.complete();
+  assert.equal(done.master_state, "off");
+  assert.equal(done.normal_use_enabled, false);
+});
+
+test("malformed or unsupported all-on activation truth is refused after a partial Google grant", async () => {
+  for (const master_state of ["on", "unknown"]) {
+    const f = await fixture({ drive: { scope: NORMAL }, db: { activationResult: { master_state } } });
+    const flow = await f.run({ disclosure_version: ONBOARD_MASTER_DISCLOSURE_VERSION });
+    assert.equal(await reasonOf(flow.complete()), "activation_unconfirmed");
+  }
+});
 
 test("begin: no provider call, the rendered disclosure and its digest, PKCE and the requested scope set", async () => {
   const f = await fixture();

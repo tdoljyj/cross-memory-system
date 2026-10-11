@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../../supabase-browser";
+import { MASTER_DISCLOSURE_VERSION, MASTER_OFF_DISCLOSURE, MASTER_RECONNECT_CONFIRMATION, renderMasterDisclosure } from "../../../worker/storage-master-disclosure";
 
 type Connection = {
   id: string; version: number; provider: string; state: string; auth_mode: string;
@@ -97,15 +98,58 @@ function isNormalUse(value: unknown): value is NormalUse {
     && (value.full_scope_disclosure_version === undefined || typeof value.full_scope_disclosure_version === "string")
     && (value.full_scope === undefined) === (value.full_scope_disclosure_version === undefined);
 }
-function readingStatus(normal: NormalUse | undefined, read: ReadAccess | undefined) {
-  if (!normal) return "状态未确认";
-  if (!read || normal.read_generation !== read.read_generation)
-    return `${normal.normal_use ? "全部文件读取与搜索已开启" : "全部文件读取与搜索未开启"}；实际读取权限未确认`;
-  if (!read.active) return `${normal.normal_use ? "已开启" : "未开启"}；目录结构和正文读取均已停止`;
-  if (!read.classes.includes("read_content"))
-    return `${normal.normal_use ? "已开启" : "未开启"}；当前仅允许查看文件名和目录结构`;
-  return normal.normal_use ? "已允许读取目录内全部文件并按内容搜索"
-    : "仅允许读取 Clued 创建的文本文件；全部文件读取与搜索未开启";
+type MasterState = "on" | "off" | "partial" | "unknown";
+type MasterAccess = { contract: "clued.storage-master-control/1"; connection_id: string; state: Exclude<MasterState, "unknown">;
+  master_generation: number; status_digest: string; disclosure_version: string; provider_scope_profile: "legacy" | "normal" | "full";
+  reconsent_required: boolean; read_classes: string[]; read_content: boolean; normal_use: boolean; write_classes: string[];
+  agent_enabled: boolean; create_enabled: boolean; read_enabled: boolean; write_enabled: boolean };
+function isMasterAccess(value: unknown): value is MasterAccess {
+  if (!isObject(value)) return false;
+  const readClasses = value.read_classes, writeClasses = value.write_classes;
+  return value.contract === "clued.storage-master-control/1"
+    && typeof value.connection_id === "string" && /^[0-9a-f-]{36}$/.test(value.connection_id)
+    && ["on", "off", "partial"].includes(String(value.state)) && Number.isSafeInteger(value.master_generation) && Number(value.master_generation) >= 0
+    && typeof value.status_digest === "string" && /^[0-9a-f]{64}$/.test(value.status_digest) && typeof value.disclosure_version === "string"
+    && ["legacy", "normal", "full"].includes(String(value.provider_scope_profile)) && typeof value.reconsent_required === "boolean"
+    && Array.isArray(readClasses) && readClasses.every(item => item === "read" || item === "read_content")
+    && typeof value.read_content === "boolean" && typeof value.normal_use === "boolean" && typeof value.agent_enabled === "boolean" && typeof value.create_enabled === "boolean"
+    && typeof value.read_enabled === "boolean" && typeof value.write_enabled === "boolean"
+    && Array.isArray(writeClasses) && writeClasses.every(item => ["modify", "overwrite", "destructive", "modify_subtree"].includes(String(item)))
+    && (value.state !== "on" || (value.provider_scope_profile === "full" && value.reconsent_required === false && value.agent_enabled === true
+      && value.normal_use === true && value.read_content === true && value.create_enabled === true && value.read_enabled === true && value.write_enabled === true
+      && ["read", "read_content"].every(item => readClasses.includes(item))
+      && ["modify", "overwrite", "destructive", "modify_subtree"].every(item => writeClasses.includes(item))))
+    && (value.state !== "off" || (value.agent_enabled === false && value.create_enabled === false && value.normal_use === false
+      && value.read_content === false && value.read_enabled === false && value.write_enabled === false));
+}
+function masterReadingStatus(master: MasterAccess | undefined) {
+  if (!master) return "总开关状态未确认；实际读取权限未确认";
+  if (master.state === "off") return "总开关已关闭；读取与搜索已停止";
+  if (!master.agent_enabled) return "当前执行条件未满足；读取与搜索已停止";
+  if (!master.read_enabled || !master.read_classes.includes("read")) return "目录结构和正文读取均已停止";
+  if (!master.read_content || !master.read_classes.includes("read_content")) return "当前仅允许查看文件名和目录结构";
+  return master.normal_use ? "已允许读取目录内全部文件并按内容搜索" : "仅允许读取 Clued 创建的文本文件；全部文件读取与搜索未开启";
+}
+const masterStateName: Record<MasterState, string> = { on: "全开", off: "全关", partial: "部分开启", unknown: "状态未确认" };
+function MasterAccessSwitch({ state, statusId, disabled, onToggle }: { state: MasterState; statusId: string; disabled: boolean; onToggle: (enable: boolean) => void }) {
+  return <label className="inline-flex cursor-pointer items-center gap-3">
+    <input type="checkbox" aria-label="Agent 文件操作总开关" aria-describedby={statusId} className="peer sr-only"
+      checked={state === "on"} aria-checked={state === "partial" ? "mixed" : state === "on"}
+      ref={element => { if (element) element.indeterminate = state === "partial"; }}
+      disabled={disabled || state === "unknown"} onChange={event => {
+        // The native click clears indeterminate before confirmation. Restore
+        // the verified state until the committed status is read back.
+        event.target.checked = state === "on";
+        event.target.indeterminate = state === "partial";
+        onToggle(state !== "on");
+      }} />
+    <span aria-hidden="true" className={`relative h-7 w-14 rounded-full border border-[var(--line)] transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-4 peer-focus-visible:outline-[var(--green)] peer-disabled:opacity-50 ${state === "on" ? "bg-[var(--green)]" : state === "partial" ? "bg-[var(--green)]/30" : "bg-[var(--panel)]"}`}>
+      <span className={`absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--ink)] text-xs text-black transition-transform ${state === "on" ? "translate-x-7" : state === "partial" ? "translate-x-3.5" : "translate-x-0"}`}>
+        {state === "partial" ? "−" : state === "unknown" ? "?" : ""}
+      </span>
+    </span>
+    <span id={statusId} aria-live="polite">{masterStateName[state]}</span>
+  </label>;
 }
 // clued.storage-normal-use-disclosure/1 (StorageNormalUse §8.2). Any change to
 // this text needs a new disclosure version in the database first.
@@ -237,7 +281,7 @@ function refusedDeletePreview(v: unknown, c: Connection): DeletePreviewReason {
   }
   return isObject(v) && v.trash_available === false ? knownDeletePreviewReason(v.reason) : "lifecycle_unavailable";
 }
-type LifecycleDialog = { kind: "reconnect" | "delete"; connection: Connection; normalUse: boolean;
+type LifecycleDialog = { kind: "reconnect" | "delete"; connection: Connection; masterEnabled: boolean;
   trashRoot: boolean; reading: boolean; preview?: DeletePreview; previewReason?: DeletePreviewReason };
 const folderHref = (c: Connection) => `https://drive.google.com/drive/folders/${encodeURIComponent(c.root_folder_id)}`;
 const folderName = (c: Connection) => c.physical_location.status === "verified" ? c.physical_location.root_name! : c.root_name;
@@ -277,6 +321,7 @@ export default function StorageConnections() {
   const [trash, setTrash] = useState<Record<string, TrashConfirmation>>({});
   // Read normal-use truth with the list, so an unknown cache is never presented as off.
   const [normalUse, setNormalUse] = useState<Record<string, NormalUse>>({});
+  const [masterAccess, setMasterAccess] = useState<Record<string, MasterAccess>>({});
   // Hourly budgets (N4), loaded on demand. Drafts are "64" / "256" / "1024" or
   // "custom" per connection, scope and dimension; custom values are whole MiB.
   const [budget, setBudget] = useState<Record<string, Budget>>({});
@@ -296,6 +341,7 @@ export default function StorageConnections() {
     setNormalUse({});
     setReadAccess({});
     setWriteAccess({});
+    setMasterAccess({});
     setBusy(true);
     try {
       const owner = await supabase.auth.getSession();
@@ -310,19 +356,21 @@ export default function StorageConnections() {
       setWorkerEnabled(result.worker_execution_enabled);
       setMessage(result.connections.length ? "" : "暂无存储连接；受治理目录登记请进入管理入口。");
       const loaded = await Promise.all((result.connections as Connection[])
-        .filter(c => c.state === "active" && c.auth_mode === "account_policy" && c.policy_active)
+        .filter(c => c.state === "active" && c.auth_mode === "account_policy")
         .map(async c => {
-          const [normal, read, write] = await Promise.all([
+          const [normal, read, write, master] = await Promise.all([
             accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use").catch(() => null),
             accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access").catch(() => null),
             accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access").catch(() => null),
+            accountRequest({ action: "master_status", connection_id: c.id }).catch(() => null),
           ]);
-          return { id: c.id, normal, read, write };
+          return { id: c.id, normal, read, write, master };
         }));
       if (epoch !== revision.current) return null;
       setNormalUse(Object.fromEntries(loaded.flatMap(item => isNormalUse(item.normal) ? [[item.id, item.normal]] : [])));
       setReadAccess(Object.fromEntries(loaded.flatMap(item => isReadAccess(item.read) ? [[item.id, item.read]] : [])));
       setWriteAccess(Object.fromEntries(loaded.flatMap(item => isWriteAccess(item.write) ? [[item.id, item.write]] : [])));
+      setMasterAccess(Object.fromEntries(loaded.flatMap(item => isMasterAccess(item.master) && item.master.connection_id === item.id ? [[item.id, item.master]] : [])));
       return result.connections as Connection[];
     } catch (error) {
       if (epoch === revision.current) {
@@ -340,7 +388,7 @@ export default function StorageConnections() {
       ownerId.current = session?.user.id ?? null;
       ++revision.current; setConnections([]); setWorkerEnabled(false);
       setDialog(null);
-      setNormalUse({}); setReadAccess({}); setWriteAccess({}); setBudget({}); setBudgetDraft({}); setTrash({});
+      setNormalUse({}); setReadAccess({}); setWriteAccess({}); setMasterAccess({}); setBudget({}); setBudgetDraft({}); setTrash({});
       queueMicrotask(() => { if (!disposed) void refresh(); });
     });
     queueMicrotask(() => { if (!disposed) void refresh(); });
@@ -363,6 +411,69 @@ export default function StorageConnections() {
     } catch { if (epoch === revision.current) setMessage("Google 连接请求未确认，请刷新状态后核对。"); }
     finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
+  async function readMasterAccess(c: Connection, epoch: number) {
+    try {
+      const result = await accountRequest({ action: "master_status", connection_id: c.id }, "/v1/storage/owner",
+        { owner: ownerId.current, current: () => epoch === revision.current });
+      if (epoch !== revision.current) return;
+      if (!isMasterAccess(result) || result.connection_id !== c.id) throw new Error("总开关状态未确认。");
+      setMasterAccess(state => ({ ...state, [c.id]: result }));
+      return result;
+    } catch {
+      if (epoch === revision.current) setMasterAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+    }
+  }
+  async function loadMasterAccess(c: Connection) {
+    if (operation.current || busy) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    try {
+      const result = await readMasterAccess(c, epoch);
+      if (epoch === revision.current) setMessage(result ? "" : "总开关状态未确认，请稍后重新读取。");
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function changeMasterAccess(c: Connection, enabled: boolean) {
+    const current = masterAccess[c.id];
+    if (operation.current || busy || !current || (enabled && current.state === "on") || (!enabled && current.state === "off")) return;
+    if (current.disclosure_version !== MASTER_DISCLOSURE_VERSION) { setMessage("总开关说明已更新，请重新读取状态后确认。"); return; }
+    if (!window.confirm(enabled ? renderMasterDisclosure(folderName(c)) : MASTER_OFF_DISCLOSURE)) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    const context = { owner: ownerId.current, current: () => epoch === revision.current };
+    let settled = epoch;
+    try {
+      if (enabled && current.reconsent_required) {
+        const result = await accountRequest({ connection_id: c.id, full_scope: { disclosure_version: MASTER_DISCLOSURE_VERSION } }, "/v1/storage/google/start", context);
+        if (epoch !== revision.current) return;
+        if (typeof result.authorization_url !== "string") throw new Error("授权地址未确认。");
+        const url = new URL(result.authorization_url);
+        if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password)
+          throw new Error("授权地址未确认。");
+        window.location.assign(url.href);
+        return;
+      }
+      const result = await accountRequest({ action: "master_set", connection_id: c.id, enabled,
+        base_generation: current.master_generation, base_status_digest: current.status_digest,
+        disclosure_version: current.disclosure_version, idempotency_key: crypto.randomUUID() }, "/v1/storage/owner", context);
+      if (epoch !== revision.current) return;
+      if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
+      const list = await refresh();
+      if (list === undefined) return;
+      settled = revision.current; setBusy(true);
+      if (list === null) throw new Error("连接状态未确认。");
+      const latest = await readMasterAccess(c, settled);
+      if (settled !== revision.current) return;
+      setMessage(latest?.state === (enabled ? "on" : "off") && latest.master_generation > current.master_generation && latest.status_digest !== current.status_digest
+        ? `Agent 文件操作已${enabled ? "全部开启" : "全部停止"}。回执：${result.receipt_id}`
+        : "已取得总开关回执，但最新状态未确认。请重新读取状态并核对原回执，勿重复提交。");
+    } catch (error) {
+      if (settled === revision.current) {
+        setMasterAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+        const reason = error instanceof RequestFailure && error.reason ? startReasons[error.reason] : undefined;
+        setMessage(reason ?? "总开关结果未确认。请重新读取状态并核对，勿重复提交。");
+      }
+    } finally { operation.current = false; if (settled === revision.current) setBusy(false); }
+  }
   async function loadReadAccess(c: Connection) {
     if (operation.current || busy) return;
     operation.current = true; setBusy(true);
@@ -371,7 +482,8 @@ export default function StorageConnections() {
       // The write level is optional here: its failure never hides the read settings.
       const [result, write] = await Promise.all([
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access"),
-        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access").catch(() => null)]);
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access").catch(() => null),
+        readMasterAccess(c, epoch)]);
       if (epoch !== revision.current) return;
       if (!isReadAccess(result)) throw new Error("查看设置未确认。");
       setReadAccess(current => ({ ...current, [c.id]: result }));
@@ -404,6 +516,7 @@ export default function StorageConnections() {
       const [latest, normal] = await Promise.all([
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access"),
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use").catch(() => null),
+        readMasterAccess(c, epoch),
       ]);
       if (epoch !== revision.current) return;
       if (!isReadAccess(latest)) throw new Error("查看设置未确认。");
@@ -420,6 +533,7 @@ export default function StorageConnections() {
       if (epoch === revision.current) {
         setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
         setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setMasterAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
         setMessage("Agent 查看设置结果未确认。请重新读取设置并核对，勿重复提交。");
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
@@ -432,6 +546,7 @@ export default function StorageConnections() {
       const [result, read] = await Promise.all([
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use"),
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access").catch(() => null),
+        readMasterAccess(c, epoch),
       ]);
       if (epoch !== revision.current) return;
       if (!isNormalUse(result)) throw new Error("正常使用设置未确认。");
@@ -481,6 +596,7 @@ export default function StorageConnections() {
       const [latest, read] = await Promise.all([
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use"),
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access").catch(() => null),
+        readMasterAccess(c, epoch),
       ]);
       if (epoch !== revision.current) return;
       if (!isNormalUse(latest)) throw new Error("正常使用设置未确认。");
@@ -496,6 +612,7 @@ export default function StorageConnections() {
       if (epoch === revision.current) {
         setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
         setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setMasterAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
         const reason = error instanceof RequestFailure && error.reason ? startReasons[error.reason] : undefined;
         setMessage(reason ?? "正常使用设置结果未确认。请重新读取设置并核对，勿重复提交。");
       }
@@ -684,7 +801,8 @@ export default function StorageConnections() {
       if (reloadedList === null) throw new Error("连接摘要未确认。");
       const [latest, read] = await Promise.all([
         accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access"),
-        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access")]);
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access"),
+        readMasterAccess(c, reloaded)]);
       if (reloaded !== revision.current) return;
       if (!isWriteAccess(latest) || !isReadAccess(read)) throw new Error("修改设置未确认。");
       setWriteAccess(state => ({ ...state, [c.id]: latest }));
@@ -697,6 +815,7 @@ export default function StorageConnections() {
       // The policy (and the read access bound to it) may have changed: drop both.
       setWriteAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
       setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+      setMasterAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
       if (settled === revision.current) {
         // A partial run names what already changed; each change kept its own receipt.
         const partial = receipts.length > 0 && receipts.length < levels.length
@@ -729,7 +848,7 @@ export default function StorageConnections() {
   async function openLifecycle(c: Connection, kind: LifecycleDialog["kind"]) {
     if (operation.current || busy || c.pending_lifecycle) return;
     if (kind === "reconnect" && (c.state !== "revoked" || !c.root_stopped || c.root_stop_generation < 1)) return;
-    const next: LifecycleDialog = { kind, connection: c, normalUse: false, trashRoot: false,
+    const next: LifecycleDialog = { kind, connection: c, masterEnabled: kind === "reconnect", trashRoot: false,
       reading: kind === "delete" && c.created_by_clued && c.state === "active",
       ...(kind === "delete" ? { previewReason: !c.created_by_clued ? "picked_or_legacy_root" as const
         : c.state !== "active" ? "connection_inactive" as const : "lifecycle_unavailable" as const } : {}) };
@@ -762,7 +881,8 @@ export default function StorageConnections() {
       const confirmation = { contract: "clued.storage-owner-confirmation/1", root_folder_id: c.root_folder_id, confirmed: true };
       const result = await accountRequest(choice.kind === "reconnect"
         ? { action: "reconnect", ...common, root_stop_generation: c.root_stop_generation,
-          confirmation: { ...confirmation, normal_use: choice.normalUse } }
+          confirmation: { ...confirmation, contract: MASTER_RECONNECT_CONFIRMATION,
+            master_enabled: choice.masterEnabled, disclosure_version: MASTER_DISCLOSURE_VERSION } }
         : { action: "delete", ...common, confirmation: choice.trashRoot && wholeRootPreview(choice.preview!)
           ? { contract: "clued.storage-owner-confirmation/2", root_folder_id: c.root_folder_id, confirmed: true,
             trash_created_root: true, confirmation_mode: "whole_created_root_v2" }
@@ -819,7 +939,8 @@ export default function StorageConnections() {
     {connections.map(c => {
       const available = c.state === "active" && c.auth_mode === "account_policy" && c.policy_active
         && c.profile_current && c.database_execution_enabled && workerEnabled;
-      const normal = normalUse[c.id], read = readAccess[c.id], write = writeAccess[c.id];
+      const normal = normalUse[c.id], read = readAccess[c.id], write = writeAccess[c.id], master = masterAccess[c.id];
+      const fullScope = master ? master.provider_scope_profile === "full" : normal?.full_scope;
       const readCurrent = normal !== undefined && read !== undefined && normal.read_generation === read.read_generation;
       const levels = write ? writeLevels(write) : [];
       const allowedWrites = write?.active ? levels.filter(level => write.classes.includes(level)) : [];
@@ -827,9 +948,20 @@ export default function StorageConnections() {
         <h2 className="font-semibold">{c.provider === "google-drive" ? "Google Drive" : c.provider} · {stateName[c.state] ?? "状态待确认"}</h2>
         <p className="my-2 font-semibold">文件夹：{folderName(c)}</p>
         <a className="underline" href={folderHref(c)} target="_blank" rel="noopener noreferrer">打开对应 Drive 文件夹</a>
-        <p role="status" className="my-2">{available ? "文件操作入口可用" : "文件操作当前不可用或暂停"}</p>
+        {c.state === "active" && c.auth_mode === "account_policy" && <div className="my-4 border-y py-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <h3 className="font-semibold">Agent 文件操作</h3>
+            <MasterAccessSwitch state={master?.state ?? "unknown"} statusId={`master-state-${c.id}`} disabled={busy}
+              onToggle={enabled => void changeMasterAccess(c, enabled)} />
+          </div>
+          <p className="my-2 text-sm">全开包括读取、搜索、新建、纳管和全部修改权限；全关停止此连接的全部 Agent 文件操作。下方单项设置决定部分开启状态。</p>
+          {master?.state === "partial" && <button disabled={busy} onClick={() => void changeMasterAccess(c, false)}>停止全部 Agent 文件操作</button>}
+          {!master && <button disabled={busy} onClick={() => void loadMasterAccess(c)}>重新读取总开关状态</button>}
+          {master?.reconsent_required && <p className="my-2 text-sm">全开需要重新授权 Google 的完整云端硬盘权限；授权完成并核验前，保持当前权限状态。</p>}
+        </div>}
         <details className="my-3 text-sm">
           <summary className="cursor-pointer font-semibold">连接详情与执行诊断{c.access_digest_missing && c.access_digest_missing.count > 0 ? `（${c.access_digest_missing.count} 个目录需检查）` : ""}</summary>
+          <p className="my-2">连接执行条件：{available ? "已满足" : "当前未满足"}。Agent 的实际权限见总开关与下方设置。</p>
           {c.physical_location.status === "verified"
             ? <p className="my-2 break-all">Drive 位置：{c.physical_location.path}</p>
             : <div className="my-2"><p>Drive 当前名称与路径暂未核实。</p>
@@ -851,24 +983,25 @@ export default function StorageConnections() {
           首次连接后开启后台续签（默认选中，可取消）</label>}
         {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
           <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
-        {c.state === "active" && c.auth_mode === "account_policy" && c.policy_active && <div className="my-2">
+        {c.state === "active" && c.auth_mode === "account_policy" && <div className="my-2">
           <section aria-labelledby={`reading-${c.id}`} className="my-4 border-t pt-4">
             <h3 id={`reading-${c.id}`} className="font-semibold">读取与搜索</h3>
-            <p role="status" className="my-2">{!normal && busy ? "正在读取实际状态……" : readingStatus(normal, read)}</p>
-            {normal && <button disabled={busy} onClick={() => void toggleNormalUse(c)}>{normal.normal_use ? "关闭读取与搜索" : "开启读取与搜索"}</button>}
-            {(!normal || !readCurrent) && <button disabled={busy} onClick={() => void loadNormalUse(c)}>重新读取读取与搜索状态</button>}
-            <p className="my-1 text-sm">开启后允许读取所选目录内全部文件并按内容搜索，也允许新建图片、PDF 等文件；不覆盖已有文件。细分读取权限可限制目录查看和正文读取。</p>
-            {normal && !normal.normal_use && normal.reconsent_required &&
-              <p className="my-1 text-sm">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
+            <p role="status" className="my-2">{!master && busy ? "正在读取实际状态……" : masterReadingStatus(master)}</p>
+            <p className="my-1 text-sm">本组控制所选目录内的读取与内容搜索。全部文件读取与搜索设置也包含新建图片、PDF 等文件；实际新建权限见下方写入权限。</p>
             <details className="mt-3 text-sm">
               <summary className="cursor-pointer font-semibold">细分读取权限</summary>
-              <p className="mt-2">Agent 查看目录结构：{read ? (read.active ? "已允许" : "未允许") : "未确认"}</p>
+              <p className="my-2">全部文件读取与搜索：{!normal || !readCurrent ? "配置未确认" : normal.normal_use ? "已配置开启" : "未配置开启"}</p>
+              {normal && <button disabled={busy} onClick={() => void toggleNormalUse(c)}>{normal.normal_use ? "关闭读取与搜索" : "开启读取与搜索"}</button>}
+              {(!normal || !readCurrent) && <button disabled={busy} onClick={() => void loadNormalUse(c)}>重新读取读取与搜索状态</button>}
+              {normal && !normal.normal_use && normal.reconsent_required &&
+                <p className="my-1">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
+              <p className="mt-2">Agent 查看目录结构：{read ? (read.active ? "已配置允许" : "未配置允许") : "未确认"}</p>
               {read
                 ? <button disabled={busy} onClick={() => void toggleRead(c)}>{read.active ? "停止 Agent 查看目录结构" : "允许 Agent 查看目录结构"}</button>
                 : <button disabled={busy} onClick={() => void loadReadAccess(c)}>读取 Agent 查看设置</button>}
               {read?.active && <>
                 <p className="mt-2">Agent 读正文：{read.classes.includes("read_content")
-                  ? !readCurrent ? "已允许；文件范围未确认" : normal?.normal_use ? "已允许（目录内全部文件）" : "已允许（仅 Clued 创建的文本文件）" : "未允许"}</p>
+                  ? !readCurrent ? "已配置允许；文件范围未确认" : normal?.normal_use ? "已配置允许（目录内全部文件）" : "已配置允许（仅 Clued 创建的文本文件）" : "未配置允许"}</p>
                 <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
                   {read.classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
               </>}
@@ -877,27 +1010,29 @@ export default function StorageConnections() {
           <section aria-labelledby={`file-scope-${c.id}`} className="my-4 border-t pt-4">
             <h3 id={`file-scope-${c.id}`} className="font-semibold">可操作的文件范围</h3>
             <p className="my-2">修改对象：仅 Clued 创建或已纳管的文件和文件夹。</p>
-            {normal?.full_scope === true ? <>
+            {master?.state === "off" && <p className="my-1 text-sm">总开关已关闭，纳管与修改已停止；Google 授权范围保留。</p>}
+            {fullScope === true ? <>
               <p className="my-1 text-sm">可纳管你拥有的已有文件和文件夹：需先允许“改名和移动文件”，再由 Agent 一次纳管一个；纳管只登记、不改动。</p>
               <p className="my-1 text-sm">Google 已授予完整云端硬盘权限；修改仍限于此目录内已纳管的对象，并受下方写入权限控制。</p>
-            </> : normal?.full_scope === false ? <>
+            </> : fullScope === false ? <>
               <button disabled={busy} onClick={() => void upgradeFullScope(c)}>允许纳管已有文件</button>
               <p className="my-1 text-sm">需要重新授权 Google（增加“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”）；只扩展可纳管范围，不开启任何写入操作。授权完成前，现有功能照常可用。</p>
             </> : <p className="my-1 text-sm">已有文件的纳管授权状态未确认。</p>}
           </section>
           <section aria-labelledby={`writing-${c.id}`} className="my-4 border-t pt-4">
             <h3 id={`writing-${c.id}`} className="font-semibold">写入权限</h3>
-            <p role="status" className="my-2">{!write ? "状态未确认" : !write.active ? "当前写入权限不可用" : allowedWrites.length ? `已有文件修改：已允许 ${allowedWrites.length} / ${levels.length} 项操作` : "已有文件修改已全部停止"}</p>
-            <p className="my-1 text-sm">以下设置控制已有文件和文件夹的修改，不包含新建文件。</p>
+            <p role="status" className="my-2">新建文件与目录：{!master ? "状态未确认" : master.agent_enabled && master.create_enabled ? "已允许" : "已停止"}</p>
+            <p role="status" className="my-2">{!master ? "总开关状态未确认；实际写入权限未确认" : master.state === "off" ? "总开关已关闭；Agent 写入已停止" : !master.agent_enabled || !master.write_enabled ? "当前执行条件未满足；Agent 写入已停止" : master.write_classes.length ? `已有文件修改：已允许 ${master.write_classes.length} / 4 项操作` : "已有文件修改已全部停止"}</p>
+            <p className="my-1 text-sm">新建权限随总开关和全部文件读取与搜索设置生效；下方细项控制已有文件和文件夹的修改。</p>
             {write?.active ? <>
-              <div className="flex flex-wrap gap-4">
-                <button disabled={busy || allowedWrites.length === levels.length} onClick={() => void setAllWrite(c, true)}>允许全部修改操作</button>
-                <button disabled={busy || allowedWrites.length === 0} onClick={() => void setAllWrite(c, false)}>停止全部修改操作</button>
-              </div>
               <details className="mt-3 text-sm">
                 <summary className="cursor-pointer font-semibold">按操作设置写入权限</summary>
+                <div className="my-2 flex flex-wrap gap-4">
+                  <button disabled={busy || allowedWrites.length === levels.length} onClick={() => void setAllWrite(c, true)}>允许全部修改操作</button>
+                  <button disabled={busy || allowedWrites.length === 0} onClick={() => void setAllWrite(c, false)}>停止全部修改操作</button>
+                </div>
                 {levels.map(level => <div key={level} className="my-2">
-                  <p>Agent {writeText[level].name}：{write.classes.includes(level) ? "已允许" : "未允许"}</p>
+                  <p>Agent {writeText[level].name}：{write.classes.includes(level) ? "已配置允许" : "未配置允许"}</p>
                   <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
                     {write.classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
                 </div>)}
@@ -979,9 +1114,9 @@ export default function StorageConnections() {
         <p className="my-2 break-all text-sm">文件夹标识：{dialog.connection.root_folder_id}</p>
         {dialog.kind === "reconnect" ? <>
           <p className="my-3">继续使用这个文件夹和原项目，重新取得 Google 授权，不会另建同名文件夹。后台续签保持关闭，可在连接完成后按需要开启。</p>
-          <label className="block"><input type="checkbox" disabled={busy} checked={dialog.normalUse}
-            onChange={event => { const normalUse = event.target.checked; setDialog(current => current ? { ...current, normalUse } : null); }} /> 同时开启读取与搜索</label>
-          {dialog.normalUse && <p className="my-3 whitespace-pre-line text-sm">{normalUseDisclosure(folderName(dialog.connection))}</p>}
+          <label className="block"><input type="checkbox" disabled={busy} checked={dialog.masterEnabled}
+            onChange={event => { const masterEnabled = event.target.checked; setDialog(current => current ? { ...current, masterEnabled } : null); }} /> 重新连接后开启全部 Agent 文件操作（默认）</label>
+          {dialog.masterEnabled && <p className="my-3 whitespace-pre-line text-sm">{renderMasterDisclosure(folderName(dialog.connection))}</p>}
         </> : <>
           <p className="my-3">删除后会停止此连接的文件操作和后台续签，并从连接列表移除；操作记录会保留。</p>
           {dialog.reading ? <p role="status">正在核对文件夹及其中内容……</p> : dialog.preview ? <>
