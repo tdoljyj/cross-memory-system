@@ -1,4 +1,5 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { withCanonicalMcpError } from "./mcp-error-envelope";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
@@ -2730,7 +2731,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
     if (rpc.method === "tools/call") {
       const name = rpc.params?.name;
       const args = rpc.params?.arguments;
-      const result = await callTool(request, env, name, args, ctx);
+      const result = withCanonicalMcpError(await callTool(request, env, name, args, ctx));
       return json(rpcResult(rpc.id, result), 200, {
         ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageUploadBeginTool.name || name === storageReadTool.name || name === storageContentTool.name ||
           name === storageConnectionsTool.name ? { "cache-control": "no-store" } : {}),
