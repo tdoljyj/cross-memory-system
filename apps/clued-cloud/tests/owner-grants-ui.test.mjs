@@ -393,10 +393,10 @@ test('DatasetSplit bootstrap cannot approve an incompatible server confirmation 
 
 const CORRECTION_REQUEST = 'af1cabdb-5259-4ca3-94d3-133f1af122c8';
 const CORRECTION_GRANT = '4970e492-d26e-4974-adaa-757b2146b171';
-async function openCorrection(f, grantChange = {}) {
+async function openCorrection(f, grantChange = {}, requestChange = {}) {
   f.emit('INITIAL_SESSION',session('owner'));
   f.calls[0].resolve({data:{status:'ok',request:{...request('approved_once'),request_id:CORRECTION_REQUEST,
-    action:'model.dataset_split.bootstrap',grant:{grant_id:CORRECTION_GRANT,uses:0,max_uses:1,revoked:false,
+    action:'model.dataset_split.bootstrap',...requestChange,grant:{grant_id:CORRECTION_GRANT,uses:0,max_uses:1,revoked:false,
       expires_at:new Date(Date.now()+86400_000).toISOString(),...grantChange}},
     view:{action:'model.dataset_split.bootstrap',expires_seconds:86400}},error:null});
   await f.settle();
@@ -409,6 +409,185 @@ function correctionIssue(options = {}) {
     previous_expires_at:'2099-01-01T00:00:00Z'};
   return result;
 }
+
+const CONTINUATION_TASK = '1502fd80-8ff8-4adc-b4f5-da6d462f4f8a';
+const PREVIOUS_BINDING = '0844da80-5605-4d4d-ba7f-a8a970423942';
+const CURRENT_BINDING = 'df03335b-544f-4168-865c-735a238225d5';
+const BOOTSTRAP_RESOURCES = [
+  'record:36f0b1f1-3352-4a0a-abab-011b39164143', 'record:adfb0f98-c415-42a5-944c-c5fc91af0fc6',
+  'record:1f443b83-e612-4bec-84ea-b5f2e0e22eb5',
+  'record:b8c1d482-9eb4-4bc5-8dd1-372b0d55174e@1#' + 'a'.repeat(64),
+  'record:46b0ff1c-f608-4ff9-89b9-dc90a61ce70f@1#' + 'b'.repeat(64),
+  'repo:tdoljyj/cross-memory-system/' + 'c'.repeat(40) + '/development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json',
+];
+function continuationIssue({ changed = true, ...options } = {}) {
+  const result = correctionIssue(options), view = result.data.confirmation_view;
+  const binding = changed ? CURRENT_BINDING : PREVIOUS_BINDING;
+  view.resources = [...BOOTSTRAP_RESOURCES];
+  view.task = { task_id: CONTINUATION_TASK, title: '完整 M0–M7 第一方模型' };
+  view.grantee = { any_agent: false, binding_id: binding, agent_name: 'Codex', vendor: 'OpenAI' };
+  Object.assign(view.correction, {
+    previous_binding_id: PREVIOUS_BINDING, new_binding_id: binding,
+    effect: changed ? 'REAUTHORIZE_CURRENT_CLAIM_HOLDER_ONE_HOUR_SINGLE_USE_KEEP_ORIGINAL_APPROVAL_HISTORY'
+      : 'REPLACE_UNUSED_GRANT_WITH_ONE_HOUR_SINGLE_USE_KEEP_ORIGINAL_APPROVAL_HISTORY',
+    binding_continuation: { schema: 'clued.dataset-split-native-binding-continuation.v1', binding_changed: changed,
+      previous_binding: { binding_id: PREVIOUS_BINDING, agent_name: 'Codex', vendor: 'OpenAI', revoked: false,
+        session_ref: '01a11f76-dbd4-7aa3-b2da-2608cb91c3e9' },
+      current_binding: { binding_id: binding, agent_name: 'Codex', vendor: 'OpenAI',
+        session_ref: '01a128c7-6817-7322-bdfa-2f202b9874a1' },
+      execution_claim: { claim_id: 'abf42eef-02c3-4d02-8082-3264d5fc765b', task_id: CONTINUATION_TASK,
+        context_key: 'project:0597aa60-9b98-4da6-a4ab-63d7705b632f', holder_binding_id: binding,
+        holder_session_ref: '01a128c7-6817-7322-bdfa-2f202b9874a1', holder_label_self_reported: '测试接续说明',
+        fence: 151, lease_version: 1, expires_at: '2099-01-01T00:00:00Z', hard_deadline_at: '2099-01-02T00:00:00Z' },
+      task: { task_id: CONTINUATION_TASK, title: '完整 M0–M7 第一方模型', version: 593, content_hash: 'e'.repeat(64) } },
+  });
+  return result;
+}
+async function showContinuation(f, answer = continuationIssue()) {
+  await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
+  f.button('查看限时修正').props.onClick();
+  f.calls[1].resolve(answer); await f.settle();
+}
+test('changed Binding: preview names both sessions and the exact current claim; only the explicit Owner button commits', async t => {
+  const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+  await showContinuation(f);
+  const shown = f.text();
+  for (const value of [PREVIOUS_BINDING, CURRENT_BINDING, '01a11f76-dbd4-7aa3-b2da-2608cb91c3e9',
+    '01a128c7-6817-7322-bdfa-2f202b9874a1', CONTINUATION_TASK, '版本 593', 'fence 151', 'lease 1',
+    '会话自报说明（未核实）', '测试接续说明']) assert.ok(shown.includes(value), value);
+  assert.ok(!shown.includes('动作、原发起者和范围保持一致'));
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.filter(c => c.name === 'clued_owner_grant_v1').length, 0);
+  assert.equal(f.nodes('select').length, 0);
+  assert.equal(f.nodes('input').filter(n => n.props.type === 'checkbox').length, 0);
+  f.button('确认授权给当前接续会话').props.onClick();
+  assert.deepEqual(plain([f.calls[2].name, f.calls[2].args.p_input]),
+    ['clued_owner_grant_v1', { confirmation_token: 'clued_ogr_a', view_digest: 'd'.repeat(64) }]);
+  f.calls[2].resolve(committed); await f.settle();
+  assert.match(f.text(), /接续会话授权已确认/);
+  assert.match(f.text(), /新授权仅给刚才确认的接续会话/);
+  assert.ok(!f.text().includes('新授权仅给原发起者'));
+});
+test('a partial or inconsistent continuation cannot fall back to same-Binding confirmation', async t => {
+  const changes = [
+    v => { delete v.correction.binding_continuation; },
+    v => { delete v.correction.new_binding_id; },
+    v => { v.correction.binding_continuation.schema = 'other'; },
+    v => { v.grantee.binding_id = PREVIOUS_BINDING; },
+    v => { v.grantee.any_agent = true; },
+    v => { v.correction.previous_binding_id = CURRENT_BINDING; },
+    v => { v.correction.binding_continuation.binding_changed = false; },
+    v => { v.correction.binding_continuation.current_binding.session_ref = 'other-session'; },
+    v => { delete v.correction.binding_continuation.previous_binding.session_ref; },
+    v => { v.correction.binding_continuation.execution_claim.holder_binding_id = PREVIOUS_BINDING; },
+    v => { v.correction.binding_continuation.execution_claim.fence = 0; },
+    v => { v.correction.binding_continuation.execution_claim.lease_version = null; },
+    v => { v.correction.binding_continuation.execution_claim.context_key = 'global'; },
+    v => { v.correction.binding_continuation.execution_claim.expires_at = 'bad'; },
+    v => { v.correction.binding_continuation.task.version = null; },
+    v => { v.correction.binding_continuation.task.content_hash = 'not-a-hash'; },
+    v => { v.task.task_id = CORRECTION_REQUEST; },
+    v => { v.resources[5] = 'repo:other/anything/**'; },
+    v => { v.resources[5] = v.resources[4]; },
+    v => { v.expires_seconds = 86400; },
+    v => { v.max_uses = 2; },
+  ];
+  for (const change of changes) {
+    const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+    const answer = continuationIssue(); change(answer.data.confirmation_view);
+    await showContinuation(f, answer);
+    assert.equal(f.calls.length, 2);
+    assert.ok(!f.nodes('button').some(n => ['确认限时修正', '确认授权给当前接续会话'].includes(f.text(n))));
+    assert.match(f.text(), /暂时无法/);
+  }
+});
+test('a complete same-Binding successor keeps the original correction path; missing historical session is displayed honestly', async t => {
+  const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+  const answer = continuationIssue({ changed: false });
+  answer.data.confirmation_view.correction.binding_continuation.previous_binding.session_ref = null;
+  await showContinuation(f, answer);
+  assert.match(f.text(), /原申请未记录会话/);
+  assert.match(f.text(), /动作、原发起者和范围保持一致/);
+  assert.ok(!f.nodes('button').some(n => f.text(n) === '确认授权给当前接续会话'));
+  f.button('确认限时修正').props.onClick();
+  f.calls[2].resolve(committed); await f.settle();
+  assert.match(f.text(), /授权期限已修正/);
+});
+test('cancel a changed-Binding preview without modifying a grant', async t => {
+  const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+  await showContinuation(f);
+  f.button('返回原批准').props.onClick(); f.render();
+  assert.equal(f.calls.length, 2);
+  assert.ok(!f.text().includes('当前接续连接'));
+  assert.ok(!f.nodes('button').some(n => f.text(n) === '确认授权给当前接续会话'));
+});
+test('changed-Binding confirmation refreshes a short-lived token and unknown completion checks that exact token', async t => {
+  const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+  await showContinuation(f, continuationIssue({ expires: new Date(Date.now() + 5000).toISOString() }));
+  f.button('确认授权给当前接续会话').props.onClick();
+  assert.equal(f.calls[2].name, 'clued_dataset_split_grant_correction_issue_v1');
+  f.calls[2].resolve(continuationIssue({ token: 'clued_ogr_fresh_continuation' })); await f.settle();
+  assert.equal(f.calls[3].name, 'clued_owner_grant_v1');
+  f.calls[3].reject(new TypeError('network')); await f.settle();
+  f.button('核对原操作').props.onClick();
+  assert.deepEqual(plain(f.calls[4].args), plain(f.calls[3].args));
+  assert.equal(f.calls.filter(c => c.name === 'clued_dataset_split_grant_correction_issue_v1').length, 2);
+  f.calls[4].resolve({ data: { ...committed.data, replayed: true }, error: null }); await f.settle();
+  assert.match(f.text(), /接续会话授权已确认/);
+});
+test('a changed claim shown on token refresh needs a new explicit look before a grant write', async t => {
+  const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+  await showContinuation(f, continuationIssue({ expires: new Date(Date.now() + 5000).toISOString() }));
+  f.button('确认授权给当前接续会话').props.onClick();
+  const fresh = continuationIssue({ token: 'clued_ogr_changed', digest: 'f'.repeat(64) });
+  fresh.data.confirmation_view.correction.binding_continuation.execution_claim.lease_version = 2;
+  f.calls[2].resolve(fresh); await f.settle();
+  assert.equal(f.calls.length, 3);
+  assert.match(f.text(), /请求内容有变化/);
+  assert.match(f.text(), /lease 2/);
+  f.button('确认授权给当前接续会话').props.onClick();
+  assert.deepEqual(plain(f.calls[3].args.p_input), { confirmation_token: 'clued_ogr_changed', view_digest: 'f'.repeat(64) });
+});
+test('a new auth session discards the changed-Binding preview and an in-flight uncertain operation', async t => {
+  for (const pending of [false, true]) {
+    const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+    await showContinuation(f);
+    if (pending) f.button('确认授权给当前接续会话').props.onClick();
+    f.emit('SIGNED_IN', { ...session('owner'), access_token: 'fixture-replacement-owner-session' });
+    assert.equal(f.calls.at(-1).name, 'clued_owner_request_view_v1');
+    assert.ok(!f.text().includes('当前接续连接'));
+    assert.ok(!f.nodes('button').some(n => ['确认授权给当前接续会话', '核对原操作'].includes(f.text(n))));
+    if (pending) {
+      f.calls[2].reject(new TypeError('network')); await f.settle();
+      assert.ok(!f.nodes('button').some(n => f.text(n) === '核对原操作'));
+    }
+    assert.equal(f.calls.filter(c => c.name === 'clued_owner_grant_v1').length, pending ? 1 : 0);
+  }
+});
+test('a pending correction issue cannot attach its old response to a refreshed same-Owner session', async t => {
+  const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+  await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
+  f.button('查看限时修正').props.onClick();
+  assert.equal(f.calls[1].name, 'clued_dataset_split_grant_correction_issue_v1');
+  f.emit('TOKEN_REFRESHED', { ...session('owner'), access_token: 'fixture-owner-new-session' });
+  f.emit('TOKEN_REFRESHED', { ...session('owner'), access_token: 'fixture-owner-newer-session' });
+  f.calls[1].resolve(continuationIssue({ token: 'clued_ogr_old_session' })); await f.settle();
+  assert.ok(!f.text().includes('当前接续连接'), 'the old response is not displayed in the new session');
+  assert.ok(!f.nodes('button').some(n => ['确认限时修正', '确认授权给当前接续会话', '核对原操作'].includes(f.text(n))));
+  assert.equal(f.calls.filter(c => c.name === 'clued_owner_grant_v1').length, 0);
+});
+test('a pending correction response after sign-out, another Owner or unmount never shows an approvable view', async t => {
+  for (const leave of [f => f.emit('SIGNED_OUT', null), f => f.emit('SIGNED_IN', session('other')), f => f.unmount()]) {
+    const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
+    await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
+    f.button('查看限时修正').props.onClick();
+    leave(f);
+    f.calls[1].resolve(continuationIssue({ token: 'clued_ogr_departed_session' })); await f.settle();
+    assert.ok(!f.text().includes('当前接续连接'));
+    assert.ok(!f.nodes('button').some(n => ['确认限时修正', '确认授权给当前接续会话', '核对原操作'].includes(f.text(n))));
+    assert.equal(f.calls.filter(c => c.name === 'clued_owner_grant_v1').length, 0);
+  }
+});
 test('the original decided request offers a Native correction view and never mutates a grant before explicit confirmation',async t=>{
   const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
   assert.equal(f.calls.length,1,'loading a decided request never issues or commits a token');

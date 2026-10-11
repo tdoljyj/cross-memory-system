@@ -29,9 +29,15 @@ export class BootstrapExecutionDenied extends Error{constructor(){super('BOOTSTR
 export class BootstrapCompletionUnknown extends Error{constructor(){super('BOOTSTRAP_COMPLETION_UNVERIFIED_INSPECT_ORIGINAL_RECEIPTS_DO_NOT_RETRY');this.name='BootstrapCompletionUnknown';}}
 const readinessReasons=new Set(['INPUT','RPC','RESULT_SCHEMA','FIXED_SOURCE','TIME_INVALID','TIME_FUTURE','TIME_STALE','UNSPECIFIED']);
 export class BootstrapReadinessDenied extends Error{constructor(reason='UNSPECIFIED'){super('BOOTSTRAP_FIXED_SOURCE_READINESS_DENIED_OR_UNAVAILABLE');this.name='BootstrapReadinessDenied';this.reason=readinessReasons.has(reason)?reason:'UNSPECIFIED';}}
+// Passive system-time samples are diagnostic only; never validation inputs.
+function sampleReadinessSystemTime(){
+ try{const value=Date.now();return Number.isSafeInteger(value)?value:null;}catch{return null;}
+}
 export async function readBootstrapReadiness(rpc,input,clock=()=>Date.now()){
  if(!exact(input,[])||typeof rpc!=='function')throw new BootstrapReadinessDenied('INPUT');
+ const rpcStartedMs=sampleReadinessSystemTime();
  let result;try{result=await rpc(BOOTSTRAP_READINESS_RPC,{});}catch{throw new BootstrapReadinessDenied('RPC');}
+ const rpcResolvedMs=sampleReadinessSystemTime();
  const keys=['status','owner_adoption_server_ref','final_recognizer_server_ref','immutable_plan_resource','plan_sha256',
   'max_uses','max_window_seconds','evaluated_at','bootstrap_write_authorized','domain_permission','m2_verdict','private_actor_fields_exposed'];
  if(!exact(result,keys))throw new BootstrapReadinessDenied('RESULT_SCHEMA');
@@ -47,7 +53,14 @@ export async function readBootstrapReadiness(rpc,input,clock=()=>Date.now()){
  if(!recent(result.evaluated_at,now)){
   const parsed=typeof result.evaluated_at==='string'?Date.parse(result.evaluated_at):NaN;
   const valid=typeof result.evaluated_at==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/.test(result.evaluated_at)&&Number.isSafeInteger(now)&&Number.isFinite(parsed);
-  throw new BootstrapReadinessDenied(!valid?'TIME_INVALID':parsed>now?'TIME_FUTURE':'TIME_STALE');
+  const reason=!valid?'TIME_INVALID':parsed>now?'TIME_FUTURE':'TIME_STALE';
+  if(valid)try{
+   // Fixed scalar allowlist: never log input/result objects, refs or errors.
+   console.warn(JSON.stringify({event:'model_bootstrap_readiness_time_diagnostic',schema_version:1,
+    rpc_started_ms:rpcStartedMs,rpc_resolved_ms:rpcResolvedMs,validation_ms:now,
+    evaluated_at:result.evaluated_at,parsed_ms:parsed,delta_ms:parsed-now,reason}));
+  }catch{/* Observation failure cannot change the original denial. */}
+  throw new BootstrapReadinessDenied(reason);
  }
  return structuredClone(result);
 }
