@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { workerGatewayRpc, setWorkerGatewayCaller, assertGatewayCloseoutBoundary }
+  from './worker-gateway-caller-fixture.mjs';
 import { validateJournal, emptyReplayState, applyTransaction, queueAt, timestampMicros }
   from '../../../scripts/ci/merge-admission-measurement-history.mjs';
 
@@ -36,6 +38,10 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
   try {
     await server.initialise(); await server.start();
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
+    const rpc = async (client, name, token, input) => {
+      try { return await workerGatewayRpc(client, name, token, input); }
+      finally { await client.query('reset role'); await client.query("select set_config('request.jwt.claims','{}',false)"); }
+    };
     await admin.query(`create role anon nologin; create role authenticated nologin;
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
       create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
@@ -60,16 +66,16 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
           values($1,'seed@example.invalid',now())`, [seedUser]);
         await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
           values($1,'openai','seed fixture',$2,array['context:read','context:write'],array['*'])`, [seedUser, seedToken]);
-        const task = (await admin.query(`select public.clued_record_mutate($1,$2) v`, [seedToken, {
+        const task = await rpc(admin, 'clued_record_mutate', seedToken, {
           operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active',
           scope: 'global', idempotency_key: uuid(), authority: 'observed', confidence_reason: 'bootstrap fixture',
           source_refs: [], source_unavailable_reason: 'synthetic', mutation: { title: 'Seed Task', content: 'fixture',
-            type_fields: { execution_bucket: 'next' }, relations: {} } }])).rows[0].v;
+            type_fields: { execution_bucket: 'next' }, relations: {} } });
         assert.equal(task.status, 'committed');
-        const issued = (await admin.query(`select public.clued_work_claim_v1($1,$2) v`, [seedToken, {
+        const issued = await rpc(admin, 'clued_work_claim_v1', seedToken, {
           scope: 'global', task_id: task.target_refs[0].id, write_set: ['seed/a'],
           trigger_refs: ['merge:owner/repo:main'], idempotency_key: uuid(), holder_label: 'Seed',
-          holder_session_ref: 'seed-fixture' }])).rows[0].v;
+          holder_session_ref: 'seed-fixture' });
         assert.equal(issued.status, 'committed'); seedClaim = issued.claim;
         await admin.query(`insert into clued_private.work_claim_merge_queue_v1
           (user_id,merge_ref,head_left_at,left_queued_at,left_claim_id)
@@ -82,12 +88,13 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await assertGatewayCloseoutBoundary(admin);
     const user = uuid(), other = uuid(), token = hash();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values
       ($1,'measurement@example.invalid',now()),($2,'other@example.invalid',now())`, [user, other]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'openai','measurement fixture',$2,array['context:read','context:write','audit:read'],array['*'])`, [user, token]);
-    const agent = async (name, input) => (await admin.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+    const agent = (name, input) => rpc(admin, name, token, input);
     const committed = r => { assert.equal(r.status, 'committed', JSON.stringify(r)); return r; };
     const taskId = committed(await agent('clued_record_mutate', { operation: 'create', record_type: 'task',
       record_schema_version: 1, lifecycle_status: 'active', scope: 'global', idempotency_key: uuid(),
@@ -162,6 +169,7 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
         revoke all on function clued_private.merge_measurement_page_v1(uuid,jsonb) from public,anon,authenticated,service_role;`);
       await admin.query('select pg_advisory_lock(192611007)');
       await reader.query("select set_config('clued_test.pause_measurement','on',false)");
+      await setWorkerGatewayCaller(reader);
       const pending = reader.query(`select public.clued_mcp_audit_receipts($1,$2) v`,
         [globalOnlyToken, { context_key: 'global', measurement: {} }]);
       let result;
@@ -196,8 +204,7 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
       const otherToken = hash();
       await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
         values($1,'openai','other reader',$2,array['audit:read'],array['*'])`, [other, otherToken]);
-      const result = (await admin.query(`select public.clued_mcp_audit_receipts($1,$2) v`,
-        [otherToken, { context_key: 'global', measurement: {} }])).rows[0].v;
+      const result = await rpc(admin, 'clued_mcp_audit_receipts', otherToken, { context_key: 'global', measurement: {} });
       assert.equal(result.status, 'NOT_MEASURED'); assert.equal(result.reason, 'stream_not_started');
       assert.deepEqual(result.events, []);
     });
@@ -299,8 +306,7 @@ test('measurement history: real PostgreSQL transaction, privacy, immutability an
         values($1,'openai','restricted reader',$2,array['audit:read'],array['global'])`, [user, restrictedToken]);
       const hiddenContext = `project:${uuid()}`;
       await admin.query(`select clued_private.merge_measurement_append_v1($1,$2,'admission_receipt','context-boundary-fixture','{}')`, [user, hiddenContext]);
-      const result = (await admin.query(`select public.clued_mcp_audit_receipts($1,$2) v`,
-        [restrictedToken, { context_key: 'global', measurement: {} }])).rows[0].v;
+      const result = await rpc(admin, 'clued_mcp_audit_receipts', restrictedToken, { context_key: 'global', measurement: {} });
       assert.equal(result.status, 'NOT_MEASURED'); assert.equal(result.reason, 'measurement_scope_incomplete');
       assert.deepEqual(result.events, []); assert.equal(JSON.stringify(result).includes(hiddenContext), false);
     });

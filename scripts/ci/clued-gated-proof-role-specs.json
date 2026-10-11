@@ -89,6 +89,16 @@
             "job_id": "database-gate-untrusted-hosted",
             "definition_sha256": "02b6711a85a6e27d14a6c5a1ca3187137a6f0d770637e33ac189ebf9ed06bad8"
           }
+        ],
+        "e5a4e4dccc6924d0eb492bf4cebd303ea62d47e9": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "26ff702764b918266b925430f8c748fe8c807b81dbabd74fb10d357db3be11f2"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "e27b4973c288bef1b272d9b3d12160fb405deaa67ec660af4185a426330da818"
+          }
         ]
       }
     },
