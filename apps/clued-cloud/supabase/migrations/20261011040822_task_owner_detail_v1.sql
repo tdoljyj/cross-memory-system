@@ -112,5 +112,15 @@ end $$;
 
 revoke all on function clued_private.task_owner_reference_ids_v1(uuid,public.clued_memories,text[],text[]),
   clued_private.task_owner_currentness_v1(uuid,public.clued_memories,text[]),
-  public.clued_task_owner_detail_v1(jsonb) from public,anon,authenticated,service_role,clued_worker_gateway;
+  public.clued_task_owner_detail_v1(jsonb) from public,anon,authenticated,service_role;
+-- Historical cutover fixtures can defer the Gateway migration/role. PUBLIC
+-- stays revoked in either order; revoke the Gateway explicitly when present.
+do $gateway_acl$
+begin
+  if exists(select 1 from pg_catalog.pg_roles where rolname='clued_worker_gateway') then
+    revoke all on function clued_private.task_owner_reference_ids_v1(uuid,public.clued_memories,text[],text[]),
+      clued_private.task_owner_currentness_v1(uuid,public.clued_memories,text[]),
+      public.clued_task_owner_detail_v1(jsonb) from clued_worker_gateway;
+  end if;
+end $gateway_acl$;
 grant execute on function public.clued_task_owner_detail_v1(jsonb) to authenticated;
