@@ -6,6 +6,7 @@ import { generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+
 import { fileURLToPath } from "node:url";
 
 import {
@@ -19,6 +20,7 @@ import {
   main,
   renderSummary,
   reportMergeSlots,
+  requiredBarrier,
 } from "./clued-merge-slot-ci.mjs";
 import { ADMISSION_APP_ID, workflowFormFindings, workflowIsGated, gateFindings } from "./clued-work-admission.mjs";
 
@@ -40,7 +42,7 @@ const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work
 const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.head.sha,pr_number:pr.number,reason:'fixture execution observed',native_runs:[]});
 const ciStateOf=(fetch,env,repo,head,workflows,since=null)=>actualCiStateOf(fetch,env,repo,head,workflows,since,
   {pr:pull(5),qualifyExecution:fixtureQualification});
-const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
+const check = (name, extra = {}) => ({ id: CI_REQUIRED_CHECKS.findIndex(row=>row.name===name)+1, name, head_sha: HEAD, status: "completed", conclusion: "success",
   external_id: name==='clued-admission-verified'?'pr:5:run:9001':undefined,
   app: { id: name === "clued-admission-verified" ? ADMISSION_APP_ID : 15368 }, ...extra });
 const run = (pathName, status = "in_progress", extra = {}) => ({ id: 7, path: pathName, status, event: "pull_request", head_sha: HEAD, ...extra });
@@ -53,6 +55,16 @@ function fakeFetch(routes) {
     const rpc = /\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(route);
     const body = init.body ? JSON.parse(init.body) : null;
     calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, method: init.method ?? "GET", input: body && body.p_input, body });
+    // Existing per-name fixtures also serve the new complete, unfiltered API.
+    // Keep individual routes for admissionOf, which is outside this change.
+    const snapshot = /^(.*\/check-runs)\?filter=all&/.exec(route);
+    if (snapshot && !Object.keys(routes).some(key=>key.startsWith(`${snapshot[1]}?filter=all`) && route.startsWith(key))) {
+      const chunks = Object.entries(routes).filter(([key])=>key.startsWith(`${snapshot[1]}?check_name=`))
+        .map(([,value])=>typeof value==='function'?value(null):value);
+      const checks = chunks.flatMap(chunk=>chunk.check_runs);
+      const page = Number(new URL(`https://api.github.com${route}`).searchParams.get('page'));
+      return new Response(JSON.stringify({total_count:checks.length,check_runs:checks.slice((page-1)*100,page*100)}));
+    }
     const key = rpc ? `rpc:${rpc[1]}` : Object.keys(routes).find((prefix) => route.startsWith(prefix));
     if (!key || !(key in routes)) return new Response("not found", { status: 404 });
     const answer = typeof routes[key] === "function" ? routes[key](body && body.p_input) : routes[key];
@@ -156,9 +168,9 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "skipped" })], trivy: [check("trivy", { conclusion: "neutral" })] }),
     ...runsRoute(HEAD, []) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
-  // A same-named check from another app, or on another head, is not the required check.
+  // A same-named check from another app is not the required check.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [check("clued-admission-verified", { app: { id: 15368 }, conclusion: "failure", id: 99 }),
-    check("clued-admission-verified", { id: 98, head_sha: OTHER, conclusion: "failure" }), check("clued-admission-verified")] }), ...runsRoute(HEAD, []) });
+    check("clued-admission-verified")] }), ...runsRoute(HEAD, []) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
   // Running needs the head's workflow file to be the default branch's: a pull request's edited copy does not count.
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY)]),
@@ -176,7 +188,7 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   // A filtered native PR listing with wrong event/head is inconsistent, not green.
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY, "in_progress", { event: "push" }),
     run(QUALITY, "in_progress", { head_sha: OTHER }), run(QUALITY, "completed")]) });
-  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
+  await assert.rejects(()=>ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS), /invalid workflow_runs snapshot row/);
   // A required check not posted yet, with nothing running: not reported.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "clued-work-admission": [check("clued-work-admission")],
     "clued-admission-verified": [] }),
@@ -436,4 +448,95 @@ test("report cleans a managed waiting request before source observation, Clued o
   assert.equal(result.managed_cleanup[0].error,undefined);
   assert.equal(fetch.calls.some(c=>c.route.startsWith("rpc:")),false);
   assert.equal(fetch.calls.some(c=>c.route.includes("/actions/runs")),false);
+});
+
+const snapshotRoute = () => `/repos/${REPO}/commits/${HEAD}/check-runs?filter=all&`;
+const snapshotRows = () => CI_REQUIRED_CHECKS.map(({name})=>check(name));
+test('one fresh complete check snapshot per observation preserves newest name/App/head and PR identity',async()=>{
+  const rows=[...snapshotRows(),check('trivy',{id:40,conclusion:'failure'}),
+    check('trivy',{id:41,app:{id:999},conclusion:'success'})];
+  const fetch=fakeFetch({[snapshotRoute()]:{total_count:rows.length,check_runs:rows}});
+  const seen=await ciStateOf(fetch.fetchImpl,env(),REPO,HEAD,WORKFLOWS);
+  assert.equal(seen.state,'failed');assert.match(seen.reason,/trivy/);
+  assert.equal(fetch.calls.filter(c=>c.route.includes('/check-runs?')).length,1);
+  const wrong=fakeFetch({[snapshotRoute()]:{total_count:5,check_runs:snapshotRows().map(row=>
+    row.name==='clued-admission-verified'?{...row,external_id:'pr:6:run:1'}:row)}});
+  assert.equal((await ciStateOf(wrong.fetchImpl,env(),REPO,HEAD,WORKFLOWS)).state,'idle');
+});
+test('complete pagination includes a required failure and an uncounted active run after page one',async()=>{
+  const filler=Array.from({length:100},(_,i)=>check('auxiliary',{id:1000+i}));
+  const rows=[...filler,...snapshotRows().map(row=>row.name==='trivy'?{...row,conclusion:'failure'}:row)];
+  const fetchImpl=async url=>{
+    const page=Number(new URL(url).searchParams.get('page'));
+    return new Response(JSON.stringify({total_count:105,check_runs:rows.slice((page-1)*100,page*100)}));
+  };
+  assert.equal((await ciStateOf(fetchImpl,env(),REPO,HEAD,WORKFLOWS)).state,'failed');
+  const completeRuns=Array.from({length:100},(_,i)=>run(`.github/workflows/aux-${i}.yml`,'completed',{id:1000+i}));
+  completeRuns.push(run('.github/workflows/late-aux.yml','queued',{id:2000}));
+  const reads=[];
+  const runFetch=async url=>{
+    reads.push(String(url)); const page=Number(new URL(url).searchParams.get('page'));
+    if(String(url).includes('/check-runs?'))return new Response(JSON.stringify({total_count:5,check_runs:snapshotRows()}));
+    return new Response(JSON.stringify({total_count:101,workflow_runs:completeRuns.slice((page-1)*100,page*100)}));
+  };
+  const seen=await ciStateOf(runFetch,env(),REPO,HEAD,WORKFLOWS);
+  assert.equal(seen.state,'idle');assert.equal(seen.active_runs[0].id,2000);
+  assert.equal(reads.filter(url=>url.includes('/actions/runs?')).length,2);
+});
+test('partial, conflicting or malformed snapshots cannot classify or pass a final barrier',async()=>{
+  const good=snapshotRows();
+  const invalid=[
+    {check_runs:good},
+    {total_count:6,check_runs:good},
+    {total_count:5,check_runs:[...good.slice(0,4),good[0]]},
+    {total_count:5,check_runs:good.map((row,i)=>i?row:{...row,head_sha:OTHER})},
+    {total_count:5,check_runs:good.map((row,i)=>i?row:{...row,app:{id:'15368'}})},
+    {total_count:5,check_runs:good.map((row,i)=>i?row:{...row,id:0})},
+    {total_count:5,check_runs:good.map((row,i)=>i?row:{...row,status:'mystery'})},
+    {total_count:2001,check_runs:good},
+  ];
+  for(const body of invalid){
+    const fetch=fakeFetch({[snapshotRoute()]:body});
+    await assert.rejects(()=>ciStateOf(fetch.fetchImpl,env(),REPO,HEAD,WORKFLOWS),/snapshot/);
+    assert.equal(await requiredBarrier(fetch.fetchImpl,env(),REPO,HEAD,5,{native_runs:[]}),false);
+  }
+  const full=Array.from({length:100},(_,i)=>check('auxiliary',{id:1000+i}));
+  const changing=async url=>new Response(JSON.stringify(Number(new URL(url).searchParams.get('page'))===1?
+    {total_count:101,check_runs:full}:{total_count:102,check_runs:[check('trivy')]}));
+  await assert.rejects(()=>ciStateOf(changing,env(),REPO,HEAD,WORKFLOWS),/snapshot/);
+  // A partial run list cannot manufacture absence of an active run.
+  const partial=fakeFetch({...allGreen(),[`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:{total_count:1,workflow_runs:[]}});
+  await assert.rejects(()=>ciStateOf(partial.fetchImpl,env(),REPO,HEAD,WORKFLOWS),/snapshot/);
+});
+test('qualification and final barriers never reuse the initial green check snapshot',async()=>{
+  let observations=0,proofs=0;
+  const fetch=fakeFetch({[snapshotRoute()]:()=>{
+    observations++;
+    return {total_count:5,check_runs:snapshotRows().map(row=>
+      observations>1 && row.name==='trivy'?{...row,conclusion:'failure'}:row)};
+  },...runsRoute(HEAD,[])});
+  const seen=await actualCiStateOf(fetch.fetchImpl,env(),REPO,HEAD,WORKFLOWS,null,{pr:pull(5),
+    qualifyExecution:async pr=>{proofs++;return fixtureQualification(pr);}});
+  assert.equal(proofs,1);assert.equal(seen.state,'idle');
+  assert.equal(fetch.calls.filter(c=>c.route.includes('/check-runs?')).length,2);
+  const fresh=fakeFetch({...allGreen(),...runsRoute(HEAD,[])});
+  assert.equal(await requiredBarrier(fresh.fetchImpl,env(),REPO,HEAD,5,{native_runs:[]}),true);
+  assert.equal(await requiredBarrier(fresh.fetchImpl,env(),REPO,HEAD,5,{native_runs:[]}),true);
+  assert.equal(fresh.calls.filter(c=>c.route.includes('/check-runs?')).length,2);
+});
+
+test('IDs repeated across pages and malformed PR run metadata stay unknown',async()=>{
+  const checkPage=Array.from({length:100},(_,i)=>check('auxiliary',{id:1000+i}));
+  const duplicate=async url=>new Response(JSON.stringify({total_count:101,check_runs:
+    Number(new URL(url).searchParams.get('page'))===1?checkPage:[checkPage[0]]}));
+  await assert.rejects(()=>ciStateOf(duplicate,env(),REPO,HEAD,WORKFLOWS),/invalid check_runs snapshot row/);
+  const runPage=Array.from({length:100},(_,i)=>run('.github/workflows/aux.yml','completed',{id:1000+i}));
+  const duplicateRun=async url=>new Response(JSON.stringify(String(url).includes('/check-runs?')?
+    {total_count:5,check_runs:snapshotRows()}:{total_count:101,workflow_runs:
+      Number(new URL(url).searchParams.get('page'))===1?runPage:[runPage[0]]}));
+  await assert.rejects(()=>ciStateOf(duplicateRun,env(),REPO,HEAD,WORKFLOWS),/invalid workflow_runs snapshot row/);
+  for(const row of [run(QUALITY,'mystery'),run(QUALITY,'queued',{head_sha:OTHER}),run(QUALITY,'queued',{event:'push'}),run('', 'queued')]) {
+    const fetch=fakeFetch({...allGreen(),...runsRoute(HEAD,[row])});
+    await assert.rejects(()=>ciStateOf(fetch.fetchImpl,env(),REPO,HEAD,WORKFLOWS),/invalid workflow_runs snapshot row/);
+  }
 });
