@@ -16,7 +16,7 @@ await build({ entryPoints: ['worker/continuity.ts'], outdir: directory, bundle: 
 stop();
 const { handleContinuityRequest: handle } = await import(pathToFileURL(path.join(directory, 'continuity.mjs')));
 const env = { SUPABASE_URL: 'https://storage.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key',
-  PROJECT_VIEWS_V2: 'true' };
+  PROJECT_VIEWS_V2: 'true', CLUED_DB_GATEWAY_TOKEN: 'fixture-worker-gateway' };
 const token = 'clued_bnd_isolated-fixture-0123456789abcdefghijklmnop';
 
 const recordUpdate = {
