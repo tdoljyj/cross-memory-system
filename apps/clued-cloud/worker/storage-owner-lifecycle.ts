@@ -1,5 +1,6 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
+import { MASTER_DISCLOSURE_VERSION, MASTER_RECONNECT_CONFIRMATION } from "./storage-master-disclosure";
 
 // Private Native route composition. Owner comes from requireSupabaseUser, not
 // a browser field; rpc adds SHA256(fixed connector secret) and that user's JWT.
@@ -30,7 +31,8 @@ type Descriptor = StorageCredentialContext & { connection_version: number; profi
 type Snapshot = { root_folder_id: string; root_parent_id: string; root_version: string; metadata_digest: string;
   etag: string; owned_by_me: boolean; can_trash: boolean; trashed: boolean; root_name: string; item_count: number };
 export type OwnerReconnectInput = { connection_id: string; base_version: number; profile_version: number; root_stop_generation: number;
-  request_id: string; confirmation: { contract: typeof STORAGE_OWNER_CONFIRMATION; root_folder_id: string; confirmed: true; normal_use: boolean } };
+  request_id: string; confirmation: { contract: typeof STORAGE_OWNER_CONFIRMATION; root_folder_id: string; confirmed: true; normal_use: boolean }
+    | { contract: typeof MASTER_RECONNECT_CONFIRMATION; root_folder_id: string; confirmed: true; master_enabled: boolean; disclosure_version: typeof MASTER_DISCLOSURE_VERSION } };
 export type OwnerDeleteInput = { connection_id: string; base_version: number; profile_version: number; request_id: string;
   confirmation: { contract: typeof STORAGE_OWNER_CONFIRMATION; root_folder_id: string; confirmed: true; trash_created_root: boolean;
     metadata_digest?: string; root_version?: string } | { contract: typeof STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION;
@@ -48,12 +50,15 @@ function publicResult(v: Data) {
   if (v.status === "uncertain" && UUID.test(String(v.attempt_id)) && v.execution_permitted === false)
     return { status: "uncertain", attempt_id: String(v.attempt_id), execution_permitted: false };
   if (v.status !== "completed" || !UUID.test(String(v.receipt_id)) || !UUID.test(String(v.connection_id))) deny();
+  if (v.master_state !== undefined && (!["on", "off", "partial"].includes(String(v.master_state)) ||
+    (v.master_state === "on" && v.provider_scope_profile !== "full"))) deny();
   return { status: "completed", receipt_id: String(v.receipt_id), connection_id: String(v.connection_id),
     ...(UUID.test(String(v.attempt_id)) ? { attempt_id: String(v.attempt_id) } : {}),
     ...(UUID.test(String(v.profile_id)) ? { profile_id: String(v.profile_id) } : {}),
     ...(UUID.test(String(v.project_id)) ? { project_id: String(v.project_id) } : {}),
     ...(typeof v.root_trashed === "boolean" ? { root_trashed: v.root_trashed } : {}),
     ...(typeof v.normal_use_enabled === "boolean" ? { normal_use_enabled: v.normal_use_enabled } : {}),
+    ...(v.master_state === undefined ? {} : { master_state: v.master_state }),
     ...(["legacy","normal","full"].includes(String(v.provider_scope_profile)) ? { provider_scope_profile: String(v.provider_scope_profile) } : {}),
     ...(["legacy","normal","full"].includes(String(v.requested_scope_profile)) ? { requested_scope_profile: String(v.requested_scope_profile) } : {}),
     ...(typeof v.refresh_enabled === "boolean" ? { refresh_enabled: v.refresh_enabled } : {}) };
@@ -64,7 +69,8 @@ export async function createStorageOwnerLifecycle(configuration: {
   vault: Parameters<typeof createStorageCredentialVault>[0];
   /** Existing Native OAuth composition; its own attempts enforce PKCE/session,
    * live issuer, provider identity, scope and a fresh sealed credential. */
-  oauth: { start(connectionId: string, defaultRefresh: boolean, scope: "keep"): Promise<{ authorization_url: string }> };
+  oauth: { start(connectionId: string, defaultRefresh: boolean, scope: "keep" | "full",
+    consent?: { disclosure_version: string }): Promise<{ authorization_url: string }> };
   fetch?: typeof fetch; clock?: () => number;
 }) {
   const vault = await createStorageCredentialVault(configuration.vault);
@@ -230,12 +236,23 @@ export async function createStorageOwnerLifecycle(configuration: {
     },
     async reconnect(owner: string, value: OwnerReconnectInput) {
       ownerValid(owner); input(value, ["connection_id","base_version","profile_version","root_stop_generation","request_id","confirmation"]);
-      confirm(value.confirmation, value.confirmation.root_folder_id, ["normal_use"]);
-      if (typeof value.confirmation.normal_use !== "boolean" || !Number.isSafeInteger(value.root_stop_generation) || value.root_stop_generation < 1) deny("input_invalid");
+      const confirmation = value.confirmation;
+      const master = confirmation.contract === MASTER_RECONNECT_CONFIRMATION;
+      if (master) {
+        if (!exact(confirmation, ["contract", "root_folder_id", "confirmed", "master_enabled", "disclosure_version"]) ||
+          confirmation.confirmed !== true || typeof confirmation.master_enabled !== "boolean" ||
+          confirmation.disclosure_version !== MASTER_DISCLOSURE_VERSION) deny("confirmation_required");
+      } else {
+        confirm(confirmation, confirmation.root_folder_id, ["normal_use"]);
+        if (typeof confirmation.normal_use !== "boolean") deny("input_invalid");
+      }
+      if (!Number.isSafeInteger(value.root_stop_generation) || value.root_stop_generation < 1) deny("input_invalid");
       const prepared = await rpc({ action: "reconnect_begin", ...value });
       if (prepared.status !== "prepared" || !UUID.test(String(prepared.connection_id)) || !UUID.test(String(prepared.attempt_id))) deny();
       // No legacy/OFF permission carry; refresh false is unconditional.
-      const result = await configuration.oauth.start(String(prepared.connection_id), false, "keep");
+      const result = master && confirmation.master_enabled
+        ? await configuration.oauth.start(String(prepared.connection_id), false, "full", { disclosure_version: MASTER_DISCLOSURE_VERSION })
+        : await configuration.oauth.start(String(prepared.connection_id), false, "keep");
       const url = new URL(result.authorization_url);
       if (url.protocol !== "https:" || url.hostname !== "accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth") deny();
       return { authorization_url: url.href, connection_id: String(prepared.connection_id), lifecycle_attempt_id: String(prepared.attempt_id), refresh_enabled: false };

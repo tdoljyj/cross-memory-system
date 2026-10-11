@@ -21,8 +21,9 @@ const rpcName='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
 const wholeRootMigration='20261010150000_storage_owner_root_trash_scope_v2.sql';
 async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 test('Native owner lifecycle, real migrations and synthetic Google observations',{timeout:240000},async t=>{
-  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'clued-owner-lifecycle-'));
-  const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:sha(id()),port:await port(),persistent:false,
+  const tempParent=await fs.realpath(os.tmpdir());
+  const dir=await fs.mkdtemp(path.join(tempParent,'clued-owner-lifecycle-'));
+  const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:sha(id()),port:await port(),persistent:true,
     postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
   const clients=[];let started=false;
   try{
@@ -37,8 +38,11 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    for(const file of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort())
+    let wholeRootPreMasterDefinition;
+    for(const file of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort()){
+      if(file.endsWith('_storage_master_control_v1.sql'))wholeRootPreMasterDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       try{await db.query(await fs.readFile(path.join(cloud,'supabase/migrations',file),'utf8'));}catch(e){throw new Error('Migration '+file+': '+e.message,{cause:e});}
+    }
     const closeout=await findGatewayCloseoutMigration(cloud);
     await assertGatewayCloseoutBoundary(db);
     const callerCatalog=await snapshotCallerCatalog(db);
@@ -93,6 +97,9 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       await assert.rejects(listing(),e=>e.code==='42501');await login(native);
     });
     await t.test('whole-root forward upgrade pins source, Owner/definer/config/ACL; replay is idempotent and drift fails without side effects',async()=>{
+      const successorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
+      if(wholeRootPreMasterDefinition)await db.query(wholeRootPreMasterDefinition);
+      try{
       const sql=await fs.readFile(path.join(cloud,'supabase/migrations',wholeRootMigration),'utf8');
       const catalog=async()=>(await db.query(`select pg_get_userbyid(proowner) owner,prosecdef,proconfig,proacl::text acl,
         encode(sha256(convert_to(prosrc,'UTF8')),'hex') source_hash from pg_proc where oid=$1::regprocedure`,[rpcName])).rows[0];
@@ -126,6 +133,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
         }finally{await db.query('rollback');}
       }
       assert.deepEqual(await catalog(),baseline);
+      }finally{if(wholeRootPreMasterDefinition)await db.query(successorDefinition);}
     });
     const original=await root();
     await t.test('actual Native onboard provenance and true registered identities; no fabricated physical path',async()=>{
@@ -447,5 +455,11 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       await db.query("update clued_private.issuer_credentials_v1 set state='retired',retired_at=clock_timestamp() where issuer_id=(select id from clued_private.issuer_identities_v1 where legacy_key=$1 and kind='storage')",[proof]);
       await assert.rejects(listing(),e=>e.code==='42501');
     });
-  }finally{for(const c of clients)await c.end().catch(()=>{});if(started)await server.stop();await fs.rm(dir,{recursive:true,force:true});}
+  }finally{
+    for(const c of clients)await c.end().catch(()=>{});if(started)await server.stop();
+    const actual=await fs.realpath(dir);
+    if(actual!==dir||path.dirname(actual)!==tempParent||!path.basename(actual).startsWith('clued-owner-lifecycle-'))
+      throw new Error('test database directory identity changed; refusing cleanup');
+    await fs.rm(actual,{recursive:true,force:true,maxRetries:20,retryDelay:250});
+  }
 });
