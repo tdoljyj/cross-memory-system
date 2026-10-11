@@ -252,6 +252,11 @@ def load_tests(loader, tests, pattern):
     replay_module = importlib.util.module_from_spec(replay_spec)
     replay_spec.loader.exec_module(replay_module)
     tests.addTests(loader.loadTestsFromModule(replay_module, pattern=pattern))
+    harness_path = ROOT / "tests/test_model_program_m2_saved_harness.py"
+    harness_spec = importlib.util.spec_from_file_location("m2_saved_harness_specifications", harness_path)
+    harness_module = importlib.util.module_from_spec(harness_spec)
+    harness_spec.loader.exec_module(harness_module)
+    tests.addTests(loader.loadTestsFromModule(harness_module, pattern=pattern))
     return tests
 
 
