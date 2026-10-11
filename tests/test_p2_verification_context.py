@@ -249,6 +249,76 @@ class F25ClockAndFreshness(VerificationContextFixture):
 
 
 class F27PathIdentity(VerificationContextFixture):
+    def tearDown(self):
+        self._remove_parent_alias(self.root / "bundle-parent-alias")
+        super().tearDown()
+
+    def _point_parent_alias(self, alias, target):
+        if os.name == "nt":
+            created = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(alias), str(target)],
+                text=True, capture_output=True,
+            )
+            if created.returncode:
+                self.skipTest("junction creation unavailable")
+        else:
+            alias.symlink_to(target, target_is_directory=True)
+
+    def _remove_parent_alias(self, alias):
+        if alias.is_symlink():
+            alias.unlink()
+        elif os.name == "nt" and alias.is_junction():
+            alias.rmdir()
+        elif alias.exists():
+            self.fail("parent alias cleanup refuses a real directory")
+
+    def _parent_alias(self):
+        alias = self.root / "bundle-parent-alias"
+        self._point_parent_alias(alias, self.repo)
+        return alias
+
+    def test_parent_alias_summary_preserves_request_and_canonical_output(self):
+        requested = self._parent_alias() / "bundle"
+        context = self.context()
+        self.assertEqual([], context.verify_bundle(requested, self.validator, boundary="source")[1])
+        summary = context.summary(boundary="source")
+        self.assertEqual(str(self.bundle.resolve()), summary["snapshot"]["root"])
+
+        # A different request spelling must not reuse the alias's Evidence.
+        self.assertEqual([], self.verify(context)[1])
+        self.assertEqual(2, context.full_validation_count)
+        self.assertFalse(context.last_reused)
+        self.assertTrue(any(e.get("reason") == "path-identity-changed" for e in context.events))
+
+    def test_parent_alias_retarget_with_identical_bytes_invalidates_summary(self):
+        alias = self._parent_alias()
+        requested = alias / "bundle"
+        replacement_parent = self.root / "replacement-parent"
+        replacement = replacement_parent / "bundle"
+        shutil.copytree(self.bundle, replacement)
+        original_data = (self.bundle / "data.txt").read_bytes()
+        original_manifest = (self.bundle / "manifest.json").read_bytes()
+        context = self.context()
+        self.assertEqual([], context.verify_bundle(requested, self.validator, boundary="source")[1])
+        self.assertEqual(str(self.bundle.resolve()), context.summary(boundary="source")["snapshot"]["root"])
+
+        self._remove_parent_alias(alias)
+        self._point_parent_alias(alias, replacement_parent)
+        self.assertEqual(original_data, (self.bundle / "data.txt").read_bytes())
+        self.assertEqual(original_manifest, (self.bundle / "manifest.json").read_bytes())
+        self.assertEqual(original_data, (requested / "data.txt").read_bytes())
+        self.assertEqual(original_manifest, (requested / "manifest.json").read_bytes())
+        with self.assertRaisesRegex(VerificationContextError, "no longer valid"):
+            context.summary(boundary="source")
+        self.assertTrue(any(e.get("reason") == "evidence-changed-before-summary" for e in context.events))
+        with self.assertRaisesRegex(VerificationContextError, "no current successful"):
+            context.summary(boundary="source")
+        with self.assertRaisesRegex(VerificationContextError, "no current successful"):
+            context.source_envelope(
+                boundary="source", sources_read=["bundle/data.txt"],
+                source_versions=["snap_fixture"], freshness="historical", degraded_reason=None,
+            )
+
     def test_directory_replacement_with_identical_bytes_invalidates(self):
         context = self.context()
         self.verify(context)
