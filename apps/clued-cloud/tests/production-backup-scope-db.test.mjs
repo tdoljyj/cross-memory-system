@@ -56,7 +56,11 @@ async function databaseFixture(dir) {
     try {
       let ready = false;
       for (let i=0;i<100;i++) {
-        if (spawnSync('docker',['exec',container,'pg_isready','-U','postgres'],{ stdio:'ignore' }).status === 0) { ready=true; break; }
+        // The image's temporary initialization server also answers pg_isready.
+        // Wait until entrypoint has exec'd the final server, not its next restart.
+        if (spawnSync('docker',['exec',container,'sh','-ceu',
+          'test "$(cat /proc/1/comm)" = postgres && pg_isready -U postgres'],
+          { stdio:'ignore' }).status === 0) { ready=true; break; }
         await new Promise(resolve => setTimeout(resolve,100));
       }
       assert.ok(ready,'Synthetic PostgreSQL did not start');
