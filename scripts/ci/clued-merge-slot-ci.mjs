@@ -54,6 +54,7 @@ import {
   ADMISSION_APP_ID,
   MERGE_SLOT_CHECK_NAME,
   appChecksOnHead,
+  checkNamesPullRequest,
   cluedRpc,
   githubJson,
   githubPaged,
@@ -63,7 +64,9 @@ import {
   workflowIsGated,
 } from "./clued-work-admission.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
-import { githubGraphReader, observeCompletedSource } from "./clued-gated-proof-runtime.mjs";
+import { githubGraphReader, githubAttemptLogReader, observeCompletedSource, createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
+
+import {cleanupManagedAutoMerge} from "./clued-managed-auto-merge.mjs";
 
 export const TOUCH_RPC = "clued_work_merge_slot_touch_v1";
 export const HOLDERS_RPC = "clued_work_merge_slot_holders_v1";
@@ -84,7 +87,7 @@ export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.ym
 // the slot; cancelled is not one: the admission run of an edited pull request
 // cancels the previous one on the same head, and the next run's check may not
 // exist yet (review NIT).
-const PASSING = new Set(["success", "neutral", "skipped"]);
+const PASSING = new Set(["success"]);
 const FAILING = new Set(["failure", "timed_out", "action_required", "startup_failure"]);
 const ACTIVE = new Set(["queued", "in_progress", "waiting", "requested", "pending"]);
 export const DEFAULT_HARD_CAP_MINUTES = 120;
@@ -117,17 +120,70 @@ async function newestCheck(fetchImpl, env, repository, headSha, { name, app_id: 
       && check.app && Number(check.app.id) === appId)
     .sort((a, b) => Number(b.id) - Number(a.id))[0] ?? null;
 }
+export function matchesOperationPR(current,expected,action) {
+  return Boolean(current && expected && current.number===expected.number && current.state==='open' && current.draft===false &&
+    current.head?.sha===expected.head?.sha && current.body===expected.body &&
+    current.base?.ref===expected.base?.ref && current.base?.repo?.full_name===expected.base?.repo?.full_name &&
+    current.base?.repo?.default_branch===expected.base?.repo?.default_branch &&
+    (!action || current.auto_merge===null) && (action!=='merge_pull_request' || current.mergeable_state==='clean'));
+}
+export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,proof,{expectedPR,action}={}) {
+  const signal=AbortSignal.timeout(12000);
+  const bounded=(url,init)=>fetchImpl(url,{...init,signal,redirect:'error'});
+  if(proof?.tip || expectedPR) {
+    const current=await githubJson(bounded,env,`/repos/${repository}/pulls/${prNumber}`);
+    if(expectedPR && !matchesOperationPR(current,expectedPR,action))return false;
+    if(proof?.tip) {
+      if(!proof.default_branch || current?.number!==prNumber || current.state!=='open' || current.draft!==false ||
+        current.head?.sha!==head || current.base?.ref!==proof.default_branch || current.base?.repo?.full_name!==repository ||
+        current.base?.repo?.default_branch!==proof.default_branch)return false;
+      const branch=await githubJson(bounded,env,`/repos/${repository}/branches/${encodeURIComponent(proof.default_branch)}`);
+      if(branch?.commit?.sha!==proof.tip)return false;
+    }
+  }
+  for(const required of CI_REQUIRED_CHECKS) {
+    const check=await newestCheck(bounded,env,repository,head,required);
+    if(!check || check.status!=='completed' || check.conclusion!=='success' ||
+      (required.name==='clued-admission-verified' && !checkNamesPullRequest(check,prNumber)))return false;
+  }
+  if(proof && !Array.isArray(proof.native_runs))return false;
+  const expected=proof?.native_runs??[];
+  const matches=(a,b)=>a?.id===b.id && a.head_sha===head && a.run_attempt===b.run_attempt &&
+    a.event==='pull_request' && a.status===b.status && a.conclusion===b.conclusion &&
+    String(a.path??'').replace(/@.*$/,'')===b.path &&
+    Array.isArray(a.pull_requests) && JSON.stringify(a.pull_requests.map(pr=>pr.number))===JSON.stringify(b.pull_requests);
+  for(const run of expected)if(!matches(await githubJson(bounded,env,`/repos/${repository}/actions/runs/${run.id}`),run))return false;
+  let total=null;const seen=new Set(),latest=new Map();
+  for(let page=1;page<=20;page++) {
+    const body=await githubJson(bounded,env,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request&per_page=100&page=${page}`);
+    if(!Array.isArray(body.workflow_runs) || !Number.isSafeInteger(body.total_count) || body.total_count<0 ||
+      (total!==null && total!==body.total_count))return false;
+    total=body.total_count;
+    for(const run of body.workflow_runs) {
+      if(!Number.isSafeInteger(run.id) || seen.has(run.id) || run.head_sha!==head || run.event!=='pull_request' ||
+        run.status!=='completed')return false;
+      seen.add(run.id);
+      const file=String(run.path??'').replace(/@.*$/,'');
+      if(!latest.has(file)||run.id>latest.get(file).id)latest.set(file,run);
+    }
+    if(seen.size===total)return expected.every(run=>matches(latest.get(run.path),run));
+    if(seen.size>total || body.workflow_runs.length!==100)return false;
+  }
+  return false;
+}
 
 // failed, running, green, or idle (not reported), with what was seen. An
 // admission check's failure that completed before slotSince (when the claim
 // became head of the merge queue, ms) is not reported.
 const STALE_OK = new Set(["clued-work-admission", "clued-admission-verified"]);
-export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null) {
+export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null, { pr, qualifyExecution } = {}) {
   const checks = [];
   let before = null;
   for (const required of CI_REQUIRED_CHECKS) {
     const check = await newestCheck(fetchImpl, env, repository, headSha, required);
     checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
+    if (check && required.name === "clued-admission-verified" && pr && !checkNamesPullRequest(check, pr.number))
+      return { state: "idle", reason: "the newest admission check does not bind this pull request", checks };
     if (check && check.status === "completed" && FAILING.has(check.conclusion)) {
       const completed = Date.parse(check.completed_at ?? "");
       // Only the admission checks: they fail when the head falls behind while the claim waits. A
@@ -159,7 +215,15 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
   }
   if (before) return { state: "idle", reason: before, checks };
   if (checks.every((check) => check.status === "completed" && PASSING.has(check.conclusion))) {
-    return { state: "green", reason: "all CI required checks passed", checks };
+    if (!pr || pr.head?.sha !== headSha || typeof qualifyExecution !== "function")
+      return { state: "idle", reason: "required checks passed; execution qualification context unavailable", checks };
+    const proof = await qualifyExecution(pr);
+    if (proof?.head !== headSha || proof.pr_number !== pr.number)
+      return { state: "idle", reason: proof?.reason ?? "execution proof identity missing", checks };
+    if (proof.state === "failed") return { state: "failed", reason: proof.reason, checks, execution: proof };
+    if (proof.passed === true && proof.state === "qualified" && await requiredBarrier(fetchImpl,env,repository,headSha,pr.number,proof))
+      return { state: "green", reason: proof.reason, checks, execution: proof };
+    return { state: "idle", reason: proof.reason ?? "execution scope remains unknown", checks, execution: proof };
   }
   return { state: "idle", reason: "no CI result yet and no CI run active", checks };
 }
@@ -179,24 +243,30 @@ function rpcError(name, response) {
 }
 
 export async function reportMergeSlots({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync,
-  sourceObservationBudgetMs }) {
+  sourceObservationBudgetMs, qualifyExecution }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const hardCap = (mode.policy && mode.policy.merge_slot_hard_cap_minutes) || DEFAULT_HARD_CAP_MINUTES;
   const result = { event: eventName, hard_cap_minutes: hardCap, holders: [], reports: [], skipped: null, notices: [], errors: [] };
+  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+  const workflows = ciWorkflows(workspace);
+  const qualify = qualifyExecution ?? createExecutionQualifier({ env, fetchImpl, workspace, workflows });
+  const openPulls=await githubPaged(fetchImpl,env,`/repos/${repository}/pulls?state=open`);
+  const cleanup=await cleanupManagedAutoMerge({env,fetchImpl,pulls:openPulls});
+  result.managed_cleanup=cleanup.actions;result.notices.push(...cleanup.notices);result.errors.push(...cleanup.errors);
   if (!(env.CLUED_CONTEXT_READ_TOKEN ?? "").trim()) {
     result.errors.push(withTokenHint("CLUED_CONTEXT_READ_TOKEN is not set."));
     return result;
   }
-  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
-  const workflows = ciWorkflows(workspace);
+
   if (eventName === "workflow_run" && Number.isSafeInteger(event?.workflow_run?.id)) {
     result.source_observation = await observeCompletedSource({ env, event, eventName, workspace, workflows,
       budgetMs: sourceObservationBudgetMs,
       read: (route, { signal }) => githubJson((url, init) => fetchImpl(url, { ...init, signal, redirect: "error" }), env, route),
-      graphRead: githubGraphReader(fetchImpl, env) });
+      graphRead: githubGraphReader(fetchImpl, env),
+      readLog: githubAttemptLogReader(fetchImpl, env) });
   }
-  const pulls = (await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`))
+  const pulls = openPulls.filter(pr=>!cleanup.blocked.has(pr.number))
     .filter((pr) => pr && pr.head && pr.base && pr.base.repo && pr.base.ref === pr.base.repo.default_branch);
   const byRef = new Map(pulls.map((pr) => [`${repository}#${pr.number}`.toLowerCase(), pr]));
   // The scopes the open pull requests name; a slot's pull request names its
@@ -242,9 +312,23 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
   for (const { pr, scope, since } of live) {
     const prRef = `${repository}#${pr.number}`;
     try {
-      const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since);
+      let seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution: qualify });
       const report = { pr: pr.number, head_sha: pr.head.sha, ci_state: seen.state, reason: seen.reason };
       if (seen.state !== "idle") {
+        const current = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
+        const tip = seen.execution?.tip ? await githubJson(fetchImpl, env,
+          `/repos/${repository}/branches/${encodeURIComponent(pr.base.repo.default_branch)}`) : null;
+        if (current?.number !== pr.number || current.state !== "open" || current.draft !== false || current.head?.sha !== pr.head.sha ||
+          current.base?.ref !== pr.base.ref || current.base?.repo?.full_name !== repository ||
+          current.base.repo.default_branch !== pr.base.repo.default_branch ||
+          (seen.execution?.tip && tip?.commit?.sha !== seen.execution.tip)) {
+          Object.assign(report, { ci_state: "idle", reason: "PR or default tip changed before reporting CI" });
+          result.reports.push(report);continue;
+        }
+        if(seen.state==='green' && !await requiredBarrier(fetchImpl,env,repository,pr.head.sha,pr.number,seen.execution)) {
+          Object.assign(report,{ci_state:'idle',reason:'required checks or active runs changed before reporting CI'});
+          result.reports.push(report);continue;
+        }
         const response = await cluedRpc(fetchImpl, env, workspace, TOUCH_RPC, {
           scope, pr_ref: prRef, head_sha: pr.head.sha, ci_state: seen.state,
           ...(seen.state === "failed" ? { reason: [...seen.reason.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 300).join("") } : { hard_cap_minutes: hardCap }),

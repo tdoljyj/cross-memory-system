@@ -468,7 +468,7 @@ test("metrics: self-hosted and hosted minutes split; queue, gate and re-run coun
   assert.deepEqual(m.self_hosted_minutes.by_workflow, { ".github/workflows/design-refs.yml": 21, ".github/workflows/trivy.yml": 10 });
   assert.deepEqual(m.self_hosted_minutes.by_conclusion, { failure: 20, success: 11 });
   assert.equal(m.self_hosted_minutes.by_layer, null);
-  assert.match(m.self_hosted_minutes.not_measured.by_layer, /not read in version 1/);
+  assert.match(m.self_hosted_minutes.not_measured.by_layer, /no applicable scoped attribution/);
   assert.deepEqual([m.hosted_minutes.total, m.hosted_minutes.jobs], [4, 1]);
   assert.deepEqual([m.queue_minutes.count, m.queue_minutes.p50, m.queue_minutes.p95], [3, 2, 6]);
   assert.deepEqual([m.gate_minutes.total, m.gate_minutes.jobs, m.gate_minutes.self_hosted_jobs], [1, 1, 1]);

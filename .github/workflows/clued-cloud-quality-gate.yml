@@ -105,11 +105,21 @@ jobs:
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Install from lockfile
+        id: install
         if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        env:
+          # Debug logs only; npm's existing cache and command stay the same.
+          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: >-
           timeout --signal=TERM --kill-after=15s 8m
           npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
+      - name: Observe npm HTTP cache events
+        if: ${{ !cancelled() && (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') }}
+        env:
+          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          NPM_INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: node "$GITHUB_WORKSPACE/scripts/ci/npm-cache-observation.mjs"
       - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
         run: npm run lint
       - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'

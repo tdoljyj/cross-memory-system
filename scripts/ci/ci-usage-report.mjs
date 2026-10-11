@@ -87,13 +87,14 @@ export const REPORT_FILE = "ci-usage-report.json";
 export const GATE_JOB = "admission-gate";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Metrics version 1 does not compute, and why. Each is reported as null.
+// Evidence still missing after scoped attribution. Each remains null; reading
+// some App checks or commit ancestry does not establish historical causality.
 export const NOT_MEASURED = Object.freeze({
-  admission_failures_by_reason: "needs the titles of the failing clued-admission-verified App checks (one check-run list per head); not read in version 1",
-  update_main_rounds: "needs each merged pull request's commits (merge commits with two parents); per pull request commits are not read in version 1",
-  wasted_final_rounds: "needs each merged pull request's commits and the main tip at each run; not read in version 1",
-  queue_depth_p95: "needs the merge queue items from Clued receipts; this run reads GitHub only",
-  unclaimed_admitted: "needs the Clued admission receipts of heads admitted without a claim in efficiency (§5.3); this run reads GitHub only",
+  admission_failures_by_reason: "needs complete authoritative admission reason evidence per head; an App verdict title does not identify failure causes",
+  update_main_rounds: "needs actual branch-update evidence and the main ref at the historical update; partial commit ancestry and later main membership do not prove update-main rounds",
+  wasted_final_rounds: "needs complete run/head lineage and causal replacement evidence with the historical main ref; ancestry candidates or a later head alone do not prove wasted work",
+  queue_depth_p95: "needs complete historical Clued FIFO queue observations; GitHub job queue time and recent claim snapshots are not a merge queue depth series",
+  unclaimed_admitted: "needs authoritative claim status and admission policy at the actual admission time; a missing current claim or an App verdict alone does not prove unclaimed admission",
 });
 
 // --- Small pure helpers.
@@ -517,8 +518,8 @@ export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budge
       by_workflow: sumBy(selfHosted, (job) => job.workflow, (job) => job.minutes),
       by_conclusion: sumBy(selfHosted, (job) => job.conclusion ?? "none", (job) => job.minutes),
       by_layer: null, by_state: null,
-      not_measured: { by_layer: "needs each pull request's changed paths (per pull request files); not read in version 1",
-        by_state: "the Merge Admission state is not recorded on runs; not read in version 1" },
+      not_measured: { by_layer: "needs a trusted PR/head admission observation; this collection path has no applicable scoped attribution",
+        by_state: "needs a trusted admission state observed before each job started; this collection path has no applicable scoped attribution" },
     },
     hosted_minutes: { status: statusOf(jobsComplete), total: round(sum(hosted.map((job) => job.minutes))), jobs: hosted.length,
       by_workflow: sumBy(hosted, (job) => job.workflow, (job) => job.minutes) },
@@ -532,7 +533,8 @@ export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budge
       self_hosted_jobs: gates.filter(isSelfHosted).length },
     gate_queue_minutes: { status: statusOf(jobsComplete), ...distribution(gates.map((job) => job.queue).filter((v) => v !== null)) },
     time_to_merge_minutes: { status: statusOf(pullsComplete), ...distribution(merged), by_layer: null, by_state: null,
-      not_measured: { by_layer: "needs each pull request's changed paths", by_state: "the Merge Admission state is not recorded on pull requests" } },
+      not_measured: { by_layer: "needs complete per-PR layer attribution for merge-time statistics",
+        by_state: "needs historical state attribution for the merge-time interval, not a current or later App observation" } },
   };
   for (const [name, reason] of Object.entries(NOT_MEASURED)) metrics[name] = { status: "not_measured", value: null, reason };
   if (attribution) {
