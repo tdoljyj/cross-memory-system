@@ -846,7 +846,8 @@ export default function StorageConnections() {
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function openLifecycle(c: Connection, kind: LifecycleDialog["kind"]) {
-    if (operation.current || busy || c.pending_lifecycle) return;
+    if (operation.current || busy || (c.pending_lifecycle && !(kind === "reconnect"
+      && c.pending_lifecycle.operation === "reconnect" && c.pending_lifecycle.state === "prepared"))) return;
     if (kind === "reconnect" && (c.state !== "revoked" || !c.root_stopped || c.root_stop_generation < 1)) return;
     const next: LifecycleDialog = { kind, connection: c, masterEnabled: kind === "reconnect", trashRoot: false,
       reading: kind === "delete" && c.created_by_clued && c.state === "active",
@@ -927,7 +928,7 @@ export default function StorageConnections() {
       if (latest !== undefined) setMessage(result.status === "completed" && typeof result.receipt_id === "string"
         ? "已核实上次操作完成。" : result.status === "cancelled"
           ? "上次操作准备已过期并取消；可以重新确认。" : result.status === "waiting"
-            ? "本次 Google 授权仍在等待。若你已取消授权，请等待准备过期（最长 10 分钟）后再次核对，再重新连接。"
+            ? "Google 授权尚未完成。若已关闭授权页，可点击“重新打开 Google 授权”，重新确认后继续。"
             : "上次操作仍未确认。此次仅核对结果，没有再次删除文件夹或重新授权。");
     } catch { if (epoch === revision.current) setMessage("上次操作暂时无法核实，请稍后再核对；不要重复提交。"); }
     finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
@@ -1087,7 +1088,12 @@ export default function StorageConnections() {
         </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
         {c.pending_lifecycle ? <div role="status" className="my-2">
-          <p>上次{c.pending_lifecycle.operation === "delete" ? "删除" : "重新连接"}操作尚待核对。</p>
+          <p>{c.pending_lifecycle.operation === "reconnect" && c.pending_lifecycle.state === "prepared"
+            ? "Google 授权尚未完成。关闭授权页后，可以重新打开并继续连接。"
+            : `上次${c.pending_lifecycle.operation === "delete" ? "删除" : "重新连接"}操作尚待核对。`}</p>
+          {c.pending_lifecycle.operation === "reconnect" && c.pending_lifecycle.state === "prepared"
+            && c.state === "revoked" && c.root_stopped && c.root_stop_generation > 0 &&
+            <button className="mr-4" disabled={busy} onClick={() => void openLifecycle(c, "reconnect")}>重新打开 Google 授权</button>}
           <button disabled={busy} onClick={() => void recoverLifecycle(c)}>核对上次操作结果</button>
         </div> : <div className="mt-3 flex gap-4">
           {c.state === "revoked" && c.root_stopped && c.root_stop_generation > 0 &&
