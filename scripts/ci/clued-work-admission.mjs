@@ -1513,7 +1513,11 @@ export function renderReverifySummary(result) {
 // its gate job changes only its own cost gating; the required check, which
 // merging needs, is unaffected.
 
-export const GATE_WAIT_SECONDS = 480;
+// R1: release the gate's self-hosted slot after three minutes of polling.
+// A late App check never changes this attempt's admitted=false output. The
+// executor must qualify a current-head gate-only attempt and run all jobs
+// once, within the live admission's rerun allowance, before considering merge.
+export const GATE_WAIT_SECONDS = 180;
 export const GATE_POLL_SECONDS = 10;
 
 // Re-review 2, N3c: the pull_requests list of a run names every open pull
@@ -1641,7 +1645,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   // A fork pull request, like any other, follows the App check that main's
   // admission run posts; the gate reads no repository variable.
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
-  const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : GATE_WAIT_SECONDS;
+  const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0
+    ? Math.min(waitSeconds, GATE_WAIT_SECONDS) : GATE_WAIT_SECONDS;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);
@@ -1659,13 +1664,15 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let found = { run: null, check: null };
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
-    for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
+    for (let waited = 0; ;) {
       found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
       // On a re-run the admission run may itself be running again under its
       // old id, with its previous attempt's check posted: wait for it to end.
       const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
       if (settled || waited >= limit) break;
-      await sleep(GATE_POLL_SECONDS * 1000);
+      const delay = Math.min(GATE_POLL_SECONDS, limit - waited);
+      await sleep(delay * 1000);
+      waited += delay;
     }
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission

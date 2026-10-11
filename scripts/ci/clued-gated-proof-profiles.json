@@ -59,9 +59,9 @@
     },
     ".github/workflows/clued-cloud-quality-gate.yml": {
       "registration_status": "registered",
-      "workflow_blob": "f1b1c57f36abe4f0123d13cdda46f7d258c54af7",
-      "source_sha256": "ee65c37d1613a20e4036d35efc19b26f9579efabd22589246ea81894ec36bd95",
-      "source_yaml": "name: clued-cloud-quality\n\n# Lint, migration ledger, typecheck, build and unit tests of apps/clued-cloud\n# (npm run lint, npm run ledger:verify, npm run typecheck, npm run build, npm\n# run test:unit) on every pull request and\n# every push to main; the build comes first because tests/rendered-html.test.mjs\n# reads the built server bundle.\n# Ordinary documentation gets a scoped check without application installs/tests;\n# unknown, code, dependency, config and governance changes still run the full suite.\n# This workflow deliberately has no paths filter: the other app checks are\n# path-filtered, so none of them can be a required status check, while this\n# one can be added to the main ruleset's required checks under the single\n# check name clued-cloud-quality. The gate job is the shared admission gate\n# (Work Claim Admission v0.1 §4.6 L0b). Audit 2026-10-06, Task 5077b641.\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache\n          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: >-\n          timeout --signal=TERM --kill-after=15s 8m\n          npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline\n          --fetch-retries=2 --fetch-timeout=30000\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache\n          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: ${{ (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') && 'npm' || '' }}\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm ci --ignore-scripts\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n",
+      "workflow_blob": "a811a0128db82fb23f78b51fefea73288a103223",
+      "source_sha256": "5fd5231948796e959f19da42f319184a01812de267212ab126f92b7f9decfff1",
+      "source_yaml": "name: clued-cloud-quality\n\n# Lint, migration ledger, typecheck, build and unit tests of apps/clued-cloud\n# (npm run lint, npm run ledger:verify, npm run typecheck, npm run build, npm\n# run test:unit) on every pull request and\n# every push to main; the build comes first because tests/rendered-html.test.mjs\n# reads the built server bundle.\n# Ordinary documentation gets a scoped check without application installs/tests;\n# unknown, code, dependency, config and governance changes still run the full suite.\n# This workflow deliberately has no paths filter: the other app checks are\n# path-filtered, so none of them can be a required status check, while this\n# one can be added to the main ruleset's required checks under the single\n# check name clued-cloud-quality. The gate job is the shared admission gate\n# (Work Claim Admission v0.1 §4.6 L0b). Audit 2026-10-06, Task 5077b641.\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache\n          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        id: install\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        env:\n          # Debug logs only; npm's existing cache and command stay the same.\n          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}\n        run: >-\n          timeout --signal=TERM --kill-after=15s 8m\n          npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline\n          --fetch-retries=2 --fetch-timeout=30000\n      - name: Observe npm HTTP cache events\n        if: ${{ !cancelled() && (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') }}\n        env:\n          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}\n          NPM_INSTALL_OUTCOME: ${{ steps.install.outcome }}\n        run: node \"$GITHUB_WORKSPACE/scripts/ci/npm-cache-observation.mjs\"\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache\n          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: ${{ (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') && 'npm' || '' }}\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm ci --ignore-scripts\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n",
       "primary_ids": [
         "trusted-self-hosted",
         "untrusted-hosted"
@@ -76,6 +76,7 @@
           "required_steps": {
             "Qualify ordinary documentation changes": 1,
             "Install from lockfile": 1,
+            "Observe npm HTTP cache events": 1,
             "Run npm run lint": 1,
             "Run npm run ledger:verify": 1,
             "Run npm run typecheck": 1,
@@ -88,6 +89,9 @@
             ],
             "Install from lockfile": [
               "00748c6c6e2381b82667ece10aa5756aa65b2caf29f2523f59de8802847cd55a"
+            ],
+            "Observe npm HTTP cache events": [
+              "f63fbc99e6a98648138320903fe5b8abbff69c05bdb569bbc93bb49480dbaa41"
             ],
             "Run npm run lint": [
               "326d9800e732eb9d5a5eb56384a547a097ed84be317cb2852cea5bb574831812"
@@ -104,7 +108,10 @@
             "Run npm run test:unit": [
               "79f78a59a4f1b3d573566924d3450cbd057589af4b945d84d50fce00d93a3f01"
             ]
-          }
+          },
+          "documentation_skipped_steps": [
+            "Observe npm HTTP cache events"
+          ]
         },
         {
           "job_id": "untrusted-hosted",
@@ -142,6 +149,96 @@
               "79f78a59a4f1b3d573566924d3450cbd057589af4b945d84d50fce00d93a3f01"
             ]
           }
+        }
+      ],
+      "accepted_sources": [
+        {
+          "registration_status": "registered",
+          "workflow_blob": "f1b1c57f36abe4f0123d13cdda46f7d258c54af7",
+          "source_sha256": "ee65c37d1613a20e4036d35efc19b26f9579efabd22589246ea81894ec36bd95",
+          "source_yaml": "name: clued-cloud-quality\n\n# Lint, migration ledger, typecheck, build and unit tests of apps/clued-cloud\n# (npm run lint, npm run ledger:verify, npm run typecheck, npm run build, npm\n# run test:unit) on every pull request and\n# every push to main; the build comes first because tests/rendered-html.test.mjs\n# reads the built server bundle.\n# Ordinary documentation gets a scoped check without application installs/tests;\n# unknown, code, dependency, config and governance changes still run the full suite.\n# This workflow deliberately has no paths filter: the other app checks are\n# path-filtered, so none of them can be a required status check, while this\n# one can be added to the main ruleset's required checks under the single\n# check name clued-cloud-quality. The gate job is the shared admission gate\n# (Work Claim Admission v0.1 §4.6 L0b). Audit 2026-10-06, Task 5077b641.\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache\n          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: >-\n          timeout --signal=TERM --kill-after=15s 8m\n          npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline\n          --fetch-retries=2 --fetch-timeout=30000\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'clued-cloud-quality' || 'clued-cloud-quality-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          fetch-depth: 2\n      - name: Qualify ordinary documentation changes\n        id: classify\n        continue-on-error: true\n        working-directory: .\n        env:\n          TMPDIR: ${{ runner.temp }}\n          TMP: ${{ runner.temp }}\n          TEMP: ${{ runner.temp }}\n          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache\n          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs\n        run: |\n          python3 scripts/ci/test_clued_docs_only.py\n          python3 scripts/ci/clued-docs-only.py\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: ${{ (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') && 'npm' || '' }}\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install from lockfile\n        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm ci --ignore-scripts\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run lint\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run ledger:verify\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run typecheck\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run build\n      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'\n        run: npm run test:unit\n",
+          "primary_ids": [
+            "trusted-self-hosted",
+            "untrusted-hosted"
+          ],
+          "pull_request": null,
+          "gated": true,
+          "routes": [
+            {
+              "job_id": "trusted-self-hosted",
+              "name": "clued-cloud-quality",
+              "self_hosted": true,
+              "required_steps": {
+                "Qualify ordinary documentation changes": 1,
+                "Install from lockfile": 1,
+                "Run npm run lint": 1,
+                "Run npm run ledger:verify": 1,
+                "Run npm run typecheck": 1,
+                "Run npm run build": 1,
+                "Run npm run test:unit": 1
+              },
+              "command_digests": {
+                "Qualify ordinary documentation changes": [
+                  "390212452e7b00c1f931da0ca737b06708eaefdb4cc857b58be5b84b58c1e827"
+                ],
+                "Install from lockfile": [
+                  "00748c6c6e2381b82667ece10aa5756aa65b2caf29f2523f59de8802847cd55a"
+                ],
+                "Run npm run lint": [
+                  "326d9800e732eb9d5a5eb56384a547a097ed84be317cb2852cea5bb574831812"
+                ],
+                "Run npm run ledger:verify": [
+                  "9d06ddb90df675a29953f2ca4432c4e8d18ec7422099c42dda409f39658a2707"
+                ],
+                "Run npm run typecheck": [
+                  "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+                ],
+                "Run npm run build": [
+                  "16c0e4305ac213dff39fc82b69b6e08aeeb8758e33cd72d7c409752a70e9f054"
+                ],
+                "Run npm run test:unit": [
+                  "79f78a59a4f1b3d573566924d3450cbd057589af4b945d84d50fce00d93a3f01"
+                ]
+              }
+            },
+            {
+              "job_id": "untrusted-hosted",
+              "name": "clued-cloud-quality",
+              "self_hosted": false,
+              "required_steps": {
+                "Qualify ordinary documentation changes": 1,
+                "Install from lockfile": 1,
+                "Run npm run lint": 1,
+                "Run npm run ledger:verify": 1,
+                "Run npm run typecheck": 1,
+                "Run npm run build": 1,
+                "Run npm run test:unit": 1
+              },
+              "command_digests": {
+                "Qualify ordinary documentation changes": [
+                  "390212452e7b00c1f931da0ca737b06708eaefdb4cc857b58be5b84b58c1e827"
+                ],
+                "Install from lockfile": [
+                  "e568f48e4564d1ada4a272f93f6e94a1db7c70212a765c414a6ec92d2a889e21"
+                ],
+                "Run npm run lint": [
+                  "326d9800e732eb9d5a5eb56384a547a097ed84be317cb2852cea5bb574831812"
+                ],
+                "Run npm run ledger:verify": [
+                  "9d06ddb90df675a29953f2ca4432c4e8d18ec7422099c42dda409f39658a2707"
+                ],
+                "Run npm run typecheck": [
+                  "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+                ],
+                "Run npm run build": [
+                  "16c0e4305ac213dff39fc82b69b6e08aeeb8758e33cd72d7c409752a70e9f054"
+                ],
+                "Run npm run test:unit": [
+                  "79f78a59a4f1b3d573566924d3450cbd057589af4b945d84d50fce00d93a3f01"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -526,6 +623,320 @@
               "b07154ac821f3f7995f64728b322c99e821fb5b0c4a281ead8cd25ac072545d0"
             ]
           }
+        }
+      ],
+      "accepted_sources": [
+        {
+          "registration_status": "registered",
+          "workflow_blob": "1eedcb3435610b3ebdfff4573218979b7e3d665d",
+          "source_sha256": "2876b0b12f1ffc96f323b8ea76eb8373a247f29e155bbadd769e972efb24e24f",
+          "source_yaml": "name: Clued connection authorization candidate\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-connection-authorization.yml'\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - 'apps/clued-cloud/worker/**'\n      - 'apps/clued-cloud/app/**'\n      - 'apps/clued-cloud/vite.config.ts'\n      - 'apps/clued-cloud/supabase/migrations/**'\n      - 'apps/clued-cloud/tests/information-flow-*.test.mjs'\n      - 'development/contracts/information-flow/vendored/**'\n      - 'scripts/phase2-qualification/minimum-context-compiler/**'\n      - 'apps/clued-cloud/tests/*authorization*.test.mjs'\n      - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'\n      - 'apps/clued-cloud/tests/development-context-api.test.mjs'\n      - 'apps/clued-cloud/tests/development-contexts-ui.test.mjs'\n      - 'apps/clued-cloud/tests/consent-account-race.test.mjs'\n      - 'apps/clued-cloud/tests/supabase-browser.test.mjs'\n      - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'\n      - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'\n      - 'apps/clued-cloud/tests/context-v2-*.test.mjs'\n      - 'apps/clued-cloud/tests/currentness-*.test.mjs'\n      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'\n      - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'\n      - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'\n      - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'\n      - 'apps/clued-cloud/tests/task-dependency-guard-db.test.mjs'\n      - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'\n      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'\n      - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'\n      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'\n      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n      - 'kernel/host/resource-center-*.py'\n      - 'apps/clued-cloud/scripts/*resource-center*.mjs'\n      - 'kernel/policy/resource-center-*.mjs'\n      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'\n      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-worker.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-transport.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs'\n      - 'apps/clued-cloud/evals/integration-runtime/**'\n      - 'development/contracts/integration-runtime/**'\n      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'\n      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'\n      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'\n      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'\n      - 'apps/clued-cloud/scripts/production-release-*'\n      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'\n      - 'protocol/agent/**'\n      - '.github/workflows/clued-cloud-production-release.yml'\n      - 'apps/clued-cloud/package*.json'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/clued-connection-authorization.yml'\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - 'apps/clued-cloud/worker/**'\n      - 'apps/clued-cloud/app/**'\n      - 'apps/clued-cloud/vite.config.ts'\n      - 'apps/clued-cloud/supabase/migrations/**'\n      - 'apps/clued-cloud/tests/information-flow-*.test.mjs'\n      - 'development/contracts/information-flow/vendored/**'\n      - 'scripts/phase2-qualification/minimum-context-compiler/**'\n      - 'apps/clued-cloud/tests/*authorization*.test.mjs'\n      - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'\n      - 'apps/clued-cloud/tests/development-context-api.test.mjs'\n      - 'apps/clued-cloud/tests/development-contexts-ui.test.mjs'\n      - 'apps/clued-cloud/tests/consent-account-race.test.mjs'\n      - 'apps/clued-cloud/tests/supabase-browser.test.mjs'\n      - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'\n      - 'apps/clued-cloud/tests/priority-projection-db.test.mjs'\n      - 'apps/clued-cloud/tests/context-v2-*.test.mjs'\n      - 'apps/clued-cloud/tests/currentness-*.test.mjs'\n      - 'apps/clued-cloud/tests/work-claims-*.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs'\n      - 'apps/clued-cloud/tests/resume-constraint-index-db.test.mjs'\n      - 'apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs'\n      - 'apps/clued-cloud/tests/projection-refresh-*.test.mjs'\n      - 'apps/clued-cloud/tests/record-update-field-merge-db.test.mjs'\n      - 'apps/clued-cloud/tests/task-dependency-guard-db.test.mjs'\n      - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'\n      - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'\n      - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'\n      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'\n      - 'apps/clued-cloud/tests/resource-center-*.test.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n      - 'kernel/host/resource-center-*.py'\n      - 'apps/clued-cloud/scripts/*resource-center*.mjs'\n      - 'kernel/policy/resource-center-*.mjs'\n      - 'apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql'\n      - 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-worker.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-transport.test.mjs'\n      - 'apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs'\n      - 'apps/clued-cloud/evals/integration-runtime/**'\n      - 'development/contracts/integration-runtime/**'\n      - 'apps/clued-cloud/tests/fixtures/integration-runtime/**'\n      - 'apps/clued-cloud/tests/mtpe-*.test.mjs'\n      - 'apps/clued-cloud/tests/production-release-gate.test.mjs'\n      - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'\n      - 'apps/clued-cloud/scripts/production-release-*'\n      - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'\n      - 'protocol/agent/**'\n      - '.github/workflows/clued-cloud-production-release.yml'\n      - 'apps/clued-cloud/package*.json'\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref\n        required: false\n        type: string\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs\n  # admission_run_id from clued-work-admission-dispatch.yml; push events are\n  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  push-reuse:\n    name: Verify prior PR tested tree\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')\n    runs-on: ubuntu-slim\n    timeout-minutes: 3\n    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n    outputs:\n      run_heavy: ${{ steps.reuse.outputs.run_heavy }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        if: github.event_name == 'push'\n        with:\n          ref: ${{ github.sha }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        if: github.event_name == 'push'\n        with:\n          node-version: 22.23.3\n      - name: Configure job temporary storage\n        if: github.event_name == 'push'\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify duplicate-push proof regressions\n        if: github.event_name == 'push'\n        run: node --test scripts/ci/clued-push-reuse.test.mjs\n      - id: reuse\n        if: github.event_name == 'push'\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n          REUSE_WORKFLOW: clued-connection-authorization.yml\n        run: node scripts/ci/clued-push-reuse.mjs\n\n  isolated-candidate-trusted-self-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner)))\n    name: >-\n      ${{ ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n             (github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner))\n          && 'isolated-candidate' || 'isolated-candidate-self-hosted-skipped' }}\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - run: npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline\n      - name: Hydrate embedded PostgreSQL bundled library symlinks\n        # --ignore-scripts skips the platform package's postinstall, which links the\n        # bundled libpq.so.5 and libicu*.so.60 that the binaries load via $ORIGIN/../lib.\n        working-directory: apps/clued-cloud/node_modules/@embedded-postgres/linux-x64\n        run: |\n          node scripts/hydrate-symlinks.js\n          ./native/bin/initdb --version\n          ./native/bin/postgres --version\n      - run: npm run typecheck\n      - run: npm run test:authorization:transport\n      - run: npm run test:authorization:database\n      - run: npm run test:context:v2\n      - run: npm run test:projection:refresh\n      - run: npm run test:work:claims\n      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs\n      - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs\n      # Without --test-force-exit, which can end a loaded run before every test has run: this\n      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.\n      - run: node --test tests/db-security-hygiene-db.test.mjs\n      - run: npm run test:information-flow:candidates\n      - run: npm run test:information-flow:intake\n      - run: npm run test:information-flow:promotion\n      - run: npm run test:information-flow:context\n      - run: npm run test:information-flow:invalidation\n      - run: npm run test:information-flow:hardening\n      - run: npm run test:records:db\n      - run: npm run test:mtpe:intake\n      - run: npm run test:production:release-gate\n      - run: npm run test:integration-runtime:gate-evidence\n      # IntegrationRuntime §17 item 2: every S2c suite runs once, here, through the gate evidence\n      # generator, which fails the step unless G-A3/7/8/9/10/11 are all PASS and every test passed.\n      - name: S2c gate evidence\n        env:\n          CLUED_EVIDENCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}\n        run: npm run integration-runtime:gate-evidence -- --out \"$RUNNER_TEMP/integration-runtime-gate-evidence.json\"\n      - name: Upload S2c gate evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: integration-runtime-gate-evidence-self-hosted\n          path: ${{ runner.temp }}/integration-runtime-gate-evidence.json\n          if-no-files-found: warn\n      - run: npm run test:authorization:invitations\n      - run: npm run test:authorization:migrations\n      - run: npm run test:resource-center:authority\n      - run: npm run test:authorization:integration\n      - run: npm run test:authorization:pages\n\n      - name: Record the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        env:\n          REUSE_WORKFLOW: clued-connection-authorization.yml\n          REUSE_REPORT_PATH: ${{ runner.temp }}/clued-tested-tree.json\n        run: node ../../scripts/ci/clued-push-reuse.mjs --report\n      - name: Upload the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-tested-tree-clued-connection-authorization.yml-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/clued-tested-tree.json\n          if-no-files-found: error\n          compression-level: 0\n          retention-days: 7\n\n  isolated-candidate-untrusted-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner))))\n    name: >-\n      ${{ ((github.event_name == 'workflow_dispatch' && github.actor != github.repository_owner) ||\n             (github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner)))\n          && 'isolated-candidate' || 'isolated-candidate-hosted-skipped' }}\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - run: npm ci --ignore-scripts\n      - name: Install embedded PostgreSQL ICU compatibility runtime\n        run: |\n          set -euo pipefail\n          icu_deb=$(mktemp \"$RUNNER_TEMP/clued-libicu60-XXXXXX.deb\")\n          trap 'rm -f -- \"$icu_deb\"' EXIT\n          curl -fsSLo \"$icu_deb\" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb\n          sudo dpkg -i \"$icu_deb\"\n          ldconfig -p | grep 'libicuuc.so.60'\n      - run: npm run typecheck\n      - run: npm run test:authorization:transport\n      - run: npm run test:authorization:database\n      - run: npm run test:context:v2\n      - run: npm run test:projection:refresh\n      - run: npm run test:work:claims\n      - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs\n      - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs\n      # Without --test-force-exit, which can end a loaded run before every test has run: this\n      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.\n      - run: node --test tests/db-security-hygiene-db.test.mjs\n      - run: npm run test:information-flow:candidates\n      - run: npm run test:information-flow:intake\n      - run: npm run test:information-flow:promotion\n      - run: npm run test:information-flow:context\n      - run: npm run test:information-flow:invalidation\n      - run: npm run test:information-flow:hardening\n      - run: npm run test:records:db\n      - run: npm run test:mtpe:intake\n      - run: npm run test:production:release-gate\n      - run: npm run test:integration-runtime:gate-evidence\n      # IntegrationRuntime §17 item 2: every S2c suite runs once, here, through the gate evidence\n      # generator, which fails the step unless G-A3/7/8/9/10/11 are all PASS and every test passed.\n      - name: S2c gate evidence\n        env:\n          CLUED_EVIDENCE_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}\n        run: npm run integration-runtime:gate-evidence -- --out \"$RUNNER_TEMP/integration-runtime-gate-evidence.json\"\n      - name: Upload S2c gate evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: integration-runtime-gate-evidence-hosted\n          path: ${{ runner.temp }}/integration-runtime-gate-evidence.json\n          if-no-files-found: warn\n      - run: npm run test:authorization:invitations\n      - run: npm run test:authorization:migrations\n      - run: npm run test:resource-center:authority\n      - run: npm run test:authorization:integration\n      - run: npm run test:authorization:pages\n",
+          "primary_ids": [
+            "isolated-candidate-trusted-self-hosted",
+            "isolated-candidate-untrusted-hosted"
+          ],
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-connection-authorization.yml",
+              "scripts/ci/clued-push-reuse.mjs",
+              "scripts/ci/clued-push-reuse.test.mjs",
+              "scripts/ci/clued-g4-fresh-start.mjs",
+              "scripts/ci/clued-g4-fresh-start.test.mjs",
+              "apps/clued-cloud/worker/**",
+              "apps/clued-cloud/app/**",
+              "apps/clued-cloud/vite.config.ts",
+              "apps/clued-cloud/supabase/migrations/**",
+              "apps/clued-cloud/tests/information-flow-*.test.mjs",
+              "development/contracts/information-flow/vendored/**",
+              "scripts/phase2-qualification/minimum-context-compiler/**",
+              "apps/clued-cloud/tests/*authorization*.test.mjs",
+              "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+              "apps/clued-cloud/tests/development-context-api.test.mjs",
+              "apps/clued-cloud/tests/development-contexts-ui.test.mjs",
+              "apps/clued-cloud/tests/consent-account-race.test.mjs",
+              "apps/clued-cloud/tests/supabase-browser.test.mjs",
+              "apps/clued-cloud/tests/project-invitations-*.test.mjs",
+              "apps/clued-cloud/tests/priority-projection-db.test.mjs",
+              "apps/clued-cloud/tests/context-v2-*.test.mjs",
+              "apps/clued-cloud/tests/currentness-*.test.mjs",
+              "apps/clued-cloud/tests/work-claims-*.test.mjs",
+              "apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs",
+              "apps/clued-cloud/tests/resume-constraint-index-db.test.mjs",
+              "apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs",
+              "apps/clued-cloud/tests/projection-refresh-*.test.mjs",
+              "apps/clued-cloud/tests/record-update-field-merge-db.test.mjs",
+              "apps/clued-cloud/tests/task-dependency-guard-db.test.mjs",
+              "apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs",
+              "apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs",
+              "apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs",
+              "apps/clued-cloud/tests/db-security-hygiene-db.test.mjs",
+              "apps/clued-cloud/tests/resource-center-*.test.mjs",
+              "kernel/host/resource-center-*.mjs",
+              "kernel/host/resource-center-*.py",
+              "apps/clued-cloud/scripts/*resource-center*.mjs",
+              "kernel/policy/resource-center-*.mjs",
+              "apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql",
+              "apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs",
+              "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+              "apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs",
+              "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+              "apps/clued-cloud/tests/integration-runtime-worker.test.mjs",
+              "apps/clued-cloud/tests/integration-runtime-transport.test.mjs",
+              "apps/clued-cloud/tests/integration-runtime-gate-evidence.test.mjs",
+              "apps/clued-cloud/evals/integration-runtime/**",
+              "development/contracts/integration-runtime/**",
+              "apps/clued-cloud/tests/fixtures/integration-runtime/**",
+              "apps/clued-cloud/tests/mtpe-*.test.mjs",
+              "apps/clued-cloud/tests/production-release-gate.test.mjs",
+              "apps/clued-cloud/tests/served-agent-contract.test.mjs",
+              "apps/clued-cloud/scripts/production-release-*",
+              "apps/clued-cloud/scripts/verify-served-agent-contract.mjs",
+              "protocol/agent/**",
+              ".github/workflows/clued-cloud-production-release.yml",
+              "apps/clued-cloud/package*.json"
+            ]
+          },
+          "gated": true,
+          "routes": [
+            {
+              "job_id": "isolated-candidate-trusted-self-hosted",
+              "name": "isolated-candidate",
+              "self_hosted": true,
+              "required_steps": {
+                "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline": 1,
+                "Hydrate embedded PostgreSQL bundled library symlinks": 1,
+                "Run npm run typecheck": 1,
+                "Run npm run test:authorization:transport": 1,
+                "Run npm run test:authorization:database": 1,
+                "Run npm run test:context:v2": 1,
+                "Run npm run test:projection:refresh": 1,
+                "Run npm run test:work:claims": 1,
+                "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs": 1,
+                "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs": 1,
+                "Run node --test tests/db-security-hygiene-db.test.mjs": 1,
+                "Run npm run test:information-flow:candidates": 1,
+                "Run npm run test:information-flow:intake": 1,
+                "Run npm run test:information-flow:promotion": 1,
+                "Run npm run test:information-flow:context": 1,
+                "Run npm run test:information-flow:invalidation": 1,
+                "Run npm run test:information-flow:hardening": 1,
+                "Run npm run test:records:db": 1,
+                "Run npm run test:mtpe:intake": 1,
+                "Run npm run test:production:release-gate": 1,
+                "Run npm run test:integration-runtime:gate-evidence": 1,
+                "S2c gate evidence": 1,
+                "Run npm run test:authorization:invitations": 1,
+                "Run npm run test:authorization:migrations": 1,
+                "Run npm run test:resource-center:authority": 1,
+                "Run npm run test:authorization:integration": 1,
+                "Run npm run test:authorization:pages": 1,
+                "Record the actual PR test tree": 1
+              },
+              "command_digests": {
+                "Run npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline": [
+                  "a0e4de3aa5bf8e4180f7f97b8534188319ddfbdfd10c7bce625f8eadf150db3d"
+                ],
+                "Hydrate embedded PostgreSQL bundled library symlinks": [
+                  "cbbbf33a5b7496a916465f41967b85a92f52f88665a1131ec1dfb371e9449c9d"
+                ],
+                "Run npm run typecheck": [
+                  "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+                ],
+                "Run npm run test:authorization:transport": [
+                  "7058e0bc142aa67c7efda9aca1790d121488bcde188131d50ef8ea91b571d04a"
+                ],
+                "Run npm run test:authorization:database": [
+                  "f1f927a987663373de89a2e561aed6eb2c9c7e062562e62b839e33ab5b9d991a"
+                ],
+                "Run npm run test:context:v2": [
+                  "d4c74200f5c31152d84744dc27bcf875cb373f88da7bc15d8478c8bbe530582d"
+                ],
+                "Run npm run test:projection:refresh": [
+                  "c29327cbae8b4e66b63d2b973806ed685be2fd825cbb04d5e80956c6af1c87eb"
+                ],
+                "Run npm run test:work:claims": [
+                  "36c3d37570567c35a081cbffe15da28601a0ed6696e533f5adb980adecda8e81"
+                ],
+                "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs": [
+                  "2483d3ecba15c87daf343f39e8098366a2915369d7de093bf26d0afeaef17ec7"
+                ],
+                "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs": [
+                  "4517c9f118a4bdb48ab565e1e01dab244309bd792b0ba3a711c5fc0307d8c916"
+                ],
+                "Run node --test tests/db-security-hygiene-db.test.mjs": [
+                  "58c105372996bc13b00aa1934d1edae9b350cad7b474151489a919c0ed7b4c97"
+                ],
+                "Run npm run test:information-flow:candidates": [
+                  "a67757e541fc7c92820cef03fa7c7809f1f4cf90c4b1e5c9828e70b76a15ecea"
+                ],
+                "Run npm run test:information-flow:intake": [
+                  "b1143fcfe91fd917e2c2becbfe3b1d88ac314a7a628cedcc669b9c4ccf99dd69"
+                ],
+                "Run npm run test:information-flow:promotion": [
+                  "992f7123fce147ad09a0d2464139930e173531cad58d878c2ba793cf68754663"
+                ],
+                "Run npm run test:information-flow:context": [
+                  "9ad30e3bd5aa963769f2a9ae94b913f106859153fa2349388507360425ede633"
+                ],
+                "Run npm run test:information-flow:invalidation": [
+                  "2b5da6c8b3f4189e816da817fb38b41ac49586b0b419e4a2b5e0a0de70aeb169"
+                ],
+                "Run npm run test:information-flow:hardening": [
+                  "c53cbe82858a1e38f2b1b6a642fe7176f37f8d208057690672543a3c59696e9b"
+                ],
+                "Run npm run test:records:db": [
+                  "fd78dc4d889d254a9c799855427215603aa284ebf3b6bfb59d4624fda0ad4179"
+                ],
+                "Run npm run test:mtpe:intake": [
+                  "3d12bf450ae89f40bee8e9fa9963441ccac77320de5fba3176c5cc6d4a73865f"
+                ],
+                "Run npm run test:production:release-gate": [
+                  "26ade4bb689ac2e644a75bb66366e082546aa706f51089072bb70b4afeecb778"
+                ],
+                "Run npm run test:integration-runtime:gate-evidence": [
+                  "62ce70bdc2fd82e9aaf4bd42a77951ad9834fbee33c97b16f4e5d1db8b0fa2dd"
+                ],
+                "S2c gate evidence": [
+                  "fdbed96e23b6e7e4d03938c723c6532d6b282f05c7c79531854cfc65aa4584f8"
+                ],
+                "Run npm run test:authorization:invitations": [
+                  "aaad36a3e956e26503a817abb23d0b6a4c07105e55af364e71a8012c6efd7a77"
+                ],
+                "Run npm run test:authorization:migrations": [
+                  "3a85da426228b7648c76046573b33d1ae1b77999741a06e0d9006a3fadb1c615"
+                ],
+                "Run npm run test:resource-center:authority": [
+                  "f91f927f5ca87627572ed208b020aa13da05bf99ae9719513d5e7c9b936a003c"
+                ],
+                "Run npm run test:authorization:integration": [
+                  "10c35750a356a4a10991a6a64e0126b88ac0d490a3f1e49a8ef8b2521f30f014"
+                ],
+                "Run npm run test:authorization:pages": [
+                  "b07154ac821f3f7995f64728b322c99e821fb5b0c4a281ead8cd25ac072545d0"
+                ],
+                "Record the actual PR test tree": [
+                  "ad01e6e5d4a764c0ec7a1bcd7203a25881b5d3229e4f0f80132888dc5260a4f5"
+                ]
+              }
+            },
+            {
+              "job_id": "isolated-candidate-untrusted-hosted",
+              "name": "isolated-candidate",
+              "self_hosted": false,
+              "required_steps": {
+                "Run npm ci --ignore-scripts": 1,
+                "Install embedded PostgreSQL ICU compatibility runtime": 1,
+                "Run npm run typecheck": 1,
+                "Run npm run test:authorization:transport": 1,
+                "Run npm run test:authorization:database": 1,
+                "Run npm run test:context:v2": 1,
+                "Run npm run test:projection:refresh": 1,
+                "Run npm run test:work:claims": 1,
+                "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs": 1,
+                "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs": 1,
+                "Run node --test tests/db-security-hygiene-db.test.mjs": 1,
+                "Run npm run test:information-flow:candidates": 1,
+                "Run npm run test:information-flow:intake": 1,
+                "Run npm run test:information-flow:promotion": 1,
+                "Run npm run test:information-flow:context": 1,
+                "Run npm run test:information-flow:invalidation": 1,
+                "Run npm run test:information-flow:hardening": 1,
+                "Run npm run test:records:db": 1,
+                "Run npm run test:mtpe:intake": 1,
+                "Run npm run test:production:release-gate": 1,
+                "Run npm run test:integration-runtime:gate-evidence": 1,
+                "S2c gate evidence": 1,
+                "Run npm run test:authorization:invitations": 1,
+                "Run npm run test:authorization:migrations": 1,
+                "Run npm run test:resource-center:authority": 1,
+                "Run npm run test:authorization:integration": 1,
+                "Run npm run test:authorization:pages": 1
+              },
+              "command_digests": {
+                "Run npm ci --ignore-scripts": [
+                  "e568f48e4564d1ada4a272f93f6e94a1db7c70212a765c414a6ec92d2a889e21"
+                ],
+                "Install embedded PostgreSQL ICU compatibility runtime": [
+                  "be368341af843388fb9cf6df7309aa6dab65e76a58d3ae4f248f4f402bf21752"
+                ],
+                "Run npm run typecheck": [
+                  "982c1455e5e73c8ccab2d70a550c972e2841a0582596e26a7fcc53b80e14aa14"
+                ],
+                "Run npm run test:authorization:transport": [
+                  "7058e0bc142aa67c7efda9aca1790d121488bcde188131d50ef8ea91b571d04a"
+                ],
+                "Run npm run test:authorization:database": [
+                  "f1f927a987663373de89a2e561aed6eb2c9c7e062562e62b839e33ab5b9d991a"
+                ],
+                "Run npm run test:context:v2": [
+                  "d4c74200f5c31152d84744dc27bcf875cb373f88da7bc15d8478c8bbe530582d"
+                ],
+                "Run npm run test:projection:refresh": [
+                  "c29327cbae8b4e66b63d2b973806ed685be2fd825cbb04d5e80956c6af1c87eb"
+                ],
+                "Run npm run test:work:claims": [
+                  "36c3d37570567c35a081cbffe15da28601a0ed6696e533f5adb980adecda8e81"
+                ],
+                "Run node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs": [
+                  "2483d3ecba15c87daf343f39e8098366a2915369d7de093bf26d0afeaef17ec7"
+                ],
+                "Run node --test --test-force-exit tests/work-claims-continuation-db.test.mjs": [
+                  "4517c9f118a4bdb48ab565e1e01dab244309bd792b0ba3a711c5fc0307d8c916"
+                ],
+                "Run node --test tests/db-security-hygiene-db.test.mjs": [
+                  "58c105372996bc13b00aa1934d1edae9b350cad7b474151489a919c0ed7b4c97"
+                ],
+                "Run npm run test:information-flow:candidates": [
+                  "a67757e541fc7c92820cef03fa7c7809f1f4cf90c4b1e5c9828e70b76a15ecea"
+                ],
+                "Run npm run test:information-flow:intake": [
+                  "b1143fcfe91fd917e2c2becbfe3b1d88ac314a7a628cedcc669b9c4ccf99dd69"
+                ],
+                "Run npm run test:information-flow:promotion": [
+                  "992f7123fce147ad09a0d2464139930e173531cad58d878c2ba793cf68754663"
+                ],
+                "Run npm run test:information-flow:context": [
+                  "9ad30e3bd5aa963769f2a9ae94b913f106859153fa2349388507360425ede633"
+                ],
+                "Run npm run test:information-flow:invalidation": [
+                  "2b5da6c8b3f4189e816da817fb38b41ac49586b0b419e4a2b5e0a0de70aeb169"
+                ],
+                "Run npm run test:information-flow:hardening": [
+                  "c53cbe82858a1e38f2b1b6a642fe7176f37f8d208057690672543a3c59696e9b"
+                ],
+                "Run npm run test:records:db": [
+                  "fd78dc4d889d254a9c799855427215603aa284ebf3b6bfb59d4624fda0ad4179"
+                ],
+                "Run npm run test:mtpe:intake": [
+                  "3d12bf450ae89f40bee8e9fa9963441ccac77320de5fba3176c5cc6d4a73865f"
+                ],
+                "Run npm run test:production:release-gate": [
+                  "26ade4bb689ac2e644a75bb66366e082546aa706f51089072bb70b4afeecb778"
+                ],
+                "Run npm run test:integration-runtime:gate-evidence": [
+                  "62ce70bdc2fd82e9aaf4bd42a77951ad9834fbee33c97b16f4e5d1db8b0fa2dd"
+                ],
+                "S2c gate evidence": [
+                  "fdbed96e23b6e7e4d03938c723c6532d6b282f05c7c79531854cfc65aa4584f8"
+                ],
+                "Run npm run test:authorization:invitations": [
+                  "aaad36a3e956e26503a817abb23d0b6a4c07105e55af364e71a8012c6efd7a77"
+                ],
+                "Run npm run test:authorization:migrations": [
+                  "3a85da426228b7648c76046573b33d1ae1b77999741a06e0d9006a3fadb1c615"
+                ],
+                "Run npm run test:resource-center:authority": [
+                  "f91f927f5ca87627572ed208b020aa13da05bf99ae9719513d5e7c9b936a003c"
+                ],
+                "Run npm run test:authorization:integration": [
+                  "10c35750a356a4a10991a6a64e0126b88ac0d490a3f1e49a8ef8b2521f30f014"
+                ],
+                "Run npm run test:authorization:pages": [
+                  "b07154ac821f3f7995f64728b322c99e821fb5b0c4a281ead8cd25ac072545d0"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1211,6 +1622,129 @@
               "97bc037ecb8257e149262bb4bff434526d1ebb8863249eb1bec564867ae05969"
             ]
           }
+        }
+      ],
+      "accepted_sources": [
+        {
+          "registration_status": "registered",
+          "workflow_blob": "cdd4a4a1e55c3e59b933b8617fdd9c44310f2078",
+          "source_sha256": "ae385d0995ff7ee312ee23e0be8f01d58e8b46ffd60859fe5f6a581e085e04db",
+          "source_yaml": "name: public-mcp-protocol\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n      - 'protocol/agent/**'\n      - 'kernel/policy/resource-center-mutation-policy.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n      - 'protocol/agent/**'\n      - 'kernel/policy/resource-center-mutation-policy.mjs'\n      - 'kernel/host/resource-center-*.mjs'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); push events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'public-mcp-protocol' || 'public-mcp-protocol-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;\n          # restoring the ~860 MB Actions cache on top of it only adds download time.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify gate terminal-state and timeout regressions\n        run: npm run mcp:gate-receipt:test\n      - name: Install dependencies from runner cache\n        # CPU bindings are bundled; protocol checks do not need optional CUDA binaries.\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n        run: >-\n          timeout --signal=TERM --kill-after=15s 8m\n          npm ci --cache \"$HOME/.npm\" --prefer-offline\n          --fetch-retries=2 --fetch-timeout=30000\n      - name: Verify governed Resource Center mutation contract\n        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs\n      - name: Allocate a protocol-only loopback port\n        run: |\n          rm -f \"$RUNNER_TEMP/public-mcp.pid\"\n          node --input-type=module <<'NODE'\n          import net from 'node:net';\n          import fs from 'node:fs';\n          const server = net.createServer();\n          await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });\n          const port = server.address().port;\n          await new Promise((resolve) => server.close(resolve));\n          fs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\\n`);\n          NODE\n      - name: Start isolated MCP\n        run: |\n          printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\\n' > evals/public-mcp/.dev.vars.public-mcp\n          setsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port \"$MCP_ISOLATED_PORT\" --inspector-port 0 --define \"__CLUED_BUILD_SHA__:\\\"$GITHUB_SHA\\\"\" --local --show-interactive-dev-session false --log-level error &\n          echo $! > \"$RUNNER_TEMP/public-mcp.pid\"\n          for attempt in $(seq 1 30); do\n            kill -0 \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\" 2>/dev/null || exit 1\n            if node --input-type=module <<'NODE'\n          import assert from 'node:assert/strict';\n          const response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });\n          assert.equal(response.status, 200);\n          assert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);\n          NODE\n            then exit 0; fi\n            sleep 1\n          done\n          exit 1\n      - name: Inspector strict schema validation\n        run: >-\n          npx mcp-inspector --cli\n          --server-url \"$MCP_ISOLATED_URL\"\n          --transport http\n          --header \"Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})\"\n          --method tools/list\n          --format json\n          --strict\n      - run: npm run mcp:protocol:verify\n      - run: npm run mcp:tools:verify\n      - run: npm run mcp:flags:verify\n      - name: Stop isolated MCP\n        if: always()\n        run: |\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            kill -- \"-$mcp_pid\" 2>/dev/null || true\n          fi\n          rm -f evals/public-mcp/.dev.vars.public-mcp\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'public-mcp-protocol' || 'public-mcp-protocol-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify gate terminal-state and timeout regressions\n        run: npm run mcp:gate-receipt:test\n      - run: npm ci\n        # CPU bindings are bundled; protocol checks do not need optional CUDA binaries.\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n      - name: Verify governed Resource Center mutation contract\n        run: node --test tests/resource-center-mutation-policy.test.mjs tests/resource-center-host-qualification.test.mjs tests/resource-center-online-tool-host.test.mjs tests/resource-center-authority-client.test.mjs tests/resource-center-google-drive-identity.test.mjs tests/resource-center-google-drive-metadata.test.mjs tests/resource-center-storage-read-transport.test.mjs tests/resource-center-storage-read-formats.test.mjs tests/resource-center-zip-reader.test.mjs tests/resource-center-ooxml-text.test.mjs tests/stage6-contract.test.mjs tests/k-cont-contract.test.mjs\n      - name: Allocate a protocol-only loopback port\n        run: |\n          rm -f \"$RUNNER_TEMP/public-mcp.pid\"\n          node --input-type=module <<'NODE'\n          import net from 'node:net';\n          import fs from 'node:fs';\n          const server = net.createServer();\n          await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });\n          const port = server.address().port;\n          await new Promise((resolve) => server.close(resolve));\n          fs.appendFileSync(process.env.GITHUB_ENV, `MCP_ISOLATED_PORT=${port}\\nMCP_ISOLATED_URL=http://127.0.0.1:${port}/mcp\\n`);\n          NODE\n      - name: Start the allocated protocol instance\n        run: |\n          printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\\n' > evals/public-mcp/.dev.vars.public-mcp\n          setsid node node_modules/wrangler/bin/wrangler.js dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --ip 127.0.0.1 --port \"$MCP_ISOLATED_PORT\" --inspector-port 0 --define \"__CLUED_BUILD_SHA__:\\\"$GITHUB_SHA\\\"\" --local --show-interactive-dev-session false --log-level error &\n          echo $! > \"$RUNNER_TEMP/public-mcp.pid\"\n          for attempt in $(seq 1 30); do\n            kill -0 \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\" 2>/dev/null || exit 1\n            if node --input-type=module <<'NODE'\n          import assert from 'node:assert/strict';\n          const response = await fetch(new URL('/.well-known/clued-continuity', process.env.MCP_ISOLATED_URL), { signal: AbortSignal.timeout(1000) });\n          assert.equal(response.status, 200);\n          assert.equal((await response.json()).components.source_commit, process.env.GITHUB_SHA);\n          NODE\n            then exit 0; fi\n            sleep 1\n          done\n          exit 1\n      - name: Inspector strict schema validation\n        run: >-\n          npx mcp-inspector --cli\n          --server-url \"$MCP_ISOLATED_URL\"\n          --transport http\n          --header \"Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})\"\n          --method tools/list\n          --format json\n          --strict\n      - run: npm run mcp:protocol:verify\n      - run: npm run mcp:tools:verify\n      - run: npm run mcp:flags:verify\n      - name: Stop isolated MCP\n        if: always()\n        run: |\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            kill -- \"-$mcp_pid\" 2>/dev/null || true\n          fi\n          rm -f evals/public-mcp/.dev.vars.public-mcp\n",
+          "primary_ids": [
+            "trusted-self-hosted",
+            "untrusted-hosted"
+          ],
+          "pull_request": {
+            "paths": [
+              ".github/workflows/public-mcp-*.yml",
+              "apps/clued-cloud/**",
+              "protocol/continuity/v1/**",
+              "protocol/agent/**",
+              "kernel/policy/resource-center-mutation-policy.mjs",
+              "kernel/host/resource-center-*.mjs"
+            ]
+          },
+          "gated": true,
+          "routes": [
+            {
+              "job_id": "trusted-self-hosted",
+              "name": "public-mcp-protocol",
+              "self_hosted": true,
+              "required_steps": {
+                "Verify gate terminal-state and timeout regressions": 1,
+                "Install dependencies from runner cache": 1,
+                "Verify governed Resource Center mutation contract": 1,
+                "Allocate a protocol-only loopback port": 1,
+                "Start isolated MCP": 1,
+                "Inspector strict schema validation": 1,
+                "Run npm run mcp:protocol:verify": 1,
+                "Run npm run mcp:tools:verify": 1,
+                "Run npm run mcp:flags:verify": 1,
+                "Stop isolated MCP": 1
+              },
+              "command_digests": {
+                "Verify gate terminal-state and timeout regressions": [
+                  "500cc5475f2ce9bf029071b7269f31773bd54d8711ef09fda3d9271f0938766c"
+                ],
+                "Install dependencies from runner cache": [
+                  "321212edcbf8c72614a914c7e599366249ad7c46dcf987814b54d81dd12208a5"
+                ],
+                "Verify governed Resource Center mutation contract": [
+                  "1c2393efd080a9873c7b23f7cfb3640c32df0c829dc4473389cd188c7f8a9930"
+                ],
+                "Allocate a protocol-only loopback port": [
+                  "8f26774addf9a691594ef21afb910e438e22d92f88ad6386aa30bc31567d56da"
+                ],
+                "Start isolated MCP": [
+                  "ec5007815dd34325048b26113d9f776f832e1f820e1bced3d3d1f98b8052ad93"
+                ],
+                "Inspector strict schema validation": [
+                  "8fc0189fe3d4165acf36c61b601249e2bb17c43163c08e4498e3fc90fe3f450d"
+                ],
+                "Run npm run mcp:protocol:verify": [
+                  "d3e23af4b3a876ebd90d20f0eafce160341aabb7864d81d5ed7a4420aaf1d2fa"
+                ],
+                "Run npm run mcp:tools:verify": [
+                  "0e2d518c9cd89e18c35737a97eba94b358bd3dda3313fd1b3548e6067088fbc0"
+                ],
+                "Run npm run mcp:flags:verify": [
+                  "b06015ae0f3765bdf1630ee5dfcf5fb7737d36bd6a00c1d2f77069e9a008b221"
+                ],
+                "Stop isolated MCP": [
+                  "97bc037ecb8257e149262bb4bff434526d1ebb8863249eb1bec564867ae05969"
+                ]
+              }
+            },
+            {
+              "job_id": "untrusted-hosted",
+              "name": "public-mcp-protocol",
+              "self_hosted": false,
+              "required_steps": {
+                "Verify gate terminal-state and timeout regressions": 1,
+                "Run npm ci": 1,
+                "Verify governed Resource Center mutation contract": 1,
+                "Allocate a protocol-only loopback port": 1,
+                "Start the allocated protocol instance": 1,
+                "Inspector strict schema validation": 1,
+                "Run npm run mcp:protocol:verify": 1,
+                "Run npm run mcp:tools:verify": 1,
+                "Run npm run mcp:flags:verify": 1,
+                "Stop isolated MCP": 1
+              },
+              "command_digests": {
+                "Verify gate terminal-state and timeout regressions": [
+                  "500cc5475f2ce9bf029071b7269f31773bd54d8711ef09fda3d9271f0938766c"
+                ],
+                "Run npm ci": [
+                  "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+                ],
+                "Verify governed Resource Center mutation contract": [
+                  "1c2393efd080a9873c7b23f7cfb3640c32df0c829dc4473389cd188c7f8a9930"
+                ],
+                "Allocate a protocol-only loopback port": [
+                  "8f26774addf9a691594ef21afb910e438e22d92f88ad6386aa30bc31567d56da"
+                ],
+                "Start the allocated protocol instance": [
+                  "ec5007815dd34325048b26113d9f776f832e1f820e1bced3d3d1f98b8052ad93"
+                ],
+                "Inspector strict schema validation": [
+                  "8fc0189fe3d4165acf36c61b601249e2bb17c43163c08e4498e3fc90fe3f450d"
+                ],
+                "Run npm run mcp:protocol:verify": [
+                  "d3e23af4b3a876ebd90d20f0eafce160341aabb7864d81d5ed7a4420aaf1d2fa"
+                ],
+                "Run npm run mcp:tools:verify": [
+                  "0e2d518c9cd89e18c35737a97eba94b358bd3dda3313fd1b3548e6067088fbc0"
+                ],
+                "Run npm run mcp:flags:verify": [
+                  "b06015ae0f3765bdf1630ee5dfcf5fb7737d36bd6a00c1d2f77069e9a008b221"
+                ],
+                "Stop isolated MCP": [
+                  "97bc037ecb8257e149262bb4bff434526d1ebb8863249eb1bec564867ae05969"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
