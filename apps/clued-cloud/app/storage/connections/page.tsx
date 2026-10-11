@@ -97,6 +97,16 @@ function isNormalUse(value: unknown): value is NormalUse {
     && (value.full_scope_disclosure_version === undefined || typeof value.full_scope_disclosure_version === "string")
     && (value.full_scope === undefined) === (value.full_scope_disclosure_version === undefined);
 }
+function readingStatus(normal: NormalUse | undefined, read: ReadAccess | undefined) {
+  if (!normal) return "状态未确认";
+  if (!read || normal.read_generation !== read.read_generation)
+    return `${normal.normal_use ? "全部文件读取与搜索已开启" : "全部文件读取与搜索未开启"}；实际读取权限未确认`;
+  if (!read.active) return `${normal.normal_use ? "已开启" : "未开启"}；目录结构和正文读取均已停止`;
+  if (!read.classes.includes("read_content"))
+    return `${normal.normal_use ? "已开启" : "未开启"}；当前仅允许查看文件名和目录结构`;
+  return normal.normal_use ? "已允许读取目录内全部文件并按内容搜索"
+    : "仅允许读取 Clued 创建的文本文件；全部文件读取与搜索未开启";
+}
 // clued.storage-normal-use-disclosure/1 (StorageNormalUse §8.2). Any change to
 // this text needs a new disclosure version in the database first.
 const normalUseDisclosure = (root: string) =>
@@ -257,8 +267,8 @@ const writeText = {
   },
 } as const;
 export default function StorageConnections() {
-  // Read level (StorageFullCapability P1) is loaded on demand per connection so
-  // the everyday page stays one request; every change is a native CAS mutation.
+  // Read the configured file range and read classes together. A range alone
+  // never proves that Agent content reading is currently allowed.
   const [readAccess, setReadAccess] = useState<Record<string, ReadAccess>>({});
   // Write level (P3): changing it replaces the account policy, so the page
   // always reloads the connection list and both settings afterwards.
@@ -284,6 +294,8 @@ export default function StorageConnections() {
     const epoch = ++revision.current;
     setDialog(null);
     setNormalUse({});
+    setReadAccess({});
+    setWriteAccess({});
     setBusy(true);
     try {
       const owner = await supabase.auth.getSession();
@@ -300,13 +312,17 @@ export default function StorageConnections() {
       const loaded = await Promise.all((result.connections as Connection[])
         .filter(c => c.state === "active" && c.auth_mode === "account_policy" && c.policy_active)
         .map(async c => {
-          try {
-            const value = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use");
-            return isNormalUse(value) ? [c.id, value] as const : null;
-          } catch { return null; }
+          const [normal, read, write] = await Promise.all([
+            accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use").catch(() => null),
+            accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access").catch(() => null),
+            accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/write-access").catch(() => null),
+          ]);
+          return { id: c.id, normal, read, write };
         }));
       if (epoch !== revision.current) return null;
-      setNormalUse(Object.fromEntries(loaded.filter((item): item is readonly [string, NormalUse] => item !== null)));
+      setNormalUse(Object.fromEntries(loaded.flatMap(item => isNormalUse(item.normal) ? [[item.id, item.normal]] : [])));
+      setReadAccess(Object.fromEntries(loaded.flatMap(item => isReadAccess(item.read) ? [[item.id, item.read]] : [])));
+      setWriteAccess(Object.fromEntries(loaded.flatMap(item => isWriteAccess(item.write) ? [[item.id, item.write]] : [])));
       return result.connections as Connection[];
     } catch (error) {
       if (epoch === revision.current) {
@@ -385,16 +401,25 @@ export default function StorageConnections() {
       "/v1/storage/read-access");
       if (epoch !== revision.current) return;
       if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
-      const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access");
+      const [latest, normal] = await Promise.all([
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access"),
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use").catch(() => null),
+      ]);
       if (epoch !== revision.current) return;
       if (!isReadAccess(latest)) throw new Error("查看设置未确认。");
       setReadAccess(state => ({ ...state, [c.id]: latest }));
+      setNormalUse(state => {
+        const next = { ...state };
+        if (isNormalUse(normal)) next[c.id] = normal; else delete next[c.id];
+        return next;
+      });
       const applied = level === "read" ? latest.active === enable : (latest.active && latest.classes.includes("read_content")) === enable;
       setMessage(applied ? `${enable ? "已允许" : "已停止"} Agent ${level === "read" ? "查看目录结构" : "读正文"}。回执：${result.receipt_id}`
         : "已提交，但最新状态未确认。请核对原回执。");
     } catch {
       if (epoch === revision.current) {
         setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
         setMessage("Agent 查看设置结果未确认。请重新读取设置并核对，勿重复提交。");
       }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
@@ -404,11 +429,19 @@ export default function StorageConnections() {
     operation.current = true; setBusy(true);
     const epoch = revision.current;
     try {
-      const result = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use");
+      const [result, read] = await Promise.all([
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use"),
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access").catch(() => null),
+      ]);
       if (epoch !== revision.current) return;
       if (!isNormalUse(result)) throw new Error("正常使用设置未确认。");
       setNormalUse(current => ({ ...current, [c.id]: result }));
-    } catch { if (epoch === revision.current) setMessage("正常使用设置未确认，请稍后重试。"); }
+      setReadAccess(current => {
+        const next = { ...current };
+        if (isReadAccess(read)) next[c.id] = read; else delete next[c.id];
+        return next;
+      });
+    } catch { if (epoch === revision.current) setMessage("读取与搜索设置未确认，请稍后重试。"); }
     finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
   // Normal credential: one native CAS mutation. Legacy credential: the same
@@ -445,17 +478,24 @@ export default function StorageConnections() {
         setMessage("需要重新授权 Google 才能开启正常使用。请重新读取设置后再开启。"); return;
       }
       if (result.status !== "committed" || typeof result.receipt_id !== "string") throw new Error("回执未确认。");
-      const latest = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use");
+      const [latest, read] = await Promise.all([
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use"),
+        accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/read-access").catch(() => null),
+      ]);
       if (epoch !== revision.current) return;
       if (!isNormalUse(latest)) throw new Error("正常使用设置未确认。");
       setNormalUse(state => ({ ...state, [c.id]: latest }));
-      // The read level changed too; drop its cached view so it is read again.
-      setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
-      setMessage(latest.normal_use === enable ? `${enable ? "已开启" : "已关闭"}正常使用。回执：${result.receipt_id}`
+      setReadAccess(state => {
+        const next = { ...state };
+        if (isReadAccess(read)) next[c.id] = read; else delete next[c.id];
+        return next;
+      });
+      setMessage(latest.normal_use === enable ? `${enable ? "已开启" : "已关闭"}读取与搜索。回执：${result.receipt_id}`
         : "已提交，但最新状态未确认。请核对原回执。");
     } catch (error) {
       if (epoch === revision.current) {
         setNormalUse(state => { const next = { ...state }; delete next[c.id]; return next; });
+        setReadAccess(state => { const next = { ...state }; delete next[c.id]; return next; });
         const reason = error instanceof RequestFailure && error.reason ? startReasons[error.reason] : undefined;
         setMessage(reason ?? "正常使用设置结果未确认。请重新读取设置并核对，勿重复提交。");
       }
@@ -779,55 +819,114 @@ export default function StorageConnections() {
     {connections.map(c => {
       const available = c.state === "active" && c.auth_mode === "account_policy" && c.policy_active
         && c.profile_current && c.database_execution_enabled && workerEnabled;
+      const normal = normalUse[c.id], read = readAccess[c.id], write = writeAccess[c.id];
+      const readCurrent = normal !== undefined && read !== undefined && normal.read_generation === read.read_generation;
+      const levels = write ? writeLevels(write) : [];
+      const allowedWrites = write?.active ? levels.filter(level => write.classes.includes(level)) : [];
       return <section key={c.id} className="my-4 rounded-xl border p-4">
         <h2 className="font-semibold">{c.provider === "google-drive" ? "Google Drive" : c.provider} · {stateName[c.state] ?? "状态待确认"}</h2>
         <p className="my-2 font-semibold">文件夹：{folderName(c)}</p>
-        {c.physical_location.status === "verified"
-          ? <p className="break-all text-sm">Drive 位置：{c.physical_location.path}</p>
-          : <div className="text-sm"><p>Drive 当前名称与路径暂未核实。</p>
-            {registeredLocation(c) && <p className="break-all">已登记位置（未核验当前路径）：{registeredLocation(c)}</p>}</div>}
         <a className="underline" href={folderHref(c)} target="_blank" rel="noopener noreferrer">打开对应 Drive 文件夹</a>
-        <p className="break-all text-xs text-gray-500">文件夹标识：{c.root_folder_id}</p>
-        <p>账号允许的操作：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}</p>
-        <p role="status" className="my-2">{available ? "存储执行入口已开启；每项操作仍须通过当前目录、客户端和单次任务准入。" : "当前文件操作不可用或暂停；连接状态不代表写入已启用。"}</p>
-        <p className="my-2 text-sm">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
-        {c.access_digest_missing && c.access_digest_missing.count > 0 && <div role="status" className="my-2 text-sm">
-          <p>有 {c.access_digest_missing.count} 个目录还没有记录访问权限摘要，仍按 Google Drive 版本核对：这些目录里出现其他变化时，其下进行中的文件操作会失败。
-            请到<Link href="/storage/admin">存储管理</Link>运行目录检查，为它们记录摘要。</p>
-          <ul className="list-disc pl-6">{c.access_digest_missing.directories.map(d =>
-            <li key={d.path}>{d.path || "（根目录）"}</li>)}</ul>
-          {c.access_digest_missing.count > c.access_digest_missing.directories.length &&
-            <p>另有 {c.access_digest_missing.count - c.access_digest_missing.directories.length} 个未列出。</p>}
-        </div>}
+        <p role="status" className="my-2">{available ? "文件操作入口可用" : "文件操作当前不可用或暂停"}</p>
+        <details className="my-3 text-sm">
+          <summary className="cursor-pointer font-semibold">连接详情与执行诊断{c.access_digest_missing && c.access_digest_missing.count > 0 ? `（${c.access_digest_missing.count} 个目录需检查）` : ""}</summary>
+          {c.physical_location.status === "verified"
+            ? <p className="my-2 break-all">Drive 位置：{c.physical_location.path}</p>
+            : <div className="my-2"><p>Drive 当前名称与路径暂未核实。</p>
+              {registeredLocation(c) && <p className="break-all">已登记位置（未核验当前路径）：{registeredLocation(c)}</p>}</div>}
+          <p className="break-all text-xs text-gray-500">文件夹标识：{c.root_folder_id}</p>
+          <p className="my-2">账号授权上限：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}。实际启用情况见下方权限设置；执行还须通过当前目录、客户端和单次任务准入。</p>
+          <p className="my-2">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
+          {c.access_digest_missing && c.access_digest_missing.count > 0 && <div role="status" className="my-2">
+            <p>有 {c.access_digest_missing.count} 个目录还没有记录访问权限摘要，仍按 Google Drive 版本核对：这些目录里出现其他变化时，其下进行中的文件操作会失败。
+              请到<Link href="/storage/admin">存储管理</Link>运行目录检查，为它们记录摘要。</p>
+            <ul className="list-disc pl-6">{c.access_digest_missing.directories.map(d =>
+              <li key={d.path}>{d.path || "（根目录）"}</li>)}</ul>
+            {c.access_digest_missing.count > c.access_digest_missing.directories.length &&
+              <p>另有 {c.access_digest_missing.count - c.access_digest_missing.directories.length} 个未列出。</p>}
+          </div>}
+        </details>
         {c.state === "awaiting_provider" && <label className="my-2 block">
           <input type="checkbox" disabled={busy} checked={defaultRefresh} onChange={event => setDefaultRefresh(event.target.checked)} />
           首次连接后开启后台续签（默认选中，可取消）</label>}
         {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
           <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
         {c.state === "active" && c.auth_mode === "account_policy" && c.policy_active && <div className="my-2">
-          <p className="font-semibold">正常使用：{normalUse[c.id] ? (normalUse[c.id].normal_use ? "已开启（可读取目录内全部文件并按内容搜索）" : "未开启") : busy ? "正在读取实际状态……" : "状态未确认"}</p>
-          {normalUse[c.id]
-            ? <button disabled={busy} onClick={() => void toggleNormalUse(c)}>{normalUse[c.id].normal_use ? "关闭正常使用" : "开启正常使用"}</button>
-            : <button disabled={busy} onClick={() => void loadNormalUse(c)}>重新读取正常使用状态</button>}
-          {normalUse[c.id] && !normalUse[c.id].normal_use && normalUse[c.id].reconsent_required &&
-            <p className="my-1 text-sm">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
-          {normalUse[c.id]?.full_scope !== undefined && <div className="my-2">
-            <p className="font-semibold">管理已有文件：{normalUse[c.id].full_scope ? "已允许（Google 已授予完整云端硬盘权限）" : "未允许"}</p>
-            {normalUse[c.id].full_scope
-              ? <p className="my-1 text-sm">打开“改名和移动文件”等级后，Agent 可以纳管你自己拥有的已有文件和文件夹，一次一个；纳管后的修改仍受各写入等级控制。</p>
-              : <>
-                <button disabled={busy} onClick={() => void upgradeFullScope(c)}>允许管理已有文件</button>
-                <p className="my-1 text-sm">需要重新授权 Google（增加“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”）；只升级授权，不打开任何写入等级。授权完成前，现有功能照常可用。</p>
+          <section aria-labelledby={`reading-${c.id}`} className="my-4 border-t pt-4">
+            <h3 id={`reading-${c.id}`} className="font-semibold">读取与搜索</h3>
+            <p role="status" className="my-2">{!normal && busy ? "正在读取实际状态……" : readingStatus(normal, read)}</p>
+            {normal && <button disabled={busy} onClick={() => void toggleNormalUse(c)}>{normal.normal_use ? "关闭读取与搜索" : "开启读取与搜索"}</button>}
+            {(!normal || !readCurrent) && <button disabled={busy} onClick={() => void loadNormalUse(c)}>重新读取读取与搜索状态</button>}
+            <p className="my-1 text-sm">开启后允许读取所选目录内全部文件并按内容搜索，也允许新建图片、PDF 等文件；不覆盖已有文件。细分读取权限可限制目录查看和正文读取。</p>
+            {normal && !normal.normal_use && normal.reconsent_required &&
+              <p className="my-1 text-sm">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
+            <details className="mt-3 text-sm">
+              <summary className="cursor-pointer font-semibold">细分读取权限</summary>
+              <p className="mt-2">Agent 查看目录结构：{read ? (read.active ? "已允许" : "未允许") : "未确认"}</p>
+              {read
+                ? <button disabled={busy} onClick={() => void toggleRead(c)}>{read.active ? "停止 Agent 查看目录结构" : "允许 Agent 查看目录结构"}</button>
+                : <button disabled={busy} onClick={() => void loadReadAccess(c)}>读取 Agent 查看设置</button>}
+              {read?.active && <>
+                <p className="mt-2">Agent 读正文：{read.classes.includes("read_content")
+                  ? !readCurrent ? "已允许；文件范围未确认" : normal?.normal_use ? "已允许（目录内全部文件）" : "已允许（仅 Clued 创建的文本文件）" : "未允许"}</p>
+                <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
+                  {read.classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
               </>}
-          </div>}
-          {normalUse[c.id]?.refresh_token_warning && <p role="status" className="my-1 text-sm">{normalUse[c.id].refresh_token_blocked
-            ? "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启正常使用；请联系维护者处理。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因，重新连接仍可使用。"
-            : `该 Google 账号在 Clued 中的授权次数已较多（${normalUse[c.id].refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}
-          <div className="mt-3">
-            <p className="font-semibold">每小时额度：{budget[c.id]
+            </details>
+          </section>
+          <section aria-labelledby={`file-scope-${c.id}`} className="my-4 border-t pt-4">
+            <h3 id={`file-scope-${c.id}`} className="font-semibold">可操作的文件范围</h3>
+            <p className="my-2">修改对象：仅 Clued 创建或已纳管的文件和文件夹。</p>
+            {normal?.full_scope === true ? <>
+              <p className="my-1 text-sm">可纳管你拥有的已有文件和文件夹：需先允许“改名和移动文件”，再由 Agent 一次纳管一个；纳管只登记、不改动。</p>
+              <p className="my-1 text-sm">Google 已授予完整云端硬盘权限；修改仍限于此目录内已纳管的对象，并受下方写入权限控制。</p>
+            </> : normal?.full_scope === false ? <>
+              <button disabled={busy} onClick={() => void upgradeFullScope(c)}>允许纳管已有文件</button>
+              <p className="my-1 text-sm">需要重新授权 Google（增加“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”）；只扩展可纳管范围，不开启任何写入操作。授权完成前，现有功能照常可用。</p>
+            </> : <p className="my-1 text-sm">已有文件的纳管授权状态未确认。</p>}
+          </section>
+          <section aria-labelledby={`writing-${c.id}`} className="my-4 border-t pt-4">
+            <h3 id={`writing-${c.id}`} className="font-semibold">写入权限</h3>
+            <p role="status" className="my-2">{!write ? "状态未确认" : !write.active ? "当前写入权限不可用" : allowedWrites.length ? `已有文件修改：已允许 ${allowedWrites.length} / ${levels.length} 项操作` : "已有文件修改已全部停止"}</p>
+            <p className="my-1 text-sm">以下设置控制已有文件和文件夹的修改，不包含新建文件。</p>
+            {write?.active ? <>
+              <div className="flex flex-wrap gap-4">
+                <button disabled={busy || allowedWrites.length === levels.length} onClick={() => void setAllWrite(c, true)}>允许全部修改操作</button>
+                <button disabled={busy || allowedWrites.length === 0} onClick={() => void setAllWrite(c, false)}>停止全部修改操作</button>
+              </div>
+              <details className="mt-3 text-sm">
+                <summary className="cursor-pointer font-semibold">按操作设置写入权限</summary>
+                {levels.map(level => <div key={level} className="my-2">
+                  <p>Agent {writeText[level].name}：{write.classes.includes(level) ? "已允许" : "未允许"}</p>
+                  <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
+                    {write.classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
+                </div>)}
+              </details>
+            </> : <button disabled={busy} onClick={() => void loadReadAccess(c)}>重新读取写入权限</button>}
+            {write?.active && write.classes.includes("destructive") && <div className="mt-3 text-sm">
+              <p className="font-semibold">回收站批量确认</p>
+              <p>同一客户端登记在 24 小时内移入回收站超过 5 项时，Agent 会把其余项目列成一批，在这里一次确认。</p>
+              {trash[c.id] ? <>
+                {trash[c.id].batches.length === 0 ? <p>没有待确认或已确认的批次。</p> : trash[c.id].batches.map(batch =>
+                  <div key={batch.batch_id} className="mt-2">
+                    <p>{batch.status === "pending" ? "待确认批次" : "已确认批次"}（{batch.items.length} 项，{batch.expires_at} 前有效）</p>
+                    {batch.items.map((item, index) => <p key={index}>{trashItemText(item)}
+                      {item.used ? "：已使用" : item.current ? "" : "：已变化，不能确认，请让 Agent 重新列出"}</p>)}
+                    {batch.status === "pending" && <button disabled={busy || !batch.items.every(item => item.current)}
+                      onClick={() => void confirmTrash(c, batch)}>全部确认</button>}
+                  </div>)}
+                {trash[c.id].batches_truncated && <p>只显示最近 20 个批次。</p>}
+              </> : <button disabled={busy} onClick={() => void loadTrash(c)}>读取回收站确认</button>}
+            </div>}
+          </section>
+          {normal?.refresh_token_warning && <p role="status" className="my-1 text-sm">{normal.refresh_token_blocked
+            ? "该 Google 账号在 Clued 中的授权次数已达上限，暂时不能通过重新授权开启读取与搜索或扩大可纳管范围；请联系维护者处理。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因，重新连接仍可使用。"
+            : `该 Google 账号在 Clued 中的授权次数已较多（${normal.refresh_token_count} 次）。Google 超过上限时会静默作废最早的授权；若某个连接突然需要重新授权，可能是这个原因。`}</p>}
+          <details className="my-4 border-t pt-4 text-sm">
+            <summary className="cursor-pointer font-semibold">每小时额度：{budget[c.id]
               ? `每个已授权 Agent 读取 ${formatBytes(budget[c.id].connection.read_bytes_per_hour)}、上传 ${formatBytes(budget[c.id].connection.upload_bytes_per_hour)}；` +
                 `账号合计读取 ${formatBytes(budget[c.id].account.read_bytes_per_hour)}、上传 ${formatBytes(budget[c.id].account.upload_bytes_per_hour)}`
-              : "未读取"}</p>
+              : "未读取"}</summary>
             {budget[c.id] ? <>
               <p className="my-1 text-sm">按滚动一小时计算；读取与上传分别计量，每个 Agent 和账号合计都不能超出。用完后 Agent 会收到“额度已用完”，一小时内逐步恢复。只有你可以在这里修改。</p>
               {(["connection", "account"] as const).map(scope => <div key={scope} className="my-2">
@@ -849,45 +948,7 @@ export default function StorageConnections() {
                 <button disabled={busy} onClick={() => void saveBudget(c, scope)}>{scope === "connection" ? "保存此连接的额度" : "保存账号合计额度"}</button>
               </div>)}
             </> : <button disabled={busy} onClick={() => void loadBudget(c)}>读取额度设置</button>}
-          </div>
-          <p className="mt-3 text-sm font-semibold">高级</p>
-          <p>Agent 查看目录结构：{readAccess[c.id] ? (readAccess[c.id].active
-            ? (readAccess[c.id].classes.includes("read_content") ? "已允许" : "已允许（只看文件名和目录，不读内容）") : "未允许") : "未读取"}</p>
-          {readAccess[c.id]
-            ? <button disabled={busy} onClick={() => void toggleRead(c)}>{readAccess[c.id].active ? "停止 Agent 查看目录结构" : "允许 Agent 查看目录结构"}</button>
-            : <button disabled={busy} onClick={() => void loadReadAccess(c)}>读取 Agent 查看设置</button>}
-          {readAccess[c.id]?.active && <>
-            <p className="mt-2">Agent 读正文：{readAccess[c.id].classes.includes("read_content")
-              ? normalUse[c.id]?.normal_use ? "已允许（目录内全部文件）" : "已允许（仅 Clued 创建的文本文件）" : "未允许"}</p>
-            <button disabled={busy} onClick={() => void toggleRead(c, "read_content")}>
-              {readAccess[c.id].classes.includes("read_content") ? "停止 Agent 读正文" : "允许 Agent 读正文"}</button>
-          </>}
-          {writeAccess[c.id]?.active && <div className="mt-2">
-            <button disabled={busy || writeLevels(writeAccess[c.id]).every(level => writeAccess[c.id].classes.includes(level))}
-              onClick={() => void setAllWrite(c, true)}>全部允许（写入等级）</button>{" "}
-            <button disabled={busy || writeLevels(writeAccess[c.id]).every(level => !writeAccess[c.id].classes.includes(level))}
-              onClick={() => void setAllWrite(c, false)}>全部停止（写入等级）</button>
-          </div>}
-          {writeAccess[c.id]?.active && writeLevels(writeAccess[c.id]).map(level => <div key={level}>
-            <p className="mt-2">Agent {writeText[level].name}：{writeAccess[c.id].classes.includes(level)
-              ? level === "modify_subtree" ? "已允许（仅 Clued 创建或已纳管的文件夹）" : "已允许（仅 Clued 创建或已纳管的文件）" : "未允许"}</p>
-            <button disabled={busy} onClick={() => void toggleWrite(c, level)}>
-              {writeAccess[c.id].classes.includes(level) ? `停止 Agent ${writeText[level].name}` : `允许 Agent ${writeText[level].name}`}</button>
-          </div>)}
-          {writeAccess[c.id]?.active && writeAccess[c.id].classes.includes("destructive") && <div>
-            <p className="mt-2">回收站批量确认：同一客户端登记在 24 小时内移入回收站超过 5 项时，Agent 会把其余项目列成一批，在这里一次确认。</p>
-            {trash[c.id] ? <>
-              {trash[c.id].batches.length === 0 ? <p>没有待确认或已确认的批次。</p> : trash[c.id].batches.map(batch =>
-                <div key={batch.batch_id} className="mt-2">
-                  <p>{batch.status === "pending" ? "待确认批次" : "已确认批次"}（{batch.items.length} 项，{batch.expires_at} 前有效）</p>
-                  {batch.items.map((item, index) => <p key={index}>{trashItemText(item)}
-                    {item.used ? "：已使用" : item.current ? "" : "：已变化，不能确认，请让 Agent 重新列出"}</p>)}
-                  {batch.status === "pending" && <button disabled={busy || !batch.items.every(item => item.current)}
-                    onClick={() => void confirmTrash(c, batch)}>全部确认</button>}
-                </div>)}
-              {trash[c.id].batches_truncated && <p>只显示最近 20 个批次。</p>}
-            </> : <button disabled={busy} onClick={() => void loadTrash(c)}>读取回收站确认</button>}
-          </div>}
+          </details>
         </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
         {c.pending_lifecycle ? <div role="status" className="my-2">
@@ -919,7 +980,7 @@ export default function StorageConnections() {
         {dialog.kind === "reconnect" ? <>
           <p className="my-3">继续使用这个文件夹和原项目，重新取得 Google 授权，不会另建同名文件夹。后台续签保持关闭，可在连接完成后按需要开启。</p>
           <label className="block"><input type="checkbox" disabled={busy} checked={dialog.normalUse}
-            onChange={event => { const normalUse = event.target.checked; setDialog(current => current ? { ...current, normalUse } : null); }} /> 同时开启正常使用</label>
+            onChange={event => { const normalUse = event.target.checked; setDialog(current => current ? { ...current, normalUse } : null); }} /> 同时开启读取与搜索</label>
           {dialog.normalUse && <p className="my-3 whitespace-pre-line text-sm">{normalUseDisclosure(folderName(dialog.connection))}</p>}
         </> : <>
           <p className="my-3">删除后会停止此连接的文件操作和后台续签，并从连接列表移除；操作记录会保留。</p>
