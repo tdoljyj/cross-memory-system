@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { sanitizeCluedResult } from '../worker/result-sanitization.ts';
 
 // Task 0c0367c7: exercise the real transport boundary, rather than a copy of
 // its private sanitizer. IDs below are synthetic, distinct fixture identities.
@@ -191,6 +192,7 @@ for (const transport of ['REST', 'MCP']) {
   test(`${transport}: canonical export preserves user fields within its service snapshot`, async () => {
     const record = { id: RECORD, record_schema_version: 1, record_type: 'note', scope: 'global', lifecycle_status: 'active',
       title: 'Fixture note', content: 'Fixture content', type_fields: { note_kind: 'log', ...userContent('export record') },
+      relations: userContent('export relations'),
       version: 7, receipt_id: RECEIPT };
     const legacyEvent = { kind: 'legacy_event', legacy_id: '17', legacy_schema_version: null,
       inline_payload: { event_type: 'note', context_key: 'global', payload: userContent('legacy event') },
@@ -202,9 +204,10 @@ for (const transport of ['REST', 'MCP']) {
       legacy_evidence: [], excluded_evidence_counts: { unlinked: 0 },
     } };
     const { data } = await resultFor(canonicalExport, transport, fixture);
-    assert.deepEqual({ type_fields: data.snapshot.records[0].type_fields, payload: data.snapshot.legacy_events[0].inline_payload.payload },
-      { type_fields: record.type_fields, payload: legacyEvent.inline_payload.payload },
-      'canonical export still preserves user record fields and legacy event payload');
+    assert.deepEqual({ type_fields: data.snapshot.records[0].type_fields, relations: data.snapshot.records[0].relations,
+      payload: data.snapshot.legacy_events[0].inline_payload.payload },
+      { type_fields: record.type_fields, relations: record.relations, payload: legacyEvent.inline_payload.payload },
+      'canonical export still preserves user record fields, relations and legacy event payload');
     assert.equal(data.snapshot.records[0].id, RECORD);
     assert.deepEqual(data, fixture);
   });
@@ -244,4 +247,61 @@ test('MCP: public holder_binding_id remains usable when a work claim conflicts',
   const { data } = await resultFor(spec, 'MCP', fixture);
   assert.deepEqual(data, fixture);
   assert.equal(data.conflicts[0].holder_binding_id, TO);
+});
+
+test('MCP: a committed work claim returns the user-declared budget unchanged with its service profile', async () => {
+  const declaredBudget = { estimated_model_tokens: 1000, ...userContent('declared budget') };
+  const storedBudget = { ...declaredBudget, profile_id: 'fixture-profile' };
+  const claim = { claim_id: CLAIM, task_id: TASK, context_key: 'global', holder_binding_id: FROM,
+    holder_session_ref: 'fixture-session', fence: 1, lease_version: 1, status: 'ACTIVE', budget: storedBudget };
+  const fixture = { status: 'committed', replayed: false, receipt_id: RECEIPT, claim };
+  const spec = { tool: 'clued_work_claim', rpc: 'clued_work_claim_v1', flags: { CLUED_WORK_CLAIMS_V1: 'true' },
+    args: { task_id: TASK, write_set: ['apps/example/**'], idempotency_key: 'sanitization-budget-fixture',
+      holder_label: 'Fixture budget roundtrip', budget: declaredBudget } };
+  const { data } = await resultFor(spec, 'MCP', fixture);
+  assert.deepEqual(data.claim.budget, storedBudget, 'the open caller declaration survives, including nested fields');
+  assert.equal(data.claim.claim_id, CLAIM);
+  assert.equal(data.claim.holder_binding_id, FROM);
+});
+
+test('module: Canonical relations remain opaque inside a service export snapshot', () => {
+  const relations = Object.freeze(userContent('record relations'));
+  const input = { snapshot: { records: [{ id: RECORD, relations }], events: [{ event_id: '17', actor_binding_id: BINDING }] } };
+  const output = sanitizeCluedResult(input, 'clued_canonical_export');
+  assert.deepEqual(output.snapshot.records[0], { id: RECORD, relations });
+  assert.equal(output.snapshot.records[0].relations, relations);
+  assert.deepEqual(output.snapshot.events, [{ event_id: '17' }]);
+  assert.equal(input.snapshot.events[0].actor_binding_id, BINDING, 'the input service row remains unchanged');
+});
+
+test('module: budget is opaque at each known work-claim result location', () => {
+  const budget = Object.freeze({ estimated_model_tokens: 1000, ...userContent('claim budget'), profile_id: 'fixture-profile' });
+  const claim = Object.freeze({ claim_id: CLAIM, task_id: TASK, holder_binding_id: FROM, budget });
+  for (const tool of ['clued_work_claim', 'clued_work_renew', 'clued_work_release', 'clued_work_verify', 'clued_work_takeover']) {
+    const input = Object.freeze({ status: 'committed', receipt_id: RECEIPT, claim });
+    const output = sanitizeCluedResult(input, tool);
+    assert.deepEqual(output, input, tool);
+    assert.equal(output.claim.budget, budget, `${tool}: preserve the user JSON branch`);
+  }
+  const resume = { status: 'restored', active_work_claims: [claim] };
+  const active = { status: 'ok', claims: [claim] };
+  assert.deepEqual(sanitizeCluedResult(resume, 'clued_session_resume'), resume);
+  assert.equal(sanitizeCluedResult(resume, 'clued_session_resume').active_work_claims[0].budget, budget);
+  assert.deepEqual(sanitizeCluedResult(active, 'clued_work_claims_active'), active);
+  assert.equal(sanitizeCluedResult(active, 'clued_work_claims_active').claims[0].budget, budget);
+});
+
+test('module: unknown service budget and metadata still hide authentication identities', () => {
+  // Boundary robustness only: do not invent an upstream RPC that emits this shape.
+  const serviceBudget = Object.freeze({ user_id: USER, actor_user_id: USER, binding_id: BINDING, actor_binding_id: BINDING,
+    retained: 17, nested: Object.freeze({ user_id: USER, binding_id: BINDING, retained: false }) });
+  const publicBudget = { retained: 17, nested: { retained: false } };
+  const input = Object.freeze({ budget: serviceBudget, metadata: Object.freeze({ actor_user_id: USER, budget: serviceBudget }) });
+  const expected = { budget: publicBudget, metadata: { budget: publicBudget } };
+  for (const tool of [undefined, 'clued_unknown_tool', 'clued_work_claim', 'clued_session_resume', 'clued_canonical_export']) {
+    assert.deepEqual(sanitizeCluedResult(input, tool), expected, `${tool}: unrelated service metadata is not opaque`);
+  }
+  assert.deepEqual(sanitizeCluedResult({ claim: { budget: serviceBudget } }, 'clued_work_unknown'),
+    { claim: { budget: publicBudget } }, 'an unknown work-prefixed tool does not create a claim boundary');
+  assert.equal(serviceBudget.user_id, USER, 'the input remains unchanged');
 });
