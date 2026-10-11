@@ -245,17 +245,40 @@ test('libpq tools get sslmode=require where the node-postgres URL says no-verify
   }
 });
 
-test('production backup mode encrypts and verifies the dump before removing plaintext', () => {
-  assert.match(productionWorkflow, /if: \$\{\{ inputs\.mode == 'backup' \}\}/);
-  assert.match(productionWorkflow, /CLUED_PRODUCTION_BACKUP_KEY/);
-  assert.match(productionWorkflow, /--user \"\$\(id -u\):\$\(id -g\)\"/);
-  assert.match(productionWorkflow, /searchParams\.delete\(\"uselibpqcompat\"\)/);
-  assert.match(productionWorkflow, /-e DATABASE_URL=\"\$database_url\"/);
-  assert.match(productionWorkflow, /pg_restore --list/);
-  assert.match(productionWorkflow, /openssl enc -aes-256-cbc -pbkdf2/);
-  assert.match(productionWorkflow, /openssl enc -d -aes-256-cbc -pbkdf2/);
-  assert.match(productionWorkflow, /shred -u \"\$dump_path\" \"\$verified_path\"/);
-  assert.match(productionWorkflow, /clued-production-pre-migration\.dump\.enc/);
+test('production backup mode encrypts and verifies the dump before removing plaintext', async () => {
+  const backup = productionWorkflow.split(/\n      - name: /)
+    .find((step) => step.startsWith('Create and verify encrypted pre-migration backup\n'));
+  const publisher = await readFile(new URL('../scripts/verify-production-backup-scope.mjs', import.meta.url), 'utf8');
+  assert.match(backup, /if: \$\{\{ inputs\.mode == 'backup' \}\}/);
+  assert.match(backup, /secrets\.CLUED_PRODUCTION_BACKUP_KEY/);
+  assert.match(backup, /--user \"\$\(id -u\):\$\(id -g\)\"/);
+  assert.match(backup, /searchParams\.delete\(\"uselibpqcompat\"\)/);
+  assert.match(backup, /-e DATABASE_URL=\"\$database_url\"/);
+  assert.match(backup, /node scripts\/verify-production-backup-scope\.mjs "\$backup_container" "\$backup_tmp"/);
+  assert.match(publisher, /const toc = await runPg\('pg_restore', \['--list', dumpPath\]\)/);
+  assert.match(publisher, /const proof = verifyArchiveScope\(inventory, toc\)/);
+  assert.match(publisher, /'exec pg_restore "\$@"'/);
+  assert.match(publisher, /const proof = await createVerifiedBackup\(\{ session, runPg, dumpPath:/);
+  assert.match(publisher, /fs\.writeFile\(path\.join\(scratch, 'scope-proof\.json'\), JSON\.stringify\(proof\)/);
+  assert.match(backup, /scope_proof="\$backup_tmp\/scope-proof\.json"/);
+  assert.match(backup, /if\(proof\.verified!==true\) throw new Error/);
+  assert.match(backup, /scope_verification:proof/);
+  assert.match(backup, /openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt/);
+  assert.match(backup, /openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000/);
+  assert.equal([...backup.matchAll(/-pass env:CLUED_PRODUCTION_BACKUP_KEY/g)].length, 2);
+  assert.match(backup, /backup_tmp=\$\(mktemp -d "\$RUNNER_TEMP\/clued-production-backup-XXXXXX"\)/);
+  assert.match(backup, /verified_path="\$backup_tmp\//);
+  assert.match(backup, /test "\$\(sha256sum "\$verified_path" \| cut -d' ' -f1\)" = "\$dump_sha256"/);
+  assert.match(backup, /trap cleanup_plaintext EXIT/);
+  assert.match(backup, /--filter "label=clued\.backup-scratch=\$backup_tmp"/);
+  const stop = backup.indexOf('docker rm -f "$backup_container"');
+  const cleanup = backup.indexOf('for plaintext in "$dump_path" "$verified_path" "$scope_proof"; do');
+  const shred = backup.indexOf('shred -u -- "$plaintext"');
+  const removeScratch = backup.indexOf('rmdir -- "$backup_tmp"');
+  assert.ok(stop >= 0 && stop < cleanup && cleanup < shred && shred < removeScratch,
+    'The owned producer must stop before plaintext and scratch are removed');
+  assert.match(backup.slice(stop, cleanup), /\|\| cleanup_status=1[\s\S]*if \[ "\$cleanup_status" -ne 0 \]; then[\s\S]*exit 1/);
+  assert.match(backup, /clued-production-pre-migration\.dump\.enc/);
   assert.doesNotMatch(productionWorkflow,
     /release-evidence\/clued-production-pre-migration\.dump\s*$/m);
 });
