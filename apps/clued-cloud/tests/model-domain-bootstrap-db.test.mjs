@@ -8,6 +8,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import {DOMAIN_POLICY as P} from '../worker/model-domain-policy.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { GATEWAY_ROLE, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
 
 // Original Task 1502fd80. Real isolated PostgreSQL; no service/production URI.
 // Candidate state is NOT_RUN until this file really executes in admitted CI.
@@ -95,6 +96,7 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       try { await admin.query(entry.sql); }
       catch (e) { throw new Error('Migration ' + entry.name + ': ' + e.message, { cause: e }); }
     }
+    await assertGatewayCloseoutBoundary(admin);
     await allowRawTestBindings(admin);
     const userId = uuid(), otherUser = uuid(), token = hash(), otherToken = hash();
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'model-fixture@example.invalid',now()),($2,'other-fixture@example.invalid',now())", [userId, otherUser]);
@@ -109,6 +111,10 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       const ownTransaction=!faultTransaction;
       if(ownTransaction)await admin.query('begin');
       try {
+        if(role===GATEWAY_ROLE) {
+          // The caller stays on this exact transaction, including fault scenes.
+          await admin.query("select set_config('request.jwt.claims',$1,true)",[JSON.stringify({role:GATEWAY_ROLE})]);
+        }
         if(role==='authenticated') {
           assert.equal(faultTransaction,false,'Native issue/consume must each have a distinct committed transaction');
           await admin.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)",
@@ -126,10 +132,10 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       }
     }
     const rpc = async (name,input,tk=token) =>
-      (await roleCall('anon','select public.'+name+'($1,$2) value',[tk,input])).rows[0].value;
-    const project = await rpc('clued_project_mutate',{operation:'create',canonical_project_id:projectId,
-      project_schema_version:1,base_version:null,idempotency_key:uuid(),
-      mutation:{name:'Synthetic model fixture',progress_status:'active',certainty_status:'confirmed',aliases:[]}});
+      (await roleCall(GATEWAY_ROLE,'select public.'+name+'($1,$2) value',[tk,input])).rows[0].value;
+    const project = await rpc('clued_project_mutate_v2',{operation:'create',canonical_project_id:projectId,
+      project_schema_version:2,base_version:null,idempotency_key:uuid(),
+      mutation:{name:'Synthetic model fixture',progress_status:'active',aliases:[]}});
     assert.equal(project.status,'committed',JSON.stringify(project));
     await admin.query(`insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status,
       record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)
@@ -322,18 +328,28 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
       ()=>admin.query("create or replace function clued_private.model_domain_bootstrap_exact_plan_candidate() returns jsonb language sql immutable set search_path='' as $$ select '{}'::jsonb $$"),
       commitBootstrap,/MODEL_DOMAIN_EXACT_PLAN_NOT_INSTALLED/);
     await t.test('public wrapper ACLs preserve authenticated Native and service separation',async()=>{
-      const acl=(await admin.query("select has_function_privilege('anon','public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb)','EXECUTE') commit,has_function_privilege('authenticated','public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb)','EXECUTE') human,has_function_privilege('service_role','public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb)','EXECUTE') service,has_function_privilege('anon','clued_private.model_domain_bootstrap_claim_candidate(text,public.clued_agent_bindings,uuid[])','EXECUTE') claim")).rows[0];
-      assert.deepEqual(acl,{commit:true,human:false,service:false,claim:false});
+      const acl=(await admin.query("select has_function_privilege('anon','public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb)','EXECUTE') commit,has_function_privilege('clued_worker_gateway','public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb)','EXECUTE') gateway,has_function_privilege('authenticated','public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb)','EXECUTE') human,has_function_privilege('service_role','public.clued_model_dataset_split_bootstrap_commit_candidate(text,jsonb)','EXECUTE') service,has_function_privilege('anon','clued_private.model_domain_bootstrap_claim_candidate(text,public.clued_agent_bindings,uuid[])','EXECUTE') claim")).rows[0];
+      assert.deepEqual(acl,{commit:false,gateway:true,human:false,service:false,claim:false});
       assert.equal(await countBootstrap(),0);assert.equal(await bootstrapUses(),0);
     });
 
     const acl=(await admin.query(`select
       has_function_privilege('anon','public.clued_model_dataset_split_verify_successor_candidate(text,jsonb)','EXECUTE') verify,
+      has_function_privilege('clued_worker_gateway','public.clued_model_dataset_split_verify_successor_candidate(text,jsonb)','EXECUTE') gateway,
       has_function_privilege('anon','clued_private.model_domain_normalize_row_successor(public.clued_agent_bindings,public.clued_memories)','EXECUTE') normal,
       has_function_privilege('authenticated','public.clued_model_dataset_split_verify_successor_candidate(text,jsonb)','EXECUTE') human,
       has_function_privilege('service_role','public.clued_model_dataset_split_verify_successor_candidate(text,jsonb)','EXECUTE') service`)).rows[0];
-    assert.deepEqual(acl,{verify:true,normal:false,human:false,service:false});
+    assert.deepEqual(acl,{verify:false,gateway:true,normal:false,human:false,service:false});
     assert.equal(nativeTransactionProof.length,3);
+    await t.test('full-chain G6 replay preserves exact caller boundary and catalog',async()=>{
+      await assertGatewayCloseoutBoundary(admin);
+      const before=await snapshotCallerCatalog(admin);
+      const closeout=migrationBundle.find(entry=>entry.name===CLOSEOUT_MIGRATION);
+      assert.ok(closeout,'the complete migration bundle must include G6');
+      await admin.query(closeout.sql);
+      await assertGatewayCloseoutBoundary(admin);
+      assert.deepEqual(await snapshotCallerCatalog(admin),before);
+    });
   } finally {
     if(admin) {try {await admin.end();} catch {}}
     ownProcess??=server.process;

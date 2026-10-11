@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -68,8 +69,11 @@ test("resume pages newest first and a checkpoint can absorb all of its Binding's
     clients.push(anon);
     await anon.connect();
     await anon.query("set role anon");
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const call = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      await workerGatewayRpc(workerCaller,name,token,input);
     const rpc = (name, input) => call(tokenHash, name, input);
     const checkpoint = (session, base, eventIds, extra = {}, key = uuid(), token = tokenHash) => call(token, "clued_mcp_commit_checkpoint", {
       context_key: "global", session_token: session, base_version: base,
@@ -192,6 +196,12 @@ test("resume pages newest first and a checkpoint can absorb all of its Binding's
     assert.equal(otherSweep.status, "committed", JSON.stringify(otherSweep));
     assert.equal(otherSweep.absorbed_event_count, 1);
     assert.equal(otherSweep.pending_event_count_after, 0);
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

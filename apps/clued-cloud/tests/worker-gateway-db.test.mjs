@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, WORKER_SIGNATURES, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
 
 // C1 phase 1, Task 9a4d6d2c, Decision 818a9b05: an additive transport role.
-// The G6 role guard below is a disposable candidate fixture, never a migration.
+// Preserve the C1 historical assertions, then exercise the actual stage-2 migration.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261009070002_worker_gateway_transition_v1.sql';
 const role = 'clued_worker_gateway';
@@ -330,6 +331,76 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         await caller.query(`select set_config('request.jwt.claims',$1,false)`, [claims]);
         await assert.rejects(caller.query('select public.test_worker_gateway_role_probe()'), error => error.code === '42501');
       }
+    });
+    await t.test('the full current migration chain closes anon RPCs and preserves Native/P5 definitions and ACL', async () => {
+      await migrator.query('drop function public.test_worker_gateway_role_probe()');
+      for (const name of migrations.filter(n => n > MIGRATION && n !== CLOSEOUT_MIGRATION)) {
+        try { await migrator.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8')); }
+        catch (error) { throw new Error(`Later migration ${name}: ${error.message}`,{cause:error}); }
+      }
+      const catalogBefore=await snapshotCallerCatalog(admin);
+      const closeout=await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8');
+      await migrator.query(closeout);
+      await assertGatewayCloseoutBoundary(admin);
+      const catalogAfter=await snapshotCallerCatalog(admin);
+      const g6='clued_mcp_currentness_g6_gate(text,jsonb)';
+      const legacy=new Set(['clued_project_mutate(text,jsonb)','clued_storage_jobs_v2(text,jsonb)']);
+      const stripPublic=s=>s.replace(/^public\./,'');
+      const definitions=rows=>rows.filter(r=>stripPublic(r.signature)!==g6).map(({acl,...r})=>r);
+      assert.deepEqual(definitions(catalogAfter),definitions(catalogBefore),'every non-G6 business definition, owner and config remains');
+      const protectedRows=rows=>rows.filter(r=>!WORKER_SIGNATURES.includes(stripPublic(r.signature))&&!legacy.has(stripPublic(r.signature)));
+      assert.deepEqual(protectedRows(catalogAfter),protectedRows(catalogBefore),'Native/P5/private/platform ACL remains');
+      await migrator.query(closeout);
+      assert.deepEqual(await snapshotCallerCatalog(admin),catalogAfter,'actual stage-2 replay is idempotent');
+      await assertGatewayCloseoutBoundary(admin);
+    });
+
+    const stage2Proof=hex(),stage2Project=crypto.randomUUID();
+    await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)
+      values($1,$2,'Gateway stage 2','gateway stage 2',$3,'confirmed',now())`,[stage2Project,user,'project:'+stage2Project]);
+    await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'test','stage-2 synthetic Binding',$2,array['context:read'],array['*'])`,[user,stage2Proof]);
+    const gate=()=>caller.query('select public.clued_mcp_currentness_g6_gate($1,$2::jsonb) value',[stage2Proof,JSON.stringify({project_id:stage2Project})]);
+    await t.test('actual G6 uses request role and valid JWT object together, preserving Binding business rejection',async()=>{
+      await asRole(role);
+      assert.equal((await gate()).rows[0].value.status,'not_ready');
+      for(const claims of ['', '{', '{}','null','[]','123','true','"clued_worker_gateway"','{"role":"anon"}']) {
+        await caller.query("select set_config('request.jwt.claims',$1,false)",[claims]);
+        await assert.rejects(gate(),e=>e.code==='42501'&&e.message==='worker_gateway_required');
+      }
+      for(const name of ['anon','authenticated','clued_p5_gateway']) {
+        await asRole(name);
+        await caller.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({role})]);
+        await assert.rejects(gate(),e=>e.code==='42501');
+      }
+      await asRole(role);
+      await assert.rejects(caller.query('select public.clued_mcp_currentness_g6_gate($1,$2::jsonb)',[hex(),'{}']),
+        e=>e.code==='42501'&&e.message==='binding_not_authorized');
+    });
+    await t.test('accidental caller grants do not bypass G6 and unknown app ACL drift refuses the whole replay',async()=>{
+      const closeout=await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8');
+      await migrator.query('grant execute on function public.clued_mcp_currentness_g6_gate(text,jsonb) to authenticated');
+      try {
+        await asRole('authenticated');
+        await caller.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({role})]);
+        await assert.rejects(gate(),e=>e.code==='42501'&&e.message==='worker_gateway_required');
+      } finally {await migrator.query('revoke execute on function public.clued_mcp_currentness_g6_gate(text,jsonb) from authenticated');}
+      await migrator.query('grant execute on function public.clued_storage_owner_lifecycle_v1(text,jsonb) to clued_worker_gateway');
+      try {
+        const before=await snapshotCallerCatalog(admin);
+        await assert.rejects(migrator.query(closeout),e=>e.code==='42501'&&e.message==='worker_gateway_role_unexpected_privileges');
+        assert.deepEqual(await snapshotCallerCatalog(admin),before,'failed replay cannot partially revoke the unexpected Native grant');
+      } finally {await migrator.query('revoke execute on function public.clued_storage_owner_lifecycle_v1(text,jsonb) from clued_worker_gateway');}
+      await migrator.query(`create function public.clued_test_unknown_closeout() returns int language sql security definer set search_path='' as 'select 1';
+        revoke all on function public.clued_test_unknown_closeout() from public; grant execute on function public.clued_test_unknown_closeout() to anon`);
+      try {
+        const before=await snapshotCallerCatalog(admin);
+        await assert.rejects(migrator.query(closeout),e=>e.code==='42501'&&e.message==='worker_gateway_closeout_boundary_unqualified'
+          &&e.detail.includes('clued_test_unknown_closeout'));
+        assert.deepEqual(await snapshotCallerCatalog(admin),before);
+      } finally {await migrator.query('drop function public.clued_test_unknown_closeout()');}
+      await migrator.query(closeout);
+      await assertGatewayCloseoutBoundary(admin);
     });
   } catch (error) {
     failure = error;

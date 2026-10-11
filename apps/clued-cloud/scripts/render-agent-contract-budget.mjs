@@ -42,14 +42,8 @@ const env = { PROJECT_VIEWS_V2: "true", CLUED_WORK_CLAIMS_V1: "true", CLUED_INTE
   CLUED_DELEGATED_OAUTH_V12: "true", SUPABASE_URL: "https://clued-budget.invalid", SUPABASE_PUBLISHABLE_KEY: "fixture-public-key" };
 globalThis.fetch = async () => { throw new Error("bootstrap budget probe attempted outbound I/O"); };
 const { handleContinuityRequest } = await import(pathToFileURL(resolve(valueOf("--worker-module"))).href);
-let markdown;
-try {
-  markdown = await readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8");
-} catch (error) {
-  if (error.code !== "ENOENT") throw error;
-  markdown = await readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8");
-}
-markdown = markdown.replace(/\r\n/g, "\n");
+const markdown = (await readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8"))
+  .replace(/\r\n/g, "\n");
 const version = Number(/^Contract version: (\d+)$/m.exec(markdown)?.[1]);
 assert.ok(Number.isInteger(version) && version > 0);
 const call = async (part) => {

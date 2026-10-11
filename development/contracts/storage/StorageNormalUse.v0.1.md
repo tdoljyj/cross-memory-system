@@ -305,6 +305,10 @@ r2 审查（B1、M1–M9、m1–m8）的处理索引见 r3（`162061a`）§0.2�
 - **迁移**（m-f）：`…/20260928070005_…account_jobs_v2.sql:150-153` 的提交校验接受 `content_ref` 形态。size / sha256 目前从 `mutation.content` 推导的现行定义**全部**改为对 `content_ref` 作业取 `content_ref.size` / `content_ref.sha256`：`storage_job_provider_attempt_v2`（`20260928072813_…:130-137`，另有 `20260930100000_…:182-183`、`20260930120000_…:466-477` 两次源码补丁）；`storage_verified_result_v2`（`20260928074834_…:254-255`，现行定义为 `20260929200000_…:685-686` 的 `create or replace`，另有 `20260930100000_…:228-229`、`20260930120000_…:478-515` 补丁）；kernel 核验 `resource-center-google-drive-postcondition.mjs:52-55`。N3 迁移以锚点补丁方式修改（与 100000 / 120000 同法，锚点命中数必须等于期望值），并加测试：对每个函数取 `pg_get_functiondef`，断言不存在未受 `content_ref` 分支保护的 `mutation->>'content'` 取 size / sha256。P4 `replace` 的 `20260930120000_…:204-205` 当时只处理文本，不在此列；二进制 `replace` 见 §6.5。文本形态不变。
 - **生命周期**：`issued` 行 10 分钟未 PUT → `expired`，释放预占（未收到任何字节）；`ready` 未提交 TTL 1 小时；二进制作业 12 小时内未开始执行则取消（`staging_expired`）；作业结算或 effect 开始后删除暂存（恢复只 GET、不重传）；R2 bucket 生命周期 3 天，仅作兜底；清理器按数据库状态删除。
 
+**P0-4认证、发行方身份与版本边界：** Binding客户端证明仍为`sha256(token)`，库内认证使用受控`cv1:`校验值；`p_issuer_hash`仍是发行方秘密的SHA-256证明值，现有接收原秘密的`p_issuer_secret`入口保持其签名和私有resolver校验。2b先校验active且未过期/退役的凭据代，再映射固定发行方UUID及原存储应用/Owner/连接范围；历史64hex发行方列保身份和PK/FK用途，不复用为认证证明。新注册摘要`clued.storage-client-registration/3`绑定固定UUID；旧registration `/2`及旧持久核验JSON原字节保留，新`clued.storage-persisted-verification/3`仅记录非秘密`issuer_kind`、`issuer_id`、`credential_generation`等所需引用，不含secret/proof/verifier。版本由服务端不可变request-version数据选择，不由调用者选择旧版；`storage_client_redirect_identity_v3`两侧使用稳定UUID，域标签仍为`clued.storage-client-redirect-identity/2`。历史代引用不授予现在的执行权，新有效代的历史link/replay仍受原业务守卫约束。
+
+C1阶段2后，无用户会话的Worker存储后台及manifest内Binding调用使用GW JWT并继续校验各自Binding/issuer及存储业务权限；有用户会话的Native路径和P5路径保留原通道，不被GW凭据覆盖。签名PUT URL仍只按本节HMAC/TTL/单次CAS和绑定授权检查，不改成需要Binding或GW bearer，不改变HMAC/AEAD密钥、size/sha256、`content_ref`、scope、Root、quota、Receipt及恢复仅GET规则。发行方换代不恢复OFF续签、不升级normal-use权限或scope、不制造/重发job，也不放宽已退役或缺授权的连接。
+
 ### 6.3 类型检查（M8、m-d）
 
 - **首块魔数拒绝表**（不论声明类型）：`MZ`、ELF（`7F 45 4C 46`）、Mach-O / fat（`FE ED FA CE/CF`、`CE/CF FA ED FE`、`CA FE BA BE`）、`#!`。命中返回 `content_type_mismatch`。

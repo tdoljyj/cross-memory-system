@@ -11,7 +11,7 @@ const CLUED_COMPONENTS = {
     .components.map((c) => [c.id, String(c.version)])),
   source_commit: null,
 };
-const CONTRACT_SOURCE = readFileSync(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const CONTRACT_SOURCE = readFileSync(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const CONTRACT_IDENTITY = { contract_version: Number(/^Contract version: (\d+)$/m.exec(CONTRACT_SOURCE)[1]),
   agent_contract_sha256: createHash("sha256").update(CONTRACT_SOURCE).digest("hex") };
 

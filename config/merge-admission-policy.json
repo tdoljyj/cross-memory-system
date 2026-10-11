@@ -6,7 +6,7 @@
   "merge_slot_hard_cap_minutes": 120,
   "layers": {
     "protected": { "paths": [] },
-    "docs": { "paths": ["docs/**", "development/contracts/**/*.md", "development/authority-index/**/*.md", "*.md", "skills/**/*.md", "!skills/clued/references/agent-contract.md"] },
+    "docs": { "paths": ["docs/**", "development/contracts/**/*.md", "development/authority-index/**/*.md", "*.md", "skills/**/*.md"] },
     "code": { "paths": ["**"] }
   },
   "rules": {

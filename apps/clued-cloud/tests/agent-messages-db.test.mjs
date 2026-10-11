@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Agent Messaging v0.1 (migration 20261006090000, Task 3f6fb219, Owner
 // Decision 24077bba): Agents of one account write to each other through
@@ -83,8 +84,14 @@ test('agent messages: claim-addressed requests, replies, inbox, summary and thei
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
+        : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const ok = (result) => { assert.equal(result.status, 'ok', JSON.stringify(result)); return result; };
     const rejected = (result, code) => { assert.deepEqual([result.status, result.error_code], ['rejected', code], JSON.stringify(result)); return result; };
@@ -264,6 +271,14 @@ test('agent messages: claim-addressed requests, replies, inbox, summary and thei
     assert.equal(limited.limit, 'sends_per_binding_per_hour');
     assert.ok(limited.retry_after > 0 && limited.retry_after <= 3600, JSON.stringify(limited));
     committed(await send('claude', { to: { binding_id: bindingIds.codex }, subject: 'x', body: 'y', kind: 'info' }));
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

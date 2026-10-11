@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claim continuation (migration 20261006180000, GenericWorkClaim §10.8,
 // Decisions 754dff5d and 9aa6e329): a new claim that picks up, on the same Binding, the
@@ -79,6 +80,10 @@ test('work claims: a same-Binding continuation of a completed claim takes no tok
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
@@ -89,7 +94,9 @@ test('work claims: a same-Binding continuation of a completed claim takes no tok
       return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
     };
     const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
+        : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const createTask = async (title) => committed(await agent('claude', 'clued_record_mutate', {
       operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active',
@@ -397,6 +404,14 @@ test('work claims: a same-Binding continuation of a completed claim takes no tok
       { scope: 'global', claim_id: taken.claim_id, idempotency_key: uuid(), holder_session_ref: 'session-a' }));
     assert.equal(tookOver.continued_from, undefined);
     assert.ok(same(await level('task', takeoverTask), 6));
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -30,7 +30,7 @@ function allParts(markdown, payload = bootstrap) {
 }
 
 test("current source travels exactly once, while full public metadata stays in content[0]", async () => {
-  const markdown = (await fs.readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  const markdown = (await fs.readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8")).replace(/\r\n/g, "\n");
   const contract = source(markdown);
   const payload = { ...bootstrap, lifecycle: { ...bootstrap.lifecycle, contract: { ...bootstrap.lifecycle.contract, version: contract.version } },
     agent_contract: { version: contract.version, sha256: contract.sha256 } };

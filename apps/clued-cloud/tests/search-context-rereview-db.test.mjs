@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Search re-review (Owner Decisions 07f80a00 and 5d61f655, Task f46591b2):
 // input checks after authorization, admitted-only resume hints, the session's
@@ -53,6 +54,9 @@ test('search re-review: inputs, sessions, merged projects and paging limit', { t
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
     await allowRawTestBindings(admin);
     for (const fn of ['search_int_input_v1(jsonb,integer)', 'search_bool_input_v1(jsonb)',
       'search_scope_allowed_v2(text,text,text,text[])']) {
@@ -83,11 +87,11 @@ test('search re-review: inputs, sessions, merged projects and paging limit', { t
             ($1,'synthetic','Revoked',$5,array['context:read'],array['global'])`,
       [userId, allToken, projectAToken, writeOnlyToken, revokedToken, scopeA]);
     await admin.query('update public.clued_agent_bindings set revoked_at=now() where token_hash=clued_private.credential_verifier_v1($1)', [revokedToken]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query('set role anon');
-    const rpc = async (token, name, input) => (await anon.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
+    const rpc = async (token, name, input) => (await gateway.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
     const create = async (scope, title, content) => {
       const r = await rpc(allToken, 'clued_record_mutate', { operation: 'create', record_type: 'note',
         record_schema_version: 1, lifecycle_status: 'active', scope, idempotency_key: uuid(),

@@ -6,7 +6,7 @@ import { contractVersionOf, verifyServedAgentContract }
   from '../scripts/verify-served-agent-contract.mjs';
 
 const contract = (await readFile(new URL(
-  '../../../skills/clued/references/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  '../../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const productionWorkflow = await readFile(new URL(
   '../../../.github/workflows/clued-cloud-production-release.yml', import.meta.url), 'utf8');
 const version = contractVersionOf(contract);

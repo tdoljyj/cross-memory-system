@@ -170,7 +170,7 @@ test("layers: docs, the agent contract's exception, root Markdown, mixed pull re
   for (const [paths, layer] of [
     [["docs/a/b.md"], "docs"], [["README.md"], "docs"], [["development/contracts/x/Y.v0.1.md"], "docs"],
     [["development/contracts/x/schema.json"], "code"], [["skills/clued/SKILL.md"], "docs"],
-    [["skills/clued/references/agent-contract.md"], "code"], [["apps/clued-cloud/README.md"], "code"],
+    [["protocol/agent/agent-contract.md"], "code"], [["skills/clued/references/agent-contract.md"], "docs"], [["apps/clued-cloud/README.md"], "code"],
     [["docs/a.md", "kernel/x.py"], "code"], [["docs/a.md", "kernel/x.py", ".github/workflows/x.yml"], "protected"],
     [["apps/clued-cloud/supabase/migrations/1_x.sql"], "code"], [[], "code"],
   ]) {

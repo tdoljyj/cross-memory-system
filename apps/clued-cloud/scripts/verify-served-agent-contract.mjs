@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const PRODUCTION_ORIGIN = 'https://clued.pixelgrav.com';
-const contractSource = new URL('../../../skills/clued/references/agent-contract.md', import.meta.url);
+const contractSource = new URL('../../../protocol/agent/agent-contract.md', import.meta.url);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 
 export function contractVersionOf(markdown) {
