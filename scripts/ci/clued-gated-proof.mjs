@@ -1,5 +1,6 @@
 // Pure, typed execution proof. Callers supply authenticated, budgeted reads
 // and source qualification. No slot/executor imports and no mutation here.
+import {validDocumentationSkippedRoute} from './clued-workflow-profile.mjs';
 export const QUALITY = '.github/workflows/clued-cloud-quality-gate.yml';
 export const DOCUMENTATION_STEPS = Object.freeze(['Install from lockfile', 'Run npm run lint',
   'Run npm run ledger:verify', 'Run npm run typecheck', 'Run npm run build', 'Run npm run test:unit']);
@@ -119,6 +120,7 @@ export function qualifyPrimary(profile, jobs, file) {
   const routes=profile.routes.filter(x=>x.name===job.name && x.self_hosted===self);
   if(routes.length!==1) return unknown(`${file}: ambiguous primary route`);
   const required=routes[0].required_steps;
+  if(!validDocumentationSkippedRoute(file,routes[0]))return unknown(`${file}: documentation auxiliary route invalid`);
   if(!required || !Object.keys(required).length) return unknown(`${file}: empty execution profile`);
   if(Object.values(required).some(count=>!Number.isSafeInteger(count) || count<1))
     return unknown(`${file}: invalid execution profile count`);
@@ -131,6 +133,8 @@ export function qualifyPrimary(profile, jobs, file) {
     const steps=resultFor(name);
     if(steps.length!==count || steps.some(x=>x.status!=='completed')) return unknown(`${file}: execution step identity/count ${name}`);
     if(docs && DOCUMENTATION_STEPS.includes(name)) continue;
+    if(docs && routes[0].documentation_skipped_steps?.includes(name) &&
+      steps.every(x=>x.conclusion==='skipped')) continue;
     // The classifier is auxiliary on the Full path: continue-on-error is
     // explicitly coupled to running all six real application steps.
     if(file===QUALITY && name==='Qualify ordinary documentation changes' && !docs) continue;
@@ -158,10 +162,11 @@ async function completeList(read, route, key) {
   return null;
 }
 
-export async function qualifiedCI({read,repository,head,prNumber,workflows,profiles,authorizeSource,qualifyDocumentation,qualifyRunIdentity}) {
+export async function qualifiedCI({read,repository,head,prNumber,workflows,profiles,authorizeSource,revalidateSources,qualifyDocumentation,qualifyRunIdentity}) {
   try {
     if(!/^[a-f0-9]{40}$/.test(head) || !Number.isInteger(prNumber) || prNumber<=0 ||
-        !(workflows instanceof Map) || !profiles?.workflows || typeof authorizeSource!=='function')
+        !(workflows instanceof Map) || !profiles?.workflows || typeof authorizeSource!=='function' ||
+        typeof revalidateSources!=='function')
       return unknown('qualification identity/source descriptor missing');
     for(const file of workflows.keys()) if(!profiles.workflows[file]) return unknown(`unrecognized CI profile: ${file}`);
     const list=await completeList(read,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request`,'workflow_runs');
@@ -177,7 +182,9 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
     if(!latest.size || latest.size!==workflows.size) return unknown('required CI workflow set incomplete');
     // Failures and recovery metadata can drive writes too. Never return a
     // stale terminal result just because only successful proofs reach the end.
-    const witnessed=new Set();
+    const witnessed=new Set(),sourceRuns=[];
+    const sourceStillCurrent=async()=>await revalidateSources({repository,head,prNumber,
+      runs:sourceRuns.map(({file,run})=>({file,run:{...run}}))})===true;
     const sameMembership=(a,b)=>Array.isArray(a?.pull_requests) && Array.isArray(b.pull_requests) &&
       a.pull_requests.length===b.pull_requests.length &&
       (a.pull_requests.length===1?a.pull_requests[0]?.number===prNumber:
@@ -186,6 +193,22 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       String(a.path??'').replace(/@.*$/,'')===String(b.path??'').replace(/@.*$/,'') &&
       a.run_attempt===b.run_attempt && a.status===b.status && a.conclusion===b.conclusion &&
       sameMembership(a,b);
+    const nativeBarrier=async()=>{
+      for(const row of latest.values())if(!sameRun(await read(`/repos/${repository}/actions/runs/${row.id}`),row))return false;
+      const rows=await completeList(read,`/repos/${repository}/actions/runs?head_sha=${head}&event=pull_request`,'workflow_runs');
+      if(!rows)return false;
+      const current=new Map();
+      for(const row of rows) {
+        const file=String(row.path??'').replace(/@.*$/,'');
+        if(row.head_sha!==head || row.event!=='pull_request' || !workflows.has(file))continue;
+        if(!current.has(file)||row.id>current.get(file).id)current.set(file,row);
+      }
+      if(current.size!==latest.size || [...latest].some(([file,row])=>!sameRun(current.get(file),row)))return false;
+      return true;
+    };
+    const nativeRuns=()=>[...latest.values()].map(run=>({id:run.id,head_sha:run.head_sha,event:run.event,
+      path:String(run.path??'').replace(/@.*$/,''),run_attempt:run.run_attempt,status:run.status,conclusion:run.conclusion,
+      pull_requests:run.pull_requests.map(pr=>pr.number)}));
     const terminal=async(run,result)=>{
       try {
       if(!sameRun(await read(`/repos/${repository}/actions/runs/${run.id}`),run))
@@ -200,7 +223,9 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       }
       if(finalLatest.size!==latest.size || [...latest].some(([file,row])=>!sameRun(finalLatest.get(file),row)))
         return unknown('terminal latest workflow set changed');
-      return result;
+      if(!await sourceStillCurrent())return unknown('terminal source authority changed');
+      if(!await nativeBarrier())return unknown('terminal native state changed during source recheck');
+      return {...result,native_runs:nativeRuns()};
       } catch {return unknown('terminal proof recheck read failed');}
     };
     const scopes=[],proofs=[];
@@ -212,6 +237,7 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
       if(!jobs || jobs.some(job=>job.run_id!==run.id || job.run_attempt!==run.run_attempt))
         return unknown(`${file}: job history incomplete or crosses attempts`);
       if((await authorizeSource({file,run,jobs}))!==true) return unknown(`${file}: candidate source not qualified`);
+      sourceRuns.push({file,run});
       // Empty native membership may be resolved only by an independently
       // source-qualified attempt witness. Wrong or multiple associations are
       // never overridden by the fallback.
@@ -266,6 +292,8 @@ export async function qualifiedCI({read,repository,head,prNumber,workflows,profi
         !sameMembership(final,latest.get(proof.file)))
         return unknown(`${proof.file}: final latest run/attempt changed`);
     }
-    return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs};
+    if(!await sourceStillCurrent())return unknown('source authority changed while qualifying');
+    if(!await nativeBarrier())return unknown('native state changed during source recheck');
+    return {passed:true,state:'qualified',reason:`${proofs.length} qualified CI workflows`,scopes,proofs,native_runs:nativeRuns()};
   } catch {return unknown('CI qualification read failed');}
 }

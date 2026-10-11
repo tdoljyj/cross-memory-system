@@ -5,9 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { EXECUTOR_PERMISSIONS, optInSha, renderSummary, runExecutor } from "./clued-merge-executor.mjs";
+import { EXECUTOR_PERMISSIONS, currentOperationAuthority, optInSha, renderSummary, runExecutor } from "./clued-merge-executor.mjs";
+import { resolveMode } from "./merge-admission-policy.mjs";
 import { CI_REQUIRED_CHECKS, HOLDERS_RPC } from "./clued-merge-slot-ci.mjs";
-import { ADMISSION_APP_ID } from "./clued-work-admission.mjs";
+import { ADMISSION_APP_ID, VERIFY_RPC } from "./clued-work-admission.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = "tdoljyj/cross-memory-system";
@@ -23,8 +24,8 @@ const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.expor
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
   CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, ...extra });
 const BODY = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`;
-const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\nClued-Auto-Merge: ${HEAD}`, draft: false, auto_merge: null,
-  head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: "main", repo: { default_branch: "main" } }, ...extra });
+const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\nClued-Auto-Merge: ${HEAD}`, state: "open", mergeable_state:"clean", draft: false, auto_merge: null,
+  head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: "main", repo: { default_branch: "main", full_name: REPO } }, ...extra });
 const verified = (extra = {}) => ({ id: 20, name: "clued-admission-verified", head_sha: HEAD, status: "completed", conclusion: "success",
   app: { id: ADMISSION_APP_ID }, external_id: "pr:5:run:900", output: { title: "ADMITTED [normal · code · reruns 1]" }, ...extra });
 const check = (name, extra = {}) => (name === "clued-admission-verified" ? verified(extra)
@@ -40,7 +41,7 @@ function fakeFetch(routes) {
     const method = init.method ?? "GET";
     calls.push({ route: rpc ? `rpc:${rpc[1]}` : route, method, input: body && body.p_input, body,
       authorization: init.headers && init.headers.authorization });
-    const key = rpc ? `rpc:${rpc[1]}` : Object.keys(routes).find((prefix) => {
+    const key = rpc ? `rpc:${rpc[1]}` : Object.keys(routes).sort((a,b)=>b.length-a.length).find((prefix) => {
       const [m, p] = prefix.includes(" ") ? prefix.split(" ") : ["GET", prefix];
       return m === method && route.startsWith(p);
     });
@@ -57,27 +58,42 @@ const checksRoute = (byName) => Object.fromEntries(Object.entries(byName).map(([
   [`/repos/${REPO}/commits/${HEAD}/check-runs?check_name=${name}&`, { check_runs: checks }]));
 const allGreen = () => checksRoute(Object.fromEntries(CI_REQUIRED_CHECKS.map(({ name }) => [name, [check(name)]])));
 
+const PROOF = Symbol("execution fixture");
+const fixtureProof = pr => ({passed:true,state:"qualified",head:pr.head.sha,pr_number:pr.number,reason:"qualified execution fixture",native_runs:[]});
 function world({ pulls = [pull()], holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [SLOT], merge_slot_until: "2026-10-09T12:00:00Z",
   merge_slot_ci: { taken_at: "2026-10-09T10:00:00Z" } }], behindBy = 0, token = { token: "ghs_exec" }, extra = {} } = {}) {
-  return fakeFetch({
+  const result = fakeFetch({
+    ...Object.fromEntries(pulls.map(pr=>[`/repos/${REPO}/pulls/${pr.number}`,pr])),
     [`/repos/${REPO}/pulls?state=open`]: pulls,
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", repository: REPO, holders }),
     [`/repos/${REPO}/branches/main`]: { commit: { sha: TIP } },
     [`/repos/${REPO}/compare/${TIP}...${HEAD}`]: { behind_by: behindBy, ahead_by: 3 },
     // By default the head's CI ran and passed (Task 114d43cf); tests override these two routes.
-    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [{ id: 700, path: ".github/workflows/clued-components.yml@refs/pull/5/merge",
+    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { total_count:1,workflow_runs: [{ id: 700, path: ".github/workflows/clued-components.yml@refs/pull/5/merge",
       head_sha: HEAD, event: "pull_request", status: "completed", conclusion: "success" }] },
     [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: [{ name: "admission-gate", conclusion: "success" }, { name: "clued-components", conclusion: "success" },
       { name: "${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ... 'clued-components-hosted-skipped' }}", conclusion: "skipped" }] },
     [`/repos/${REPO}/installation`]: { id: 99 },
     "POST /app/installations/99/access_tokens": token,
     [`PUT /repos/${REPO}/pulls/5/update-branch`]: { message: "Updating pull request branch." },
-    "POST /graphql": { data: { enablePullRequestAutoMerge: { pullRequest: { number: 5, autoMergeRequest: { enabledAt: "now" } } } } },
+    "POST /graphql": {data:{disablePullRequestAutoMerge:{pullRequest:{number:5}}}},
+    [`PUT /repos/${REPO}/pulls/5/merge`]:{__status:200,body:{merged:true,sha:TIP}},
     ...allGreen(),
     ...extra,
   });
+  result.execution = extra[PROOF]; result.progress_ref=holders[0]?.progress_ref;
+  return result;
 }
-const run = (fetch, extraEnv = {}) => runExecutor({ env: env(extraEnv), fetchImpl: fetch.fetchImpl, workspace: ROOT });
+// These fixtures test consumer/authority ordering. Source/job qualification is
+// tested independently by the pure proof and runtime suites, not bypassed by env.
+const run = (fetch, extraEnv = {}, dependencies = {}) => runExecutor({ env: env(extraEnv), fetchImpl: fetch.fetchImpl, workspace: ROOT,
+  qualifyExecution: async pr=>({...fixtureProof(pr),...(typeof fetch.execution==='function'?await fetch.execution(pr):fetch.execution)}),
+  authorizeOperation: async ({pr,env})=>{
+    const current=await (await fetch.fetchImpl(`https://api.github.com/repos/${REPO}/pulls/${pr.number}`)).json();
+    const mode=resolveMode({env,workspace:ROOT,readFile:fs.readFileSync});
+    return {valid:current.state==='open' && current.head?.sha===pr.head.sha && current.draft===false,
+      pr:current,mode,progress_ref:fetch.progress_ref};
+  },...dependencies });
 const writes = (fetch) => fetch.calls.filter((call) => call.method !== "GET" && !call.route.startsWith("rpc:") && !call.route.includes("access_tokens"));
 
 test("optInSha: only an exact body line naming a full head sha", () => {
@@ -108,19 +124,11 @@ test("a head behind the default branch is brought up to date as the App, bound t
   }
 });
 
-test("an up-to-date, admitted head opted in for itself gets auto-merge once its CI ran and passed; GitHub waits for the required checks", async () => {
-  // An App check still pending (clued-merge-slot, clued-admission-verified) does not hold it back: GitHub waits for it.
-  // (A workflow's own check, such as trivy, runs in a run that gatedCiOf waits for.)
-  const running = checksRoute({ "clued-merge-slot": [check("clued-merge-slot", { status: "in_progress", conclusion: null })] });
-  for (const extra of [{}, running]) {
-    const fetch = world({ extra });
-    const result = await run(fetch);
-    assert.deepEqual(result.actions.map((a) => [a.action, a.status, a.error]), [["enable_auto_merge", 200, undefined]]);
-    const [mutation] = writes(fetch);
-    assert.equal(mutation.route, "/graphql");
-    assert.match(mutation.body.query, /enablePullRequestAutoMerge\(input: \{pullRequestId: \$id, mergeMethod: MERGE, expectedHeadOid: \$oid\}\)/);
-    assert.deepEqual(mutation.body.variables, { id: "PR_node5", oid: HEAD });
-  }
+test("qualified clean current opted-in head uses normal match-head merge, without creating auto-merge",async()=>{
+  const fetch=world();const result=await run(fetch);
+  assert.deepEqual([result.actions[0].action,result.actions[0].result,result.actions[0].merge_status],["merge_pull_request","merged",200]);
+  assert.deepEqual(writes(fetch).map(c=>[c.method,c.route,c.body]),[["PUT",`/repos/${REPO}/pulls/5/merge`,{merge_method:"merge",sha:HEAD}]]);
+  assert.equal(fetch.calls.some(c=>c.route==="/graphql"),false);
 });
 
 test("an opt-in for an approved head covers later changes only where they equal the default branch", async () => {
@@ -131,7 +139,7 @@ Clued-Auto-Merge: ${APPROVED}`;
   const since = (list, behind = 0) => ({ [`/repos/${REPO}/compare/${APPROVED}...${HEAD}`]: { behind_by: behind, files: list } });
   const vsTip = (list) => ({ [`/repos/${REPO}/compare/${TIP}...${HEAD}`]: { behind_by: 0, ahead_by: 3, files: list } });
   let fetch = world({ pulls: [pull({ body })], extra: { ...since(files("README.md", "worker/a.ts")), ...vsTip(files("scripts/pr-change.mjs")) } });
-  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge", "only main's files changed since the approval");
+  assert.equal((await run(fetch)).actions[0].action, "merge_pull_request", "only main's files changed since the approval");
   for (const [name, extra] of [
     ["a change of the pull request's own after the approval", { ...since(files("README.md", "scripts/pr-change.mjs")), ...vsTip(files("scripts/pr-change.mjs")) }],
     ["a hand-resolved conflict or an amended merge (an evil merge)", { ...since(files("worker/a.ts")), ...vsTip(files("worker/a.ts", "scripts/pr-change.mjs")) }],
@@ -159,20 +167,18 @@ test("auto-merge on with an opt-in for another head is turned off (review MAJOR-
   assert.deepEqual(mutation.body.variables, { id: "PR_node5" });
   // Auto-merge someone turned on without an opt-in line is left alone.
   const manual = world({ pulls: [pull({ body: BODY, auto_merge: { merge_method: "merge" } })] });
-  assert.deepEqual([writes(manual), (await run(manual)).actions[0].reason], [[], "auto-merge is already on"]);
+  assert.deepEqual([writes(manual), (await run(manual)).actions[0].reason], [[], "manual auto-merge is not managed by this executor"]);
 });
 
-// CI runs on the head: the newest pull_request run of a gated workflow, and its jobs (review MAJOR-1).
+// Deliberately typed source-qualified execution fixtures. These tests exercise
+// how the consumer handles them; arbitrary helper success cannot mint a proof.
 const GATED = ".github/workflows/clued-components.yml";
-const ciRuns = ({ conclusion = "success", status = "completed",
-  jobs = [["admission-gate", "success"], ["clued-components", "success"], ["clued-components-hosted-skipped", "skipped"]] } = {}) => ({
-  [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [
-    { id: 600, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status: "completed", conclusion: "failure" },
-    { id: 700, path: `${GATED}@refs/pull/5/merge`, head_sha: HEAD, event: "pull_request", status, conclusion: status === "completed" ? conclusion : null },
-  ] },
-  [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: jobs.map(([name, c]) => ({ name, conclusion: c })) },
+const ciRuns = ({conclusion="success",status="completed",jobs=[["primary","success"]]}={}) => ({
+  [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: {total_count:1,workflow_runs:[{id:700,path:GATED,head_sha:HEAD,event:"pull_request",status,conclusion}]},
+  [PROOF]: {passed:status==="completed" && conclusion==="success" && jobs.some(([name,c])=>name!=="admission-gate"&&c==="success") && jobs.every(([,c])=>c==="success"||c==="skipped"),
+    state:"qualified",reason:"qualified execution fixture"},
 });
-const mergeable = (status) => ({ "POST /graphql": { data: null, errors: [{ message: `Pull request Pull request is in ${status} status` }] } });
+const mergeable = (status) => ({[`/repos/${REPO}/pulls/5`]:pull({mergeable_state:status})});
 const MERGE = `PUT /repos/${REPO}/pulls/5/merge`;
 const mergeCall = (fetch) => writes(fetch).find((call) => call.method === "PUT" && call.route === `/repos/${REPO}/pulls/5/merge`);
 
@@ -184,41 +190,27 @@ test("a clean, opted-in head whose CI all ran and passed is merged by the execut
     [[], "merged", 200, "c".repeat(40), undefined]);
   const merge = mergeCall(fetch);
   assert.deepEqual([merge.body, merge.authorization], [{ merge_method: "merge", sha: HEAD }, "Bearer ghs_exec"]);
-  assert.ok(fetch.calls.some((call) => call.route === `/repos/${REPO}/actions/runs/700/jobs?filter=latest&per_page=100`), "the newest run's jobs");
-  assert.match(result.notices[0], /already mergeable, so GitHub does not take auto-merge; the executor merged it/);
+  assert.ok(fetch.calls.filter(call=>call.route===`/repos/${REPO}/pulls/5`).length>=2,"current native PR is revalidated before writes");
+
   assert.match(renderSummary(result), /\*\*merged\*\*/);
 });
 
 test("Task 114d43cf: a workflow without a gate passes with one twin run and the other skipped", async () => {
   const fetch = world({ extra: ciRuns({ jobs: [["gitleaks", "success"], ["gitleaks-hosted-skipped", "skipped"]] }) });
-  assert.equal((await run(fetch)).actions[0].action, "enable_auto_merge");
+  assert.equal((await run(fetch)).actions[0].action, "merge_pull_request");
 });
 
-test("Task 114d43cf: skipped gated jobs, a red or running CI run or no CI run get neither auto-merge nor a merge", async () => {
-  for (const [name, extra, reason] of [
-    ["gate refused, every gated job skipped", ciRuns({ jobs: [["admission-gate", "success"], ["clued-components", "skipped"],
-      ["clued-components-hosted-skipped", "skipped"]] }), /\.github\/workflows\/clued-components\.yml ran no job besides its gate \(all skipped\)/],
-    ["gate failed", ciRuns({ jobs: [["admission-gate", "failure"], ["clued-components", "skipped"], ["clued-components-hosted-skipped", "skipped"]] }),
-      /clued-components\.yml job admission-gate is failure/],
-    ["a job failed in a successful run", ciRuns({ jobs: [["admission-gate", "success"], ["clued-components", "cancelled"],
-      ["clued-components-hosted-skipped", "skipped"]] }), /clued-components\.yml job clued-components is cancelled/],
-    ["CI run failed", ciRuns({ conclusion: "failure" }), /clued-components\.yml is completed \(failure\)/],
-    ["CI run still running", { ...ciRuns({ status: "in_progress" }),
-      [`/repos/${REPO}/contents/.github/workflows?ref=${HEAD}`]: [] }, /clued-components\.yml is in_progress/],
-    ["no CI run", { [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: [] } }, /no CI workflow ran on this head/],
-  ]) {
-    for (const status of ["clean", "pending"]) {
-      const fetch = world({ extra: { ...(status === "clean" ? mergeable("clean") : {}), ...extra } });
-      const result = await run(fetch);
-      assert.deepEqual([result.errors, result.actions[0].action, writes(fetch)], [[], "none", []], `${name} ${status}`);
-      assert.match(result.actions[0].reason, new RegExp(`^waiting for CI on this head: .*${reason.source}`), `${name} ${status}`);
-    }
+test("typed unknown, failed, skipped-primary and identity mismatches never enable or directly merge",async()=>{
+  for(const proof of [{passed:false,state:"unknown"},{passed:false,state:"failed"},{passed:true,state:"unknown"},
+    {passed:true,state:"qualified",head:APPROVED},{passed:true,state:"qualified",pr_number:6}]) {
+    const fetch=world({extra:{...mergeable("clean"),[PROOF]:proof}});
+    const result=await run(fetch);
+    assert.equal(result.actions[0].action,"none");assert.deepEqual(writes(fetch),[]);
   }
-  // Unstable (a check that is not required failed or is pending) is never merged.
-  const fetch = world({ extra: { ...mergeable("unstable"), ...ciRuns() } });
-  const result = await run(fetch);
-  assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].error, mergeCall(fetch)], [[], "mergeable_now", undefined, undefined]);
-  assert.match(result.notices[0], /already mergeable, but not merged: .*not required failed or is still pending \(unstable status\)/);
+  const fetch=world({extra:{...mergeable("unstable"),...ciRuns()}});
+  const result=await run(fetch);
+  assert.deepEqual([result.errors,result.actions[0].result,mergeCall(fetch)],[[],undefined,undefined]);
+  assert.match(result.actions[0].reason,/not clean/);
 });
 
 test("GitHub refuses the merge: 405 and 409 stay mergeable_now with the reason; any other answer is merge_refused", async () => {
@@ -228,21 +220,20 @@ test("GitHub refuses the merge: 405 and 409 stay mergeable_now with the reason; 
     const result = await run(fetch);
     assert.deepEqual([result.errors, result.actions[0].result, result.actions[0].merge_status, result.actions[0].error],
       [[], expected, code, `merge refused: ${message}`], String(code));
-    assert.match(result.notices[0], /enable_auto_merge was refused: merge refused/);
+    assert.match(result.notices[0], /merge_pull_request was refused: merge refused/);
   }
 });
 
-test("any other GraphQL error is a refusal notice", async () => {
-  const other = world({ extra: { "POST /graphql": { data: null, errors: [{ message: "Resource not accessible by integration" }] } } });
-  const refused = await run(other);
-  assert.deepEqual([refused.errors, refused.actions[0].error], [[], "Resource not accessible by integration"]);
-  assert.match(refused.notices[0], /enable_auto_merge was refused/);
+test("managed cleanup refusal prevents proof, Clued reads and merge",async()=>{
+  const fetch=world({pulls:[pull({auto_merge:{merge_method:"merge"}})],extra:{"POST /graphql":{errors:[{message:"refused"}]}}});
+  let proofs=0;const result=await run(fetch,{}, {qualifyExecution:async()=>{proofs++;throw Error("must not call")}});
+  assert.equal(proofs,0);assert.equal(fetch.calls.some(c=>c.route.startsWith("rpc:")),false);
+  assert.equal(mergeCall(fetch),undefined);assert.match(result.actions[0].error,/did not confirm/);
 });
 
 test("nothing is written unless every condition holds", async () => {
   const cases = [
     ["not opted in", { pulls: [pull({ body: BODY })] }, /did not opt in/],
-    ["auto-merge already on", { pulls: [pull({ auto_merge: { merge_method: "merge" } })] }, /already on/],
     ["CI failed", { extra: checksRoute({ gitleaks: [check("gitleaks", { conclusion: "failure", completed_at: "2026-10-09T11:00:00Z" })] }) }, /CI failed/],
     ["not admitted", { extra: checksRoute({ "clued-admission-verified": [verified({ conclusion: "failure" })] }) }, /has not admitted/],
     ["admitted for another pull request (review MINOR-2)", { extra: checksRoute({ "clued-admission-verified": [verified({ external_id: "pr:6:run:901" })] }) }, /has not admitted/],
@@ -262,15 +253,15 @@ test("a protected-layer pull request gets auto-merge like any other; Owner revie
   for (const retired of [undefined, "", "false"]) {
     const fetch = world(protectedCheck);
     const result = await run(fetch, retired === undefined ? {} : { CLUED_OWNER_REVIEW_ENFORCE: retired });
-    assert.equal(result.actions[0].action, "enable_auto_merge", String(retired));
+    assert.equal(result.actions[0].action, "merge_pull_request", String(retired));
   }
 });
 
-test("frozen: the executor does nothing, not even read the queue", async () => {
-  const fetch = world({ behindBy: 1 });
-  const result = await run(fetch, { CLUED_MERGE_ADMISSION_STATE: "frozen" });
-  assert.deepEqual([result.state, fetch.calls.length], ["frozen", 0]);
-  assert.match(result.notices[0], /frozen/);
+test("frozen refuses new work while disabling executor-managed auto-merge",async()=>{
+  const fetch=world({behindBy:1});const result=await run(fetch,{CLUED_MERGE_ADMISSION_STATE:"frozen"});
+  assert.equal(result.state,"frozen");assert.deepEqual(writes(fetch),[]);
+  const managed=world({pulls:[pull({auto_merge:{merge_method:"merge"}})]});
+  assert.equal((await run(managed,{CLUED_MERGE_ADMISSION_STATE:"frozen"})).actions[0].action,"disable_auto_merge");
 });
 
 test("without the App permissions it reports and changes nothing", async () => {
@@ -327,14 +318,14 @@ test("the independent executor uses actions write for full reruns and otherwise 
 });
 
 test("claim renewal opts in only a full matching head of a non-protected layer", async () => {
-  for (const [layer, progress, expected] of [['code', HEAD, 'enable_auto_merge'], ['docs', HEAD.toUpperCase(), 'enable_auto_merge'],
+  for (const [layer, progress, expected] of [['code', HEAD, 'merge_pull_request'], ['docs', HEAD.toUpperCase(), 'merge_pull_request'],
     ['protected', HEAD, 'none'], ['code', HEAD.slice(0, 12), 'none'], ['code', APPROVED, 'none'], ['code', `receipt:${HEAD}`, 'none']]) {
     const fetch = world({ pulls: [pull({ body: BODY })],
       holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [SLOT], progress_ref: progress }],
       extra: checksRoute({ 'clued-admission-verified': [verified({ output: { title: `ADMITTED [normal · ${layer} · reruns 1]` } })] }) });
     const result = await run(fetch);
     assert.equal(result.actions[0].action, expected, `${layer}: ${progress}`);
-    if (expected === 'enable_auto_merge') assert.match(result.actions[0].reason, new RegExp(`opted in by the claim renewal at ${HEAD}`));
+    if (expected === 'merge_pull_request') assert.match(result.actions[0].reason, new RegExp(`opted in by the claim renewal at ${HEAD}`));
   }
 });
 
@@ -345,7 +336,8 @@ const rerunWorld = ({ attempt = 1, limit = 1, admitted = true, jobs = [['admissi
   pulls: [pull({ body: BODY })], extra: {
     ...checksRoute({ 'clued-admission-verified': [verified({ conclusion: admitted ? 'success' : 'failure',
       output: { title: `${admitted ? 'ADMITTED' : 'REJECTED'} [normal · code · reruns ${limit}]` } })] }),
-    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { workflow_runs: runs ?? [gateOnlyRun({ run_attempt: attempt })] },
+    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { total_count:(runs ?? [0]).length,workflow_runs: runs ?? [gateOnlyRun({ run_attempt: attempt })] },
+    [PROOF]:{passed:false,state:"unknown",reason:"qualified gate-only recovery",rerun:{id:700,run_attempt:attempt,path:GATED}},
     [`/repos/${REPO}/actions/runs/700/jobs`]: { jobs: jobs.map(([name, conclusion]) => ({ name, conclusion })) },
     [`/repos/${REPO}/pulls/5`]: { ...pull(), state: 'open', head: { sha: currentHead } },
     [`/repos/${REPO}/actions/runs/700`]: gateOnlyRun({ run_attempt: currentAttempt }),
@@ -364,16 +356,11 @@ test("an admitted gate-only run is rerun with all jobs once using GITHUB_TOKEN, 
   assert.equal(fetch.calls.some((c) => c.route.includes('access_tokens')), false);
 });
 
-test("only exactly gate-only successful pull_request runs qualify for automatic reruns", async () => {
-  for (const options of [{ jobs: [['admission-gate', 'success'], ['clued-components', 'success']] },
-    { jobs: [['admission-gate', 'success']] }, { jobs: [['clued-components', 'skipped']] },
-    { jobs: [['admission-gate', 'success'], ['clued-components', 'neutral']] },
-    { jobs: [['admission-gate', 'failure'], ['clued-components', 'skipped']] },
-    { runs: [gateOnlyRun({ conclusion: 'failure' })] }, { runs: [gateOnlyRun({ event: 'push' })] },
-    { runs: [gateOnlyRun({ head_sha: APPROVED })] }]) {
-    const fetch = rerunWorld(options);
-    assert.notEqual((await run(fetch)).actions[0].action, 'rerun_gated', JSON.stringify(options));
-    assert.equal(writes(fetch).some((c) => c.route.endsWith('/rerun')), false);
+test("unqualified recovery cannot rerun",async()=>{
+  for(const proof of [{passed:false,state:"unknown"},{passed:false,state:"failed"},
+    {passed:false,state:"unknown",head:APPROVED,rerun:{id:700,run_attempt:1,path:GATED}}]) {
+    const fetch=rerunWorld({extra:{[PROOF]:proof}});
+    assert.notEqual((await run(fetch)).actions[0].action,"rerun_gated");assert.deepEqual(writes(fetch),[]);
   }
 });
 
@@ -388,7 +375,7 @@ test("reruns are bounded by admission, attempt metadata and the one automatic re
 
 test("a newer run, a moved PR head or a changed attempt prevents rerunning the stale run", async () => {
   for (const options of [{ currentHead: APPROVED }, { currentAttempt: 2 },
-    { runs: [gateOnlyRun(), gateOnlyRun({ id: 701, conclusion: 'failure' })] }]) {
+    { extra:{[PROOF]:{passed:false,state:"unknown",reason:"newer run"}} }]) {
     const fetch = rerunWorld(options);
     assert.equal((await run(fetch)).actions[0].action, 'none', JSON.stringify(options));
     assert.deepEqual(writes(fetch), []);
@@ -403,13 +390,125 @@ test("a rerun refusal is reported without merging or requesting App actions perm
   assert.equal(writes(fetch).length, 1);
 });
 
-test("a newer workflow run created after planning prevents rerunning the old gate-only run", async () => {
-  let reads = 0;
-  const fetch = rerunWorld({ extra: {
-    [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: () => ({ workflow_runs:
-      ++reads < 3 ? [gateOnlyRun()] : [gateOnlyRun(), gateOnlyRun({ id: 701, conclusion: 'failure' })] }),
-  } });
-  const result = await run(fetch);
-  assert.equal(result.actions[0].action, 'none');
-  assert.deepEqual(writes(fetch), []);
+test("execution becomes unknown after planning: no rerun",async()=>{
+  let reads=0;const fetch=rerunWorld({extra:{[PROOF]:()=>++reads===1?{passed:false,state:"unknown",rerun:{id:700,run_attempt:1,path:GATED}}:{passed:false,state:"unknown"}}});
+  assert.equal((await run(fetch)).actions[0].action,"none");assert.deepEqual(writes(fetch),[]);
+});
+
+// Production authority reader: native PR/default-tip, current claim verifier,
+// queue and App observation, with no execution proof in the ADMITTED evaluator.
+function authorityWorld(extra={}) {
+  const current=pull({changed_files:1,base:{ref:"main",sha:TIP,repo:{default_branch:"main",full_name:REPO}}});
+  const fetch=world({pulls:[current],extra:{
+    ...checksRoute({"clued-admission-verified":[verified({output:{title:"ADMITTED [normal · docs · reruns 2]"}})]}),
+    [`/repos/${REPO}/pulls/5/files`]:[{filename:"README.md",status:"modified"}],
+    [`/repos/${REPO}/compare/${TIP}...${HEAD}`]:{status:"ahead",files:[{filename:"README.md",status:"modified"}]},
+    [`rpc:${VERIFY_RPC}`]:{verdict:"ADMITTED",reasons:[],verified_at:"2026-10-10T20:00:00Z",
+      claim:{trigger_refs:[SLOT],merge_slot_until:"2026-10-10T21:00:00Z"}},...extra}});
+  return {fetch,current};
+}
+test("real live authority reader admits the current claimed FIFO head and rejects withdrawal",async()=>{
+  for(const revoked of [false,true]) {
+    const {fetch,current}=authorityWorld(revoked?{[`rpc:${VERIFY_RPC}`]:{verdict:"REJECTED",reasons:["claim_revoked"]}}:{});
+    const result=await currentOperationAuthority({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT,
+      readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"merge_pull_request"});
+    assert.equal(result.valid,!revoked);assert.deepEqual(writes(fetch),[]);
+    assert.ok(fetch.calls.some(c=>c.route===`rpc:${VERIFY_RPC}`));
+  }
+});
+test("the real production qualifier refuses fixture head/source; required greens do not mint execution proof",async()=>{
+  const fetch=world();const result=await runExecutor({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT});
+  assert.equal(result.actions[0].action,"none");assert.deepEqual(writes(fetch),[]);
+});
+test("live authority is checked after qualification and before enable, direct merge and rerun",async()=>{
+  for(const type of ["enable","direct","rerun"]){
+    const fetch=type==="rerun"?rerunWorld():world({extra:type==="direct"?mergeable("clean"): {}});
+    let checks=0;
+    const result=await run(fetch,{}, {authorizeOperation:async ({pr,env})=>({valid:++checks<2,pr,
+      mode:resolveMode({env,workspace:ROOT,readFile:fs.readFileSync}),progress_ref:fetch.progress_ref})});
+    assert.equal(mergeCall(fetch),undefined);assert.equal(writes(fetch).filter(c=>c.route.endsWith("/rerun")).length,0);
+    if(type!=="direct")assert.deepEqual(writes(fetch),[]);
+    assert.ok(result.actions.length);
+  }
+});
+test("managed auto already on loses eligibility: unknown source, expired slot and revoked permission turn it off",async()=>{
+  for(const [options,dependencies] of [
+    [{extra:{[PROOF]:{passed:false,state:"unknown",reason:"unregistered source"}}},{}],
+    [{holders:[]},{}],
+    [{},{authorizeOperation:async()=>({valid:false})}],
+    [{pulls:[pull({body:"no claim",auto_merge:{enabled_by:{login:"clued-admission[bot]"}}})]},{}],
+    [{pulls:[pull({draft:true,auto_merge:{merge_method:"merge"}})]},{}],
+  ]) {
+    const fetch=world({pulls:[pull({auto_merge:{merge_method:"merge"}})],...options});
+    const result=await run(fetch,{},dependencies);
+    assert.equal(result.actions[0].action,"disable_auto_merge");
+    assert.equal(writes(fetch).length,1);assert.match(writes(fetch)[0].body.query,/disablePullRequestAutoMerge/);
+  }
+});
+test("manual non-opted auto remains untouched even when claim leaves the queue",async()=>{
+  const fetch=world({holders:[],pulls:[pull({body:BODY,auto_merge:{enabled_by:{login:"tdoljyj"}}})]});
+  assert.deepEqual((await run(fetch)).actions,[]);assert.deepEqual(writes(fetch),[]);
+});
+
+test("final native barrier after authority refuses newer run, changed attempt, new active run or required failure",async()=>{
+  for(const change of ["newer","attempt","active","required"]){
+    let changed=false,authorizations=0;
+    const row={id:700,path:GATED,head_sha:HEAD,event:"pull_request",run_attempt:1,status:"completed",conclusion:"success",pull_requests:[{number:5}]};
+    const observed={...row,pull_requests:[5]};
+    const fetch=world({extra:{
+      [PROOF]:{native_runs:[observed]},
+      [`/repos/${REPO}/actions/runs/700`]:()=>({...row,run_attempt:changed&&change==="attempt"?2:1}),
+      [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:()=>{
+        const rows=changed&&["newer","active"].includes(change)?[row,{...row,id:701,
+          status:change==="active"?"queued":"completed"}]:[row];
+        return {total_count:rows.length,workflow_runs:rows};
+      },
+      [`/repos/${REPO}/commits/${HEAD}/check-runs?check_name=trivy&`]:()=>({check_runs:[check("trivy",{conclusion:changed&&change==="required"?"failure":"success"})]}),
+    }});
+    const result=await run(fetch,{}, {authorizeOperation:async({pr,env})=>{
+      if(++authorizations===2)changed=true;
+      return {valid:true,pr,mode:resolveMode({env,workspace:ROOT,readFile:fs.readFileSync}),progress_ref:fetch.progress_ref};
+    }});
+    assert.equal(result.actions[0].action,"none",change);assert.deepEqual(writes(fetch),[],change);
+  }
+});
+test("production live authority retains efficiency's actual FIFO holder",async()=>{
+  const {fetch,current}=authorityWorld(checksRoute({"clued-admission-verified":[verified({output:{title:"ADMITTED [efficiency · docs · reruns 2]"}})]}));
+  const result=await currentOperationAuthority({env:env({CLUED_MERGE_ADMISSION_STATE:"efficiency"}),fetchImpl:fetch.fetchImpl,workspace:ROOT,
+    readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"merge_pull_request"});
+  assert.equal(result.valid,true);assert.deepEqual(writes(fetch),[]);
+});
+
+test("a stale App layer or retry limit does not describe the current policy",async()=>{
+  for(const title of ["ADMITTED [normal · code · reruns 1]","ADMITTED [normal · docs · reruns 1]"]) {
+    const {fetch,current}=authorityWorld(checksRoute({"clued-admission-verified":[verified({output:{title}})]}));
+    const result=await currentOperationAuthority({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT,
+      readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"rerun_gated"});
+    assert.equal(result.valid,false,title);assert.deepEqual(writes(fetch),[]);
+  }
+});
+test("cleanup with withdrawn opt-in, empty claim or missing Clued token never starts slow qualification",async()=>{
+  for(const body of [BODY,"",`${BODY}\nClued-Auto-Merge: ${HEAD}`]) {
+    const fetch=world({pulls:[pull({body,auto_merge:{enabled_by:{login:"clued-admission[bot]"}}})]});
+    let proofs=0;const result=await run(fetch,{CLUED_CONTEXT_READ_TOKEN:""},{qualifyExecution:async()=>{proofs++;throw Error("must not call")}});
+    assert.equal(proofs,0);assert.equal(result.actions[0].action,"disable_auto_merge");
+    assert.equal(fetch.calls.some(c=>c.route.startsWith("rpc:")),false);
+  }
+});
+
+test("final Native PR binding refuses body/opt-in withdrawal, new auto request, non-clean state and retargeting",async()=>{
+  for(const mutation of [pr=>({...pr,body:BODY}),pr=>({...pr,body:""}),
+    pr=>({...pr,auto_merge:{enabled_by:{login:"tdoljyj"}}}),pr=>({...pr,mergeable_state:"unstable"}),
+    pr=>({...pr,base:{...pr.base,repo:{...pr.base.repo,default_branch:"release"}}})]) {
+    let lastNative=false;
+    const fetch=world({extra:{[`/repos/${REPO}/pulls/5`]:()=>{
+      const pr=pull();return lastNative?mutation(pr):pr;
+    }}});
+    let authorities=0;
+    const result=await run(fetch,{}, {authorizeOperation:async({pr,env})=>{
+      const current=pull();if(++authorities===2)lastNative=true;
+      return {valid:true,pr:current,mode:resolveMode({env,workspace:ROOT,readFile:fs.readFileSync}),progress_ref:fetch.progress_ref};
+    }});
+    assert.equal(result.actions[0].action,"none");assert.deepEqual(writes(fetch),[]);
+  }
 });

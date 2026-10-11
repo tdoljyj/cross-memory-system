@@ -13,7 +13,7 @@ import {
   HOLDERS_RPC,
   REQUIRED_CHECK_WORKFLOWS,
   TOUCH_RPC,
-  ciStateOf,
+  ciStateOf as actualCiStateOf,
   ciWorkflows,
   gitBlobSha,
   main,
@@ -36,8 +36,12 @@ const PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.expor
 const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED_CONTEXT_READ_TOKEN: "clued-token",
   CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: PEM, GITHUB_RUN_ID: "9001", ...extra });
 const pull = (number, sha = HEAD, body = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`) =>
-  ({ number, body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main" } } });
+  ({ number, node_id:`PR_${number}`, state: "open", body, draft: false, head: { sha }, base: { ref: "main", repo: { default_branch: "main", full_name:REPO } } });
+const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.head.sha,pr_number:pr.number,reason:'fixture execution observed',native_runs:[]});
+const ciStateOf=(fetch,env,repo,head,workflows,since=null)=>actualCiStateOf(fetch,env,repo,head,workflows,since,
+  {pr:pull(5),qualifyExecution:fixtureQualification});
 const check = (name, extra = {}) => ({ id: 10, name, head_sha: HEAD, status: "completed", conclusion: "success",
+  external_id: name==='clued-admission-verified'?'pr:5:run:9001':undefined,
   app: { id: name === "clued-admission-verified" ? ADMISSION_APP_ID : 15368 }, ...extra });
 const run = (pathName, status = "in_progress", extra = {}) => ({ id: 7, path: pathName, status, event: "pull_request", head_sha: HEAD, ...extra });
 
@@ -52,7 +56,7 @@ function fakeFetch(routes) {
     const key = rpc ? `rpc:${rpc[1]}` : Object.keys(routes).find((prefix) => route.startsWith(prefix));
     if (!key || !(key in routes)) return new Response("not found", { status: 404 });
     const answer = typeof routes[key] === "function" ? routes[key](body && body.p_input) : routes[key];
-    return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(answer?.__status?answer.body:answer), { status: answer?.__status??200, headers: { "content-type": "application/json" } });
   };
   return { fetchImpl, calls };
 }
@@ -61,7 +65,7 @@ function fakeFetch(routes) {
 const checksRoute = (sha, byName) => Object.fromEntries(Object.entries(byName).map(([name, checks]) =>
   [`/repos/${REPO}/commits/${sha}/check-runs?check_name=${name}&`, { check_runs: checks }]));
 const allGreen = (sha = HEAD) => checksRoute(sha, Object.fromEntries(CI_REQUIRED_CHECKS.map(({ name }) => [name, [check(name, { head_sha: sha })]])));
-const runsRoute = (sha, runs) => ({ [`/repos/${REPO}/actions/runs?head_sha=${sha}`]: { workflow_runs: runs } });
+const runsRoute = (sha, runs) => ({ [`/repos/${REPO}/actions/runs?head_sha=${sha}`]: { total_count:runs.length,workflow_runs: runs } });
 const listing = (sha, entries) => ({ [`/repos/${REPO}/contents/.github/workflows?ref=${sha}`]: entries });
 const sameAsMain = (sha = HEAD) => listing(sha, [...WORKFLOWS].map(([p, blob]) => ({ path: p, sha: blob })));
 
@@ -151,7 +155,7 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "skipped" })], trivy: [check("trivy", { conclusion: "neutral" })] }),
     ...runsRoute(HEAD, []) });
-  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   // A same-named check from another app, or on another head, is not the required check.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [check("clued-admission-verified", { app: { id: 15368 }, conclusion: "failure", id: 99 }),
     check("clued-admission-verified", { id: 98, head_sha: OTHER, conclusion: "failure" }), check("clued-admission-verified")] }), ...runsRoute(HEAD, []) });
@@ -169,10 +173,10 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(".github/workflows/pr-added.yml")]) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   assert.ok(!fetch.calls.some((call) => call.route.includes("/contents/")), "no listing when nothing counted runs");
-  // A push run, another head's run and a finished run are not this pull request's CI.
+  // A filtered native PR listing with wrong event/head is inconsistent, not green.
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY, "in_progress", { event: "push" }),
     run(QUALITY, "in_progress", { head_sha: OTHER }), run(QUALITY, "completed")]) });
-  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
+  assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   // A required check not posted yet, with nothing running: not reported.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "clued-work-admission": [check("clued-work-admission")],
     "clued-admission-verified": [] }),
@@ -228,6 +232,7 @@ function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_
   touch = (input) => ({ status: "ok", touched: true, claims: [CLAIM], merge_slot_until: "2026-10-08T12:45:00Z", ci_state: input.ci_state, returned: input.ci_state === "failed" }) } = {}) {
   return fakeFetch({
     [`/repos/${REPO}/pulls?state=open`]: pulls,
+    ...Object.fromEntries(pulls.map(pr=>[`/repos/${REPO}/pulls/${pr.number}`,pr])),
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", repository: REPO, holders }),
     [`rpc:${TOUCH_RPC}`]: touch,
     [`/repos/${REPO}/installation`]: { id: 99 },
@@ -237,7 +242,28 @@ function slotWorld({ holders = [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_
   });
 }
 const report = (fetch, more = {}) => reportMergeSlots({ env: env(more.env), event: more.event ?? null, eventName: more.eventName ?? "schedule",
-  fetchImpl: fetch.fetchImpl, workspace: ROOT });
+  fetchImpl: fetch.fetchImpl, workspace: ROOT, qualifyExecution:more.qualifyExecution??fixtureQualification });
+
+test('required green cannot extend a slot with gate-only, unknown, wrong-identity or skipped execution',async()=>{
+  const props=[{passed:false,state:'unknown',reason:'gate only',rerun:{id:7,run_attempt:1}},
+    {passed:false,state:'unknown',reason:'unregistered source'},
+    {passed:true,state:'qualified',head:OTHER,pr_number:5,reason:'other head'},
+    {passed:true,state:'qualified',head:HEAD,pr_number:6,reason:'other PR'}];
+  for(const proof of props) {
+    const fetch=slotWorld({extra:{...allGreen(),...runsRoute(HEAD,[])}});
+    const result=await report(fetch,{qualifyExecution:async()=>({head:HEAD,pr_number:5,...proof})});
+    assert.equal(result.reports[0].ci_state,'idle');
+    assert.equal(fetch.calls.some(call=>call.route===`rpc:${TOUCH_RPC}`),false);
+  }
+  const wrong=slotWorld({extra:{...allGreen(),...checksRoute(HEAD,{'clued-admission-verified':[check('clued-admission-verified',{external_id:'pr:6:run:9'})]}),...runsRoute(HEAD,[])}});
+  assert.equal((await report(wrong)).reports[0].ci_state,'idle');
+  const moved=slotWorld({extra:{...allGreen(),...runsRoute(HEAD,[]),[`/repos/${REPO}/pulls/5`]:{...pull(5),head:{sha:OTHER}}}});
+  assert.equal((await report(moved)).reports[0].ci_state,'idle');
+  assert.equal(moved.calls.some(call=>call.route===`rpc:${TOUCH_RPC}`),false);
+  const failed=slotWorld({extra:{...allGreen(),...runsRoute(HEAD,[])}});
+  const outcome=await report(failed,{qualifyExecution:async()=>({head:HEAD,pr_number:5,passed:false,state:'failed',reason:'actual primary failed'})});
+  assert.equal(outcome.reports[0].ci_state,'failed');assert.equal(outcome.reports[0].returned,true);
+});
 
 test("reportMergeSlots: reports the holder's CI state with the policy's hard cap", async () => {
   let fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, [run(GITLEAKS)]), ...sameAsMain() } });
@@ -357,7 +383,7 @@ test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits
   let fetch = slotWorld();
   let result = await report(fetch, { env: { CLUED_CONTEXT_READ_TOKEN: "" } });
   assert.match(result.errors[0], /CLUED_CONTEXT_READ_TOKEN is not set.*CLUED_ADMISSION_CLUED_TOKEN/);
-  assert.equal(fetch.calls.length, 0);
+  assert.equal(fetch.calls.length, 1, "cleanup checks open PRs before returning for a missing Clued token");
   fetch = fakeFetch({ [`/repos/${REPO}/pulls?state=open`]: [pull(5)],
     [`rpc:${HOLDERS_RPC}`]: () => ({ status: "ok", holders: [], reason: "admission_binding_required" }) });
   result = await report(fetch);
@@ -375,11 +401,39 @@ test("reportMergeSlots: Clued refusals and missing tokens are errors; main exits
   console.error = () => {};
   try {
     assert.equal(await main(base, slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } }).fetchImpl), 0);
-    assert.equal(await main(base, fetch.fetchImpl), 1);
+    assert.equal(await main(base, fetch.fetchImpl), 0, 'no touch until real default-branch qualification is available');
+    const refused=fakeFetch({[`/repos/${REPO}/pulls?state=open`]:[pull(5)],
+      [`rpc:${HOLDERS_RPC}`]:()=>({status:'ok',reason:'admission_binding_required',holders:[]})});
+    assert.equal(await main(base, refused.fetchImpl), 1);
   } finally {
     console.log = quiet;
     console.error = loud;
   }
   assert.match(fs.readFileSync(summary, "utf8"), /## clued-merge-slot-ci/);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("qualification cannot retain old required success or miss a newly queued uncounted workflow",async()=>{
+  for(const change of ["required","queued"]){
+    let changed=false;
+    const fetch=slotWorld({extra:{...allGreen(),
+      [`/repos/${REPO}/commits/${HEAD}/check-runs?check_name=clued-admission-verified&`]:()=>({check_runs:[check("clued-admission-verified",{conclusion:changed&&change==="required"?"failure":"success"})]}),
+      [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:()=>({total_count:changed&&change==="queued"?1:0,
+        workflow_runs:changed&&change==="queued"?[run(".github/workflows/other.yml","queued")]:[]})}});
+    const result=await report(fetch,{qualifyExecution:async pr=>{changed=true;return fixtureQualification(pr)}});
+    assert.equal(result.reports[0].ci_state,"idle");
+    assert.equal(fetch.calls.some(c=>c.route===`rpc:${TOUCH_RPC}`),false);
+  }
+});
+
+test("report cleans a managed waiting request before source observation, Clued or slow proof",async()=>{
+  const pr={...pull(5),auto_merge:{enabled_by:{login:"clued-admission[bot]"}}};
+  const fetch=slotWorld({pulls:[pr],extra:{[`/repos/${REPO}/pulls/5`]:pr,
+    "/graphql":{data:{disablePullRequestAutoMerge:{pullRequest:{number:5}}}},
+    "/app/installations/99/access_tokens":{__status:201,body:{token:"ghs_app"}}}});
+  let proofCalls=0;const result=await report(fetch,{env:{CLUED_CONTEXT_READ_TOKEN:""},qualifyExecution:async()=>{proofCalls++;throw Error("must not run")}});
+  assert.equal(proofCalls,0);assert.equal(result.managed_cleanup[0].action,"disable_auto_merge");
+  assert.equal(result.managed_cleanup[0].error,undefined);
+  assert.equal(fetch.calls.some(c=>c.route.startsWith("rpc:")),false);
+  assert.equal(fetch.calls.some(c=>c.route.includes("/actions/runs")),false);
 });
