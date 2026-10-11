@@ -593,7 +593,7 @@ class RequestVerificationContext:
             raise VerificationContextError("no current successful Bundle Evidence for boundary")
         try:
             identity, version, content = self._capture_state(
-                Path(evidence.root),
+                Path(evidence.path_identity.requested_path),
                 evidence.manifest,
                 evidence.version.validator_contract_version,
                 evidence.version.doctor_version,
