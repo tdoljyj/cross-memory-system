@@ -81,7 +81,7 @@ export default function StorageOnboard() {
   const [name, setName] = useState(ONBOARD_DEFAULT_ROOT_NAME);
   const [picked, setPicked] = useState<{ folder_id: string; name: string } | null>(null);
   const [tracksText, setTracksText] = useState(ONBOARD_DEFAULT_TRACKS.join("\n"));
-  const [normalUse, setNormalUse] = useState(true);
+  const [masterEnabled, setMasterEnabled] = useState(true);
   const [defaultRefresh, setDefaultRefresh] = useState(true);
   const operation = useRef(false);
   const load = useCallback(async () => {
@@ -102,7 +102,7 @@ export default function StorageOnboard() {
   const root = mode === "new" ? { mode: "new" as const, name: name.trim() }
     : picked ? { mode: "picked" as const, name: picked.name, folder_id: picked.folder_id } : null;
   const choice: OnboardChoice | null = root && onboardRootNameValid(root.name) && onboardTracksValid(tracks)
-    ? { root, tracks, normal_use: normalUse, default_refresh: defaultRefresh } : null;
+    ? { root, tracks, normal_use: masterEnabled, default_refresh: defaultRefresh } : null;
   const ready = !!config?.enabled && config.allowed === true && !!choice;
 
   async function pickFolder() {
@@ -186,7 +186,7 @@ export default function StorageOnboard() {
       </fieldset>
       <label className="my-4 block"><span className="font-semibold">子目录（每行一个，1–32 个）</span>
         <textarea aria-label="子目录" rows={4} value={tracksText} disabled={busy} onChange={event => setTracksText(event.target.value)} /></label>
-      <label className="block"><input type="checkbox" checked={normalUse} disabled={busy} onChange={event => setNormalUse(event.target.checked)} />正常使用（Agent 可读取目录内全部文件并按内容搜索）</label>
+      <label className="block"><input type="checkbox" checked={masterEnabled} disabled={busy} onChange={event => setMasterEnabled(event.target.checked)} />连接后开启全部 Agent 文件操作（默认）</label>
       <label className="block"><input type="checkbox" checked={defaultRefresh} disabled={busy || !config.refresh_available}
         onChange={event => setDefaultRefresh(event.target.checked)} />连接后后台自动续签（默认选中，可随时停用）</label>
       {!defaultRefresh && <p className="text-sm">不开启后台续期时，连接约 1 小时后读写都不可用，需要回到本页重新授权。</p>}
