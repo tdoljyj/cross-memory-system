@@ -24,6 +24,21 @@ Direct update/delete/truncate of events is refused. Account erasure keeps the ne
 
 ## Remaining integration requirements
 
+### Capability metadata schema /1
+
+Migration `20261011050507_merge_admission_measurement_capabilities_v1.sql` adds private `merge_measurement_capabilities_v1(uuid)` and extends the existing authenticated audit measurement response. Its single DO block is compatible with the unchanged publisher's schema/history transaction; the public signature, ACL and `audit:read` permission remain unchanged.
+
+| Response field | Required semantics |
+| --- | --- |
+| `stream_id`, `end_sequence`, `started_at`, `source_digest` | One fixed, rechecked header; never substitute the helper's latest stream or tail. |
+| `capabilities` | `clued.authenticated-measurement-capabilities/1`; fixed catalog/trigger/clock fields only, validated twice. |
+| `capability_fingerprint` | SHA256 of the validated metadata projection; not an independent trusted pin or continuous-DDL proof. |
+| `served_observed_at` | Server observation after the final reads and contributor authorization; not a commit timestamp. |
+| `source_auth`, `source_continuity`, `commit_clock_qualified`, `official_metric` | Always false in this phase. |
+| `t0` | Always null in this phase. |
+
+The caller user comes only from the existing resolver. Every context contributing at or before the fixed end is authorized before and after the final reads. Invalid or changing pins/capabilities, unavailable sources and incomplete authorization return `NOT_MEASURED` with an empty event array; unreadable contributors must not be filtered into a smaller denominator. No clock-continuity sidecar, new writer, setting, permission or public RPC is installed by this migration.
+
 The authenticated metadata reader remains a candidate until independently reviewed, installed and naturally qualified. A repository-qualified consumer and its source/provenance checks are still required. Existing CI token/measurement App boundaries must be preserved. Cross-context claims cannot leak through a project-scoped reader or be silently omitted from a supposedly complete queue denominator.
 
 The CI source must separately prove every relevant admission outcome, including unknown/failed/cancelled cases and the policy/claim disposition at that time. HEAD_ADMITTED server receipts alone are not a complete failure denominator. Actual update-main metrics require confirmed operations and contemporaneous main/head evidence; HTTP202 acceptance and later DAG ancestry are insufficient. Wasted-final-round and cancellation-cause metrics need explicit causal links, not merely later heads. The existing measurement App budget remains 2000 requests, remaining-quota floor600, immutable completed-job caching, and no retry or measurement-triggered extra CI.
