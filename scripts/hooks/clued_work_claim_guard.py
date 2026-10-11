@@ -47,7 +47,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
@@ -58,7 +58,7 @@ PUBLISH_TOOLS = {"create_pull_request", "push_files", "create_or_update_file"}
 # Starting CI or dispatching a subtask spends like a build (agent-contract §1.7).
 SPEND_TOOLS = {"actions_run_trigger", "create_session"}
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
-# Agent messages (agent-contract §1.7): where agent_inbox is folded in, and the
+# Agent messages (agent-contract Appendix A.3): where agent_inbox is folded in, and the
 # tools that read and answer it.
 INBOX_TOOLS = {"clued_session_resume", "clued_work_renew"}
 INBOX_READ_TOOL = "clued_agent_inbox"
@@ -562,7 +562,7 @@ def inbox_reminder(payload: dict) -> str | None:
     if not counts or not any(counts):
         return None
     how_to = INBOX_HOW_TO if messages_enabled(body) else INBOX_DISABLED_HOW_TO
-    return ("Clued agent messages (agent-contract §1.7): other Agents wrote to you through Clued: "
+    return ("Clued agent messages (agent-contract Appendix A.3): other Agents wrote to you through Clued: "
             + describe_inbox(*counts) + ". " + how_to)
 
 
@@ -639,7 +639,7 @@ def inbox_finding(entries: list[dict]) -> tuple[str, str] | None:
     key_state = state if enabled else f"{state}:messages-disabled"
     other_answer = " If you answered them in another way, say so in your reply." if enabled else ""
     return (f"inbox:{use_id}:{key_state}",
-            "Clued agent messages (agent-contract §1.7): the latest resume or renewal reported "
+            "Clued agent messages (agent-contract Appendix A.3): the latest resume or renewal reported "
             + describe_inbox(unread, requests) + f", and {what}. " + how_to
             + other_answer + " Reported once in each state.")
 

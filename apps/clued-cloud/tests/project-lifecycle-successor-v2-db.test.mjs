@@ -15,6 +15,7 @@ const migration = '20260924120000_project_lifecycle_successor_v2.sql';
 const currentnessMigration = '20260924121000_project_lifecycle_successor_v2_frontier_invalidation.sql';
 const issuerMigration = '20261009070001_issuer_identity_credentials_v1.sql';
 const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
+const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageOwnerLifecycleMigrations = [
   '20261010055701_storage_owner_lifecycle_v1.sql',
   '20261010150000_storage_owner_root_trash_scope_v2.sql',
@@ -60,7 +61,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -421,6 +422,17 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       const gateway=server.getPgClient();clients.push(gateway);await gateway.connect();
       const listed=await workerGatewayRpc(gateway,'clued_project_list_v2',tokenHash,{limit:200});
       assert.ok(listed.projects.some(p=>p.id===compatId),'current v2 business reads remain available through GW');
+    });
+    await t.test('storage master follows its deferred historical prerequisites and preserves the Native/GW boundary',async()=>{
+      // Keep the immutable V2 hash and legacy caller assertions above. The new
+      // successor requires their actual production definitions, so install it
+      // only after this fixture has replayed every deferred cutover.
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageMasterMigration),'utf8'));
+      await assertGatewayCloseoutBoundary(admin);
+      assert.ok((await admin.query("select to_regclass('clued_private.storage_master_controls_v1') as table_id")).rows[0].table_id);
+      const signature='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
+        assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,signature])).rows[0].allowed,role==='authenticated',role);
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

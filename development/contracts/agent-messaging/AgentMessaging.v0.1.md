@@ -6,6 +6,7 @@
 Owner 决定：Decision `24077bba`（专用消息通道；先做与 claim `3c2518c0` 不重叠的部分），Decision `471eb27a`（第 2 步加收件提醒 hook）。
 Task：`3f6fb219`（project `0597aa60`）。
 相关：[GenericWorkClaim.v0.1.md](../execution-admission/GenericWorkClaim.v0.1.md)（认领与冲突）、[OwnerCredential.v0.1.md](../owner-authorization/OwnerCredential.v0.1.md)（Owner 批准只来自 Owner 本人的页面）。
+现行 Agent 消息规则：[Agent Contract Appendix A.3](../../../protocol/agent/agent-contract.md#appendix-a3)（冲突协调、消息开关与收件处理）。
 
 ---
 
