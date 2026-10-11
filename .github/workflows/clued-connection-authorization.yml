@@ -290,6 +290,12 @@ jobs:
       - run: npm run test:resource-center:authority
       - run: npm run test:authorization:integration
       - run: npm run test:authorization:pages
+      - name: Verify DatasetSplit Native grant correction and Binding successor
+        run: |
+          node scripts/run-tests.mjs --test \
+            tests/dataset-split-native-grant-binding-successor-db.test.mjs \
+            tests/dataset-split-native-grant-correction-db.test.mjs \
+            tests/dataset-split-native-grant-currentness-scope-db.test.mjs
 
       - name: Record the actual PR test tree
         if: success() && github.event_name == 'pull_request'
@@ -392,3 +398,9 @@ jobs:
       - run: npm run test:resource-center:authority
       - run: npm run test:authorization:integration
       - run: npm run test:authorization:pages
+      - name: Verify DatasetSplit Native grant correction and Binding successor
+        run: |
+          node scripts/run-tests.mjs --test \
+            tests/dataset-split-native-grant-binding-successor-db.test.mjs \
+            tests/dataset-split-native-grant-correction-db.test.mjs \
+            tests/dataset-split-native-grant-currentness-scope-db.test.mjs
