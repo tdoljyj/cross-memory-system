@@ -13,6 +13,6 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "hook.settings": "1.1.1",
   "script.components": "1.0.1",
   "script.update-clued-skills": "1.0.0",
-  "script.memory-sync": "1.0.0"
+  "script.memory-sync": "1.0.1"
 };
 export const MCP_SERVER_VERSION = "0.4.9";

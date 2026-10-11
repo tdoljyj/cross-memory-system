@@ -157,7 +157,7 @@
     {
       "id": "script.memory-sync",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Read-only memory snapshot mirror and doctor (sync-memory, memory.py).",
       "root": ".",
       "files": [
@@ -168,7 +168,7 @@
         "scripts/memory.py",
         "scripts/verification_context.py"
       ],
-      "content_sha256": "b29372a66112e714df44b564298a978d259683626afd3e8ddf37bdace286e74f"
+      "content_sha256": "554b5be11cd146343bca3d7df68ca3622e5b0ee70994af4a53d71df757ea7e03"
     }
   ]
 }
