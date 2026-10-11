@@ -1,0 +1,111 @@
+{
+  "schema": "clued.dataset-split-expired-native-reauthorization-source-contract/1",
+  "status": "SOURCE_CANDIDATE_NOT_ACCEPTED_OR_PUBLISHED",
+  "authority_effect": "NO_GRANT_FROM_THIS_CONTRACT",
+  "adopted_plan": {
+    "sha256": "d4dada8b43a3dfe95096cf0add78c828827b1e4f25c25cf871e93cef2ef77e1e",
+    "bytes": 12001,
+    "adoption_server_ref": {
+      "id": "4f7ff043-ea1c-4205-ae6f-115d3c58e70e",
+      "version": 2,
+      "content_hash": "c7df9b20ebe99b707f2555546983524ceb521d410d67a1a89454b23b85de3404",
+      "receipt_id": "aea1558c-c24b-491e-a90b-f11224c969c8",
+      "event_id": "8497"
+    },
+    "effect": "PLAN_AND_SOURCE_PREPARATION_ONLY",
+    "trust": "Exact Source containing this fixed reference requires separate Owner acceptance. M1 integrity, authority labels or this candidate do not prove Native personal approval."
+  },
+  "subject": {
+    "task_id": "1502fd80-8ff8-4adc-b4f5-da6d462f4f8a",
+    "task_version": 593,
+    "origin_request_id": "af1cabdb-5259-4ca3-94d3-133f1af122c8",
+    "origin_grant_id": "4970e492-d26e-4974-adaa-757b2146b171",
+    "bootstrap_key": "model-bootstrap-1b397478-b792-4d73-864b-cee9af714052",
+    "immutable_plan_resource": "repo:tdoljyj/cross-memory-system/8a975c42ddba3ee7a80fe54a4223b7f590014b67/development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json",
+    "immutable_plan_sha256": "fc83a4a1f69de07d6de9dea5e879f1498b1b8f288ba3f9b8fba11d979de110ea",
+    "targets_and_six_resources": "Unchanged exact immutable plan; canonical resource order used by the existing Grant writer",
+    "task_body_fields_relations_change": "NONE",
+    "full_M0_M7_scope": "UNCHANGED"
+  },
+  "prerequisite": {
+    "migration": "20261011041300_dataset_split_native_grant_binding_successor_v1.sql",
+    "context_full_pgdef_sha256": "e6479cd30ae02ad9a2d82caf14bc82766cc654983508747cda7f34279c2c83ca",
+    "link_full_pgdef_sha256": "2e73e0bc85ee2bed7a789f5e29490992e291613d9240cb2191c01581ec1d0819",
+    "qualification": "Exact function owner, SECURITY DEFINER, empty search_path and private EXECUTE ACL unchanged before and after forward patch",
+    "on_absent_or_changed": "HOLD_WITH_NO_FALLBACK"
+  },
+  "time_branches": {
+    "LIVE": {
+      "predicate": "old.granted_at <= server_now AND old.expires_at > server_now + interval '1 hour'",
+      "effect": "EXISTING_CORRECTION_UNCHANGED",
+      "complete_choices_view_snapshot_shape": "UNCHANGED",
+      "expiry_cap": "new.expires_at <= old.expires_at"
+    },
+    "GAP": {
+      "predicate": "server_now < old.expires_at AND old.expires_at <= server_now + interval '1 hour'",
+      "effect": "REFUSE_WITHOUT_MUTATION"
+    },
+    "EXPIRED": {
+      "predicate": "old.granted_at <= server_now AND old.expires_at <= server_now",
+      "scope": "Only original approved_once, unused, nonrevoked, non-auto-approved Grant with verified original Native history and fixed adopted scope",
+      "mode": "EXPIRED_FRESH_NATIVE_OWNER_GRANT",
+      "effect": "EXPIRED_UNUSED_BOOTSTRAP_GRANT_REAUTHORIZED_BY_FRESH_NATIVE_OWNER",
+      "time_rule": "WRITER_GRANTED_AT_PLUS_3600_SECONDS",
+      "expires_seconds": 3600,
+      "max_uses": 1,
+      "new_deadline_may_exceed_old": true,
+      "old_permission_restored": false,
+      "new_granted_at_before_old_deadline_or_in_server_future": "REFUSE_AND_ROLL_BACK"
+    }
+  },
+  "private_scope_guards": [
+    "Source-pinned exact adoption id/version/full M1 content hash/Receipt/Event/plan SHA; no title, label, latest or caller-selected replacement",
+    "Complete M1 integrity proof in private snapshot; not Native Owner attestation",
+    "Unique current non-race ACTIVE legal claim, current fence/lease, all three targets covered",
+    "Actual current Binding derived from the legal claim and privately compared with the approved business grantee reference",
+    "Exact Task version/full content, Global plus Project CURRENT, v12 actual permissions and revocation revalidation",
+    "Exact original request/key/action/resources/plan and original Native session/token/digest/Receipt chain",
+    "Scope resources exactly six, unique and equal as canonical sets; original Grant/plan are never rewritten",
+    "Missing, changed, revoked or mismatched source or scope is HOLD"
+  ],
+  "native_interface": {
+    "public_view": "clued_dataset_split_grant_correction_view_v1",
+    "public_issue": "clued_dataset_split_grant_correction_issue_v1",
+    "arguments": {"request_id":"original fixed request only"},
+    "caller_mode_clock_binding_authority": "NOT_ACCEPTED",
+    "confirmation": "Existing original writer with confirmation_token and view_digest only",
+    "token": "Fresh separate Native issue transaction, five-minute TTL, account session and exact view digest bound",
+    "expired_public_shape": {
+      "path": "view.correction.expired_reauthorization",
+      "schema": "clued.dataset-split-expired-native-reauthorization.v1",
+      "fields": ["mode","time_rule","adoption_server_ref"],
+      "scope_proof": "Private only; public view exposes no new private Actor or Owner payload"
+    },
+    "ui": "Owner explicitly confirms the fresh expired authorization; unknown/partial/refused shape remains HOLD; no replacement request/key advice",
+    "success_deadline": "Display the actual writer-returned expires_at; no promise of a complete hour after COMMIT or response"
+  },
+  "transaction_and_replay": {
+    "pre_write": "Recompute exact context and private snapshot under existing locks before first Grant or Receipt write",
+    "atomic": "Original writer creates new Grant/Receipt, revokes old Grant, CAS-updates original request pointer and consumes the fresh token in one transaction",
+    "preserved_history": "Original request identity/Binding/key/plan, old granted_at/expires_at/uses and original Native token/Receipt unchanged except approved revocation and successor pointer fields",
+    "failure": "Roll back Grant/revoke/pointer together, preserving existing rejected-token burn and audit protocol",
+    "replay": "Same committed token returns same Grant/Receipt/deadline, never renews time or creates a second Grant",
+    "unknown_result": "Query the original confirmation token/digest; never issue replacement tokens to guess completion",
+    "already_changed_pointer": "REFUSE_NEW_ISSUE"
+  },
+  "required_qualification": [
+    "Independent exact Source and affected Role/contract acceptance",
+    "Protected admission, current complete primary CI and actual critical steps",
+    "Exact separately approved forward SQL and Native UI publication with real backup/installation evidence",
+    "Fresh current scope and Owner personally confirmed Native view",
+    "Original unchanged-key Bootstrap commit considered only after its own actual current Grant and gates"
+  ],
+  "exclusions": [
+    "Automatic renewal or extension of the expired original Grant",
+    "New request/key/plan/target or caller-controlled Binding",
+    "Native confirmation by an Agent",
+    "Bootstrap, Canonical model projections, DomainAuthority, DataGate or M2 from Source installation",
+    "Model/data/training/device/paid or old terminal experiment/VM authorization",
+    "Full product qualification, activation or M7 completion from this successor"
+  ]
+}

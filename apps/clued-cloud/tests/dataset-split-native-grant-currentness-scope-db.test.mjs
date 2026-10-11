@@ -13,6 +13,7 @@ const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,
 // Independent Global execution-intent currentness regression. Synthetic
 // accounts and a temporary PostgreSQL only; no real grant or production.
 const candidateFile = '20261011041300_dataset_split_native_grant_binding_successor_v1.sql';
+const expiredSuccessor = '20261011141907_dataset_split_expired_native_reauthorization_v1.sql';
 const repo = path.resolve(app, '../..');
 const sourceRepo = path.resolve(sourceApp,'../..');
 const TASK = '1502fd80-8ff8-4adc-b4f5-da6d462f4f8a';
@@ -30,7 +31,7 @@ async function freePort() {
 
 test('Native Owner validates a Project Task with a registered Global intent through real currentness',
   { timeout: 300000 }, async t => {
-  const root = path.resolve(repo, 'work/host-harness/ngcs');
+  const root = path.resolve(process.env.CLUED_SYNTHETIC_TEMP_ROOT ?? path.join(repo, 'work/host-harness/ngcs'));
   await fs.mkdir(root, { recursive: true });
   assert.equal((await fs.realpath(root)).toLowerCase(), root.toLowerCase());
   const dir = await fs.mkdtemp(path.join(root, 'p-'));
@@ -56,7 +57,9 @@ test('Native Owner validates a Project Task with a registered Global intent thro
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrationDir = path.join(sourceApp, 'supabase/migrations');
     const names = (await fs.readdir(migrationDir)).filter(n => n.endsWith('.sql')).sort();
-    for (const name of names.filter(n => n !== successor && n !== candidateFile)) {
+    // Preserve the explicit 175022 and 041300 boundaries in this historical
+    // regression; the dependent expired successor has its own complete suite.
+    for (const name of names.filter(n => n !== successor && n !== candidateFile && n !== expiredSuccessor)) {
       try { await db.query(await fs.readFile(path.join(migrationDir, name), 'utf8')); }
       catch (e) { throw new Error('Migration ' + name + ': ' + e.message, { cause: e }); }
     }

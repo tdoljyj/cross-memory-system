@@ -75,6 +75,37 @@ const CORRECTION_TASK = "1502fd80-8ff8-4adc-b4f5-da6d462f4f8a";
 const CORRECTION_SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
 const SAME_BINDING_EFFECT = "REPLACE_UNUSED_GRANT_WITH_ONE_HOUR_SINGLE_USE_KEEP_ORIGINAL_APPROVAL_HISTORY";
 const CONTINUATION_EFFECT = "REAUTHORIZE_CURRENT_CLAIM_HOLDER_ONE_HOUR_SINGLE_USE_KEEP_ORIGINAL_APPROVAL_HISTORY";
+const CORRECTION_REQUEST = "af1cabdb-5259-4ca3-94d3-133f1af122c8";
+const EXPIRED_EFFECT = "EXPIRED_UNUSED_BOOTSTRAP_GRANT_REAUTHORIZED_BY_FRESH_NATIVE_OWNER";
+const EXPIRED_MODE = "EXPIRED_FRESH_NATIVE_OWNER_GRANT";
+const EXPIRED_TIME_RULE = "WRITER_GRANTED_AT_PLUS_3600_SECONDS";
+const EXPIRED_PLAN_SHA256 = "d4dada8b43a3dfe95096cf0add78c828827b1e4f25c25cf871e93cef2ef77e1e";
+type ExpiredReauthorization = { schema: string; mode: string; time_rule: string; adoption_server_ref: Json };
+function expiredReauthorization(view: Json, request: Json | null): ExpiredReauthorization | null {
+  const correction = object(view.correction) ? view.correction : null;
+  if (!correction || (!("expired_reauthorization" in correction) && correction.effect !== EXPIRED_EFFECT)) return null;
+  const expired = correction.expired_reauthorization;
+  const previous = request && object(request.grant) ? request.grant : null;
+  const bad = () => { throw new RequestFailure("HOLD：过期后的新确认内容不完整或不一致。请保持原申请，等待服务条件核对；不要另发申请或更换 key。"); };
+  if (!object(expired) || expired.schema !== "clued.dataset-split-expired-native-reauthorization.v1"
+    || expired.mode !== EXPIRED_MODE || expired.time_rule !== EXPIRED_TIME_RULE
+    || correction.effect !== EXPIRED_EFFECT || correction.request_id !== CORRECTION_REQUEST
+    || correction.previous_grant_id !== "4970e492-d26e-4974-adaa-757b2146b171"
+    || view.action !== "model.dataset_split.bootstrap" || view.choice !== "grant"
+    || view.expires_seconds !== 3600 || view.max_uses !== 1 || !previous
+    || typeof correction.previous_expires_at !== "string" || typeof previous.expires_at !== "string"
+    || !Number.isFinite(Date.parse(correction.previous_expires_at))
+    || Date.parse(correction.previous_expires_at) !== Date.parse(previous.expires_at)
+    || !object(expired.adoption_server_ref)) return bad();
+  const ref = expired.adoption_server_ref;
+  if (typeof ref.id !== "string" || !REQUEST_ID.test(ref.id)
+    || !Number.isSafeInteger(ref.version) || Number(ref.version) <= 0
+    || typeof ref.content_hash !== "string" || !/^[0-9a-f]{64}$/.test(ref.content_hash)
+    || typeof ref.receipt_id !== "string" || !REQUEST_ID.test(ref.receipt_id)
+    || typeof ref.event_id !== "string" || !/^[1-9][0-9]*$/.test(ref.event_id)
+    || ref.plan_sha256 !== EXPIRED_PLAN_SHA256) return bad();
+  return expired as ExpiredReauthorization;
+}
 
 // Older same-Binding views have none of these fields. A successor must carry
 // the whole server-rendered subject and agree with its exact grantee/scope;
@@ -82,7 +113,8 @@ const CONTINUATION_EFFECT = "REAUTHORIZE_CURRENT_CLAIM_HOLDER_ONE_HOUR_SINGLE_US
 function bindingContinuation(view: Json, request: Json | null): BindingContinuation | null {
   const correction = object(view.correction) ? view.correction : null;
   if (!correction) return null;
-  const successor = "binding_continuation" in correction || "previous_binding_id" in correction
+  const expired = expiredReauthorization(view, request);
+  const successor = "expired_reauthorization" in correction || "binding_continuation" in correction || "previous_binding_id" in correction
     || "new_binding_id" in correction || (typeof correction.effect === "string" && correction.effect !== SAME_BINDING_EFFECT);
   if (!successor) return null;
   const c = correction.binding_continuation;
@@ -107,7 +139,7 @@ function bindingContinuation(view: Json, request: Json | null): BindingContinuat
     || typeof task.content_hash !== "string" || !/^[0-9a-f]{64}$/.test(task.content_hash)
     || correction.previous_binding_id !== previous.binding_id || correction.new_binding_id !== next.binding_id
     || c.binding_changed !== (previous.binding_id !== next.binding_id)
-    || correction.effect !== (c.binding_changed ? CONTINUATION_EFFECT : SAME_BINDING_EFFECT)
+    || correction.effect !== (expired ? EXPIRED_EFFECT : c.binding_changed ? CONTINUATION_EFFECT : SAME_BINDING_EFFECT)
     || view.grantee.binding_id !== next.binding_id || view.grantee.any_agent !== false
     || claim.holder_binding_id !== next.binding_id || next.session_ref !== claim.holder_session_ref
     || view.action !== "model.dataset_split.bootstrap" || view.choice !== "grant" || view.max_uses !== 1
@@ -118,13 +150,15 @@ function bindingContinuation(view: Json, request: Json | null): BindingContinuat
   return c as unknown as BindingContinuation;
 }
 
-async function rpc(name: string, input: Json): Promise<Json> {
+async function rpc(name: string, input: Json, fixedCorrection = false): Promise<Json> {
+  const hold = "HOLD：当前服务暂不满足这份原申请的确认条件。原申请与批准历史保留；不要另发申请或更换 key。";
   let result: { data: unknown; error: { message?: string; code?: string } | null };
   try {
     result = await supabase.rpc(name, { p_input: input });
   } catch { throw new RequestFailure("网络请求未完成，结果未知。", true); }
   if (result.error) {
     const code = result.error.message ?? "";
+    if (fixedCorrection) throw new RequestFailure(hold, !result.error.code);
     if (MESSAGES[code]) throw new RequestFailure(MESSAGES[code]);
     throw new RequestFailure(result.error.code ? "请求被拒绝（" + code + "）。" : "网络请求未完成，结果未知。",
       !result.error.code);
@@ -133,7 +167,7 @@ async function rpc(name: string, input: Json): Promise<Json> {
   if (!object(value)) throw new RequestFailure("服务返回了无法识别的结果，结果未知。", true);
   if (value.status === "rejected" || value.status === "failed") {
     const code = typeof value.error_code === "string" ? value.error_code : String(value.status);
-    throw new RequestFailure(MESSAGES[code] ?? "请求被拒绝（" + code + "）。", value.status === "failed");
+    throw new RequestFailure(fixedCorrection ? hold : MESSAGES[code] ?? "请求被拒绝（" + code + "）。", value.status === "failed");
   }
   return value;
 }
@@ -196,7 +230,7 @@ export default function OwnerConfirmPage() {
   const [rows, setRows] = useState<ScopeRow[]>([]);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [pending, setPending] = useState<Issued | null>(null);
-  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number; left?: Left[]; corrected?: boolean; subjectChanged?: boolean } | null>(null);
+  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number; left?: Left[]; corrected?: boolean; subjectChanged?: boolean; expiredReauthorized?: boolean } | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   // Bundle members (the request on the page included) the Owner unticked.
   const [skipped, setSkipped] = useState<string[]>([]);
@@ -245,7 +279,7 @@ export default function OwnerConfirmPage() {
     const generation = epoch.current;
     setWorking(true); setError("");
     try {
-      const value = await rpc("clued_owner_request_view_v1", { request_id: id });
+      const value = await rpc("clued_owner_request_view_v1", { request_id: id }, id === CORRECTION_REQUEST);
       if (epoch.current !== generation) return;
       if (!object(value.request)) throw new RequestFailure("请求内容不完整，请刷新页面。");
       setRequest(value.request);
@@ -280,7 +314,7 @@ export default function OwnerConfirmPage() {
     if (issuer) correctionIssueSession.current = issuer;
     try {
       const value = next.datasetSplitCorrection
-        ? await rpc("clued_dataset_split_grant_correction_issue_v1", { request_id: id })
+        ? await rpc("clued_dataset_split_grant_correction_issue_v1", { request_id: id }, true)
         : await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
       if (epoch.current !== generation || (issuer && (current.current?.user.id !== issuer.owner_id
         || current.current?.access_token !== issuer.access_token))) return null;
@@ -301,7 +335,8 @@ export default function OwnerConfirmPage() {
       }
       if (next.datasetSplitCorrection) {
         const continuation = bindingContinuation(value.confirmation_view, request);
-        continuationSession.current = continuation?.binding_changed ? issuer?.access_token ?? null : null;
+        continuationSession.current = continuation?.binding_changed || expiredReauthorization(value.confirmation_view, request)
+          ? issuer?.access_token ?? null : null;
       }
       const result = { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
         expires_at: value.expires_at, view: value.confirmation_view, options: next };
@@ -366,7 +401,8 @@ export default function OwnerConfirmPage() {
     try {
       let grant: Json | undefined;
       if (mine && target) {
-        if (target.options.datasetSplitCorrection && bindingContinuation(target.view, request)?.binding_changed
+        if (target.options.datasetSplitCorrection && (bindingContinuation(target.view, request)?.binding_changed
+          || expiredReauthorization(target.view, request))
           && continuationSession.current !== current.current?.access_token) {
           throw new RequestFailure("登录会话已经变化，请重新预览接续授权后再确认。");
         }
@@ -378,10 +414,16 @@ export default function OwnerConfirmPage() {
           target = fresh;
         }
         setPending(target); setIssued(null);
-        const value = await rpc("clued_owner_grant_v1", { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
+        const value = await rpc("clued_owner_grant_v1", { confirmation_token: target.confirmation_token, view_digest: target.view_digest }, Boolean(target.options.datasetSplitCorrection));
         if (epoch.current !== generation) return;
         if (value.status !== "committed" || !object(value.grant) || typeof value.grant.grant_id !== "string") {
           throw new RequestFailure("批准结果尚未确认，请核对原操作。", true);
+        }
+        if (target.options.datasetSplitCorrection && expiredReauthorization(target.view, request)
+          && (value.grant.max_uses !== 1 || typeof value.grant.expires_at !== "string"
+            || !Number.isFinite(Date.parse(value.grant.expires_at))
+            || Date.parse(value.grant.expires_at) <= Date.parse(String((target.view.correction as Json).previous_expires_at)))) {
+          throw new RequestFailure("新授权的实际期限尚未确认，请核对原操作。", true);
         }
         setPending(null);
         grant = value.grant;
@@ -393,6 +435,7 @@ export default function OwnerConfirmPage() {
           .map(member => ({ id: member.id, action: actionText(member.issued?.view) }))];
       setDone({ kind: "granted", grant: grant ?? result.grant, count: result.count + (mine ? 1 : 0), left,
         corrected: Boolean(target?.options.datasetSplitCorrection),
+        expiredReauthorized: Boolean(target?.options.datasetSplitCorrection && expiredReauthorization(target.view, request)),
         subjectChanged: Boolean(target?.options.datasetSplitCorrection && bindingContinuation(target.view, request)?.binding_changed) });
     } catch (failure) {
       if (epoch.current !== generation) return;
@@ -454,6 +497,13 @@ export default function OwnerConfirmPage() {
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
+  function cancelCorrection() {
+    if (pending) return; // An unknown Grant outcome keeps its original token.
+    ++epoch.current; continuationSession.current = null; correctionIssueSession.current = null;
+    setIssued(null); setError(""); setWorking(false);
+    setOptions({ ...options, datasetSplitCorrection: false });
+  }
+
   async function signIn(event: FormEvent) {
     event.preventDefault();
     if (working) return;
@@ -478,11 +528,12 @@ export default function OwnerConfirmPage() {
   const canCorrect = requestId === "af1cabdb-5259-4ca3-94d3-133f1af122c8"
     && request?.action === "model.dataset_split.bootstrap" && status === "approved_once"
     && oldGrant?.grant_id === "4970e492-d26e-4974-adaa-757b2146b171"
-    && oldGrant.uses === 0 && oldGrant.max_uses === 1 && oldGrant.revoked === false
-    && Date.parse(String(oldGrant.expires_at)) > Date.now() + 3600_000;
+    && oldGrant.uses === 0 && oldGrant.max_uses === 1 && oldGrant.revoked === false;
+  // This offers only a server preview. LIVE/GAP/EXPIRED are never selected by the browser clock.
   const correction = view && object(view.correction) ? view.correction : null;
   const continuation = view && options.datasetSplitCorrection ? bindingContinuation(view, request) : null;
   const subjectChanged = continuation?.binding_changed === true;
+  const expiredFresh = view && options.datasetSplitCorrection ? expiredReauthorization(view, request) : null;
   const viewRequest = view && object(view.request) ? view.request : null;
   const note = viewRequest && typeof viewRequest.agent_note_unverified === "string" ? viewRequest.agent_note_unverified : "";
   // Re-review 9: a note the admission check wrote (repo.protected_change) is
@@ -526,34 +577,36 @@ export default function OwnerConfirmPage() {
         {done?.kind === "granted" && permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
           <p>权限已加到这个连接上。Agent 重试刚才被拒的操作即可，不用重新连接。</p>
           <p>可以在 <Link href="/oauth/connections">连接管理</Link> 随时收窄或撤销这个连接的权限。</p></section>}
-        {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>{done.subjectChanged ? "接续会话授权已确认" : done.corrected ? "授权期限已修正" : "已批准"}</h2>
-          {done.corrected && <p>{done.subjectChanged
+        {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>{done.expiredReauthorized ? "过期后的新授权已确认" : done.subjectChanged ? "接续会话授权已确认" : done.corrected ? "授权期限已修正" : "已批准"}</h2>
+          {done.expiredReauthorized && <p>这次是你本人确认的新授权，旧权限没有恢复。原申请和批准历史保留；仅给刚才核对的当前会话，最多 1 小时、1 次，以实际有效期为准。</p>}
+          {done.corrected && !done.expiredReauthorized && <p>{done.subjectChanged
             ? "旧授权已撤销，原申请和批准历史保留；新授权仅给刚才确认的接续会话，在 1 小时内使用 1 次。"
             : "旧授权已撤销，原申请和批准历史保留；新授权仅给原发起者，在 1 小时内使用 1 次。"}</p>}
           {(done.count ?? 1) > 1 && <p>同一批 {done.count} 项已批准，每项各自生成一个授权。</p>}
           <p>{done.grant?.max_uses === 1 ? "只允许这一次" : "授权已生效"}，有效期至 {new Date(String(done.grant?.expires_at)).toLocaleString()}。</p>
-          <p>Agent 重试时会自动用上这次批准。可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p>
+          <p>{done.expiredReauthorized ? "这次确认不会自动运行 Bootstrap；后续执行仍须独立核验当前条件。" : "Agent 重试时会自动用上这次批准。"}可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p>
           {(done.left?.length ?? 0) > 0 && <><p>同一批还有 {done.left?.length} 项没勾，仍等你确认：</p><ul>{done.left?.map(item =>
             <li key={item.id}><a href={"/confirm/" + item.id}>{item.action}</a></li>)}</ul></>}</section>}
         {done?.kind === "rejected" && <section aria-label="已拒绝" role="status"><h2>已拒绝</h2><p>Agent 不会得到这次授权。</p></section>}
         {!done && request && status !== "pending" && <section aria-label="请求状态"><h2>{STATUS[status] ?? status}</h2>
-          <p>{canCorrect ? "原批准已保留。这次动作只接受 1 小时、1 次的授权，可在下方确认收窄期限。" : "这个请求已不需要处理。"}{status === "expired" ? "如仍需要，请让 Agent 重新发起。" : ""}</p>
+          <p>{canCorrect ? "原批准已保留。服务会判定限时修正、过期后的新确认或暂不可确认；先预览，尚未生成新授权。" : "这个请求已不需要处理。"}{status === "expired" ? requestId === CORRECTION_REQUEST ? "原申请与历史保持不变；请等待合法接续条件核对，不要另发申请或更换 key。" : "如仍需要，请让 Agent 重新发起。" : ""}</p>
           {leftover.length > 0 && <><p>同一批还有 {leftover.length} 项等你确认：</p><ul>{leftover.map(member =>
             <li key={String(member.request_id)}><Link href={"/confirm/" + String(member.request_id)}>{String(member.action ?? "")}</Link></li>)}</ul></>}</section>}
         {!done && canCorrect && !pending && !correction && <section aria-label="修正授权期限">
-          <p>先核对这份申请的限时修正。页面会显示新授权给谁；如接续会话改变，需要你本人明确确认。预览不会修改授权。</p>
+          <p>先读取 Clued 提供的确认内容。限时修正与过期后的新授权会分别说明；后者必须你本人重新确认。服务条件不满足时保持 HOLD，预览不会修改 Grant。</p>
           <button type="button" disabled={working} onClick={() => void choose({ ...options, choice: "grant",
-            seconds: 3600, anyAgent: false, scope: [], datasetSplitBootstrap: true, datasetSplitCorrection: true })}>查看限时修正</button>
+            seconds: 3600, anyAgent: false, scope: [], datasetSplitBootstrap: true, datasetSplitCorrection: true })}>查看授权确认</button>
+          {Boolean(options.datasetSplitCorrection) && working && <button type="button" onClick={cancelCorrection}>取消预览</button>}
         </section>}
         {!done && !pending && correction && view && <section aria-label="确认限时修正">
-          <h2>{subjectChanged ? "确认授权给当前接续会话" : "确认收窄授权期限"}</h2>
-          <p>{subjectChanged ? "原申请和批准历史保留，动作和六个对象的范围不变。这次新授权将给下面的当前接续会话，需要你本人确认。"
+          <h2>{expiredFresh ? "原授权已过期：确认一次新的授权" : subjectChanged ? "确认授权给当前接续会话" : "确认收窄授权期限"}</h2>
+          <p>{expiredFresh ? "旧权限已经结束，这次不是恢复旧批准。动作、原申请和六个对象的范围不变；新授权只给下面的当前会话，必须你本人明确确认。" : subjectChanged ? "原申请和批准历史保留，动作和六个对象的范围不变。这次新授权将给下面的当前接续会话，需要你本人确认。"
             : "原申请和批准历史保留，动作、原发起者和范围保持一致。"}</p>
           <dl><dt>动作</dt><dd>{actionText(view)}</dd>
             <dt>范围</dt><dd><ul>{list(view.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd>
             <dt>原授权</dt><dd>{String(correction.previous_grant_id)}</dd>
             <dt>原期限</dt><dd>{new Date(String(correction.previous_expires_at)).toLocaleString()}</dd>
-            <dt>新期限</dt><dd>确认后 1 小时内有效，且不超过原期限</dd>
+            <dt>新期限</dt><dd>{expiredFresh ? "从服务写入新授权的时间起 1 小时，最多 1 次；可以超过已结束的原期限。完成后显示实际有效期，不承诺返回后仍有完整 1 小时。" : "确认后 1 小时内有效，且不超过原期限"}</dd>
             <dt>次数</dt><dd>1 次</dd><dt>给谁</dt><dd>{subjectChanged ? "当前接续会话：" : ""}{String(grantee?.agent_name ?? "原发起请求的 Agent")}</dd>
             {continuation && <>
               <dt>原申请的连接</dt><dd>{continuation.previous_binding.agent_name}（{continuation.previous_binding.vendor}） {continuation.previous_binding.binding_id}</dd>
@@ -567,10 +620,8 @@ export default function OwnerConfirmPage() {
               <dt>会话自报说明（未核实）</dt><dd>{continuation.execution_claim.holder_label_self_reported}</dd>
             </>}
           </dl>
-          <button type="button" disabled={working || !issued} onClick={() => void approve()}>{subjectChanged ? "确认授权给当前接续会话" : "确认限时修正"}</button>
-          <button type="button" disabled={working} onClick={() => { setIssued(null); setError("");
-            continuationSession.current = null;
-            setOptions({ ...options, datasetSplitCorrection: false }); }}>返回原批准</button>
+          <button type="button" disabled={working || !issued} onClick={() => void approve()}>{expiredFresh ? "本人确认过期后新的 1 小时单次授权" : subjectChanged ? "确认授权给当前接续会话" : "确认限时修正"}</button>
+          <button type="button" disabled={working} onClick={cancelCorrection}>返回原批准</button>
         </section>}
         {!done && status === "pending" && <>
           {!permission && <section aria-label="选择" className="owner-choice"><h2>怎么批</h2>

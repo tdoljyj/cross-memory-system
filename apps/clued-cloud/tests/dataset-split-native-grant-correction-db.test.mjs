@@ -14,6 +14,7 @@ const { findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCal
 // Real isolated PostgreSQL and synthetic accounts/IDs only. No production,
 // real Owner approval, DomainAuthority, DataGate, M2 or model qualification.
 const candidateFile = '20261011041300_dataset_split_native_grant_binding_successor_v1.sql';
+const expiredSuccessor = '20261011141907_dataset_split_expired_native_reauthorization_v1.sql';
 const repo = path.resolve(app, '../..');
 const sourceRepo = path.resolve(sourceApp,'../..');
 const REQUEST = 'af1cabdb-5259-4ca3-94d3-133f1af122c8';
@@ -31,7 +32,7 @@ async function freePort() {
 
 for (const scene of ['boundaries','consume-race']) test(`Native correction (${scene}): isolated real token/receipt transaction`,
   { timeout: 300000 }, async t => {
-  const root = path.resolve(repo, 'work/host-harness/ngc');
+  const root = path.resolve(process.env.CLUED_SYNTHETIC_TEMP_ROOT ?? path.join(repo, 'work/host-harness/ngc'));
   await fs.mkdir(root, { recursive: true });
   assert.equal((await fs.realpath(root)).toLowerCase(), root.toLowerCase());
   const dir = await fs.mkdtemp(path.join(root, 'p-'));
@@ -57,7 +58,9 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    const names = (await fs.readdir(path.join(sourceApp,'supabase/migrations'))).filter(n => n.endsWith('.sql') && n !== candidateFile).sort();
+    // This historical fixture applies 041300 at its explicit boundary below;
+    // its dependent expired successor belongs to the separate successor suite.
+    const names = (await fs.readdir(path.join(sourceApp,'supabase/migrations'))).filter(n => n.endsWith('.sql') && n !== candidateFile && n !== expiredSuccessor).sort();
     const closeout = await findGatewayCloseoutMigration(sourceApp);
     // The original request predates G6 and uses its now-retired project alias.
     // Only that historical setup precedes closeout; all Native correction cases run after it.

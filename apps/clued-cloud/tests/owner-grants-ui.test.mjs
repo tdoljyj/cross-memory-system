@@ -445,7 +445,7 @@ function continuationIssue({ changed = true, ...options } = {}) {
 }
 async function showContinuation(f, answer = continuationIssue()) {
   await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
-  f.button('查看限时修正').props.onClick();
+  f.button('查看授权确认').props.onClick();
   f.calls[1].resolve(answer); await f.settle();
 }
 test('changed Binding: preview names both sessions and the exact current claim; only the explicit Owner button commits', async t => {
@@ -567,7 +567,7 @@ test('a new auth session discards the changed-Binding preview and an in-flight u
 test('a pending correction issue cannot attach its old response to a refreshed same-Owner session', async t => {
   const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
   await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
-  f.button('查看限时修正').props.onClick();
+  f.button('查看授权确认').props.onClick();
   assert.equal(f.calls[1].name, 'clued_dataset_split_grant_correction_issue_v1');
   f.emit('TOKEN_REFRESHED', { ...session('owner'), access_token: 'fixture-owner-new-session' });
   f.emit('TOKEN_REFRESHED', { ...session('owner'), access_token: 'fixture-owner-newer-session' });
@@ -580,7 +580,7 @@ test('a pending correction response after sign-out, another Owner or unmount nev
   for (const leave of [f => f.emit('SIGNED_OUT', null), f => f.emit('SIGNED_IN', session('other')), f => f.unmount()]) {
     const f = fixture(CONFIRM, { id: CORRECTION_REQUEST }); t.after(() => f.unmount());
     await openCorrection(f, {}, { resources: BOOTSTRAP_RESOURCES });
-    f.button('查看限时修正').props.onClick();
+    f.button('查看授权确认').props.onClick();
     leave(f);
     f.calls[1].resolve(continuationIssue({ token: 'clued_ogr_departed_session' })); await f.settle();
     assert.ok(!f.text().includes('当前接续连接'));
@@ -592,7 +592,7 @@ test('the original decided request offers a Native correction view and never mut
   const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
   assert.equal(f.calls.length,1,'loading a decided request never issues or commits a token');
   assert.match(f.text(),/原批准已保留/);
-  f.button('查看限时修正').props.onClick();
+  f.button('查看授权确认').props.onClick();
   assert.deepEqual(plain([f.calls[1].name,f.calls[1].args.p_input]),
     ['clued_dataset_split_grant_correction_issue_v1',{request_id:CORRECTION_REQUEST}]);
   f.calls[1].resolve(correctionIssue());await f.settle();
@@ -608,16 +608,16 @@ test('the original decided request offers a Native correction view and never mut
 test('spent, revoked or wrong original grants offer no correction; cancel changes no authorization',async t=>{
   for(const change of [{uses:1},{revoked:true},{grant_id:'another-grant'}]){
     const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f,change);
-    assert.ok(!f.nodes('button').some(n=>f.text(n)==='查看限时修正'));assert.equal(f.calls.length,1);
+    assert.ok(!f.nodes('button').some(n=>f.text(n)==='查看授权确认'));assert.equal(f.calls.length,1);
   }
   const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
-  f.button('查看限时修正').props.onClick();f.calls[1].resolve(correctionIssue());await f.settle();
+  f.button('查看授权确认').props.onClick();f.calls[1].resolve(correctionIssue());await f.settle();
   f.button('返回原批准').props.onClick();f.render();assert.equal(f.calls.length,2);
   assert.ok(!f.nodes('button').some(n=>f.text(n)==='确认限时修正'));
 });
 test('an expiring correction token refreshes through the same correction door, and unknown completion uses the original token',async t=>{
   const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
-  f.button('查看限时修正').props.onClick();
+  f.button('查看授权确认').props.onClick();
   f.calls[1].resolve(correctionIssue({expires:new Date(Date.now()+5000).toISOString()}));await f.settle();
   f.button('确认限时修正').props.onClick();
   assert.equal(f.calls[2].name,'clued_dataset_split_grant_correction_issue_v1');
@@ -631,7 +631,7 @@ test('an expiring correction token refreshes through the same correction door, a
 });
 test('a correction view naming another original cannot be submitted',async t=>{
   const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
-  f.button('查看限时修正').props.onClick();const answer=correctionIssue();
+  f.button('查看授权确认').props.onClick();const answer=correctionIssue();
   answer.data.confirmation_view.correction.previous_grant_id='other-grant';
   f.calls[1].resolve(answer);await f.settle();assert.equal(f.calls.length,2);
   assert.ok(!f.nodes('button').some(n=>f.text(n)==='确认限时修正'));assert.match(f.text(),/与原申请不一致/);
@@ -888,4 +888,157 @@ test('grants page: a server without the switch shows no switch section', async t
   f.calls[0].resolve({ data: { status: 'ok', grants: [], pending_requests: [] }, error: null });
   await f.settle();
   assert.ok(!f.text().includes('自动审批'));
+});
+
+// Controlled Native UI fixtures for the separately gated expired successor.
+// Every RPC here is a deferred in-memory Promise; no Supabase/HTTP is used.
+const OLD_EXPIRED_AT='2000-01-01T00:00:00Z';
+const EXPIRED_BUTTON='本人确认过期后新的 1 小时单次授权';
+function expiredIssue({changed=true,...options}={}){
+  const result=continuationIssue({changed,...options}),view=result.data.confirmation_view;
+  view.correction.previous_expires_at=OLD_EXPIRED_AT;
+  view.correction.effect='EXPIRED_UNUSED_BOOTSTRAP_GRANT_REAUTHORIZED_BY_FRESH_NATIVE_OWNER';
+  view.correction.expired_reauthorization={schema:'clued.dataset-split-expired-native-reauthorization.v1',
+    mode:'EXPIRED_FRESH_NATIVE_OWNER_GRANT',time_rule:'WRITER_GRANTED_AT_PLUS_3600_SECONDS',
+    adoption_server_ref:{id:'4f7ff043-ea1c-4205-ae6f-115d3c58e70e',version:2,
+      content_hash:'c7df9b20ebe99b707f2555546983524ceb521d410d67a1a89454b23b85de3404',
+      receipt_id:'aea1558c-c24b-491e-a90b-f11224c969c8',event_id:'8497',
+      plan_sha256:'d4dada8b43a3dfe95096cf0add78c828827b1e4f25c25cf871e93cef2ef77e1e'}};
+  return result;
+}
+async function showExpired(f,answer=expiredIssue()){
+  await openCorrection(f,{expires_at:OLD_EXPIRED_AT},{resources:BOOTSTRAP_RESOURCES});
+  assert.equal(f.calls.length,1,'A decided origin never automatically issues a Native token');
+  f.button('查看授权确认').props.onClick();
+  f.calls[1].resolve(answer);await f.settle();
+}
+const expiredCommitted={data:{status:'committed',grant:{grant_id:'11111111-1111-4111-8111-111111111111',
+  max_uses:1,expires_at:'2099-02-03T04:05:06Z'}},error:null};
+
+test('expired preview states fresh Owner authorization and writer-time rule; only explicit button commits',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await showExpired(f);
+  const shown=f.text();
+  for(const text of ['原授权已过期','这次不是恢复旧批准','当前接续会话','版本 593','fence 151','lease 1',
+    '服务写入新授权的时间起 1 小时','不承诺返回后仍有完整 1 小时'])assert.ok(shown.includes(text),text);
+  assert.ok(!shown.includes('且不超过原期限'));
+  assert.equal(f.calls.filter(c=>c.name==='clued_owner_grant_v1').length,0);
+  assert.deepEqual(plain(f.calls[1].args.p_input),{request_id:CORRECTION_REQUEST});
+  assert.equal(f.nodes('select').length,0);assert.equal(f.nodes('input').filter(n=>n.props.type==='checkbox').length,0);
+  f.button(EXPIRED_BUTTON).props.onClick();
+  assert.deepEqual(plain(f.calls[2].args.p_input),{confirmation_token:'clued_ogr_a',view_digest:'d'.repeat(64)});
+  f.calls[2].resolve(expiredCommitted);await f.settle();
+  assert.match(f.text(),/过期后的新授权已确认/);assert.match(f.text(),/旧权限没有恢复/);
+  assert.ok(f.text().includes(new Date(expiredCommitted.data.grant.expires_at).toLocaleString()));
+  assert.match(f.text(),/不会自动运行 Bootstrap/);assert.equal(f.fetches.length,0);
+});
+
+test('server mode decides expired display independently of browser time; LIVE shape retains narrowing',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());
+  const ordinary=Date.now;Date.now=()=>0;
+  try{await showExpired(f);}finally{Date.now=ordinary;}
+  assert.ok(f.nodes('button').some(n=>f.text(n)===EXPIRED_BUTTON));
+  const g=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>g.unmount());await showContinuation(g);
+  assert.match(g.text(),/确认授权给当前接续会话/);assert.match(g.text(),/不超过原期限/);
+  assert.ok(!g.text().includes('过期后的新授权'));
+});
+
+test('missing SQL, GAP or Source-pin rejection stays HOLD with original request/key and no Grant call',async t=>{
+  for(const message of ['dataset_split_correction_grant_not_eligible','dataset_split_expired_scope_not_pinned',
+    'owner_request_expired','confirmation_view_stale']){
+    const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());
+    await openCorrection(f,{expires_at:OLD_EXPIRED_AT},{resources:BOOTSTRAP_RESOURCES});
+    f.button('查看授权确认').props.onClick();f.calls[1].resolve({data:null,error:{message,code:'42501'}});await f.settle();
+    assert.match(f.text(),/HOLD/);assert.match(f.text(),/不要另发申请或更换 key/);
+    assert.ok(!f.nodes('button').some(n=>f.text(n)===EXPIRED_BUTTON));
+    assert.equal(f.calls.filter(c=>c.name==='clued_owner_grant_v1').length,0);assert.equal(f.calls.length,2);
+    assert.ok(!f.text().includes('请让 Agent 重新发起'));
+  }
+});
+
+test('initial af1 view refusal never suggests a new request or key',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());
+  f.emit('INITIAL_SESSION',session('owner'));
+  f.calls[0].resolve({data:null,error:{message:'owner_request_expired',code:'42501'}});await f.settle();
+  assert.equal(f.calls.length,1);assert.match(f.text(),/HOLD/);assert.match(f.text(),/不要另发申请或更换 key/);
+  assert.ok(!f.text().includes('请让 Agent 重新发起'));
+});
+
+test('partial or inconsistent expired mode/rule/Ref/subject/resources cannot fall back to LIVE',async t=>{
+  const mutations=[
+    v=>{delete v.correction.expired_reauthorization;},
+    v=>{v.correction.expired_reauthorization.mode='LIVE';},
+    v=>{v.correction.expired_reauthorization.time_rule='COMMIT_PLUS_HOUR';},
+    v=>{v.correction.effect='REPLACE_UNUSED_GRANT_WITH_ONE_HOUR_SINGLE_USE_KEEP_ORIGINAL_APPROVAL_HISTORY';},
+    v=>{delete v.correction.expired_reauthorization.adoption_server_ref;},
+    v=>{v.correction.expired_reauthorization.adoption_server_ref.plan_sha256='f'.repeat(64);},
+    v=>{v.correction.expired_reauthorization.adoption_server_ref.content_hash='bad';},
+    v=>{v.correction.expired_reauthorization.adoption_server_ref.receipt_id='bad';},
+    v=>{v.correction.expired_reauthorization.adoption_server_ref.version=0;},
+    v=>{delete v.correction.binding_continuation;},
+    v=>{v.grantee.binding_id=PREVIOUS_BINDING;},
+    v=>{v.correction.binding_continuation.execution_claim.fence=0;},
+    v=>{v.correction.previous_expires_at='2001-01-01T00:00:00Z';},
+    v=>{v.resources[5]='repo:wrong/scope/**';},
+    v=>{v.expires_seconds=86400;},v=>{v.max_uses=2;},
+  ];
+  for(const mutate of mutations){const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());
+    const answer=expiredIssue();mutate(answer.data.confirmation_view);await showExpired(f,answer);
+    assert.ok(!f.nodes('button').some(n=>[EXPIRED_BUTTON,'确认限时修正','确认授权给当前接续会话'].includes(f.text(n))));
+    assert.equal(f.calls.filter(c=>c.name==='clued_owner_grant_v1').length,0);
+  }
+});
+
+test('expired unknown completion and missing returned expiry keep the same original token/digest',async t=>{
+  for(const incomplete of [false,true]){
+    const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await showExpired(f);
+    f.button(EXPIRED_BUTTON).props.onClick();
+    if(incomplete)f.calls[2].resolve({data:{status:'committed',grant:{grant_id:'new',max_uses:1}},error:null});
+    else f.calls[2].reject(new TypeError('network'));
+    await f.settle();f.button('核对原操作').props.onClick();
+    assert.deepEqual(plain(f.calls[3].args),plain(f.calls[2].args));
+    assert.equal(f.calls.filter(c=>c.name==='clued_dataset_split_grant_correction_issue_v1').length,1);
+    f.calls[3].resolve({data:{...expiredCommitted.data,replayed:true},error:null});await f.settle();
+    assert.match(f.text(),/过期后的新授权已确认/);
+    assert.ok(f.text().includes(new Date(expiredCommitted.data.grant.expires_at).toLocaleString()));
+  }
+});
+
+test('expired short token refresh cannot silently change server mode or current claim',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());
+  await showExpired(f,expiredIssue({expires:new Date(Date.now()+5000).toISOString()}));
+  f.button(EXPIRED_BUTTON).props.onClick();
+  const fresh=expiredIssue({token:'clued_ogr_fresh',digest:'f'.repeat(64)});
+  fresh.data.confirmation_view.correction.binding_continuation.execution_claim.lease_version=2;
+  f.calls[2].resolve(fresh);await f.settle();
+  assert.equal(f.calls.length,3);assert.match(f.text(),/请求内容有变化/);assert.match(f.text(),/lease 2/);
+  f.button(EXPIRED_BUTTON).props.onClick();
+  assert.deepEqual(plain(f.calls[3].args.p_input),{confirmation_token:'clued_ogr_fresh',view_digest:'f'.repeat(64)});
+});
+
+test('cancel pending expired preview invalidates its epoch; late response never becomes approvable',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());
+  await openCorrection(f,{expires_at:OLD_EXPIRED_AT},{resources:BOOTSTRAP_RESOURCES});
+  f.button('查看授权确认').props.onClick();f.render();f.button('取消预览').props.onClick();f.render();
+  f.calls[1].resolve(expiredIssue());await f.settle();
+  assert.ok(!f.nodes('button').some(n=>f.text(n)===EXPIRED_BUTTON));
+  assert.equal(f.calls.filter(c=>c.name==='clued_owner_grant_v1').length,0);
+});
+
+test('expired same-Binding preview is still fresh Owner/session bound; changes never reuse its response',async t=>{
+  for(const leave of [f=>f.emit('TOKEN_REFRESHED',{...session('owner'),access_token:'new-owner-token'}),
+    f=>f.emit('SIGNED_OUT',null),f=>f.emit('SIGNED_IN',session('other'))]){
+    const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());
+    await showExpired(f,expiredIssue({changed:false}));leave(f);
+    assert.ok(!f.nodes('button').some(n=>f.text(n)===EXPIRED_BUTTON));
+    assert.equal(f.calls.filter(c=>c.name==='clued_owner_grant_v1').length,0);
+  }
+});
+
+test('unmount during expired issue discards the late response and calls no Grant writer',async()=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});
+  await openCorrection(f,{expires_at:OLD_EXPIRED_AT},{resources:BOOTSTRAP_RESOURCES});
+  f.button('查看授权确认').props.onClick();f.unmount();
+  f.calls[1].resolve(expiredIssue());await f.settle();
+  assert.ok(!f.nodes('button').some(n=>f.text(n)===EXPIRED_BUTTON));
+  assert.equal(f.calls.filter(c=>c.name==='clued_owner_grant_v1').length,0);
 });
