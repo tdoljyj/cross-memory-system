@@ -1,0 +1,73 @@
+{
+  "object_type": "ObjectAuthorityRegistry",
+  "revision_id": "CLUED-MODEL-OBJECT-AUTHORITY-v1-20260918",
+  "date": "2026-09-18",
+  "status": "FROZEN_FOR_PRE_M0_STRUCTURE_BINDING",
+  "sources": {
+    "plan_sha256": "b1773742be41c8129b1cdf447c7b59dd1a235aba6ff35575b9c8288884f6b5d0",
+    "kernel_v3_3_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "architecture_acceptance_sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+    "structure_freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+  },
+  "authorities": [
+    {
+      "objects": [
+        "Canonical State",
+        "Authority",
+        "GateAuthorization",
+        "GateResultReceipt",
+        "PromotionAuthorization",
+        "PromotionResultReceipt",
+        "Kernel RC_CANDIDATE",
+        "Kernel RC",
+        "ReleaseRiskManifest signing"
+      ],
+      "owner": "KERNEL / EXISTING DOMAIN AUTHORITY",
+      "model_domain_effect": "TYPED_REFERENCE_ONLY"
+    },
+    {
+      "objects": [
+        "TierSetRevision",
+        "TierDefinitionRevision"
+      ],
+      "owner": "PRODUCT / OWNER-ADOPTED PLAN",
+      "model_domain_effect": "READ_AND_BIND_EXACT_REVISION"
+    },
+    {
+      "objects": [
+        "ModelFamily",
+        "ModelFamilyRevision",
+        "ModelCandidateRevision",
+        "ModelQualificationResult",
+        "Dataset/Experiment/Training/Eval registries"
+      ],
+      "owner": "MODEL PROGRAM",
+      "model_domain_effect": "NON_CANONICAL_PRODUCT_AUTHORITY_UNTIL_GATED"
+    },
+    {
+      "objects": [
+        "TierReleaseUnit",
+        "TierSetReleaseSourceLock",
+        "SignedTierSetReleaseManifest composition",
+        "M6 deterministic projections"
+      ],
+      "owner": "MODEL RELEASE ORCHESTRATION",
+      "model_domain_effect": "COORDINATION_AND_PROJECTION_ONLY / NO AUTHORITY CREATION"
+    },
+    {
+      "objects": [
+        "ModelOutputCandidate"
+      ],
+      "owner": "MODEL CAPABILITY PORT / MODEL PROVIDER",
+      "model_domain_effect": "CANDIDATE_ONLY / NEVER_CANONICAL_BY_ITSELF"
+    }
+  ],
+  "invariants": [
+    "No second Canonical.",
+    "No second Gate engine.",
+    "No second RC schema authority.",
+    "No cross-tier reuse of Risk/RC/GA/GRR/PA/PRR.",
+    "M6-V remains read-only; only M6-P performs release actions.",
+    "Semantic Recall remains separately gated and is not activated by this registry."
+  ]
+}

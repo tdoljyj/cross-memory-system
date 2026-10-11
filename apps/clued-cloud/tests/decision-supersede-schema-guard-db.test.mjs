@@ -11,6 +11,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -53,21 +55,25 @@ test("decision supersede rejects a replacement without record_schema_version", {
     for (const name of (await fs.readdir(path.join(root, "supabase/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const token = hash();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'supersede@example.invalid',now())`, [userId]);
     const bindingId = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','All scopes',$2,array['context:read','context:write'],array['*']) returning id`, [userId, token])).rows[0].id;
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query("set role anon");
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
 
     const mutate = async (input) =>
-      (await anon.query("select public.clued_record_mutate($1,$2) value", [token, input])).rows[0].value;
+      (await gateway.query("select public.clued_record_mutate($1,$2) value", [token, input])).rows[0].value;
     const supersedeRpc = async (input) =>
-      (await anon.query("select public.clued_decision_supersede($1,$2) value", [token, input])).rows[0].value;
+      (await gateway.query("select public.clued_decision_supersede($1,$2) value", [token, input])).rows[0].value;
     // The binding RPC entry raises replacement_scope_required before a receipt
     // exists; the core is called directly to prove the receipt-backed rejections.
     const supersedeCore = async (input) =>

@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -49,6 +51,7 @@ test("a committed checkpoint renews the session without a second resume", { time
     for (const name of (await fs.readdir(path.join(root, "supabase/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const tokenHash = hash();
@@ -66,8 +69,11 @@ test("a committed checkpoint renews the session without a second resume", { time
     clients.push(anon);
     await anon.connect();
     await anon.query("set role anon");
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const call = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      await workerGatewayRpc(workerCaller,name,token,input);
     const rpc = (name, input) => call(tokenHash, name, input);
     const checkpoint = (session, base, eventIds, key = uuid()) => rpc("clued_mcp_commit_checkpoint", {
       context_key: "global", session_token: session, base_version: base,
@@ -261,7 +267,7 @@ test("a committed checkpoint renews the session without a second resume", { time
     // A constraint that becomes visible without changing (here: the Binding
     // gains Global read after its resume) arrives in full.
     const widened = await call(projectToken, "clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
-    await admin.query("update public.clued_agent_bindings set context_keys=array['global',$2] where token_hash=$1",
+    await admin.query("update public.clued_agent_bindings set context_keys=array['global',$2] where token_hash=clued_private.credential_verifier_v1($1)",
       [projectToken, projectContext]);
     let widenedCheckpoint = await call(projectToken, "clued_mcp_commit_checkpoint", {
       context_key: projectContext, session_token: widened.session_token, base_version: widened.version,
@@ -302,11 +308,17 @@ test("a committed checkpoint renews the session without a second resume", { time
 
     // A Binding that lost read admission still checkpoints but gets no renewal.
     const readable = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured" });
-    await admin.query("update public.clued_agent_bindings set scopes=array['context:write','audit:read'] where token_hash=$1", [tokenHash]);
+    await admin.query("update public.clued_agent_bindings set scopes=array['context:write','audit:read'] where token_hash=clued_private.credential_verifier_v1($1)", [tokenHash]);
     const writeOnly = await checkpoint(readable.session_token, readable.version, []);
     assert.equal(writeOnly.status, "committed");
     assert.equal(writeOnly.session_renewal, null);
     assert.equal(writeOnly.session_renewal_unavailable, "context_read_not_authorized");
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

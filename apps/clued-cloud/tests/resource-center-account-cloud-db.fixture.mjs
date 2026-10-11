@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -14,6 +15,7 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapi
 // already-tested registration/transition contracts, not a production backfill.
 // All provider operations below use an in-memory fake, never Google or a disk.
 export async function testAccountCloud(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `account-cloud-${randomUUID()}`, resource = "https://account-cloud.invalid/mcp";
@@ -465,7 +467,8 @@ export async function testAccountCloud(t, admin, server, user, decision) {
         await admin.query("reset role");
         await admin.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '20 minutes' where id=$1", [row.provider_attempt_receipt_id]);
         await admin.query("set local role anon");
-        await assert.rejects(scheduled({action:"load",...job.reference}),/storage_scheduled_recovery_denied/);
+        // BUG-20261007-005: an older attempt is still loaded (it was refused past 10 minutes).
+        assert.equal((await scheduled({action:"load",...job.reference})).status,"recovery_only");
         await admin.query("rollback to savepoint expired_scheduled_attempt");
         await admin.query("savepoint bad_scheduled_recovery");
         await assert.rejects(scheduled({action:"load",...job.reference,mutation:{operation:"create"}}),/storage_scheduled_recovery_denied/);
@@ -534,6 +537,103 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       assert.deepEqual(await counters(), revokedBefore); assert.deepEqual(await journal(job), row); assert.deepEqual(await jobRow(job), originalJob);
       await assert.rejects(cloud({ action: "finalize", ...job.reference, credential_version: 1, finish: {} }), /storage_cloud_mode_denied/);
       assert.deepEqual(await counters(), revokedBefore); assert.deepEqual(await journal(job), row); assert.equal(storage.posts, 1);
+    });
+    await t.test("an unsettled attempted create stays due with backoff, gets a job-bound refresh and is released only when proven absent (BUG-20261007-005)", async () => {
+      const initial = await createRoot(), client = await bind(initial), target = await activate(initial), job = await submit(target, client), storage = provider(target);
+      storage.losePost = true;
+      assert.equal((await executor(target, storage).run(job.reference)).status, "unreconciled");
+      const row = await journal(job); assert.equal(row.state, "started"); assert.ok(row.provider_attempt);
+      // A well-formed (not usable) sealed credential, as recovery loads require.
+      await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2::jsonb where id=$1", [target.connection,
+        JSON.stringify({ contract: "clued.storage-credential/1", key_id: "fixture", nonce: "A".repeat(16), ciphertext: "B".repeat(24) })]);
+      const rpc = async (name, input, hash = issuer) => (await caller.query(`select public.${name}($1,$2::jsonb) value`, [hash, JSON.stringify(input)])).rows[0].value;
+      const scheduled = input => rpc("clued_storage_scheduled_recovery_v2", input);
+      const refresh = input => rpc("clued_storage_refresh_worker_v1", input);
+      const absent = (input, hash) => rpc("clued_storage_recovery_absent_v1", input, hash);
+      const listed = async () => (await scheduled({ action: "due" })).jobs.some(item => item.job_id === job.reference.job_id);
+      const backoff = async () => (await admin.query("select attempts,next_at>clock_timestamp() waiting from clued_private.storage_recovery_backoff_v1 where owner_id=$1 and job_id=$2",
+        [user, job.reference.job_id])).rows[0];
+      const age = interval => admin.query(`update public.clued_audit_receipts set created_at=clock_timestamp()-interval '${interval}' where id=$1`, [row.provider_attempt_receipt_id]);
+
+      // 1. Due inside the first 10 minutes without backoff; afterwards with backoff, never dropped.
+      await age("30 seconds"); assert.equal(await listed(), true); assert.equal(await backoff(), undefined);
+      await age("20 minutes");
+      assert.equal(await listed(), true); assert.deepEqual(await backoff(), { attempts: 1, waiting: true });
+      assert.equal(await listed(), false, "waits for its backoff");
+      await admin.query("update clued_private.storage_recovery_backoff_v1 set next_at=clock_timestamp()-interval '1 second' where job_id=$1", [job.reference.job_id]);
+      assert.equal(await listed(), true); assert.deepEqual(await backoff(), { attempts: 2, waiting: true });
+      // Storage step 1 (Task ce5c725e): however often it was listed, the next wait is at most 10 minutes plus 30 s of jitter.
+      await admin.query("update clued_private.storage_recovery_backoff_v1 set attempts=9,next_at=clock_timestamp()-interval '1 second' where job_id=$1", [job.reference.job_id]);
+      assert.equal(await listed(), true);
+      const wait = Number((await admin.query("select extract(epoch from next_at-clock_timestamp()) s from clued_private.storage_recovery_backoff_v1 where job_id=$1",
+        [job.reference.job_id])).rows[0].s);
+      assert.ok(wait > 590 && wait <= 630, `capped wait ${wait}`);
+      assert.equal((await scheduled({ action: "load", ...job.reference })).status, "recovery_only");
+
+      // 4. The ordinary refresh is skipped and counted while the root is fenced.
+      await admin.query(`insert into clued_private.storage_refresh_delegations_v1(connection_id,issuer_hash,enabled,version,next_refresh_at,failures,receipt_id)
+        values($1,$2,true,1,clock_timestamp()-interval '1 minute',0,$3)`, [target.connection, issuer, target.receipt]);
+      const due = await refresh({ action: "due" });
+      assert.equal(due.connections.includes(target.connection), false); assert.ok(due.root_busy >= 1);
+      await assert.rejects(refresh({ action: "claim", connection_id: target.connection, attempt_id: randomUUID() }), /storage_root_has_unresolved_mutation/);
+
+      // 2. A recovery-only refresh bound to the exact attempted job is accepted for the account-policy connection.
+      const queued = await submit(target, client);
+      await assert.rejects(refresh({ action: "claim", connection_id: target.connection, attempt_id: randomUUID(), recovery_job_id: queued.reference.job_id }),
+        /storage_refresh_denied/, "a job without a provider attempt has nothing to recover");
+      const attempt = randomUUID();
+      const claimed = await refresh({ action: "claim", connection_id: target.connection, attempt_id: attempt, recovery_job_id: job.reference.job_id });
+      assert.equal(claimed.status, "acquired"); assert.equal(claimed.attempt_id, attempt);
+      const pending = (await admin.query("select recovery_job_id,recovery_intent_id,recovery_attempt_digest from clued_private.storage_refresh_attempts_v1 where id=$1", [attempt])).rows[0];
+      assert.equal(pending.recovery_job_id, job.reference.job_id); assert.equal(pending.recovery_intent_id, row.id); assert.match(pending.recovery_attempt_digest, /^[0-9a-f]{64}$/);
+      const envelope = { contract: "clued.storage-credential/1", key_id: "fixture", nonce: "A".repeat(16), ciphertext: "C".repeat(24) };
+      const commit = { action: "commit", connection_id: target.connection, attempt_id: attempt, credential_envelope: envelope,
+        expires_at: new Date(Date.now() + 3600000).toISOString() };
+      await assert.rejects(refresh({ ...commit, recovery_job_id: queued.reference.job_id }), /storage_refresh_denied/);
+      assert.equal((await refresh({ ...commit, recovery_job_id: job.reference.job_id })).status, "committed");
+      assert.equal(Number((await admin.query("select credential_version from clued_private.storage_connections_v1 where id=$1", [target.connection])).rows[0].credential_version), 2);
+      assert.equal((await journal(job)).state, "started", "a refresh never settles or repeats the provider effect");
+
+      // 3. Absence settles only an expired, old create with the exact attempt.
+      const settle = { action: "settle_absent", ...job.reference, intent_id: row.id, base_version: Number(row.version), request_sha256: row.request_sha256,
+        proof: { contract: "clued.storage-create-absent/1", provider_file_id: row.provider_attempt.provider_file_id,
+          parent_id: row.provider_attempt.parent_id, intent_id: row.id } };
+      await admin.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '2 minutes' where id=$1", [row.id]);
+      await assert.rejects(absent(settle), /storage_absent_release_denied/, "its create may still have been running 10 minutes ago");
+      await admin.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '15 minutes' where id=$1", [row.id]);
+      for (const bad of [{ ...settle, proof: { ...settle.proof, provider_file_id: "other-object" } }, { ...settle, base_version: 9 },
+        { ...settle, request_sha256: "f".repeat(64) }, { ...settle, proof: { ...settle.proof, contract: "clued.storage-create-verified/2" } },
+        { ...settle, extra: true }, { ...settle, job_id: queued.reference.job_id }]) {
+        await assert.rejects(absent(bad), /storage_absent_release_denied|storage_scheduled_recovery_denied/);
+      }
+      await assert.rejects(absent(settle, sha(randomUUID())), /storage_absent_release_denied/);
+      await age("5 minutes");
+      await assert.rejects(absent(settle), /storage_absent_release_denied|storage_scheduled_recovery_denied/, "the attempt is too recent");
+      await age("20 minutes");
+      const released = await absent(settle);
+      assert.equal(released.status, "committed"); assert.equal(released.state, "cancelled"); assert.equal(released.replayed, false);
+      assert.equal(released.execution_permitted, false); assert.equal(released.intent_id, row.id);
+      const settled = await journal(job);
+      assert.equal(settled.state, "cancelled");
+      assert.deepEqual(settled.final_result, { outcome: "released_not_effected", reason_code: "PROVIDER_EFFECT_ABSENT" });
+      assert.deepEqual((await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [released.receipt_id])).rows[0],
+        { operation: "storage_absent_release", status: "committed" });
+      assert.equal((await admin.query("select count(*)::int n from public.clued_context_events where receipt_id=$1 and canonical_event_type='extension:storage:absent_released'",
+        [released.receipt_id])).rows[0].n, 1);
+      const replay = await absent(settle);
+      assert.equal(replay.replayed, true); assert.equal(replay.receipt_id, released.receipt_id);
+      assert.equal(await backoff(), undefined); assert.equal(await listed(), false);
+      const inspected = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "inspect", ...job.reference })])).rows[0].value;
+      assert.equal(inspected.status, "cancelled"); assert.equal(inspected.reason_code, "PROVIDER_EFFECT_ABSENT");
+      // The root is quiet again, and a late attempt record is refused.
+      await admin.query("select clued_private.storage_root_quiet_v1($1,$2)", [user, target.rootId]);
+      await assert.rejects(cloud({ action: "provider_attempt", ...job.reference, credential_version: 2, attempt: row.provider_attempt }));
+      for (const role of ["authenticated", "service_role"]) {
+        const db = await connect(role);
+        await assert.rejects(db.query("select public.clued_storage_recovery_absent_v1($1,$2::jsonb)", [issuer, JSON.stringify(settle)]), /permission denied/);
+        await assert.rejects(db.query("select clued_private.storage_account_recovery_refresh_v1($1,$2,$3,$4,true,null,null,null)",
+          [target.connection, user, target.profile, job.reference.job_id]), /permission denied/);
+      }
     });
     await t.test("a complete persisted verification settles after root revocation with one original result and no provider I/O", async () => {
       const sample = await captureVerified(), { target, job, storage, original, record } = sample;
@@ -640,6 +740,115 @@ export async function testAccountCloud(t, admin, server, user, decision) {
       await assert.rejects(cloud(settleInput(sample, { verified_receipt_id: randomUUID(), verified_digest: sha("post-only") })), { message: "storage_verified_mismatch" });
       assert.deepEqual(await journal(job), original); assert.deepEqual(await counters(), before); assert.equal(storage.io, beforeIo); assert.equal(storage.posts, 1);
       await assert.rejects(admin.query("select clued_private.storage_root_quiet_v1($1,$2)", [user, sample.target.rootId]), /storage_root_has_unresolved_mutation/);
+    });
+    await t.test("a queued job whose dispatch never started is dispatched again on a quiet root, refused on a stuck root and settled after 2 hours (BUG-20261008-001)", async () => {
+      const initial = await createRoot(), client = await bind(initial), target = await activate(initial), storage = provider(target);
+      const sweep = async (input, hash = issuer) => (await caller.query("select public.clued_storage_queued_sweep_v1($1,$2::jsonb) value",
+        [hash, JSON.stringify(input)])).rows[0].value;
+      const due = { action: "due", dispatch: true };
+      const listed = (result, job) => result.jobs.some(item => item.job_id === job.reference.job_id && item.connection_id === job.reference.connection_id);
+      // Older than every queued job other tests left behind, so the oldest-first limits reach it.
+      const age = (job, interval) => admin.query(`update clued_private.storage_jobs_v1 set created_at=clock_timestamp()-interval '${interval}' where owner_id=$1 and job_id=$2`,
+        [user, job.reference.job_id]);
+      const counts = async job => { const row = await jobRow(job); return { attempts: row.redispatch_attempts, outcome: row.dispatch_outcome }; };
+
+      // The fixed issuer and the exact shape only; no API role may call it.
+      for (const bad of [{ action: "due" }, { action: "due", dispatch: "yes" }, { action: "due", dispatch: true, extra: 1 }, { action: "load", dispatch: true }])
+        await assert.rejects(sweep(bad), /storage_queued_sweep_denied/);
+      await assert.rejects(sweep(due, sha(randomUUID())), /storage_queued_sweep_denied/);
+      for (const role of ["authenticated", "service_role"]) {
+        const db = await connect(role);
+        await assert.rejects(db.query("select public.clued_storage_queued_sweep_v1($1,$2::jsonb)", [issuer, JSON.stringify(due)]), /permission denied/);
+      }
+      for (const signature of ["storage_root_stuck_v1(uuid,text)", "storage_queued_timeout_v1(uuid,uuid)"]) {
+        const permissions = (await admin.query(`select has_function_privilege('anon',p.oid,'EXECUTE') anon,has_function_privilege('authenticated',p.oid,'EXECUTE') authenticated,
+          has_function_privilege('service_role',p.oid,'EXECUTE') service from pg_proc p where p.oid=$1::regprocedure`, ["clued_private." + signature])).rows[0];
+        assert.deepEqual(permissions, { anon: false, authenticated: false, service: false }, signature);
+      }
+
+      // 1. Not before 90 seconds; then listed once, with backoff; never without the dispatch flag.
+      const queued = await submit(target, client);
+      assert.equal(listed(await sweep(due), queued), false, "the dispatch after submit runs first");
+      await age(queued, "100 minutes");
+      assert.equal(listed(await sweep({ action: "due", dispatch: false }), queued), false);
+      assert.deepEqual(await counts(queued), { attempts: 0, outcome: null });
+      assert.equal(listed(await sweep(due), queued), true);
+      assert.deepEqual(await counts(queued), { attempts: 1, outcome: null });
+      assert.equal(listed(await sweep(due), queued), false, "waits for its backoff");
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_at=clock_timestamp()-interval '3 minutes' where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
+      assert.equal(listed(await sweep(due), queued), true);
+      assert.equal((await counts(queued)).attempts, 2);
+      // Storage step 1 (Task ce5c725e): after many listings the next one is at most 10 minutes later.
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_attempts=9,redispatch_at=clock_timestamp()-interval '9 minutes' where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
+      assert.equal(listed(await sweep(due), queued), false, "not before 10 minutes");
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_at=clock_timestamp()-interval '10 minutes 5 seconds' where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
+      assert.equal(listed(await sweep(due), queued), true, "listed again after 10 minutes, not 60");
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_attempts=2,redispatch_at=clock_timestamp() where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
+      // A listed job runs through the ordinary load, which still sees it queued.
+      assert.equal((await cloud({ action: "load", ...queued.reference })).status, "queued");
+
+      // 2. An unsettled journal on the root: the job is counted as root_busy, not listed, and its load is refused.
+      const fence = await submit(target, client); storage.losePost = true;
+      assert.equal((await executor(target, storage).run(fence.reference)).status, "unreconciled");
+      const fenced = await journal(fence); assert.equal(fenced.state, "started");
+      await admin.query("update clued_private.storage_jobs_v1 set redispatch_at=clock_timestamp()-interval '10 minutes' where owner_id=$1 and job_id=$2", [user, queued.reference.job_id]);
+      const busy = await sweep(due);
+      assert.equal(listed(busy, queued), false); assert.ok(busy.root_busy >= 1);
+      assert.equal((await counts(queued)).attempts, 2, "a fenced root does not spend the backoff");
+      await assert.rejects(cloud({ action: "load", ...queued.reference }), /storage_root_has_unresolved_mutation/);
+
+      // 3. A submit while that job is inside its admission still queues; once the admission is 60 s past, the root is stuck
+      //    and submit is refused before any Receipt or job.
+      const waiting = await submit(target, client);
+      await admin.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '2 minutes' where id=$1", [fenced.id]);
+      const before = await counters(), refusedJob = randomUUID();
+      const refused = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "submit",
+        connection_id: target.connection, job_id: refusedJob, mutation: { ...waiting.mutation, destination_path: target.root + "/20_P_产品与体验/refused.txt" } })])).rows[0].value;
+      assert.deepEqual(refused, { status: "rejected", error_code: "storage_root_busy", job_id: refusedJob, connection_id: target.connection, execution_permitted: false });
+      assert.deepEqual(await counters(), before);
+      // A replay of a job that already exists is answered from its history, stuck root or not.
+      const replay = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "submit",
+        ...waiting.reference, mutation: waiting.mutation })])).rows[0].value;
+      assert.equal(replay.status, "queued"); assert.equal(replay.replayed, true);
+
+      // 4. Still queued 2 hours after submit: settled as attention_required (DISPATCH_NOT_STARTED), once, and never executed.
+      await age(queued, "3 hours");
+      const timedOut = await sweep(due);
+      assert.ok(timedOut.settled >= 1); assert.equal(listed(timedOut, queued), false);
+      const row = await jobRow(queued);
+      assert.deepEqual(row.dispatch_outcome, { status: "attention_required", reason: { code: "DISPATCH_NOT_STARTED" } });
+      assert.equal(row.intent_id, null);
+      assert.deepEqual((await admin.query("select operation,status,idempotency_key from public.clued_audit_receipts where id=$1", [row.dispatch_outcome_receipt_id])).rows[0],
+        { operation: "storage_dispatch_outcome", status: "committed", idempotency_key: `cloud-dispatch-outcome:${queued.reference.job_id}` });
+      assert.equal((await admin.query("select count(*)::int n from public.clued_context_events where receipt_id=$1 and canonical_event_type='extension:storage:dispatch_outcome'",
+        [row.dispatch_outcome_receipt_id])).rows[0].n, 1);
+      const inspected = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "inspect", ...queued.reference })])).rows[0].value;
+      assert.equal(inspected.status, "attention_required"); assert.equal(inspected.reason_code, "DISPATCH_NOT_STARTED");
+      const loaded = await cloud({ action: "load", ...queued.reference });
+      assert.equal(loaded.status, "attention_required", "load answers the settled status and never a queued descriptor");
+      // A late executor report cannot settle it a second time.
+      const reported = await cloud({ action: "report", ...queued.reference, credential_version: 1, outcome: { status: "denied" } });
+      assert.equal(reported.status, "attention_required");
+      assert.deepEqual((await jobRow(queued)).dispatch_outcome, row.dispatch_outcome);
+      const again = await sweep(due);
+      assert.deepEqual(await jobRow(queued), row); assert.equal(listed(again, queued), false);
+      // A started job is never settled by the timeout, whatever its age.
+      await age(fence, "3 hours"); await sweep(due);
+      assert.equal((await jobRow(fence)).dispatch_outcome, null); assert.equal((await journal(fence)).state, "started");
+
+      // 5. Production 2026-10-07 (20261008010000): four text jobs past 2 hours on a quiet root. The timeout settles
+      //    3 per call; the fourth must wait for the next call and is never listed for dispatch meanwhile.
+      const quietRoot = await createRoot(), quietClient = await bind(quietRoot), quietTarget = await activate(quietRoot);
+      const old = [];
+      for (let i = 0; i < 4; i++) { const job = await submit(quietTarget, quietClient); await age(job, `${3 * 60 + i} minutes`); old.push(job); }
+      const first = await sweep(due);
+      assert.equal(old.some(job => listed(first, job)), false, "a text job past 2 hours is never dispatched");
+      const outcomes = async () => Promise.all(old.map(async job => (await jobRow(job)).dispatch_outcome?.reason?.code ?? null));
+      assert.ok((await outcomes()).filter(Boolean).length >= 3);
+      const second = await sweep(due);
+      assert.equal(old.some(job => listed(second, job)), false);
+      assert.deepEqual(await outcomes(), ["DISPATCH_NOT_STARTED", "DISPATCH_NOT_STARTED", "DISPATCH_NOT_STARTED", "DISPATCH_NOT_STARTED"]);
+      assert.ok((await Promise.all(old.map(jobRow))).every(row => row.intent_id === null && row.redispatch_attempts === 0));
     });
   } finally {
     await admin.query("rollback");

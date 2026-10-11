@@ -1,0 +1,20 @@
+/** Concrete M1 create plan, deliberately not an executable write API.
+ * The private source must derive Native approval and actual transaction Actor.
+ * Public persistent projections contain no raw subject/binding identity.
+ */
+import {DOMAIN_POLICY as P} from './model-domain-policy.mjs';
+import {POLICY} from './model-domain-readonly.mjs';
+import {prepareBootstrapCandidate} from './model-domain-consumer.mjs';
+export async function prepareM1CreatePlan(source,input,clock){
+  const preflight=await prepareBootstrapCandidate(source,input,clock);
+  const identity={source:'NATIVE_GRANTEE_AND_M1_RECEIPT_EVENT_ACTOR',identity_not_persisted:true};
+  const base=id=>({operation:'create',id,scope:POLICY.scope,record_schema_version:1,lifecycle_status:'active',base_version:null,source_refs:[],source_unavailable_reason:'Protected Native Owner Grant and exact Canonical Record/Receipt references are not Evidence IDs; source bindings retained in typed fields.',confidence_reason:'Fixed non-production DatasetSplit projection derived by the registered M1 producer from a real Native approval; write remains unavailable in this candidate.'});
+  const record=(id,kind,authority,fields)=>({...base(id),record_type:kind,authority,idempotency_key:input.idempotency_key+':'+kind+':'+id,mutation:{title:'DatasetSplit v0.1 Native source projection',content:'Fixed non-production definition recognition projection. Actor identity is derived privately from its real M1 transaction and Native grantee, never persisted in this text.',type_fields:fields,relations:{}}});
+  const producer=record(input.producer_record_id,'state','user_explicit',{state_kind:'model_dataset_split_domain_producer',domain_producer:{service:POLICY.service,role:'EXISTING_MODEL_DOMAIN_AUTHORITY_DELEGATE',domain_owner:'MODEL PROGRAM',environment:'NON_PRODUCTION',authority_registry_sha256:P.domain.authority_registry_sha256},identity_binding:identity});
+  const permission=record(input.permission_record_id,'decision','user_explicit',{rationale:'Exact Native model.dataset_split.bootstrap approval, not the earlier Owner definition adoption or final recognizer designation.',domain_permission:{status:'active',revoked_at:null,action:'DatasetSplit.definition.recognize',effect:P.domain.effect,environment:'NON_PRODUCTION',canonical_scope:POLICY.scope,subject:P.domain.subject,not_before:'<REAL_NATIVE_GRANTED_AT>',expires_at:'<REAL_NATIVE_EXPIRES_AT>',producer_registration_ref:'<REAL_M1_PRODUCER_ID_VERSION_SERVER_HASH>'},identity_binding:identity});
+  const recognition=record(input.recognition_record_id,'state','observed',{state_kind:'model_dataset_split_domain_recognition',domain_recognition:{contract_id:P.domain.contract_id,contract_version:P.domain.version,contract_sha256:P.contract_sha256,subject:P.domain.subject,owner_adoption:P.domain.owner_adoption,permission_record_ref:'<REAL_M1_PERMISSION_ID_VERSION_SERVER_HASH>',producer_registration_ref:'<REAL_M1_PRODUCER_ID_VERSION_SERVER_HASH>',producer:{service:POLICY.service},effect:P.domain.effect},identity_binding:identity,owner_source_bindings:{owner_adoption_server_ref:input.owner_adoption_server_ref,final_recognizer_server_ref:input.final_recognizer_server_ref,hash_mapping:'ORIGINAL_EXACT_SERVER_HASH_GUARD_NO_BODY_HASH_FALLBACK'}});
+  // user_confirmed is intentionally absent. Only the real protected Native
+  // confirmation chain may derive it inside the same SQL transaction. No
+  // caller verified/proof/user_confirmed field is accepted by the preflight.
+  return Object.freeze({status:'M1_CREATE_PLAN_NOT_EXECUTABLE',mutation_permitted:false,preflight,atomic_order:[producer,permission,recognition],requires_single_existing_M1_transaction:true,actual_execution:'NONE',unresolved_slots:['Native confirmation -> real user_confirmed derivation','actual committed producer ref','actual committed permission ref','actual Native window','private principal augmentation from real Native/M1 actors','complete SQL database validation'],domain_authority_receipt:'NOT_ISSUED',m2_verdict:'NOT_ISSUED'});
+}

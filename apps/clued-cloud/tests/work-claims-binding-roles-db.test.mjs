@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Binding roles (migration 20261003200000, Task 869d2db7, Owner Decision
 // 38ddb8cf): once the Owner marks a CI admission Binding, only it binds claims
@@ -60,6 +62,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();
@@ -78,12 +81,18 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
     await human.query('set role authenticated');
     const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
+        : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const native = async (name, input, claims = fresh(userId)) => {
       await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
         [claims.sub ?? '', JSON.stringify(claims)]);
@@ -274,6 +283,14 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.deepEqual([v2.verdict, v2.bound_pr], ['ADMITTED', 'o/r#12'], 'no role marked any more: the earlier behaviour');
     assert.ok(!(await native('clued_binding_roles_list_v1', {})).bindings.some((b) => b.binding_id === bindingIds.ci),
       'a revoked Binding without a role is not listed');
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

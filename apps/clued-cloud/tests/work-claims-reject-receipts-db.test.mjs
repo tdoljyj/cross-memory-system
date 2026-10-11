@@ -14,6 +14,8 @@ import './work-claims-lease-key-db.case.mjs';
 import './work-claims-owner-handover-db.case.mjs';
 // The merge slot case (migration 20261006120000) as well.
 import './work-claims-merge-slot-db.case.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claim rejection Receipts for renew, takeover pre-checks and replays
 // (migration 20261003070000, Task 91272c5d): every such refusal leaves a
@@ -64,6 +66,7 @@ test('work claims: renew, takeover and replay refusals leave rate-limited reject
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at)
@@ -81,8 +84,14 @@ test('work claims: renew, takeover and replay refusals leave rate-limited reject
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
+        : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const rejected = (result, code) => {
       assert.deepEqual([result.status, result.error_code], ['rejected', code], JSON.stringify(result));
@@ -248,6 +257,14 @@ test('work claims: renew, takeover and replay refusals leave rate-limited reject
         assert.equal(allowed, false, `${role} can execute ${fn}`);
       }
     }
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

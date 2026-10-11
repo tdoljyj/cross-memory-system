@@ -12,6 +12,9 @@ begin
     insert into public.clued_agent_bindings(id,user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values(clued_binding_id,owner_id,'test','canonical-search-regression',binding_hash,
         array['context:read','context:write'],array['global']);
+    -- raw-binding-grants: a raw Binding needs an explicit grant since migration 20261009050000.
+    insert into clued_private.raw_binding_grants_v1(binding_id,context_key,actions,reason)
+      values(clued_binding_id,'global',array['read','write'],'canonical search regression fixture');
     session_data:=public.clued_mcp_restore(binding_hash,'{"context_key":"global"}');
     result:=public.clued_record_mutate(binding_hash,jsonb_build_object(
       'operation','create','record_type','note','record_schema_version',1,'scope','global',

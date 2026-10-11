@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -38,6 +39,7 @@ test('approved legacy successor requires live whole-table owner proof and exact 
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
     const userId = uuid();
     const activationId = '0d09405e-f918-43c3-b476-6e3c4465eef4';
     const approvalReceiptId = '58d4dce0-92c1-4245-ab1b-af3712a4009f';

@@ -198,3 +198,65 @@ test("P6.2: a created directory carries its sharing digest only when it equals t
   assert.throws(() => createGoogleDriveCreatePostconditionVerifier({ managed_root: root, root_folder_id: "root",
     root_parent_id: "container", get_file: async () => null, list_children: async () => [], get_sharing: "x" }), TypeError);
 });
+
+test("storage step 2: a created directory carries its access digest only together with its sharing digest", async () => {
+  const { googleDriveAccessDigest, googleDriveSharingDigest } = await import("../../../kernel/host/resource-center-google-drive-sharing.mjs");
+  const sharing = { shared: false, permissionIds: ["owner"] };
+  const permissions = [{ id: "owner", type: "user", role: "owner" }];
+  const parentDigest = googleDriveSharingDigest(sharing);
+  const run = async (options, before = { destination_parent_sharing_digest: parentDigest }) => {
+    const f = fixture({ options: { require_effect_provider_id: true, include_verified_proof: true,
+      get_sharing: async (id) => ({ id, ...sharing }), ...options } });
+    f.request.effect_result.provider_file_id = "topic";
+    Object.assign(f.request.provider_before, before);
+    return (await f.verify(f.request)).verified_proof;
+  };
+  const proof = await run({ get_access: async (id) => ({ id, version: "1", permissions }) });
+  assert.equal(proof.provider_sharing_digest, parentDigest);
+  assert.equal(proof.provider_access_digest, googleDriveAccessDigest({ permissions }));
+  // No access reader, a failed or foreign read, no usable list, or no sharing digest: no access digest.
+  for (const [options, before] of [
+    [{}, undefined],
+    [{ get_access: async () => { throw new Error("DRIVE_METADATA_UNAVAILABLE"); } }, undefined],
+    [{ get_access: async () => ({ id: "track", version: "1", permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, version: "1", permissions: [] }) }, undefined],
+    // A read that saw another version (or none) is not the verified folder's.
+    [{ get_access: async (id) => ({ id, version: "2", permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, permissions }) }, undefined],
+    [{ get_access: async (id) => ({ id, version: "1", permissions }) }, { destination_parent_sharing_digest: null }],
+  ]) assert.equal("provider_access_digest" in await run(options, before), false);
+  assert.throws(() => createGoogleDriveCreatePostconditionVerifier({ managed_root: root, root_folder_id: "root",
+    root_parent_id: "container", get_file: async () => null, list_children: async () => [], get_access: "x" }), TypeError);
+});
+
+// Storage step 3: an identity that names its ancestors is walked by their Drive IDs.
+test("step 3: with ancestors the chain is walked by Drive ID; only version-matched folders are pinned", async () => {
+  const ancestors = (trackMatch = "access") => [
+    { path: root, id: "root", parent_id: "container", match: "access", value: "a".repeat(64) },
+    { path: `${root}/20_P_产品与体验`, id: "track", parent_id: "root", match: trackMatch, value: trackMatch === "version" ? "1" : "b".repeat(64) },
+  ];
+  const newShape = (f, trackMatch) => ({ ...f.request, provider_before: { ...f.request.provider_before, root_folder_version: null,
+    destination_parent_version: trackMatch === "version" ? "1" : null, provider_version: "c".repeat(64), ancestors: ancestors(trackMatch) } });
+  // A sibling change moves the folder versions: fine by digest.
+  const f = fixture({ alter: files => { files.root.version = "7"; files.track.version = "8"; } });
+  assert.equal((await f.verify(newShape(f))).provider_file_id, "topic");
+  // The legacy identity still pins every version.
+  const legacy = fixture({ alter: files => { files.track.version = "8"; } });
+  await assert.rejects(legacy.verify(legacy.request), /ANCESTOR_CHANGED/);
+  // A version-matched destination folder is still pinned.
+  const pinned = fixture({ alter: files => { files.track.version = "8"; } });
+  await assert.rejects(pinned.verify(newShape(pinned, "version")), /ANCESTOR_CHANGED/);
+  // A renamed, moved or trashed ancestor fails.
+  for (const change of [files => { files.track.name = "renamed"; }, files => { files.track.parents = ["elsewhere"]; },
+    files => { files.track.trashed = true; }, files => { files.root.parents = ["other-container"]; }]) {
+    const changed = fixture({ alter: change });
+    await assert.rejects(changed.verify(newShape(changed)), /ANCESTOR_CHANGED/);
+  }
+  // An inconsistent chain is a request mismatch.
+  const broken = fixture();
+  for (const before of [{ ancestors: ancestors().slice(0, 1) }, { ancestors: [ancestors()[0], { ...ancestors()[1], parent_id: "x" }] },
+    { ancestors: [{ ...ancestors()[0], id: "other" }, ancestors()[1]] }, { ancestors: [ancestors()[0], { ...ancestors()[1], id: "topic" }] }]) {
+    await assert.rejects(broken.verify({ ...newShape(broken), provider_before: { ...newShape(broken).provider_before, ...before } }),
+      /REQUEST_MISMATCH/);
+  }
+});

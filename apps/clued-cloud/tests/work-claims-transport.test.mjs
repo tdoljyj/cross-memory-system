@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 import { contractVersionOf } from '../scripts/verify-served-agent-contract.mjs';
 
@@ -12,13 +13,15 @@ const CLUED_COMPONENTS = {
     .components.map((c) => [c.id, String(c.version)])),
   source_commit: null,
 };
-const CONTRACT_VERSION = contractVersionOf(await readFile(new URL('../../../skills/clued/references/agent-contract.md', import.meta.url), 'utf8'));
+const CONTRACT_SOURCE = (await readFile(new URL('../../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+const CONTRACT_VERSION = contractVersionOf(CONTRACT_SOURCE);
+const CONTRACT_SHA256 = createHash('sha256').update(CONTRACT_SOURCE).digest('hex');
 
 // Work Claim Admission v0.1, step 2: the five work-claim tools and the resume
 // fold-in over the Worker transport. The database side is covered by
 // currentness-work-claims-db.test.mjs; here every RPC is mocked.
 
-const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 const enabled = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_WORK_CLAIMS_V1: 'true' };
 const disabled = { ...assets, PROJECT_VIEWS_V2: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -226,6 +229,7 @@ test('resume folds in contract_version and the live claims; a failed claims read
     clued_components: CLUED_COMPONENTS,
     authority_capture_completeness: { state: 'unknown', basis: 'server_observes_only_writes_that_reached_clued', independent_of: 'currentness' },
     contract_version: CONTRACT_VERSION,
+    agent_contract_sha256: CONTRACT_SHA256,
     active_work_claims: claims.active_work_claims,
     active_work_claim_count: 1,
     work_claim_profile: claims.work_claim_profile,
@@ -266,13 +270,14 @@ test('resume folds in contract_version and the live claims; a failed claims read
     } finally { restore(); }
   }
 
-  // Flag off: resume is untouched and only the restore RPC runs.
+  // Flag off: contract identity remains present and only the restore RPC runs.
   {
     const { calls, restore } = mockFetch(handler);
     try {
       const response = await worker.fetch(mcp(bindingToken, 'clued_session_resume', { context_key: 'global' }), disabled, ctx);
       const result = (await response.json()).result.structuredContent;
-      assert.equal('contract_version' in result, false);
+      assert.equal(result.contract_version, CONTRACT_VERSION);
+      assert.equal(result.agent_contract_sha256, CONTRACT_SHA256);
       assert.equal('active_work_claims' in result, false);
       assert.deepEqual(result.clued_components, CLUED_COMPONENTS, 'component versions do not depend on the work-claims flag');
       assert.equal(calls.length, 1);

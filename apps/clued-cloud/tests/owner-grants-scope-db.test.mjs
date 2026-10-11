@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 // Owner Credential v0.1 §4 item 3 (migration 20261003190000, Task fcd55008,
 // Owner Decision c4e82dee): for "grant for a while" the Owner keeps a subset of
@@ -61,6 +63,7 @@ test('owner grants: the confirmation page narrows or widens a request\'s resourc
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUser = uuid();
@@ -82,12 +85,16 @@ test('owner grants: the confirmation page narrows or widens a request\'s resourc
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
     await human.query('set role authenticated');
-    const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+    const agent = async (who, name, input) => CI_SIGNATURES.includes(name+'(text,jsonb)')
+      ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v
+      : workerGatewayRpc(workerCaller,name,tokens[who],input);
     const native = async (name, input, claims = session(userId)) => {
       await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
         [claims.sub ?? '', JSON.stringify(claims)]);
@@ -184,6 +191,12 @@ test('owner grants: the confirmation page narrows or widens a request\'s resourc
     // Only the latest view can be approved: the earlier widened token is revoked.
     assert.equal((await grant(spelled)).error_code, 'confirmation_token_revoked');
     assert.deepEqual(committed(await grant(kept)).grant.resources, [commit]);
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

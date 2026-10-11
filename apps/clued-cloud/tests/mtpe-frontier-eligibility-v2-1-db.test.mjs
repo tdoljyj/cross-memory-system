@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -51,6 +53,7 @@ test('frontier eligibility v2.1 resolves an empty frontier as NONE and narrows t
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const hostToken = hash();
@@ -73,8 +76,12 @@ test('frontier eligibility v2.1 resolves an empty frontier as NONE and narrows t
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const rpc = async (token, name, input = {}) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      await workerGatewayRpc(workerCaller, name, token, input);
     const write = (input) => rpc(hostToken, 'clued_record_mutate', input);
     const snapshot = () => rpc(hostToken, 'clued_mcp_mtpe_snapshot');
     const validate = () => rpc(hostToken, 'clued_mcp_mtpe_validate');
@@ -98,10 +105,10 @@ test('frontier eligibility v2.1 resolves an empty frontier as NONE and narrows t
     // Project-scoped fixtures avoid clued_now_global_uidx (one global 'now' Task per user).
     const projectId = uuid();
     const scope = `project:${projectId}`;
-    assert.equal((await rpc(hostToken, 'clued_project_mutate', {
-      operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
+    assert.equal((await rpc(hostToken, 'clued_project_mutate_v2', {
+      operation: 'create', canonical_project_id: projectId, project_schema_version: 2,
       idempotency_key: uuid(),
-      mutation: { name: 'MTPE Eligibility', certainty_status: 'confirmed', progress_status: 'active' },
+      mutation: { name: 'MTPE Eligibility', progress_status: 'active' },
     })).status, 'committed');
     const createTask = async (title, typeFields) => {
       const id = uuid();
@@ -253,6 +260,13 @@ test('frontier eligibility v2.1 resolves an empty frontier as NONE and narrows t
     await assert.rejects(() => admin.query(
       `select clued_private.reconcile_approved_direct_event_continuity_once_v1($1,$2,$3,$4,true)`,
       [owner, '0'.repeat(64), uuid(), uuid()]), /direct_continuity_manifest_digest_mismatch/);
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

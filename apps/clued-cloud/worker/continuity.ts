@@ -1,4 +1,10 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
+import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
+  modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
+  type ModelDomainFeatureEnv, type ModelDomainToolName } from "./model-domain-tools";
+import { BootstrapCompletionUnknown, BootstrapExecutionDenied, BootstrapInputDenied, BootstrapReadinessDenied } from "./model-domain-bootstrap-source.mjs";
+import { dispatchModelDomainTool, ModelDomainToolDenied } from "./model-domain-dispatch";
 import { contextRpcByTool, contextTools, contextsEnabled, sanitizeContextResult, type ContextFeatureEnv } from "./contexts";
 import { p5RpcByTool, p5TenantWritesEnabled, p5Tools, type P5FeatureEnv } from "./p5";
 import {
@@ -83,7 +89,8 @@ import {
 } from "./integrations";
 import { measurePack } from "./context-pack";
 import { permissionDenial, permissionDenialResult } from "./permission-guidance";
-import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION } from "./generated/agent-contract";
+import { AGENT_CONTRACT_MARKDOWN, AGENT_CONTRACT_VERSION, AGENT_CONTRACT_SHA256 } from "./generated/agent-contract";
+import { renderAgentContractBootstrap } from "./agent-contract-bootstrap.mjs";
 import { CLUED_COMPONENTS_SCHEMA, CLUED_COMPONENT_VERSIONS, MCP_SERVER_VERSION } from "./generated/components";
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
@@ -91,6 +98,7 @@ import { createStorageGoogleOnboard } from "./storage-google-onboard";
 import { ONBOARD_DISCLOSURE_VERSION } from "./storage-onboard-disclosure";
 import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
+import { createStorageOwnerLifecycle, StorageOwnerLifecycleError, type OwnerReconnectInput, type OwnerDeleteInput } from "./storage-owner-lifecycle";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
@@ -129,8 +137,8 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
-  AgentMessageFeatureEnv, IntegrationFeatureEnv {
+export interface ContinuityEnv extends DatabaseGatewayEnv, RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
+  AgentMessageFeatureEnv, IntegrationFeatureEnv, ModelDomainFeatureEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -267,6 +275,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
     service: "clued-continuity",
     kernel_version: KERNEL_VERSION,
     components: cluedComponents(),
+    agent_contract: { version: AGENT_CONTRACT_VERSION, sha256: AGENT_CONTRACT_SHA256 },
     canonical_store: "clued-cloud/supabase",
     context_model: "user_id + context_key",
     work_log: "日志.md",
@@ -579,11 +588,13 @@ async function supabaseRequest(
   init: RequestInit & { userToken?: string } = {},
 ) {
   const { url, key } = supabaseConfig(env);
+  const token = init.userToken ?? databaseGatewayToken(env);
+  if (!token) throw new HttpError(503, "Clued database gateway is not configured.");
   const headers = new Headers(init.headers);
   headers.set("apikey", key);
   headers.set("content-type", "application/json");
   headers.set("accept", "application/json");
-  headers.set("authorization", `Bearer ${init.userToken ?? key}`);
+  headers.set("authorization", `Bearer ${token}`);
   const response = await fetch(`${url}${path}`, { ...init, headers });
   const text = await response.text();
   let payload: unknown = null;
@@ -605,11 +616,16 @@ async function supabaseRequest(
         : typeof details?.error_description === "string"
           ? details.error_description
           : "Clued storage request failed.";
-    // Binding RPCs use the storage anon role after Clued authenticates the
+    // Binding RPCs use the Worker gateway role after Clued authenticates the
     // connection. PostgREST maps that role's insufficient_privilege to 401;
     // forwarding it makes MCP clients restart OAuth for a resource denial.
-    // Preserve actual JWT/authentication errors as 401.
+    // A rejected Worker JWT is a server outage, not an expired client grant.
+    // Explicit user/P5 JWT authentication errors retain 401.
     const status =
+      !init.userToken && response.status === 401 &&
+        typeof details?.code === "string" && /^PGRST30[123]$/.test(details.code)
+        ? 503
+        :
       response.status === 401 && details?.code === "42501"
         ? 403
         : response.status >= 500 &&
@@ -619,8 +635,8 @@ async function supabaseRequest(
         : response.status;
     throw new HttpError(
       status,
-      message,
-      payload,
+      status === 503 && response.status === 401 ? "Clued database gateway is temporarily unavailable." : message,
+      status === 503 && response.status === 401 ? { code: "worker_gateway_unavailable" } : payload,
     );
   }
   return payload;
@@ -821,6 +837,11 @@ export async function runStorageRefreshScheduled(env: ContinuityEnv) {
     }) as Record<string, unknown>;
     const due = await rpc({ action: "due" });
     if (!Array.isArray(due.connections) || due.connections.length > 10 || !due.connections.every(c => typeof c === "string")) return { status: "unavailable" };
+    // BUG-20261007-005: a refresh held back by an unresolved journal on its root
+    // is no longer silent. Scheduled recovery settles the journal (and may run a
+    // recovery-only refresh); until then reads fail once the token expires.
+    if (Number.isSafeInteger(due.root_busy) && Number(due.root_busy) > 0)
+      console.warn(JSON.stringify({ event: "storage_refresh_root_busy", connections: Number(due.root_busy) }));
     const refresher = await createStorageGoogleRefresh({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
       client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc });
     let committed = 0, unavailable = Number.isSafeInteger(due.pending_expired) && Number(due.pending_expired)>0 ? Number(due.pending_expired) : 0;
@@ -882,6 +903,11 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
       }) as Record<string, unknown>;
+    const absentRpc = async (input: Record<string, unknown>) => await supabaseRequest(env,
+      "/rest/v1/rpc/clued_storage_recovery_absent_v1", {
+        method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      }) as Record<string, unknown>;
     const due = await recoveryRpc({ action: "due" });
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     if (due.status !== "ok" || !Array.isArray(due.jobs) || due.jobs.length > 3 ||
@@ -889,7 +915,14 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
           Object.keys(job).sort().join(",") === "connection_id,job_id" &&
           typeof job.connection_id === "string" && uuid.test(job.connection_id) &&
           typeof job.job_id === "string" && uuid.test(job.job_id))) return { status: "unavailable" };
-    let committed = 0, attention = 0;
+    const refresher = env.CLUED_STORAGE_REFRESH_V1 === "true" && due.jobs.length ? await createStorageGoogleRefresh({
+      client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
+      vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+      rpc: async input => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_refresh_worker_v1", {
+        method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
+        signal: AbortSignal.timeout(10000), redirect: "manual",
+      }) as Record<string, unknown> }).catch(() => null) : null;
+    let committed = 0, released = 0, attention = 0;
     for (const reference of due.jobs as Array<{ connection_id: string; job_id: string }>) {
       try {
         const prior = await verifiedRpc({ ...reference, action: "verified_inspect" });
@@ -916,18 +949,28 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         if (prior.status !== "inspection_required" || prior.connection_id !== reference.connection_id ||
             prior.job_id !== reference.job_id || prior.execution_permitted !== false)
           throw new Error("original journal unavailable");
-        const descriptor = await recoveryRpc({ ...reference, action: "load" });
-        if (descriptor.status !== "recovery_only" || descriptor.connection_id !== reference.connection_id ||
-            descriptor.job_id !== reference.job_id) throw new Error("recovery descriptor unavailable");
-        const recovery = await createStorageCloudRecovery({
-          client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
-          rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, timeout_ms: 10000,
-        });
-        const result = await recovery.run(reference);
-        if (result.status === "committed") committed++; else attention++;
+        const attempt = async () => {
+          const descriptor = await recoveryRpc({ ...reference, action: "load" });
+          if (descriptor.status !== "recovery_only" || descriptor.connection_id !== reference.connection_id ||
+              descriptor.job_id !== reference.job_id) throw new Error("recovery descriptor unavailable");
+          const recovery = await createStorageCloudRecovery({
+            client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
+            rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, absent: { rpc: absentRpc }, report_expiring: true, timeout_ms: 10000,
+          });
+          return await recovery.run(reference);
+        };
+        let result = await attempt();
+        // BUG-20261007-005: an expiring credential gets one recovery-only refresh
+        // bound to this job (the root's ordinary refresh waits for a quiet root).
+        if (result.status === "credential_expiring" && refresher &&
+            (await refresher.run(reference.connection_id, reference.job_id)).status === "committed") result = await attempt();
+        if (result.status === "committed") committed++;
+        else if (result.status === "released_not_effected") released++;
+        else attention++;
       } catch { attention++; }
     }
-    return { status: attention ? "attention_required" : "ok", committed, attention };
+    if (released) console.warn(JSON.stringify({ event: "storage_recovery_released_not_effected", released }));
+    return { status: attention ? "attention_required" : "ok", committed, released, attention };
   } catch { return { status: "unavailable" }; }
 }
 
@@ -1145,6 +1188,27 @@ async function requireSupabaseUser(request: Request, env: ContinuityEnv) {
   return { user, token };
 }
 
+async function storageOwnerLifecycleRuntime(env: ContinuityEnv, token: string) {
+  const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
+  if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+  const vault = JSON.parse(env.CLUED_STORAGE_VAULT_KEYS);
+  const oauth = await createStorageGoogleOAuth({
+    client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+    client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
+    redirect_uri: env.CLUED_STORAGE_GOOGLE_REDIRECT_URI ?? "", vault,
+    rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_oauth_v1", {
+      method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
+    }) as Record<string, unknown>,
+  });
+  return createStorageOwnerLifecycle({ vault, oauth,
+    rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_owner_lifecycle_v1", {
+      method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
+    }) as Record<string, unknown>,
+  });
+}
+
 async function listBindings(request: Request, env: ContinuityEnv) {
   const { token } = await requireSupabaseUser(request, env);
   const rows = (await supabaseRequest(
@@ -1176,10 +1240,12 @@ const tools = [
   {
     name: "clued_agent_bootstrap",
     description:
-      "Read the public, vendor-neutral Clued Continuity connection and lifecycle contract. This call never returns user context or credentials.",
+      "Read public Clued connection metadata and the full Clued Agent Contract in content[1]. When agent_contract.parts is above 1, read every part in order before work. This call never returns user context or credentials.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        part: { type: "integer", minimum: 1, description: "Contract part to read, starting at 1; omit to read the full contract or its first part. Read all reported parts in order." },
+      },
       additionalProperties: false,
     },
   },
@@ -1480,12 +1546,22 @@ const tools = [
   {
     name: "clued_audit_receipts",
     description:
-      "Read recent immutable receipts plus a server-derived restore → append → checkpoint compliance view and checkpoint reminders.",
+      "Read recent immutable receipts and session compliance. With measurement, read fixed-watermark private merge-admission journal pages under existing audit:read authority; every contributing context must be authorized. Pages are raw transaction fragments, not official metrics or complete wall-clock history.",
     inputSchema: {
       type: "object",
       properties: {
         context_key: { type: "string" },
         limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+        measurement: {
+          type: "object",
+          properties: {
+            after_sequence: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+            end_sequence: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+            stream_id: { type: "string", format: "uuid" },
+            limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },
@@ -1499,6 +1575,7 @@ const tools = [
   ...ownerRequestTools,
   ...agentMessageTools,
   ...integrationTools,
+  ...modelDomainTools,
 ] as const;
 
 type PublicToolName = (typeof tools)[number]["name"];
@@ -1627,6 +1704,7 @@ export const publicToolPolicies = {
   ...ownerRequestToolPolicies,
   ...agentMessageToolPolicies,
   ...integrationToolPolicies,
+  ...modelDomainToolPolicies,
 } as const satisfies Record<PublicToolName, PublicToolPolicy>;
 
 function publishTool<T extends (typeof tools)[number]>(tool: T) {
@@ -1651,7 +1729,7 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_AGENT_MESSAGES_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1" | "CLUED_INTEGRATION_RUNTIME_V1">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_WORK_CLAIMS_V1" | "CLUED_OWNER_REQUESTS_V1" | "CLUED_AGENT_MESSAGES_V1" | "CLUED_DEVELOPMENT_CONTEXT_V14" | "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_READ_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_BINARY_V1" | "CLUED_INTEGRATION_RUNTIME_V1" | "CLUED_MODEL_DOMAIN_SOURCE_V1" | "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1">) {
   const existing = tools.filter((tool) =>
     (!(tool.name in recordRpcByTool || tool.name in informationFlowRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
@@ -1660,6 +1738,9 @@ export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5
     && (tool.name !== OWNER_REQUEST_TOOL || ownerRequestsEnabled(env))
     && (!(tool.name in agentMessageRpcByTool) || agentMessagesEnabled(env))
     && (!isIntegrationTool(tool.name) || integrationRuntimeEnabled(env))
+    && (!isModelDomainTool(tool.name) || (recordsV2Enabled(env) && modelDomainSourceEnabled(env)))
+    && ((tool.name !== MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL && tool.name !== MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL) ||
+      (modelDomainBootstrapRequestEnabled(env) && ownerRequestsEnabled(env)))
   ).map(publishTool);
   const binary = storageBinaryEnabled(env);
   return [...existing, ...(storageJobsEnabled(env) ? storageAgentToolsFor(binary) : []), ...(binary ? [storageUploadBeginTool] : []),
@@ -2090,6 +2171,67 @@ async function callOwnerRequest(request: Request, env: ContinuityEnv, args: unkn
     isError: status === "rejected" || status === "failed" };
 }
 
+// Model Program source integration. This is an exact candidate dispatch call site,
+// independent of rpcByTool: no private alias or arbitrary caller-selected RPC.
+// The source-only fixed Owner-anchor read uses this same Request/Binding chain
+// and returns the ordinary readonly envelope; it never calls submitOwnerRequest.
+async function callModelDomainTool(request: Request, env: ContinuityEnv,
+  name: ModelDomainToolName, args: unknown) {
+  if (!recordsV2Enabled(env) || !modelDomainSourceEnabled(env) ||
+    ((name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL || name === MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL) &&
+      (!modelDomainBootstrapRequestEnabled(env) || !ownerRequestsEnabled(env)))) {
+    throw new HttpError(404, "Unknown Clued continuity tool.");
+  }
+  const token = bearerToken(request);
+  if (!token) throw new HttpError(401, "Authorize with a Clued Binding Token.");
+  if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Model domain sources require the existing Clued Binding.");
+  const tokenHash = await sha256(token);
+  try {
+    const result = await dispatchModelDomainTool(env, name, args, {
+      rpc: async (rpc, input) => {
+        try {
+          return await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+            method: "POST", body: JSON.stringify({ p_token_hash: tokenHash, p_input: input }),
+          });
+        } catch (error) {
+          // A known SQL exception from this exact owned PostgREST invocation
+          // proves the database transaction rolled back. A bare HTTP status,
+          // network error or 5xx response cannot establish completion.
+          const details = error instanceof HttpError && error.details &&
+            typeof error.details === "object" && !Array.isArray(error.details)
+            ? error.details as Record<string, unknown> : null;
+          if (rpc === "clued_model_dataset_split_bootstrap_commit_candidate" &&
+            error instanceof HttpError && error.status >= 400 && error.status < 500 &&
+            (details?.code === "42501" || details?.code === "22023")) {
+            throw new BootstrapExecutionDenied();
+          }
+          throw error;
+        }
+      },
+      // The same Request, bearer and environment enter the existing Native
+      // request path. There is no caller token, actor or confirmation proof.
+      submitOwnerRequest: async (input) => await callOwnerRequest(request, env, input),
+    });
+    if (name === MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL) return result;
+    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: false };
+  } catch (error) {
+    if (error instanceof BootstrapExecutionDenied) {
+      const result = { status: "rejected", error_code: "BOOTSTRAP_DATABASE_TRANSACTION_REJECTED",
+        completion_unknown: false, retry_allowed: false };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+    if (error instanceof BootstrapCompletionUnknown) {
+      const result = { status: "unknown", error_code: "BOOTSTRAP_COMPLETION_UNVERIFIED",
+        completion_unknown: true, retry_allowed: false };
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+    }
+    if (error instanceof BootstrapInputDenied) throw new HttpError(400, "Exact DatasetSplit bootstrap input required.");
+    if (error instanceof BootstrapReadinessDenied) throw new HttpError(403, "DatasetSplit bootstrap readiness denied or unavailable. Reason: " + error.reason + ".");
+    if (error instanceof ModelDomainToolDenied) throw new HttpError(403, "Model domain source denied or unavailable.");
+    throw error;
+  }
+}
+
 // IntegrationRuntime §12.3: Binding channel only (a clued_bnd_ token, else 403). The RPCs authenticate
 // the token hash themselves. A rule rejection, before or inside the Receipt, renders as one
 // request_rule shape; authorization denials stay HTTP 403; a Receipt-level conflict is retryable.
@@ -2313,11 +2455,11 @@ async function callTool(
   }
   if (name === "clued_agent_bootstrap") {
     const result = bootstrapContract(new URL(request.url).origin, env);
-    return {
-      content: [{ type: "text", text: JSON.stringify(result) }],
-      structuredContent: result,
-      isError: false,
-    };
+    const part = args && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>).part : undefined;
+    return renderAgentContractBootstrap(result, {
+      markdown: AGENT_CONTRACT_MARKDOWN, version: AGENT_CONTRACT_VERSION, sha256: AGENT_CONTRACT_SHA256,
+    }, part);
   }
   if (typeof name === "string" && (name in recordRpcByTool || name in informationFlowRpcByTool) &&
     !recordsV2Enabled(env)) {
@@ -2332,6 +2474,7 @@ async function callTool(
   if (typeof name === "string" && name in agentMessageRpcByTool && !agentMessagesEnabled(env)) {
     throw new HttpError(404, "Clued agent messages are disabled.");
   }
+  if (isModelDomainTool(name)) return await callModelDomainTool(request, env, name, args);
   if (name === OWNER_REQUEST_TOOL) {
     if (!ownerRequestsEnabled(env)) throw new HttpError(404, "Clued owner requests are disabled.");
     return await callOwnerRequest(request, env, args);
@@ -2420,10 +2563,9 @@ function withAuthorityCapture(name: string, value: unknown): unknown {
   return { ...record, authority_capture_completeness: authorityCaptureUnknown };
 }
 
-// Work Claim Admission v0.1 §4.2: a resume carries the contract version the
-// Worker serves and this user's live work claims, so a compliant Agent sees a
-// conflict at its first Clued call. Only when CLUED_WORK_CLAIMS_V1 is on; a
-// failed claims read is reported in the result, never thrown into the resume.
+// Work Claim Admission v0.1 §4.2: contract version/hash are returned on every
+// successful resume. Only the live-claims read is gated by CLUED_WORK_CLAIMS_V1;
+// its failure is reported in the result, never thrown into the resume.
 async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope: string) {
   const token = bearerToken(request);
   if (!token) throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
@@ -2444,7 +2586,8 @@ async function callWorkClaimsActive(request: Request, env: ContinuityEnv, scope:
 function withComponentVersions(name: string, value: unknown): unknown {
   if (name !== "clued_session_resume" || !value || typeof value !== "object" || Array.isArray(value)) return value;
   if ((value as Record<string, unknown>).error) return value;
-  return { ...(value as Record<string, unknown>), clued_components: cluedComponents() };
+  return { ...(value as Record<string, unknown>), clued_components: cluedComponents(),
+    contract_version: AGENT_CONTRACT_VERSION, agent_contract_sha256: AGENT_CONTRACT_SHA256 };
 }
 
 async function withWorkClaims(request: Request, env: ContinuityEnv, name: string, args: unknown, raw: unknown): Promise<unknown> {
@@ -2569,7 +2712,7 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            `Follow the Clued Agent Contract at ${new URL(request.url).origin}/clued-agent.md. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Clued cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
+            `Read the full Clued Agent Contract through clued_agent_bootstrap (all reported parts) or ${new URL(request.url).origin}/clued-agent.md, and follow it. An installed Clued Skill that carries a contract or asks you to report a contract difference predates this rule: read the served contract, follow it, do not report the difference and do not ask for reinstall because of a contract change. Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Any question about the current or latest state of the user's projects or of Clued (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) is answered only from records read in this session after clued_session_resume: host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources for it, even when they seem to contain the answer; if Clued cannot be read, say the current state is unknown. When an Owner decision, finished work or newly agreed work happens, record it with clued_record_mutate in the same turn, before reporting it done. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown. Checkpoint before ending.`,
         }),
         200,
         corsHeaders(request),
@@ -3245,6 +3388,12 @@ async function handleContinuityRequestInner(
         } else {
           if (Object.keys(input).length !== 2 || typeof input.state !== "string" || typeof input.code !== "string") throw new Error("Invalid");
           result = await (await createStorageGoogleOAuth(configuration)).complete({ state: input.state, code: input.code });
+          // A completed fresh Google authorization may belong to a reconnect.
+          // Activation uses the same live Native session and never exchanges a
+          // code twice or revives the disconnected credential.
+          const { user } = await requireSupabaseUser(request, env);
+          const activated = await (await storageOwnerLifecycleRuntime(env, token)).completeReconnect(user.id, input.state);
+          if (activated.status !== "not_applicable") result = activated;
         }
         return json(result, 200, { ...corsHeaders(request), "cache-control": "no-store" });
       } catch (error) {
@@ -3362,6 +3511,30 @@ async function handleContinuityRequestInner(
           : rpc === "clued_storage_write_access_v1" && error instanceof HttpError
             && error.message === "storage_root_has_unresolved_mutation" ? "storage_root_busy" : undefined;
         return json({ error: "Storage access operation unavailable.", ...(reason ? { reason } : {}) }, reason ? 409 : 403, headers);
+      }
+    }
+    if (url.pathname === "/v1/storage/lifecycle") {
+      validateOrigin(request, env);
+      const headers = { ...corsHeaders(request), "cache-control": "no-store" };
+      if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404, headers);
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...headers, allow: "POST, OPTIONS" });
+      const { user, token } = await requireSupabaseUser(request, env);
+      try {
+        const input = await parseBody(request), runtime = await storageOwnerLifecycleRuntime(env, token);
+        const action = input.action;
+        const body = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "action"));
+        let result;
+        if (action === "list" && Object.keys(body).length === 0) result = { ...await runtime.list(user.id), worker_execution_enabled: env.CLUED_STORAGE_EXECUTOR_V1 === "true" };
+        else if (action === "reconnect") result = await runtime.reconnect(user.id, body as OwnerReconnectInput);
+        else if (action === "delete") result = await runtime.delete(user.id, body as OwnerDeleteInput);
+        else if (action === "preview_delete" && Object.keys(body).length === 1 && typeof body.connection_id === "string") result = await runtime.previewDelete(user.id, body.connection_id);
+        else if (action === "recover" && Object.keys(body).length === 1 && typeof body.attempt_id === "string") result = await runtime.recover(user.id, body.attempt_id);
+        else return json({ error: "Storage operation not recognized.", reason: "input_invalid" }, 400, headers);
+        return json(result, 200, headers);
+      } catch (error) {
+        const reason = error instanceof StorageOwnerLifecycleError ? error.reason : "lifecycle_unavailable";
+        return json({ error: "Storage connection operation unavailable.", reason }, 409, headers);
       }
     }
     if (url.pathname === "/v1/storage/account" || url.pathname === "/v1/storage/refresh") {

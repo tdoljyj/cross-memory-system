@@ -31,7 +31,7 @@ export async function testRenewalDatabase(t, admin, server, user, decision) {
     // Exact temporary fixture; no provider effect. It exercises the shared root fence.
     await admin.query("insert into clued_private.resource_center_mutations_v1(user_id,profile_id,writer_binding_id,request_key,request_sha256,exact_request,authority_request,authority_result,authority_token_hash,profile_version,source_decision_id,state,expires_at,receipt_id) values($1,$2,$3,'renew-fence',$4,'{}','{}','{}',$5,1,$6,'uncertain',now(),$7)", [user,profile,writer,"f".repeat(64),oldReader,decision,enroll.receipt_id]);
     assert.equal((await renew(token, req)).status, "fenced");
-    assert.equal((await admin.query("select token_hash from clued_private.resource_center_writer_bindings_v1 where id=$1", [writer])).rows[0].token_hash, oldWriter);
+    assert.equal((await admin.query("select token_hash=clued_private.credential_verifier_v1($2) same from clued_private.resource_center_writer_bindings_v1 where id=$1", [writer, oldWriter])).rows[0].same, true);
     await admin.query("update clued_private.resource_center_mutations_v1 set state='cancelled' where profile_id=$1", [profile]);
   });
   let result;

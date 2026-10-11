@@ -12,56 +12,266 @@
       "PROJECT_VIEWS_V2": true,
       "P5_TENANT_WRITES": false,
       "CLUED_INTEGRATION_RUNTIME_V1": true,
-      "expected_tool_count": 36
+      "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+      "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+      "expected_tool_count": 43
     },
     "full_matrix": [
       {
         "PROJECT_VIEWS_V2": false,
         "P5_TENANT_WRITES": false,
         "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
         "expected_tool_count": 18
       },
       {
-        "PROJECT_VIEWS_V2": true,
+        "PROJECT_VIEWS_V2": false,
         "P5_TENANT_WRITES": false,
         "CLUED_INTEGRATION_RUNTIME_V1": false,
-        "expected_tool_count": 29
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 18
       },
       {
         "PROJECT_VIEWS_V2": false,
-        "P5_TENANT_WRITES": true,
+        "P5_TENANT_WRITES": false,
         "CLUED_INTEGRATION_RUNTIME_V1": false,
-        "expected_tool_count": 23
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 18
       },
       {
-        "PROJECT_VIEWS_V2": true,
-        "P5_TENANT_WRITES": true,
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": false,
         "CLUED_INTEGRATION_RUNTIME_V1": false,
-        "expected_tool_count": 34
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 18
       },
       {
         "PROJECT_VIEWS_V2": false,
         "P5_TENANT_WRITES": false,
         "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
         "expected_tool_count": 25
       },
       {
-        "PROJECT_VIEWS_V2": true,
+        "PROJECT_VIEWS_V2": false,
         "P5_TENANT_WRITES": false,
         "CLUED_INTEGRATION_RUNTIME_V1": true,
-        "expected_tool_count": 36
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 25
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 25
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 25
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 23
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 23
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 23
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 23
       },
       {
         "PROJECT_VIEWS_V2": false,
         "P5_TENANT_WRITES": true,
         "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 30
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 30
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 30
+      },
+      {
+        "PROJECT_VIEWS_V2": false,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
         "expected_tool_count": 30
       },
       {
         "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 29
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 29
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 36
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 36
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 36
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 36
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 43
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": false,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 43
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 34
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 34
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 41
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": false,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 41
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
         "P5_TENANT_WRITES": true,
         "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
         "expected_tool_count": 41
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": false,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 41
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": false,
+        "expected_tool_count": 48
+      },
+      {
+        "PROJECT_VIEWS_V2": true,
+        "P5_TENANT_WRITES": true,
+        "CLUED_INTEGRATION_RUNTIME_V1": true,
+        "CLUED_MODEL_DOMAIN_SOURCE_V1": true,
+        "CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1": true,
+        "expected_tool_count": 48
       }
     ]
   }

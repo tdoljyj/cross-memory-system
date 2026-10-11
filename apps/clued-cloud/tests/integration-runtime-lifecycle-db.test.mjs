@@ -1,3 +1,5 @@
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -7,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2c Integration Runtime PR-4 (IntegrationRuntime v0.1.8 §14.1): revoke (Native / Binding revoke_self /
 // Operator), restore / regrant, reauth mark / clear, capability_expansion, lifecycle, §10.5 REPLACE_HOLDER
@@ -113,8 +116,10 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     const before = await snapshot();
     await apply(MIGRATION);
     const after = await snapshot();
+    // Production order: the migrations up to the grant migration now, the grant migration and every later one
+    // (the security hygiene migration 20261007120000 among them) once T-S-2 has checked the database before it.
     assert.ok(migrations.includes(GRANTS));
-    for (const name of migrations.filter((name) => name > MIGRATION && name !== GRANTS)) await apply(name);
+    for (const name of migrations.filter((name) => name > MIGRATION && name < GRANTS)) await apply(name);
 
 
     // ---- structure (§13.7) -------------------------------------------------------------------------
@@ -143,7 +148,7 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       const { rows } = await admin.query(`select p.oid::regprocedure::text f,
           bool_or(has_function_privilege(r.rolname, p.oid, 'execute')) any_execute
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+        cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
         where (n.nspname = 'clued_private' and p.proname like 'integration\\_%')
            or (n.nspname = 'public' and (p.proname like 'clued\\_integration\\_%'
                or p.proname in ('clued_user_integration_v1', 'clued_admin_integration_v1')))
@@ -184,16 +189,36 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       for (const f of changed) assert.doesNotMatch(afterGrants.functions[f], /(^|[{,])=/, f);
     });
 
+    const executors = async () => (await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
+        has_function_privilege(r.rolname, p.oid, 'execute')) roles
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
+      where n.nspname = 'public' and p.proname = any($1)
+      group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']])).rows;
+
     await t.test('T-S-2 after the target grants: exactly §5.13', async () => {
-      const { rows } = await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
-          has_function_privilege(r.rolname, p.oid, 'execute')) roles
-        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
-        where n.nspname = 'public' and p.proname = any($1)
-        group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']]);
+      const rows = await executors();
       assert.equal(rows.length, BINDING_RPCS.length + 2);
       for (const row of rows) {
         assert.deepEqual(row.roles, row.proname.startsWith('clued_integration_') ? ['anon', 'authenticated'] : ['authenticated'], row.proname);
+      }
+    });
+
+    // every later migration, in production order
+    for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+    const gateway=await connect();
+    await gateway.query('set session authorization authenticator');
+    await setWorkerGatewayCaller(gateway);
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
+
+    await t.test('T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout', async () => {
+      const rows = await executors();
+      assert.equal(rows.length, BINDING_RPCS.length + 2);
+      for (const row of rows) {
+        assert.deepEqual(row.roles, row.proname.startsWith('clued_integration_') ? ['clued_worker_gateway'] : ['authenticated'], row.proname);
       }
     });
 
@@ -255,10 +280,30 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     await admin.query('insert into clued_private.platform_admin_v13(subject_id, version) values ($1, 1)', [operatorUser]);
 
     // ---- channel helpers -------------------------------------------------------------------------
-    const rpc = async (client, name, binding, input) =>
-      (await client.query(`select public.${name}($1, $2::jsonb) r`, [binding.hash ?? binding, JSON.stringify(input)])).rows[0].r;
+    // Concurrent compound fixtures seed rows and hold locks on their original
+    // backend. Switch only that public call's real role, retaining its transaction/PID.
+    // A failed SQL statement leaves an open transaction aborted; its existing outer
+    // rollback restores the transactional SET and the original SQLSTATE is preserved.
+    const roleQueues=new WeakMap();
+    const requestRole = (client,role,body) => {
+      const next=(roleQueues.get(client) ?? Promise.resolve()).catch(()=>{}).then(async()=>{
+      const prior=(await client.query("select current_setting('role') role,current_setting('request.jwt.claims',true) claims")).rows[0];
+      await client.query("select set_config('role',$1,false),set_config('request.jwt.claims',$2,false)",[role,JSON.stringify({role})]);
+      try { return await body(); }
+      finally {
+        try { await client.query("select set_config('role',$1,false),set_config('request.jwt.claims',$2,false)",[prior.role,prior.claims ?? '']); }
+        catch(error) { if(error.code!=='25P02') throw error; }
+      }
+      });
+      roleQueues.set(client,next);
+      return next;
+    };
+    const rpc = async (client, name, binding, input) => client===admin
+      ? workerGatewayRpc(gateway,name,binding.hash ?? binding,input)
+      : requestRole(client,'clued_worker_gateway',async() => (await client.query(`select public.${name}($1, $2::jsonb) r`,[binding.hash ?? binding,JSON.stringify(input)])).rows[0].r);
     const asUser = async (fn, user, input, claims = {}) => {
       await admin.query('begin');
+      await admin.query('set local role authenticated');
       try {
         await admin.query(`select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', $2, true)`,
           [user, JSON.stringify(claims)]);
@@ -789,10 +834,10 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       throw new Error(`backend ${pid} is not waiting on a lock`);
     };
     // one call inside an already open transaction of db, as the Native / Operator session of user
-    const sessionIn = async (db, fn, user, input) => {
-      await db.query(`select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', '{}', true)`, [user]);
-      return (await db.query(`select public.${fn}($1::jsonb) r`, [JSON.stringify(input)])).rows[0].r;
-    };
+    const sessionIn = async (db, fn, user, input) => requestRole(db,'authenticated',async()=>{
+      await db.query(`select set_config('request.jwt.claim.sub', $1, true)`,[user]);
+      return (await db.query(`select public.${fn}($1::jsonb) r`,[JSON.stringify(input)])).rows[0].r;
+    });
     // a whole transaction on db (begin … commit), started now and awaited later
     const inTx = (db, body) => (async () => {
       await db.query('begin');
@@ -1969,6 +2014,11 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal(r1.status, 'committed');
     });
 
+    const closeout=await findGatewayCloseoutMigration(root);
+    const callerCatalog=await snapshotCallerCatalog(admin);
+    await apply(closeout);
+    assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog,'G6 replay preserves current Native/Binding definitions and ACL');
+    await assertGatewayCloseoutBoundary(admin);
   } finally {
     for (const client of clients) await client.end().catch(() => {});
     await server.stop().catch(() => {});

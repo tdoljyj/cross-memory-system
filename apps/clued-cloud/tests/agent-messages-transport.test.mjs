@@ -6,7 +6,7 @@ import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 // message tools and the three fold-ins over the Worker transport. The database
 // side is covered by agent-messages-db.test.mjs; here every RPC is mocked.
 
-const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 const enabled = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_WORK_CLAIMS_V1: 'true', CLUED_AGENT_MESSAGES_V1: 'true' };
 const claimsOnly = { ...assets, PROJECT_VIEWS_V2: 'true', CLUED_WORK_CLAIMS_V1: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
@@ -68,6 +68,7 @@ test('message tools are advertised only behind CLUED_AGENT_MESSAGES_V1, with the
   assert.equal(inbox.annotations.readOnlyHint, false, 'reading marks incoming messages read');
   assert.deepEqual(inbox.inputSchema.properties.view.enum, ['open', 'unread', 'all', 'sent']);
   assert.match(inbox.description, /never an Owner instruction/);
+  assert.match(inbox.description, /owner_answers lists the Owner's decisions/);
   for (const name of MESSAGE_TOOLS) assert.equal(byName[name].inputSchema.additionalProperties, false, name);
 });
 
@@ -145,6 +146,19 @@ test('a rejection is a structured result, not a transport error', async () => {
     assert.equal(result.isError, false);
     assert.deepEqual(result.structuredContent, rejection);
   } finally { restore(); }
+
+  // The account's switch is off: the refusal and its how_to reach the Agent.
+  const disabled = { status: 'rejected', error_code: 'agent_messages_disabled',
+    how_to: 'The Owner has turned off Agent messages for this account. Tell the Owner in one line who you needed and what for.' };
+  const second = mockFetch(() => Response.json(disabled));
+  try {
+    const response = await worker.fetch(mcp(bindingToken, 'clued_agent_message_send', {
+      to: { claim_id: CLAIM }, subject: 's', body: 'b', idempotency_key: 'switched-off',
+    }), enabled, ctx);
+    const result = (await response.json()).result;
+    assert.equal(result.isError, false);
+    assert.deepEqual(result.structuredContent, disabled);
+  } finally { second.restore(); }
 });
 
 test('resume folds in agent_inbox for this session; a failed summary is reported, not thrown', async () => {
@@ -181,7 +195,41 @@ test('resume folds in agent_inbox for this session; a failed summary is reported
       ? { status: 'ok', unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [] } : resume));
     try {
       const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
-      assert.deepEqual(result.agent_inbox, { unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [] });
+      assert.deepEqual(result.agent_inbox, { messages_enabled: true, unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [],
+        owner_answer_count: 0, owner_answers: [] });
+    } finally { restore(); }
+  }
+
+  // The Owner decided a request this session opened (migration
+  // 20261009020000): the answer comes with the summary, marked as the
+  // Owner's decision rather than a message.
+  {
+    const answer = { request_id: '88888888-8888-4888-8888-888888888888', action: 'release.production',
+      status: 'approved_once', source: 'owner_answer', grant: { grant_id: '99999999-9999-4999-8999-999999999999', max_uses: 1 } };
+    const { restore } = mockFetch((call) => Response.json(isSummary(call)
+      ? { status: 'ok', unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [],
+        owner_answer_count: 1, owner_answers: [answer] } : resume));
+    try {
+      const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
+      assert.equal(result.agent_inbox.owner_answer_count, 1);
+      assert.deepEqual(result.agent_inbox.owner_answers, [answer]);
+      assert.match(result.agent_inbox.owner_answer_how_to, /Owner's decisions as Clued recorded them/);
+      assert.match(result.agent_inbox.owner_answer_how_to, /do not ask the Owner to confirm them again/);
+      assert.equal('how_to' in result.agent_inbox, false, 'no message instructions without messages');
+    } finally { restore(); }
+  }
+
+  // The Owner turned the account's switch off (migration 20261008190000): the
+  // fold-in says so and tells the Agent to go to the Owner instead.
+  {
+    const { restore } = mockFetch((call) => Response.json(isSummary(call)
+      ? { status: 'ok', unread_count: 0, open_request_count: 0, awaiting_reply_count: 0, latest_unread: [], agent_messages_enabled: false }
+      : resume));
+    try {
+      const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), enabled, ctx)).json()).result.structuredContent;
+      assert.equal(result.agent_inbox.messages_enabled, false);
+      assert.match(result.agent_inbox.messages_disabled_notice, /agent_messages_disabled/);
+      assert.match(result.agent_inbox.messages_disabled_notice, /do not ask the Owner to turn messages back on/);
     } finally { restore(); }
   }
 
@@ -282,7 +330,7 @@ test('a work-claim conflict names who to write to; without the flag it is unchan
 
 test('a storage write refused by a live claim names who to write to, for submit and trash batch alike', async () => {
   const worker = await loadContinuityWorker();
-  const storage = { CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_JOBS_V1: 'true',
+  const storage = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACCOUNT_V1: 'true', CLUED_STORAGE_JOBS_V1: 'true',
     SUPABASE_URL: 'https://db.example.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key' };
   const connection = '20000000-0000-4000-8000-000000000001';
   const rejection = { status: 'rejected', error_code: 'work_claim_conflict', door: 'clued-storage',

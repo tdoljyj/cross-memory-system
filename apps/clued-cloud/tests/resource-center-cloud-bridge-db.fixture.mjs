@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
@@ -16,6 +17,7 @@ await build({stdin:{contents:`export {createStorageCloudWorker} from './worker/s
 const {createStorageCloudWorker,createStorageCredentialVault,createStorageGoogleRefresh}=await import(pathToFileURL(join(dir,'bridge.mjs')));
 
 export async function testCloudBridge(t,admin,server,{user,profile,decision,connection,bindings,native,revoke}) {
+  await allowTestIssuerCredentials(admin);
   const client=server.getPgClient(),other=server.getPgClient();await client.connect();await other.connect();
   await client.query('set role anon');await other.query('set role anon');
   const issuer=sha('fixture-cloud-issuer'),vaultConfig={current_key_id:'v1',keys:{v1:randomBytes(32).toString('base64url')}};

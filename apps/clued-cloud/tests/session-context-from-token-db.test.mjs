@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -53,6 +55,7 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     for (const name of (await fs.readdir(path.join(root, "supabase/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const tokenHash = hash();
@@ -70,8 +73,11 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     clients.push(anon);
     await anon.connect();
     await anon.query("set role anon");
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const call = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      await workerGatewayRpc(workerCaller,name,token,input);
     const rpc = (name, input) => call(tokenHash, name, input);
     const restore = (contextKey, token = tokenHash) =>
       call(token, "clued_mcp_restore", { context_key: contextKey, response_view: "structured" });
@@ -145,10 +151,10 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     // A Binding no longer admitted to its session's context gets the
     // authorization error, not the mismatch.
     const narrowed = await restore(projectContext, otherTokenHash);
-    await admin.query("update public.clued_agent_bindings set context_keys=array['global'] where token_hash=$1", [otherTokenHash]);
+    await admin.query("update public.clued_agent_bindings set context_keys=array['global'] where token_hash=clued_private.credential_verifier_v1($1)", [otherTokenHash]);
     await assert.rejects(checkpoint(narrowed.session_token, narrowed.version, "global", "global", otherTokenHash),
       /binding_not_authorized/);
-    await admin.query("update public.clued_agent_bindings set revoked_at=now() where token_hash=$1", [otherTokenHash]);
+    await admin.query("update public.clued_agent_bindings set revoked_at=now() where token_hash=clued_private.credential_verifier_v1($1)", [otherTokenHash]);
     await assert.rejects(checkpoint(narrowed.session_token, narrowed.version, "global", "global", otherTokenHash),
       /binding_not_authorized/);
 
@@ -168,14 +174,14 @@ test("checkpoint and reconcile take the context from the session token", { timeo
         [userId, `Scope fixture ${index}`, projectContext.slice(8), recordType, projectContext, typeFields]);
     }
     const scopeCalls = async (work) => {
-      await anon.query("begin");
+      await workerCaller.query("begin");
       try {
         const value = await work();
-        const { rows } = await anon.query(`select coalesce(sum(calls),0)::int calls from pg_stat_xact_user_functions
+        const { rows } = await workerCaller.query(`select coalesce(sum(calls),0)::int calls from pg_stat_xact_user_functions
           where schemaname='clued_private' and funcname='binding_read_scopes_v2'`);
         return { value, calls: rows[0].calls };
       } finally {
-        await anon.query("rollback");
+        await workerCaller.query("rollback");
       }
     };
     const busy = await restore(projectContext);
@@ -197,6 +203,12 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     for (const name of ["clued_mcp_commit_checkpoint_explicit_context", "clued_mcp_session_reconcile_explicit_context"]) {
       await assert.rejects(anon.query(`select clued_private.${name}($1,$2)`, [tokenHash, {}]), /permission denied/);
     }
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -5,6 +5,8 @@ name: clued-cloud-quality
 # run test:unit) on every pull request and
 # every push to main; the build comes first because tests/rendered-html.test.mjs
 # reads the built server bundle.
+# Ordinary documentation gets a scoped check without application installs/tests;
+# unknown, code, dependency, config and governance changes still run the full suite.
 # This workflow deliberately has no paths filter: the other app checks are
 # path-filtered, so none of them can be a required status check, while this
 # one can be added to the main ruleset's required checks under the single
@@ -28,9 +30,9 @@ jobs:
   # Clued admits this pull request. The gate does not call Clued and gets no
   # Clued token (this job runs PR code): it waits for the trusted
   # pull_request_target run of clued-work-admission.yml on this head and reads
-  # its result. Until the Owner sets the repository variable
-  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits; non-PR
-  # events are admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
+  # its result, always enforced (Merge Admission step 6 retired the advisory
+  # switch CLUED_WORK_ADMISSION_ENFORCE); non-PR events are admitted.
+  # Self-hosted Linux pool, pinned Node (Decision f86179b3).
   admission-gate:
     name: admission-gate
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
@@ -39,6 +41,7 @@ jobs:
       actions: read
       checks: read
       contents: read
+      pull-requests: read
     outputs:
       admitted: ${{ steps.gate.outputs.admitted }}
       enforced: ${{ steps.gate.outputs.enforced }}
@@ -51,9 +54,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - id: gate
         env:
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
@@ -81,19 +85,51 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 2
+      - name: Qualify ordinary documentation changes
+        id: classify
+        continue-on-error: true
+        working-directory: .
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          python3 scripts/ci/test_clued_docs_only.py
+          python3 scripts/ci/clued-docs-only.py
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install from lockfile
+        id: install
+        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        env:
+          # Debug logs only; npm's existing cache and command stay the same.
+          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
         run: >-
           timeout --signal=TERM --kill-after=15s 8m
           npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
           --fetch-retries=2 --fetch-timeout=30000
-      - run: npm run lint
-      - run: npm run ledger:verify
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run test:unit
+      - name: Observe npm HTTP cache events
+        if: ${{ !cancelled() && (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') }}
+        env:
+          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          NPM_INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        run: node "$GITHUB_WORKSPACE/scripts/ci/npm-cache-observation.mjs"
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run lint
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run ledger:verify
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run typecheck
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run build
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run test:unit
 
   untrusted-hosted:
     name: >-
@@ -119,15 +155,37 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 2
+      - name: Qualify ordinary documentation changes
+        id: classify
+        continue-on-error: true
+        working-directory: .
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          python3 scripts/ci/test_clued_docs_only.py
+          python3 scripts/ci/clued-docs-only.py
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
-          cache: npm
+          cache: ${{ (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') && 'npm' || '' }}
           cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install from lockfile
+        if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
         run: npm ci --ignore-scripts
-      - run: npm run lint
-      - run: npm run ledger:verify
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm run test:unit
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run lint
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run ledger:verify
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run typecheck
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run build
+      - if: steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false'
+        run: npm run test:unit

@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 // Connection permission requests (migration 20261004150000; Owner Decision
 // 43ba00e2, Task e86eb58d): a connection that lacks a context or action asks
@@ -60,6 +62,7 @@ test('connection permission requests: ask without the scope, Owner approves once
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const owner = uuid();
     const other = uuid();
@@ -96,12 +99,16 @@ test('connection permission requests: ask without the scope, Owner approves once
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
     await human.query('set role authenticated');
-    const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+    const agent = async (who, name, input) => CI_SIGNATURES.includes(name+'(text,jsonb)')
+      ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v
+      : workerGatewayRpc(workerCaller,name,tokens[who],input);
     const native = async (name, input, claims = session(owner)) => {
       await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
         [claims.sub ?? '', JSON.stringify(claims)]);
@@ -194,7 +201,7 @@ test('connection permission requests: ask without the scope, Owner approves once
     assert.equal((await admin.query(`select clued_private.owner_grant_consume_v1($1,$2,'connection.permission',$3,null) v`,
       [owner, chatgpt, [`permission:${P}/write`]])).rows[0].v, null);
     // The gateway's status check reports the live scopes.
-    const live = (await anon.query('select public.clued_authorization_status_v12($1) v', [tokens.chatgpt])).rows[0].v;
+    const live = await workerGatewayRpc(workerCaller,'clued_authorization_status_v12',tokens.chatgpt);
     assert.equal(live.active, true);
     assert.deepEqual(live.scopes, ['context:read', 'context:write']);
     // Asking again for what it now has is refused.
@@ -222,6 +229,12 @@ test('connection permission requests: ask without the scope, Owner approves once
       await assert.rejects(() => anon.query(`select clued_private.${fn}`, args), /permission denied/);
       await assert.rejects(() => human.query(`select clued_private.${fn}`, args), /permission denied/);
     }
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => undefined);
     await server.stop().catch(() => undefined);

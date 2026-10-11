@@ -32,6 +32,8 @@
   - 发布 workflow：job 进 `clued-release` environment；新增 `migrate` 模式（输入 `migrations`，逗号分隔的文件名）；`deploy` 与 `migrate` 先跑 `scripts/ci/clued-release-grant.mjs`。
   - 授权检查先只提示（Owner 选择）：Owner 设仓库变量 `CLUED_RELEASE_GRANT_ENFORCE=true` 后才拦。
   - Agent 合同升到第 20 版，§6.6 写明发布与迁移前按提交申请授权。
+- 自动审批开关（§12，Owner Decision `5ce219c6`，Task `8eb340c7`）：迁移 `20261008170000_owner_auto_approve_v1.sql`，测试 `tests/owner-auto-approve-db.test.mjs`、`tests/owner-grants-ui.test.mjs`、`tests/owner-requests-transport.test.mjs`。需生产迁移与 Worker 发布后生效；Agent 合同与工具说明的补写见 Task `ce42fc18`。
+- 批完自动告诉 Agent（§13，Owner Decision `973e1b5b`，Task `d5bd604e`）：迁移 `20261009020000_owner_request_answers_v1.sql`，测试 `tests/owner-request-answers-db.test.mjs`、`tests/owner-requests-transport.test.mjs`、`tests/agent-messages-transport.test.mjs`。需生产迁移与 Worker 发布后生效。
 - 第 5 步（Owner 授权 2026-10-03，Task `340693ee`）：Agent 合同升到第 14 版，§6.6 写明 Owner 批准只来自 Owner 本人登录的页面、`confirm_url` 原样交给 Owner、不得自称已批准、被拒或过期就停；§4 错误表的 `work_claim_budget_exhausted` 改为先给 `owner_request.confirm_url`。尚无门口消费的动作（发布、迁移）仍按 §6.4 需要明确授权。Worker 发布后服务端 `/clued-agent.md` 才是第 14 版。
 日期：2026-10-02
 Task：`17ab25b3`（Global）。Owner 决定：方向与优先级见 Task `17ab25b3` v3，规则见 Decision `6fa79397`，待定三条见 Decision `667f588b`（§11）。
@@ -231,7 +233,7 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
   - 没有授权就复用或新建这个 Binding 的待确认请求（建议 1 次、24 小时），附上 PR、受保护路径数与 compare 链接作为说明（`agent_note`，确认页标为「准入检查说明」，复审 9），准入判 REJECTED 并给出确认链接。
   - 复审 9 起（合同 v30 §1.7）：Agent 先推送，由准入检查开请求，说明里有 PR 与 compare 链接；只有门口写的请求（回执 `origin: ci-admission`）在确认页标为「准入检查说明」，其余仍是 Agent 说明（未核实）。`repo.protected_change` 不能打包，确认页只给精确提交一个选项（迁移 `20261005140000_owner_review_hardening.sql`）。强制开关打开前不调用门口。
   - 只有标了 `ci-admission` 的 Binding 能调，Owner 标出之前谁都不能用（复审 10 MAJOR-3，与其他角色「未标出时谁都能做」不同），只需 `context:read`。Agent 不能用 `clued_owner_request` 开这个动作的请求（`owner_request_action_door_only`）；确认步骤只接受请求本身的提交。PR 必须包含 base 分支当前 tip（复审 10），所以在合并时 main 没有前进的前提下，授权的提交就是合并结果；main ruleset 打开「要求分支最新」后这个前提才由 GitHub 保证（WorkClaimAdmission §4.7）。
-- 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs`（由 `owner-grants-release-door-db.test.mjs` 引入运行）、`scripts/ci/clued-work-admission.test.mjs`。Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示。
+- 迁移 `20261005120000_owner_grants_admission_door.sql`，测试 `apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs`（由 `owner-grants-release-door-db.test.mjs` 引入运行）、`scripts/ci/clued-work-admission.test.mjs`。起初 Owner 设仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true` 后才拦，之前只提示；Merge Admission 第 6 步（2026-10-09）起不再读取该变量，始终拦截，回退手段为 `frozen` 与 main ruleset 的 Owner 应急步骤。
 
 ---
 
@@ -260,13 +262,15 @@ Clued 维护一张"受信宿主公钥"表，由 Owner 在 Native 页面登记。
 
 - 没有门口的动作，例如 Agent 直接调用的外部工具，或本机命令。
 - Agent 绕过发布 workflow、直接用有写权限的数据库连接修改生产。需要 Owner 把该连接设为只读才能堵上（§6.1）。
-- Agent 合并改动发布门口本身的 PR（复审 7 MAJOR-3）：ruleset 不要求审批，合并后的 workflow 就是下一次发布运行的 workflow，删掉授权步骤即不再需要授权。§6.3 的 Owner 复核在准入时拦下这类 PR，但要 Owner 打开 `CLUED_OWNER_REVIEW_ENFORCE`；发布脚本加载的应用源码不在保护路径内（WorkClaimAdmission §4.7）。
+- Agent 合并改动发布门口本身的 PR（复审 7 MAJOR-3）：ruleset 不要求审批，合并后的 workflow 就是下一次发布运行的 workflow，删掉授权步骤即不再需要授权。§6.3 的 Owner 复核在准入时拦下这类 PR（Merge Admission 第 6 步起始终生效，此前要 Owner 打开 `CLUED_OWNER_REVIEW_ENFORCE`）；发布脚本加载的应用源码不在保护路径内（WorkClaimAdmission §4.7）。
 - Owner 复核的门口与授权表在 Clued 数据库里，Agent 若有生产数据库写权限，就能改掉它们（复审 9，见 WorkClaimAdmission §4.7）。
-- 持有仓库管理权限的凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份时，能改 `CLUED_RELEASE_GRANT_ENFORCE`、`CLUED_OWNER_REVIEW_ENFORCE`、environment 与 ruleset，所有授权检查都可被关掉。
+- 持有仓库管理权限的凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份时，能改 `CLUED_RELEASE_GRANT_ENFORCE`（Merge Admission 第 6 步之前还有 `CLUED_OWNER_REVIEW_ENFORCE`）、environment 与 ruleset，所有授权检查都可被关掉。
 - Owner 自己在确认页上批准了不该批准的事。系统生成的主体能减少误导，但无法替 Owner 判断。
 - 授权期内的滥用：在授权覆盖的范围和时长内，Agent 的每次使用都会放行。授权越宽，风险越大，所以默认 4 小时、最长 7 天，并且可以随时撤销。
 - 对话弹窗与 `user_explicit` 记录：仍只是 Agent 的声明（§1.2）。
 - 别人拿到 Owner 已登录的电脑或手机：因为不要求最近登录（§11 第 2 条），在登录会话有效期内可以替 Owner 点确认。设备锁屏与退出登录是 Owner 自己的防线。
+
+**P0-4补充，不撤回上述威胁声明：** 带域`cv1:`仅使认证列里的存储校验值不能直接当作证明值；被盗原始Binding令牌或它的SHA-256证明值仍可在原授权范围内使用，直到撤销或过期；仍须经该调用路径允许的运输身份并通过原业务守卫。发行方2b将固定身份与凭据代分离；`issuer_id`、代ID和存储校验值不能认证，retired/expired代不能恢复，历史Receipt/摘要中的旧身份输入不能成为认证后门。原始发行方秘密或有效证明值被盗仍须实际退代/轮换处置。GW JWT只是Worker数据库运输凭据，不是Owner确认、Grant或消费Receipt；即使经GW，发布/迁移门口仍须原有效Grant、精确动作/资源/次数和消费守卫。Native确认的用户会话、账号/会话撤销、确认令牌一次性及view/CAS检查保持；带`client_id`的委托JWT、Binding或GW身份不能替代Owner直接登录。CI8例外不授予Owner批准权；平台管理/直连写权限、Worker失陷及范围内滥用等上述风险不因本补充消失。
 
 ---
 
@@ -286,3 +290,68 @@ Clued 维护一张"受信宿主公钥"表，由 Owner 在 Native 页面登记。
 1. **受权方**：默认授权给发起请求的那个 Agent 宿主（Binding），确认页可选"任何 Agent"。Owner 的所有 Claude Code 会话共用一个 Binding（Decision `533a5286`），所以授权对这些会话都有效。
 2. **不要求最近登录**：授权与确认请求只要求 Owner 本人有效的登录会话，不检查最近一次登录的时间。仍拒绝委托 OAuth 与 Binding，仍用一次性两步令牌。现有 Information Flow S3/S4/S5 与认领豁免的 15 分钟规则不在本决定范围内，保持不变。
 3. **旧豁免**：现有认领豁免记录保留到过期，新豁免一律走授权。
+
+---
+
+## 12. 自动审批开关（Owner Decision `5ce219c6`，Task `8eb340c7`）
+
+Owner 打开开关后，在开关有效期内，Agent 或门口提交的申请当场获批，不用 Owner 逐条点。打开开关本身就是 Owner 提前给出的批准，所以 §3.2"Agent 只能发起请求，不能批准请求"不变：Agent 开不了开关，也批不了、放宽不了任何授权。
+
+### 12.1 开与关
+
+- **打开**：只在 `/grants` 页面，由 Owner 本人登录后两步确认（`clued_owner_auto_approve_confirmation_issue_v1` + `clued_owner_auto_approve_on_v1`），与 §5 的授权确认同一套一次性令牌：只在同一登录会话、5 分钟内、对 Clued 渲染出的同一份视图有效。视图列出会自动通过的动作、每个动作的批法和仍需 Owner 确认的动作。
+- **时长**：打开时选，默认 24 小时，最长 7 天，到期自动关闭。再次打开会替换正在生效的那一段。
+- **关闭**：一步（`clued_owner_auto_approve_off_v1`），与撤销授权一样，因为它只收回权限。关闭后新申请照常等 Owner 确认；已自动发出的授权留在 `/grants`，到期或由 Owner 逐条撤销。
+- Receipt：`OWNER_AUTO_APPROVE_ON`、`OWNER_AUTO_APPROVE_OFF`；令牌出错时记 `OWNER_AUTO_APPROVE_REJECTED`。
+
+### 12.2 自动通过的范围
+
+只有 Owner 选定的动作（`owner_grant_actions.auto_approvable`）：`release.production`、`migration.production`、`repo.protected_change`、`work_claim.extra_claims`。
+
+- `connection.permission` 永远要 Owner 点：它扩大的是连接本身，开关关了也收不回（数据库约束保证它不能被设为可自动通过）。
+- `model.dataset_split.*` 不自动：它的门口只认 Owner 在确认页上确认过的授权（第一方模型权限边界）。
+- 以后新登记的动作默认不自动，Owner 加入后才自动。
+
+### 12.3 自动发出的授权
+
+与确认页按风险的默认选择一致（§4、默认选择按风险）：
+
+- 高风险动作"只批这一次"：1 次、24 小时；
+- 常规动作"管一段时间"：按 Agent 建议的时长和次数，没有建议时为 4 小时。
+
+授权只给发起请求的那个 Binding，只覆盖请求里的资源，到期时间不晚于开关的到期时间。授权记 `OWNER_GRANT_GIVEN` Receipt，`principal` 为 `owner_auto_approve`，并记下开关那次打开的 Receipt。`/grants` 上标"来源：自动审批"。
+
+### 12.4 在哪里生效（当场回执）
+
+申请在下面四处打开，开关有效时都在同一事务里批准，调用方拿到的就是已决定的申请和授权，这就是回执：
+
+1. `clued_owner_request`（Agent 申请；一次申请多个动作时逐个批准）：结果的 `status` 为 `approved_once` 或 `granted`，`grant.auto_approved` 为 true，不再带 `confirm_url`。
+2. 发布门口（`release.production`、`migration.production`）：批准后当场用掉这次授权，返回 `consumed: true`、`auto_approved: true`，运行直接继续。
+3. 准入门口（`repo.protected_change`）：同样当场准入，返回 `admitted: true`、`auto_approved: true`。
+4. 认领超出每 Task 上限（`work_claim.extra_claims`）：批准后用掉一次，认领照常签发。
+
+### 12.5 不保护什么（补充 §9）
+
+开关有效期间，§6.1 发布授权与 §6.3 准入复核对上述动作不再等 Owner：Agent 可以在这段时间里发布、迁移，或合并改动准入与发布门口本身的 PR。开关的保护只剩时长上限、Receipt 记录和随时可关。所以默认 24 小时，最长 7 天。
+
+## 13. 批完自动告诉 Agent（Owner Decision `973e1b5b`，Task `d5bd604e`）
+
+开关关着时，Owner 在 `/confirm` 上批准一次、给一段时间的授权或拒绝之后，结果自动送到提交申请的 Agent，不用它再拿 `request_id` 去查，也不用 Owner 回聊天说"批了"。全在 Clued 内部完成，不接邮件或推送等外部渠道。
+
+### 13.1 送给谁
+
+- 送给打开申请的那个 Binding。申请时带了 `session_ref`（Agent 的 Host 会话号，与认领用的 `holder_session_ref` 相同）就只送那个会话；没带就送这个 Binding 的每个会话，与 Agent 消息的寻址一致。一次申请多个动作时，`session_ref` 随每个成员保存。
+- 只送 Owner 的决定：`approved_once`、`granted`、`rejected`。仍在等待或已过期的申请不算。
+- 开关打开时自动通过的申请（§12）不再送：打开申请的那次调用已经把结果带回去了。
+- 决定超过 7 天还没读的不再显示。迁移之前已决定的申请都算已读。
+
+### 13.2 在哪里看到
+
+- `clued_session_resume` 和 `clued_work_renew` 的 `agent_inbox` 里：`owner_answer_count`，以及最新 5 条 `owner_answers`。这里只显示，不标已读。续租按认领自己的会话取。
+- `clued_agent_inbox`（视图 open、unread、all）的 `owner_answers`：最多 20 条，与消息一起标已读（`mark_read: false` 时不标）。`sent` 视图和按 `thread_id` 读线程时不显示。
+- Agent 用 `clued_owner_request` 读这条申请的状态时，也会标已读；别的 Binding 读状态不会。
+- 每条与状态读取看到的申请相同（动作、资源、结果、授权），另带 `source: "owner_answer"`。一次申请多个动作算一条，显示为第一个成员，`bundle` 列出全部成员；读一次，所有成员都标已读。
+
+### 13.3 怎么对待
+
+这是 Clued 记下的 Owner 决定，不是别的 Agent 的消息：Agent 可以据此继续（批了就用授权重试被拒的步骤，拒了就不重试，并用一句话告诉 Owner 卡住了什么），不必再请 Owner 确认。授权在每个门口使用时照常核对，送达本身不放宽任何东西。

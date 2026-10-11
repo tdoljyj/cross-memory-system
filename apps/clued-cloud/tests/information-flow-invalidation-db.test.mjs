@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -9,6 +10,8 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { serialize } from '../../../scripts/phase2-qualification/minimum-context-compiler/compiler.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Information Flow M0-D slice S5 (contract M0DCloseout.v0.1 sections 4.1,
 // 4.3.3, 5.1, 6.3, 6.4, 7 E2E-03/04/05/14, 8 gates M0D-B01 and M0D-B05):
@@ -123,6 +126,7 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    let workerCaller; // The pre-S5 historical phase predates the C1 role.
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
@@ -130,8 +134,9 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
     const as = async (claims) => human.query(
       "select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
       [claims.sub ?? '', JSON.stringify(claims)]);
-    const agent = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+    const agent = async (token, name, input) => workerCaller
+      ? await workerGatewayRpc(workerCaller, name, token, input)
+      : (await anon.query(`select public.${name}($1,$2) v`, [token,input])).rows[0].v;
     const native = async (name, input, claims = fresh(userId)) => {
       await as(claims);
       return (await human.query(`select public.${name}($1,$2) v`, [input, sha256(JSON.stringify(input))])).rows[0].v;
@@ -197,6 +202,12 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
 
     await apply(S5_MIGRATION);
     for (const name of migrations.slice(s5Index + 1)) await apply(name);
+    workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
+    await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     // Backfill: live lineage for K0, backfill_source_changed for K0b.
     assert.deepEqual((await lineage(k0)).map((row) => [row.source_record_id, row.source_version, row.lineage_stale,
@@ -289,7 +300,14 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
 
     // ---- Worker transport. Only the PostgREST hop is shimmed.
     const worker = await loadContinuityWorker();
+    const gatewayToken = 'synthetic-information-flow-invalidation-worker-gateway';
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await gateway.query('set session authorization authenticator; set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
     const workerEnv = { PROJECT_VIEWS_V2: 'true', SUPABASE_URL: 'https://storage.clued.test',
+      CLUED_DB_GATEWAY_TOKEN: gatewayToken,
       ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
     const rawBinding = `clued_bnd_${'s'.repeat(43)}`;
     const rawDeleted = `clued_bnd_${'d'.repeat(43)}`;
@@ -323,10 +341,13 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       }
       const rpc = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url.pathname)?.[1];
       assert.ok(rpc, url.pathname);
+      if (!claims && token !== gatewayToken) {
+        return Response.json({ code: 'PGRST301', message: 'invalid JWT' }, { status: 401 });
+      }
       rpcLog.push(rpc);
       const body = JSON.parse(init.body);
       const keys = Object.keys(body);
-      const client = claims ? human : anon;
+      const client = claims ? human : gateway;
       if (claims) await as(claims);
       try {
         const value = (await client.query(`select public.${rpc}(${keys.map((name, i) => `${name}=>$${i + 1}`).join(',')}) v`,
@@ -358,9 +379,9 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
     };
     const project = async (name) => {
       const id = uuid();
-      const created = await agent(tokenA, 'clued_project_mutate', { operation: 'create', canonical_project_id: id,
-        project_schema_version: 1, base_version: null, idempotency_key: key('proj'), mutation: { name: `S5 ${name}`,
-          progress_status: 'active', certainty_status: 'confirmed', aliases: [] } });
+      const created = await agent(tokenA, 'clued_project_mutate_v2', { operation: 'create', canonical_project_id: id,
+        project_schema_version: 2, base_version: null, idempotency_key: key('proj'), mutation: { name: `S5 ${name}`,
+          progress_status: 'active', aliases: [] } });
       assert.equal(created.status, 'committed', JSON.stringify(created));
       return `project:${id}`;
     };
@@ -901,17 +922,17 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       // Raw Binding deletion and raw context_keys narrowing (widening does not stale).
       const md = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawDeleted),
         'raw deleted').manifest.id;
-      await admin.query('delete from public.clued_agent_bindings where token_hash=$1', [sha256(rawDeleted)]);
+      await admin.query('delete from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)', [sha256(rawDeleted)]);
       assert.deepEqual([(await manifest(md)).stale, (await manifest(md)).stale_reason], [true, 'binding_deleted']);
       const mn = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawNarrowed),
         'raw narrowed').manifest.id;
       assert.deepEqual((await manifest(mn)).effective_scopes, [p5a, p5b].sort());
-      await admin.query('update public.clued_agent_bindings set context_keys=array[$2] where token_hash=$1',
+      await admin.query('update public.clued_agent_bindings set context_keys=array[$2] where token_hash=clued_private.credential_verifier_v1($1)',
         [sha256(rawNarrowed), p5a]);
       assert.deepEqual([(await manifest(mn)).stale, (await manifest(mn)).stale_reason], [true, 'binding_scope_reduced']);
       const mn2 = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawNarrowed),
         'raw narrowed again').manifest.id;
-      await admin.query("update public.clued_agent_bindings set context_keys=array['*'] where token_hash=$1",
+      await admin.query("update public.clued_agent_bindings set context_keys=array['*'] where token_hash=clued_private.credential_verifier_v1($1)",
         [sha256(rawNarrowed)]);
       assert.equal((await manifest(mn2)).stale, false, 'widening does not stale');
 
@@ -970,13 +991,13 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       await admin.query('begin');
       await admin.query('select 1 from public.clued_memories where id=$1 for update', [lockA]);
       await admin.query('select 1 from clued_private.knowledge_lineage where knowledge_record_id=$1 for update', [lockK]);
-      await anon.query("set lock_timeout='2s'");
+      await workerCaller.query("set lock_timeout='2s'");
       try {
         const locked = await agent(tokenA, 'clued_context_pack', { scope: pLock, task_class: 'lock.check' });
         assert.equal(locked.status, 'ok', JSON.stringify(locked));
         assert.deepEqual(locked.pack.items.map((row) => row.canonical_id).sort(), [lockA, lockK].sort());
       } finally {
-        await anon.query('reset lock_timeout');
+        await workerCaller.query('reset lock_timeout');
         await admin.query('rollback');
       }
     } finally {
@@ -1002,6 +1023,13 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       /invalidation_row_immutable/);
     await assert.rejects(admin.query("update clued_private.record_evidence_status set flagged_by='withdrawal'"),
       /invalidation_row_immutable/);
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

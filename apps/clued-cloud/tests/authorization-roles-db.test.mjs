@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 // Permission simplification step 4 (migration 20261004210000_authorization_roles;
 // PermissionSimplification.v0.1 §3.1, Decision b32fc5b9, Task 0756c748):
@@ -61,6 +63,7 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const owner = uuid();
     const other = uuid();
@@ -171,8 +174,12 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
-    const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
+    const agent = async (who, name, input) => CI_SIGNATURES.includes(name+'(text,jsonb)')
+      ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v
+      : workerGatewayRpc(workerCaller,name,tokens[who],input);
     const asked = await agent('reader', 'clued_owner_request_v1', { action: 'connection.permission',
       resources: ['permission:project:*/developer', 'permission:global/reader'], idempotency_key: 'reader:roles' });
     assert.equal(asked.status, 'committed', JSON.stringify(asked));
@@ -199,6 +206,12 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
     // The materializer is not callable from the API roles.
     await assert.rejects(() => anon.query('select clued_private.authorization_all_projects_expand_v1($1,null)', [dev]),
       /permission denied/);
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

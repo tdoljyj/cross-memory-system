@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Generic Work Claim v0.1, rollout step 1 (migration
 // 20261002210000_work_claims_resource_kinds; GenericWorkClaim.v0.1.md §2):
@@ -56,6 +58,7 @@ test('work claims: typed resources, registered kinds and per-kind overlap',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     // --- Normalization. ---
     const normalize = async (entries) => (await admin.query(
@@ -138,8 +141,14 @@ test('work claims: typed resources, registered kinds and per-kind overlap',
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const call = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) value`, [token,input])).rows[0].value
+        : await workerGatewayRpc(workerCaller, name, token, input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const createTask = async (title) => committed(await call(tokens.A, 'clued_record_mutate', {
       operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active',
@@ -198,6 +207,14 @@ test('work claims: typed resources, registered kinds and per-kind overlap',
     // The registry and helpers are not reachable from client roles.
     await assert.rejects(() => anon.query('select * from clued_private.work_claim_resource_kinds'), /permission denied/);
     await assert.rejects(() => anon.query("select clued_private.work_claim_resources_intersect('a','a')"), /permission denied/);
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -11,6 +12,8 @@ import { Tiktoken } from 'js-tiktoken/lite';
 import o200kBase from 'js-tiktoken/ranks/o200k_base';
 import { serialize } from '../../../scripts/phase2-qualification/minimum-context-compiler/compiler.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Information Flow M0-D slice S4 (contract M0DCloseout.v0.1 sections 6.1-6.3,
 // 7, 8 gates M0D-B01 and M0D-B04): Context Policy acceptance, the service
@@ -108,6 +111,8 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     const userId = uuid();
     const otherUser = uuid();
@@ -127,6 +132,10 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
@@ -135,7 +144,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       "select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
       [claims.sub ?? '', JSON.stringify(claims)]);
     const agent = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+      await workerGatewayRpc(workerCaller, name, token, input);
     const native = async (name, input, claims = fresh(userId)) => {
       await as(claims);
       return (await human.query(`select public.${name}($1,$2) v`, [input, sha256(JSON.stringify(input))])).rows[0].v;
@@ -205,11 +214,12 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
     for (const [sig, expected] of [
       ['public.clued_context_policy_confirmation_issue_v1(jsonb)', [false, true, false]],
       ['public.clued_context_policy_accept_v1(jsonb,text)', [false, true, false]],
-      ['public.clued_context_pack(text,jsonb)', [true, false, false]],
+      ['public.clued_context_pack(text,jsonb)', [false, false, false]],
       ['public.clued_user_context_pack(jsonb)', [false, true, false]]]) {
       const grants = await entryGrants(sig);
       assert.deepEqual([grants.anon, grants.authenticated, grants.service_role, grants.definer], [...expected, true], sig);
       assert.deepEqual(grants.config, ['search_path=""'], sig);
+      assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway',$1::regprocedure,'execute') gateway",[sig])).rows[0].gateway, sig === 'public.clued_context_pack(text,jsonb)');
     }
     assert.deepEqual((await admin.query(`select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where n.nspname='public' and p.proname like 'clued\\_context\\_polic%' order by 1`)).rows.map((row) => row.proname),
@@ -220,7 +230,14 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
 
     // ---- Worker transport. Only the PostgREST hop is shimmed.
     const worker = await loadContinuityWorker();
+    const gatewayToken = 'synthetic-information-flow-context-worker-gateway';
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await gateway.query('set session authorization authenticator; set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
     const workerEnv = { PROJECT_VIEWS_V2: 'true', SUPABASE_URL: 'https://storage.clued.test',
+      CLUED_DB_GATEWAY_TOKEN: gatewayToken,
       ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
     const rawBinding = `clued_bnd_${'s'.repeat(43)}`;
     const rawBindingB = `clued_bnd_${'b'.repeat(43)}`;
@@ -257,10 +274,13 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       }
       const rpc = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url.pathname)?.[1];
       assert.ok(rpc, url.pathname);
+      if (!claims && token !== gatewayToken) {
+        return Response.json({ code: 'PGRST301', message: 'invalid JWT' }, { status: 401 });
+      }
       rpcLog.push(rpc);
       const body = JSON.parse(init.body);
       const keys = Object.keys(body);
-      const client = claims ? human : anon;
+      const client = claims ? human : gateway;
       if (claims) await as(claims);
       try {
         const value = (await client.query(`select public.${rpc}(${keys.map((name, i) => `${name}=>$${i + 1}`).join(',')}) v`,
@@ -295,9 +315,9 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
     };
     const project = async (name) => {
       const id = uuid();
-      const created = await agent(tokenA, 'clued_project_mutate', { operation: 'create', canonical_project_id: id,
-        project_schema_version: 1, base_version: null, idempotency_key: key('proj'), mutation: { name: `S4 ${name}`,
-          progress_status: 'active', certainty_status: 'confirmed', aliases: [] } });
+      const created = await agent(tokenA, 'clued_project_mutate_v2', { operation: 'create', canonical_project_id: id,
+        project_schema_version: 2, base_version: null, idempotency_key: key('proj'), mutation: { name: `S4 ${name}`,
+          progress_status: 'active', aliases: [] } });
       assert.equal(created.status, 'committed', JSON.stringify(created));
       return `project:${id}`;
     };
@@ -846,12 +866,12 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       // Review m1: the compile path takes no row locks.
       await admin.query('begin');
       await admin.query('select 1 from public.clued_memories where id=$1 for update', [ls2]);
-      await anon.query("set lock_timeout='2s'");
+      await workerCaller.query("set lock_timeout='2s'");
       try {
         assert.equal((await agent(tokenA, 'clued_context_pack', { scope: pLin, task_class: 'lineage.change' })).status,
           'ok', 'a compile does not wait on source row locks');
       } finally {
-        await anon.query('reset lock_timeout');
+        await workerCaller.query('reset lock_timeout');
         await admin.query('rollback');
       }
       assert.equal((await post('/v1/records', { operation: 'update', id: ls1, record_type: 'note', record_schema_version: 1,
@@ -956,7 +976,7 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       const doomedId = uuid();
       assert.equal((await agent(tokenDoomed, 'clued_record_mutate', noteInput(doomedId, 'Doomed agent write',
         { scope: p13 }))).status, 'committed');
-      await admin.query('delete from public.clued_agent_bindings where token_hash=$1', [tokenDoomed]);
+      await admin.query('delete from public.clued_agent_bindings where token_hash=clued_private.credential_verifier_v1($1)', [tokenDoomed]);
       for (const id of [maintenanceId, doomedId]) {
         assert.equal(await confirmed(id, 1), false);
         assert.equal((await writer(id, 1)).writer_principal, 'unknown', id);
@@ -1254,6 +1274,13 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       [anyToken]), /confirmation_token_immutable/);
     await assert.rejects(admin.query('update clued_private.native_confirmation_tokens set consumed_at=null,consumed_receipt_id=null,consume_outcome=null where id=$1',
       [anyToken]), /confirmation_token_immutable/);
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

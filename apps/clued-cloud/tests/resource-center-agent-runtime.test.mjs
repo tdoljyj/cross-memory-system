@@ -27,7 +27,7 @@ if (process.env.CLUED_STORAGE_RUNTIME_CHILD !== '1') {
     resolveDir: fileURLToPath(new URL('../', import.meta.url)), sourcefile: 'storage-agent-runtime.ts', contents: `
       import {handleContinuityRequest} from './worker/continuity.ts';
       export default {fetch(request,env,ctx){return handleContinuityRequest(request,{
-        CLUED_STORAGE_ACCOUNT_V1:'true', CLUED_STORAGE_JOBS_V1:'true',
+        CLUED_DB_GATEWAY_TOKEN:'test-worker-gateway', CLUED_STORAGE_ACCOUNT_V1:'true', CLUED_STORAGE_JOBS_V1:'true',
         SUPABASE_URL:'https://db.example.invalid', SUPABASE_PUBLISHABLE_KEY:'fixture-public-key'
       },ctx);}};`,
   }, bundle: true, platform: 'node', format: 'esm', write: false });
@@ -39,7 +39,7 @@ if (process.env.CLUED_STORAGE_RUNTIME_CHILD !== '1') {
       manifest: { mainModule: 'worker.js', modules: { 'worker.js': { type: 'esm', contents: outputFiles[0].text } } } },
     dev: { outboundService: { type: 'fetcher', handler: async request => {
       assert.equal(request.url, 'https://db.example.invalid/rest/v1/rpc/clued_storage_jobs_v1');
-      assert.equal(request.headers.get('authorization'), 'Bearer fixture-public-key');
+      assert.equal(request.headers.get('authorization'), 'Bearer test-worker-gateway');
       const body = await request.json(); calls.push(body);
       assert.equal(body.p_token_hash, createHash('sha256').update(token).digest('hex'));
       return Response.json({ ...ref, status: 'queued', request_digest: 'a'.repeat(64), intent_id: null,

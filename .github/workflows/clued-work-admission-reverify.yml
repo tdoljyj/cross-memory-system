@@ -7,14 +7,15 @@ name: clued-work-admission-reverify
 # into the default branch whose newest clued-admission-verified App check
 # passed, and when the claim no longer admits the PR posts a failing App check
 # on its head, which blocks the merge (re-review 7, MAJOR-1). Without the App
-# key it fails rather than pass quietly (re-review 8). Runs only when
-# CLUED_WORK_ADMISSION_ENFORCE=true; otherwise it reports and does nothing.
+# key it fails rather than pass quietly (re-review 8). Always enforced (Merge
+# Admission step 6 retired CLUED_WORK_ADMISSION_ENFORCE).
 # Code comes from the default branch; no PR code is checked out. The Clued
 # token and the App key come from the `clued-admission` environment, as for
 # the check itself.
-# Owner review (CLUED_OWNER_REVIEW_ENFORCE) is enforced from 2026-10-05
-# (Owner Decision 43d36f03): a pull request that changes this file needs an
-# Owner Grant on its head commit before it is admitted.
+# Owner review is enforced from 2026-10-05 (Owner Decision 43d36f03; Merge
+# Admission step 6 retired CLUED_OWNER_REVIEW_ENFORCE): a pull request that
+# changes this file needs an Owner Grant on its head commit before it is
+# admitted.
 
 on:
   schedule:
@@ -24,7 +25,16 @@ on:
   # once instead of within the hour.
   push:
     branches: [main]
+  # Merge Admission v0.1 §4.1 item 3: after switching CLUED_MERGE_ADMISSION_STATE
+  # the Owner dispatches this with reason state_change, which judges every open
+  # pull request again and posts both App checks, passing or failing.
   workflow_dispatch:
+    inputs:
+      reason:
+        description: "scheduled: fail checks that no longer hold; state_change: judge every open pull request again after a state switch"
+        type: choice
+        options: [scheduled, state_change]
+        default: scheduled
 
 permissions:
   actions: read
@@ -32,15 +42,20 @@ permissions:
   contents: read
   pull-requests: read
 
+# A state_change dispatch has its own group, so a later push or scheduled
+# run never replaces it while it waits (step 3 review MINOR-4).
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ inputs.reason == 'state_change' && 'state_change' || 'scheduled' }}
   cancel-in-progress: false
 
 jobs:
   reverify:
     name: clued-work-admission-reverify
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # slim is limited to 15 minutes; state_change retains standard Ubuntu
+    # for its 30-minute rejudgment of every open pull request.
+    runs-on: ${{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}
+    # state_change judges every open pull request and posts two checks each.
+    timeout-minutes: ${{ inputs.reason == 'state_change' && 30 || 10 }}
     environment: clued-admission
     steps:
       # Re-review 4, m6: the default branch as it is now, so a re-run of an
@@ -49,13 +64,30 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Re-verify open pull requests with a passing admission check
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
-          # Re-review 7, MAJOR-3: protected changes need an Owner Grant on the head.
-          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
+          # Merge Admission v0.1 §4: judged in the same state as the check.
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          CLUED_REVERIFY_REASON: ${{ inputs.reason }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode reverify
+      # Merge Admission step 3: the hourly report of the merge slots' CI state
+      # (scripts/ci/clued-merge-slot-ci.mjs; clued-merge-slot-ci.yml reports when
+      # a CI run completes). In this job it costs no extra hosted run.
+      - name: Report the CI state of the pull requests holding a merge slot
+        if: ${{ !cancelled() }}
+        env:
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-merge-slot-ci.mjs

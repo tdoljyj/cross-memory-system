@@ -11,7 +11,7 @@
 - **已上线**：
   - `work_claims_v1` 与 transport、admission hardening、会话上限迁移已应用 clued-prod。
   - Worker 五个认领工具与 resume 的 `active_work_claims` 已发布。
-  - `clued-work-admission` 是 `main` 的必需检查，`CLUED_WORK_ADMISSION_ENFORCE=true`。
+  - `clued-work-admission` 是 `main` 的必需检查，`CLUED_WORK_ADMISSION_ENFORCE=true`（Merge Admission 第 6 步，2026-10-09 起不再读取该变量，始终强制）。
   - 六个自托管重任务 workflow 有 `admission-gate`，三个重任务的手动触发须经准入。
   - Claude Code 钩子已合入。
   - 各项实现细节见 §4.3、§4.5、§4.6 的「实现」条目。
@@ -97,7 +97,7 @@
     - 修复（Owner Decision `b43f8b8a`：全修后派复审 8；Task `c7b721ee`）：
       - MAJOR-1：复核改读 App check（它写明 PR），只看发往默认分支的 PR，以该 head 上最新的 App check 是否成功为准；不再准入时由 App 直接发一条失败 check（`pr:<n>:run:<复核运行 id>`）挡住合并（复审 8 起，没有 App 私钥时复核报错，不再重跑准入运行）。复核 workflow 加 `checks: read` 与 App 私钥。
       - MAJOR-2：只有改名前也是 workflow 文件时才取 base；从别处改名进来或复制的按新增 workflow 检查。
-      - MAJOR-3：新增「Owner 复核」（§4.6「实现（复审 7）」）：改动保护路径、声明 environment 的 workflow（改动或删除）、新增 secret 引用、改动含自托管 job 的 workflow 的触发器，准入要求该 head 提交上的 Owner Grant（`repo.protected_change`，迁移 `20261005120000_owner_grants_admission_door.sql`）。Owner 设 `CLUED_OWNER_REVIEW_ENFORCE=true` 后强制，之前只提示。覆盖不到的写进 §4.7。
+      - MAJOR-3：新增「Owner 复核」（§4.6「实现（复审 7）」）：改动保护路径、声明 environment 的 workflow（改动或删除）、新增 secret 引用、改动含自托管 job 的 workflow 的触发器，准入要求该 head 提交上的 Owner Grant（`repo.protected_change`，迁移 `20261005120000_owner_grants_admission_door.sql`）。Owner 设 `CLUED_OWNER_REVIEW_ENFORCE=true` 后强制，之前只提示（Merge Admission 第 6 步起不再读取该变量，始终强制）。覆盖不到的写进 §4.7。
       - MAJOR-4：`scripts/runner/README.md` 第 6 步：临时（ephemeral）runner，或把 hook 设置放到服务账户写不了的地方（systemd drop-in / 服务注册表）、runner 目录除 `_work`、`_diag` 外只读、`--disableupdate`、`ptrace_scope≥1`。不加固时 runner 检查不是硬保证。
       - m1：`memory-publication-gate` 的自托管 job 只对发往默认分支的 PR 运行，两个 job 都从默认分支取校验脚本；runner 检查对 `pull_request_target` 读事件中 PR 的 base，不是默认分支就拒绝。
       - m2：判定为 ADMITTED 后再读一次 PR，head 变了就报错（不发成功）。
@@ -106,7 +106,7 @@
       - n2：`runs-on` 与 `timeout-minutes` 的注释需要 `#` 前有空白。
       - m3、m4、m7、n1、n4 与已知项：文档更正（§4.4、§4.7、GenericWorkClaim §4.1、§8、§10.6）。
       - n3 未改：钩子属合规层（L3），改动在 `scripts/hooks/`，留作后续。
-    - Owner 需要做的设置（合并后，复审 11 更新）：① 经发布 workflow 的 `migrate` 应用迁移 `20261005120000` 与 `20261005140000`（需授权）；② 发布 Worker，下发合同 v30 与确认页改动；③ 在 `/bindings` 把准入用的 Binding 标为 `ci-admission`（门口只认它，不标则所有保护 PR 在开关打开后以 `owner_review_unavailable:refused` 失败）；④ 在 main ruleset 打开「要求分支最新」；⑤ 设 `CLUED_OWNER_REVIEW_ENFORCE=true`（开关关着时门口不会被调用，无法事先试跑；打开后用一个只改 workflow 注释的 PR 走一遍：被拒、批准、编辑 PR、关闭再重开）；⑥ 把 `CLUED_RELEASE_TAG_TOKEN` 移进 `clued-release` environment；⑦ 把 runner 换成临时（ephemeral）runner 或做 README 第 6 步；⑧ 到 `/grants` 看一眼此前批出的 `repo.protected_change` 授权。
+    - Owner 需要做的设置（合并后，复审 11 更新）：① 经发布 workflow 的 `migrate` 应用迁移 `20261005120000` 与 `20261005140000`（需授权）；② 发布 Worker，下发合同 v30 与确认页改动；③ 在 `/bindings` 把准入用的 Binding 标为 `ci-admission`（门口只认它，不标则所有保护 PR 在开关打开后以 `owner_review_unavailable:refused` 失败）；④ 在 main ruleset 打开「要求分支最新」；⑤ 设 `CLUED_OWNER_REVIEW_ENFORCE=true`（开关关着时门口不会被调用，无法事先试跑；打开后用一个只改 workflow 注释的 PR 走一遍：被拒、批准、编辑 PR、关闭再重开；Merge Admission 第 6 步起该变量不再读取）；⑥ 把 `CLUED_RELEASE_TAG_TOKEN` 移进 `clued-release` environment；⑦ 把 runner 换成临时（ephemeral）runner 或做 README 第 6 步；⑧ 到 `/grants` 看一眼此前批出的 `repo.protected_change` 授权。
   - 复审 8（2026-10-05，Task `c7b721ee`，对照 PR #559 head `650b95a`）：fresh-context 只读评审，HOLD_FAIL（BLOCKER 0 / MAJOR 2 / MINOR 5 / NIT 4，Note `7c64d5f6`）。复审 7 的 MAJOR-1、MAJOR-2、门口迁移、m1/m2/m5/m6/n2 与文档更正确认成立。
     - 新发现：
       - MAJOR-1：保护路径漏了准入 job 自己执行的测试文件。它们在持有准入 token 与 App 私钥的步骤之前、在同一工作区运行；合并一个改测试文件的 PR 后，之后每次准入都能改写准入脚本、拿走私钥、伪造 check。
@@ -215,7 +215,7 @@
 
 | 层 | 入口 | 谁强制 | 不依赖 Agent 自觉？ | 本设计给的保证 |
 | --- | --- | --- | --- | --- |
-| L0 | `main` 合并 | GitHub ruleset required check `clued-work-admission` 与 App check `clued-admission-verified` | **是**（判定时） | 没有有效 claim 覆盖该 PR 的 head、base、变更文件集，就不能合并。判定在检查运行时成立，之后每小时复核一次（复审 7 MAJOR-1 起按 PR 复核）。PR 正文可以写别人的认领（§4.7）。改动保护路径等的 PR 还需该提交上的 Owner Grant（§4.6，开启 `CLUED_OWNER_REVIEW_ENFORCE` 后） |
+| L0 | `main` 合并 | GitHub ruleset required check `clued-work-admission` 与 App check `clued-admission-verified` | **是**（判定时） | 没有有效 claim 覆盖该 PR 的 head、base、变更文件集，就不能合并。判定在检查运行时成立，之后每小时复核一次（复审 7 MAJOR-1 起按 PR 复核）。PR 正文可以写别人的认领（§4.7）。改动保护路径等的 PR 还需该提交上的 Owner Grant（§4.6；Merge Admission 第 6 步起始终强制，此前须开启 `CLUED_OWNER_REVIEW_ENFORCE`） |
 | L0 | 自托管 CI 重任务（加闸的 8 个：Information Flow E2E、Supabase migration/pgTAP（g4-database）、connection authorization 与 isolated-candidate、node22-install、public-mcp behavior／protocol、clued-components、design-refs） | workflow 首个 job `admission-gate`（GitHub 托管 runner，秒级）；runner 机器上的开工前检查（`scripts/runner/`，Owner 安装后） | **装上 runner 检查且使用临时（ephemeral）runner 时是**（复审 7 MAJOR-4、复审 8 MINOR-4：常驻 runner 上跑 PR 代码的 job 能关掉它或留下进程，加固只降低风险）；只靠 `admission-gate` 时否：在改过 workflow 的分支上手动触发或 push 可以跳过它（复审 N3） | 未被 claim 覆盖的 PR 不跑加闸的重任务；改了 workflow 的 PR 要有 clued-admission App 的准入 check；非 main 的 push、发往其他分支的 PR、workflow 与 main 不一致的手动触发在开工前被拒。不加闸的自托管短检查（`model-program-*`、`mps03-native-agent`、`multitrack-governance-projection`、`node-profile-policy`、`runner-budget-policy`、`gitleaks`、`trivy` 等）照常跑 PR 代码，有超时上限；`memory-publication-gate`（只对发往 main 的 PR）与 `public-mcp-gate-receipt`（`workflow_run`，main 的代码）每个 PR 事件跑一次，不需认领 |
 | L1 | Clued Canonical 与 claim 表 | Postgres 事务 + CAS + lease | **是** | 同一 write_set／trigger_ref／intent 只有一个有效 claim；过期、fence 不符的写被拒 |
 | L2 | Agent 开工前 | agent-contract §1 新增步骤；`clued_session_resume` 返回冲突 claim | 否 | 合规 Agent 在**第一次 Clued 调用**就看到冲突并停下，成本止于一次 resume |
@@ -316,7 +316,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - **合并位（Task `f89eaf0a`，Owner Decision `0edf7889`，合同 v33 §1.7）**：`main` 要求 PR 合并前跟上最新 main，CI 跑到一半时别的会话一合并，这一轮就白跑了。2026-10-06 PR 571 因 575、576 插队连续重跑两轮。合并位是共享触发来源 `merge:<owner>/<name>:<branch>`：会话准备合并时，续期自己 PR 的认领，把它加进 `trigger_refs`；冲突检测（`work_claim_conflicts`，同账号所有 Binding、精确匹配）保证同一时间只有一个持有者。拿到合并位的会话同步 main、跑 CI、合并，然后立刻续期去掉它或释放认领；拿不到的等着重试，被拒的续期不计次数、不耗令牌。
   - **自己的计时（Owner Decision `2ea795e4`，迁移 `20261006120000`）**：合并位在最后一次拿到或续期后 45 分钟失效（profile `merge_slot_seconds`=2700，不超过认领租约），认领视图给出 `merge_slot_until`。冲突检测只算仍有效的合并位，多副本竞赛的副本之间也互相检查有效合并位（只看合并位，不看路径和其他引用）；续期时引用没变但带着合并位，也要对其他认领的有效合并位做一次检查，所以失效后被别人拿走的合并位，原持有者续期拿不回来。Owner 交接不刷新合并位。PR 合并（`clued_work_claim_adopt_v1`）或不合并就关闭（`clued_work_merge_slot_return_v1`，同样只限 CI 准入 Binding）时，绑定该 PR 的认领去掉合并位引用，只去掉该 PR 所在仓库的合并位引用，留 `WORK_CLAIM_MERGE_SLOT_RETURNED` 回执。续期刷新合并位每次都算一次续期，计入认领的续期上限。
-  - **GitHub 强制**：准入运行另发一个 App 检查 `clued-merge-slot`（准入为提示模式时不检查）：头提交已包含基础分支最新提交时，只有认领持有有效合并位才通过；没包含时通过（GitHub 本来就不让合并）；服务还不报 `merge_slot_until` 时通过并注明未检查。它不并进 `clued-admission-verified`，因为重型工作流的准入关卡看那个检查，恰好包含最新 main 的中间推送仍要跑 CI。每小时的复核对已通过但合并位已失效或已归还的头提交补发失败检查。拿合并位时 PR 已包含最新提交，就编辑 PR 正文重跑检查。
+  - **GitHub 强制**：准入运行另发一个 App 检查 `clued-merge-slot`（Merge Admission 第 6 步之前，准入为提示模式时不检查）：头提交已包含基础分支最新提交时，只有认领持有有效合并位才通过；没包含时通过（GitHub 本来就不让合并）；服务还不报 `merge_slot_until` 时通过并注明未检查。它不并进 `clued-admission-verified`，因为重型工作流的准入关卡看那个检查，恰好包含最新 main 的中间推送仍要跑 CI。每小时的复核对已通过但合并位已失效或已归还的头提交补发失败检查。拿合并位时 PR 已包含最新提交，就编辑 PR 正文重跑检查。
   - **上线顺序**：合并 → 备份 → 迁移 → Worker 发布（合同 v33）→ Owner 在 main 规则集里把 clued-admission App 的 `clued-merge-slot` 加为必需检查。加之前它只是提示。
   - **剩余限制**：检查结果是某一时刻的判断；合并位在两次复核之间失效或被归还，已通过的检查最多一小时后才转为失败；这段时间里能合并的只有已包含最新 main 的那一个 PR，别的 PR 都还要先合入 main，所以不会白跑 CI。账号里还没有标记 `ci-admission` 角色的 Binding 时，任何 Binding 都能调用归还接口（与 adopt 相同）。仓库管理员权限可以改规则集。
 
@@ -348,7 +348,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 加入 ruleset required 列表后，这条和 gitleaks、trivy 一样是无过滤 check，不会出现"等不到"的问题。
 - 同一 check 顺带输出一张汇总表：按本 PR 变更路径判定哪些路径过滤的 workflow **适用**、各自在当前 head 上的结论、哪些**不适用**。这就是 2026-10-01 根因审计第 4 项要的"始终返回结果的汇总检查"，不必另开一个。
 - 自报 JSON、伪造签名不算：check 由 workflow 从 Clued 实时查询，Receipt 在 Clued 侧。**同名 check 未覆盖**：PR 可以新增一个同名 job，见下文「仍未覆盖」。
-- **实现偏离（第 3 步，2026-10-01，PR #454）**：生产的 `/mcp` 由委托 OAuth provider 接管，只接受 OAuth access token，直接的 `clued_bnd_` Binding token 会被 401 拒绝；因此 CI 不走 MCP，而是直接调 Clued 数据库 PostgREST 的 `clued_work_verify_v1`（公开 publishable key + Binding token 的 SHA-256，由数据库 `resolve_binding` 鉴权，与 Worker 内部走的是同一条路）。强制与否不跟随 `CLUED_WORK_CLAIMS_V1`，而是 Owner 的仓库变量 `CLUED_WORK_ADMISSION_ENFORCE=true`：未打开时 check 只做 advisory（有 claim 就把判定写进 summary，没有则报 NOT_ENFORCED，一律放行），避免迁移一应用就拦住所有 PR 而 Agent 还无法建 claim；打开后缺 trailer、REJECTED、RPC 缺失、token 被拒、传输错误一律 fail closed。
+- **实现偏离（第 3 步，2026-10-01，PR #454）**：生产的 `/mcp` 由委托 OAuth provider 接管，只接受 OAuth access token，直接的 `clued_bnd_` Binding token 会被 401 拒绝；因此 CI 不走 MCP，而是直接调 Clued 数据库 PostgREST 的 `clued_work_verify_v1`（公开 publishable key + Binding token 的 SHA-256，由数据库 `resolve_binding` 鉴权；P0-4 2a 后按受控 `cv1:` 校验值解析。它与 Worker 共用 Binding 业务认证，但C1阶段2后的运输角色不同：该CI门口保留anon，Worker用专用GW JWT，不能互相借角色）。强制与否不跟随 `CLUED_WORK_CLAIMS_V1`，而是 Owner 的仓库变量 `CLUED_WORK_ADMISSION_ENFORCE=true`：未打开时 check 只做 advisory（有 claim 就把判定写进 summary，没有则报 NOT_ENFORCED，一律放行），避免迁移一应用就拦住所有 PR 而 Agent 还无法建 claim；打开后缺 trailer、REJECTED、RPC 缺失、token 被拒、传输错误一律 fail closed。Merge Admission 第 6 步（2026-10-09）删除了该变量的读取与 advisory 分支：此后始终 fail closed（合并准入策略自身只建议认领之处除外），回退手段改为 `frozen` 与 main ruleset 的 Owner 应急步骤。
 
 - **实现（第 7 步评审修复，2026-10-01，Owner Decision `64d9b418`，Task `95a93218`／`21a77b34`）**：
   - 评审发现原 check 在 `pull_request` 事件下运行 PR 自带的 workflow 与脚本，PR 可以改写判定。现改为 `pull_request_target`：workflow 与 `scripts/ci/clued-work-admission.mjs` 取自 base 分支，不 checkout、不执行 PR 代码，PR 只经 API 读取，每次运行重新读取，因此修改正文（`edited`）或重跑都看到当前 trailer 与 head。没有 `pull_request` 触发：改动本 workflow 文件的 PR 也由 base 分支上的版本判定。（复审 7 MAJOR-3：这只保证 PR 改不了对它自己的判定；PR 合并后，它的改动就是之后所有 PR 的判定代码，所以改动准入本身要 Owner 复核，见下。）
@@ -360,7 +360,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
     - L0b 的 `admission-gate` 仍是 PR 定义的 job，PR 可以删掉 `needs:`。**处理（同一决定）**：准入检查读取 PR 新增或改动的 workflow：base 上已有闸的 workflow，或新加的含自托管 job 的 workflow，必须保留与 `GATE_JOB_SHA256` 一致的 `admission-gate` job，其余每个 job 都 `needs` 它，且 `if:` 为闸条件 `&&` 一个整体括号组；否则判 REJECTED（`workflow_gate:<文件>:<原因>`），PR 无法合入。闸 job 改为检出 base 分支（或默认分支）代码，PR 改脚本也绕不过。已知代价：被拒的 PR 上，重任务在拒绝前可能已经跑过一次。base 上已有、本来不加闸的轻量 workflow（Owner Decision `75abfe80`）不在检查范围。修改闸 job 本身需两步：先在 `GATE_JOB_SHA256` 中加入新摘要并合入，再改各 workflow。
     - 任何同仓 PR 的 workflow 都能引用仓库 secret，所以 `CLUED_CONTEXT_READ_TOKEN` 只能靠 environment 限定加轮换保护。
 - **实现（token 隔离，2026-10-02，Task `95a93218`，PR #479）**：
-  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 clued-admission App 的 `clued-admission-verified` check，只认本事件的 main 准入运行发出的、写着本 PR 的那条（该运行发出多条时看最新的），成功才放行（复审 2 N3c、复审 3 N-R1、复审 4 m1、复审 5 n1；原先看 `clued-work-admission.yml` 的 `pull_request_target` 运行的结论，现在运行列表只用来找本事件的准入运行）；重跑一律不放行（复审 3 N-R3）。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。
+  - `admission-gate` 不再调用 Clued，也不再拿 `CLUED_CONTEXT_READ_TOKEN`（它跑的是 PR 的代码）。它等待本 head 上 clued-admission App 的 `clued-admission-verified` check，只认本事件的 main 准入运行发出的、写着本 PR 的那条（该运行发出多条时看最新的），成功才放行（复审 2 N3c、复审 3 N-R1、复审 4 m1、复审 5 n1；原先看 `clued-work-admission.yml` 的 `pull_request_target` 运行的结论，现在运行列表只用来找本事件的准入运行）；重跑一律不放行（复审 3 N-R3）。强制模式下等不到运行、到期仍未结束（默认 480 秒）或 GitHub API 出错都不放行；advisory 模式从不拦截。来自 fork 的 PR 可能拿不到仓库变量，所以闸对 fork PR 一律按强制处理，只跟随准入运行的结果；准入运行在 base 仓库读变量，advisory 时总是成功（Task `27b4f5e8` 第 11 条，2026-10-02）。Merge Admission 第 6 步起闸与准入运行都不再读取该变量，没有 advisory 模式，任何 PR 都只跟随准入运行的结果。
   - 只有跑 base 分支代码的 workflow 引用该 token：`clued-work-admission.yml`、`clued-work-admission-reverify.yml`，以及 PR #480 起的 `clued-work-admission-dispatch.yml`。三者都在 `clued-admission` environment 中运行。Owner 已（2026-10-02）将该 environment 的部署分支限定为 `main`、不设审批人，把 token 移为 environment secret、删除仓库 secret 并轮换；此后PR 新增或改写的 workflow（运行在 `refs/pull/N/merge`）即使声明该 environment 也拿不到 token。
   - 仓库检查（`scripts/ci/clued-work-admission.test.mjs`）断言只有上述 workflow 引用该 token 的 secret（复审 3 起名为 `secrets.CLUED_ADMISSION_CLUED_TOKEN`，旧名 `CLUED_CONTEXT_READ_TOKEN` 已停用）。
   - 仍未覆盖：同名 check 伪造（见上）。另外 PR 可以改写自己的 workflow、删掉 `needs: admission-gate`：闸是 PR 自己的 job，只能控制合规 PR 的花费，不是强制边界。
@@ -384,7 +384,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
   - 流程（合同 v30 §1.7，复审 9 MAJOR-2）：先推送（包含当前 main）；准入检查拒绝并开请求，说明里有 PR 与 compare 链接，确认页标为「准入检查说明」；Owner 看过改动后批准；编辑 PR 重新准入；加闸任务在该 head 上已被跳过，需关闭再重开一次 PR 让它们运行（再推一次只会让新 head 重新被拒，复审 11 MINOR-1）。这个动作不能打包，确认页只给精确提交一个选项。
   - 强制开关打开之前不调用门口（不给 Owner 开请求），摘要只写明需要 Owner。门口的服务器错误记为 `transient`：准入时仍拒绝，每小时复核时不改动 check。
   - 只有 Owner 标了 `ci-admission` 的 Binding 能调这个门口，标出之前谁都不能用（复审 10 MAJOR-3），只需 `context:read`。Agent 不能自己开这个动作的请求（复审 10 MINOR-2）。确认页只在说明里的链接终点正是要批准的提交时显示链接。
-  - 强制开关是 Owner 的仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true`。未打开时只在摘要里提示；打开后门口缺失、被拒或传输错误都判 REJECTED。
+  - 起初强制开关是 Owner 的仓库变量 `CLUED_OWNER_REVIEW_ENFORCE=true`：未打开时只在摘要里提示；打开后门口缺失、被拒或传输错误都判 REJECTED。Merge Admission 第 6 步（2026-10-09）起不再读取该变量，始终如打开时一样判定。
 
 **L0b：重任务 workflow 的 `admission-gate` job**
 
@@ -411,6 +411,8 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 与 Stop hook 同样可关、可删；标为 L3，不进任何"不可绕过"声明。
 - **实现（第 6 步，2026-10-01，Owner Decision `9297922c`）**：`scripts/hooks/clued_work_claim_guard.py` 一个脚本按 `hook_event_name` 服务三个事件，由 `.claude/settings.json` 注册。SessionStart 注入 §1.7 规则与本 checkout 记录的有效认领；设了只读 Binding token `CLUED_CONTEXT_READ_TOKEN` 时，另经 PostgREST `clued_work_claims_active_v1`（公开配置读自 `app/supabase-public-config.ts`，只发 token 的 SHA-256）读取该用户全部有效认领，失败只降级为提示。PostToolUse 在 `clued_work_claim`／`renew`／`takeover`／`release` 成功后更新 `.clued/work-claim.json`（已 gitignore）。PreToolUse 在上述命令与 `mcp__*__create_pull_request`／`push_files`／`create_or_update_file` 前检查：没有有效认领、也没有 `CLUED_WORK_CLAIM` 时，「发布」与「花钱」两类各在每个会话拦一次。`CLUED_WORK_CLAIM_GUARD=off` 关闭。PreToolUse 不校验认领是否覆盖改动路径，这由 CI 的 `clued-work-admission` 负责。
 
+**P0-4认证与运输边界（随ERRATA-005最终接受及实际阶段2生效）：** CI/钩子仍只提交 Binding 令牌的SHA-256证明值，不提交已存`cv1:`校验值；其独立anon直连集合须与当时`scripts/ci/**`及`scripts/hooks/**`实际调用的精确RPC签名一致，当前为8项。Worker80中仅`clued_work_verify_v1(text,jsonb)`、`clued_work_claims_active_v1(text,jsonb)`与该集合重叠；重叠不使其他Worker RPC可被CI直调，G6不在CI集合。Worker认领工具经GW运输仍须原Binding、Task/fence、write_set、lease、预算及准入校验；Native Owner批准仍须直接人类会话。凭据内部proof映射只支持原事务内的Binding校验，不产生GW身份、Owner批准或合并位。未知签名、角色或ACL漂移拒绝；阶段1不得提前声称anon面已关闭。不得借本说明改变门口、runner、FIFO、重跑额度、审批消费或Owner复核规则。
+
 ### 4.7 不保护什么（必须原样写进任何完成声明）
 
 - Host 在第一次调用 Clued 之前消耗的模型 token。
@@ -423,7 +425,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - main 移动后（复审 9、10、11）：有保护路径的 PR 必须包含当前 main，main 有推送时复核 workflow 立即重判并打红落后的 PR。但在复核跑完之前（几分钟），PR 的 check 仍是绿的，而合并时机完全由 Agent 掌握：两个在判定时都不含保护路径、都不需要 Owner 的 PR，由 Agent 用 API 接连合并，就能把保护文件改回旧版（复审 9 MAJOR-1 的原手法，复审 11 本地演示过）。这只能由 Owner 在 main ruleset 打开「要求分支最新」关闭；打开之前，「合并结果就是批准的 head」只在合并时 main 没有前进时成立。
 - 准入读 head 与文件列表之间的 ABA（复审 8 NIT）：判定后再读一次 head，只比较 SHA。Agent 在几秒内把 head 推走再推回，判定可能用到另一个提交的文件列表。
 - 仓库级 secret 与 GitHub 托管 runner 分钟（复审 7 m5）：任何能推分支的 Agent 都能加一个 `on: push`（任意分支）的托管 workflow，最多 256 份 matrix、每份 6 小时，读取所有仓库级 secret（例如 `OPENAI_API_KEY`、`CI_HEALTH_GITHUB_TOKEN`、`CLUED_E2E_EMAIL` / `CLUED_E2E_PASSWORD`）。准入、gate、runner 检查都不经过。生产相关的 secret 应放在只限 `main` 的 environment（`clued-release`、`clued-admission`）里；`CLUED_RELEASE_TAG_TOKEN` 的 job 已进 `clued-release`，secret 由 Owner 移入。`CLUED_PRODUCTION_BACKUP_KEY`、`CLUED_STORAGE_SOURCE_*` 是否只在 environment 中，从仓库无法核验。
-- Agent 的 GitHub 凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份，即仓库管理员（`docs/maintenance/main-admission-self-test-deadlock.md`）。持有管理权限的凭据能改 ruleset、`CLUED_WORK_ADMISSION_ENFORCE`、`CLUED_RELEASE_GRANT_ENFORCE`、`CLUED_OWNER_REVIEW_ENFORCE` 等变量、environment 的分支策略与 secret，本设计的所有 GitHub 侧保证都以 Agent 不这样做为前提。要去掉这个前提，Agent 需要一个没有 Administration、Secrets、Variables、Environments 权限的凭据（例如只有 Contents 与 Pull requests 写权限的 GitHub App 或细粒度 token）。
+- Agent 的 GitHub 凭据（复审 7 m7）：Agent 用 Owner 的 GitHub 身份，即仓库管理员（`docs/maintenance/main-admission-self-test-deadlock.md`）。持有管理权限的凭据能改 ruleset、`CLUED_MERGE_ADMISSION_STATE`、`CLUED_RELEASE_GRANT_ENFORCE` 等变量（Merge Admission 第 6 步之前还有 `CLUED_WORK_ADMISSION_ENFORCE`、`CLUED_OWNER_REVIEW_ENFORCE`）、environment 的分支策略与 secret，本设计的所有 GitHub 侧保证都以 Agent 不这样做为前提。要去掉这个前提，Agent 需要一个没有 Administration、Secrets、Variables、Environments 权限的凭据（例如只有 Contents 与 Pull requests 写权限的 GitHub App 或细粒度 token）。
 - PR 正文或手动触发填别人的认领（已知项，复审 7 更正影响）：仓库侧不知道 PR 由谁打开。非持有者可以：用别人的认领让自己的 PR 准入并合并（改动在对方 write_set 内即可），绕过合并侧的互斥；抢先把对方的认领绑到自己的 PR，对方的 PR 此后得到 `claim_bound_to_other_pr`，认领作废；在多份模式中借此决定哪一份被采纳；计入对方 Task 的 CI 额度。只有合规 Agent 不这样做。
 - 同一 head 的多个 PR（复审 7 n4）：App check 按提交生效。同 head 另一个发往 main 的 PR 准入失败（或被复核挡住）时，失败 check 成为该提交上最新的一条，也挡住原 PR，直到它的下一个事件重新准入。
 - Claude Code 钩子不匹配 `mcp__github__merge_pull_request`、`create_branch`、`delete_file`、`enable_pr_auto_merge`（复审 7 n3，未改）。钩子是合规层（L3），不影响 L0 的保证。

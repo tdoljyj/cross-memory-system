@@ -38,6 +38,12 @@
 - [两级五视图 ADR](./clued-two-level-views/01-ADR-两级五视图单一数据源.md)
 - [Phase 2 Acceptance & Invalidation](./execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md)
 
+## CI 检查的范围
+
+[`clued-cloud-quality`](../.github/workflows/clued-cloud-quality-gate.yml) 保留每个 PR 的同名检查。仅普通文档变更通过完整差异和检出身份核对时，摘要显示 `DOCUMENTATION_ONLY`，省略应用依赖安装、lint、账本校验、类型检查、构建及单元测试。这个结果只证明文档范围检查成功，不证明应用测试已执行，也不形成 Native 或发布资格。
+
+代码、依赖、配置、被排除的治理文档路径、数据库安全与迁移账本文档仍走完整应用检查；比较数据缺失、分类失败或身份不一致也会回到完整检查。准入、扫描和其它适用检查各自执行。
+
 ## 文件放置原则
 
 仓库只保留与代码、协议/合同、ADR、Schema/Migration、测试/Fixture、Runbook、Skill、构建/部署配置、当前执行控制或可复现机器 Evidence 直接相关的文档。

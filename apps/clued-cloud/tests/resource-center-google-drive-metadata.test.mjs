@@ -128,3 +128,74 @@ test("Drive metadata search escapes quotes and rejects incomplete/looped results
   });
   await assert.rejects(incomplete.listChildren({ parent_id: "parent", name: "a.md" }), /DRIVE_LIST_INVALID/);
 });
+
+test("transient reads are retried only when asked, with capped backoff (Task ce5c725e)", async () => {
+  const replies = (statuses) => {
+    const calls = [];
+    return { calls, fetch: async () => {
+      const next = statuses[calls.length] ?? 200; calls.push(next);
+      if (next === "timeout") { const error = new Error("t"); error.name = "TimeoutError"; throw error; }
+      if (next === "reset") throw new TypeError("network reset");
+      if (next === 200) return Response.json({ id: "known-file" });
+      if (next === "403-rate") return Response.json({ error: { errors: [{ reason: "userRateLimitExceeded" }] } }, { status: 403 });
+      return Response.json({ error: { errors: [{ reason: "forbidden" }] } }, { status: next });
+    } };
+  };
+  const waits = [];
+  const options = { get_credential: getCredential, sleep: async (ms) => { waits.push(ms); }, random: () => 0.5 };
+
+  // Off by default: one request, the same error as before.
+  const off = replies([503]);
+  await assert.rejects(createGoogleDriveMetadataApi({ ...options, fetch: off.fetch }).getFile("known-file"), /^Error: DRIVE_METADATA_UNAVAILABLE$/);
+  assert.equal(off.calls.length, 1); assert.deepEqual(waits, []);
+
+  // 429, 5xx, a rate-limit 403, a timeout and a transport failure are retried.
+  for (const first of [429, 500, 503, "403-rate", "timeout", "reset"]) {
+    waits.length = 0;
+    const on = replies([first, 200]);
+    assert.equal((await createGoogleDriveMetadataApi({ ...options, fetch: on.fetch, transient_retries: 2 }).getFile("known-file")).id, "known-file");
+    assert.equal(on.calls.length, 2, String(first)); assert.deepEqual(waits, [1500]);
+  }
+
+  // At most transient_retries retries, doubling waits; then the original error.
+  waits.length = 0;
+  const exhausted = replies([503, 503, 503, 200]);
+  await assert.rejects(createGoogleDriveMetadataApi({ ...options, fetch: exhausted.fetch, transient_retries: 2 }).getFile("known-file"),
+    /^Error: DRIVE_METADATA_UNAVAILABLE$/);
+  assert.equal(exhausted.calls.length, 3); assert.deepEqual(waits, [1500, 2500]);
+
+  // A permission 403, a 404 and a 400 are answers, never retried.
+  for (const status of [403, 404, 400]) {
+    waits.length = 0;
+    const final = replies([status, 200]);
+    await assert.rejects(createGoogleDriveMetadataApi({ ...options, fetch: final.fetch, transient_retries: 2 }).getFile("known-file"), /DRIVE_METADATA_UNAVAILABLE/);
+    assert.equal(final.calls.length, 1, String(status)); assert.deepEqual(waits, []);
+  }
+
+  // The caller's abort stops retrying at once.
+  const controller = new AbortController();
+  const aborted = replies([503, 200]);
+  const api = createGoogleDriveMetadataApi({ get_credential: getCredential, fetch: aborted.fetch, transient_retries: 2,
+    sleep: async () => { controller.abort(); }, random: () => 0 });
+  await assert.rejects(api.getFile("known-file", { signal: controller.signal }), /AbortError|DRIVE_METADATA_ABORTED|aborted/);
+  assert.equal(aborted.calls.length, 1);
+
+  for (const bad of [-1, 4, 1.5, "2"]) {
+    assert.throws(() => createGoogleDriveMetadataApi({ get_credential: getCredential, transient_retries: bad }), /transient_retries/);
+  }
+});
+
+test("storage step 2: getVersionedAccess reads version and permissions in one request", async () => {
+  const urls = [];
+  const permissions = [{ id: "owner", type: "user", role: "owner" }];
+  const api = createGoogleDriveMetadataApi({ get_credential: getCredential, fetch: async (url) => {
+    urls.push(new URL(url)); return Response.json({ id: "folder", version: "12", permissions, name: "ignored" }); } });
+  assert.deepEqual(await api.getVersionedAccess("folder"), { id: "folder", version: "12", permissions });
+  assert.equal(urls.length, 1);
+  assert.equal(urls[0].searchParams.get("fields"),
+    "id,version,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)");
+  const other = createGoogleDriveMetadataApi({ get_credential: getCredential,
+    fetch: async () => Response.json({ id: "another", version: "12", permissions }) });
+  await assert.rejects(other.getVersionedAccess("folder"), /DRIVE_METADATA_MISMATCH/);
+  await assert.rejects(api.getVersionedAccess("bad id"), TypeError);
+});

@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // S2a-2 (Cross-Host v0.2.6 §21.1 CC-1, CC-3): a default search covers every
 // readable scope and matches reworded (including Chinese) queries.
@@ -25,6 +27,8 @@ test('context search covers readable scopes and non-literal queries', { timeout:
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-search-scope-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
+    // The token-order assertions use Unicode byte ordering, not host locale collation.
+    initdbFlags: ['--locale=C', '--encoding=UTF8'],
     persistent: false, postgresFlags: ['-c', 'io_method=sync'],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
@@ -51,6 +55,10 @@ test('context search covers readable scopes and non-literal queries', { timeout:
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
     for (const fn of ['search_terms_v1(text)', 'search_min_score_v1(text[])',
       'search_score_v1(text,text,text[])', 'search_scope_allowed_v1(text,text,text,text[])']) {
       for (const role of ['anon', 'authenticated', 'service_role']) {
@@ -93,11 +101,11 @@ test('context search covers readable scopes and non-literal queries', { timeout:
       values($1,'synthetic','Project only',$2,array['context:read','context:write'],array[$4]),
             ($1,'synthetic','Global and profile',$3,array['context:read','context:write'],array['global','profile'])`,
       [userId, projectToken, profileToken, projectScope]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query('set role anon');
-    const rpc = async (token, name, input) => (await anon.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
+    const rpc = async (token, name, input) => (await gateway.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
     const create = async (scope, type, title, content, typeFields) => {
       const r = await rpc(allToken, 'clued_record_mutate', { operation: 'create', record_type: type,
         record_schema_version: 1, lifecycle_status: 'active', scope, idempotency_key: uuid(),

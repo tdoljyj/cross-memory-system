@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clued:model-program:m2:candidate:DatasetManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "authority_effect",
+    "dataset_id",
+    "dataset_revision",
+    "manifest_revision_sha256",
+    "registry_sha256",
+    "dataset_split_authority_mapping",
+    "splits",
+    "samples",
+    "candidate_domain_reference_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "clued.model-m2-manifest-candidate/1"
+    },
+    "status": {
+      "const": "SYNTHETIC_OFFLINE_CANDIDATE"
+    },
+    "authority_effect": {
+      "const": "NONE"
+    },
+    "dataset_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "dataset_revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "manifest_revision_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "registry_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "dataset_split_authority_mapping": {
+      "const": "UNRESOLVED"
+    },
+    "splits": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:clued:model-program:m2:candidate:DatasetSplit"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sample_id",
+          "source_id",
+          "source_revision",
+          "raw_snapshot_sha256",
+          "input_key",
+          "content_sha256",
+          "split_id",
+          "origin_kind",
+          "isolation_groups",
+          "parent_sample_ids",
+          "exposure_records",
+          "parse_revision",
+          "scrub_revision",
+          "dedup_revision",
+          "near_duplicate_detector_revision"
+        ],
+        "properties": {
+          "sample_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "source_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "source_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "raw_snapshot_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "input_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "split_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "origin_kind": {
+            "enum": [
+              "NOVEL_SYNTHETIC_TEST_CASE",
+              "PREVIOUSLY_EXPOSED_TEST_CASE",
+              "UPSTREAM_FIXTURE_TEST_MARKER"
+            ]
+          },
+          "isolation_groups": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_session",
+              "source_project",
+              "semantic_near_duplicate_cluster"
+            ],
+            "properties": {
+              "source_session": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+              },
+              "source_project": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+              },
+              "semantic_near_duplicate_cluster": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+              }
+            }
+          },
+          "parent_sample_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+            },
+            "minItems": 0,
+            "uniqueItems": true,
+            "maxItems": 10000
+          },
+          "exposure_records": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "event_id",
+                "consumer_id",
+                "purpose_description",
+                "used_for_selection",
+                "source_revision"
+              ],
+              "properties": {
+                "event_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+                },
+                "consumer_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+                },
+                "purpose_description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "used_for_selection": {
+                  "type": "boolean"
+                },
+                "source_revision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              }
+            },
+            "minItems": 0,
+            "uniqueItems": true,
+            "maxItems": 10000
+          },
+          "parse_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "scrub_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "dedup_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "near_duplicate_detector_revision": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "candidate_domain_reference_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

@@ -63,6 +63,13 @@ class RepositoryManifestTest(unittest.TestCase):
         ids = {c["id"] for c in cc.load_manifest(ROOT)["components"]}
         self.assertTrue({"skill.clued", "agent-contract", "mcp.server", "hook.version-check"} <= ids)
 
+    def test_claude_code_plugin_copies_are_current(self):
+        # The private Claude Code plugin ships copies of the Skill and the capture guard
+        # (Task 67c97003); a change to either needs scripts/build_claude_code_plugin.py.
+        run = subprocess.run([sys.executable, str(ROOT / "scripts" / "build_claude_code_plugin.py"), "--check"],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+
 
 class VersionOrderTest(unittest.TestCase):
     def test_numeric_order(self):
@@ -91,7 +98,7 @@ class CheckTest(unittest.TestCase):
 
     def test_crlf_checkout_hashes_like_lf(self):
         path = self.repo.dir / "pkg" / "references" / "a.md"
-        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
         self.assertEqual(cc.check(self.repo.dir), [])
 
     def test_marker_must_match_manifest(self):

@@ -19,7 +19,7 @@ const vaultKeys = { current_key_id: "test", keys: { test: btoa("v".repeat(32)).r
 const OWNER = "10000000-0000-4000-8000-0000000000a1", CONNECTION = "20000000-0000-4000-8000-0000000000a1";
 const ROOT = "rootFolderId0001", OUTSIDE = "outsideFolder0001", MYDRIVE = "myDriveRoot00001";
 const FOLDER = "application/vnd.google-apps.folder";
-const env = {
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
   CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_READ_V1: "true",
   CLUED_STORAGE_CONNECTOR_ISSUER: "i".repeat(40), CLUED_STORAGE_VAULT_KEYS: JSON.stringify(vaultKeys),
   CLUED_STORAGE_GOOGLE_CLIENT_ID: "read-client", CLUED_STORAGE_READ_CURSOR_KEY: btoa("c".repeat(32)),
@@ -374,6 +374,9 @@ test("credential scope, subject and expiry are rechecked; failures still finaliz
     const { h, value } = await browse({ operation: "list" }, { envelope: await envelope(override) });
     assert.equal(value.error, "storage_read_unavailable"); assert.equal(h.googleRequests, 0);
     assert.equal(h.calls.at(-1).p_input.action, "finalize");
+    // BUG-20261007-005: only an expired credential carries the fixed renewal hint.
+    if (override.expires_at_ms) assert.match(value.hint, /Google access has expired/);
+    else assert.equal(value.hint, undefined);
   }
   const wrong = await vault.seal(JSON.stringify({ token_type: "Bearer", access_token: "fixture-read-access-token", scope: "x", expires_at_ms: Date.now() + 3600000 }),
     { ...context, provider_subject: "someone-else" });

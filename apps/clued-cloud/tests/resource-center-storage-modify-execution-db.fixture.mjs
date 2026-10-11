@@ -1,8 +1,11 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveModifyPostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-modify-postcondition.mjs";
+import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+import { EMPTY_PROVIDER_VERSION } from "../../../kernel/host/resource-center-google-drive-identity.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const ACTIONS = ["inspect", "create_file", "create_topic"];
@@ -16,6 +19,7 @@ const TRACK = "20_P_产品与体验";
 // cloud executor (verified-result mode) against disposable PostgreSQL and an
 // in-memory Drive. Never Google, never a disk.
 export async function testStorageModifyExecution(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `modify-exec-${randomUUID()}`, resource = "https://modify-exec.invalid/mcp";
@@ -164,12 +168,14 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
     };
     return state;
   };
-  const executor = (target, storage, database = caller, observe = async () => {}) => {
+  // legacy: a Worker from before storage step 3 ignores load's ancestor_match.
+  const executor = (target, storage, database = caller, observe = async () => {}, { legacy = false } = {}) => {
     let loaded;
     return createResourceCenterCloudExecutor({ verified_result_mode: true,
       load_job: async ref => {
         loaded = await cloud({ action: "load", ...ref }, database);
         const descriptor = { ...loaded }; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
+        if (legacy) delete descriptor.ancestor_match;
         return descriptor;
       },
       get_credential: async expected => ({ ...expected, access_token: "fixture-modify-exec-access", scope: SCOPES, expires_at_ms: Date.now() + 3600000 }),
@@ -247,6 +253,90 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       const afterMove = await artifact(target, movedPath);
       assert.equal(afterMove.id, created.id); assert.equal(afterMove.provider_file_version, file.version);
       assert.equal((await journal(move)).verified_result_v2.proof.contract, "clued.storage-move-verified/1");
+    });
+
+    await t.test("storage step 3: a sibling change during a create no longer fails it; a changed role on the track does", async () => {
+      const OWNER = [{ id: "owner", type: "user", role: "owner" }];
+      const prepared = async ({ digests }) => {
+        const { target, client, storage } = await setup();
+        for (const id of [target.rootId, target.trackId]) storage.files.get(id).permissions = structuredClone(OWNER);
+        if (digests) await admin.query(`update clued_private.resource_center_artifacts_v1 set provider_access_digest=$2
+          where profile_id=$1 and path in ($3,$4) and state='active'`,
+          [target.profile, googleDriveAccessDigest({ permissions: OWNER }), target.root, `${target.root}/${TRACK}`]);
+        return { target, client, storage };
+      };
+      const createWith = async ({ target, client, storage }, name, during) => {
+        const job = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${target.root}/${TRACK}/${name}`, content: "step 3 fixture" });
+        const result = await executor(target, storage, caller, async request => { if (request.action === "provider_attempt") during(storage.files, target); }).run(job.reference);
+        return { job, result };
+      };
+      const sibling = (files, target) => {
+        for (const id of [target.rootId, target.trackId]) files.get(id).version = String(Number(files.get(id).version) + 5);
+        const id = `sibling-${randomUUID()}`;
+        files.set(id, { id, name: "other.txt", parents: [target.trackId], version: "1", trashed: false, mimeType: "text/plain" });
+      };
+      // Digest-matched ancestors: the job completes and settles.
+      const matched = await prepared({ digests: true });
+      const done = await createWith(matched, "with-sibling.txt", sibling);
+      assert.equal(done.result.status, "committed", JSON.stringify(done.result));
+      const identity = (await journal(done.job)).authority_request.provider_identity;
+      assert.deepEqual(identity.ancestors.map(entry => [entry.path, entry.match]),
+        [[matched.target.root, "access"], [`${matched.target.root}/${TRACK}`, "access"]]);
+      assert.equal(identity.provider_version, EMPTY_PROVIDER_VERSION);
+      assert.equal(identity.root_folder_version, null);
+      assert.ok(await artifact(matched.target, `${matched.target.root}/${TRACK}/with-sibling.txt`));
+      // Version-matched ancestors (no digest): the same change still stops the job before any write.
+      const legacy = await prepared({ digests: false });
+      const posts = legacy.storage.posts;
+      const stopped = await createWith(legacy, "stopped.txt", sibling);
+      assert.notEqual(stopped.result.status, "committed");
+      assert.equal(legacy.storage.posts, posts);
+      assert.equal((await journal(stopped.job)).authority_request.provider_identity.ancestors[1].match, "version");
+      // A changed role on the track stops the job before any write.
+      const role = await prepared({ digests: true });
+      const before = role.storage.posts;
+      const refused = await createWith(role, "role.txt", (files, target) => {
+        files.get(target.trackId).permissions = [...OWNER, { id: "anyone", type: "anyone", role: "reader" }];
+      });
+      assert.notEqual(refused.result.status, "committed");
+      assert.equal(role.storage.posts, before);
+
+      // A digest changed between the verified record and the settlement is a registry change: nothing is registered.
+      const raced = await prepared({ digests: true });
+      const racedJob = await submitJob(raced.target, raced.client, { operation: "create", target_kind: "file",
+        destination_path: `${raced.target.root}/${TRACK}/raced.txt`, content: "step 3 fixture" });
+      const racedResult = await executor(raced.target, raced.storage, caller, async request => {
+        if (request.action === "settle_verified") await admin.query(`update clued_private.resource_center_artifacts_v1 set provider_access_digest=$2
+          where profile_id=$1 and path=$3 and state='active'`, [raced.target.profile, "e".repeat(64), `${raced.target.root}/${TRACK}`]);
+      }).run(racedJob.reference);
+      assert.notEqual(racedResult.status, "committed");
+      const racedIntent = await journal(racedJob);
+      assert.ok(racedIntent.verified_result_v2, "the verification was recorded");
+      assert.notEqual(racedIntent.state, "committed");
+      assert.equal(await artifact(raced.target, `${raced.target.root}/${TRACK}/raced.txt`), undefined);
+    });
+
+    await t.test("storage step 3: a Worker from before step 3 keeps working against the new database", async () => {
+      const { target, client, storage } = await setup();
+      await admin.query(`update clued_private.resource_center_artifacts_v1 set provider_access_digest=$2 where profile_id=$1 and path=$3 and state='active'`,
+        [target.profile, "a".repeat(64), target.root]);
+      const old = { legacy: true };
+      const create = await submitJob(target, client, { operation: "create", target_kind: "file", destination_path: `${target.root}/${TRACK}/old.txt`, content: "legacy Worker" });
+      assert.equal((await executor(target, storage, caller, undefined, old).run(create.reference)).status, "committed");
+      const created = await artifact(target, create.mutation.destination_path);
+      const topic = await directoryIn(target, storage, "legacy-topic");
+      const renamedPath = `${target.root}/${TRACK}/old-renamed.txt`;
+      const rename = await submitJob(target, client, modify("rename", created.path, renamedPath, storage.files.get(created.provider_file_id).version));
+      assert.equal((await executor(target, storage, caller, undefined, old).run(rename.reference)).status, "committed");
+      const move = await submitJob(target, client, modify("move", renamedPath, `${topic.path}/old-renamed.txt`, storage.files.get(created.provider_file_id).version));
+      assert.equal((await executor(target, storage, caller, undefined, old).run(move.reference)).status, "committed");
+      for (const job of [create, rename, move]) {
+        const intent = await journal(job);
+        assert.equal(intent.state, "committed");
+        assert.ok(intent.verified_result_v2);
+        assert.equal("ancestors" in intent.authority_request.provider_identity, false);
+        assert.match(intent.authority_request.provider_identity.root_folder_version, /^\d+$/);
+      }
     });
 
     await t.test("a content edit racing the update is never settled into the registry", async () => {

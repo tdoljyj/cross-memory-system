@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { build, stop } from 'esbuild';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migration = '20260907123955_clued_context_ownership_publication_v11.sql';
@@ -56,6 +57,7 @@ for (const profile of ['production-m1', 'all-repository-migrations']) {
         try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
         catch (error) { error.message = `${name}: ${error.message}`; throw error; }
       }
+      await allowRawTestBindings(admin);
       await admin.query('insert into auth.users(id,email) values($1,$2),($3,$4)', [U,'owner@example.invalid',V,'other@example.invalid']);
       await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Clued test','clued test',$3)`, [project,U,`project:${project}`]);
       for (let n = 0; n < bindings.length; n += 1) {

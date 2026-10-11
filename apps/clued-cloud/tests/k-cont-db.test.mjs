@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -7,6 +8,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -49,6 +52,8 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     for (const name of (await fs.readdir(path.join(root, "supabase/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
+    await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     const userId = uuid();
     const tokenHash = hash();
@@ -63,7 +68,10 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     clients.push(anon);
     await anon.connect();
     await anon.query("set role anon");
-    const rpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [tokenHash, input])).rows[0].value;
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
+    const rpc = async (name, input) => await workerGatewayRpc(workerCaller,name,tokenHash,input);
 
     const restored = await rpc("clued_mcp_restore", { context_key: "global", response_view: "structured", event_limit: 1, event_budget_bytes: 4096 });
     const first = await rpc("clued_mcp_append_event", {
@@ -273,7 +281,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       [reducedBinding, requestId, userId]);
     await admin.query(`insert into clued_private.authorization_entries_v12(binding_id,resource_kind,resource_id,environment,actions)
       values($1,'scope',$2,'canonical',array['read'])`, [reducedBinding, projectContext]);
-    const reducedRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [reducedTokenHash, input])).rows[0].value;
+    const reducedRpc = async (name, input) => await workerGatewayRpc(workerCaller,name,reducedTokenHash,input);
     const reduced = await reducedRpc("clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
     const auditSearch = await reducedRpc("clued_mcp_search_context", {
       context_key: projectContext, session_token: reduced.session_token, query: "extension:kcont:audit_secret",
@@ -353,8 +361,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','K-CONT no-audit checkpoint reader',$2,array['context:read','context:write'],array[$3]) returning id`,
       [userId, noAuditTokenHash, projectContext])).rows[0].id;
-    const noAuditRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`,
-      [noAuditTokenHash, input])).rows[0].value;
+    const noAuditRpc = async (name, input) => await workerGatewayRpc(workerCaller,name,noAuditTokenHash,input);
     const noAuditRestore = await noAuditRpc("clued_mcp_restore", { context_key: projectContext, response_view: "structured" });
     assert.equal(noAuditRestore.events_after_checkpoint.some((event) => Number(event.id) === Number(auditOnlyEventId)), false);
     const checkpointInput = (eventId, key) => ({
@@ -405,18 +412,24 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     await admin.query(`update public.clued_context_events set target_refs=jsonb_build_array(jsonb_build_object('kind','record','id',upper($2::text)))
       where id=(select max(id) from public.clued_context_events where user_id=$1 and canonical_event_type='extension:kcont:page_cost')`,
       [userId, projectRecordId]);
-    await anon.query("set statement_timeout='3s'");
+    await workerCaller.query("set statement_timeout='3s'");
     const pageCursor = (await admin.query(`select min(id)-1 as id from public.clued_context_events
       where user_id=$1 and canonical_event_type='extension:kcont:page_cost'`, [userId])).rows[0].id;
     const fullPage = await reducedRpc("clued_mcp_restore", {
       context_key: projectContext, response_view: "structured", event_order: "oldest", event_cursor: Number(pageCursor), event_limit: 100,
       event_budget_bytes: 262144,
     });
-    await anon.query("reset statement_timeout");
+    await workerCaller.query("reset statement_timeout");
     const pageCostEvents = fullPage.events_after_checkpoint.filter((item) => item.canonical_event_type === "extension:kcont:page_cost");
     assert.equal(pageCostEvents.length, 100);
     assert.ok(pageCostEvents.every((item) =>
       item.record_targets.length === 1 && item.record_targets[0].title === "Project constraint"));
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

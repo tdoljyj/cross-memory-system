@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials, issuerBusinessDefinition } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -18,6 +19,7 @@ const MiB = 1024 * 1024;
 // in-memory Drive, create-verified/3 settlement and GET-only recovery, against disposable
 // PostgreSQL. Never Google, never R2 (the staged bytes are handed to the executor directly).
 export async function testStorageBinaryUpload(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], session = randomUUID(), issuer = sha(randomUUID() + randomUUID()), clientIssuer = sha(randomUUID());
   const oauthClient = `binary-exec-${randomUUID()}`, resource = "https://binary-exec.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
@@ -150,6 +152,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         if (method === "PUT") assert.equal(recorded, 1, "the exact attempt is durable before the upload");
       }
       if (method === "POST" && u.searchParams.get("uploadType") === "multipart") {
+        if (state.onUpload) await state.onUpload();
         state.writes++;
         const part = parseMultipart(await bodyBytes(init.body), new Headers(init.headers).get("content-type"));
         const file = createFile(part.metadata, part.mediaType, part.bytes);
@@ -162,6 +165,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         return new Response("", { status: 200, headers: { location: "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=FIXTURE" } });
       }
       if (method === "PUT") {
+        if (state.onUpload) await state.onUpload();
         state.writes++;
         assert.equal(u.searchParams.get("upload_id"), "FIXTURE");
         const file = createFile(pendingSession.metadata, new Headers(init.headers).get("content-type"), await bodyBytes(init.body));
@@ -340,7 +344,8 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       // The root is resolved only for a live storage client Binding: a revoked token gets its
       // path back unchanged (the policy denies it), so path refusals cannot confirm a guessed root.
       const clientHash = (await admin.query("select token_hash from public.clued_agent_bindings where id=$1", [client.id])).rows[0].token_hash;
-      const pathsFor = async () => (await admin.query("select clued_private.storage_mutation_paths_v1($1,$2,$3::jsonb) value",
+      // The column holds the verifier; an internal proof stands in for the client's token here.
+      const pathsFor = async () => (await admin.query("select clued_private.storage_mutation_paths_v1(clued_private.credential_internal_proof_v1($1),$2,$3::jsonb) value",
         [clientHash, target.connection, JSON.stringify({ destination_path: relative })])).rows[0].value.destination_path;
       assert.equal(await pathsFor(), full, "a live storage client Binding resolves the root");
       await admin.query("update public.clued_agent_bindings set revoked_at=now() where id=$1", [client.id]);
@@ -396,8 +401,13 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
     await t.test("multipart binary create commits with a create-verified/3 proof and a deletable staging object", async () => {
       const { target, client, storage } = await setup();
       const bytes = pngBytes(64 * 1024 + 3);
+      // BUG-20261008-002: the staging sweep runs while the effect uploads the staged object.
+      let duringUpload = null;
+      storage.onUpload = async () => { duringUpload = await staging({ action: "sweep" }); };
       const { id, job, result } = await run(target, client, storage, bytes, "photo.png", "image/png");
       assert.equal(result.status, "committed", JSON.stringify(result));
+      assert.ok(duringUpload, "the sweep ran during the upload");
+      assert.equal(duringUpload.delete.includes(id), false, "a started job's staged object is never deletable while it uploads");
       const created = await artifact(target, pathFor(target, "photo.png"));
       assert.ok(created);
       assert.equal(Buffer.compare(storage.bytes.get(created.provider_file_id), Buffer.from(bytes)), 0);
@@ -408,7 +418,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       assert.equal(proof.sha256, sha(bytes)); assert.equal(proof.size, String(bytes.length));
       assert.equal((await journal(job)).provider_attempt.size, String(bytes.length));
       const swept = await staging({ action: "sweep" });
-      assert.ok(swept.delete.includes(id), "consumed and started: the object may be deleted");
+      assert.ok(swept.delete.includes(id), "consumed and committed: the object may be deleted");
       assert.equal((await staging({ action: "object_deleted", staging_ids: [id] })).marked, 1);
       assert.ok((await row(id)).object_deleted_at);
       assert.equal((await staging({ action: "sweep" })).delete.includes(id), false);
@@ -486,10 +496,11 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
       const { target, client, storage } = await setup();
       storage.loseUpload = true;
       const bytes = pngBytes(6 * MiB);
-      const { job, result } = await run(target, client, storage, bytes, "lost.png", "image/png");
+      const { id, job, result } = await run(target, client, storage, bytes, "lost.png", "image/png");
       assert.equal(result.status, "unreconciled", JSON.stringify(result));
       const m = await journal(job);
       assert.equal(m.state, "started");
+      assert.equal((await staging({ action: "sweep" })).delete.includes(id), false, "an unsettled job keeps its staged object");
       const writes = storage.writes;
       await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2::jsonb where id=$1", [target.connection,
         JSON.stringify({ contract: "clued.storage-credential/1", key_id: "fixture", nonce: "A".repeat(16), ciphertext: "B".repeat(24) })]);
@@ -517,6 +528,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
         request_sha256: descriptor.request_sha256, verified_receipt_id: recorded.verified_receipt_id, verified_digest: recorded.verified_digest });
       assert.equal(settled.state, "committed", JSON.stringify(settled));
       assert.equal(storage.writes, writes, "recovery never writes");
+      assert.ok((await staging({ action: "sweep" })).delete.includes(id), "once settled, the staged object may be deleted");
     });
 
     await t.test("a create-verified/2 proof cannot settle a binary job", async () => {
@@ -673,7 +685,7 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
 
     await t.test("no live size / sha256 derivation reads mutation.content without a content_ref guard", async () => {
       for (const signature of ["clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)", "clued_private.storage_verified_result_v2(text,jsonb)"]) {
-        const body = (await admin.query("select pg_get_functiondef($1::regprocedure) body", [signature])).rows[0].body;
+        const body = await issuerBusinessDefinition(admin,signature);
         const uses = [...body.matchAll(/(octet_length\(j\.mutation->>'content'\)|convert_to\(j\.mutation->>'content')/g)];
         assert.ok(uses.length >= 2, signature);
         for (const use of uses) {

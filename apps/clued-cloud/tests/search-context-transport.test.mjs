@@ -6,7 +6,7 @@ import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 // (SQLSTATE 22023, HTTP 400 from PostgREST) reach the Agent as tool errors
 // with a fixed message, not as a transport failure.
 
-const assets = { ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
+const assets = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
 const env = { ...assets, PROJECT_VIEWS_V2: 'true' };
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const bindingToken = `clued_bnd_${'s'.repeat(43)}`;

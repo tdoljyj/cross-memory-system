@@ -1,3 +1,5 @@
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -7,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // S2c Integration Runtime PR-3 (IntegrationRuntime v0.1.8 §14.1): A / B verification, READY profiles,
 // integration_ready_project_v1 and its Receipt, declare / report / fact_set. Proves G-A8 (T-A8-1…4), the
@@ -119,7 +122,10 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     await apply(MIGRATION);
     const after = await snapshot();
     assert.ok(migrations.includes(GRANTS));
-    for (const name of migrations.filter((name) => name > MIGRATION && name !== GRANTS)) await apply(name);
+    // Production order: the migrations between this one and the grant migration now, the grant migration
+    // after T-S-2 has checked the database without it, then every later migration (among them
+    // 20261007120000_db_security_hygiene.sql, which narrows the grants).
+    for (const name of migrations.filter((name) => name > MIGRATION && name < GRANTS)) await apply(name);
 
     await t.test('T-S-3 the migration adds only PR-3 objects and replaces only the two PR-2 entry points', () => {
       for (const kind of ['relations', 'policies']) {
@@ -149,7 +155,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
           (select count(*) from pg_policies p where p.schemaname = 'clued_private' and p.tablename = c.relname) policies,
           bool_or(has_table_privilege(r.rolname, c.oid, 'select,insert,update,delete,truncate,references,trigger')) any_privilege
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+        cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
         where n.nspname = 'clued_private' and c.relname = any($1)
         group by c.oid, c.relname, c.relrowsecurity, c.relacl, c.relowner order by c.relname`, [PR3_TABLES]);
       assert.deepEqual(rows.map((r) => r.relname), PR3_TABLES);
@@ -170,7 +176,7 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       const { rows } = await admin.query(`select p.oid::regprocedure::text f,
           bool_or(has_function_privilege(r.rolname, p.oid, 'execute')) any_execute
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+        cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
         where (n.nspname = 'clued_private' and p.proname like 'integration\\_%')
            or (n.nspname = 'public' and (p.proname like 'clued\\_integration\\_%'
                or p.proname in ('clued_user_integration_v1', 'clued_admin_integration_v1')))
@@ -181,8 +187,16 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       for (const name of [...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']) assert.ok(publicRpcs.includes(name), name);
     });
 
-    // the §5.13 target grants: the stage C grant migration itself (§13.0)
+    // the §5.13 target grants: the stage C grant migration itself (§13.0), then the later migrations
     await apply(GRANTS);
+    for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+    const gateway=await connect();
+    await gateway.query('set session authorization authenticator');
+    await setWorkerGatewayCaller(gateway);
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     // ---- fixtures ----------------------------------------------------------------------------
     const newUser = async () => {
@@ -242,10 +256,30 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
     await admin.query('insert into clued_private.platform_admin_v13(subject_id, version) values ($1, 1)', [operatorUser]);
 
     // ---- channel helpers -------------------------------------------------------------------------
-    const rpc = async (client, name, binding, input) =>
-      (await client.query(`select public.${name}($1, $2::jsonb) r`, [binding.hash ?? binding, JSON.stringify(input)])).rows[0].r;
+    // Concurrent compound fixtures seed rows and hold locks on their original
+    // backend. Switch only that public call's real role, retaining its transaction/PID.
+    // A failed SQL statement leaves an open transaction aborted; its existing outer
+    // rollback restores the transactional SET and the original SQLSTATE is preserved.
+    const roleQueues=new WeakMap();
+    const requestRole = (client,role,body) => {
+      const next=(roleQueues.get(client) ?? Promise.resolve()).catch(()=>{}).then(async()=>{
+      const prior=(await client.query("select current_setting('role') role,current_setting('request.jwt.claims',true) claims")).rows[0];
+      await client.query("select set_config('role',$1,false),set_config('request.jwt.claims',$2,false)",[role,JSON.stringify({role})]);
+      try { return await body(); }
+      finally {
+        try { await client.query("select set_config('role',$1,false),set_config('request.jwt.claims',$2,false)",[prior.role,prior.claims ?? '']); }
+        catch(error) { if(error.code!=='25P02') throw error; }
+      }
+      });
+      roleQueues.set(client,next);
+      return next;
+    };
+    const rpc = async (client, name, binding, input) => client===admin
+      ? workerGatewayRpc(gateway,name,binding.hash ?? binding,input)
+      : requestRole(client,'clued_worker_gateway',async() => (await client.query(`select public.${name}($1, $2::jsonb) r`,[binding.hash ?? binding,JSON.stringify(input)])).rows[0].r);
     const asUser = async (fn, user, input, claims = {}) => {
       await admin.query('begin');
+      await admin.query('set local role authenticated');
       try {
         await admin.query(`select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', $2, true)`,
           [user, JSON.stringify(claims)]);
@@ -329,16 +363,17 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       'clued_private.integration_binding_owners_v1', 'clued_private.integration_revocations_v1',
       'clued_private.integration_capability_declarations_v1', 'clued_private.integration_claims_v1'].map(async (table) => [table, await rowHash(table)])));
 
-    await t.test('T-S-2 after the target grants: exactly §5.13', async () => {
+    // Historical §5.13 is followed by the actual G6 closeout: Binding RPCs use GW, Native remains authenticated.
+    await t.test('T-S-2 after the complete migration chain: G6 Binding gateway and Native authenticated only', async () => {
       const { rows } = await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
           has_function_privilege(r.rolname, p.oid, 'execute')) roles
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+        cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
         where n.nspname = 'public' and p.proname = any($1)
         group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1', 'clued_admin_integration_v1']]);
       assert.equal(rows.length, BINDING_RPCS.length + 2);
       for (const row of rows) {
-        assert.deepEqual(row.roles, row.proname.startsWith('clued_integration_') ? ['anon', 'authenticated'] : ['authenticated'], row.proname);
+        assert.deepEqual(row.roles, row.proname.startsWith('clued_integration_') ? ['clued_worker_gateway'] : ['authenticated'], row.proname);
       }
     });
 
@@ -491,7 +526,9 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
       const { binding, id } = await active();
       await verifyReady(binding, id, 'test.read');
       await verifyReady(binding, id, 'test.audit');
-      const asOf = (await admin.query('select clock_timestamp() t')).rows[0].t;
+      // pg's Date parser truncates microseconds; keep the actual database instant
+      // so a verification in this same millisecond is not excluded by as_of.
+      const asOf = (await admin.query('select clock_timestamp()::text t')).rows[0].t;
       const x = await project(id, 'test.read', asOf);
       const y = await project(id, 'test.audit', asOf);
       assert.equal(x.ready, true, JSON.stringify(x.reasons));
@@ -997,6 +1034,11 @@ test('S2c PR-3: verification separation, READY profiles, declare / report / fact
         assert.ok(older.some((text) => text.includes(`'${family}'`)), `${family} is an operation family`);
       }
     });
+    const closeout=await findGatewayCloseoutMigration(root);
+    const callerCatalog=await snapshotCallerCatalog(admin);
+    await apply(closeout);
+    assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog,'G6 replay preserves current Native/Binding definitions and ACL');
+    await assertGatewayCloseoutBoundary(admin);
   } finally {
     for (const client of clients) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -31,7 +31,7 @@ test("the Worker passes the release's served-contract check against the reposito
   // Worker after deploy; run the same check against this Worker before merge,
   // so a contract version bump cannot leave the bootstrap behind.
   const worker = await loadWorker();
-  const contract = await readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8");
+  const contract = await readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8");
   const [served, bootstrap] = await Promise.all([
     worker.fetch(new Request("https://clued.test/clued-agent.md"), baseEnv, ctx).then((r) => r.text()),
     worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx).then((r) => r.json()),
@@ -83,10 +83,19 @@ test("current-state answers are sourced from Clued on every injected surface (co
       )
       .then((r) => r.json()),
   ]);
-  assert.match(contract, /Contract version: 38/);
+  const manifest = JSON.parse(await readFile(new URL("../../../config/clued-components.json", import.meta.url), "utf8"));
+  assert.equal(contractVersionOf(contract), Number(manifest.components.find((component) => component.id === "agent-contract").version));
+  // Owner auto-approval switch and Owner answers (OwnerCredential §12, §13; Task ce42fc18).
+  assert.match(contract, /That result is the receipt: go on with the gated step and do not hand the Owner a link/);
+  assert.match(contract, /your Host session id as `session_ref`/);
+  assert.match(contract, /act on it without asking the Owner to confirm again/);
   // Merge slot: closing gives it back, reopening does not take it again (Task 6525c538).
   assert.match(contract, /Closing gives the slot back even when you reopen the pull request at once/);
-  assert.match(contract, /close and reopen it first, then take the slot/);
+  // MergeAdmission step 2 (Owner Decisions 73050422, 77216370): "Re-run all jobs" on the current head
+  // replaces close and reopen; layers and the Owner's state.
+  assert.match(contract, /Re-run only a `pull_request` run on the pull request's current head, with "Re-run all jobs"/);
+  assert.match(contract, /"Re-run failed jobs" and single-job re-runs skip the gate: never use them/);
+  assert.match(contract, /Never change the state, or ask the Owner to, to let your pull request through/);
   // Storage connection discovery (Owner Decision 1721045d): look the connection up, never ask the Owner for it.
   assert.match(contract, /Find a storage connection yourself; never ask the Owner for a `connection_id`/);
   assert.match(contract, /Get it from `clued_storage_connections`/);
@@ -96,11 +105,28 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /A head that only merges the default branch into an approved head keeps that approval/);
   // Merge slot (Owner Decision 0edf7889): one session at a time brings main in, runs CI and merges.
   assert.match(contract, /The slot is the trigger ref `merge:<owner>\/<name>:<branch>`/);
-  assert.match(contract, /Here a conflict means wait; do not stop or tell the Owner for it/);
+  // Merge Admission step 4 (Owner Decision 661f8c36, Task 38e0c90d): the slot is a queue; a merge ref never conflicts.
+  assert.match(contract, /A merge ref never conflicts: the renewal succeeds, and the claim's `merge_queue` shows your `state`/);
+  assert.match(contract, /bring the default branch in and push first, then renew its claim/);
+  assert.match(contract, /While you wait, do nothing for the merge/);
+  assert.match(contract, /Renew about once an hour to keep your lease \(2 hours\) without spending the claim's 12 renewals/);
+  assert.match(contract, /a renewal that keeps the ref joins again at the back/);
   assert.match(contract, /Merge dependent pull requests one at a time/);
   // Owner Decision 2ea795e4: the slot lapses on its own clock and a required App check enforces it.
-  assert.match(contract, /The slot lapses 45 minutes after you last took or renewed it/);
+  assert.match(contract, /The head's slot starts when it becomes head and lapses 45 minutes after that or after your last renewal/);
+  // Merge Admission step 3 (Owner Decisions 4f576896, 1fb7f6b3): CI keeps the slot, a failure returns it, a hard cap ends it.
+  assert.match(contract, /Where the `clued-merge-slot-ci` workflow runs, CI keeps the slot for you, so do not renew only to keep it/);
+  assert.match(contract, /a CI required check that fails after you became head gives the slot back at once, takes you out of the queue/);
+  assert.match(contract, /A check that had already failed when you became head, such as the admission of a head that fell behind while you waited, does not/);
+  assert.match(contract, /the slot ends `merge_slot_hard_cap_minutes` \(the policy file's, 120 by default\) after you became head/);
+  assert.match(contract, /the slot lasts 90 minutes past the latest report/);
+  assert.match(contract, /If it shows no report for your current head while CI runs .* or the workflow does not run, renew with the same refs/);
+  assert.match(contract, /or `merge_slot_until` comes within 10 minutes while a run of your head is still going/);
+  assert.match(contract, /Turn auto-merge off as soon as a CI required check fails or the merge is refused/);
   assert.match(contract, /posts a `clued-merge-slot` check on every head/);
+  assert.match(contract, /the check passes only while the claim holds the slot as head of the queue/);
+  // Runner hook merge-admission-ungated-rerun (Task 26cced7e): an ungated self-hosted check may be re-run once.
+  assert.match(contract, /a self-hosted check that has no `admission-gate` job \(such as `runner-budget-policy`\)/);
   assert.match(contract, /`migration\.production`: one resource per migration file the run applies/);
   assert.match(contract, /ask for everything the release needs in one call: `clued_owner_request` with `actions`/);
   assert.match(contract, /When it carries `suggested_request`, call `clued_owner_request` with that object as is/);
@@ -157,7 +183,9 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /A passing check is not verified again at merge time/);
   assert.match(contract, /First dispatch `clued-work-admission-dispatch\.yml` on the default branch with `workflow`/);
   assert.match(contract, /with `admission_run_id` set to that run's id, within 30 minutes of that run's start/);
-  assert.match(contract, /resume also returns `contract_version`/);
+  assert.match(contract, /Every successful resume returns `contract_version` and `agent_contract_sha256`/);
+  assert.match(contract, /read it through `clued_agent_bootstrap` \(all parts\)/);
+  assert.match(contract, /do not report the difference and do not ask for reinstall because of a contract change/);
   assert.match(skill, /claim its Task as the contract's §1\.7 says/);
   assert.match(contract, /Resume lists unabsorbed work-log events newest first \(`event_order: "newest"`, the default\)/);
   assert.match(contract, /`checkpoint_recommended` and `pending_event_count_recent` count only those of the last 24 hours/);
@@ -187,7 +215,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
   const [skill, contract, agents, rootAgents, manifestText] = await Promise.all([
     readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
-    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8").then((text) => text.replace(/\r\n/g, "\n")),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../memory/manifest.json", import.meta.url), "utf8"),
@@ -197,7 +225,9 @@ test("repository Skill, project rules and root snapshot share the v1.6 authority
   assert.match(contract, /only online Canonical Store/);
   assert.match(contract, /never dual-write Markdown/);
   assert.match(contract, /read-only, versioned export/);
-  for (const text of [skill, agents, rootAgents]) {
+  assert.match(skill, /clued_agent_bootstrap/);
+  assert.doesNotMatch(skill, /references\/agent-contract\.md/);
+  for (const text of [agents, rootAgents]) {
     assert.match(text, /agent-contract\.md/);
   }
   assert.match(rootAgents, /clued_record_mutate/);
@@ -210,12 +240,12 @@ test("repository Skill, project rules and root snapshot share the v1.6 authority
 test("the Worker serves the single agent contract and advertises capture", async () => {
   const worker = await loadWorker();
   const [source, response, bootstrap] = await Promise.all([
-    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8"),
     worker.fetch(new Request("https://clued.test/clued-agent.md"), baseEnv, ctx),
     worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx),
   ]);
   const served = await response.text();
-  assert.ok(served.startsWith(source), "served contract must be the source file verbatim");
+  assert.ok(served.startsWith(source.replace(/\r\n/g, "\n")), "served contract must be the LF-normalized source file verbatim");
   assert.match(served, /## 3\. Capture/);
   const { renderAgentContractModule } = await import("../scripts/generate-agent-contract.mjs");
   const generated = await readFile(new URL("../worker/generated/agent-contract.ts", import.meta.url), "utf8");

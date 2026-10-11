@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes } from "node:crypto";
 
+// raw-binding-grants: the calling test (resource-center-authority-db) calls allowRawTestBindings.
+
 export const STORAGE_ADMIN_API = "clued_private.storage_admin_designate_v2";
 export const storageAdminCall = async (db, input) => (await db.query(
   `select ${STORAGE_ADMIN_API}($1::jsonb) value`, [JSON.stringify(input)])).rows[0].value;

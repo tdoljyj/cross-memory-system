@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
-import { googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const SHORTCUT = "application/vnd.google-apps.shortcut";
@@ -30,7 +30,9 @@ function identity(file, allowParentlessBoundary = false) {
  * Exact-ID authorization is checked independently for every registered directory;
  * root permission is never treated as inherited drive.file application access.
  * get_sharings, when given, adds each directory's provider_sharing_digest (null
- * when Drive omits the sharing fields) so the Owner can record it in the registry.
+ * when Drive omits the sharing fields) and, from the same read, its
+ * provider_access_digest (storage step 2; null without a usable permission
+ * list), so the Owner can record them in the registry.
  * @param {{trusted_layout?: unknown, get_file?: Function, list_folder?: Function, get_files?: Function, list_folders?: Function, get_sharings?: Function, clock?: Function, timeout_ms?: number}} config
  */
 export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: getFile,
@@ -140,6 +142,9 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
       observed.forEach((entry, i) => {
         if (sharing[i]?.id !== entry.provider_file_id) deny("DIRECTORY_CHANGED");
         entry.provider_sharing_digest = googleDriveSharingDigest(sharing[i]);
+        // Storage step 2 (Task e2eb07d1): the access digest from the same read
+        // (null when Drive returned no usable permission list).
+        entry.provider_access_digest = googleDriveAccessDigest(sharing[i]);
       });
     }
     const finished = checkTime();

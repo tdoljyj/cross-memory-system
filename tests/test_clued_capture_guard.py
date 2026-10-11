@@ -227,7 +227,7 @@ class CaptureGuardTest(GuardHarness):
         self.assertNotIn("PR #1 with", proc.stderr)
 
     def test_own_reminder_logged_as_user_entry_is_not_a_decision(self):
-        feedback = ("Stop hook feedback:\nClued capture guard (skills/clued/references/agent-contract.md §3 "
+        feedback = ("Stop hook feedback:\nClued capture guard (protocol/agent/agent-contract.md §3 "
                     "and §5):\n- The Clued write after it did not commit (rejected: authority_escalation_forbidden).")
         entries = self.merge_turn() + [
             call("w1", MUTATE, ABOUT_PR_7), result("w1", COMMITTED), call("c1", CHECKPOINT),

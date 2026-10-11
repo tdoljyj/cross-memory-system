@@ -4,10 +4,13 @@ name: Clued Integration Runtime config
 # enable / disable set the production Worker's CLUED_INTEGRATION_RUNTIME_V1
 # secret (unset or false = off). The flag is global: it applies to every account
 # at once. enable first checks, read-only, that production carries the stage C
-# grant migration and that the Integration public RPCs have exactly the §5.13
-# EXECUTE grants; otherwise it stops before touching the Worker. disable has no
-# precondition, so it is always available as the rollback. Each run must name
-# the authorizing Decision. No repository code is checked out or run.
+# grant migration and the database security hygiene migration, and that the
+# Integration public RPCs have exactly the §5.13 EXECUTE grants as that hygiene
+# migration narrowed them (Binding path: anon only, since the Worker calls it
+# with the publishable key; Native and Operator paths: authenticated only);
+# otherwise it stops before touching the Worker. disable has no precondition, so
+# it is always available as the rollback. Each run must name the authorizing
+# Decision. No repository code is checked out or run.
 
 on:
   workflow_dispatch:
@@ -55,6 +58,11 @@ jobs:
           DECISION_ID: ${{ inputs.decision_id }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
         run: |
           set -euo pipefail
           [[ "$MODE" =~ ^(enable|disable)$ ]] || { echo "unknown mode"; exit 1; }
@@ -68,6 +76,11 @@ jobs:
         working-directory: ${{ runner.temp }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
         run: |
           set -euo pipefail
           test -n "$CLUED_ATTESTATION_DATABASE_URL"
@@ -77,22 +90,24 @@ jobs:
           result=$(docker run --rm -i -e DATABASE_URL="$database_url" postgres:17-alpine \
             sh -c 'psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -X -tA' <<'SQL'
           with expected(f, anon, authenticated) as (values
-            ('public.clued_integration_request_open_v1(text,jsonb)', true, true),
-            ('public.clued_integration_create_or_bind_v1(text,jsonb)', true, true),
-            ('public.clued_integration_identity_update_v1(text,jsonb)', true, true),
-            ('public.clued_integration_reconcile_request_v1(text,jsonb)', true, true),
-            ('public.clued_integration_status_v1(text,jsonb)', true, true),
-            ('public.clued_integration_declare_v1(text,jsonb)', true, true),
-            ('public.clued_integration_report_v1(text,jsonb)', true, true),
-            ('public.clued_integration_verify_v1(text,jsonb)', true, true),
-            ('public.clued_integration_revoke_self_v1(text,jsonb)', true, true),
+            ('public.clued_integration_request_open_v1(text,jsonb)', true, false),
+            ('public.clued_integration_create_or_bind_v1(text,jsonb)', true, false),
+            ('public.clued_integration_identity_update_v1(text,jsonb)', true, false),
+            ('public.clued_integration_reconcile_request_v1(text,jsonb)', true, false),
+            ('public.clued_integration_status_v1(text,jsonb)', true, false),
+            ('public.clued_integration_declare_v1(text,jsonb)', true, false),
+            ('public.clued_integration_report_v1(text,jsonb)', true, false),
+            ('public.clued_integration_verify_v1(text,jsonb)', true, false),
+            ('public.clued_integration_revoke_self_v1(text,jsonb)', true, false),
             ('public.clued_user_integration_v1(jsonb)', false, true),
             ('public.clued_admin_integration_v1(jsonb)', false, true)),
+          migrations(name) as (values ('integration_runtime_grants'), ('db_security_hygiene')),
           problems as (
-            select 'migration integration_runtime_grants is recorded '
-                || (select count(*) from supabase_migrations.schema_migrations where name = 'integration_runtime_grants')
+            select 'migration ' || m.name || ' is recorded '
+                || (select count(*) from supabase_migrations.schema_migrations s where s.name = m.name)
                 || ' times' p
-             where (select count(*) from supabase_migrations.schema_migrations where name = 'integration_runtime_grants') <> 1
+              from migrations m
+             where (select count(*) from supabase_migrations.schema_migrations s where s.name = m.name) <> 1
             union all
             select 'missing function ' || e.f from expected e where to_regprocedure(e.f) is null
             union all
@@ -124,6 +139,11 @@ jobs:
           DECISION_ID: ${{ inputs.decision_id }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
         run: |
           set -euo pipefail
           value=false; [[ "$MODE" == enable ]] && value=true

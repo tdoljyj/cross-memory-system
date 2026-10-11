@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -45,23 +47,28 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
       try { await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8")); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const tokenHash = hash();
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'currentness@example.invalid',now())", [userId]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Currentness database test',$2,array['context:read','context:write','audit:read'],array['global'])`, [userId, tokenHash]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query("set role anon");
-    const rpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [tokenHash, input])).rows[0].value;
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
+    const rpc = async (name, input) => (await gateway.query(`select public.${name}($1,$2) value`, [tokenHash, input])).rows[0].value;
     const list = () => rpc("clued_record_list", { level: "global", record_type: "decision" });
     const user = server.getPgClient();
     clients.push(user);
     await user.connect();
     await user.query("set role authenticated");
-    await user.query("select set_config('request.jwt.claim.sub',$1,false)", [userId]);
+    await user.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+      [userId, JSON.stringify({ sub: userId, role: "authenticated" })]);
     const userList = async () => (await user.query("select public.clued_user_record_list($1) value", [{ level: "global", record_type: "decision" }])).rows[0].value;
 
     const d1 = await rpc("clued_record_mutate", {
@@ -249,7 +256,7 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'typed-currentness@example.invalid',now())", [typedUser]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Typed currentness test',$2,array['context:read','context:write'],array['global'])`, [typedUser, typedToken]);
-    const typedRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [typedToken, input])).rows[0].value;
+    const typedRpc = async (name, input) => (await gateway.query(`select public.${name}($1,$2) value`, [typedToken, input])).rows[0].value;
     assert.equal((await typedRpc("clued_record_mutate", {
       operation: "create", record_type: "decision", record_schema_version: 1,
       lifecycle_status: "active", scope: "global", idempotency_key: uuid(),
@@ -300,7 +307,7 @@ test("T-CUR-35/67 successor: Event fence, materialization, hidden equivalence, a
       values($1,'synthetic','Alias currentness test',$2,
         array['context:read','context:write'],array['project:alpha',$3])`,
       [aliasUser, aliasToken, projectScope]);
-    const aliasRpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`,
+    const aliasRpc = async (name, input) => (await gateway.query(`select public.${name}($1,$2) value`,
       [aliasToken, input])).rows[0].value;
     const aliasRecord = await aliasRpc("clued_record_mutate", {
       operation: "create", record_type: "decision", record_schema_version: 1,

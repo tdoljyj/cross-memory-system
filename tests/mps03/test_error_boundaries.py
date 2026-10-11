@@ -26,6 +26,9 @@ class ErrorBoundaries(unittest.TestCase):
         class DeniedSessions(BaseHTTPRequestHandler):
             def log_message(self,*args): pass
             def do_POST(self):
+                # Consume the valid fixture request before closing the socket:
+                # unread POST bytes can reset the connection on Windows.
+                bounded_request_body(self)
                 body=b'{"ok":false,"error":"ENTRY_AUTHENTICATION_FAILED"}'
                 self.send_response(401)
                 self.send_header("Content-Type","application/json")
@@ -214,6 +217,7 @@ class ErrorBoundaries(unittest.TestCase):
             called=False
             def log_message(self,*args): pass
             def do_POST(self):
+                bounded_request_body(self)
                 LocalGateway.called=True
                 body=b'{"session_token":"local-session"}'
                 self.send_response(200)

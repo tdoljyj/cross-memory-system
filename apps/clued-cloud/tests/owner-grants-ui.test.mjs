@@ -350,6 +350,114 @@ test('a routine action opens on 这一类管一段时间 with the suggested dura
   assert.equal(f.button('这一类管一段时间').props['aria-pressed'], true);
 });
 
+test('DatasetSplit bootstrap uses only the fixed one-hour, one-use requester grant despite the high-risk once default', async t => {
+  const f = fixture(CONFIRM); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', default_choice: 'once', suggested_expires_seconds: 86400,
+    request: { ...request(), action: 'model.dataset_split.bootstrap' },
+    view: { action: 'model.dataset_split.bootstrap', choice: 'once', expires_seconds: 86400, max_uses: 1 },
+    resource_options: [{ resource: 'repo:o/n/**', options: ['repo:o/n/**', 'repo:o/**'] }] }, error: null });
+  await f.settle();
+  assert.deepEqual(plain(f.calls[1].args.p_input), { request_id: REQUEST, choice: 'grant',
+    expires_seconds: 3600, max_uses: 1, grantee: 'requester' });
+  const answer = issued({ seconds: 3600 });
+  answer.data.confirmation_view.action = 'model.dataset_split.bootstrap';
+  answer.data.confirmation_view.max_uses = 1;
+  f.calls[1].resolve(answer); await f.settle();
+  assert.equal(f.nodes('select').length, 0);
+  assert.equal(f.nodes('input').filter(n => n.props.type === 'checkbox').length, 0);
+  assert.ok(!f.nodes('button').some(n => f.text(n) === '只批这一次'));
+  assert.match(f.text(), /1 小时内使用 1 次/);
+  f.button('批准').props.onClick();
+  assert.deepEqual(plain(f.calls[2].args.p_input), { confirmation_token: 'clued_ogr_a', view_digest: 'd'.repeat(64) });
+});
+
+test('DatasetSplit bootstrap cannot approve an incompatible server confirmation view', async t => {
+  for (const change of [v => { v.choice = 'once'; }, v => { v.expires_seconds = 86400; },
+    v => { v.max_uses = null; }, v => { v.grantee.any_agent = true; }]) {
+    const f = fixture(CONFIRM); t.after(() => f.unmount());
+    f.emit('INITIAL_SESSION', session('owner'));
+    f.calls[0].resolve({ data: { status: 'ok', request: { ...request(), action: 'model.dataset_split.bootstrap' },
+      view: { action: 'model.dataset_split.bootstrap', expires_seconds: 3600 } }, error: null });
+    await f.settle();
+    const answer = issued({ seconds: 3600 });
+    answer.data.confirmation_view.action = 'model.dataset_split.bootstrap';
+    answer.data.confirmation_view.max_uses = 1;
+    change(answer.data.confirmation_view);
+    f.calls[1].resolve(answer); await f.settle();
+    assert.equal(f.button('批准').props.disabled, true);
+    assert.match(f.text(), /暂时无法批准/);
+    assert.equal(f.calls.length, 2);
+  }
+});
+
+const CORRECTION_REQUEST = 'af1cabdb-5259-4ca3-94d3-133f1af122c8';
+const CORRECTION_GRANT = '4970e492-d26e-4974-adaa-757b2146b171';
+async function openCorrection(f, grantChange = {}) {
+  f.emit('INITIAL_SESSION',session('owner'));
+  f.calls[0].resolve({data:{status:'ok',request:{...request('approved_once'),request_id:CORRECTION_REQUEST,
+    action:'model.dataset_split.bootstrap',grant:{grant_id:CORRECTION_GRANT,uses:0,max_uses:1,revoked:false,
+      expires_at:new Date(Date.now()+86400_000).toISOString(),...grantChange}},
+    view:{action:'model.dataset_split.bootstrap',expires_seconds:86400}},error:null});
+  await f.settle();
+}
+function correctionIssue(options = {}) {
+  const result = issued({seconds:3600,...options});
+  result.data.confirmation_view.action='model.dataset_split.bootstrap';
+  result.data.confirmation_view.max_uses=1;
+  result.data.confirmation_view.correction={request_id:CORRECTION_REQUEST,previous_grant_id:CORRECTION_GRANT,
+    previous_expires_at:'2099-01-01T00:00:00Z'};
+  return result;
+}
+test('the original decided request offers a Native correction view and never mutates a grant before explicit confirmation',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  assert.equal(f.calls.length,1,'loading a decided request never issues or commits a token');
+  assert.match(f.text(),/原批准已保留/);
+  f.button('查看限时修正').props.onClick();
+  assert.deepEqual(plain([f.calls[1].name,f.calls[1].args.p_input]),
+    ['clued_dataset_split_grant_correction_issue_v1',{request_id:CORRECTION_REQUEST}]);
+  f.calls[1].resolve(correctionIssue());await f.settle();
+  assert.equal(f.calls.length,2);assert.match(f.text(),/确认收窄授权期限/);
+  assert.match(f.text(),/不超过原期限/);assert.ok(f.text().includes(CORRECTION_GRANT));
+  assert.equal(f.nodes('select').length,0);
+  f.button('确认限时修正').props.onClick();
+  assert.deepEqual(plain([f.calls[2].name,f.calls[2].args.p_input]),
+    ['clued_owner_grant_v1',{confirmation_token:'clued_ogr_a',view_digest:'d'.repeat(64)}]);
+  f.calls[2].resolve(committed);await f.settle();
+  assert.match(f.text(),/授权期限已修正/);assert.match(f.text(),/旧授权已撤销，原申请和批准历史保留/);
+});
+test('spent, revoked or wrong original grants offer no correction; cancel changes no authorization',async t=>{
+  for(const change of [{uses:1},{revoked:true},{grant_id:'another-grant'}]){
+    const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f,change);
+    assert.ok(!f.nodes('button').some(n=>f.text(n)==='查看限时修正'));assert.equal(f.calls.length,1);
+  }
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  f.button('查看限时修正').props.onClick();f.calls[1].resolve(correctionIssue());await f.settle();
+  f.button('返回原批准').props.onClick();f.render();assert.equal(f.calls.length,2);
+  assert.ok(!f.nodes('button').some(n=>f.text(n)==='确认限时修正'));
+});
+test('an expiring correction token refreshes through the same correction door, and unknown completion uses the original token',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  f.button('查看限时修正').props.onClick();
+  f.calls[1].resolve(correctionIssue({expires:new Date(Date.now()+5000).toISOString()}));await f.settle();
+  f.button('确认限时修正').props.onClick();
+  assert.equal(f.calls[2].name,'clued_dataset_split_grant_correction_issue_v1');
+  f.calls[2].resolve(correctionIssue({token:'clued_ogr_fresh'}));await f.settle();
+  assert.equal(f.calls[3].name,'clued_owner_grant_v1');
+  f.calls[3].reject(new TypeError('network'));await f.settle();
+  f.button('核对原操作').props.onClick();
+  assert.deepEqual(plain(f.calls[4].args),plain(f.calls[3].args));
+  f.calls[4].resolve({data:{...committed.data,replayed:true},error:null});await f.settle();
+  assert.match(f.text(),/授权期限已修正/);
+});
+test('a correction view naming another original cannot be submitted',async t=>{
+  const f=fixture(CONFIRM,{id:CORRECTION_REQUEST});t.after(()=>f.unmount());await openCorrection(f);
+  f.button('查看限时修正').props.onClick();const answer=correctionIssue();
+  answer.data.confirmation_view.correction.previous_grant_id='other-grant';
+  f.calls[1].resolve(answer);await f.settle();assert.equal(f.calls.length,2);
+  assert.ok(!f.nodes('button').some(n=>f.text(n)==='确认限时修正'));assert.match(f.text(),/与原申请不一致/);
+});
+
 test('the Agent\'s suggested duration is the default; changing the options issues a new token', async t => {
   const f = fixture(CONFIRM); t.after(() => f.unmount());
   await open(f, 'pending', 86400);
@@ -522,4 +630,83 @@ test('grants page shows the ids Agents quote: grant, request and Task', async t 
   assert.ok(text.includes('连接权限申请 e86eb58d'));
   assert.ok(text.includes('授权 c1d2e3f4'), 'a grant the Owner started has no request id');
   assert.ok(text.includes('申请 33333333'), 'a pending request shows its id');
+});
+
+// OwnerCredential §12 (Decision 5ce219c6): the auto-approval switch.
+const autoOff = { on: false, covers: ['release.production'],
+  excluded: [{ action: 'connection.permission', title: '给发起请求的连接加权限' }] };
+const autoView = { kind: 'owner_auto_approve', expires_seconds: 86400,
+  covers: [{ action: 'release.production', title: '运行生产发布（deploy 模式）', risk: 'high', approval: 'once' },
+    { action: 'work_claim.extra_claims', title: '某个 Task 超出每日认领上限后再认领', risk: 'routine', approval: 'grant' }],
+  excluded: [{ action: 'connection.permission', title: '给发起请求的连接加权限' }] };
+
+test('grants page turns auto-approval on in two steps over the view Clued renders', async t => {
+  const f = fixture(GRANTS); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', auto_approve: autoOff, grants: [], pending_requests: [] }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('自动审批'));
+  assert.ok(f.text().includes('已关闭'));
+  f.button('打开自动审批').props.onClick();
+  assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]),
+    ['clued_owner_auto_approve_confirmation_issue_v1', { p_input: { expires_seconds: 86400 } }], 'default 24 hours');
+  f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'tok-1', view_digest: 'd'.repeat(64),
+    confirmation_view: autoView }, error: null });
+  await f.settle();
+  const text = f.text();
+  assert.ok(text.includes('打开 24 小时'));
+  assert.ok(text.includes('运行生产发布（deploy 模式）（release.production）：只批这一次'));
+  assert.ok(text.includes('work_claim.extra_claims）：按 Agent 建议的时长和次数'));
+  assert.ok(text.includes('仍需你确认：给发起请求的连接加权限'));
+  assert.equal(f.calls.length, 2, 'nothing is turned on before 确认打开');
+  f.button('确认打开').props.onClick();
+  assert.deepEqual(plain([f.calls[2].name, f.calls[2].args]),
+    ['clued_owner_auto_approve_on_v1', { p_input: { confirmation_token: 'tok-1', view_digest: 'd'.repeat(64) } }]);
+  f.calls[2].resolve({ data: { status: 'committed', auto_approve: { ...autoOff, on: true,
+    expires_at: new Date(Date.now() + 5 * 3600_000 + 30_000).toISOString() } }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('自动审批已打开'));
+  assert.ok(f.text().includes('已打开，还剩 5 小时'));
+  assert.ok(f.text().includes('不会自动通过：给发起请求的连接加权限'));
+  assert.equal(f.fetches.length, 0);
+});
+
+test('grants page: 取消 drops the offered view; a chosen duration is sent; 关闭 is one step', async t => {
+  const f = fixture(GRANTS); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', auto_approve: autoOff, grants: [], pending_requests: [] }, error: null });
+  await f.settle();
+  f.nodes('select')[0].props.onChange({ target: { value: '604800' } }); f.render();
+  f.button('打开自动审批').props.onClick();
+  assert.deepEqual(plain(f.calls[1].args), { p_input: { expires_seconds: 604800 } });
+  f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'tok-2', view_digest: 'e'.repeat(64),
+    confirmation_view: { ...autoView, expires_seconds: 604800 } }, error: null });
+  await f.settle();
+  assert.ok(f.text().includes('打开 7 天'));
+  f.button('取消').props.onClick(); f.render();
+  assert.ok(f.text().includes('已关闭'));
+  assert.equal(f.calls.length, 2);
+
+  const g = fixture(GRANTS); t.after(() => g.unmount());
+  g.emit('INITIAL_SESSION', session('owner'));
+  g.calls[0].resolve({ data: { status: 'ok', auto_approve: { ...autoOff, on: true, expires_at: '2099-01-01T00:00:00Z' },
+    grants: [{ grant_id: 'a0e3b847-b0ef-4816-b1c3-863cb770af98', action: 'release.production', action_title: '运行生产发布（deploy 模式）',
+      resources: ['repo:o/n/abc'], any_agent: false, agent_name: 'Claude', expires_at: '2099-01-01T00:00:00Z',
+      max_uses: 1, uses: 0, auto_approved: true }], pending_requests: [] }, error: null });
+  await g.settle();
+  assert.ok(g.text().includes('来源自动审批'), 'a grant the switch gave says so');
+  g.button('关闭自动审批').props.onClick();
+  assert.deepEqual(plain([g.calls[1].name, g.calls[1].args]), ['clued_owner_auto_approve_off_v1', { p_input: {} }]);
+  g.calls[1].resolve({ data: { status: 'committed', auto_approve: autoOff }, error: null });
+  await g.settle();
+  assert.ok(g.text().includes('自动审批已关闭'));
+  assert.ok(g.text().includes('授权 a0e3b847'), 'grants already given stay listed');
+});
+
+test('grants page: a server without the switch shows no switch section', async t => {
+  const f = fixture(GRANTS); t.after(() => f.unmount());
+  f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', grants: [], pending_requests: [] }, error: null });
+  await f.settle();
+  assert.ok(!f.text().includes('自动审批'));
 });

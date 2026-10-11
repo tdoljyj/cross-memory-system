@@ -42,19 +42,32 @@
 // the Worker. The public /mcp route cannot be used here: in production it is
 // owned by the delegated OAuth provider and accepts OAuth access tokens only.
 //
-// Enforcement is the Owner's explicit switch, the repository variable
-// CLUED_WORK_ADMISSION_ENFORCE=true. Until it is on, the check is advisory: a
-// PR that names a claim gets its verdict in the summary, a PR without one is
-// reported NOT_ENFORCED, and both are admitted, so nothing changes while the
-// migrations, Worker flag and Agent-side claiming are still rolling out. Once
-// it is on, a missing trailer, a REJECTED verdict, a missing RPC, a refused
-// token or a transport error all fail closed. Non-PR events (push to main,
-// dispatch) are not admission subjects and are admitted.
+// Admission is always enforced: a missing trailer, a REJECTED verdict, a
+// missing RPC, a refused token or a transport error all fail closed, except
+// where the merge admission policy itself only advises the claim (below).
+// Until Merge Admission step 6 (2026-10-09) the repository variables
+// CLUED_WORK_ADMISSION_ENFORCE and CLUED_OWNER_REVIEW_ENFORCE could turn the
+// check into an advisory one; they are no longer read. The rollback is the
+// frozen state and the main ruleset's Owner emergency steps
+// (MergeAdmission.v0.1.md §13). Non-PR events (push to main, dispatch) are
+// not admission subjects and are admitted.
 //
 // CLUED_CONTEXT_READ_TOKEN is read only by the jobs that run default-branch
 // code (the pull_request_target check, the scheduled re-verification and the
 // dispatch admission), all in the `clued-admission` environment. No `pull_request` job, whose code the PR
 // controls, is given it.
+//
+// Merge Admission v0.1 (MergeAdmission.v0.1.md, Owner Decision d130195e): what
+// a pull request needs besides its claim is no longer a set of constants here
+// but the merge admission policy (merge-admission-policy.mjs and
+// config/merge-admission-policy.json, read from the default branch's
+// checkout). The pull request's paths give its layer (protected, code or
+// docs), the Owner's variable CLUED_MERGE_ADMISSION_STATE the state (normal,
+// efficiency or frozen), and the two give the rules: whether the claim is
+// enforced or only advised, whether an Owner Grant and the base branch's tip
+// are needed, whether the merge slot is required and whether auto-merge is
+// allowed. The summary and the App check's title show the mode a head was
+// judged in.
 //
 // No dependencies: Node 20+ fetch, crypto and fs only, so a hosted runner
 // finishes in seconds without an install.
@@ -63,6 +76,20 @@ import { createHash, createSign } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  effectiveProtectedPaths,
+  effectiveRules,
+  globToRegExp,
+  layerOf,
+  loadPolicy,
+  modeLabel,
+  parseModeLabel,
+  POLICY_PATH,
+  resolveMode,
+} from "./merge-admission-policy.mjs";
+
+export { globToRegExp };
 
 // The public project URL and publishable key come from the repository's single
 // source for them, app/supabase-public-config.ts (the web app and the Worker
@@ -87,10 +114,6 @@ export function resolvePublicSupabaseConfig(env, workspace, readFile = fs.readFi
 const CLAIM_TRAILER = /^Clued-Work-Claim:[ \t]*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})[ \t]*$/m;
 const SCOPE_TRAILER = /^Clued-Work-Scope:[ \t]*(global|project:[0-9a-fA-F-]{36})[ \t]*$/m;
 
-export function enforcementEnabled(env) {
-  return /^(1|true|on|enabled)$/i.test((env.CLUED_WORK_ADMISSION_ENFORCE ?? "").trim());
-}
-
 // ---------------------------------------------------------------------------
 // Claim reference: PR body first, then the head commit message.
 
@@ -106,29 +129,8 @@ export function parseClaimReference(text) {
 // Workflow path filters (GitHub `on.pull_request.paths` / `paths-ignore`).
 // A line-based reader is enough for this repository's workflows and keeps the
 // script dependency-free; it is exercised against the real files in the test.
-
-export function globToRegExp(glob) {
-  let source = "";
-  for (let i = 0; i < glob.length; i += 1) {
-    const ch = glob[i];
-    if (ch === "*") {
-      if (glob[i + 1] === "*") {
-        source += ".*";
-        i += 1;
-        if (glob[i + 1] === "/") i += 1; // `**/` also matches zero directories
-      } else {
-        source += "[^/]*";
-      }
-    } else if (ch === "?") {
-      source += "[^/]";
-    } else if ("\\^$.|+()[]{}".includes(ch)) {
-      source += `\\${ch}`;
-    } else {
-      source += ch;
-    }
-  }
-  return new RegExp(`^${source}$`);
-}
+// globToRegExp lives in merge-admission-policy.mjs, which matches the policy's
+// layers with the same semantics.
 
 function unquote(value) {
   const trimmed = value.trim();
@@ -252,7 +254,7 @@ export function readWorkflowTriggers(workspace, readDir = fs.readdirSync, readFi
 // ---------------------------------------------------------------------------
 // GitHub REST (GITHUB_TOKEN of the run; read-only).
 
-async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) {
+export async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   const response = await fetchImpl(`${base}${route}`, {
     headers: {
@@ -267,7 +269,7 @@ async function githubJson(fetchImpl, env, route, { allowMissing = false } = {}) 
   return await response.json();
 }
 
-async function githubPaged(fetchImpl, env, route, key) {
+export async function githubPaged(fetchImpl, env, route, key) {
   const items = [];
   for (let page = 1; page <= 50; page += 1) {
     const sep = route.includes("?") ? "&" : "?";
@@ -310,6 +312,16 @@ export const GATE_JOB_SHA256 = new Set([
   // runs on the self-hosted Linux pool with a pinned Node, so it spends no
   // hosted minutes. The hosted variant (62f231ef…) is no longer accepted.
   "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4",
+  // Task fb97ebd5: the same gate with Pull requests: read for private-PR
+  // re-runs. Register this exact version before updating the workflows.
+  "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd",
+  // Merge Admission step 6 (Task 958f8ed7): the same gate without the
+  // CLUED_WORK_ADMISSION_ENFORCE line, once enforcement no longer reads it.
+  "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc",
+  // BUG-20261010-CI-TMP-001: exactly the same enforced gate, plus the
+  // checked-out temporary-storage bootstrap immediately before its command.
+  // Register on trusted main first; workflow rollout is a separate PR.
+  "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 
@@ -434,18 +446,19 @@ export function jobTimeout(job) {
   return match && value.split("\n").slice(1).every((line) => /^\s*(#.*)?$/.test(line)) ? Number(match[1]) : null;
 }
 
-// A job counts as GitHub-hosted only when its runs-on is one literal
-// ubuntu-*, windows-* or macos-* label and it neither calls a reusable
-// workflow nor merges YAML anchors; anything else may reach a self-hosted
-// runner, so it is treated as one.
+// A job counts as GitHub-hosted with one literal ubuntu-*, windows-* or
+// macos-* label, or the exact state_change choice between two fixed hosted
+// labels below. It must neither call a reusable workflow nor merge YAML
+// anchors. Every other expression may reach a self-hosted runner.
 const HOSTED_LABEL = /^(ubuntu|windows|macos)-[A-Za-z0-9.-]+$/;
+const HOSTED_STATE_CHANGE_RUNNER = "${{ inputs.reason == 'state_change' && 'ubuntu-latest' || 'ubuntu-slim' }}";
 export function jobIsHosted(job) {
   if (job.lines.some((line) => /^ {4}uses:/.test(line) || /^\s*<<\s*:/.test(line))) return false;
   const value = jobField(job, "runs-on");
   if (value === null) return false;
   const text = value.replace(/(^|\s)#.*$/gm, "").trim();
   if (text.includes("\n")) return false;
-  return HOSTED_LABEL.test(unquote(text));
+  return HOSTED_LABEL.test(unquote(text)) || text === HOSTED_STATE_CHANGE_RUNNER;
 }
 
 // Findings for one workflow at the PR head; baseText is its base-branch
@@ -541,6 +554,29 @@ export async function workflowGateFindings(fetchImpl, env, repository, files, he
   return (await workflowFindings(fetchImpl, env, repository, files, headSha, baseSha)).gate;
 }
 
+// Merge Admission v0.1 §3.3, review MAJOR-1: a broken policy file on the
+// default branch judges every pull request as frozen. A pull request that
+// changes the file is refused outright, as the workflow guard refuses a
+// workflow, when its head's file would not load or when it removes the file.
+// The head's file is checked with the default branch's loadPolicy, so a new
+// schema is a two-step change: first a loader that accepts it, then the file.
+export async function policyFileFindings(fetchImpl, env, repository, files, headSha) {
+  const findings = [];
+  for (const file of files) {
+    if (file.filename !== POLICY_PATH && file.previous_filename !== POLICY_PATH) continue;
+    // A copy of the file elsewhere leaves it as it is.
+    if (file.status === "copied" && file.filename !== POLICY_PATH) continue;
+    if (file.status === "removed" || file.filename !== POLICY_PATH) {
+      findings.push(`policy_file_removed:${POLICY_PATH}`);
+      continue;
+    }
+    const text = await fileAt(fetchImpl, env, repository, POLICY_PATH, headSha);
+    const { errors } = text === null ? { errors: ["missing at the head"] } : loadPolicy(text);
+    if (errors.length) findings.push(`policy_file_invalid:${errors[0]}${errors.length > 1 ? ` (and ${errors.length - 1} more)` : ""}`);
+  }
+  return findings;
+}
+
 // ---------------------------------------------------------------------------
 // Owner review (re-review 7, MAJOR-3; re-review 8, Owner Decision f2bf949a).
 // The main ruleset requires no approving review, so whatever the admission
@@ -551,8 +587,8 @@ export async function workflowGateFindings(fetchImpl, env, repository, files, he
 // schedule. A pull request that changes any PROTECTED_PATHS entry is admitted
 // only with an Owner Grant of repo.protected_change on its exact head commit
 // (OwnerCredential §6.3), asked of Clued's admission door with the admission
-// Binding. Enforced when CLUED_OWNER_REVIEW_ENFORCE=true (the Owner's switch,
-// set once migration 20261005120000 is applied); until then it is reported.
+// Binding. Always enforced (until Merge Admission step 6 the Owner's switch
+// CLUED_OWNER_REVIEW_ENFORCE could reduce it to a notice).
 // Re-review 8, MAJOR-1/2: the decision is by path only. Reading a workflow's
 // environments, secrets and triggers line by line missed YAML escapes,
 // explicit keys and aliases, and the admission job's own tests ran with its
@@ -565,37 +601,14 @@ export async function workflowGateFindings(fetchImpl, env, repository, files, he
 
 export const OWNER_REVIEW_ACTION = "repo.protected_change";
 export const OWNER_REVIEW_RPC = "clued_owner_grant_admission_door_v1";
-export const PROTECTED_PATHS = [
-  // Every workflow, and what the jobs holding secrets run: the CI and release
-  // scripts (including the admission job's own self-tests), the runner check,
-  // the release scripts and the dependencies they load, the Worker deploy
-  // configuration, and where admission asks Clued.
-  ".github/**",
-  "scripts/ci/**",
-  "scripts/runner/**",
-  "apps/clued-cloud/scripts/**",
-  "apps/clued-cloud/package.json",
-  "apps/clued-cloud/package-lock.json",
-  "apps/clued-cloud/wrangler*.jsonc",
-  PUBLIC_CONFIG_SOURCE,
-  // Re-review 9, MINOR-2: checkout attributes can re-encode or filter what
-  // every later job runs (working-tree-encoding, filters), and submodules
-  // bring in code from elsewhere.
-  ".gitattributes",
-  "**/.gitattributes",
-  ".gitmodules",
-  // Re-review 11, NIT: npm configuration decides where the dependencies
-  // that run with production credentials come from.
-  ".npmrc",
-  "**/.npmrc",
-];
+// The protected paths: the merge admission policy's CORE_PROTECTED_PATHS
+// (merge-admission-policy.mjs) and the policy file itself. The policy can add
+// more (effectiveProtectedPaths), never remove any; the name stays for the
+// references to it.
+export const PROTECTED_PATHS = Object.freeze(effectiveProtectedPaths(null));
 
-export function ownerReviewEnforced(env) {
-  return /^(1|true|on|enabled)$/i.test((env.CLUED_OWNER_REVIEW_ENFORCE ?? "").trim());
-}
-
-export function protectedPathFindings(paths) {
-  const patterns = PROTECTED_PATHS.map((pattern) => [pattern, globToRegExp(pattern)]);
+export function protectedPathFindings(paths, protectedPaths = effectiveProtectedPaths(null)) {
+  const patterns = protectedPaths.map((pattern) => [pattern, globToRegExp(pattern)]);
   const findings = [];
   for (const changed of paths) {
     const hit = patterns.find(([, regex]) => regex.test(changed));
@@ -682,28 +695,44 @@ export function ownerReviewFindings(headText, baseText) {
   return findings;
 }
 
-export async function ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note) {
+// Task 2b2359da: the door can exceed the anon role's 3 s statement timeout
+// (500, code 57014) on a fresh database connection. A cancelled call rolls
+// back as a whole and the door is idempotent (it reuses the pending request
+// and replays a grant use), so that one error is retried, twice at most.
+export const DOOR_RETRY_DELAYS_MS = Object.freeze([2000, 4000]);
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note,
+  { delays = DOOR_RETRY_DELAYS_MS, sleep = sleepMs } = {}) {
   const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
   const resource = `repo:${repository}/${headSha}`;
-  const response = await fetchImpl(`${base}/rest/v1/rpc/${OWNER_REVIEW_RPC}`, {
-    method: "POST",
-    headers: {
-      apikey: key,
-      authorization: `Bearer ${key}`,
-      "content-type": "application/json",
-      accept: "application/json",
-      "user-agent": "clued-work-admission",
-    },
-    body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN),
-      p_input: { action: OWNER_REVIEW_ACTION, resources: [resource], ...(note ? { note } : {}) } }),
-  });
+  let response;
   let text = "";
   let body = null;
-  try {
-    text = await response.text();
-    body = text ? JSON.parse(text) : null;
-  } catch {
+  for (let attempt = 0; ; attempt += 1) {
+    response = await fetchImpl(`${base}/rest/v1/rpc/${OWNER_REVIEW_RPC}`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+        accept: "application/json",
+        "user-agent": "clued-work-admission",
+      },
+      body: JSON.stringify({ p_token_hash: sha256Hex(env.CLUED_CONTEXT_READ_TOKEN),
+        p_input: { action: OWNER_REVIEW_ACTION, resources: [resource], ...(note ? { note } : {}) } }),
+    });
+    text = "";
     body = null;
+    try {
+      text = await response.text();
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    const timedOut = response.status === 500 && body && body.code === "57014";
+    if (!timedOut || attempt >= delays.length) break;
+    await sleep(delays[attempt]);
   }
   const detail = describe(response.status, body, text, response.headers);
   if (response.status === 404 && body && body.code === "PGRST202") return { kind: "rpc_unavailable", detail, resource };
@@ -783,11 +812,13 @@ export async function verifyClaim(fetchImpl, env, args, workspace) {
 // ---------------------------------------------------------------------------
 // Evaluation.
 
-function emptyOutcome(eventName, enforced) {
+// enforced is always true since Merge Admission step 6; it stays in the
+// outcome for the `enforced` output of the registered admission-gate job.
+function emptyOutcome(eventName) {
   return {
-    mode: null, event: eventName, admitted: false, enforced, verdict: null, reasons: [], notices: [],
+    mode: null, event: eventName, admitted: false, enforced: true, verdict: null, reasons: [], notices: [],
     claim_id: null, scope: null, head_sha: null, base_sha: null, pr_ref: null, changed_paths: [],
-    applicable_workflows: [], error: null,
+    applicable_workflows: [], error: null, admission_mode: null,
   };
 }
 
@@ -815,32 +846,30 @@ async function summarizeWorkflows(fetchImpl, env, repository, headSha, changedPa
 }
 
 // Re-review 7, MAJOR-3: a pull request with owner-review findings needs an
-// Owner Grant on its head commit. Enforced, anything short of a grant rejects
-// it. Re-review 9, NIT: until the Owner turns enforcement on, the door is not
-// asked at all (it would open an Owner request for every such head); the
-// summary only says that the Owner would be asked.
+// Owner Grant on its head commit; anything short of a grant rejects it.
 // Path names come from the pull request: only plain characters reach the
 // summary, the Owner's note and the check (re-review 10 MINOR-1, re-review 11 NIT).
 export function plainFinding(finding) {
   return String(finding).replace(/[^A-Za-z0-9._/*:() -]/g, "?").slice(0, 160);
 }
 
-async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome, tipCompare) {
+// Merge Admission v0.1: asked whenever the rules say owner_grant: required. In
+// frozen a pull request outside the protected layer is asked too (frozenLayer
+// names its layer in the Owner's note), and no approval is carried over
+// (carryOver false), so every head needs its own grant.
+async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, outcome, tipCompare,
+  { protectedPaths, carryOver = true, frozenLayer = null } = {}) {
   const baseTip = tipCompare ? tipCompare.tip : null;
-  const enforced = ownerReviewEnforced(env);
   const headSha = pr.head.sha;
   const summary = findings.slice(0, 10).map(plainFinding).join(", ") + (findings.length > 10 ? `, and ${findings.length - 10} more` : "");
-  if (!enforced) {
-    outcome.owner_review = { enforced, kind: "not_asked", resource: `repo:${repository}/${headSha}`, confirm_url: null, grant_id: null };
-    outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): an Owner Grant on ${headSha} would be needed (${summary})`);
-    return;
-  }
   // Owner Decision a0d93cd0: the base branch merged into an approved head.
   let source = null;
-  try {
-    source = await carriedApprovalSource(fetchImpl, env, repository, headSha, tipCompare);
-  } catch (error) {
-    outcome.notices.push(`owner_review_carry_over_unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  if (carryOver) {
+    try {
+      source = await carriedApprovalSource(fetchImpl, env, repository, headSha, tipCompare, protectedPaths);
+    } catch (error) {
+      outcome.notices.push(`owner_review_carry_over_unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   if (source) {
     const carryNote = `${outcome.pr_ref ?? repository} @ ${source.slice(0, 12)}: earlier head of this pull request; its approval would carry over to ${headSha.slice(0, 12)}, which only merged ${pr.base.ref} into it`.slice(0, 2000);
@@ -851,7 +880,7 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
       carried = { kind: "transient", detail: error instanceof Error ? error.message : String(error) };
     }
     if (carried.kind === "granted" || carried.kind === "transient") {
-      outcome.owner_review = { enforced, kind: carried.kind, resource: carried.resource ?? null, confirm_url: null,
+      outcome.owner_review = { kind: carried.kind, resource: carried.resource ?? null, confirm_url: null,
         grant_id: carried.grant && carried.grant.grant_id ? carried.grant.grant_id : null, carried_from: source };
       if (carried.kind === "granted") {
         outcome.notices.push(`owner_review_carried:${outcome.owner_review.grant_id} from ${source} (${summary})`);
@@ -874,14 +903,16 @@ async function ownerReview(fetchImpl, env, repository, pr, workspace, findings, 
     .map((finding) => finding.replace(/^protected_path:/, "").replace(/[^A-Za-z0-9._/*-]/g, "?").slice(0, 120)).join(", ");
   // Re-review 11, NIT: compared with the tip the pull request must contain.
   const compare = `https://github.com/${repository}/compare/${baseTip ?? pr.base.sha}...${headSha}`;
-  const note = `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${findings.length} protected path(s) changed, see ${compare} (${listed}${findings.length > 10 ? `, and ${findings.length - 10} more` : ""})`.slice(0, 2000);
+  const note = (frozenLayer
+    ? `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: merge admission is frozen, so this ${frozenLayer}-layer change of ${outcome.changed_paths.length} path(s) needs an Owner Grant too, see ${compare}`
+    : `${outcome.pr_ref ?? repository} @ ${headSha.slice(0, 12)}: ${findings.length} protected path(s) changed, see ${compare} (${listed}${findings.length > 10 ? `, and ${findings.length - 10} more` : ""})`).slice(0, 2000);
   let door;
   try {
     door = await ownerReviewDoor(fetchImpl, env, repository, headSha, workspace, note);
   } catch (error) {
     door = { kind: "transient", detail: error instanceof Error ? error.message : String(error) };
   }
-  outcome.owner_review = { enforced, kind: door.kind, resource: door.resource ?? null, confirm_url: door.confirm_url ?? null,
+  outcome.owner_review = { kind: door.kind, resource: door.resource ?? null, confirm_url: door.confirm_url ?? null,
     grant_id: door.grant && door.grant.grant_id ? door.grant.grant_id : null };
   if (door.kind === "granted") {
     outcome.notices.push(`owner_review_granted:${outcome.owner_review.grant_id} (${summary})`);
@@ -940,10 +971,13 @@ export async function baseTipCompare(fetchImpl, env, repository, pr) {
 // which makes the head's protected diff against the tip the approved head's
 // diff against its own base. Any protected file a merge brought in differs
 // from the tip in nothing (it is not in the head's diff): it is main's.
-// Only an earlier head whose clued-admission-verified check passed is asked
-// about, the deepest one first (a head admitted this way leads back to the
-// head the Owner approved), and the Owner review door stays the authority: it
-// admits a head again only while the grant that admitted it is not revoked.
+// Only an earlier head whose clued-admission-verified check ever passed is
+// asked about, the deepest one first (a head admitted this way leads back to
+// the head the Owner approved), and the Owner review door stays the authority:
+// it admits a head again only while the grant that admitted it is not revoked.
+// A later failing check on that head does not count against it: once main
+// moves, the re-verification posts "RE-VERIFIED: REJECTED" on the approved head
+// (it no longer contains the tip), which is exactly why the author merges main.
 export const CARRY_OVER_DEPTH = 10;
 
 async function compareSummary(fetchImpl, env, repository, from, to) {
@@ -959,11 +993,10 @@ async function compareSummary(fetchImpl, env, repository, from, to) {
   return { status: body.status, mergeBase, paths: [...paths] };
 }
 
-const protectedOf = (paths) => protectedPathFindings(paths).map((finding) => finding.replace(/^protected_path:/, ""));
-
 // The earlier head whose Owner Grant the head may keep, or null.
-export async function carriedApprovalSource(fetchImpl, env, repository, headSha, tipCompare) {
+export async function carriedApprovalSource(fetchImpl, env, repository, headSha, tipCompare, protectedPaths = effectiveProtectedPaths(null)) {
   if (tipCompare.truncated || !tipCompare.upToDate) return null;
+  const protectedOf = (paths) => protectedPathFindings(paths, protectedPaths).map((finding) => finding.replace(/^protected_path:/, ""));
   const changedNow = new Set(protectedOf(tipCompare.paths));
   const untouched = (paths) => !protectedOf(paths).some((path) => changedNow.has(path));
   let source = null;
@@ -982,15 +1015,26 @@ export async function carriedApprovalSource(fetchImpl, env, repository, headSha,
     const onBase = await compareSummary(fetchImpl, env, repository, earlierToTip.mergeBase, tipCompare.tip);
     if (!onBase || !untouched(onBase.paths)) break;
     const checks = await appChecksOnHead(fetchImpl, env, repository, earlier);
-    if (checks[0] && checks[0].status === "completed" && checks[0].conclusion === "success") source = earlier;
+    if (checks.some((check) => check.status === "completed" && check.conclusion === "success")) source = earlier;
     current = earlier;
   }
   return source;
 }
 
-export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary }) {
-  const enforced = enforcementEnabled(env);
-  const outcome = emptyOutcome(eventName, enforced);
+// The mode as the summary and the outputs report it; layer, rules and label
+// are added once the pull request's paths are known.
+function modeOutcome(mode) {
+  return { state: mode.state, requested: mode.requested, source: mode.source, policy_version: mode.policy_version,
+    errors: mode.errors, layer: null, rules: null, label: null };
+}
+
+// readPolicyFile reads config/merge-admission-policy.json of the workspace;
+// the self-tests pass a fixed table so that they never depend on the
+// repository's copy (review MAJOR-1).
+export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary, readPolicyFile = fs.readFileSync }) {
+  const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
+  const outcome = emptyOutcome(eventName);
+  outcome.admission_mode = modeOutcome(mode);
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
@@ -1008,172 +1052,209 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
-
-  // Advisory mode must never fail the job for a reason unrelated to the PR:
-  // whatever goes wrong below is reported and the PR is admitted.
-  const notEnforced = (reason) => {
-    outcome.admitted = true;
-    if (outcome.verdict === null || outcome.verdict === "ERROR") outcome.verdict = "NOT_ENFORCED";
-    outcome.reasons.push(reason);
+  // Merge Admission step 2: auto_merge_disabled can arrive for a pull request
+  // that was just merged or closed. It is not judged, and nothing passes.
+  if (typeof pr.state === "string" && pr.state !== "open") {
+    outcome.verdict = "PR_NOT_OPEN";
+    outcome.reasons.push(`pull request #${pr.number} is ${plainFinding(pr.state)}; nothing to judge`);
     return outcome;
-  };
-  try {
-    if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
-    const repository = env.GITHUB_REPOSITORY;
-    const changed = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
-    outcome.changed_paths = changed.paths;
-    const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
-    const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
-    const gateFindingsOfPr = workflowResult.gate;
-    if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
-    const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr);
-    const ownerFindings = protectedPathFindings([...new Set([...changed.paths, ...tipCompare.paths])].sort());
-    // A long compare may hide a protected path: the Owner is asked.
-    if (tipCompare.truncated) ownerFindings.push(`protected_path_unknown:the compare of ${tipCompare.tip} with the head is unavailable or lists ${BASE_COMPARE_LIMIT} or more files`);
-    if (ownerFindings.length) outcome.owner_review_findings = ownerFindings;
-    for (const hint of workflowResult.owner) outcome.notices.push(`workflow_review_hint:${hint}`);
-    if (withSummary && workspace) {
-      await summarizeWorkflows(fetchImpl, env, repository, pr.head.sha, outcome.changed_paths, workspace, outcome);
-    }
+  }
 
-    if (!env.CLUED_CONTEXT_READ_TOKEN) {
-      if (enforced) throw new Error("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified.");
-      return notEnforced("CLUED_CONTEXT_READ_TOKEN is not set; advisory verification skipped");
-    }
+  if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+  const repository = env.GITHUB_REPOSITORY;
+  const changed = await changedPathsOfPullRequest(fetchImpl, env, repository, pr.number);
+  outcome.changed_paths = changed.paths;
+  const truncated = Number.isInteger(pr.changed_files) && changed.file_count < pr.changed_files;
+  const workflowResult = await workflowFindings(fetchImpl, env, repository, changed.files, pr.head.sha, pr.base.sha);
+  const gateFindingsOfPr = [...workflowResult.gate, ...await policyFileFindings(fetchImpl, env, repository, changed.files, pr.head.sha)];
+  if (gateFindingsOfPr.length) outcome.workflow_gate_findings = gateFindingsOfPr;
+  const tipCompare = await baseTipCompare(fetchImpl, env, repository, pr);
+  const allPaths = [...new Set([...changed.paths, ...tipCompare.paths])].sort();
+  const protectedPaths = effectiveProtectedPaths(mode.policy);
+  const ownerFindings = protectedPathFindings(allPaths, protectedPaths);
+  // A long compare may hide a protected path: the Owner is asked.
+  if (tipCompare.truncated) ownerFindings.push(`protected_path_unknown:the compare of ${tipCompare.tip} with the head is unavailable or lists ${BASE_COMPARE_LIMIT} or more files`);
+  if (ownerFindings.length) outcome.owner_review_findings = ownerFindings;
+  // Merge Admission v0.1 §3.2: the strictest layer of all paths decides,
+  // and the rules follow from it and the state (protected exactly when
+  // ownerFindings is not empty).
+  const layer = layerOf(allPaths, mode.policy, { unknown: tipCompare.truncated });
+  const rules = effectiveRules(mode.policy, mode.state, layer);
+  Object.assign(outcome.admission_mode, { layer, rules, label: modeLabel(mode.state, layer, rules) });
+  const claimAdvisory = rules.work_claim === "advise";
+  for (const hint of workflowResult.owner) outcome.notices.push(`workflow_review_hint:${hint}`);
+  if (withSummary && workspace) {
+    await summarizeWorkflows(fetchImpl, env, repository, pr.head.sha, outcome.changed_paths, workspace, outcome);
+  }
 
-    let reference = parseClaimReference(pr.body);
-    if (!reference) {
-      const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${pr.head.sha}`);
-      reference = parseClaimReference(commit && commit.commit && commit.commit.message);
+  if (!env.CLUED_CONTEXT_READ_TOKEN) throw new Error("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified.");
+
+  let reference = parseClaimReference(pr.body);
+  if (!reference) {
+    const commit = await githubJson(fetchImpl, env, `/repos/${repository}/commits/${pr.head.sha}`);
+    reference = parseClaimReference(commit && commit.commit && commit.commit.message);
+  }
+  if (!reference) {
+    if (!claimAdvisory) {
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push("claim_trailer_missing");
+      return outcome;
     }
-    if (!reference) {
-      if (enforced) {
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push("claim_trailer_missing");
-        return outcome;
-      }
-      return notEnforced("no Clued-Work-Claim trailer in the PR body or head commit");
-    }
+    // Merge Admission v0.1 §5.1: work_claim: advise admits it and says so.
+    outcome.notices.push(`claim_advisory_missing: no Clued-Work-Claim trailer in the PR body or head commit (the ${layer} layer only advises a claim in ${mode.state})`);
+  } else {
     outcome.claim_id = reference.claim_id;
     outcome.scope = reference.scope;
-    if (truncated) {
-      // Paths past the API limit cannot be checked against the write set.
-      if (enforced) {
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push(`changed_files_truncated:${pr.changed_files}`);
-        return outcome;
-      }
-      return notEnforced(`changed file list truncated (${pr.changed_files} files); advisory verification skipped`);
-    }
+  }
+  if (truncated) {
+    // Paths past the API limit cannot be checked against the write set.
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(`changed_files_truncated:${pr.changed_files}`);
+    return outcome;
+  }
 
+  let verified = null;
+  if (reference) {
     // Re-review N8: a PR the workflow guard already refuses is verified
     // read-only, so it neither binds the claim nor uses the Task's CI budget.
-    const verified = await verifyClaim(fetchImpl, env, gateFindingsOfPr.length ? {
-      scope: reference.scope,
-      claim_id: reference.claim_id,
-      changed_paths: outcome.changed_paths,
-    } : {
-      scope: reference.scope,
-      claim_id: reference.claim_id,
-      changed_paths: outcome.changed_paths,
-      head_sha: pr.head.sha,
-      base_sha: pr.base.sha,
-      pr_ref: outcome.pr_ref,
-    }, workspace);
-    if (verified.kind === "rpc_unavailable") {
-      if (enforced) throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}); enforcement is on, so admission cannot be verified.`);
-      return notEnforced(`${VERIFY_RPC} is not deployed yet (${verified.detail})`);
+    const reasonsBefore = outcome.reasons.length;
+    let result;
+    try {
+      result = await verifyClaim(fetchImpl, env, gateFindingsOfPr.length ? {
+        scope: reference.scope,
+        claim_id: reference.claim_id,
+        changed_paths: outcome.changed_paths,
+      } : {
+        scope: reference.scope,
+        claim_id: reference.claim_id,
+        changed_paths: outcome.changed_paths,
+        head_sha: pr.head.sha,
+        base_sha: pr.base.sha,
+        pr_ref: outcome.pr_ref,
+        // Merge Admission v0.1 §10 (step 3): the Receipts of the binding and
+        // of a newly admitted head name the mode it was judged in. A service
+        // before migration 20261009010000 ignores the key.
+        admission_mode: { state: mode.state, layer, reruns_per_head: rules.reruns_per_head },
+      }, workspace);
+    } catch (error) {
+      if (!claimAdvisory) throw error;
+      result = { kind: "unavailable", detail: error instanceof Error ? error.message : String(error) };
     }
-    if (verified.kind === "refused") {
-      if (enforced) throw new Error(`Clued refused the verification request (${verified.detail}).`);
-      return notEnforced(`Clued refused the verification request (${verified.detail})`);
-    }
-
-    outcome.verdict = verified.verdict;
-    outcome.reasons.push(...verified.reasons);
-    const outside = verified.payload.paths_outside_write_set;
-    if (Array.isArray(outside) && outside.length) outcome.paths_outside_write_set = outside;
-    if (Number.isInteger(verified.payload.admitted_heads)) {
-      outcome.admitted_heads = verified.payload.admitted_heads;
-      outcome.max_heads_per_claim = verified.payload.max_heads_per_claim ?? null;
-    }
-    // GitHub CI per Task in 24 hours (GenericWorkClaim §10.4, Task bb9f1e36).
-    if (Number.isInteger(verified.payload.task_ci_heads_24h)) {
-      outcome.task_ci_heads_24h = verified.payload.task_ci_heads_24h;
-      outcome.task_ci_head_cap = verified.payload.task_ci_head_cap ?? null;
-      outcome.ci_retry_after = verified.payload.ci_retry_after ?? null;
-    }
-    if (verified.payload.claim && typeof verified.payload.claim === "object") {
-      const { claim } = verified.payload;
-      outcome.claim = {
-        task_id: claim.task_id ?? null, status: claim.status ?? null, fence: claim.fence ?? null,
-        expires_at: claim.expires_at ?? null, base_commit: claim.base_commit ?? null,
-        bound_pr: claim.bound_pr ?? null,
-        write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
-      };
-    }
-    // The claim's base must name a commit of this repository. A claim taken on
-    // a newer main than the PR's base is only reported (Owner Decision
-    // 36b50981): base_commit is declared by the Agent, so the comparison
-    // cannot catch a wrong claim, and rejecting it only forced re-pushes.
-    const claimBase = outcome.claim && outcome.claim.base_commit;
-    if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
-      const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${claimBase}...${pr.base.sha}`, { allowMissing: true });
-      if (!compare) {
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push(`claim_base_unknown:${claimBase}`);
-      } else if (compare.status !== "ahead" && compare.status !== "identical") {
-        outcome.notices.push(`base_behind_claim:${compare.status} (the claim's base_commit ${claimBase} is newer than this PR's base ${pr.base.sha}; merge main into the branch or claim with the branch's merge-base)`);
-      }
-    }
-    if (gateFindingsOfPr.length) {
-      outcome.verdict = "REJECTED";
-      outcome.reasons.push(...gateFindingsOfPr);
-    }
-    if (ownerFindings.length && outcome.verdict === "ADMITTED") {
-      if (!tipCompare.upToDate && ownerReviewEnforced(env)) {
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${ownerFindings.slice(0, 10).map(plainFinding).join(", ")}${ownerFindings.length > 10 ? `, and ${ownerFindings.length - 10} more` : ""})`);
+    if (result.kind !== "verdict") {
+      const what = result.kind === "rpc_unavailable" ? `${VERIFY_RPC} is not deployed (${result.detail})`
+        : result.kind === "refused" ? `Clued refused the verification request (${result.detail})`
+          : `the verification is unavailable (${result.detail})`;
+      if (claimAdvisory) {
+        outcome.notices.push(`claim_advisory_unverified: ${what}`);
+      } else if (result.kind === "rpc_unavailable") {
+        throw new Error(`Clued ${VERIFY_RPC} is not deployed (${result.detail}); admission cannot be verified.`);
       } else {
-        if (!tipCompare.upToDate) outcome.notices.push(`not enforced (CLUED_OWNER_REVIEW_ENFORCE is not set): the branch would first need ${pr.base.ref} at ${tipCompare.tip}`);
-        await ownerReview(fetchImpl, env, repository, pr, workspace, ownerFindings, outcome, tipCompare);
+        throw new Error(`Clued refused the verification request (${result.detail}).`);
       }
-    }
-    // Re-review 7, m2: the file list was read after the head, so a push in
-    // between would pair this head's verdict with another head's files.
-    if (outcome.verdict === "ADMITTED") {
-      const now = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
-      if (!now || !now.head || now.head.sha !== pr.head.sha) {
-        throw new Error(`the pull request's head moved from ${pr.head.sha} to ${now && now.head ? now.head.sha : "(unknown)"} during admission; the next run judges the new head`);
-      }
-    }
-    // Owner Decision 2ea795e4: a head that contains the base branch's tip can
-    // merge, so only the claim holding the merge slot may have it.
-    // Advisory admission does not enforce it either (review MINOR-4).
-    const slot = mergeSlotState({ repository, branch: pr.base.ref, tip: tipCompare.tip,
-      upToDate: tipCompare.upToDate, claim: verified.payload.claim, verifiedAt: verified.payload.verified_at });
-    outcome.merge_slot = enforced ? slot : { ...slot, observed: slot.state, state: "not_checked" };
-    if (enforced) {
-      outcome.admitted = outcome.verdict === "ADMITTED";
     } else {
-      outcome.advisory = true;
-      outcome.admitted = true;
-      outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
+      verified = result;
+      outcome.verdict = verified.verdict;
+      outcome.reasons.push(...verified.reasons);
+      const outside = verified.payload.paths_outside_write_set;
+      if (Array.isArray(outside) && outside.length) outcome.paths_outside_write_set = outside;
+      if (Number.isInteger(verified.payload.admitted_heads)) {
+        outcome.admitted_heads = verified.payload.admitted_heads;
+        outcome.max_heads_per_claim = verified.payload.max_heads_per_claim ?? null;
+      }
+      // GitHub CI per Task in 24 hours (GenericWorkClaim §10.4, Task bb9f1e36).
+      if (Number.isInteger(verified.payload.task_ci_heads_24h)) {
+        outcome.task_ci_heads_24h = verified.payload.task_ci_heads_24h;
+        outcome.task_ci_head_cap = verified.payload.task_ci_head_cap ?? null;
+        outcome.ci_retry_after = verified.payload.ci_retry_after ?? null;
+      }
+      if (verified.payload.claim && typeof verified.payload.claim === "object") {
+        const { claim } = verified.payload;
+        outcome.claim = {
+          task_id: claim.task_id ?? null, status: claim.status ?? null, fence: claim.fence ?? null,
+          expires_at: claim.expires_at ?? null, base_commit: claim.base_commit ?? null,
+          bound_pr: claim.bound_pr ?? null,
+          write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
+        };
+      }
+      // The claim's base must name a commit of this repository. A claim taken on
+      // a newer main than the PR's base is only reported (Owner Decision
+      // 36b50981): base_commit is declared by the Agent, so the comparison
+      // cannot catch a wrong claim, and rejecting it only forced re-pushes.
+      const claimBase = outcome.claim && outcome.claim.base_commit;
+      if (outcome.verdict === "ADMITTED" && typeof claimBase === "string" && claimBase) {
+        let compare;
+        try {
+          compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${claimBase}...${pr.base.sha}`, { allowMissing: true });
+        } catch (error) {
+          if (!claimAdvisory) throw error;
+          outcome.notices.push(`claim_advisory_unverified: the claim's base_commit could not be compared (${error instanceof Error ? error.message : String(error)})`);
+        }
+        if (compare === undefined) {
+          // work_claim: advise and the compare failed: noted above.
+        } else if (!compare) {
+          outcome.verdict = "REJECTED";
+          outcome.reasons.push(`claim_base_unknown:${claimBase}`);
+        } else if (compare.status !== "ahead" && compare.status !== "identical") {
+          outcome.notices.push(`base_behind_claim:${compare.status} (the claim's base_commit ${claimBase} is newer than this PR's base ${pr.base.sha}; merge main into the branch or claim with the branch's merge-base)`);
+        }
+      }
     }
-    return outcome;
-  } catch (error) {
-    if (enforced) throw error;
-    return notEnforced(`advisory verification unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    // Merge Admission v0.1 §5.1: work_claim: advise admits a claim that does
+    // not admit the pull request, and moves its reasons to the notices.
+    if (claimAdvisory && outcome.verdict !== "ADMITTED") {
+      if (outcome.verdict) outcome.claim_verdict = outcome.verdict;
+      for (const reason of outcome.reasons.splice(reasonsBefore)) outcome.notices.push(`claim_advisory:${reason}`);
+    }
   }
+  if (claimAdvisory) outcome.verdict = "ADMITTED";
+  if (gateFindingsOfPr.length) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(...gateFindingsOfPr);
+  }
+  // Merge Admission v0.1 §5.1 up_to_date and owner_grant (WorkClaimAdmission
+  // §4.6, re-review 10): the protected layer's, and every layer's in frozen.
+  const reviewFindings = ownerFindings.length ? ownerFindings : [`state_frozen:${layer}`];
+  // Review MINOR-1: in frozen every head needs its own grant (§4.2), the
+  // protected layer's too, so no approval is carried over.
+  const frozen = mode.state === "frozen";
+  const listedFindings = `${reviewFindings.slice(0, 10).map(plainFinding).join(", ")}${reviewFindings.length > 10 ? `, and ${reviewFindings.length - 10} more` : ""}`;
+  if (rules.up_to_date === "check_and_strict" && !tipCompare.upToDate && outcome.verdict === "ADMITTED") {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(`protected_change_not_up_to_date:${tipCompare.tip} (merge ${pr.base.ref} into the branch first; ${listedFindings}${frozen ? "; merge admission is frozen, so the new head needs its own Owner Grant" : ""})`);
+  }
+  if (rules.owner_grant === "required" && outcome.verdict === "ADMITTED") {
+    await ownerReview(fetchImpl, env, repository, pr, workspace, reviewFindings, outcome, tipCompare,
+      { protectedPaths, carryOver: !frozen, frozenLayer: frozen && layer !== "protected" ? layer : null });
+  }
+  // Re-review 7, m2: the file list was read after the head, so a push in
+  // between would pair this head's verdict with another head's files.
+  if (outcome.verdict === "ADMITTED") {
+    const now = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
+    if (!now || !now.head || now.head.sha !== pr.head.sha) {
+      throw new Error(`the pull request's head moved from ${pr.head.sha} to ${now && now.head ? now.head.sha : "(unknown)"} during admission; the next run judges the new head`);
+    }
+  }
+  // Owner Decision 2ea795e4: a head that contains the base branch's tip can
+  // merge, so only the claim holding the merge slot may have it.
+  // Merge Admission v0.1: merge_slot: advise passes it as not_required, and
+  // auto_merge: forbidden (frozen) fails it while auto-merge is on.
+  const slot = mergeSlotState({ repository, branch: pr.base.ref, tip: tipCompare.tip,
+    upToDate: tipCompare.upToDate, claim: verified ? verified.payload.claim : null,
+    verifiedAt: verified ? verified.payload.verified_at : null, claimless: !verified });
+  if (rules.auto_merge === "forbidden" && pr.auto_merge) outcome.merge_slot = { ...slot, observed: slot.state, state: "auto_merge_forbidden" };
+  else if (rules.merge_slot === "advise") outcome.merge_slot = { ...slot, observed: slot.state, state: "not_required" };
+  else outcome.merge_slot = slot;
+  outcome.admitted = outcome.verdict === "ADMITTED";
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
 // Merge slot (agent contract v33 §1.7; Owner Decisions 0edf7889, 2ea795e4).
 // The default branch requires a pull request to contain its tip before it
 // merges, so a merge by another session during a CI run wastes that run. The
-// merge slot, the trigger ref merge:<owner>/<name>:<branch>, is held by one
-// live claim at a time (Clued's conflict check) and lapses 45 minutes after it
-// was last taken or refreshed (migration 20261006120000). The admission run
+// merge slot, the trigger ref merge:<owner>/<name>:<branch>, is a first-in,
+// first-out queue whose head holds the slot (migration 20261009080000, Merge
+// Admission step 4); merge_slot_until is set only for the head. The admission run
 // posts the clued-merge-slot check as the clued-admission App: it fails while
 // the head contains the base branch's tip and the claim does not hold the slot,
 // so once the Owner makes the check required, nobody can merge without it.
@@ -1188,11 +1269,15 @@ export function mergeSlotRef(repository, branch) {
 }
 
 // states: held, not_needed (the head does not contain the tip), not_reported
-// (the Clued service predates merge slots), missing.
-export function mergeSlotState({ repository, branch, tip, upToDate, claim, verifiedAt }) {
+// (the Clued service predates merge slots), missing. A pull request admitted
+// with no verified claim (work_claim: advise) holds no slot (claimless).
+// evaluate() adds not_required (merge_slot: advise) and auto_merge_forbidden
+// (frozen with auto-merge on).
+export function mergeSlotState({ repository, branch, tip, upToDate, claim, verifiedAt, claimless = false }) {
   const ref = mergeSlotRef(repository, branch);
   const base = { ref, tip: tip ?? null, until: null };
   if (!upToDate) return { ...base, state: "not_needed" };
+  if (claimless) return { ...base, state: "missing" };
   if (!claim || typeof claim !== "object" || !Object.hasOwn(claim, "merge_slot_until")) return { ...base, state: "not_reported" };
   const refs = Array.isArray(claim.trigger_refs) ? claim.trigger_refs : [];
   const named = refs.some((value) => typeof value === "string" && value.toLowerCase() === ref.toLowerCase());
@@ -1203,15 +1288,24 @@ export function mergeSlotState({ repository, branch, tip, upToDate, claim, verif
 }
 
 // The check for one admission result: admitted and holding (or not needing)
-// the slot passes; everything else fails.
-export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, branch }) {
+// the slot passes; everything else fails. mode is the admission's mode label
+// ("<state> · <layer> · reruns <n>", Merge Admission v0.1 §10).
+export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, branch, mode }) {
   const slot = ref || "merge:<owner>/<name>:<branch>";
   const target = branch || "the base branch";
+  const [modeState, modeLayer] = String(mode ?? "").split(" · ");
   if (!admitted) {
     return { success: false, title: "Not admitted",
       summary: "clued-work-admission did not admit this head, so it cannot hold the merge slot." };
   }
   switch (state) {
+    case "not_required":
+      return { success: true, title: `not_required(${modeLayer || "layer"}, ${modeState || "state"})`,
+        summary: `The merge admission policy only advises the merge slot for the ${modeLayer || "pull request's"} layer in the ${modeState || "current"} state, so this check does not require \`${slot}\` (Merge Admission v0.1 §5).` };
+    case "auto_merge_forbidden":
+      return { success: false, title: "Auto-merge is not allowed while merge admission is frozen",
+        summary: "Merge admission is frozen: only the Owner merges, and auto-merge is forbidden (Merge Admission v0.1 §4.2). "
+          + "Turn auto-merge off for this pull request; then push, or edit the pull request body, to run this check again." };
     case "held":
       return { success: true, title: `Merge slot held until ${until}`,
         summary: `The claim holds \`${slot}\` until ${until}. Merge, then give the slot back (renew without the ref, or release the claim).` };
@@ -1221,13 +1315,10 @@ export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, bran
     case "not_reported":
       return { success: true, title: "Not checked: Clued does not report merge slots yet",
         summary: "The Clued service does not report merge_slot_until yet (migration 20261006120000 is not applied), so the merge slot is not checked." };
-    case "not_checked":
-      return { success: true, title: "Not checked: admission is advisory",
-        summary: "CLUED_WORK_ADMISSION_ENFORCE is not set, so the merge slot is not checked." };
     case "missing":
       return { success: false, title: "Merge slot not held",
         summary: `This head contains the tip of ${target}, so it could merge now, and only the session holding the merge slot may merge. `
-          + `Renew the claim${claimId ? ` \`${claimId}\`` : ""} with \`${slot}\` added to its trigger_refs (agent contract §1.7; on work_claim_conflict another session holds it: wait and try again). `
+          + `Join the merge queue by renewing the claim${claimId ? ` \`${claimId}\`` : ""} with \`${slot}\` added to its trigger_refs, or, if it is already there, wait until its merge_queue shows it as head (agent contract §1.7). `
           + "Then push, or edit the pull request body, to run this check again." };
     default:
       return { success: false, title: "Merge slot unknown",
@@ -1264,12 +1355,48 @@ export async function appChecksOnHead(fetchImpl, env, repository, headSha, name 
     .sort((a, b) => Number(b.id) - Number(a.id));
 }
 
-export async function reverify({ env, fetchImpl, workspace, now = () => Date.now() }) {
-  const result = { enforced: enforcementEnabled(env), checked: [], blocked: [], errors: [] };
-  if (!result.enforced) {
-    result.skipped = "CLUED_WORK_ADMISSION_ENFORCE is not set; checks are advisory";
-    return result;
+// Merge Admission v0.1 §4.1 item 3 (step 3): after the Owner switches the
+// state, the Owner dispatches this workflow with reason=state_change. Every
+// open, non-draft pull request into the default branch is then judged again
+// and gets both App checks anew, passing or failing, with the new mode in the
+// title, since a switch back from frozen must turn its red checks green. The
+// hourly run keeps posting failures only.
+export const STATE_CHANGE_REASON = "state_change";
+const STATE_CHANGE_PREFIX = "RE-VERIFIED (state change): ";
+
+async function rejudge({ env, fetchImpl, now, pr, outcome, result }) {
+  const label = outcome.admission_mode && outcome.admission_mode.label;
+  // A transient Owner review door leaves both checks as they are (review MINOR-2).
+  if (outcome.owner_review && outcome.owner_review.kind === "transient") {
+    throw new Error(`Clued's Owner review door is unavailable (${outcome.reasons.join("; ")}); the checks stay as they are until the next run`);
   }
+  const verdict = outcome.verdict ?? (outcome.admitted ? "ADMITTED" : "NOT ADMITTED");
+  const admission = await postAppCheck({
+    env, fetchImpl, now, headSha: pr.head.sha, success: outcome.admitted, prNumber: pr.number,
+    title: `${STATE_CHANGE_PREFIX}${verdict}${label ? ` [${label}]` : ""}`,
+    summary: `Merge admission state changed; #${pr.number} was judged again${label ? ` in mode ${label}` : ""}: `
+      + (outcome.admitted ? "admitted." : `not admitted: ${outcome.reasons.join("; ") || "no reason given"}.`),
+  });
+  if (!admission.posted) throw new Error(`no ${APP_CHECK_NAME} check could be posted: ${admission.error ?? admission.reason}`);
+  const state = outcome.merge_slot ? outcome.merge_slot.state : "unknown";
+  const slot = mergeSlotCheck({ admitted: outcome.admitted, state,
+    ref: outcome.merge_slot ? outcome.merge_slot.ref : mergeSlotRef(env.GITHUB_REPOSITORY, pr.base.ref),
+    until: outcome.merge_slot ? outcome.merge_slot.until : null, tip: outcome.merge_slot ? outcome.merge_slot.tip : null,
+    claimId: outcome.claim_id, branch: pr.base.ref, mode: label });
+  const posted = await postAppCheck({
+    env, fetchImpl, now, headSha: pr.head.sha, success: slot.success, title: `${STATE_CHANGE_PREFIX}${slot.title}`,
+    prNumber: pr.number, name: MERGE_SLOT_CHECK_NAME, summary: slot.summary,
+  });
+  if (!posted.posted) throw new Error(`no ${MERGE_SLOT_CHECK_NAME} check could be posted: ${posted.error ?? posted.reason}`);
+  result.rejudged.push({ pr: pr.number, verdict, admitted: outcome.admitted, check_run_id: admission.check_run_id,
+    merge_slot: state, merge_slot_passed: slot.success, merge_slot_check_run_id: posted.check_run_id });
+}
+
+export async function reverify({ env, fetchImpl, workspace, now = () => Date.now(), readPolicyFile = fs.readFileSync }) {
+  const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
+  const stateChange = (env.CLUED_REVERIFY_REASON ?? "").trim() === STATE_CHANGE_REASON;
+  const result = { mode: { state: mode.state, source: mode.source, errors: mode.errors },
+    reason: stateChange ? STATE_CHANGE_REASON : "scheduled", checked: [], blocked: [], rejudged: [], errors: [] };
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   // Re-review 8, NIT: without the App nothing can be blocked, and the App
   // checks this reads would not exist; say so instead of passing quietly.
@@ -1283,6 +1410,16 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
     if (pr.draft || !pr.head || !pr.base) continue;
     const defaultBranch = pr.base.repo && pr.base.repo.default_branch;
     if (defaultBranch && pr.base.ref !== defaultBranch) continue;
+    if (stateChange) {
+      try {
+        const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile });
+        if (outcome.verdict === "PR_NOT_OPEN") continue;
+        await rejudge({ env, fetchImpl, now, pr, outcome, result });
+      } catch (error) {
+        result.errors.push({ pr: pr.number, error: error instanceof Error ? error.message : String(error) });
+      }
+      continue;
+    }
     try {
       const green = (checks) => Boolean(checks[0]) && checks[0].status === "completed" && checks[0].conclusion === "success";
       const admissionGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha));
@@ -1290,15 +1427,20 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       // (Owner Decision 2ea795e4).
       const slotGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha, MERGE_SLOT_CHECK_NAME));
       if (!admissionGreen && !slotGreen) continue;
-      const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false });
+      const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile });
+      // Closed between the list and the fresh read: nothing to re-verify.
+      if (outcome.verdict === "PR_NOT_OPEN") continue;
+      const label = outcome.admission_mode && outcome.admission_mode.label;
       result.checked.push({ pr: pr.number, verdict: outcome.verdict, reasons: outcome.reasons,
+        ...(label ? { mode: label } : {}),
         ...(outcome.merge_slot ? { merge_slot: outcome.merge_slot.state } : {}) });
       // A transient Owner review door leaves both checks as they are (review MINOR-2).
       const transient = Boolean(outcome.owner_review && outcome.owner_review.kind === "transient");
-      if (slotGreen && !transient && (!outcome.admitted || (outcome.merge_slot && outcome.merge_slot.state === "missing"))) {
+      const slotFails = outcome.merge_slot && ["missing", "auto_merge_forbidden"].includes(outcome.merge_slot.state);
+      if (slotGreen && !transient && (!outcome.admitted || slotFails)) {
         const slot = mergeSlotCheck({ admitted: outcome.admitted, state: outcome.merge_slot ? outcome.merge_slot.state : "unknown",
           ref: outcome.merge_slot ? outcome.merge_slot.ref : mergeSlotRef(repository, pr.base.ref),
-          tip: outcome.merge_slot ? outcome.merge_slot.tip : null, claimId: outcome.claim_id, branch: pr.base.ref });
+          tip: outcome.merge_slot ? outcome.merge_slot.tip : null, claimId: outcome.claim_id, branch: pr.base.ref, mode: label });
         const posted = await postAppCheck({
           env, fetchImpl, now, headSha: pr.head.sha, success: false, title: `RE-VERIFIED: ${slot.title}`, prNumber: pr.number,
           name: MERGE_SLOT_CHECK_NAME, summary: slot.summary,
@@ -1317,12 +1459,14 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       if (outcome.owner_review && outcome.owner_review.kind === "transient") {
         throw new Error(`Clued's Owner review door is unavailable (${outcome.reasons.join("; ")}); the check stays as it is until the next run`);
       }
-      const verdict = `RE-VERIFIED: ${outcome.verdict ?? "NOT ADMITTED"}`;
+      const verdict = `RE-VERIFIED: ${outcome.verdict ?? "NOT ADMITTED"}${label ? ` [${label}]` : ""}`;
       const posted = await postAppCheck({
         env, fetchImpl, now, headSha: pr.head.sha, success: false, title: verdict, prNumber: pr.number,
         summary: `The re-verification no longer admits #${pr.number}: ${outcome.reasons.join("; ") || "no reason given"}. `
           + (outcome.reasons.some((reason) => reason.startsWith("protected_change_not_up_to_date:"))
-            ? `Merge ${pr.base.ref} into the branch and push; the new head needs its own Owner Grant.`
+            ? (outcome.admission_mode && outcome.admission_mode.state === "frozen"
+              ? `Merge ${pr.base.ref} into the branch and push; merge admission is frozen, so the new head needs its own Owner Grant.`
+              : `Merge ${pr.base.ref} into the branch and push; the approval carries over when the merge leaves the protected changes as they were, otherwise the new head needs its own Owner Grant.`)
             : "Push a commit or edit the pull request once it is admitted again."),
       });
       if (!posted.posted) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}`);
@@ -1336,8 +1480,18 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
 
 export function renderReverifySummary(result) {
   const lines = ["## clued-work-admission re-verification", ""];
-  if (result.skipped) {
-    lines.push(`Skipped: ${result.skipped}.`, "");
+  if (result.mode) {
+    lines.push(`**Mode:** \`${result.mode.state}\` · source \`${result.mode.source}\``);
+    for (const error of result.mode.errors ?? []) lines.push(`- fail closed to frozen: ${error}`);
+    lines.push("");
+  }
+  if (result.reason === STATE_CHANGE_REASON) {
+    lines.push(`State change: open PRs judged again: ${result.rejudged.length} · errors: ${result.errors.length}`);
+    for (const pr of result.rejudged) {
+      lines.push(`- #${pr.pr}: ${pr.verdict} (check ${pr.check_run_id}), merge slot \`${pr.merge_slot}\` ${pr.merge_slot_passed ? "passing" : "failing"} (check ${pr.merge_slot_check_run_id})`);
+    }
+    for (const error of result.errors) lines.push(`- ${error.pr === null ? "re-verification" : `#${error.pr}`}: error ${error.error}`);
+    lines.push("");
     return lines.join("\n");
   }
   lines.push(`Open PRs with a passing admission check checked: ${result.checked.length} · failing checks posted: ${result.blocked.length} · errors: ${result.errors.length}`);
@@ -1359,7 +1513,11 @@ export function renderReverifySummary(result) {
 // its gate job changes only its own cost gating; the required check, which
 // merging needs, is unaffected.
 
-export const GATE_WAIT_SECONDS = 480;
+// R1: release the gate's self-hosted slot after three minutes of polling.
+// A late App check never changes this attempt's admitted=false output. The
+// executor must qualify a current-head gate-only attempt and run all jobs
+// once, within the live admission's rerun allowance, before considering merge.
+export const GATE_WAIT_SECONDS = 180;
 export const GATE_POLL_SECONDS = 10;
 
 // Re-review 2, N3c: the pull_requests list of a run names every open pull
@@ -1411,8 +1569,11 @@ export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, s
   }
   if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
   const body = await response.json();
-  // The newest App check of each admission run, with the pull request it names.
+  // The newest App check of each admission run, with the pull request it names,
+  // and the newest naming this pull request from any run (re-verification
+  // included), which a re-run also has to pass (Merge Admission step 2).
   const posted = new Map();
+  let newestForPr = null;
   for (const check of (body && body.check_runs) || []) {
     if (check.name !== APP_CHECK_NAME || check.head_sha !== headSha) continue;
     if (!check.app || Number(check.app.id) !== ADMISSION_APP_ID) continue;
@@ -1420,6 +1581,7 @@ export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, s
     if (!match) continue;
     const prior = posted.get(match[2]);
     if (!prior || Number(check.id) > Number(prior.check.id)) posted.set(match[2], { check, pr: Number(match[1]) });
+    if (Number(match[1]) === Number(prNumber) && (!newestForPr || Number(check.id) > Number(newestForPr.id))) newestForPr = check;
   }
   const runs = (await githubJson(fetchImpl, env,
     `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`)).workflow_runs ?? [];
@@ -1430,25 +1592,44 @@ export async function eventAdmissionCheck(fetchImpl, env, repository, headSha, s
   for (const run of fresh) {
     const entry = posted.get(String(run.id));
     if (entry && entry.pr !== Number(prNumber)) continue;
-    return { run, check: entry ? entry.check : null };
+    return { run, check: entry ? entry.check : null, newestForPr };
   }
-  return { run: null, check: null };
+  return { run: null, check: null, newestForPr };
 }
 
 // Re-review 3, N-R3: a re-run replays the run's own workflow file and event,
 // so one of a run from before the gates existed has no gate, and "re-run
 // failed jobs" keeps the gate's earlier output. The gate refuses re-runs of
-// pull request and branch dispatch runs; push a new commit instead (the
-// runner check refuses them before any job, including "re-run failed jobs").
+// branch dispatch runs; push a new commit instead.
+// Merge Admission v0.1 §8 (step 2, Owner Decisions 77216370, 1b93760d): a
+// pull request run's "Re-run all jobs" runs this gate again, which admits it
+// only on the pull request's current head and only while the attempt is at
+// most 1 + the reruns_per_head in the admission check's title. "Re-run failed
+// jobs" does not run the gate again; the runner check refuses its heavy jobs.
 export function rerunAttempt(env) {
   const attempt = Number.parseInt(String(env.GITHUB_RUN_ATTEMPT ?? "1"), 10);
   return Number.isInteger(attempt) && attempt > 1 ? attempt : null;
 }
 const RERUN_HOWTO = "re-runs are not admitted; push a new commit";
+const PR_RERUN_HOWTO = "only \"Re-run all jobs\" of the current head's run, as many times as the clued-admission-verified title allows; push a new commit otherwise";
+
+// The pull request as it is now, for a re-run (the event payload is the
+// original one). GitHub lets a token with contents: read read it.
+async function currentHeadOf(fetchImpl, env, pr) {
+  let now;
+  try {
+    now = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/pulls/${pr.number}`);
+  } catch (error) {
+    return `pull request #${pr.number} could not be read (${error instanceof Error ? error.message : String(error)})`;
+  }
+  if (!now || now.state !== "open") return `pull request #${pr.number} is ${now && now.state ? now.state : "unreadable"}`;
+  if (!now.head || now.head.sha !== pr.head.sha) return `${pr.head.sha} is no longer the head of #${pr.number} (now ${now.head && now.head.sha})`;
+  if (!now.base || now.base.ref !== pr.base.ref) return `#${pr.number} now targets ${now.base && now.base.ref}, not ${pr.base.ref}`;
+  return null;
+}
 
 export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now() }) {
-  let enforced = enforcementEnabled(env);
-  const outcome = emptyOutcome(eventName, enforced);
+  const outcome = emptyOutcome(eventName);
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
@@ -1461,26 +1642,21 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
-  // A fork pull request may not receive repository variables, so an unset
-  // CLUED_WORK_ADMISSION_ENFORCE here proves nothing. The gate then follows
-  // the App check, which main's admission run posts after reading the
-  // variable in the base repository; it succeeds whenever admission is advisory.
-  const headRepo = pr.head.repo && pr.head.repo.full_name;
-  const baseRepo = (pr.base.repo && pr.base.repo.full_name) || env.GITHUB_REPOSITORY;
-  if (!enforced && headRepo && baseRepo && headRepo !== baseRepo) {
-    enforced = true;
-    outcome.enforced = true;
-    outcome.notices.push(`fork pull request from ${headRepo}: following the ${ADMISSION_WORKFLOW} result whatever this run sees of CLUED_WORK_ADMISSION_ENFORCE`);
-  }
+  // A fork pull request, like any other, follows the App check that main's
+  // admission run posts; the gate reads no repository variable.
   const waitSeconds = Number.parseInt(env.CLUED_ADMISSION_GATE_WAIT_SECONDS ?? "", 10);
-  const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0 ? waitSeconds : GATE_WAIT_SECONDS;
+  const limit = Number.isInteger(waitSeconds) && waitSeconds >= 0
+    ? Math.min(waitSeconds, GATE_WAIT_SECONDS) : GATE_WAIT_SECONDS;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
     const attempt = rerunAttempt(env);
     if (attempt) {
-      outcome.verdict = "RERUN_REFUSED";
-      outcome.reasons.push(`run attempt ${attempt}: ${RERUN_HOWTO}`);
-      throw Object.assign(new Error("refused"), { refused: true });
+      const stale = await currentHeadOf(fetchImpl, env, pr);
+      if (stale) {
+        outcome.verdict = "RERUN_REFUSED";
+        outcome.reasons.push(`run attempt ${attempt}: ${stale}; ${PR_RERUN_HOWTO}`);
+        throw Object.assign(new Error("refused"), { refused: true });
+      }
     }
     if (!/^[0-9]{1,20}$/.test(String(env.GITHUB_RUN_ID ?? ""))) throw new Error("GITHUB_RUN_ID is not set.");
     const self = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`);
@@ -1488,12 +1664,25 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     if (!Number.isFinite(since)) throw new Error(`run ${env.GITHUB_RUN_ID} has no created_at.`);
     let found = { run: null, check: null };
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
-    for (let waited = 0; ; waited += GATE_POLL_SECONDS) {
+    for (let waited = 0; ;) {
       found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
-      if ((found.check && found.check.status === "completed") || waited >= limit) break;
-      await sleep(GATE_POLL_SECONDS * 1000);
+      // On a re-run the admission run may itself be running again under its
+      // old id, with its previous attempt's check posted: wait for it to end.
+      const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
+      if (settled || waited >= limit) break;
+      const delay = Math.min(GATE_POLL_SECONDS, limit - waited);
+      await sleep(delay * 1000);
+      waited += delay;
     }
-    const run = found.check;
+    // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
+    // check for this pull request on this head decides, whichever admission
+    // run (or re-verification) posted it: every later check is a later
+    // judgement of the same head.
+    // (postAppCheck only ever posts completed checks, so an unfinished newer
+    // one does not occur.)
+    const newer = attempt && found.check && found.newestForPr && found.newestForPr.status === "completed"
+      && Number(found.newestForPr.id) > Number(found.check.id) ? found.newestForPr : null;
+    const run = newer ?? found.check;
     if (run) {
       outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null,
         workflow_run_id: found.run.id, source: what };
@@ -1504,6 +1693,9 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     } else if (!run || run.status !== "completed") {
       outcome.verdict = "ADMISSION_PENDING";
       outcome.reasons.push(`${what}: run ${found.run.id} ${run ? `check ${run.id} still ${run.status}` : "has posted no check"} after ${limit}s`);
+    } else if (attempt && !newer && found.run.status !== "completed") {
+      outcome.verdict = "ADMISSION_PENDING";
+      outcome.reasons.push(`${what}: run ${found.run.id} is running again (${found.run.status}) after ${limit}s; its check ${run.id} is from an earlier attempt`);
     } else if (run.conclusion === "success") {
       outcome.verdict = "ADMITTED";
       outcome.admitted = true;
@@ -1511,17 +1703,23 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       outcome.verdict = "REJECTED";
       outcome.reasons.push(`${what} ${run.id} concluded ${run.conclusion}`);
     }
-  } catch (error) {
-    if (!(error && error.refused)) {
-      if (enforced) throw error;
-      outcome.verdict = "NOT_ENFORCED";
-      outcome.reasons.push(`advisory gate unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    // Merge Admission v0.1 §10: the gate does not read the policy; it reads
+    // the mode main's admission run put in the check's title.
+    const label = run && run.status === "completed" ? parseModeLabel(run.output && run.output.title) : null;
+    if (label) {
+      outcome.admission_mode = { state: label.state, layer: label.layer, reruns_per_head: label.reruns_per_head, source: "admission check title",
+        label: `${label.state} · ${label.layer} · reruns ${label.reruns_per_head}` };
     }
-  }
-  if (!outcome.admitted && !enforced) {
-    outcome.advisory = true;
-    outcome.admitted = true;
-    outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
+    if (attempt && outcome.admitted) {
+      const allowed = label ? label.reruns_per_head : 0;
+      if (attempt > 1 + allowed) {
+        outcome.admitted = false;
+        outcome.verdict = "RERUN_REFUSED";
+        outcome.reasons.push(`run attempt ${attempt}: ${label ? `the ${label.layer} layer allows ${allowed} re-run(s) per head in ${label.state}` : "the admission check names no re-run allowance"}; ${PR_RERUN_HOWTO}`);
+      }
+    }
+  } catch (error) {
+    if (!(error && error.refused)) throw error;
   }
   return outcome;
 }
@@ -1590,60 +1788,49 @@ async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
   const defaultBranch = (event && event.repository && event.repository.default_branch) || "main";
   const runId = String((event && event.inputs && event.inputs.admission_run_id) ?? "").trim();
   const attempt = rerunAttempt(env);
-  try {
-    if (attempt) {
-      outcome.verdict = "RERUN_REFUSED";
-      outcome.reasons.push(`run attempt ${attempt}: ${RERUN_HOWTO}`);
-    } else if (!/^[0-9]{1,20}$/.test(runId)) {
+  if (attempt) {
+    outcome.verdict = "RERUN_REFUSED";
+    outcome.reasons.push(`run attempt ${attempt}: ${RERUN_HOWTO}`);
+  } else if (!/^[0-9]{1,20}$/.test(runId)) {
+    outcome.verdict = "REJECTED";
+    outcome.reasons.push(`admission_run_missing: ${DISPATCH_HOWTO}`);
+  } else {
+    if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
+    const run = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${runId}`, { allowMissing: true });
+    if (!run) {
       outcome.verdict = "REJECTED";
-      outcome.reasons.push(`admission_run_missing: ${DISPATCH_HOWTO}`);
+      outcome.reasons.push(`admission_run_not_found:${runId}`);
     } else {
-      if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
-      const run = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/actions/runs/${runId}`, { allowMissing: true });
-      if (!run) {
-        outcome.verdict = "REJECTED";
-        outcome.reasons.push(`admission_run_not_found:${runId}`);
+      outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null };
+      const title = String(run.display_title ?? "").split(" ");
+      const expectedPath = `.github/workflows/${DISPATCH_ADMISSION_WORKFLOW}`;
+      const runPath = String(run.path ?? "");
+      const checks = [
+        [runPath === expectedPath || runPath.startsWith(`${expectedPath}@`), `admission_run_wrong_workflow:${runPath}`],
+        [run.event === "workflow_dispatch", `admission_run_wrong_event:${run.event}`],
+        [run.head_branch === defaultBranch, `admission_run_not_on_default_branch:${run.head_branch}`],
+        [run.status === "completed" && run.conclusion === "success", `admission_run_not_successful:${run.status}/${run.conclusion}`],
+        [now() - Date.parse(run.created_at) <= DISPATCH_ADMISSION_TTL_SECONDS * 1000, `admission_run_expired:${run.created_at}`],
+        [title.length === 4 && title[0] === "admit" && title[1] === workflow && title[2] === ref && CLAIM_ID.test(title[3]),
+          `admission_run_other_target:${run.display_title}`],
+      ];
+      for (const [ok, reason] of checks) if (!ok) outcome.reasons.push(reason);
+      if (title.length === 4 && CLAIM_ID.test(title[3])) outcome.claim_id = title[3];
+      if (outcome.reasons.length === 0) {
+        // Re-review N3: the admission covers the commit it verified, not
+        // whatever the ref points at later.
+        const admitted = await admittedHeadOf(fetchImpl, env, run.id);
+        outcome.head_sha = env.GITHUB_SHA ?? null;
+        if (!admitted) outcome.reasons.push("admission_run_head_unknown");
+        else if (admitted !== String(env.GITHUB_SHA ?? "").toLowerCase()) outcome.reasons.push(`admission_run_other_head:${admitted}`);
+      }
+      if (outcome.reasons.length === 0) {
+        outcome.verdict = "ADMITTED";
+        outcome.admitted = true;
       } else {
-        outcome.admission_run = { id: run.id, status: run.status, conclusion: run.conclusion ?? null, html_url: run.html_url ?? null };
-        const title = String(run.display_title ?? "").split(" ");
-        const expectedPath = `.github/workflows/${DISPATCH_ADMISSION_WORKFLOW}`;
-        const runPath = String(run.path ?? "");
-        const checks = [
-          [runPath === expectedPath || runPath.startsWith(`${expectedPath}@`), `admission_run_wrong_workflow:${runPath}`],
-          [run.event === "workflow_dispatch", `admission_run_wrong_event:${run.event}`],
-          [run.head_branch === defaultBranch, `admission_run_not_on_default_branch:${run.head_branch}`],
-          [run.status === "completed" && run.conclusion === "success", `admission_run_not_successful:${run.status}/${run.conclusion}`],
-          [now() - Date.parse(run.created_at) <= DISPATCH_ADMISSION_TTL_SECONDS * 1000, `admission_run_expired:${run.created_at}`],
-          [title.length === 4 && title[0] === "admit" && title[1] === workflow && title[2] === ref && CLAIM_ID.test(title[3]),
-            `admission_run_other_target:${run.display_title}`],
-        ];
-        for (const [ok, reason] of checks) if (!ok) outcome.reasons.push(reason);
-        if (title.length === 4 && CLAIM_ID.test(title[3])) outcome.claim_id = title[3];
-        if (outcome.reasons.length === 0) {
-          // Re-review N3: the admission covers the commit it verified, not
-          // whatever the ref points at later.
-          const admitted = await admittedHeadOf(fetchImpl, env, run.id);
-          outcome.head_sha = env.GITHUB_SHA ?? null;
-          if (!admitted) outcome.reasons.push("admission_run_head_unknown");
-          else if (admitted !== String(env.GITHUB_SHA ?? "").toLowerCase()) outcome.reasons.push(`admission_run_other_head:${admitted}`);
-        }
-        if (outcome.reasons.length === 0) {
-          outcome.verdict = "ADMITTED";
-          outcome.admitted = true;
-        } else {
-          outcome.verdict = "REJECTED";
-        }
+        outcome.verdict = "REJECTED";
       }
     }
-  } catch (error) {
-    if (outcome.enforced) throw error;
-    outcome.verdict = "NOT_ENFORCED";
-    outcome.reasons.push(`advisory gate unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!outcome.admitted && !outcome.enforced) {
-    outcome.advisory = true;
-    outcome.admitted = true;
-    outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
   }
   return outcome;
 }
@@ -1651,8 +1838,7 @@ async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
 // The dispatch admission run (step 1 above). Inputs arrive as environment
 // variables; the run must be on the default branch.
 export async function dispatchAdmit({ env, fetchImpl, workspace }) {
-  const enforced = enforcementEnabled(env);
-  const outcome = emptyOutcome("workflow_dispatch", enforced);
+  const outcome = emptyOutcome("workflow_dispatch");
   const workflow = String(env.ADMIT_WORKFLOW ?? "").trim();
   const ref = String(env.ADMIT_REF ?? "").trim();
   const claimId = String(env.ADMIT_CLAIM_ID ?? "").trim();
@@ -1666,56 +1852,30 @@ export async function dispatchAdmit({ env, fetchImpl, workspace }) {
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   outcome.claim_id = claimId;
   outcome.scope = scope;
-  const notEnforced = (reason) => {
-    outcome.admitted = true;
-    if (outcome.verdict === null || outcome.verdict === "ERROR") outcome.verdict = "NOT_ENFORCED";
-    outcome.reasons.push(reason);
-    return outcome;
-  };
-  try {
-    const commit = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/commits/${encodeURIComponent(ref)}`, { allowMissing: true });
-    if (!commit || typeof commit.sha !== "string") throw new Error(`ref ${ref} was not found.`);
-    outcome.head_sha = commit.sha;
-    if (!env.CLUED_CONTEXT_READ_TOKEN) {
-      if (enforced) throw new Error("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified.");
-      return notEnforced("CLUED_CONTEXT_READ_TOKEN is not set; advisory verification skipped");
-    }
-    // The dispatched head is metered against the Task's CI budget like a pull
-    // request head (re-review MAJOR-6), and the run records the head it
-    // admitted, which the heavy workflow's gate compares with its own commit.
-    const verified = await verifyClaim(fetchImpl, env, { scope, claim_id: claimId, head_sha: commit.sha, ci_dispatch: true }, workspace);
-    if (verified.kind === "rpc_unavailable") {
-      if (enforced) throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}).`);
-      return notEnforced(`${VERIFY_RPC} is not deployed yet (${verified.detail})`);
-    }
-    if (verified.kind === "refused") {
-      if (enforced) throw new Error(`Clued refused the verification request (${verified.detail}).`);
-      return notEnforced(`Clued refused the verification request (${verified.detail})`);
-    }
-    outcome.verdict = verified.verdict;
-    outcome.reasons.push(...verified.reasons);
-    if (verified.payload.claim && typeof verified.payload.claim === "object") {
-      const { claim } = verified.payload;
-      outcome.claim = {
-        task_id: claim.task_id ?? null, status: claim.status ?? null, fence: claim.fence ?? null,
-        expires_at: claim.expires_at ?? null, base_commit: claim.base_commit ?? null,
-        bound_pr: claim.bound_pr ?? null,
-        write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
-      };
-    }
-    if (enforced) {
-      outcome.admitted = outcome.verdict === "ADMITTED";
-    } else {
-      outcome.advisory = true;
-      outcome.admitted = true;
-      outcome.reasons.push("advisory only: CLUED_WORK_ADMISSION_ENFORCE is not set");
-    }
-    if (outcome.admitted) console.log(`::notice title=${ADMITTED_HEAD_TITLE}::${commit.sha}`);
-    return outcome;
-  } catch (error) {
-    if (enforced) throw error;
-    return notEnforced(`advisory verification unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  const commit = await githubJson(fetchImpl, env, `/repos/${env.GITHUB_REPOSITORY}/commits/${encodeURIComponent(ref)}`, { allowMissing: true });
+  if (!commit || typeof commit.sha !== "string") throw new Error(`ref ${ref} was not found.`);
+  outcome.head_sha = commit.sha;
+  if (!env.CLUED_CONTEXT_READ_TOKEN) throw new Error("CLUED_CONTEXT_READ_TOKEN is not set; admission cannot be verified.");
+  // The dispatched head is metered against the Task's CI budget like a pull
+  // request head (re-review MAJOR-6), and the run records the head it
+  // admitted, which the heavy workflow's gate compares with its own commit.
+  const verified = await verifyClaim(fetchImpl, env, { scope, claim_id: claimId, head_sha: commit.sha, ci_dispatch: true }, workspace);
+  if (verified.kind === "rpc_unavailable") throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}).`);
+  if (verified.kind === "refused") throw new Error(`Clued refused the verification request (${verified.detail}).`);
+  outcome.verdict = verified.verdict;
+  outcome.reasons.push(...verified.reasons);
+  if (verified.payload.claim && typeof verified.payload.claim === "object") {
+    const { claim } = verified.payload;
+    outcome.claim = {
+      task_id: claim.task_id ?? null, status: claim.status ?? null, fence: claim.fence ?? null,
+      expires_at: claim.expires_at ?? null, base_commit: claim.base_commit ?? null,
+      bound_pr: claim.bound_pr ?? null,
+      write_set: Array.isArray(claim.write_set) ? claim.write_set : [],
+    };
   }
+  outcome.admitted = outcome.verdict === "ADMITTED";
+  if (outcome.admitted) console.log(`::notice title=${ADMITTED_HEAD_TITLE}::${commit.sha}`);
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -1725,8 +1885,21 @@ export function renderSummary(outcome) {
   const lines = [];
   lines.push("## clued-work-admission");
   lines.push("");
-  const mode = outcome.enforced ? "enforced" : "advisory (CLUED_WORK_ADMISSION_ENFORCE is not set)";
-  lines.push(`**Verdict:** \`${outcome.verdict}\` · admitted: \`${outcome.admitted}\` · ${mode}`);
+  // Merge Admission v0.1 §10: the mode first, then the rules it gave.
+  const admission = outcome.admission_mode;
+  if (admission) {
+    lines.push(`**Mode:** \`${admission.state}\`${admission.layer ? ` · layer \`${admission.layer}\`` : ""} · source \`${admission.source}\`${admission.policy_version ? ` · policy v${admission.policy_version}` : ""}`);
+    for (const error of admission.errors ?? []) lines.push(`- fail closed to frozen: ${error}`);
+  }
+  lines.push(`**Verdict:** \`${outcome.verdict}\` · admitted: \`${outcome.admitted}\` · enforced`);
+  if (admission && admission.rules) {
+    const columns = ["work_claim", "owner_grant", "up_to_date", "merge_slot", "reruns_per_head", "auto_merge", "merge_actor"];
+    lines.push("");
+    lines.push(`| ${columns.join(" | ")} |`);
+    lines.push(`| ${columns.map(() => "---").join(" | ")} |`);
+    lines.push(`| ${columns.map((column) => admission.rules[column]).join(" | ")} |`);
+    lines.push("");
+  }
   if (outcome.claim_id) lines.push(`**Claim:** \`${outcome.claim_id}\` (scope \`${outcome.scope}\`)`);
   if (outcome.claim) {
     lines.push(`**Claim state:** task \`${outcome.claim.task_id}\` · ${outcome.claim.status} · fence ${outcome.claim.fence} · expires ${outcome.claim.expires_at}${outcome.claim.base_commit ? ` · base \`${outcome.claim.base_commit}\`` : ""}`);
@@ -1858,15 +2031,17 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
   }
   const success = env.ADMISSION_OUTCOME === "success";
   const verdict = (env.ADMISSION_VERDICT ?? "").trim() || (success ? "ADMITTED" : "NOT ADMITTED");
+  // Merge Admission v0.1 §10: the title names the mode, "ADMITTED [normal · code · reruns 0]".
+  const mode = (env.ADMISSION_MODE ?? "").replace(/[\r\n[\]]/g, " ").trim();
   const result = await postAppCheck({
-    env, fetchImpl, now, headSha, success, title: verdict, prNumber: env.ADMISSION_PR_NUMBER,
-    summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"}).`,
+    env, fetchImpl, now, headSha, success, title: mode ? `${verdict} [${mode}]` : verdict, prNumber: env.ADMISSION_PR_NUMBER,
+    summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"})${mode ? ` in mode ${mode}` : ""}.`,
   });
   // The merge slot check on the same head (Owner Decision 2ea795e4).
   const slot = mergeSlotCheck({ admitted: success, state: (env.ADMISSION_MERGE_SLOT ?? "").trim(),
     ref: (env.ADMISSION_MERGE_SLOT_REF ?? "").trim(), until: (env.ADMISSION_MERGE_SLOT_UNTIL ?? "").trim(),
     tip: (env.ADMISSION_MERGE_SLOT_TIP ?? "").trim(), claimId: (env.ADMISSION_CLAIM_ID ?? "").trim(),
-    branch: (env.ADMISSION_BASE_REF ?? "").trim() });
+    branch: (env.ADMISSION_BASE_REF ?? "").trim(), mode });
   result.merge_slot = await postAppCheck({
     env, fetchImpl, now, headSha, success: slot.success, title: slot.title, summary: slot.summary,
     prNumber: env.ADMISSION_PR_NUMBER, name: MERGE_SLOT_CHECK_NAME,
@@ -1900,7 +2075,7 @@ async function claimReferenceOf(fetchImpl, env, pr) {
   return reference;
 }
 
-async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
+export async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
   const { url: base, key } = resolvePublicSupabaseConfig(env, workspace);
   const response = await fetchImpl(`${base}/rest/v1/rpc/${rpc}`, {
     method: "POST",
@@ -2040,18 +2215,17 @@ function renderAdoptSummary(result) {
   return lines.join("\n");
 }
 
-// The merge slot state for the app-check step: not_checked whenever admission
-// is advisory; without one (admission stopped before verifying), unknown,
-// which fails the check.
+// The merge slot state for the app-check step; without one (admission
+// stopped before verifying), unknown, which fails the check.
 export function mergeSlotOutputs(outcome) {
   const slot = outcome.merge_slot;
   const clean = (value) => String(value ?? "").replace(/[\r\n]/g, " ");
-  const state = slot ? slot.state : (outcome.admitted && !outcome.enforced ? "not_checked" : "unknown");
+  const state = slot ? slot.state : "unknown";
   return [`merge_slot=${clean(state)}`, `merge_slot_ref=${clean(slot && slot.ref)}`,
     `merge_slot_until=${clean(slot && slot.until)}`, `merge_slot_tip=${clean(slot && slot.tip)}`];
 }
 
-export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch) {
+export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = globalThis.fetch, { readPolicyFile = fs.readFileSync } = {}) {
   const modeIndex = argv.indexOf("--mode");
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : "required";
   if (!["required", "gate", "reverify", "dispatch-admit", "app-check", "adopt"].includes(mode)) {
@@ -2088,7 +2262,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     return 0;
   }
   if (mode === "reverify") {
-    const result = await reverify({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
+    const result = await reverify({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, readPolicyFile });
     console.log(JSON.stringify(result, null, 2));
     appendFile(env.GITHUB_STEP_SUMMARY, renderReverifySummary(result));
     if (result.errors.length) {
@@ -2106,9 +2280,12 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   try {
     if (mode === "gate") outcome = await gate({ env, event, eventName, fetchImpl });
     else if (mode === "dispatch-admit") outcome = await dispatchAdmit({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
-    else outcome = await evaluate({ env, event, eventName, fetchImpl, workspace: env.GITHUB_WORKSPACE, withSummary: true });
+    else outcome = await evaluate({ env, event, eventName, fetchImpl, workspace: env.GITHUB_WORKSPACE, withSummary: true, readPolicyFile });
   } catch (error) {
-    outcome = emptyOutcome(eventName, enforcementEnabled(env));
+    // Review MINOR-2: an admission run that fails still says in which mode.
+    const admissionMode = mode === "required" ? resolveMode({ env, workspace: env.GITHUB_WORKSPACE, readFile: readPolicyFile }) : null;
+    outcome = emptyOutcome(eventName);
+    if (admissionMode) outcome.admission_mode = modeOutcome(admissionMode);
     outcome.verdict = "ERROR";
     outcome.error = error instanceof Error ? error.message : String(error);
   }
@@ -2121,11 +2298,19 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     `verdict=${outcome.verdict ?? ""}`,
     `claim_id=${outcome.claim_id ?? ""}`,
     `head_sha=${outcome.head_sha ?? ""}`,
+    `admission_mode=${String((outcome.admission_mode && outcome.admission_mode.label) ?? "").replace(/[\r\n]/g, " ")}`,
     ...mergeSlotOutputs(outcome),
     "",
   ].join("\n"));
   if (outcome.error) {
     console.error(`::error title=clued-work-admission::${withTokenHint(outcome.error)}`);
+    return 1;
+  }
+  // PR_NOT_OPEN: the workflow posts no check for it, but the run still fails:
+  // the runner hook admits a workflow-changing pull request's jobs on the
+  // admission run's success alone (confirmation review MAJOR-N1).
+  if (outcome.verdict === "PR_NOT_OPEN") {
+    console.error(`::error title=clued-work-admission::${outcome.reasons.join("; ")}`);
     return 1;
   }
   if (!outcome.admitted) {
@@ -2134,13 +2319,16 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
       console.error(`::error title=clued-work-admission::${text}`);
       return 1;
     }
+    // Merge Admission step 2 (review MAJOR-1): on attempt 1 a gate that does
+    // not admit succeeds and its heavy jobs are skipped (the admission check
+    // already shows why). A re-run that is not admitted fails instead, so the
+    // run is red and skipped heavy jobs never look like a pass.
+    if (mode === "gate" && rerunAttempt(env)) {
+      console.error(`::error title=admission-gate::${text}; this re-run did not run the heavy jobs.`);
+      return 1;
+    }
     console.error(`::warning title=admission-gate::${text}; heavy jobs are skipped.`);
     return 0;
-  }
-  if (outcome.verdict === "NOT_ENFORCED") {
-    console.error(`::notice title=clued-work-admission::Not enforced: ${outcome.reasons.join("; ")}`);
-  } else if (outcome.advisory) {
-    console.error(`::notice title=clued-work-admission::Advisory verdict ${outcome.verdict}${outcome.reasons.length ? ` (${outcome.reasons.join("; ")})` : ""}`);
   }
   return 0;
 }

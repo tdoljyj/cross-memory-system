@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // BUG-20261002-001: the NOW_CONFLICT check of a project task must not resolve
 // the effective project of Global tasks, whose project_id is null.
@@ -52,6 +54,10 @@ test("project now-task writes ignore Global now tasks and still detect real conf
     for (const name of (await fs.readdir(path.join(root, "supabase/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const token = hash();
@@ -66,12 +72,12 @@ test("project now-task writes ignore Global now tasks and still detect real conf
     [projectId, projectScope, userId, otherProjectId, otherScope]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','All scopes',$2,array['context:read','context:write'],array['*'])`, [userId, token]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query("set role anon");
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
     const rpc = async (input) =>
-      (await anon.query("select public.clued_record_mutate($1,$2) value", [token, input])).rows[0].value;
+      (await gateway.query("select public.clued_record_mutate($1,$2) value", [token, input])).rows[0].value;
     const create = (scope, bucket) => rpc({
       operation: "create", record_type: "task", record_schema_version: 1, lifecycle_status: "active", scope,
       idempotency_key: uuid(), authority: "observed", confidence_reason: "now conflict fixture",

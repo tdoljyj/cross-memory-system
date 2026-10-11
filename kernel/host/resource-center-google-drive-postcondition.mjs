@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 import { contentRefShape } from "./resource-center-google-drive-create-effect.mjs";
-import { googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
+import { ancestorChain, walkAncestorChain } from "./resource-center-google-drive-ancestors.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const normalized = (value) => bindResourceCenterMutation({ destination_path: value }).destination_path;
@@ -15,11 +16,15 @@ const fail = (code) => { throw new Error(code); };
  * it) carries that digest in its proof (provider_sharing_digest), so it is
  * registered matched by sharing rather than by its Drive version. Any other
  * outcome, or a failed read, leaves the digest out: version matching, as before.
- * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, get_sharing?: Function, require_effect_provider_id?: boolean, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
+ * Storage step 2 (Task e2eb07d1): with get_access as well (a read returning
+ * id, version and permissions together), such a directory also carries the
+ * access digest it was observed with (provider_access_digest), only when that
+ * read saw the verified version.
+ * @param {{managed_root: string, root_folder_id: string, root_parent_id: string, get_file: Function, list_children: Function, get_sharing?: Function, get_access?: Function, require_effect_provider_id?: boolean, include_verified_proof?: boolean, timeout_ms?: number, poll_ms?: number, clock?: () => number, sleep?: Function}} config
  */
 export function createGoogleDriveCreatePostconditionVerifier({
   managed_root: managedRoot, root_folder_id: rootId, root_parent_id: rootParentId,
-  get_file: getFile, list_children: listChildren, get_sharing: getSharing,
+  get_file: getFile, list_children: listChildren, get_sharing: getSharing, get_access: getAccess,
   require_effect_provider_id: requireEffectProviderId = false,
   include_verified_proof: includeVerifiedProof = false,
   timeout_ms: timeoutMs = 30_000, poll_ms: pollMs = 1000,
@@ -29,6 +34,7 @@ export function createGoogleDriveCreatePostconditionVerifier({
   if (!root || !rootId || !rootParentId || typeof getFile !== "function" ||
     typeof listChildren !== "function" || typeof clock !== "function" || typeof sleep !== "function" ||
     (getSharing !== undefined && typeof getSharing !== "function") ||
+    (getAccess !== undefined && typeof getAccess !== "function") ||
     !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
     !Number.isInteger(pollMs) || pollMs < 1 || pollMs > timeoutMs ||
     typeof includeVerifiedProof !== "boolean" || (includeVerifiedProof && !requireEffectProviderId)) {
@@ -50,7 +56,8 @@ export function createGoogleDriveCreatePostconditionVerifier({
       !destination?.startsWith(root + "/") || !effect || effect.operation !== "create" ||
       normalized(effect.destination_path) !== destination ||
       before?.root_folder_id !== rootId || before.root_parent_id !== rootParentId ||
-      !before.destination_parent_id || !before.destination_parent_version || !/^[0-9a-f]{64}$/.test(before.provider_version ?? "") ||
+      !before.destination_parent_id || (!Array.isArray(before.ancestors) && !before.destination_parent_version) ||
+      !/^[0-9a-f]{64}$/.test(before.provider_version ?? "") ||
       before.destination_file_id !== null || before.destination_file_version !== null ||
       (requireEffectProviderId && !/^[A-Za-z0-9_-]{1,160}$/.test(effect.provider_file_id ?? ""))) {
       fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
@@ -67,7 +74,13 @@ export function createGoogleDriveCreatePostconditionVerifier({
     const size = folder ? null : ref ? String(ref.size) : String(Buffer.byteLength(content, "utf8"));
     const digest = folder ? null : ref ? ref.sha256 : createHash("sha256").update(content, "utf8").digest("hex");
     const mimeType = ref ? ref.mime_type : undefined;
+    // Step 3: an identity that names its ancestors is walked by their Drive
+    // IDs; only the folders matched by version keep their version pinned.
+    const chain = ancestorChain(before, { root, root_folder_id: rootId, root_parent_id: rootParentId },
+      parts.length ? `${root}/${parts.join("/")}` : root);
+    if (chain && chain.at(-1).id !== before.destination_parent_id) fail("DRIVE_POSTCONDITION_REQUEST_MISMATCH");
     async function parentIdentity() {
+      if (chain) return walkAncestorChain(chain, getFile, { pin_versions: true });
       let node = await getFile(rootId);
       check(node, rootId, root.slice(root.lastIndexOf("/") + 1), rootParentId, true);
       const versions = [[node.id, node.version]];
@@ -149,6 +162,14 @@ export function createGoogleDriveCreatePostconditionVerifier({
           } catch { sharingDigest = null; }
           if (sharingDigest !== before.destination_parent_sharing_digest) sharingDigest = null;
         }
+        // Step 2: the folder's own access, recorded only with the sharing digest.
+        let accessDigest = null;
+        if (sharingDigest && typeof getAccess === "function") {
+          try {
+            const access = await getAccess(file.id);
+            accessDigest = access?.id === file.id && access.version === file.version ? googleDriveAccessDigest(access) : null;
+          } catch { accessDigest = null; }
+        }
         // This is emitted only after the complete metadata/content/ancestor and
         // uniqueness checks above. The fixed server bridge, never an Agent,
         // may persist it against the original started journal before revoke.
@@ -160,6 +181,7 @@ export function createGoogleDriveCreatePostconditionVerifier({
           : Object.freeze({ contract: "clued.storage-create-verified/2",
           ...postcondition, target_kind: mutation.target_kind, size, sha256: digest,
           ...(sharingDigest ? { provider_sharing_digest: sharingDigest } : {}),
+          ...(accessDigest ? { provider_access_digest: accessDigest } : {}),
           provider_before: structuredClone(before),
           checks: Object.freeze({ identity: true, content: true, ancestors: true,
             unique_name: true, stable_version: true }) });

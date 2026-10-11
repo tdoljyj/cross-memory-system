@@ -8,13 +8,18 @@ const source=readFileSync(new URL("../app/storage/connections/page.tsx",import.m
 const compiled=ts.transpileModule(source,{compilerOptions:{
   module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2020,esModuleInterop:true,
 }}).outputText;
-const active={id:"fixture-connection",version:4,provider:"google-drive",state:"active",auth_mode:"account_policy",
+const active={id:"10000000-0000-4000-8000-000000000090",version:4,provider:"google-drive",state:"active",auth_mode:"account_policy",
   root_name:"Clued_资料中心",policy_active:true,actions:["inspect","create_file","create_topic"],
-  refresh_enabled:true,database_execution_enabled:false,profile_current:true};
+  refresh_enabled:true,database_execution_enabled:false,profile_current:true,
+  profile_id:"10000000-0000-4000-8000-000000000091",project_id:"10000000-0000-4000-8000-000000000092",
+  profile_version:1,root_folder_id:"fixture-root",root_parent_id:"fixture-parent",managed_root:"/registered/fixture-root",
+  created_by_clued:false,root_stopped:false,root_stop_generation:0,normal_use_enabled:false,
+  physical_location:{status:"verified",source:"google_drive_metadata",path:"我的云端硬盘/Clued_资料中心",root_name:"Clued_资料中心"}};
 const writeStatus=classes=>({active:true,policy_generation:classes.length+1,
   disclosure_version:"clued.storage-modify-disclosure/1",overwrite_disclosure_version:"clued.storage-overwrite-disclosure/1",classes});
-function fixture() {
+function fixture(initialNormal = normalStatus("normal",false)) {
   const hooks=[],effects=[],calls=[],prompts=[];let cursor=0,tree,authCallback,owner="owner";
+  let automaticNormalRead = false;
   const equal=(a,b)=>a&&b&&a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
   const React={
     useState(initial){const i=cursor++;hooks[i]??={value:initial};return [hooks[i].value,v=>{hooks[i].value=typeof v==="function"?v(hooks[i].value):v;}]},
@@ -35,7 +40,17 @@ function fixture() {
       }}};
       throw Error(name);
     },
-    fetch(url,init){return new Promise(resolve=>calls.push({url,init,resolve}));},
+    fetch(url,init){return new Promise(resolve=>{
+      calls.push({url,init,resolve});
+      if(automaticNormalRead && url === "/v1/storage/normal-use" && JSON.parse(init.body).action === "status") {
+        // The new background read remains in the complete request log. Only
+        // its deterministic response is automatic; mutation/readbacks stay controlled.
+        assert.deepEqual(JSON.parse(init.body),{action:"status",connection_id:active.id});
+        assert.equal(init.headers.authorization,"Bearer native-"+owner);
+        assert.equal(init.method,"POST");assert.equal(init.redirect,"error");
+        automaticNormalRead=false;resolve({ok:true,status:200,json:async()=>initialNormal});
+      }
+    });},
   });
   const render=()=>{cursor=0;tree=exports.default();while(effects.length)effects.shift()();};
   const settle=async()=>{for(let i=0;i<30;i++)await Promise.resolve();render();};
@@ -46,14 +61,21 @@ function fixture() {
   function labelled(label){let found;const walk=n=>{if(Array.isArray(n))return n.forEach(walk);if(!n||typeof n!=="object")return;
     if(n.props?.["aria-label"]===label)found=n;walk(n.props?.children);};walk(tree);return found;}
   return {calls,prompts,settle,button,labelled,render,text:()=>text(tree),tree:()=>tree,
-    respond(i,value,status=200){calls[i].resolve({ok:status<400,status,json:async()=>value});},
+    respond(i,value,status=200){
+      if(calls[i].url === "/v1/storage/lifecycle" && Array.isArray(value.connections)) {
+        value={contract:"clued.storage-owner-lifecycle/1",complete:true,...value};
+        automaticNormalRead=value.connections.some(c=>c.state==="active" && c.auth_mode==="account_policy" && c.policy_active);
+      }
+      calls[i].resolve({ok:status<400,status,json:async()=>value});
+    },
     change(id){owner=id;authCallback("SIGNED_IN",id?{user:{id}}:null);render();},
   };
 }
 test("everyday page shows exact scope and a paused execution gate without technical grant controls",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
-  assert.equal(f.calls[0].url,"/v1/storage/owner");
-  assert.deepEqual(JSON.parse(f.calls[0].init.body),{action:"connections"});
+  assert.equal(f.calls[0].url,"/v1/storage/lifecycle");
+  assert.deepEqual(JSON.parse(f.calls[0].init.body),{action:"list"});
+  assert.equal(f.calls[1].url,"/v1/storage/normal-use");
   assert.match(f.text(),/Clued_资料中心/);assert.match(f.text(),/当前文件操作不可用或暂停/);
   assert.equal(f.text().includes(active.id),false);
   for(const phrase of ["Agent 存储权限","Decision ID","授权客户端","登记账号连接"])assert.equal(f.text().includes(phrase),false);
@@ -61,123 +83,123 @@ test("everyday page shows exact scope and a paused execution gate without techni
 test("whole-drive disconnect sends one native CAS mutation and requires matching readback",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   const button=f.button("断开网盘连接");button.props.onClick();button.props.onClick();await f.settle();
-  assert.equal(f.calls.length,2);assert.match(f.prompts[0],/不删除 Google Drive 文件/);
+  assert.equal(f.calls.length,3);assert.match(f.prompts[0],/不删除 Google Drive 文件/);
   assert.match(f.prompts[0],/断开后不再允许读取提供方/);
-  assert.equal(f.calls[1].url,"/v1/storage/owner");
-  assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"disconnect",connection_id:active.id,base_version:4,idempotency_key:"fixture-id"});
-  f.respond(1,{status:"committed",receipt_id:"fixture-receipt"});await f.settle();
-  assert.equal(f.calls.length,3);f.respond(2,{connections:[{...active,state:"revoked",policy_active:false,refresh_enabled:false,version:5}],worker_execution_enabled:false});
-  await f.settle();assert.match(f.text(),/网盘连接已断开/);assert.equal(f.calls.length,3);
+  assert.equal(f.calls[2].url,"/v1/storage/owner");
+  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"disconnect",connection_id:active.id,base_version:4,idempotency_key:"fixture-id"});
+  f.respond(2,{status:"committed",receipt_id:"fixture-receipt"});await f.settle();
+  assert.equal(f.calls.length,4);f.respond(3,{connections:[{...active,state:"revoked",policy_active:false,refresh_enabled:false,version:5}],worker_execution_enabled:false});
+  await f.settle();assert.match(f.text(),/网盘连接已断开/);assert.equal(f.calls.length,4);
 });
 test("unknown disconnect result does not resend or claim success",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("断开网盘连接").props.onClick();await f.settle();
-  f.respond(1,{error:"private"},403);await f.settle();
-  assert.equal(f.calls.length,3);f.respond(2,{connections:[active],worker_execution_enabled:false});await f.settle();
-  assert.match(f.text(),/断开结果未确认/);assert.equal(f.calls.length,3);
+  f.respond(2,{error:"private"},403);await f.settle();
+  assert.equal(f.calls.length,4);f.respond(3,{connections:[active],worker_execution_enabled:false});await f.settle();
+  assert.match(f.text(),/断开结果未确认/);assert.equal(f.calls.length,5);
 });
 test("Agent read level is loaded on demand and toggled by one native CAS mutation with readback",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
-  assert.equal(f.calls.length,1,"the everyday page stays one request");
+  assert.equal(f.calls.length,2,"the everyday page reads the lifecycle list and normal-use truth only");
   assert.match(f.text(),/Agent 查看目录结构：未读取/);
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  assert.equal(f.calls[1].url,"/v1/storage/read-access");
-  assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
-  assert.equal(f.calls[2].url,"/v1/storage/write-access");
+  assert.equal(f.calls[2].url,"/v1/storage/read-access");
   assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"status",connection_id:active.id});
-  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  assert.equal(f.calls[3].url,"/v1/storage/write-access");
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"status",connection_id:active.id});
+  f.respond(2,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
-  f.respond(2,writeStatus([]));await f.settle();
+  f.respond(3,writeStatus([]));await f.settle();
   assert.equal(f.text().includes("允许 Agent 读正文"),false,"bodies are offered only while read is on");
   const allow=f.button("允许 Agent 查看目录结构");allow.props.onClick();allow.props.onClick();await f.settle();
-  assert.equal(f.calls.length,4);assert.match(f.prompts.at(-1),/不读取文件内容，不修改任何文件/);
-  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
+  assert.equal(f.calls.length,5);assert.match(f.prompts.at(-1),/不读取文件内容，不修改任何文件/);
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
     base_generation:0,disclosure_version:"clued.storage-read-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(3,{status:"committed",receipt_id:"fixture-read-receipt"});await f.settle();
-  f.respond(4,{active:true,read_generation:1,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(4,{status:"committed",receipt_id:"fixture-read-receipt"});await f.settle();
+  f.respond(5,{active:true,read_generation:1,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:["read"]});await f.settle();
   assert.match(f.text(),/已允许 Agent 查看目录结构。回执：fixture-read-receipt/);
   assert.match(f.text(),/已允许（只看文件名和目录，不读内容）/);
   const stop=f.button("停止 Agent 查看目录结构");stop.props.onClick();await f.settle();
-  assert.deepEqual(JSON.parse(f.calls[5].init.body).classes,[]);assert.equal(JSON.parse(f.calls[5].init.body).base_generation,1);
-  f.respond(5,{error:"private"},403);await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[6].init.body).classes,[]);assert.equal(JSON.parse(f.calls[6].init.body).base_generation,1);
+  f.respond(6,{error:"private"},403);await f.settle();
   assert.match(f.text(),/Agent 查看设置结果未确认/);assert.match(f.text(),/Agent 查看目录结构：未读取/);
-  assert.equal(f.calls.length,6,"an unknown result is never resent");
+  assert.equal(f.calls.length,7,"an unknown result is never resent");
 });
 test("reading bodies is a separate toggle with its own disclosure, and stopping it keeps the read level",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
   const status=classes=>({active:true,read_generation:classes.length+1,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes});
-  f.respond(1,status(["read"]));f.respond(2,writeStatus([]));await f.settle();
+  f.respond(2,status(["read"]));f.respond(3,writeStatus([]));await f.settle();
   assert.match(f.text(),/Agent 读正文：未允许/);
   f.button("允许 Agent 读正文").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/由 Clued 创建的文本文件正文/);assert.match(f.prompts.at(-1),/发送给该 Agent 所用的模型服务/);
-  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["read","read_content"],
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set_classes",connection_id:active.id,classes:["read","read_content"],
     base_generation:2,disclosure_version:"clued.storage-read-content-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(3,{status:"committed",receipt_id:"fixture-content-receipt"});await f.settle();
-  f.respond(4,status(["read","read_content"]));await f.settle();
+  f.respond(4,{status:"committed",receipt_id:"fixture-content-receipt"});await f.settle();
+  f.respond(5,status(["read","read_content"]));await f.settle();
   assert.match(f.text(),/已允许 Agent 读正文。回执：fixture-content-receipt/);assert.match(f.text(),/Agent 读正文：已允许/);
   f.button("停止 Agent 读正文").props.onClick();await f.settle();
-  assert.deepEqual(JSON.parse(f.calls[5].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
+  assert.deepEqual(JSON.parse(f.calls[6].init.body),{action:"set_classes",connection_id:active.id,classes:["read"],
     base_generation:3,disclosure_version:"clued.storage-read-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(5,{status:"committed",receipt_id:"fixture-stop-receipt"});await f.settle();
-  f.respond(6,status(["read"]));await f.settle();
+  f.respond(6,{status:"committed",receipt_id:"fixture-stop-receipt"});await f.settle();
+  f.respond(7,status(["read"]));await f.settle();
   assert.match(f.text(),/已停止 Agent 读正文/);assert.match(f.text(),/已允许（只看文件名和目录，不读内容）/);
 });
 test("rename and move is its own write-level toggle; it replaces the policy and reloads everything",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(2,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
-  f.respond(2,writeStatus([]));await f.settle();
+  f.respond(3,writeStatus([]));await f.settle();
   assert.match(f.text(),/Agent 改名和移动文件：未允许/);
   const allow=f.button("允许 Agent 改名和移动文件");allow.props.onClick();allow.props.onClick();await f.settle();
-  assert.equal(f.calls.length,4);
+  assert.equal(f.calls.length,5);
   assert.match(f.prompts.at(-1),/由 Clued 创建的文件/);assert.match(f.prompts.at(-1),/尚未开始的排队任务会被取消/);
-  assert.equal(f.calls[3].url,"/v1/storage/write-access");
-  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["modify"],
+  assert.equal(f.calls[4].url,"/v1/storage/write-access");
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set_classes",connection_id:active.id,classes:["modify"],
     base_generation:1,disclosure_version:"clued.storage-modify-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(3,{status:"committed",receipt_id:"fixture-modify-receipt"});await f.settle();
-  assert.equal(f.calls[4].url,"/v1/storage/owner","the connection list is reloaded");
-  f.respond(4,{connections:[{...active,actions:[...active.actions,"modify"]}],worker_execution_enabled:false});await f.settle();
-  assert.equal(f.calls[5].url,"/v1/storage/write-access");assert.equal(f.calls[6].url,"/v1/storage/read-access");
-  f.respond(5,writeStatus(["modify"]));
-  f.respond(6,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(4,{status:"committed",receipt_id:"fixture-modify-receipt"});await f.settle();
+  assert.equal(f.calls[5].url,"/v1/storage/lifecycle","the connection list is reloaded");
+  f.respond(5,{connections:[{...active,actions:[...active.actions,"modify"]}],worker_execution_enabled:false});await f.settle();
+  assert.equal(f.calls[7].url,"/v1/storage/write-access");assert.equal(f.calls[8].url,"/v1/storage/read-access");
+  f.respond(7,writeStatus(["modify"]));
+  f.respond(8,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
   assert.match(f.text(),/已允许 Agent 改名和移动文件。回执：fixture-modify-receipt/);
   assert.match(f.text(),/改名、移动文件/);
   f.button("停止 Agent 改名和移动文件").props.onClick();await f.settle();
-  assert.deepEqual(JSON.parse(f.calls[7].init.body).classes,[]);assert.equal(JSON.parse(f.calls[7].init.body).base_generation,2);
-  f.respond(7,{error:"private"},403);await f.settle();
-  assert.match(f.text(),/Agent 修改设置结果未确认/);assert.equal(f.calls.length,8,"an unknown result is never resent");
+  assert.deepEqual(JSON.parse(f.calls[9].init.body).classes,[]);assert.equal(JSON.parse(f.calls[9].init.body).base_generation,2);
+  f.respond(9,{error:"private"},403);await f.settle();
+  assert.match(f.text(),/Agent 修改设置结果未确认/);assert.equal(f.calls.length,10,"an unknown result is never resent");
 });
 test("a level switch refused because the root has an unresolved job says so (fix d9d6db4c)",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(2,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
-  f.respond(2,writeStatus([]));await f.settle();
+  f.respond(3,writeStatus([]));await f.settle();
   f.button("允许 Agent 改名和移动文件").props.onClick();await f.settle();
-  f.respond(3,{error:"Storage access operation unavailable.",reason:"storage_root_busy"},409);await f.settle();
+  f.respond(4,{error:"Storage access operation unavailable.",reason:"storage_root_busy"},409);await f.settle();
   assert.match(f.text(),/未修改：此目录有一个已开始但未结束的任务/);
-  assert.doesNotMatch(f.text(),/结果未确认/);assert.equal(f.calls.length,4,"a refusal is never resent");
+  assert.doesNotMatch(f.text(),/结果未确认/);assert.equal(f.calls.length,5,"a refusal is never resent");
 });
 test("overwrite is its own toggle with its own disclosure and keeps rename/move as is",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(2,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
-  f.respond(2,writeStatus(["modify"]));await f.settle();
+  f.respond(3,writeStatus(["modify"]));await f.settle();
   assert.match(f.text(),/Agent 覆盖文件内容：未允许/);assert.match(f.text(),/Agent 改名和移动文件：已允许（仅 Clued 创建或已纳管的文件）/);
   f.button("允许 Agent 覆盖文件内容").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/保存为永久保留的 Google Drive 版本/);assert.match(f.prompts.at(-1),/最近 10 个/);
-  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["modify","overwrite"],
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set_classes",connection_id:active.id,classes:["modify","overwrite"],
     base_generation:2,disclosure_version:"clued.storage-overwrite-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(3,{status:"committed",receipt_id:"fixture-overwrite-receipt"});await f.settle();
-  f.respond(4,{connections:[{...active,actions:[...active.actions,"modify","overwrite"]}],worker_execution_enabled:false});await f.settle();
-  f.respond(5,writeStatus(["modify","overwrite"]));
-  f.respond(6,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(4,{status:"committed",receipt_id:"fixture-overwrite-receipt"});await f.settle();
+  f.respond(5,{connections:[{...active,actions:[...active.actions,"modify","overwrite"]}],worker_execution_enabled:false});await f.settle();
+  f.respond(7,writeStatus(["modify","overwrite"]));
+  f.respond(8,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
   assert.match(f.text(),/已允许 Agent 覆盖文件内容。回执：fixture-overwrite-receipt/);assert.match(f.text(),/覆盖文件内容/);
 });
@@ -186,31 +208,31 @@ const destructiveStatus=classes=>({...writeStatus(classes),destructive_disclosur
 test("moving files to the trash is its own toggle with its own disclosure; a server without it shows no toggle",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(2,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
-  f.respond(2,destructiveStatus([]));await f.settle();
+  f.respond(3,destructiveStatus([]));await f.settle();
   assert.match(f.text(),/Agent 把文件移入回收站：未允许/);
   f.button("允许 Agent 把文件移入回收站").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/30 天后自动永久删除/);assert.match(f.prompts.at(-1),/不会永久删除/);assert.match(f.prompts.at(-1),/超过 5 项/);assert.match(f.prompts.at(-1),/空目录/);
-  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set_classes",connection_id:active.id,classes:["destructive"],
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set_classes",connection_id:active.id,classes:["destructive"],
     base_generation:1,disclosure_version:"clued.storage-destructive-disclosure/1",idempotency_key:"fixture-id"});
-  f.respond(3,{status:"committed",receipt_id:"fixture-destructive-receipt"});await f.settle();
-  f.respond(4,{connections:[{...active,actions:[...active.actions,"destructive"]}],worker_execution_enabled:false});await f.settle();
-  f.respond(5,destructiveStatus(["destructive"]));
-  f.respond(6,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(4,{status:"committed",receipt_id:"fixture-destructive-receipt"});await f.settle();
+  f.respond(5,{connections:[{...active,actions:[...active.actions,"destructive"]}],worker_execution_enabled:false});await f.settle();
+  f.respond(7,destructiveStatus(["destructive"]));
+  f.respond(8,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});await f.settle();
   assert.match(f.text(),/已允许 Agent 把文件移入回收站。回执：fixture-destructive-receipt/);
   assert.match(f.text(),/移入回收站、从回收站恢复/);
   // The Agent's pending batch is listed with each item's ID and version and confirmed once ("全部确认").
   f.button("读取回收站确认").props.onClick();await f.settle();
-  assert.equal(f.calls[7].url,"/v1/storage/trash-confirmation");
-  assert.deepEqual(JSON.parse(f.calls[7].init.body),{action:"status",connection_id:active.id});
+  assert.equal(f.calls[9].url,"/v1/storage/trash-confirmation");
+  assert.deepEqual(JSON.parse(f.calls[9].init.body),{action:"status",connection_id:active.id});
   const item=(extra={})=>({operation:"delete",target_kind:"file",path:"/Clued_资料中心/20_P/a.md",provider_file_id:"drive-a",
     provider_file_version:"9",current:true,used:false,...extra});
   const batch=(status,items)=>({batch_id:"batch-1",status,created_at:"2026-10-01T00:00:00Z",expires_at:"2026-10-02T00:00:00Z",items});
   const stale={...batch("pending",[item(),item({path:"/Clued_资料中心/20_P/b.md",provider_file_id:"drive-b",current:false})]),batch_id:"batch-0"};
   const pending=batch("pending",[item(),item({operation:"restore",target_kind:"directory",path:"/Clued_资料中心/20_P/old",provider_file_id:"drive-d",provider_file_version:"2"})]);
-  f.respond(7,{destructive:true,policy_generation:2,limit:5,window_hours:24,batches_truncated:true,batches:[pending,stale]});await f.settle();
+  f.respond(9,{destructive:true,policy_generation:2,limit:5,window_hours:24,batches_truncated:true,batches:[pending,stale]});await f.settle();
   assert.match(f.text(),/移入回收站：\/Clued_资料中心\/20_P\/a\.md（ID drive-a，版本 9）/);
   assert.match(f.text(),/从回收站恢复（空目录）：\/Clued_资料中心\/20_P\/old/);
   assert.match(f.text(),/已变化，不能确认/);assert.match(f.text(),/只显示最近 20 个批次/);
@@ -222,20 +244,20 @@ test("moving files to the trash is its own toggle with its own disclosure; a ser
   assert.equal(confirmButtons().length,2);assert.equal(confirmButtons()[1].props.disabled,true);
   confirmButtons()[0].props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/共 2 项/);assert.match(f.prompts.at(-1),/30 天后自动永久删除/);
-  assert.equal(f.calls[8].url,"/v1/storage/trash-confirmation");
-  assert.deepEqual(JSON.parse(f.calls[8].init.body),{action:"confirm",connection_id:active.id,batch_id:"batch-1",base_generation:2,
+  assert.equal(f.calls[10].url,"/v1/storage/trash-confirmation");
+  assert.deepEqual(JSON.parse(f.calls[10].init.body),{action:"confirm",connection_id:active.id,batch_id:"batch-1",base_generation:2,
     idempotency_key:"fixture-id"});
-  f.respond(8,{status:"committed",receipt_id:"fixture-trash-confirmation"});await f.settle();
-  f.respond(9,{destructive:true,policy_generation:2,limit:5,window_hours:24,batches_truncated:false,batches:[batch("confirmed",pending.items)]});await f.settle();
+  f.respond(10,{status:"committed",receipt_id:"fixture-trash-confirmation"});await f.settle();
+  f.respond(11,{destructive:true,policy_generation:2,limit:5,window_hours:24,batches_truncated:false,batches:[batch("confirmed",pending.items)]});await f.settle();
   assert.match(f.text(),/已确认这批 2 项。回执：fixture-trash-confirmation/);
   assert.match(f.text(),/已确认批次/);assert.equal(confirmButtons().length,0);
 });
 test("without the destructive disclosure in the status, the page offers only rename/move and overwrite",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(2,{active:false,read_generation:0,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:[]});
-  f.respond(2,writeStatus([]));await f.settle();
+  f.respond(3,writeStatus([]));await f.settle();
   assert.match(f.text(),/Agent 覆盖文件内容：未允许/);assert.equal(f.text().includes("回收站"),false);
 });
 // Decision 62e796f9: one button for every write level, one confirmation, then one
@@ -247,7 +269,7 @@ const readOff={active:false,read_generation:0,disclosure_version:"clued.storage-
 test("all write levels at once: one confirmation, then one change per level in order",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,readOff);f.respond(2,allStatus(["overwrite"]));await f.settle();
+  f.respond(2,readOff);f.respond(3,allStatus(["overwrite"]));await f.settle();
   assert.equal(f.button("全部停止（写入等级）").props.disabled,false);
   const all=f.button("全部允许（写入等级）");all.props.onClick();all.props.onClick();await f.settle();
   assert.equal(f.prompts.length,1,"one confirmation");
@@ -258,7 +280,7 @@ test("all write levels at once: one confirmation, then one change per level in o
   const steps=[["modify","clued.storage-modify-disclosure/1",["modify","overwrite"]],
     ["destructive","clued.storage-destructive-disclosure/1",["destructive","modify","overwrite"]],
     ["modify_subtree","clued.storage-subtree-disclosure/1",["destructive","modify","modify_subtree","overwrite"]]];
-  let call=3,generation=2;
+  let call=4,generation=2;
   for(const [level,disclosure,classes] of steps){
     assert.deepEqual(JSON.parse(f.calls[call].init.body),{action:"set_classes",connection_id:active.id,classes,
       base_generation:generation,disclosure_version:disclosure,idempotency_key:"fixture-id"},level);
@@ -267,27 +289,27 @@ test("all write levels at once: one confirmation, then one change per level in o
     assert.deepEqual(JSON.parse(f.calls[call].init.body),{action:"status",connection_id:active.id});
     f.respond(call,allStatus(classes));await f.settle();call++;generation=classes.length+1;
   }
-  assert.equal(f.calls[call].url,"/v1/storage/owner","then everything is reloaded once");
+  assert.equal(f.calls[call].url,"/v1/storage/lifecycle","then everything is reloaded once");
   f.respond(call,{connections:[active],worker_execution_enabled:false});await f.settle();
-  f.respond(call+1,allStatus(["destructive","modify","modify_subtree","overwrite"]));f.respond(call+2,readOff);await f.settle();
+  f.respond(call+2,allStatus(["destructive","modify","modify_subtree","overwrite"]));f.respond(call+3,readOff);await f.settle();
   assert.match(f.text(),/已允许 Agent 改名和移动文件、把文件移入回收站、移动整个文件夹。回执：r-modify、r-destructive、r-modify_subtree/);
   assert.equal(f.button("全部允许（写入等级）").props.disabled,true,"nothing left to allow");
   // Stopping all goes the other way round, the most destructive levels first.
   f.button("全部停止（写入等级）").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/一次停止以下 4 项/);
-  assert.deepEqual(JSON.parse(f.calls[call+3].init.body).classes,["destructive","modify","overwrite"],"modify_subtree first");
-  f.respond(call+3,{status:"committed",receipt_id:"s-1"});await f.settle();
-  f.respond(call+4,allStatus(["destructive","modify","overwrite"]));await f.settle();
-  assert.deepEqual(JSON.parse(f.calls[call+5].init.body).classes,["modify","overwrite"]);
+  assert.deepEqual(JSON.parse(f.calls[call+4].init.body).classes,["destructive","modify","overwrite"],"modify_subtree first");
+  f.respond(call+4,{status:"committed",receipt_id:"s-1"});await f.settle();
+  f.respond(call+5,allStatus(["destructive","modify","overwrite"]));await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[call+6].init.body).classes,["modify","overwrite"]);
   // A refusal part way names what already changed and stops.
-  f.respond(call+5,{error:"Storage access operation unavailable.",reason:"storage_root_busy"},409);await f.settle();
+  f.respond(call+6,{error:"Storage access operation unavailable.",reason:"storage_root_busy"},409);await f.settle();
   assert.match(f.text(),/已停止：移动整个文件夹（回执：s-1）；其余未完成。此目录有一个已开始但未结束的任务/);
-  assert.equal(f.calls.length,call+6,"never resent");
+  assert.equal(f.calls.length,call+7,"never resent");
 });
 test("the bulk buttons follow the levels the server offers",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,readOff);f.respond(2,writeStatus([]));await f.settle();
+  f.respond(2,readOff);f.respond(3,writeStatus([]));await f.settle();
   assert.equal(f.button("全部停止（写入等级）").props.disabled,true,"nothing to stop");
   f.button("全部允许（写入等级）").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/一次允许以下 2 项/);assert.equal(f.prompts.at(-1).includes("回收站"),false);
@@ -295,17 +317,17 @@ test("the bulk buttons follow the levels the server offers",async()=>{
 // StorageNormalUse.v0.1 §8.2: one "正常使用" toggle; the four toggles stay under 高级.
 // After P7 the levels also cover adopted items; bodies of every in-root file only under normal use.
 test("level labels name what each level covers",async()=>{
-  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
+  const f=fixture(null);await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   f.button("读取 Agent 查看设置").props.onClick();await f.settle();
-  f.respond(1,{active:true,read_generation:2,disclosure_version:"clued.storage-read-disclosure/1",
+  f.respond(2,{active:true,read_generation:2,disclosure_version:"clued.storage-read-disclosure/1",
     content_disclosure_version:"clued.storage-read-content-disclosure/1",classes:["read","read_content"]});
-  f.respond(2,{...writeStatus(["modify","modify_subtree"]),subtree_disclosure_version:"clued.storage-subtree-disclosure/1"});await f.settle();
+  f.respond(3,{...writeStatus(["modify","modify_subtree"]),subtree_disclosure_version:"clued.storage-subtree-disclosure/1"});await f.settle();
   assert.match(f.text(),/Agent 读正文：已允许（仅 Clued 创建的文本文件）/);
   assert.match(f.text(),/Agent 改名和移动文件：已允许（仅 Clued 创建或已纳管的文件）/);
   assert.match(f.text(),/Agent 移动整个文件夹：已允许（仅 Clued 创建或已纳管的文件夹）/);
   assert.doesNotMatch(f.text(),/已允许（仅 Clued 创建的文件）/);
-  f.button("读取正常使用设置").props.onClick();await f.settle();
-  f.respond(3,normalStatus("normal",true));await f.settle();
+  f.button("重新读取正常使用状态").props.onClick();await f.settle();
+  f.respond(4,normalStatus("normal",true));await f.settle();
   assert.match(f.text(),/Agent 读正文：已允许（目录内全部文件）/);
 });
 const normalStatus=(profile,on,extra={})=>({connection_id:active.id,read_generation:on?3:1,disclosure_version:"clued.storage-normal-use-disclosure/1",
@@ -313,10 +335,8 @@ const normalStatus=(profile,on,extra={})=>({connection_id:active.id,read_generat
   refresh_token_blocked:false,...extra});
 test("normal use with a normal credential is one native CAS mutation under the versioned disclosure",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
-  assert.equal(f.calls.length,1,"normal use is loaded on demand");assert.match(f.text(),/正常使用：未读取/);assert.match(f.text(),/高级/);
-  f.button("读取正常使用设置").props.onClick();await f.settle();
+  assert.equal(f.calls.length,2,"normal use is read automatically with the lifecycle list");assert.match(f.text(),/正常使用：未开启/);assert.match(f.text(),/高级/);
   assert.equal(f.calls[1].url,"/v1/storage/normal-use");assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
-  f.respond(1,normalStatus("normal",false));await f.settle();
   assert.match(f.text(),/正常使用：未开启/);
   const on=f.button("开启正常使用");on.props.onClick();on.props.onClick();await f.settle();
   assert.equal(f.calls.length,3);
@@ -332,11 +352,10 @@ test("normal use with a normal credential is one native CAS mutation under the v
   assert.match(f.prompts.at(-1),/不会收回 Google 授权/);
   assert.equal(JSON.parse(f.calls[4].init.body).action,"disable");assert.equal(JSON.parse(f.calls[4].init.body).base_generation,3);
   f.respond(4,{error:"private"},403);await f.settle();
-  assert.match(f.text(),/正常使用设置结果未确认/);assert.match(f.text(),/正常使用：未读取/);assert.equal(f.calls.length,5,"never resent");
+  assert.match(f.text(),/正常使用设置结果未确认/);assert.match(f.text(),/正常使用：状态未确认/);assert.equal(f.calls.length,5,"never resent");
 });
 test("normal use on a legacy connection starts Google re-consent with the normal set; busy and token limits are explained",async()=>{
-  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
-  f.button("读取正常使用设置").props.onClick();await f.settle();f.respond(1,normalStatus("legacy",false));await f.settle();
+  const f=fixture(normalStatus("legacy",false));await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   assert.match(f.text(),/开启需要重新授权 Google/);
   f.button("开启正常使用").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/前往 Google 授权页面/);
@@ -344,7 +363,7 @@ test("normal use on a legacy connection starts Google re-consent with the normal
   assert.deepEqual(JSON.parse(f.calls[2].init.body),{connection_id:active.id,normal_use:{disclosure_version:"clued.storage-normal-use-disclosure/1"}});
   f.respond(2,{error:"Storage Google connection unavailable.",reason:"storage_root_busy"},403);await f.settle();
   assert.match(f.text(),/该目录还有尚未完成的文件操作，稍后再试/);
-  f.button("读取正常使用设置").props.onClick();await f.settle();
+  f.button("重新读取正常使用状态").props.onClick();await f.settle();
   f.respond(3,normalStatus("legacy",false,{refresh_token_count:90,refresh_token_warning:true,refresh_token_blocked:true}));await f.settle();
   assert.match(f.text(),/授权次数已达上限/);
   const before=f.calls.length;f.button("开启正常使用").props.onClick();await f.settle();
@@ -356,8 +375,7 @@ const FULL_DISCLOSURE="clued.storage-full-scope-disclosure/1";
 const fullStatus=(profile,extra={})=>normalStatus(profile,profile!=="legacy",{reconsent_required:profile==="legacy",
   full_scope:profile==="full",full_scope_disclosure_version:FULL_DISCLOSURE,...extra});
 test("managing existing files: one button starts Google re-consent with the full set under its own disclosure, nothing else",async()=>{
-  const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
-  f.button("读取正常使用设置").props.onClick();await f.settle();f.respond(1,fullStatus("normal"));await f.settle();
+  const f=fixture(fullStatus("normal"));await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
   assert.match(f.text(),/管理已有文件：未允许/);assert.match(f.text(),/只升级授权，不打开任何写入等级/);
   f.button("允许管理已有文件").props.onClick();await f.settle();
   const prompt=f.prompts.at(-1);
@@ -370,18 +388,15 @@ test("managing existing files: one button starts Google re-consent with the full
   f.respond(2,{error:"Storage Google connection unavailable.",reason:"storage_root_busy"},403);await f.settle();
   assert.match(f.text(),/该目录还有尚未完成的文件操作，稍后再试/);
   // A full credential: allowed, no button.
-  f.button("读取正常使用设置").props.onClick();await f.settle();f.respond(3,fullStatus("full"));await f.settle();
+  f.button("重新读取正常使用状态").props.onClick();await f.settle();f.respond(3,fullStatus("full"));await f.settle();
   assert.match(f.text(),/管理已有文件：已允许/);assert.match(f.text(),/正常使用：已开启/);
   assert.throws(()=>f.button("允许管理已有文件"));
   // The refresh-token limit refuses before any request.
-  const g=fixture();await g.settle();g.respond(0,{connections:[active],worker_execution_enabled:false});await g.settle();
-  g.button("读取正常使用设置").props.onClick();await g.settle();
-  g.respond(1,fullStatus("normal",{refresh_token_count:90,refresh_token_warning:true,refresh_token_blocked:true}));await g.settle();
+  const g=fixture(fullStatus("normal",{refresh_token_count:90,refresh_token_warning:true,refresh_token_blocked:true}));await g.settle();g.respond(0,{connections:[active],worker_execution_enabled:false});await g.settle();
   const before=g.calls.length;g.button("允许管理已有文件").props.onClick();await g.settle();
   assert.equal(g.calls.length,before);assert.match(g.text(),/暂时不能通过重新授权允许管理已有文件/);
   // An older server names neither field: no button.
-  const h=fixture();await h.settle();h.respond(0,{connections:[active],worker_execution_enabled:false});await h.settle();
-  h.button("读取正常使用设置").props.onClick();await h.settle();h.respond(1,normalStatus("normal",true));await h.settle();
+  const h=fixture(normalStatus("normal",true));await h.settle();h.respond(0,{connections:[active],worker_execution_enabled:false});await h.settle();
   assert.equal(h.text().includes("管理已有文件"),false);
 });
 // StorageNormalUse.v0.1 §7.3 / §8.2 item 4 (N4): hourly budgets with presets and a bounded custom value.
@@ -393,10 +408,10 @@ const budgetStatus=(connection={},account={})=>({contract:"clued.storage-budget/
   bounds:{step_bytes:MiB,connection:{min_bytes:32*MiB,max_bytes:2*GiB},account:{min_bytes:32*MiB,max_bytes:8*GiB}}});
 test("hourly budgets: presets and custom within bounds, one native CAS mutation, readback confirms immediate effect",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[active],worker_execution_enabled:false});await f.settle();
-  assert.equal(f.calls.length,1,"budgets are loaded on demand");assert.match(f.text(),/每小时额度：未读取/);
+  assert.equal(f.calls.length,2,"budgets are loaded on demand");assert.match(f.text(),/每小时额度：未读取/);
   f.button("读取额度设置").props.onClick();await f.settle();
-  assert.equal(f.calls[1].url,"/v1/storage/budget");assert.deepEqual(JSON.parse(f.calls[1].init.body),{action:"status",connection_id:active.id});
-  f.respond(1,budgetStatus());await f.settle();
+  assert.equal(f.calls[2].url,"/v1/storage/budget");assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"status",connection_id:active.id});
+  f.respond(2,budgetStatus());await f.settle();
   assert.match(f.text(),/每个已授权 Agent 读取 256 MiB、上传 256 MiB；账号合计读取 1 GiB、上传 1 GiB/);
   assert.match(f.text(),/可设 32 MiB–2 GiB/);assert.match(f.text(),/可设 32 MiB–8 GiB/);assert.match(f.text(),/256 MiB（默认）/);
   const read=f.labelled("每个已授权 Agent（此连接）读取额度"),upload=f.labelled("每个已授权 Agent（此连接）上传额度");
@@ -407,17 +422,17 @@ test("hourly budgets: presets and custom within bounds, one native CAS mutation,
   assert.equal(custom.props.min,32);assert.equal(custom.props.max,2048);
   custom.props.onChange({target:{value:"4096"}});f.render();
   f.button("保存此连接的额度").props.onClick();await f.settle();
-  assert.equal(f.calls.length,2,"an out-of-bounds custom value sends nothing");assert.match(f.text(),/自定义额度须为 32 MiB 到 2 GiB 之间的整数 MiB/);
+  assert.equal(f.calls.length,3,"an out-of-bounds custom value sends nothing");assert.match(f.text(),/自定义额度须为 32 MiB 到 2 GiB 之间的整数 MiB/);
   f.labelled("每个已授权 Agent（此连接）上传自定义额度（MiB）").props.onChange({target:{value:"100"}});f.render();
   const save=f.button("保存此连接的额度");save.props.onClick();save.props.onClick();await f.settle();
-  assert.equal(f.calls.length,3);
+  assert.equal(f.calls.length,4);
   assert.match(f.prompts.at(-1),/读取 64 MiB、上传 100 MiB/);assert.match(f.prompts.at(-1),/立即生效/);
   assert.match(f.prompts.at(-1),/不改变任何授权、正常使用、写入设置或排队任务/);
-  assert.deepEqual(JSON.parse(f.calls[2].init.body),{action:"set",scope:"connection",connection_id:active.id,base_generation:0,
+  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"set",scope:"connection",connection_id:active.id,base_generation:0,
     read_bytes_per_hour:64*MiB,upload_bytes_per_hour:100*MiB,idempotency_key:"fixture-id"});
-  f.respond(2,{status:"committed",receipt_id:"fixture-budget-receipt"});await f.settle();
-  assert.deepEqual(JSON.parse(f.calls[3].init.body),{action:"status",connection_id:active.id});
-  f.respond(3,budgetStatus({budget_generation:1,configured:true,read_bytes_per_hour:64*MiB,upload_bytes_per_hour:100*MiB}));await f.settle();
+  f.respond(3,{status:"committed",receipt_id:"fixture-budget-receipt"});await f.settle();
+  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"status",connection_id:active.id});
+  f.respond(4,budgetStatus({budget_generation:1,configured:true,read_bytes_per_hour:64*MiB,upload_bytes_per_hour:100*MiB}));await f.settle();
   assert.match(f.text(),/已更新每个已授权 Agent（此连接）的每小时额度，立即生效。回执：fixture-budget-receipt/);
   assert.match(f.text(),/每个已授权 Agent 读取 64 MiB、上传 100 MiB/);
   // Account totals: their own CAS generation and no connection_id; an unknown result is never resent.
@@ -425,8 +440,23 @@ test("hourly budgets: presets and custom within bounds, one native CAS mutation,
   f.labelled("账号合计（全部 Agent 与连接）读取自定义额度（MiB）").props.onChange({target:{value:"8192"}});f.render();
   f.button("保存账号合计额度").props.onClick();await f.settle();
   assert.match(f.prompts.at(-1),/账号合计（全部 Agent 与连接）的每小时额度改为：读取 8 GiB、上传 1 GiB/);
-  assert.deepEqual(JSON.parse(f.calls[4].init.body),{action:"set",scope:"account",base_generation:0,
+  assert.deepEqual(JSON.parse(f.calls[5].init.body),{action:"set",scope:"account",base_generation:0,
     read_bytes_per_hour:8*GiB,upload_bytes_per_hour:GiB,idempotency_key:"fixture-id"});
-  f.respond(4,{error:"private"},403);await f.settle();
-  assert.match(f.text(),/额度设置结果未确认/);assert.match(f.text(),/每小时额度：未读取/);assert.equal(f.calls.length,5,"never resent");
+  f.respond(5,{error:"private"},403);await f.settle();
+  assert.match(f.text(),/额度设置结果未确认/);assert.match(f.text(),/每小时额度：未读取/);assert.equal(f.calls.length,6,"never resent");
+});
+test("storage step 3: directories still matched by Drive version are listed with a pointer to the directory check",async()=>{
+  const f=fixture();await f.settle();
+  f.respond(0,{connections:[{...active,access_digest_missing:{count:21,directories:[{path:"",since:"2026-10-08T00:00:00Z"},
+    {path:"资料/旧目录",since:"2026-10-08T00:00:00Z"}]}}],worker_execution_enabled:false});await f.settle();
+  assert.match(f.text(),/有 21 个目录还没有记录访问权限摘要/);
+  assert.match(f.text(),/（根目录）/);assert.match(f.text(),/资料\/旧目录/);assert.match(f.text(),/另有 19 个未列出/);
+  assert.match(f.text(),/运行目录检查/);
+  for(const missing of [{count:0,directories:[]},undefined]){
+    const g=fixture();await g.settle();g.respond(0,{connections:[{...active,access_digest_missing:missing}],worker_execution_enabled:false});await g.settle();
+    assert.equal(g.text().includes("访问权限摘要"),false);assert.match(g.text(),/Clued_资料中心/);
+  }
+  // A malformed field is not a connection.
+  const h=fixture();await h.settle();h.respond(0,{connections:[{...active,access_digest_missing:{count:"x",directories:[]}}],worker_execution_enabled:false});await h.settle();
+  assert.equal(h.text().includes("Clued_资料中心"),false);
 });

@@ -7,9 +7,9 @@ on:
       - "scripts/ci/self-hosted/**"
       - "tests/test_ci_health.py"
   schedule:
-    # Hourly keeps the hosted-minute cost bounded; the self-hosted heartbeat
+    # Every six hours keeps the hosted-minute cost bounded; the self-hosted heartbeat
     # workflow still probes every exact runner route every 15 minutes for free.
-    - cron: "17 * * * *"
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       scan_job_history:
@@ -30,13 +30,15 @@ concurrency:
 
 jobs:
   deterministic-health-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Evaluate runner pool and startup latency
         id: health
         env:

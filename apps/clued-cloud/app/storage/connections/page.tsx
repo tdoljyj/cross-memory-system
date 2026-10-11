@@ -8,7 +8,19 @@ type Connection = {
   id: string; version: number; provider: string; state: string; auth_mode: string;
   root_name: string; policy_active: boolean; actions: string[];
   refresh_enabled: boolean; database_execution_enabled: boolean; profile_current: boolean;
+  profile_version: number; root_folder_id: string; managed_root: string;
+  created_by_clued: boolean; root_stopped: boolean; root_stop_generation: number;
+  normal_use_enabled: boolean;
+  physical_location: { status: "verified" | "unavailable"; source: "google_drive_metadata"; path?: string; root_name?: string; observed_at?: string };
+  pending_lifecycle?: { attempt_id: string; operation: "reconnect" | "delete"; state: string; execution_permitted: false };
+  // Storage step 3: directories still matched by Drive version (older servers omit it).
+  access_digest_missing?: DigestMissing;
 };
+type DigestMissing = { count: number; directories: { path: string; since: string }[] };
+function isDigestMissing(value: unknown): value is DigestMissing {
+  return isObject(value) && Number.isSafeInteger(value.count) && Number(value.count) >= 0 && Array.isArray(value.directories)
+    && value.directories.length <= 20 && value.directories.every(d => isObject(d) && typeof d.path === "string" && typeof d.since === "string");
+}
 const actionName: Record<string, string> = {
   inspect: "查看任务状态", create_file: "新建文件", create_topic: "新建主题目录", modify: "改名、移动文件",
   overwrite: "覆盖文件内容", destructive: "移入回收站、从回收站恢复", modify_subtree: "移动整个文件夹",
@@ -24,13 +36,29 @@ function isConnection(value: unknown): value is Connection {
     && typeof value.auth_mode === "string" && typeof value.root_name === "string"
     && typeof value.policy_active === "boolean" && typeof value.refresh_enabled === "boolean"
     && typeof value.database_execution_enabled === "boolean" && typeof value.profile_current === "boolean"
-    && Array.isArray(value.actions) && value.actions.every(action => typeof action === "string" && Object.hasOwn(actionName, action));
+    && Number.isSafeInteger(value.profile_version) && Number(value.profile_version) > 0
+    && typeof value.root_folder_id === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(value.root_folder_id)
+    && typeof value.managed_root === "string" && typeof value.created_by_clued === "boolean"
+    && typeof value.root_stopped === "boolean" && Number.isSafeInteger(value.root_stop_generation)
+    && typeof value.normal_use_enabled === "boolean" && isObject(value.physical_location)
+    && ["verified", "unavailable"].includes(String(value.physical_location.status))
+    && value.physical_location.source === "google_drive_metadata"
+    && (value.physical_location.status !== "verified" || (typeof value.physical_location.path === "string"
+      && typeof value.physical_location.root_name === "string"))
+    && (value.pending_lifecycle === undefined || (isObject(value.pending_lifecycle)
+      && typeof value.pending_lifecycle.attempt_id === "string" && /^[0-9a-f-]{36}$/.test(value.pending_lifecycle.attempt_id)
+      && ["reconnect", "delete"].includes(String(value.pending_lifecycle.operation))
+      && ["prepared", "started", "uncertain"].includes(String(value.pending_lifecycle.state))
+      && value.pending_lifecycle.execution_permitted === false))
+    && Array.isArray(value.actions) && value.actions.every(action => typeof action === "string" && Object.hasOwn(actionName, action))
+    && (value.access_digest_missing === undefined || isDigestMissing(value.access_digest_missing));
 }
 // A refused request keeps only a fixed reason label from our own allowlist.
 class RequestFailure extends Error { reason?: string; }
-async function accountRequest(body: object, path = "/v1/storage/owner") {
+async function accountRequest(body: object, path = "/v1/storage/owner", context?: { owner: string | null; current: () => boolean }) {
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session) throw new Error("请登录 Clued 后重新读取连接。");
+  if (context && (!context.current() || data.session.user.id !== context.owner)) throw new Error("账号已变化，请重新读取。");
   const response = await fetch(path, {
     method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + data.session.access_token },
     body: JSON.stringify(body), cache: "no-store", redirect: "error",
@@ -43,7 +71,7 @@ async function accountRequest(body: object, path = "/v1/storage/owner") {
   }
   const result: unknown = await response.json();
   const latest = await supabase.auth.getSession();
-  if (latest.error || latest.data.session?.user.id !== data.session.user.id) throw new Error("账号已变化，请重新读取。");
+  if (latest.error || latest.data.session?.user.id !== data.session.user.id || (context && !context.current())) throw new Error("账号已变化，请重新读取。");
   if (!isObject(result)) throw new Error("连接状态未确认。");
   return result;
 }
@@ -157,6 +185,53 @@ function isTrashConfirmation(value: unknown): value is TrashConfirmation {
 }
 const trashItemText = (item: TrashItem) => `${item.operation === "delete" ? "移入回收站" : "从回收站恢复"}${item.target_kind === "directory" ? "（空目录）" : ""}：`
   + `${item.path}（ID ${item.provider_file_id}，版本 ${item.provider_file_version}）`;
+type DeletePreview = { trash_available: true; root_folder_id: string; root_name: string; root_version: string;
+  metadata_digest: string; item_count: number; connection_version: number; profile_version: number;
+  confirmation_contract?: "clued.storage-owner-confirmation/2"; confirmation_mode?: "whole_created_root_v2" };
+const wholeRootPreview = (v: DeletePreview) => v.confirmation_contract === "clued.storage-owner-confirmation/2"
+  && v.confirmation_mode === "whole_created_root_v2";
+function isDeletePreview(v: unknown, c: Connection): v is DeletePreview {
+  return isObject(v) && v.trash_available === true && v.root_folder_id === c.root_folder_id
+    && typeof v.root_name === "string" && typeof v.root_version === "string" && /^[0-9]{1,30}$/.test(v.root_version)
+    && typeof v.metadata_digest === "string" && /^[0-9a-f]{64}$/.test(v.metadata_digest)
+    && Number.isSafeInteger(v.item_count) && Number(v.item_count) >= 0
+    && v.connection_version === c.version && v.profile_version === c.profile_version
+    && ((v.confirmation_contract === undefined && v.confirmation_mode === undefined)
+      || (v.confirmation_contract === "clued.storage-owner-confirmation/2" && v.confirmation_mode === "whole_created_root_v2"));
+}
+const deletePreviewReasons = {
+  picked_or_legacy_root: "这是已有或自行选择的文件夹，此次只删除连接，保留文件夹及全部内容。",
+  connection_inactive: "这个连接目前未处于已连接状态，无法核对文件夹。需要连带处理文件夹时，请先重新连接。",
+  storage_connection_unavailable: "当前连接的有效状态或访问资格未能确认。请关闭窗口并刷新状态后核对。",
+  fresh_authorization_required: "当前 Google 授权无法用于核对文件夹，需要核查授权状态。本次只删除连接，保留 Drive 文件夹。",
+  metadata_unavailable: "未能读取 Google 的文件夹信息，暂时无法核对删除条件。本次只删除连接，保留 Drive 文件夹。",
+  root_drift: "文件夹的位置、所有权或访问资格与登记信息不一致。本次保留 Drive 文件夹，请先核对连接与文件夹。",
+  inventory_unavailable: "未能完整核对文件夹内的文件和子文件夹。本次只删除连接，保留 Drive 文件夹。",
+  operation_deadline: "完整核对未能在限定时间内完成。本次只删除连接，保留 Drive 文件夹。",
+  can_trash_unavailable: "未能确认 Google 允许把这个文件夹移入回收站。本次只删除连接，保留 Drive 文件夹。",
+  conditional_capability_unavailable: "本次读取未取得删除所需的版本保护信息，暂时不能连带移入回收站。此连接无需因此重新连接。",
+  whole_root_trash_unavailable: "当前服务尚未确认支持整文件夹回收。本次只删除连接，保留 Drive 文件夹。",
+  preview_version_conflict: "连接状态在核对期间发生了变化。请关闭窗口并刷新状态，再重新核对；本次保留 Drive 文件夹。",
+  lifecycle_unavailable: "文件夹删除条件尚未确认，当前无法确定具体原因。本次只删除连接，保留 Drive 文件夹。",
+} as const;
+type DeletePreviewReason = keyof typeof deletePreviewReasons;
+function knownDeletePreviewReason(value: unknown): DeletePreviewReason {
+  return typeof value === "string" && Object.hasOwn(deletePreviewReasons, value) ? value as DeletePreviewReason : "lifecycle_unavailable";
+}
+function refusedDeletePreview(v: unknown, c: Connection): DeletePreviewReason {
+  if (isObject(v) && v.trash_available === true) {
+    if (v.root_folder_id !== c.root_folder_id) return "root_drift";
+    if (Number.isSafeInteger(v.connection_version) && Number.isSafeInteger(v.profile_version)
+      && (v.connection_version !== c.version || v.profile_version !== c.profile_version)) return "preview_version_conflict";
+    return "lifecycle_unavailable";
+  }
+  return isObject(v) && v.trash_available === false ? knownDeletePreviewReason(v.reason) : "lifecycle_unavailable";
+}
+type LifecycleDialog = { kind: "reconnect" | "delete"; connection: Connection; normalUse: boolean;
+  trashRoot: boolean; reading: boolean; preview?: DeletePreview; previewReason?: DeletePreviewReason };
+const folderHref = (c: Connection) => `https://drive.google.com/drive/folders/${encodeURIComponent(c.root_folder_id)}`;
+const folderName = (c: Connection) => c.physical_location.status === "verified" ? c.physical_location.root_name! : c.root_name;
+const registeredLocation = (c: Connection) => c.managed_root.startsWith("/clued-cloud/") ? null : c.managed_root;
 // One write class per change; each has its own confirmation text (P3 modify, P4 overwrite, P5 destructive,
 // P6 modify_subtree).
 const writeText = {
@@ -190,7 +265,7 @@ export default function StorageConnections() {
   const [writeAccess, setWriteAccess] = useState<Record<string, WriteAccess>>({});
   // Trash batch confirmation (P5), loaded on demand per connection.
   const [trash, setTrash] = useState<Record<string, TrashConfirmation>>({});
-  // Normal use (StorageNormalUse §8.2), loaded on demand like the read level.
+  // Read normal-use truth with the list, so an unknown cache is never presented as off.
   const [normalUse, setNormalUse] = useState<Record<string, NormalUse>>({});
   // Hourly budgets (N4), loaded on demand. Drafts are "64" / "256" / "1024" or
   // "custom" per connection, scope and dimension; custom values are whole MiB.
@@ -200,33 +275,56 @@ export default function StorageConnections() {
   const [workerEnabled, setWorkerEnabled] = useState(false);
   const [message, setMessage] = useState("正在读取连接……");
   const [busy, setBusy] = useState(false);
-  const [defaultRefresh, setDefaultRefresh] = useState(false);
-  const revision = useRef(0), operation = useRef(false);
+  const [defaultRefresh, setDefaultRefresh] = useState(true);
+  const [dialog, setDialog] = useState<LifecycleDialog | null>(null);
+  const dialogElement = useRef<HTMLDivElement | null>(null);
+  const revision = useRef(0), operation = useRef(false), ownerId = useRef<string | null>(null);
+  useEffect(() => { if (dialog) dialogElement.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, [dialog?.kind, dialog?.connection.id]);
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
+    setDialog(null);
+    setNormalUse({});
     setBusy(true);
     try {
-      const result = await accountRequest({ action: "connections" });
+      const owner = await supabase.auth.getSession();
       if (epoch !== revision.current) return;
-      if (!Array.isArray(result.connections) || !result.connections.every(isConnection)
+      ownerId.current = owner.data.session?.user.id ?? null;
+      const result = await accountRequest({ action: "list" }, "/v1/storage/lifecycle");
+      if (epoch !== revision.current) return;
+      if (result.contract !== "clued.storage-owner-lifecycle/1" || result.complete !== true
+        || !Array.isArray(result.connections) || !result.connections.every(isConnection)
         || typeof result.worker_execution_enabled !== "boolean") throw new Error("连接摘要未确认。");
       setConnections(result.connections);
       setWorkerEnabled(result.worker_execution_enabled);
       setMessage(result.connections.length ? "" : "暂无存储连接；受治理目录登记请进入管理入口。");
+      const loaded = await Promise.all((result.connections as Connection[])
+        .filter(c => c.state === "active" && c.auth_mode === "account_policy" && c.policy_active)
+        .map(async c => {
+          try {
+            const value = await accountRequest({ action: "status", connection_id: c.id }, "/v1/storage/normal-use");
+            return isNormalUse(value) ? [c.id, value] as const : null;
+          } catch { return null; }
+        }));
+      if (epoch !== revision.current) return null;
+      setNormalUse(Object.fromEntries(loaded.filter((item): item is readonly [string, NormalUse] => item !== null)));
       return result.connections as Connection[];
     } catch (error) {
       if (epoch === revision.current) {
         setConnections([]); setWorkerEnabled(false);
         setMessage(error instanceof Error ? error.message : "连接状态未确认。");
       }
-      return null;
+      return epoch === revision.current ? null : undefined;
     } finally { if (epoch === revision.current) setBusy(false); }
   }, []);
   useEffect(() => {
     let disposed = false;
-    const { data } = supabase.auth.onAuthStateChange(() => {
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (disposed) return;
+      if (event === "TOKEN_REFRESHED" && session?.user.id === ownerId.current) return;
+      ownerId.current = session?.user.id ?? null;
       ++revision.current; setConnections([]); setWorkerEnabled(false);
+      setDialog(null);
+      setNormalUse({}); setReadAccess({}); setWriteAccess({}); setBudget({}); setBudgetDraft({}); setTrash({});
       queueMicrotask(() => { if (!disposed) void refresh(); });
     });
     queueMicrotask(() => { if (!disposed) void refresh(); });
@@ -588,6 +686,92 @@ export default function StorageConnections() {
       if (epoch === revision.current) { await refresh(); setMessage("断开结果未确认。请核对最新状态与原回执，勿重复提交。"); }
     } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
   }
+  async function openLifecycle(c: Connection, kind: LifecycleDialog["kind"]) {
+    if (operation.current || busy || c.pending_lifecycle) return;
+    if (kind === "reconnect" && (c.state !== "revoked" || !c.root_stopped || c.root_stop_generation < 1)) return;
+    const next: LifecycleDialog = { kind, connection: c, normalUse: false, trashRoot: false,
+      reading: kind === "delete" && c.created_by_clued && c.state === "active",
+      ...(kind === "delete" ? { previewReason: !c.created_by_clued ? "picked_or_legacy_root" as const
+        : c.state !== "active" ? "connection_inactive" as const : "lifecycle_unavailable" as const } : {}) };
+    setDialog(next);
+    if (!next.reading) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    const context = { owner: ownerId.current, current: () => epoch === revision.current };
+    try {
+      const value = await accountRequest({ action: "preview_delete", connection_id: c.id }, "/v1/storage/lifecycle", context);
+      if (epoch !== revision.current) return;
+      setDialog(current => current?.connection.id === c.id && current.kind === "delete"
+        ? { ...current, reading: false, ...(isDeletePreview(value, c) ? { preview: value, trashRoot: !wholeRootPreview(value) }
+          : { previewReason: refusedDeletePreview(value, c) }) } : current);
+    } catch (error) {
+      if (epoch === revision.current) setDialog(current => current?.connection.id === c.id
+        ? { ...current, reading: false, previewReason: knownDeletePreviewReason(error instanceof RequestFailure
+          ? error.reason === "storage_owner_lifecycle_conflict" ? "preview_version_conflict" : error.reason : undefined) } : current);
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function submitLifecycle() {
+    if (operation.current || busy || !dialog || dialog.reading) return;
+    const choice = dialog, c = choice.connection, epoch = revision.current;
+    const context = { owner: ownerId.current, current: () => epoch === revision.current };
+    if (choice.trashRoot && (!choice.preview || !isDeletePreview(choice.preview, c))) return;
+    operation.current = true; setBusy(true); setDialog(null);
+    try {
+      const common = { connection_id: c.id, base_version: c.version, profile_version: c.profile_version,
+        request_id: crypto.randomUUID() };
+      const confirmation = { contract: "clued.storage-owner-confirmation/1", root_folder_id: c.root_folder_id, confirmed: true };
+      const result = await accountRequest(choice.kind === "reconnect"
+        ? { action: "reconnect", ...common, root_stop_generation: c.root_stop_generation,
+          confirmation: { ...confirmation, normal_use: choice.normalUse } }
+        : { action: "delete", ...common, confirmation: choice.trashRoot && wholeRootPreview(choice.preview!)
+          ? { contract: "clued.storage-owner-confirmation/2", root_folder_id: c.root_folder_id, confirmed: true,
+            trash_created_root: true, confirmation_mode: "whole_created_root_v2" }
+          : { ...confirmation, trash_created_root: choice.trashRoot,
+            ...(choice.trashRoot ? { metadata_digest: choice.preview!.metadata_digest, root_version: choice.preview!.root_version } : {}) } },
+        "/v1/storage/lifecycle", context);
+      if (epoch !== revision.current) return;
+      if (choice.kind === "reconnect") {
+        if (typeof result.authorization_url !== "string") throw new Error("授权地址未确认。");
+        const url = new URL(result.authorization_url);
+        if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password)
+          throw new Error("授权地址未确认。");
+        window.location.assign(url.href); return;
+      }
+      if (result.status === "completed" && typeof result.receipt_id === "string" && result.connection_id === c.id
+        && result.root_trashed === choice.trashRoot) {
+        const latest = await refresh();
+        if (latest === undefined) return;
+        setMessage(latest !== null && !latest.some(item => item.id === c.id)
+          ? `连接已删除${choice.trashRoot ? "，文件夹及其中内容已移入 Google Drive 回收站" : "，Drive 文件夹已保留"}。`
+          : "已取得删除回执，连接列表尚未核实。请刷新状态核对。");
+      } else {
+        const latest = await refresh();
+        if (latest !== undefined) setMessage("删除结果尚未确认。请使用此连接的“核对上次操作结果”，不要重复删除。");
+      }
+    } catch {
+      if (epoch === revision.current) {
+        const latest = await refresh();
+        if (latest !== undefined) setMessage("操作结果未确认。请先核对连接状态和上次操作结果；不要重复提交。");
+      }
+    } finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
+  async function recoverLifecycle(c: Connection) {
+    if (operation.current || busy || !c.pending_lifecycle) return;
+    operation.current = true; setBusy(true);
+    const epoch = revision.current;
+    const context = { owner: ownerId.current, current: () => epoch === revision.current };
+    try {
+      const result = await accountRequest({ action: "recover", attempt_id: c.pending_lifecycle.attempt_id }, "/v1/storage/lifecycle", context);
+      if (epoch !== revision.current) return;
+      const latest = await refresh();
+      if (latest !== undefined) setMessage(result.status === "completed" && typeof result.receipt_id === "string"
+        ? "已核实上次操作完成。" : result.status === "cancelled"
+          ? "上次操作准备已过期并取消；可以重新确认。" : result.status === "waiting"
+            ? "本次 Google 授权仍在等待。若你已取消授权，请等待准备过期（最长 10 分钟）后再次核对，再重新连接。"
+            : "上次操作仍未确认。此次仅核对结果，没有再次删除文件夹或重新授权。");
+    } catch { if (epoch === revision.current) setMessage("上次操作暂时无法核实，请稍后再核对；不要重复提交。"); }
+    finally { operation.current = false; if (epoch === revision.current) setBusy(false); }
+  }
   return <main className="mx-auto max-w-3xl px-6 py-16">
     <h1 className="text-2xl font-semibold">存储连接</h1>
     <p className="my-4">Google Drive 的授权属于当前 Clued 账号。这里显示已登记范围与实际执行状态。</p>
@@ -597,20 +781,34 @@ export default function StorageConnections() {
         && c.profile_current && c.database_execution_enabled && workerEnabled;
       return <section key={c.id} className="my-4 rounded-xl border p-4">
         <h2 className="font-semibold">{c.provider === "google-drive" ? "Google Drive" : c.provider} · {stateName[c.state] ?? "状态待确认"}</h2>
-        <p className="my-2">已登记范围：{c.root_name}</p>
+        <p className="my-2 font-semibold">文件夹：{folderName(c)}</p>
+        {c.physical_location.status === "verified"
+          ? <p className="break-all text-sm">Drive 位置：{c.physical_location.path}</p>
+          : <div className="text-sm"><p>Drive 当前名称与路径暂未核实。</p>
+            {registeredLocation(c) && <p className="break-all">已登记位置（未核验当前路径）：{registeredLocation(c)}</p>}</div>}
+        <a className="underline" href={folderHref(c)} target="_blank" rel="noopener noreferrer">打开对应 Drive 文件夹</a>
+        <p className="break-all text-xs text-gray-500">文件夹标识：{c.root_folder_id}</p>
         <p>账号允许的操作：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}</p>
         <p role="status" className="my-2">{available ? "存储执行入口已开启；每项操作仍须通过当前目录、客户端和单次任务准入。" : "当前文件操作不可用或暂停；连接状态不代表写入已启用。"}</p>
         <p className="my-2 text-sm">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
+        {c.access_digest_missing && c.access_digest_missing.count > 0 && <div role="status" className="my-2 text-sm">
+          <p>有 {c.access_digest_missing.count} 个目录还没有记录访问权限摘要，仍按 Google Drive 版本核对：这些目录里出现其他变化时，其下进行中的文件操作会失败。
+            请到<Link href="/storage/admin">存储管理</Link>运行目录检查，为它们记录摘要。</p>
+          <ul className="list-disc pl-6">{c.access_digest_missing.directories.map(d =>
+            <li key={d.path}>{d.path || "（根目录）"}</li>)}</ul>
+          {c.access_digest_missing.count > c.access_digest_missing.directories.length &&
+            <p>另有 {c.access_digest_missing.count - c.access_digest_missing.directories.length} 个未列出。</p>}
+        </div>}
         {c.state === "awaiting_provider" && <label className="my-2 block">
           <input type="checkbox" disabled={busy} checked={defaultRefresh} onChange={event => setDefaultRefresh(event.target.checked)} />
-          连接后开启后台续签</label>}
+          首次连接后开启后台续签（默认选中，可取消）</label>}
         {["awaiting_provider", "reauthorization_required"].includes(c.state) &&
           <button disabled={busy} onClick={() => void connect(c)}>连接／重新授权 Google</button>}
         {c.state === "active" && c.auth_mode === "account_policy" && c.policy_active && <div className="my-2">
-          <p className="font-semibold">正常使用：{normalUse[c.id] ? (normalUse[c.id].normal_use ? "已开启（可读取目录内全部文件并按内容搜索）" : "未开启") : "未读取"}</p>
+          <p className="font-semibold">正常使用：{normalUse[c.id] ? (normalUse[c.id].normal_use ? "已开启（可读取目录内全部文件并按内容搜索）" : "未开启") : busy ? "正在读取实际状态……" : "状态未确认"}</p>
           {normalUse[c.id]
             ? <button disabled={busy} onClick={() => void toggleNormalUse(c)}>{normalUse[c.id].normal_use ? "关闭正常使用" : "开启正常使用"}</button>
-            : <button disabled={busy} onClick={() => void loadNormalUse(c)}>读取正常使用设置</button>}
+            : <button disabled={busy} onClick={() => void loadNormalUse(c)}>重新读取正常使用状态</button>}
           {normalUse[c.id] && !normalUse[c.id].normal_use && normalUse[c.id].reconsent_required &&
             <p className="my-1 text-sm">开启需要重新授权 Google（增加“查看你 Google 云端硬盘中的所有文件”）；授权完成前，现有功能照常可用。</p>}
           {normalUse[c.id]?.full_scope !== undefined && <div className="my-2">
@@ -692,8 +890,56 @@ export default function StorageConnections() {
           </div>}
         </div>}
         {["active", "reauthorization_required"].includes(c.state) && <button disabled={busy} onClick={() => void disconnect(c)}>断开网盘连接</button>}
+        {c.pending_lifecycle ? <div role="status" className="my-2">
+          <p>上次{c.pending_lifecycle.operation === "delete" ? "删除" : "重新连接"}操作尚待核对。</p>
+          <button disabled={busy} onClick={() => void recoverLifecycle(c)}>核对上次操作结果</button>
+        </div> : <div className="mt-3 flex gap-4">
+          {c.state === "revoked" && c.root_stopped && c.root_stop_generation > 0 &&
+            <button disabled={busy} onClick={() => void openLifecycle(c, "reconnect")}>重新连接这个文件夹</button>}
+          <button disabled={busy} onClick={() => void openLifecycle(c, "delete")}>删除连接</button>
+        </div>}
       </section>;
     })}
+    {dialog && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-6">
+      <div ref={dialogElement} role="dialog" aria-modal="true" aria-labelledby="lifecycle-title"
+        onKeyDown={event => {
+          if (event.key === "Escape") { event.preventDefault(); setDialog(null); }
+          if (event.key === "Tab") {
+            const items = [...event.currentTarget.querySelectorAll<HTMLElement>("a[href], button:not(:disabled), input:not(:disabled)")];
+            const first = items[0], last = items[items.length - 1];
+            if (event.shiftKey && event.target === first) { event.preventDefault(); last?.focus(); }
+            else if (!event.shiftKey && event.target === last) { event.preventDefault(); first?.focus(); }
+          }
+        }} className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl bg-white p-6 text-gray-900">
+        <h2 id="lifecycle-title" className="text-xl font-semibold">{dialog.kind === "delete" ? "删除连接" : "重新连接原文件夹"}</h2>
+        <p className="my-3 font-semibold">文件夹：{dialog.preview?.root_name ?? folderName(dialog.connection)}</p>
+        {dialog.connection.physical_location.status === "verified" && <p className="break-all">位置：{dialog.connection.physical_location.path}</p>}
+        <a className="underline" href={folderHref(dialog.connection)} target="_blank" rel="noopener noreferrer">打开这个 Drive 文件夹核对</a>
+        <p className="my-2 break-all text-sm">文件夹标识：{dialog.connection.root_folder_id}</p>
+        {dialog.kind === "reconnect" ? <>
+          <p className="my-3">继续使用这个文件夹和原项目，重新取得 Google 授权，不会另建同名文件夹。后台续签保持关闭，可在连接完成后按需要开启。</p>
+          <label className="block"><input type="checkbox" disabled={busy} checked={dialog.normalUse}
+            onChange={event => { const normalUse = event.target.checked; setDialog(current => current ? { ...current, normalUse } : null); }} /> 同时开启正常使用</label>
+          {dialog.normalUse && <p className="my-3 whitespace-pre-line text-sm">{normalUseDisclosure(folderName(dialog.connection))}</p>}
+        </> : <>
+          <p className="my-3">删除后会停止此连接的文件操作和后台续签，并从连接列表移除；操作记录会保留。</p>
+          {dialog.reading ? <p role="status">正在核对文件夹及其中内容……</p> : dialog.preview ? <>
+            <label className="block"><input type="checkbox" disabled={busy} checked={dialog.trashRoot}
+              onChange={event => { const trashRoot = event.target.checked; setDialog(current => current ? { ...current, trashRoot } : null); }} /> 同时把 Clued 新建的文件夹及其中全部内容移入 Drive 回收站</label>
+            {wholeRootPreview(dialog.preview) ? <>
+              <p className="my-2 text-sm">刚才核对了其中 {dialog.preview.item_count} 个文件和子文件夹。勾选后，你确认回收上面标识的整个文件夹及执行时的全部内容，包括确认后新放进去的内容。</p>
+              <p className="my-2 text-sm">显示的清单仅供参考；执行以这个文件夹标识为准，即使其名称、位置或内容在确认后发生变化，也会回收这个文件夹及当时其中的全部内容。</p>
+              <p className="my-2 text-sm">可从 Google Drive 回收站恢复；Google 会在 30 天后自动永久删除。</p>
+            </> : <p className="my-2 text-sm">已核对其中 {dialog.preview.item_count} 个文件和子文件夹，包括你后来放进去的内容。可从 Google Drive 回收站恢复；Google 会在 30 天后自动永久删除。</p>}
+          </> : <p className="my-2 text-sm">{deletePreviewReasons[dialog.previewReason ?? "lifecycle_unavailable"]}</p>}
+        </>}
+        <div className="mt-5 flex gap-4">
+          <button onClick={() => setDialog(null)}>取消</button>
+          <button disabled={busy || dialog.reading} onClick={() => void submitLifecycle()}>{dialog.kind === "reconnect"
+            ? "确认并前往 Google 授权" : dialog.trashRoot ? "删除连接并移入回收站" : "仅删除连接，保留文件夹"}</button>
+        </div>
+      </div>
+    </div>}
     <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button>
       <Link href="/storage/onboard">新建 Google Drive 连接</Link><Link href="/storage/admin">存储管理</Link><Link href="/oauth/connections">已连接应用／客户端管理</Link></div>
   </main>;

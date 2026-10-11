@@ -36,15 +36,16 @@ name: clued-work-admission
 # a check identity a PR workflow cannot use (a GitHub App, or required
 # workflows), which is an Owner setting outside the repository.
 #
-# Enforcement is the Owner's repository variable
-# CLUED_WORK_ADMISSION_ENFORCE=true; until then the check is advisory. Once
-# enforced, a missing claim, a REJECTED verdict, a missing RPC, a refused token
-# or a transport error all fail closed. Hosted runner on purpose: seconds of
-# work, no install, no self-hosted capacity.
+# The check is always enforced (Merge Admission step 6 retired the advisory
+# switch CLUED_WORK_ADMISSION_ENFORCE): a missing claim, a REJECTED verdict, a
+# missing RPC, a refused token or a transport error all fail closed. Hosted runner on purpose: seconds of
+# work, no application dependency install, no self-hosted capacity.
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited, ready_for_review, closed]
+    # Merge Admission v0.1 §4.2 (step 2): turning auto-merge on or off
+    # re-judges the pull request, so frozen's "auto-merge forbidden" holds at once.
+    types: [opened, synchronize, reopened, edited, ready_for_review, closed, auto_merge_enabled, auto_merge_disabled]
 
 permissions:
   actions: read
@@ -68,8 +69,9 @@ jobs:
     # the runner check refuse the others (no admission check).
     if: >-
       github.event.action != 'closed' &&
+      github.event.pull_request.state == 'open' &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     environment: clued-admission
     steps:
@@ -81,17 +83,23 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Self-test the admission script (no network, mocked fetch)
         run: |
           node --version
-          node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs
+          node --test scripts/ci/clued-work-admission.test.mjs scripts/ci/merge-admission-policy.test.mjs scripts/ci/clued-release-grant.test.mjs scripts/runner/clued-runner-job-started.test.mjs
       - name: Verify the work claim with Clued and summarize applicable workflows
         id: admit
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
-          # Re-review 7, MAJOR-3: protected changes need an Owner Grant on the head.
-          CLUED_OWNER_REVIEW_ENFORCE: ${{ vars.CLUED_OWNER_REVIEW_ENFORCE }}
+          # Merge Admission v0.1 §4: the Owner's global state (normal when
+          # unset, efficiency, frozen; any other value is frozen). The rules
+          # come from config/merge-admission-policy.json of this checkout.
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode required
       # Owner Decision 37e01bb1: the same result once more as the Owner's
@@ -99,7 +107,9 @@ jobs:
       # a pull request's own workflow cannot post this check and the main
       # ruleset can require it by App. Posts nothing until the App is set up.
       - name: Post the result as the clued-admission App
-        if: ${{ !cancelled() }}
+        # Merge Admission step 2: a pull request found closed is not judged and gets no
+        # check (the admission step still fails, so the run is not a success).
+        if: ${{ !cancelled() && steps.admit.outputs.verdict != 'PR_NOT_OPEN' }}
         env:
           # Re-review 3, N-R6: when the admission step fails before it names
           # the head, the failure is still posted on the event's head, so an
@@ -110,6 +120,9 @@ jobs:
           ADMISSION_PR_NUMBER: ${{ github.event.pull_request.number }}
           ADMISSION_OUTCOME: ${{ steps.admit.outcome }}
           ADMISSION_VERDICT: ${{ steps.admit.outputs.verdict }}
+          # Merge Admission v0.1 §10: the mode the head was judged in, shown
+          # in the check's title ("ADMITTED [normal · code · reruns 0]").
+          ADMISSION_MODE: ${{ steps.admit.outputs.admission_mode }}
           # Owner Decision 2ea795e4: the clued-merge-slot check on the same
           # head. A head that contains the base branch's tip passes it only
           # while its claim holds the merge slot; an empty state fails it.
@@ -138,7 +151,7 @@ jobs:
     if: >-
       github.event.action == 'closed' &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     environment: clued-admission
     steps:
@@ -148,6 +161,11 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Report the merge or close to Clued (adoption, merge slot)
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}

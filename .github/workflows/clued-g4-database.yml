@@ -12,12 +12,24 @@ on:
       - main
     paths:
       - .github/workflows/clued-g4-database.yml
+      - 'scripts/ci/clued-push-reuse.mjs'
+      - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
+      - 'scripts/ci/merge-admission-measurement-history*.mjs'
+      - 'apps/clued-cloud/tests/merge-admission-measurement-history-db.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
   pull_request:
     paths:
       - .github/workflows/clued-g4-database.yml
+      - 'scripts/ci/clued-push-reuse.mjs'
+      - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
+      - 'scripts/ci/merge-admission-measurement-history*.mjs'
+      - 'apps/clued-cloud/tests/merge-admission-measurement-history-db.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
@@ -34,10 +46,10 @@ jobs:
   # Clued admits this pull request. The gate does not call Clued and gets no
   # Clued token (this job runs PR code): it waits for the trusted
   # pull_request_target run of clued-work-admission.yml on this head and reads
-  # its result. Until the Owner sets the repository variable
-  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits. A hand
-  # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
-  # push events are admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
+  # its result, always enforced (Merge Admission step 6 retired the advisory
+  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs
+  # admission_run_id from clued-work-admission-dispatch.yml; push events are
+  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
   admission-gate:
     name: admission-gate
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
@@ -46,6 +58,7 @@ jobs:
       actions: read
       checks: read
       contents: read
+      pull-requests: read
     outputs:
       admitted: ${{ steps.gate.outputs.admitted }}
       enforced: ${{ steps.gate.outputs.enforced }}
@@ -58,23 +71,62 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - id: gate
         env:
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
-  database-gate-trusted-self-hosted:
+  push-reuse:
+    name: Verify prior PR tested tree
     needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')
+    runs-on: ubuntu-slim
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      run_heavy: ${{ steps.reuse.outputs.run_heavy }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        if: github.event_name == 'push'
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: github.event_name == 'push'
+        with:
+          node-version: 22.23.3
+      - name: Configure job temporary storage
+        if: github.event_name == 'push'
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Verify duplicate-push proof regressions
+        if: github.event_name == 'push'
+        run: node --test scripts/ci/clued-push-reuse.test.mjs
+      - id: reuse
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REUSE_WORKFLOW: clued-g4-database.yml
+        run: node scripts/ci/clued-push-reuse.mjs
+
+  database-gate-trusted-self-hosted:
+    needs: [admission-gate, push-reuse]
     if: >-
       needs.admission-gate.outputs.admitted == 'true' &&
+      (!cancelled() && needs.admission-gate.result == 'success' &&
+       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||
+        needs.push-reuse.outputs.run_heavy != 'false') &&
       ((github.event_name == 'workflow_dispatch' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner))
+       github.actor == github.repository_owner)))
     name: Supabase migration, RLS, transaction, and pgTAP
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
     timeout-minutes: 25
@@ -95,54 +147,43 @@ jobs:
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;
           # restoring the ~860 MB Actions cache on top of it only adds download time.
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
+        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci --cache "$HOME/.npm" --prefer-offline
 
       - name: Build the application surfaces used by lifecycle tests
         run: npm run build
 
-      - name: Isolate local Supabase ports
-        env:
-          CLUED_G4_RUN_ID: ${{ github.run_id }}
-        run: |
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
+      - name: Verify fresh-start guard regressions
+        run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs
 
-          run_id = int(os.environ['CLUED_G4_RUN_ID'])
-          port_base = 45000 + (run_id % 1000) * 10
-          config = Path('supabase/config.toml')
-          source = config.read_text(encoding='utf-8')
-          project = 'project_id = "clued-cloud"'
-          if source.count(project) != 1:
-              raise RuntimeError('Unexpected Supabase project ID')
-          source = source.replace(project, f'project_id = "clued-g4-{run_id}"')
-          source, count = re.subn(
-              r'(?m)^([ \t]*(?:port|shadow_port)[ \t]*=[ \t]*)5432([0-9])$',
-              lambda match: match.group(1) + str(port_base + int(match.group(2))),
-              source,
-          )
-          if count != 7:
-              raise RuntimeError(f'Expected seven Supabase ports, found {count}')
-          config.write_text(source, encoding='utf-8')
-          print(f'G4 Supabase project and ports isolated for run {run_id}')
-          PY
+      - name: Prepare a fresh attempt-specific Supabase project
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
 
       - name: Start isolated Supabase runtime
-        run: npm run db:start
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
 
-      - name: Reapply migrations from a clean database
-        run: npm run db:reset
+      - name: Verify fresh migration initialization
+        # start applies the complete migration chain once to a proven empty project.
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
-        run: npm run db:lint
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
 
       - name: Run Unified Record V2 RLS and transaction tests
-        run: npm run db:test:m1
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local
 
       - name: Run Project Lifecycle Successor v2 database and surface tests
         run: npm run test:project:lifecycle:v2
+
+      - name: Verify measurement journal transactions and FIFO replay
+        run: |
+          node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
+          node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
 
       - name: Capture safe failure diagnostics
         if: failure()
@@ -151,14 +192,15 @@ jobs:
           docker system df
 
       - name: Stop isolated Supabase runtime
-        if: always()
+        if: always() && env.CLUED_G4_FRESH_PROJECT != ''
         run: |
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup
           # The CLI may return nonzero while pruning unrelated containers on
           # this persistent runner. The gate still requires this run's isolated
           # runtime to be stopped; Docker errors must not be mistaken for clean.
-          npx --yes supabase@2.115.0 stop --no-backup || stop_status=$?
+          npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || stop_status=$?
           running=$(docker ps --format '{{.Names}}') || exit 1
-          if grep -Eq '^supabase_.*_clued-g4-${{ github.run_id }}$' <<< "$running"; then
+          if grep -Eq "^supabase_.*_${CLUED_G4_FRESH_PROJECT}$" <<< "$running"; then
             echo '::error::Isolated Supabase containers remain running'
             exit 1
           fi
@@ -166,17 +208,36 @@ jobs:
             echo '::warning::Supabase global prune failed after this run stopped'
           fi
 
+      - name: Record the actual PR test tree
+        if: success() && github.event_name == 'pull_request'
+        env:
+          REUSE_WORKFLOW: clued-g4-database.yml
+          REUSE_REPORT_PATH: ${{ runner.temp }}/clued-tested-tree.json
+        run: node ../../scripts/ci/clued-push-reuse.mjs --report
+      - name: Upload the actual PR test tree
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clued-tested-tree-clued-g4-database.yml-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clued-tested-tree.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   database-gate-untrusted-hosted:
-    needs: admission-gate
+    needs: [admission-gate, push-reuse]
     if: >-
       needs.admission-gate.outputs.admitted == 'true' &&
+      (!cancelled() && needs.admission-gate.result == 'success' &&
+       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||
+        needs.push-reuse.outputs.run_heavy != 'false') &&
       ((github.event_name == 'workflow_dispatch' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        (github.event.pull_request.head.repo.full_name != github.repository ||
-        github.actor != github.repository_owner)))
+        github.actor != github.repository_owner))))
     name: Supabase migration, RLS, transaction, and pgTAP (hosted)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -197,26 +258,43 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
 
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
+        # CPU bindings are bundled; G4 does not need the optional CUDA binaries.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci
 
       - name: Build the application surfaces used by lifecycle tests
         run: npm run build
 
-      - name: Start isolated Supabase runtime
-        run: npm run db:start
+      - name: Verify fresh-start guard regressions
+        run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs
 
-      - name: Reapply migrations from a clean database
-        run: npm run db:reset
+      - name: Prepare a fresh attempt-specific Supabase project
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
+
+      - name: Start isolated Supabase runtime
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
+
+      - name: Verify fresh migration initialization
+        # start applies the complete migration chain once to a proven empty project.
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
-        run: npm run db:lint
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
 
       - name: Run Unified Record V2 RLS and transaction tests
-        run: npm run db:test:m1
+        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase test db supabase/tests/m1_runtime_contracts.test.sql supabase/tests/m1_legacy_mapping.test.sql --local
 
       - name: Run Project Lifecycle Successor v2 database and surface tests
         run: npm run test:project:lifecycle:v2
+
+      - name: Verify measurement journal transactions and FIFO replay
+        run: |
+          node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
+          node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
 
       - name: Capture safe failure diagnostics
         if: failure()
@@ -225,5 +303,7 @@ jobs:
           docker system df
 
       - name: Stop isolated Supabase runtime
-        if: always()
-        run: npx --yes supabase@2.115.0 stop --no-backup
+        if: always() && env.CLUED_G4_FRESH_PROJECT != ''
+        run: |
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup
+          npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup

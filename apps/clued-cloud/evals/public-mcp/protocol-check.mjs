@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
+const components = JSON.parse(fs.readFileSync(
+  new URL("../../../../config/clued-components.json", import.meta.url), "utf8",
+)).components;
+assert.ok(Array.isArray(components), "component manifest must contain components");
+const mcpComponents = components.filter((component) => component?.id === "mcp.server");
+assert.equal(mcpComponents.length, 1, "component manifest must contain exactly one mcp.server");
+const mcpServerVersion = mcpComponents[0].version;
+assert.ok(typeof mcpServerVersion === "string" && mcpServerVersion.length > 0
+  && mcpServerVersion.trim() === mcpServerVersion, "mcp.server version must be a nonempty string");
+
 const url = process.env.MCP_ISOLATED_URL ?? "http://127.0.0.1:8787/mcp";
 async function rpc(id, method, params = {}, authenticated = true) {
   const headers = { "content-type": "application/json" };
@@ -33,7 +43,7 @@ const initialize = await rpc(1, "initialize", {
 assert.equal(initialize.status, 200);
 const initialized = await initialize.json();
 assert.equal(initialized.result.protocolVersion, "2025-06-18");
-assert.deepEqual(initialized.result.serverInfo, { name: "Clued Continuity", version: "0.4.0" });
+assert.deepEqual(initialized.result.serverInfo, { name: "Clued Continuity", version: mcpServerVersion });
 
 const ping = await rpc(2, "ping");
 assert.equal(ping.status, 200);

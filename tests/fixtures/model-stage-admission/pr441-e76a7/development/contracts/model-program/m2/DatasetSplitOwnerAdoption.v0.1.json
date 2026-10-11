@@ -1,0 +1,48 @@
+{
+  "schema_version": "clued.model-dataset-split-owner-adoption-reference/1",
+  "status": "OWNER_ADOPTED_BASELINE_DOMAIN_RECEIPT_PENDING",
+  "domain_owner": "MODEL PROGRAM",
+  "authority_effect": "OWNER_DEFINITION_ADOPTION_ONLY",
+  "owner_adoption": {
+    "canonical_record_id": "b8c1d482-9eb4-4bc5-8dd1-372b0d55174e",
+    "record_version": 1,
+    "canonical_scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "record_content_sha256": "b58db4fe2cc81c123f078aeff789fcc9fe971902321ffd36a9e3ebaa1af477eb",
+    "canonical_receipt_id": "45a657d9-ba34-437e-b17c-2d792ce5c692",
+    "quote_evidence_id": "1257e89f-d6b6-4015-8712-0bab340cc1b4",
+    "quote_sha256": "905819e2e3a059a02087855e9f326d05c877c1767ec31dc012c5c44652840230",
+    "quote_size_bytes": 6,
+    "effect": "OWNER_BASELINE_ADOPTION_ONLY"
+  },
+  "accepted_sources": {
+    "definition": {
+      "path": "development/contracts/model-program/m2/DatasetSplitDefinition.candidate.json",
+      "size_bytes": 4481,
+      "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+    },
+    "instance_schema": {
+      "path": "development/contracts/model-program/m2/schemas/DatasetSplit.candidate.schema.json",
+      "size_bytes": 5835,
+      "sha256": "f0359d6846fa6bff94994c145f7d7077132dc077054fe1b011edaf6c3789d95d"
+    }
+  },
+  "definition": {
+    "path": "development/contracts/model-program/m2/DatasetSplitDefinition.v0.1.json",
+    "size_bytes": 5566,
+    "sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77"
+  },
+  "instance_schema": {
+    "path": "development/contracts/model-program/m2/schemas/DatasetSplit.v0.1.schema.json",
+    "size_bytes": 6268,
+    "sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"
+  },
+  "manifest_schema": {
+    "path": "development/contracts/model-program/m2/schemas/DatasetManifest.owner-adopted.schema.json",
+    "size_bytes": 6350,
+    "sha256": "7352272c3d066bae22c9868ac41a043de6f9f877107c3fae798b36e8832b2d5b"
+  },
+  "domain_authority_receipt_ref": null,
+  "m2_verdict": "NOT_ISSUED",
+  "training_or_data_use_authorized": false,
+  "canonical_reference_live_check": "NOT_RUN_OFFLINE"
+}

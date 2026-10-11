@@ -48,7 +48,8 @@ function fixture(confirm = true) {
         found=n.props.children.filter(c=>c?.props?.role==="status").map(text).join("");visit(n.props.children);};visit(tree);return found;},
   };
 }
-const connection = { id: "fixture-connection-a", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile" };
+const connection = { id: "fixture-connection-a", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile", root_name:"Clued_资料中心" };
+const fixtureReceipt = "10000000-0000-4000-8000-000000000083", lateReceipt = "10000000-0000-4000-8000-000000000084";
 
 test("directory probe shows progress and safe failure beside its button without a second dispatch",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
@@ -193,6 +194,7 @@ const status = { enabled:false,version:0,connection_version:2,failures:0,pending
 async function ready(confirm=true) {
   const f=fixture(confirm); await f.settle(); f.respond(0,{connections:[{...connection,state:"active",version:2}]}); await f.settle();
   assert.equal(f.requests.length,1);
+  assert.equal(f.requests[0].url,"/v1/storage/owner"); assert.deepEqual(JSON.parse(f.requests[0].init.body),{action:"connections"});
   f.button("查询续签状态").props.onClick(); await f.settle();
   assert.equal(f.requests[1].url,"/v1/storage/refresh"); assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:"status",connection_id:connection.id});
   f.respond(1,status); await f.settle(); return f;
@@ -201,7 +203,7 @@ test("standing refresh requires explicit confirmation and exact CAS, then reads 
   const f=await ready(); f.button("授权开启后台续签").props.onClick(); await f.settle();
   assert.ok(f.confirmations[0].includes("退出登录不影响续签"));
   assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:"enable",connection_id:connection.id,base_version:2,delegation_version:0,idempotency_key:"fixture-request",until_revoked:true});
-  f.respond(2,{receipt_id:"fixture-receipt"}); await f.settle();
+  f.respond(2,{status:"committed",receipt_id:fixtureReceipt}); await f.settle();
   assert.deepEqual(JSON.parse(f.requests[3].init.body),{action:"status",connection_id:connection.id});
   f.respond(3,{...status,enabled:true,version:1}); await f.settle(); assert.ok(f.text().includes("后台续签已开启"));
   f.button("停用后台续签").props.onClick(); await f.settle();
@@ -215,7 +217,7 @@ test("cancelled confirmation never submits; uncertain pending cannot be re-enabl
 test("account switch during refresh setting does not query or display the old connection",async()=>{
   const f=await ready(); f.button("授权开启后台续签").props.onClick(); await f.settle();
   f.change("b"); await f.settle(); f.respond(3,{connections:[]}); await f.settle();
-  f.respond(2,{receipt_id:"old-receipt"}); await f.settle();
+  f.respond(2,{status:"committed",receipt_id:lateReceipt}); await f.settle();
   assert.equal(f.requests.length,4); assert.equal(f.text().includes(connection.id),false); assert.equal(f.text().includes("设置已确认"),false);
 });
 test("double click cannot dispatch two refresh changes",async()=>{
@@ -242,8 +244,8 @@ test("native registration sends only exact existing IDs and a stable receipt key
   const body=JSON.parse(f.requests[1].init.body);
   assert.deepEqual(body,{action:"register",profile_id:registrationProfile,source_decision_id:registrationDecision,
     idempotency_key:`storage-register-ui-v1:${registrationProfile}:${registrationDecision}`});
-  f.respond(1,{status:"committed",receipt_id:"fixture-receipt"}); await f.settle();
-  assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:"list"});
+  f.respond(1,{status:"committed",receipt_id:fixtureReceipt}); await f.settle();
+  assert.equal(f.requests[2].url,"/v1/storage/owner"); assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:"connections"});
   f.respond(2,{connections:[connection]}); await f.settle(); assert.ok(f.text().includes(connection.id));
   assert.equal(f.navigations.length,0);
 });
@@ -266,7 +268,7 @@ test("account switch before registration dispatch blocks the stale request and c
 });
 test("late registration receipt after account switch cannot refresh old connection state",async()=>{
   const f=await registrationReady(); f.button("登记账号连接").props.onClick(); await f.settle(); f.change("b"); await f.settle();
-  f.respond(2,{connections:[]}); await f.settle(); f.respond(1,{status:"committed",receipt_id:"old-receipt"}); await f.settle();
+  f.respond(2,{connections:[]}); await f.settle(); f.respond(1,{status:"committed",receipt_id:lateReceipt}); await f.settle();
   assert.equal(f.requests.length,3); assert.equal(f.text().includes(connection.id),false);
 });
 

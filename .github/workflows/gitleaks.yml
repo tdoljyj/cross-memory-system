@@ -38,6 +38,8 @@ jobs:
       # (refs/remotes/pull/*) that earlier runs of other PRs left behind, so
       # closed or superseded history stayed in the scan. Scan exactly the
       # remote's branches and tags plus this run's checked-out HEAD.
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Drop refs of deleted branches and of other PRs' earlier runs
         run: |
           git remote prune origin
@@ -83,6 +85,8 @@ jobs:
       # (refs/remotes/pull/*) that earlier runs of other PRs left behind, so
       # closed or superseded history stayed in the scan. Scan exactly the
       # remote's branches and tags plus this run's checked-out HEAD.
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - name: Drop refs of deleted branches and of other PRs' earlier runs
         run: |
           git remote prune origin

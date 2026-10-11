@@ -5,11 +5,13 @@ on:
     paths:
       - ".github/workflows/**"
       - "scripts/ci/validate_runner_budget_policy.py"
+      - "scripts/ci/test_validate_runner_budget_policy.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/**"
       - "scripts/ci/validate_runner_budget_policy.py"
+      - "scripts/ci/test_validate_runner_budget_policy.py"
 
 permissions:
   contents: read
@@ -38,7 +40,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python scripts/ci/validate_runner_budget_policy.py
+      - run: python scripts/ci/test_validate_runner_budget_policy.py
 
   untrusted-hosted:
     timeout-minutes: 20
@@ -59,4 +64,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: python scripts/ci/validate_runner_budget_policy.py
+      - run: python scripts/ci/test_validate_runner_budget_policy.py

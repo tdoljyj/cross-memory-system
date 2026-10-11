@@ -7,6 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -49,6 +51,10 @@ test("task depends_on accepts only readable tasks of the same user", { timeout: 
     for (const name of (await fs.readdir(path.join(root, "supabase/migrations"))).filter((name) => name.endsWith(".sql")).sort()) {
       await admin.query(await fs.readFile(path.join(root, "supabase/migrations", name), "utf8"));
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const otherUserId = uuid();
@@ -67,12 +73,12 @@ test("task depends_on accepts only readable tasks of the same user", { timeout: 
             ($1,'synthetic','Project only',$3,array['context:read','context:write'],array[$5]),
             ($4,'synthetic','Other user',$6,array['context:read','context:write'],array['*'])`,
     [userId, allToken, projectToken, otherUserId, projectScope, otherToken]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query("set role anon");
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
     const rpc = async (token, input) =>
-      (await anon.query("select public.clued_record_mutate($1,$2) value", [token, input])).rows[0].value;
+      (await gateway.query("select public.clued_record_mutate($1,$2) value", [token, input])).rows[0].value;
     const create = (token, scope, recordType, typeFields, relations = {}) => rpc(token, {
       operation: "create", record_type: recordType, record_schema_version: 1, lifecycle_status: "active", scope,
       idempotency_key: uuid(), authority: "observed", confidence_reason: "dependency guard fixture",

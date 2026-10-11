@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-07T03:49:58.107Z",
-  "history_through": "20261007003804",
-  "row_count": 202,
+  "exported_at": "2026-10-11T01:28:28.439736Z",
+  "history_through": "20261011012328",
+  "row_count": 239,
   "rows": [
     {
       "version": "20260823154017",
@@ -1619,6 +1619,302 @@
       "statements_md5": "3913379070362474383be0e308161164",
       "statements_length": 1925,
       "source": "migrations/20261007000000_storage_connections_display_name.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007091956",
+      "name": "storage_binary_replace_v1",
+      "statements_md5": "7c8d467eb58e91dbc9f4234c8af86af7",
+      "statements_length": 9711,
+      "source": "migrations/20261007150000_storage_binary_replace_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007111133",
+      "name": "integration_runtime_ready_profiles",
+      "statements_md5": "a5f7a858e0b44e4a0d20484a1d74913e",
+      "statements_length": 2083,
+      "source": "migrations/20261007060000_integration_runtime_ready_profiles.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007163616",
+      "name": "storage_recovery_deadlock_v1",
+      "statements_md5": "5fc46b0ae709fd0f8f59908523378f77",
+      "statements_length": 20979,
+      "source": "migrations/20261007200000_storage_recovery_deadlock_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007182910",
+      "name": "db_security_hygiene",
+      "statements_md5": "fd88483c16dcb9ca717e87b144369d45",
+      "statements_length": 6172,
+      "source": "migrations/20261007120000_db_security_hygiene.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261007182916",
+      "name": "storage_queued_dispatch_v1",
+      "statements_md5": "44d17b0fa617a1181550d9b559618b5c",
+      "statements_length": 12497,
+      "source": "migrations/20261008000000_storage_queued_dispatch_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008015609",
+      "name": "storage_queued_dispatch_window_v1",
+      "statements_md5": "0d49563082b53ea365586c89bbeb78ac",
+      "statements_length": 1615,
+      "source": "migrations/20261008010000_storage_queued_dispatch_window_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008053740",
+      "name": "storage_staging_retain_until_settled_v1",
+      "statements_md5": "65e4a8271b0dc6bcec4118c0d5da285a",
+      "statements_length": 2675,
+      "source": "migrations/20261008030000_storage_staging_retain_until_settled_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008054432",
+      "name": "model_domain_sources",
+      "statements_md5": "d1553ffadce02878231e7a656e36e396",
+      "statements_length": 26917,
+      "source": "migrations/20261007130044_model_domain_sources.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008054439",
+      "name": "model_reference_owner_approval_source",
+      "statements_md5": "1f973e81f34152e5f9b23f4d47e80ee8",
+      "statements_length": 11763,
+      "source": "migrations/20261007161246_model_reference_owner_approval_source.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008091959",
+      "name": "model_domain_actor_free_successor",
+      "statements_md5": "2d516cc534b63ada0723965b7bc35c47",
+      "statements_length": 34171,
+      "source": "migrations/20261008065024_model_domain_actor_free_successor.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008095811",
+      "name": "storage_backoff_cap_v1",
+      "statements_md5": "69740d66700bdc1a5e87f0adbb019d4c",
+      "statements_length": 2266,
+      "source": "migrations/20261008080000_storage_backoff_cap_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008111639",
+      "name": "storage_access_digest_v1",
+      "statements_md5": "911be385d9189c8b65cb2e24c7ba4c3a",
+      "statements_length": 25431,
+      "source": "migrations/20261008120000_storage_access_digest_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008150143",
+      "name": "credential_table_privileges_v1",
+      "statements_md5": "5db11889ff26b5ecdee7ea07f41eb467",
+      "statements_length": 3506,
+      "source": "migrations/20261008150000_credential_table_privileges_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008150701",
+      "name": "storage_ancestor_identity_v1",
+      "statements_md5": "ca814a9339c50786e4ef13ac909105dc",
+      "statements_length": 17925,
+      "source": "migrations/20261008140000_storage_ancestor_identity_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008234320",
+      "name": "agent_messages_switch_v1",
+      "statements_md5": "838e1070a593d16e2ecb29719439e5a7",
+      "statements_length": 8527,
+      "source": "migrations/20261008190000_agent_messages_switch_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261008234513",
+      "name": "owner_auto_approve_v1",
+      "statements_md5": "3aec66316e351b19d2bdd67d37811354",
+      "statements_length": 23934,
+      "source": "migrations/20261008170000_owner_auto_approve_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009000153",
+      "name": "credential_verifier_v1",
+      "statements_md5": "d777f4d61691d5d6dc0c8375552dc0d3",
+      "statements_length": 24583,
+      "source": "migrations/20261008210000_credential_verifier_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009014306",
+      "name": "work_claims_merge_slot_touch_v1",
+      "statements_md5": "d80e9855d62b90e42bcae108f2271af5",
+      "statements_length": 25154,
+      "source": "migrations/20261009010000_work_claims_merge_slot_touch_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009014531",
+      "name": "owner_request_answers_v1",
+      "statements_md5": "da9fc9824064fae36e43fbdb79bab9fa",
+      "statements_length": 9486,
+      "source": "migrations/20261009020000_owner_request_answers_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009021802",
+      "name": "revoke_legacy_audit_bindings_v1",
+      "statements_md5": "5a78cb36d0dbb95687c93d60a304fa41",
+      "statements_length": 1890,
+      "source": "migrations/20261009040000_revoke_legacy_audit_bindings_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009035737",
+      "name": "model_domain_atomic_bootstrap",
+      "statements_md5": "b7fb650c45312bfcb2b81dc6ea289b3e",
+      "statements_length": 36317,
+      "source": "migrations/20261008152103_model_domain_atomic_bootstrap.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009040805",
+      "name": "owner_grant_use_lookup_v1",
+      "statements_md5": "d60e0e29769e528919ea93ca158c3ce2",
+      "statements_length": 3789,
+      "source": "migrations/20261009070000_owner_grant_use_lookup_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009050923",
+      "name": "close_v12_raw_binding_fallback_v1",
+      "statements_md5": "628e273b62d5b798cf3be1b526727583",
+      "statements_length": 4871,
+      "source": "migrations/20261009050000_close_v12_raw_binding_fallback_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009090315",
+      "name": "work_claims_merge_queue_v1",
+      "statements_md5": "e1003ce65c8caff5948b8698b89ccace",
+      "statements_length": 18325,
+      "source": "migrations/20261009080000_work_claims_merge_queue_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009130642",
+      "name": "worker_gateway_transition_v1",
+      "statements_md5": "a67df5a6aa1488354e047569436c277f",
+      "statements_length": 17686,
+      "source": "migrations/20261009070002_worker_gateway_transition_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009160947",
+      "name": "audit_receipt_lookup_indexes_v1",
+      "statements_md5": "14ebd282f4520e943a96580ee04692fb",
+      "statements_length": 5665,
+      "source": "migrations/20261009110000_audit_receipt_lookup_indexes_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009181037",
+      "name": "worker_gateway_request_context_probe_v1",
+      "statements_md5": "1b5cdfce8c2c099849bdba411f55e6c0",
+      "statements_length": 9350,
+      "source": "migrations/20261009160000_worker_gateway_request_context_probe_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261009181419",
+      "name": "close_worker_gateway_request_context_probe_v1",
+      "statements_md5": "6d697c6f5d4628b16f391adacad70713",
+      "statements_length": 6004,
+      "source": "migrations/20261009160100_close_worker_gateway_request_context_probe_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010013611",
+      "name": "search_context_text_cache_v1",
+      "statements_md5": "2b555747d91324dcd21aecc05086942d",
+      "statements_length": 9989,
+      "source": "history-only/20261010013611_search_context_text_cache_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010035113",
+      "name": "search_context_text_cache_reapply",
+      "statements_md5": "6674031084f5eb37863da04c0f21d72e",
+      "statements_length": 10267,
+      "source": "migrations/20261010030000_search_context_text_cache_reapply.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010043720",
+      "name": "issuer_identity_credentials_v1",
+      "statements_md5": "17603f053bd4e9ba954f94c7daf6db1f",
+      "statements_length": 29186,
+      "source": "migrations/20261009070001_issuer_identity_credentials_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010101524",
+      "name": "storage_owner_lifecycle_v1",
+      "statements_md5": "39654bc4a2caa8cfb1e7f7f9b08b76dc",
+      "statements_length": 43100,
+      "source": "migrations/20261010055701_storage_owner_lifecycle_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010120036",
+      "name": "merge_slot_ci_notice_v1",
+      "statements_md5": "604fdedd8d3f0e8cbfbf404c59ec50b7",
+      "statements_length": 12869,
+      "source": "migrations/20261010112852_merge_slot_ci_notice_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010150104",
+      "name": "dataset_split_native_grant_correction_v1",
+      "statements_md5": "4e918a0c7c124f7b598bb948720f85e2",
+      "statements_length": 15968,
+      "source": "migrations/20261010133000_dataset_split_native_grant_correction_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261010155223",
+      "name": "storage_owner_root_trash_scope_v2",
+      "statements_md5": "e3424aaea73db751d267ad65a8f7d68b",
+      "statements_length": 12679,
+      "source": "migrations/20261010150000_storage_owner_root_trash_scope_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261011011706",
+      "name": "worker_gateway_closeout_v1",
+      "statements_md5": "44fa3dc2326547491d1ad0eb623afe0c",
+      "statements_length": 32076,
+      "source": "migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261011012328",
+      "name": "dataset_split_native_grant_currentness_scope_v1",
+      "statements_md5": "9525de9ea646ed2d7bae9f54c008a8e8",
+      "statements_length": 1273,
+      "source": "migrations/20261010175022_dataset_split_native_grant_currentness_scope_v1.sql",
       "transform": "identical"
     }
   ],

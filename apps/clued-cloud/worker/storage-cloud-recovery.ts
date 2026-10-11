@@ -5,6 +5,7 @@ import { createGoogleDriveReplacePostconditionVerifier } from "../../../kernel/h
 import { createGoogleDriveDestructivePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-destructive-postcondition.mjs";
 import { DESTRUCTIVE_PROOF_CONTRACTS } from "../../../kernel/host/resource-center-google-drive-destructive-effect.mjs";
 import { createGoogleDriveDirectoryMovePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-directory-move-postcondition.mjs";
+import { createGoogleDriveCreateAbsenceProbe } from "../../../kernel/host/resource-center-google-drive-absence.mjs";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
@@ -15,22 +16,33 @@ const object = (v: unknown): v is Data => !!v && typeof v === "object" && !Array
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const providerId = /^[A-Za-z0-9_-]{1,160}$/;
 const denied = () => new Error("storage_recovery_unavailable");
+const EXPIRING = "storage_recovery_credential_expiring";
 
 /** Private settlement-only composition. The trusted RPC must independently
  * authenticate and pin the original job, intent and provider attempt on BOTH
  * calls. This is not an authorization surface and never substitutes for that
  * database contract. No executor, token refresh, retry or normal-load fallback
- * exists here. A missing/expired credential requires a separate human recovery.
+ * exists here. A missing/expired credential requires a separate human recovery;
+ * with `report_expiring` an expiring one is reported as credential_expiring
+ * before any Drive read, so scheduled recovery may run the recovery-only refresh
+ * bound to this job (BUG-20261007-005).
+ * With `absent`, a create whose effect Drive proves absent (no file with the
+ * generated ID, none tagged with the intent) is settled as not effected by the
+ * database, which decides whether the create could still run.
  */
 export async function createStorageCloudRecovery(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
   timeout_ms?: number;
   verified?: { descriptor: Data; rpc: (input: Data) => Promise<Data> };
+  absent?: { rpc: (input: Data) => Promise<Data> };
+  /** Report an expiring credential as credential_expiring instead of inspection_required. */
+  report_expiring?: boolean;
 }) {
   const timeout = config.timeout_ms ?? 10000;
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || typeof config.rpc !== "function" ||
-      !Number.isInteger(timeout) || timeout < 1 || timeout > 60000) throw denied();
+      !Number.isInteger(timeout) || timeout < 1 || timeout > 60000 ||
+      (config.absent !== undefined && (!config.verified || typeof config.absent?.rpc !== "function"))) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
   const fetcher = createStorageFetch(config.fetch);
   const clock = config.clock ?? Date.now;
@@ -82,11 +94,19 @@ export async function createStorageCloudRecovery(config: {
         })); check();
         if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" ||
             token.access_token.length < 16 || scopeProfile(token.scope) === null ||
-            !Number.isFinite(token.expires_at_ms) || !Number.isFinite(clock()) ||
-            Number(token.expires_at_ms) - clock() <= timeout + 1000) throw denied();
+            !Number.isFinite(token.expires_at_ms) || !Number.isFinite(clock())) throw denied();
+        if (Number(token.expires_at_ms) - clock() <= timeout + 1000) throw new Error(EXPIRING);
         return { access_token: token.access_token, scope: token.scope };
       };
-      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, fetch: async (input, init) => {
+      // An expiring credential is reported before any Drive read.
+      try { await credential(); }
+      catch (error) {
+        if (config.report_expiring && error instanceof Error && error.message === EXPIRING)
+          return { status: "credential_expiring", execution_permitted: false };
+        throw error;
+      }
+      // The one GET-only Drive metadata channel, shared by verification and the absence probe.
+      const metadataFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         check();
         const url = new URL(String(input));
         if (init?.method !== "GET" || init.body != null || url.origin !== "https://www.googleapis.com" ||
@@ -94,7 +114,10 @@ export async function createStorageCloudRecovery(config: {
             !/^\/drive\/v3\/files(?:\/[A-Za-z0-9_-]+(?:\/revisions\/[A-Za-z0-9_-]+)?)?$/.test(url.pathname) ||
             [...url.searchParams.keys()].some(key => !["fields", "supportsAllDrives", "includeItemsFromAllDrives", "q", "pageSize", "pageToken"].includes(key))) throw denied();
         return bounded(fetcher(input, { ...init, signal: AbortSignal.any([abort.signal, ...(init.signal ? [init.signal] : [])]) }));
-      }});
+      };
+      // Storage step 1 (Task ce5c725e): a rate-limited or failed read is retried twice
+      // with backoff inside the budget instead of waiting for the next listing.
+      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, fetch: metadataFetch, transient_retries: 2 });
       // Rename and file move (P3) settle only through the verified record.
       const operation = String(d.mutation.operation);
       // A directory move (P6) settles only through the verified record, and
@@ -113,11 +136,15 @@ export async function createStorageCloudRecovery(config: {
       if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
           d.attempt.operation !== "replace")) throw denied();
       if ("content_ref" in d.mutation && !config.verified) throw denied();
+      // BUG-20261008-002: a create that may be proven absent polls for its file for half the
+      // budget only. Polling for the whole budget left no time for the absence probe and its
+      // settlement, so a create whose file never reached Drive stayed started and fenced its root.
+      const verifyTimeout = operation === "create" && config.absent ? Math.max(1, Math.floor(timeout / 2)) : timeout;
       const verifierConfig = {
         managed_root: String(d.profile.managed_root), root_folder_id: String(d.root_folder_id), root_parent_id: String(d.root_parent_id),
         get_file: (id: string) => metadata.getFile(id, { signal: abort.signal }),
         list_children: (input: Data) => metadata.listChildren(input, { signal: abort.signal }),
-        include_verified_proof: !!config.verified, timeout_ms: timeout, poll_ms: Math.min(1000, timeout), clock,
+        include_verified_proof: !!config.verified, timeout_ms: verifyTimeout, poll_ms: Math.min(1000, verifyTimeout), clock,
       };
       // The descendant refresh (P6.1) reads a few at a time and stops
       // starting reads after a fraction of the budget, leaving the rest of it
@@ -134,8 +161,9 @@ export async function createStorageCloudRecovery(config: {
           get_revision: (fileId: string, revisionId: string) => metadata.getRevision(fileId, revisionId, { signal: abort.signal }) })
         : modify ? createGoogleDriveModifyPostconditionVerifier(verifierConfig)
         : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true,
-          get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }) });
-      const postcondition = await bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
+          get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }),
+          get_access: (id: string) => metadata.getVersionedAccess(id, { signal: abort.signal }) });
+      const verification = bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
         effect_result: subtree
           ? { operation, target_kind: "directory", source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
               provider_file_id: d.attempt.provider_file_id, subtree_sample: d.attempt.subtree_sample, descendants: d.attempt.descendants }
@@ -152,6 +180,24 @@ export async function createStorageCloudRecovery(config: {
           ? { operation, source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
               provider_file_id: d.attempt.provider_file_id, content: d.attempt.content }
           : { operation: "create", destination_path: d.mutation.destination_path, provider_file_id: d.attempt.provider_file_id } }));
+      let postcondition: unknown;
+      try { postcondition = await verification; }
+      catch (error) {
+        // BUG-20261007-005: a create whose effect cannot be proven may be proven absent.
+        if (!config.absent || !config.verified || operation !== "create") throw error;
+        check();
+        const proof = await bounded(createGoogleDriveCreateAbsenceProbe({ get_credential: credential,
+          fetch: (input: RequestInfo | URL, init?: RequestInit) => metadataFetch(input, init) })(
+          { provider_file_id: String(d.attempt.provider_file_id), parent_id: String(d.attempt.parent_id), intent_id: String(d.intent_id) },
+          { signal: abort.signal })); check();
+        if (!proof) throw error;
+        const settled = await bounded(config.absent.rpc({ action: "settle_absent", ...pinned, intent_id: d.intent_id,
+          base_version: d.version, request_sha256: d.request_sha256, proof })); check();
+        if (settled.status !== "committed" || settled.state !== "cancelled" || settled.intent_id !== d.intent_id ||
+            settled.connection_id !== pinned.connection_id || settled.job_id !== pinned.job_id ||
+            !uuid.test(String(settled.receipt_id)) || settled.execution_permitted !== false) throw denied();
+        return { status: "released_not_effected", job_id: pinned.job_id, receipt_id: String(settled.receipt_id), execution_permitted: false };
+      }
       check();
       let done: Data;
       if (config.verified) {

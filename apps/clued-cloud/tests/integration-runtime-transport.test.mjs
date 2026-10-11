@@ -1,3 +1,4 @@
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -8,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build, stop } from 'esbuild';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
 // S2c Integration Runtime PR-5 (IntegrationRuntime v0.1.8 §13.5 T-A11-4b (a)(d)): the real Host-disconnect
 // path. The pinned OAuth provider (worker/delegated-oauth.ts) and the continuity Worker run in process over
@@ -15,6 +17,9 @@ import EmbeddedPostgres from 'embedded-postgres';
 // at POST /oauth/token reaches revoke_issuer and derives REVOKED (CONNECTION_USER_REVOKE); reconnecting the
 // same client is refused. (d) refresh rotation, expiry and the provider's expiry cleanup never call
 // revoke_issuer. The (b)(c) variants are in integration-runtime-lifecycle-db.test.mjs.
+// The controlled PostgREST shim selects real PostgreSQL roles from synthetic credentials.
+// Its HTTP status mapping is fixture behavior; this does not qualify production JWT
+// verification or real PostgREST response codes.
 // Every database runs as a non-root OS user (embedded-postgres refuses root).
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -105,11 +110,26 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
-    // the loop above includes the stage C grant migration, so the §5.13 target grants are the real ones
+    await allowTestIssuerCredentials(admin);
+    // The entire chain includes G6: current Binding RPCs are GW-only, while Native remains authenticated.
     for (const rpc of BINDING_RPCS) {
-      const { rows } = await admin.query(`select has_function_privilege('anon', $1::regprocedure, 'execute') ok`, [`public.${rpc}(text, jsonb)`]);
-      assert.equal(rows[0].ok, true, rpc);
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway']) {
+        const {rows}=await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') ok",[role,`public.${rpc}(text,jsonb)`]);
+        assert.equal(rows[0].ok,role==='clued_worker_gateway',role+': '+rpc);
+      }
     }
+    for(const fn of ['clued_user_integration_v1','clued_admin_integration_v1']) {
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway']) {
+        const {rows}=await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') ok",[role,`public.${fn}(jsonb)`]);
+        assert.equal(rows[0].ok,role==='authenticated',role+': '+fn);
+      }
+    }
+    const closeout=await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    const callerCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',closeout),'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog);
+    await assertGatewayCloseoutBoundary(admin);
     // test-only registry rows (§13.0)
     await admin.query(`insert into clued_private.integration_hosts_v1(host, tenant_dimension, account_dimension,
         tenant_evidence_kinds, account_evidence_kinds, first_authorization_required, registry_version, capability_snapshot_ref)
@@ -121,17 +141,20 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
     await admin.query(`insert into clued_private.authorization_issuers_v12(token_hash, resource, name)
       values ($1, $2, 'Integration transport fixture')`, [sha(issuer), resource]);
     const human = await connect();
-    const anon = await connect();
+    const gateway = await connect();
     await human.query('set role authenticated');
     await human.query("select set_config('request.jwt.claim.sub', $1, false), set_config('request.jwt.claims', $2, false)",
       [OWNER, JSON.stringify({ sub: OWNER })]);
-    await anon.query('set role anon');
+    await gateway.query('set session authorization authenticator; set role clued_worker_gateway');
+    await gateway.query(`select set_config('request.jwt.claims','{"role":"clued_worker_gateway"}',false)`);
 
-    const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
+    const gatewayToken = 'synthetic-integration-runtime-worker-gateway';
+    const env = { CLUED_DB_GATEWAY_TOKEN: gatewayToken, OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
       CLUED_AUTHORIZATION_ISSUER_TOKEN: issuer, SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key',
       PROJECT_VIEWS_V2: 'true', CLUED_INTEGRATION_RUNTIME_V1: 'true',
       ASSETS: { fetch: async () => new Response('Not found', { status: 404 }) } };
-    // PostgREST stand-in: the account JWT runs as authenticated with its claims, anything else as anon;
+    // PostgREST stand-in: the account JWT runs as authenticated with its claims;
+    // the Worker credential runs as the real gateway, and unknown credentials are refused.
     // the SQLSTATE → HTTP mapping is PostgREST's for the codes these entries raise.
     const rpcLog = [];
     globalThis.fetch = async (input, init = {}) => {
@@ -144,12 +167,15 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
       }
       const name = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url.pathname)?.[1];
       assert.ok(name, url.pathname);
+      if (!isHuman && new Headers(init.headers).get('authorization') !== `Bearer ${gatewayToken}`) {
+        return Response.json({ code: 'PGRST301', message: 'invalid JWT' }, { status: 401 });
+      }
       rpcLog.push(name);
       const values = JSON.parse(init.body || '{}');
       const keys = Object.keys(values);
       assert.ok(keys.every((name) => /^p_[a-z0-9_]+$/.test(name)), keys.join());
       try {
-        const { rows } = await (isHuman ? human : anon).query(
+        const { rows } = await (isHuman ? human : gateway).query(
           `select public.${name}(${keys.map((name, index) => `${name} => $${index + 1}`).join(', ')}) value`,
           keys.map((name) => (values[name] !== null && typeof values[name] === 'object' ? JSON.stringify(values[name]) : values[name])));
         return Response.json(rows[0].value);

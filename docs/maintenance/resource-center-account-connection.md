@@ -6,6 +6,45 @@ Candidate successor under existing Storage Task
 
 ## Authority and custody
 
+### Stable storage issuer and key rotation (step 2b candidate)
+
+Migration `20261009070001_issuer_identity_credentials_v1.sql`, authorized for implementation by Owner Decision
+`818a9b05`, separates fixed issuer identity from credential generation. Its production application and secret
+rotation require the production release gate. The storage issuer's existing PK/FKs continue to identify the
+same OAuth app, attempts, delegations and jobs; ordinary key rotation retires a credential, not that identity.
+Every public hash/secret entry authenticates the active verifier before the private business body runs.
+No public endpoint accepts a stored verifier instead of a proof. The original legacy proof remains usable
+through its active cutover credential for at most 24 hours after the first migration; retaining its identity
+after retirement or expiry does not preserve authentication.
+
+Existing persisted `clued.storage-persisted-verification/2` JSON, its digest and its immutable Receipt remain
+unchanged. A currently authenticated new key can inspect/settle that same issuer's historical result through
+the fixed identity check; all existing job, provider-attempt, authority snapshot, version and Receipt checks
+still apply. A retired or expired historical credential grants no fresh operation. New verification uses `/3`, with `issuer_id`,
+`issuer_kind` and the credential generation captured by the resolver; it contains no issuer proof, verifier or
+legacy `issuer_hash` field. The generation is audit provenance and does not bypass current authentication.
+
+Native policy-transition recovery retains its current Owner and exact Receipt/payload/issuer checks when the
+issuer app has been revoked. An active credential is still required; fresh or changed operations are denied.
+The separate onboarding sweep may use an active credential only to expire its own staged attempts, as in
+the original cleanup contract. Neither path revives a retired credential or starts new provider work.
+
+New default-refresh consent and onboard activation requests also use UUID identity, kind and credential
+generation. Their M1 received-payload and request hashes bind that input. Historical Receipt bytes are
+preserved; refresh-delegation FK keys remain fixed identity values. Consumers use the delegation and current
+policy/issuer checks, not a credential recovered from a Receipt.
+
+For `CLUED_STORAGE_CONNECTOR_ISSUER`, stage/activate a separately generated verifier through the offline
+operator, update the Worker secret, validate refresh, native raw-secret onboarding, new proof RPCs and
+historical verified-result recovery, then immediately retire the previous generation. Validate rejection of
+the old raw secret and proof, and continued operation of pre-existing Bindings/registrations. The detailed
+two-key sequence is in `apps/clued-cloud/docs/connection-authorization-rollout.md`. Never revoke/re-register
+the app or renew its standing delegation merely to rotate its key.
+This 2b cutover limit is independent of C1's minimum 24-hour observation after gateway cutover. The resolver
+rechecks expiry after credential and issuer SHARE locks, rather than before commit after every later business
+lock wait. Production migration, Worker secret configuration and release retain their exact authorization
+gates; C1's independent ES256 signing key is a separate Owner import.
+
 The authenticated Supabase Canonical service remains the only policy authority.
 `storage_connections_v1` pins an existing profile, owner and current Decision;
 it is a resource registration, not another account/identity store.
@@ -962,6 +1001,326 @@ level switch (`storage_root_has_unresolved_mutation`).
 - Release order: the migration first. The old Worker never calls the release;
   the new Worker against the old database gets an error from the release call
   and logs `storage_unattempted_release_unavailable`.
+
+### Unsettled attempted jobs no longer lock the root (BUG-20261007-005)
+
+Clued Task `c9733a6e`, migration `20261007200000_storage_recovery_deadlock_v1.sql`.
+On 2026-10-07 a binary create on the account-policy connection `Clued_资料中心`
+recorded its provider attempt and never settled; the file never reached Drive.
+Scheduled recovery looked at it only during the 10 minutes after the attempt,
+the ordinary credential refresh waits for a quiet root, and the recovery-only
+refresh accepted legacy connections only. The access token expired an hour
+later and every read of the connection answered `storage_read_unavailable`,
+with no alert. Nothing could settle the job: once this change is released, the
+next scheduled recovery settles it as `PROVIDER_EFFECT_ABSENT` and reads recover.
+
+- **Recovery keeps trying.** `clued_storage_scheduled_recovery_v2` keeps a job
+  due after its first 10 minutes, with backoff stored in
+  `clued_private.storage_recovery_backoff_v1` (2, 4, 8 ... minutes, at most 60).
+  Jobs inside their first 10 minutes are listed first. `load` no longer has an
+  upper age bound.
+- **Recovery-only refresh for account-policy connections.**
+  `clued_storage_refresh_worker_v1` accepts `recovery_job_id` for an
+  account-policy connection when the job is an attempted, unsettled cloud job
+  admitted under the connection's still-active policy
+  (`clued_private.storage_account_recovery_refresh_v1`, the same checks as
+  the scheduled `load`). Like the legacy branch it skips only the quiet-root
+  check, keeps the file fence and issues no writer, admission or Drive write.
+  The scheduled recovery asks `createStorageCloudRecovery` to report an
+  expiring credential (`credential_expiring`) before any Drive read, runs that
+  refresh once and loads the job again.
+- **Absent effects are settled.** When the post-write verification of a create
+  fails, the recovery reads Drive (GET only) for the generated file ID and for
+  any file tagged `appProperties.clued_intent_id` with the intent, trashed
+  files included (`kernel/host/resource-center-google-drive-absence.mjs`).
+  A 404 for the ID and an empty, complete tag search is a proof
+  (`clued.storage-create-absent/1`); anything else is not.
+  `public.clued_storage_recovery_absent_v1` then re-runs every `load` check
+  and accepts only a create whose admission expired and whose attempt was
+  recorded at least 10 minutes earlier: every create request is dispatched
+  before its admission expires and is bounded at 120 s, and the resumable
+  session URI is never persisted, so nothing can complete the upload later.
+  The journal becomes `cancelled` with `{outcome: released_not_effected,
+  reason_code: PROVIDER_EFFECT_ABSENT}`, its own Receipt
+  (`storage_absent_release`) and Event (`extension:storage:absent_released`).
+  `clued_storage_inspect` reports the reason code with a fixed hint. A lost
+  reply is answered from the journal (`replayed: true`).
+- **No silent stall.** The refresh `due` call skips a connection whose root
+  has an unresolved journal (its claim would be refused anyway) and returns
+  the count as `root_busy`; the Worker logs `storage_refresh_root_busy`. A read
+  with an expired sealed token still answers `storage_read_unavailable`, now
+  with a fixed hint that the connection's Google access has expired.
+  Scheduled recovery logs `storage_recovery_released_not_effected`.
+- **Release order.** The migration first. The old Worker ignores `root_busy`
+  and never calls the new function; the new Worker against the old database
+  gets an error from the absence call (the job stays fenced, as before) and a
+  refused `recovery_job_id` refresh for account-policy connections.
+- **Residual.** A rename, move, replace, trash or untrash whose effect cannot
+  be proven still waits for the Owner's native recovery; only a create can be
+  proven absent by its generated ID and tag.
+
+### Queued jobs are dispatched again and never stay queued (BUG-20261008-001)
+
+Clued Task `f7a4dd7d`, migration `20261008000000_storage_queued_dispatch_v1.sql`,
+Worker module `apps/clued-cloud/worker/storage-queued-dispatch.ts`.
+On 2026-10-07 four text creates on `Clued_资料中心` were submitted while the
+root was fenced by the unsettled binary job of BUG-20261007-005. Submit queued
+them; the one dispatch after submit was refused at `load`
+(`storage_root_has_unresolved_mutation`); the Worker reports a dispatch outcome
+only after a successful `load`; and nothing listed a queued job again. They
+stayed `queued` with no intent and no reason for more than six hours, while the
+same requests submitted after the root settled ran within 90 seconds.
+
+- **Dispatched again.** `public.clued_storage_queued_sweep_v1` (fixed connector
+  issuer, `{action: due, dispatch: bool}`) lists at most 3 queued jobs (no
+  intent, no dispatch outcome) of active account-policy connections whose root
+  has no unresolved journal: 90 seconds after submit, then with backoff (2, 4,
+  8 ... minutes, at most 60) counted on the job (`redispatch_attempts`,
+  `redispatch_at`). A job on a fenced root is counted as `root_busy` and keeps
+  its backoff. Listing counts as the attempt, so a dispatch that is lost or
+  refused again still advances the backoff. The Worker's scheduled run
+  (`runStorageQueuedSweepScheduled`) dispatches each listed job exactly as after
+  submit: the job queue when bound, else in place. A listed job that already
+  started only answers its status at `load`; a second `begin` replays.
+- **Settled after 2 hours.** The same call settles at most 3 text jobs still
+  queued 2 hours after submit as `attention_required` with reason
+  `DISPATCH_NOT_STARTED`, through the executor report's own Receipt operation
+  and idempotency key (`storage_dispatch_outcome`,
+  `cloud-dispatch-outcome:<job>`) and Event, so a late report and the timeout
+  cannot both commit. `clued_storage_inspect` adds a fixed hint: nothing was
+  changed, submit again under a new `job_id` if still wanted. A binary job keeps
+  its own 12-hour cancellation (`staging_expired`). The settlement runs with the
+  storage account, Google and both jobs flags; dispatch also needs the executor
+  switch and an execution-enabled issuer.
+- **Refused at submit when the root is stuck.** A root whose unresolved journal
+  outlived its admission by 60 seconds (`clued_private.storage_root_stuck_v1`,
+  the unattempted release's threshold) refuses a new submit before any Receipt
+  or job with `{status: rejected, error_code: storage_root_busy}`; the MCP tool
+  answers a fixed `storage_root_busy` message. A submit while a job is still
+  inside its admission queues as before. A replay of an existing job is answered
+  from its history.
+- **Diagnosable load refusals.** The cloud executor logs a refused `load` as
+  `STORAGE_ROOT_BUSY` or `STORAGE_JOB_LOAD_REFUSED` instead of `UNSPECIFIED`.
+  The scheduled run logs `storage_queued_sweep` with counts, or
+  `storage_queued_sweep_unavailable`.
+- **Never dispatched past 2 hours** (migration
+  `20261008010000_storage_queued_dispatch_window_v1.sql`). The timeout settles
+  at most 3 text jobs per call and the redispatch candidates are listed in the
+  same call; the candidate query now skips text jobs submitted 2 hours ago or
+  earlier, so the next call settles them instead. Before this patch a fourth
+  old job could be dispatched.
+- **The four jobs of 2026-10-07.** The first sweep after the release at
+  `ac26d9f` (2026-10-07 18:35Z) settled `...a001`-`a003` as
+  `DISPATCH_NOT_STARTED`. `...a004` was dispatched in the same call, the gap the
+  patch above closes, and was denied before any reservation
+  (`ARTIFACT_AUTHORITY_RESOLUTION_FAILED`, no intent): nothing changed in Drive,
+  and the file already written under its name was not touched.
+- **Release order.** The migration first. The old Worker never calls the sweep
+  and its submit path passes the new refusal through as `storage_job_unavailable`;
+  the new Worker against the old database logs `storage_queued_sweep_unavailable`
+  every minute until the migration is applied.
+
+### A binary create keeps its staged object until it is settled (BUG-20261008-002)
+
+Clued Task `5c18ed64`, migration
+`20261008030000_storage_staging_retain_until_settled_v1.sql`, Worker module
+`apps/clued-cloud/worker/storage-cloud-recovery.ts`.
+On 2026-10-08 the binary create `a1f3c2d4-5e6b-4a7c-9d8e-20261008b001`
+(59728-byte zip) started at 03:11:04Z and recorded its provider attempt at
+03:11:07.65Z; the minute staging sweep deleted its staged object at
+03:11:07.99Z, while the effect was streaming it to Drive. The file never
+reached Drive, the journal stayed `started` and fenced `Clued_资料中心`, and
+later submits were refused with `storage_root_busy`. Production showed the same
+race once before: the create of 2026-10-07 09:06Z lost its object 2 seconds
+before its attempt and was settled `PROVIDER_EFFECT_ABSENT` only at 16:44Z.
+Two of the five binary creates so far failed this way.
+
+- **The staged object stays until the job is settled.**
+  `clued_private.storage_staging_deletable_v1` let the sweep delete a consumed
+  object as soon as its job had an intent, but the intent is created when the
+  executor starts and a binary create streams the object only after recording
+  its attempt. A consumed object is now deletable only when its job was settled
+  before any reservation (`dispatch_outcome`) or its intent is `committed` or
+  `cancelled`; `storage_staging_purgeable_v1` (the 7-day row purge) follows the
+  same rule. `rejected` and `expired` rows are unchanged.
+- **Scheduled recovery can prove the create absent.** Recovery first runs the
+  create postcondition verifier, which polls for the file. When the registered
+  folders are unchanged it polled for the whole 10-second budget, so the
+  absence probe and `clued_storage_recovery_absent_v1` never ran and the job
+  was listed again with backoff forever. (On 2026-10-07 the root folder had
+  changed, the verifier failed at once, and the probe settled that job.) For a
+  create, the verifier now polls for half the budget; the rest is left for the
+  probe and the settlement. Every other check is unchanged: a file that exists,
+  is tagged with the intent, or cannot be read is never settled as absent.
+- **The job of 2026-10-08.** Once the Worker is released, the next listing of
+  `...b001` proves it absent and settles it `cancelled` with
+  `PROVIDER_EFFECT_ABSENT`; the root is then quiet again and new submits run.
+  The staged object is already gone, so the same request is submitted again
+  under a new `job_id` with a new upload.
+- **Release order.** Either order works. The migration alone keeps every new
+  binary job's object until settlement; the Worker alone lets recovery settle a
+  stuck create.
+
+### Retry waits are capped at 10 minutes (storage step 1)
+
+Clued Task `ce5c725e`, Decision `56d61a92`, migration
+`20261008080000_storage_backoff_cap_v1.sql`, module
+`kernel/host/resource-center-google-drive-metadata.mjs`. This is the first step
+of the storage concurrency design (Task `10826ce2`), done ahead of the rest.
+
+- **Scheduled recovery.** A job past its first 10 minutes is listed again after
+  2, 4, 8, then 10 minutes, plus up to 30 seconds of random jitter. It used to
+  double up to 60 minutes, so a stuck job that had become provable could wait
+  an hour (BUG-20261008-002 was next due at 06:27Z after a 05:27Z listing).
+- **Queued redispatch.** A queued job is listed again after 2, 4, 8, then 10
+  minutes instead of up to 60.
+- **Drive reads during recovery.** `createGoogleDriveMetadataApi` takes
+  `transient_retries` (0 to 3, default 0). With it, a read that gets 429, a 5xx,
+  a 403 whose reason is `userRateLimitExceeded` or `rateLimitExceeded`, its own
+  timeout or a transport failure is retried after `min(2^n s + up to 1 s,
+  32 s)`. A permission 403, a 404, a 400, the caller's abort and a subrequest
+  limit are never retried. Scheduled recovery uses 2 retries inside its
+  10-second budget; the executor and the tool host keep 0, so the admission
+  window of a running job is unchanged.
+- **Release order.** Either order works: the migration only changes waits, and
+  the Worker change only adds retries to recovery reads.
+
+### Directory access digests (storage step 2)
+
+Clued Task `e2eb07d1`, Decision `94fc26b4`, migration
+`20261008120000_storage_access_digest_v1.sql`, Worker
+`apps/clued-cloud/worker/storage-access-digest-backfill.ts`. Design:
+`development/contracts/storage/StorageFineGrainedConcurrency.v0.1.md` §4.1.
+This step only collects the digest; no matching rule changes until step 3
+(Task `469700eb`).
+
+- **What it is.** `resource_center_artifacts_v1.provider_access_digest` is
+  `googleDriveAccessDigest`: every permission with its grantee kind, role,
+  domain, discoverability and expiry. Unlike `provider_sharing_digest` it
+  changes when only a role changes. `access_digest_missing_at` marks a
+  directory whose digest could not be established; it stays matched by version.
+- **Where it comes from.**
+  - Onboarding: the root and every track, from the same Drive read that
+    recorded their version (`effect_result` `access_digest`).
+  - Directory create and adopt: the verifier reads the folder's permissions
+    and the proof carries `provider_access_digest`, only together with the
+    sharing digest the existing rule already checks.
+  - Directory move: the settlement records it on the source and destination
+    folders still at the version the provider identity saw (in the same update
+    as their sharing digest) and on the moved directory.
+  - The directory check reports it per directory; an Owner approved
+    `artifact_update` with `provider_access_digest` stores it and clears the
+    missing mark.
+  - Backfill: every minute `clued_storage_access_digest_backfill_v1` lists up
+    to five directories with neither digest and no missing mark, under an
+    active connection with a valid credential, a quiet root and no root deny.
+    `load` applies the scheduled-recovery checks (account, active unexpired
+    policy, current Decisions, profile version) and stamps
+    `access_digest_attempted_at`, which keeps the directory out of the list
+    for 30 minutes. The Worker reads `id,version,permissions(...)` in one
+    request. The commit, under the root lock and with CAS on the row version
+    and registered version, stores the digest only when that version is the
+    registered one; another version, a 404 or no usable permission list marks
+    the directory missing. A transient or credential failure (429, 5xx, 401,
+    403, timeout) commits nothing, so the directory is tried again later.
+    Receipt `storage_access_digest_backfill`.
+    Equal versions prove only that the folder is unchanged since the registry
+    last recorded that version, the same baseline version matching uses today.
+- **Missing digests.** A directory marked missing is matched by version as
+  before. To give it a digest, run the directory check and record the
+  observed `provider_access_digest` with `artifact_update`.
+- **Release order.** Migration first. The new Worker sends inputs the old
+  database refuses: `access_digest` at onboarding, `provider_access_digest`
+  in a directory create or adopt proof (refused with `storage_verified_mismatch`
+  after Drive was written, leaving the job uncertain) and in a directory check
+  observation. The migration alone changes nothing a running Worker relies
+  on; every new input is optional.
+- **Before the migration.** It refuses to run while any storage journal is
+  verified but not settled (`storage_access_digest_verified_job_unsettled`):
+  the verified record compares whole registry rows, which the new columns
+  change. Let such jobs settle first.
+
+### Ancestors matched by identity (storage step 3)
+
+Clued Task `469700eb`, Decision `3196d6f2`, migration
+`20261008140000_storage_ancestor_identity_v1.sql`, kernel
+`kernel/host/resource-center-google-drive-identity.mjs` and
+`resource-center-google-drive-ancestors.mjs`. Design:
+`development/contracts/storage/StorageFineGrainedConcurrency.v0.1.md` §4.2.
+
+- **Why.** Drive moves a folder's version whenever anything inside it
+  changes, so matching ancestors by version failed a job when an unrelated
+  file appeared next to it. Ancestors are now matched by identity and digest;
+  the target (the file replaced, renamed, moved or trashed) keeps its own
+  Drive version precondition.
+- **Matching order** (`resource_center_directory_match_v2`): access digest,
+  else sharing digest, else Drive version. An empty digest never matches.
+- **Descriptor.** `load` (cloud worker v2) returns `ancestor_match`: every
+  registered directory from the root to the destination folder and to the
+  source folder (not for a relocating untrash), each with its match mode.
+- **Identity.** In the verified-result mode, with `ancestor_match`, the
+  identity carries `ancestors[]` = `{path, id, parent_id, match, value}` for
+  every walked folder; `value` is the digest or version (null when it could
+  not be read). `root_folder_version` and `destination_parent_version` are
+  null when that folder is matched by a digest, and `provider_version` covers
+  only version-matched ancestors (none: the fixed
+  `sha256("clued.provider-version/empty")`). A sharing-matched folder also
+  has its access digest in `ancestor_access`; the server does not match it,
+  but the effects' re-resolution then stops a job on a role-only change, as
+  the folder's Drive version did before. Adopt and directory move keep the
+  legacy identity, and the authority refuses them with `ancestors`
+  (`request_invalid`). Without `ancestor_match` (an older database) the
+  identity is the legacy one.
+- **Authority and settlement.** A request with `ancestors` is checked by
+  `resource_center_ancestors_match_v1` instead of the root and destination
+  folder version clauses: the set must equal the registered directories on
+  the way, each Drive ID and parent ID must equal the registry (the root's
+  parent is `root_parent_id`), and each value must match by its mode. A
+  version-matched directory is compared by version only where it was before
+  (the root and the destination folder). Denials are `ancestors_invalid`,
+  `ancestor_set_mismatch`, `ancestor_identity_mismatch`, or a match reason
+  (`access_changed`, `access_unavailable`, `match_changed`, `sharing_*`,
+  `version_mismatch`) prefixed `root_`, `parent_` (a folder the mutation works
+  in) or `ancestor_`. `storage_verified_result_v2` applies the same check, and
+  `settle_verified` compares the saved registry ancestors by identity, mode
+  and matched value (`resource_center_ancestor_rows_identity_v1`) instead of
+  whole rows. That projection applies to every request; for a request
+  without `ancestors` the root and destination folder are still compared by
+  version there, and the selected row's version still enters the authority
+  version.
+- **Match mode race.** `load` reads each directory's mode on a quiet root but
+  holds no lock afterwards. If the backfill or an Owner directory check
+  records a digest between `load` and the authority, the job is refused with
+  `*_match_changed` and the Agent submits it again. Accepted: it needs a
+  write to the registry within seconds of the job's start.
+- **Postconditions.** Create, rename/file move, replace, trash and untrash
+  walk the chain by the registered Drive IDs: each folder keeps its name,
+  sits alone under the expected parent and is not trashed. A create pins only
+  version-matched folders. A renamed, moved or trashed ancestor fails.
+- **Owner hint.** The connection list (`clued_storage_owner_manage_v2`
+  `connections`) reports `access_digest_missing` (count and up to 20 paths);
+  the storage page asks the Owner to run the directory check for them.
+  Directories the backfill has not reached yet are matched by version too but
+  are not listed.
+- **Limits.** At most 64 registered directories on the source and
+  destination chains together; a deeper job is refused
+  (`CLOUD_DESCRIPTOR_INVALID`). Each access- or sharing-matched folder costs
+  one more Drive read per identity resolution.
+- **Release order.** Migration first, then the Worker. Apart from the
+  settlement projection above, the migration changes nothing for a request
+  without `ancestors`. Rolling back the Worker or the migration needs no
+  journal carrying ancestors to be open: an old Worker cannot verify one
+  (its postconditions need the folder versions the new identity leaves
+  null), and the old functions would see those nulls as a registry change.
+  Drain them first; this must return 0:
+
+  ```sql
+  select count(*) from clued_private.resource_center_mutations_v1
+  where state in ('prepared','started','uncertain')
+    and authority_request->'provider_identity' ? 'ancestors';
+  ```
+- **Local writer path.** The authority client used by local native writers
+  never sends `ancestors`; those requests are checked exactly as before.
 
 ## Full scope and adopt (StorageFullCapability.v0.1 P7)
 

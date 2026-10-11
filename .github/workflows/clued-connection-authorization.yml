@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - '.github/workflows/clued-connection-authorization.yml'
+      - 'scripts/ci/clued-push-reuse.mjs'
+      - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - 'apps/clued-cloud/worker/**'
       - 'apps/clued-cloud/app/**'
       - 'apps/clued-cloud/vite.config.ts'
@@ -31,6 +35,7 @@ on:
       - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'
       - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
       - 'kernel/host/resource-center-*.mjs'
       - 'kernel/host/resource-center-*.py'
@@ -52,13 +57,17 @@ on:
       - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
       - 'apps/clued-cloud/scripts/production-release-*'
       - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
-      - 'skills/clued/references/agent-contract.md'
+      - 'protocol/agent/**'
       - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   push:
     branches: [main]
     paths:
       - '.github/workflows/clued-connection-authorization.yml'
+      - 'scripts/ci/clued-push-reuse.mjs'
+      - 'scripts/ci/clued-push-reuse.test.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.mjs'
+      - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - 'apps/clued-cloud/worker/**'
       - 'apps/clued-cloud/app/**'
       - 'apps/clued-cloud/vite.config.ts'
@@ -86,6 +95,7 @@ on:
       - 'apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs'
       - 'apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs'
       - 'apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs'
+      - 'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs'
       - 'apps/clued-cloud/tests/resource-center-*.test.mjs'
       - 'kernel/host/resource-center-*.mjs'
       - 'kernel/host/resource-center-*.py'
@@ -107,7 +117,7 @@ on:
       - 'apps/clued-cloud/tests/served-agent-contract.test.mjs'
       - 'apps/clued-cloud/scripts/production-release-*'
       - 'apps/clued-cloud/scripts/verify-served-agent-contract.mjs'
-      - 'skills/clued/references/agent-contract.md'
+      - 'protocol/agent/**'
       - '.github/workflows/clued-cloud-production-release.yml'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
@@ -129,10 +139,10 @@ jobs:
   # Clued admits this pull request. The gate does not call Clued and gets no
   # Clued token (this job runs PR code): it waits for the trusted
   # pull_request_target run of clued-work-admission.yml on this head and reads
-  # its result. Until the Owner sets the repository variable
-  # CLUED_WORK_ADMISSION_ENFORCE=true the gate is advisory and admits. A hand
-  # dispatch needs admission_run_id from clued-work-admission-dispatch.yml;
-  # push events are admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
+  # its result, always enforced (Merge Admission step 6 retired the advisory
+  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs
+  # admission_run_id from clued-work-admission-dispatch.yml; push events are
+  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).
   admission-gate:
     name: admission-gate
     runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
@@ -141,6 +151,7 @@ jobs:
       actions: read
       checks: read
       contents: read
+      pull-requests: read
     outputs:
       admitted: ${{ steps.gate.outputs.admitted }}
       enforced: ${{ steps.gate.outputs.enforced }}
@@ -153,23 +164,62 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - id: gate
         env:
-          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
-  isolated-candidate-trusted-self-hosted:
+  push-reuse:
+    name: Verify prior PR tested tree
     needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')
+    runs-on: ubuntu-slim
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      run_heavy: ${{ steps.reuse.outputs.run_heavy }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        if: github.event_name == 'push'
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: github.event_name == 'push'
+        with:
+          node-version: 22.23.3
+      - name: Configure job temporary storage
+        if: github.event_name == 'push'
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Verify duplicate-push proof regressions
+        if: github.event_name == 'push'
+        run: node --test scripts/ci/clued-push-reuse.test.mjs
+      - id: reuse
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REUSE_WORKFLOW: clued-connection-authorization.yml
+        run: node scripts/ci/clued-push-reuse.mjs
+
+  isolated-candidate-trusted-self-hosted:
+    needs: [admission-gate, push-reuse]
     if: >-
       needs.admission-gate.outputs.admitted == 'true' &&
+      (!cancelled() && needs.admission-gate.result == 'success' &&
+       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||
+        needs.push-reuse.outputs.run_heavy != 'false') &&
       ((github.event_name == 'workflow_dispatch' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor == github.repository_owner))
+       github.actor == github.repository_owner)))
     name: >-
       ${{ ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
              (github.event_name == 'push' && github.actor == github.repository_owner) ||
@@ -190,6 +240,8 @@ jobs:
         with:
           node-version: 24.19.0
           # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below.
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline
       - name: Hydrate embedded PostgreSQL bundled library symlinks
         # --ignore-scripts skips the platform package's postinstall, which links the
@@ -207,6 +259,9 @@ jobs:
       - run: npm run test:work:claims
       - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs
+      # Without --test-force-exit, which can end a loaded run before every test has run: this
+      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.
+      - run: node --test tests/db-security-hygiene-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion
@@ -236,17 +291,36 @@ jobs:
       - run: npm run test:authorization:integration
       - run: npm run test:authorization:pages
 
+      - name: Record the actual PR test tree
+        if: success() && github.event_name == 'pull_request'
+        env:
+          REUSE_WORKFLOW: clued-connection-authorization.yml
+          REUSE_REPORT_PATH: ${{ runner.temp }}/clued-tested-tree.json
+        run: node ../../scripts/ci/clued-push-reuse.mjs --report
+      - name: Upload the actual PR test tree
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clued-tested-tree-clued-connection-authorization.yml-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clued-tested-tree.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
   isolated-candidate-untrusted-hosted:
-    needs: admission-gate
+    needs: [admission-gate, push-reuse]
     if: >-
       needs.admission-gate.outputs.admitted == 'true' &&
+      (!cancelled() && needs.admission-gate.result == 'success' &&
+       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||
+        needs.push-reuse.outputs.run_heavy != 'false') &&
       ((github.event_name == 'workflow_dispatch' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        (github.event.pull_request.head.repo.full_name != github.repository ||
-        github.actor != github.repository_owner)))
+        github.actor != github.repository_owner))))
     name: >-
       ${{ ((github.event_name == 'workflow_dispatch' && github.actor != github.repository_owner) ||
              (github.event_name == 'push' && github.actor != github.repository_owner) ||
@@ -268,11 +342,16 @@ jobs:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
       - run: npm ci --ignore-scripts
       - name: Install embedded PostgreSQL ICU compatibility runtime
         run: |
-          curl -fsSLo /tmp/libicu60.deb https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
-          sudo dpkg -i /tmp/libicu60.deb
+          set -euo pipefail
+          icu_deb=$(mktemp "$RUNNER_TEMP/clued-libicu60-XXXXXX.deb")
+          trap 'rm -f -- "$icu_deb"' EXIT
+          curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
+          sudo dpkg -i "$icu_deb"
           ldconfig -p | grep 'libicuuc.so.60'
       - run: npm run typecheck
       - run: npm run test:authorization:transport
@@ -282,6 +361,9 @@ jobs:
       - run: npm run test:work:claims
       - run: node --test --test-force-exit tests/work-claims-acceptance-db.test.mjs
       - run: node --test --test-force-exit tests/work-claims-continuation-db.test.mjs
+      # Without --test-force-exit, which can end a loaded run before every test has run: this
+      # file stops its embedded PostgreSQL servers itself, so node exits once the tests are done.
+      - run: node --test tests/db-security-hygiene-db.test.mjs
       - run: npm run test:information-flow:candidates
       - run: npm run test:information-flow:intake
       - run: npm run test:information-flow:promotion

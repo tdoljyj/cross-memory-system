@@ -1,9 +1,10 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveDirectoryMovePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-directory-move-postcondition.mjs";
-import { googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const CLOUD = "public.clued_storage_cloud_worker_router_v2";
@@ -21,6 +22,7 @@ const OWNER_ONLY = [{ id: "owner-permission", type: "user", role: "owner" }];
 // executor (verified-result mode) against disposable PostgreSQL and an
 // in-memory Drive. Never Google, never a disk.
 export async function testStorageDirectoryMove(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
   const oauthClient = `subtree-${randomUUID()}`, resource = "https://subtree.invalid/mcp";
@@ -343,6 +345,9 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       const made = await artifact(target, `${trackPath}/made`);
       assert.equal(made.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
       assert.equal((await journal(created)).verified_result_v2.proof.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+      // Storage step 2: and with its observed access digest.
+      assert.equal(made.provider_access_digest, googleDriveAccessDigest({ permissions: OWNER_ONLY }));
+      assert.equal((await journal(created)).verified_result_v2.proof.provider_access_digest, googleDriveAccessDigest({ permissions: OWNER_ONLY }));
       // The committed replay check rebuilds the registration with the digest (a mismatch raises).
       const inspected = await cloud({ action: "verified_inspect", ...created.reference });
       assert.equal(inspected.status, "committed");
@@ -356,6 +361,7 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
         directory_semantics: "topic" });
       assert.equal((await executor(target, storage).run(odd.reference)).status, "committed");
       assert.equal((await artifact(target, `${trackPath}/odd`)).provider_sharing_digest, null);
+      assert.equal((await artifact(target, `${trackPath}/odd`)).provider_access_digest, null);
       assert.equal("provider_sharing_digest" in (await journal(odd)).verified_result_v2.proof, false);
     });
 
@@ -369,6 +375,11 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       const topicAfter = await artifactById(topic.id), trackAfter = await artifactById(track.id);
       assert.equal(topicAfter.provider_sharing_digest, digest); assert.equal(trackAfter.provider_sharing_digest, digest);
       assert.equal(Number(topicAfter.version), Number(topic.version) + 1);
+      // Storage step 2: the same update records their access digest, and the
+      // moved directory gets its own.
+      const access = googleDriveAccessDigest({ permissions: OWNER_ONLY });
+      assert.equal(topicAfter.provider_access_digest, access); assert.equal(trackAfter.provider_access_digest, access);
+      assert.equal((await artifactById(folder.id)).provider_access_digest, access);
       assert.equal(topicAfter.provider_file_version, topic.provider_file_version, "the version itself is left as registered");
       // Drive advanced the destination folder's version: writes into it still work.
       storage.files.get(topic.provider_file_id).version = String(Number(storage.files.get(topic.provider_file_id).version) + 4);
@@ -381,6 +392,19 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal(Number((await artifactById(track.id)).version), Number(trackAfter.version));
     });
 
+    await t.test("storage step 2: a folder that already has a sharing digest gets only its access digest from a move, once", async () => {
+      const { target, client, storage, topic, folder } = await tree();
+      await recordSharing(target, topic);
+      const shared = await artifactById(topic.id);
+      assert.equal(shared.provider_sharing_digest, googleDriveSharingDigest(PRIVATE)); assert.equal(shared.provider_access_digest, null);
+      const job = await submitJob(target, client, move(folder, `${topic.path}/folder`));
+      assert.equal((await executor(target, storage).run(job.reference)).status, "committed");
+      const after = await artifactById(topic.id);
+      assert.equal(after.provider_sharing_digest, shared.provider_sharing_digest);
+      assert.equal(after.provider_access_digest, googleDriveAccessDigest({ permissions: OWNER_ONLY }));
+      assert.equal(Number(after.version), Number(shared.version) + 1);
+    });
+
     await t.test("P6.2: a folder whose Drive version moved on since it was registered gets no digest from a move", async () => {
       const { target, client, storage, trackPath, topic, folder } = await tree();
       const track = await artifact(target, trackPath);
@@ -391,6 +415,7 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
       assert.equal((await journal(job)).authority_request.provider_identity.source_parent_version, "3");
       const trackAfter = await artifactById(track.id);
       assert.equal(trackAfter.provider_sharing_digest, null);
+      assert.equal(trackAfter.provider_access_digest, null);
       assert.equal(Number(trackAfter.version), Number(track.version), "the stale source folder is left as registered");
       assert.equal((await artifactById(topic.id)).provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
     });
@@ -427,6 +452,115 @@ export async function testStorageDirectoryMove(t, admin, server, user, decision)
         if (unshared) assert.equal((await journal(job)).authority_request.provider_identity.destination_parent_sharing_digest, null);
         assert.equal(await artifact(target, mutation.destination_path), undefined);
       }
+    });
+
+    await t.test("storage step 2: the verified record refuses an access digest on a file, without a sharing digest, or malformed", async () => {
+      // Each case on its own root: a refused record leaves its intent fenced.
+      const good = googleDriveAccessDigest({ permissions: OWNER_ONLY });
+      for (const [kind, forged, unshared] of [["file", good], ["directory", "invalid"], ["directory", "A".repeat(64)],
+        ["directory", good, true]]) {
+        const { target, client, storage } = await setup();
+        const trackPath = `${target.root}/${TRACK}`;
+        if (unshared) { delete storage.files.get(target.trackId).shared; delete storage.files.get(target.trackId).permissionIds; }
+        const mutation = kind === "file" ? { operation: "create", target_kind: "file", destination_path: `${trackPath}/f.md`, content: "x" }
+          : { operation: "create", target_kind: "directory", destination_path: `${trackPath}/d`, directory_semantics: "topic" };
+        const job = await submitJob(target, client, mutation);
+        let refused = false, loaded;
+        const forging = createResourceCenterCloudExecutor({ verified_result_mode: true,
+          load_job: async ref => { const d = await cloud({ action: "load", ...ref }); loaded = d; const c = { ...d }; delete c.credential_envelope; delete c.oauth_client_id; return c; },
+          get_credential: async expected => ({ ...expected, access_token: "fixture-subtree-access", scope: SCOPES, expires_at_ms: Date.now() + 3600000 }),
+          drive_fetch: storage.fetch,
+          rpc: async input => {
+            const { connection_id, job_id, action, ...body } = input;
+            if (action === "verified_record") body.proof = { ...body.proof, provider_access_digest: forged };
+            try {
+              return await cloud({ connection_id, job_id, action, ...(action === "settle_verified" ? {} : { credential_version: loaded.credential_version }),
+                ...(action === "finalize" ? { finish: { action, ...body } } : body) });
+            } catch (error) { if (action === "verified_record") refused = /storage_verified_mismatch/.test(String(error.message)); throw error; }
+          },
+        });
+        const result = await forging.run(job.reference);
+        assert.notEqual(result.status, "committed", JSON.stringify(result));
+        assert.equal(refused, true, `${kind} ${forged}`);
+        assert.equal(await artifact(target, mutation.destination_path), undefined);
+      }
+    });
+
+    await t.test("storage step 2: the backfill records an access digest only at the registered version, once", async () => {
+      const { target } = await setup([]);
+      const envelope = { contract: "clued.storage-credential/1", key_id: "fixture", nonce: "x".repeat(16), ciphertext: "y".repeat(24) };
+      await admin.query("update clued_private.storage_connections_v1 set credential_envelope=$2 where id=$1", [target.connection, envelope]);
+      const backfill = async (input, hash = issuer) => (await caller.query("select public.clued_storage_access_digest_backfill_v1($1,$2::jsonb) value",
+        [hash, JSON.stringify(input)])).rows[0].value;
+      const root = await artifact(target, target.root), track = await artifact(target, `${target.root}/${TRACK}`);
+      const mine = async () => (await backfill({ action: "due" })).directories.filter(d => d.connection_id === target.connection)
+        .map(d => d.artifact_id).sort();
+      assert.deepEqual(await mine(), [root.id, track.id].sort());
+      await assert.rejects(backfill({ action: "due" }, "f".repeat(64)), /backfill_denied/);
+      await assert.rejects(backfill({ action: "due", extra: true }), /backfill_denied/);
+      // Load names the credential and the row; it is read only.
+      const loaded = await backfill({ action: "load", connection_id: target.connection, artifact_id: root.id });
+      assert.equal(loaded.status, "read_only"); assert.equal(loaded.execution_permitted, false);
+      assert.equal(loaded.provider_file_id, target.rootId); assert.equal(loaded.registered_version, root.provider_file_version);
+      assert.equal(loaded.row_version, Number(root.version)); assert.deepEqual(loaded.credential_envelope, envelope);
+      // Loading puts it behind the others without changing the row's version.
+      const attempted = await artifactById(root.id);
+      assert.notEqual(attempted.access_digest_attempted_at, null); assert.equal(Number(attempted.version), Number(root.version));
+      assert.deepEqual(await mine(), [track.id]);
+      const access = googleDriveAccessDigest({ permissions: OWNER_ONLY });
+      const commit = (row, observed, digest, version = Number(row.version), found = observed !== null) => backfill({ action: "commit",
+        connection_id: target.connection, artifact_id: row.id, row_version: version, registered_version: row.provider_file_version,
+        found, observed_version: observed, access_digest: digest });
+      // found is required and must agree with the observation.
+      await assert.rejects(backfill({ action: "commit", connection_id: target.connection, artifact_id: root.id, row_version: Number(root.version),
+        registered_version: root.provider_file_version, observed_version: root.provider_file_version, access_digest: null }), /backfill_denied/);
+      await assert.rejects(commit(root, root.provider_file_version, null, Number(root.version), false), /backfill_denied/);
+      // A stale row version or a malformed outcome changes nothing.
+      await assert.rejects(commit(root, root.provider_file_version, access, Number(root.version) - 1), /backfill_conflict/);
+      await assert.rejects(commit(root, root.provider_file_version, "not-hex"), /backfill_denied/);
+      // Same version: recorded, with its Receipt.
+      const recorded = await commit(root, root.provider_file_version, access);
+      assert.equal(recorded.outcome, "recorded");
+      const rootAfter = await artifactById(root.id);
+      assert.equal(rootAfter.provider_access_digest, access); assert.equal(rootAfter.access_digest_missing_at, null);
+      assert.equal(Number(rootAfter.version), Number(root.version) + 1);
+      assert.equal(rootAfter.provider_file_version, root.provider_file_version);
+      const receipt = (await admin.query("select operation,status from public.clued_audit_receipts where id=$1", [recorded.receipt_id])).rows[0];
+      assert.deepEqual(receipt, { operation: "storage_access_digest_backfill", status: "committed" });
+      // Another version (or a failed read): marked missing, no digest.
+      const missing = await commit(track, String(Number(track.provider_file_version) + 1), access);
+      assert.equal(missing.outcome, "missing");
+      const trackAfter = await artifactById(track.id);
+      assert.equal(trackAfter.provider_access_digest, null); assert.notEqual(trackAfter.access_digest_missing_at, null);
+      // A folder Drive no longer shows (404) is marked missing too.
+      const gone = await artifactById((await register({ action: "artifact_register", profile_id: target.profile,
+        path: `${target.root}/${TRACK}/gone`, provider_file_id: `st-gone-${randomUUID()}`, provider_file_version: "1",
+        target_kind: "directory", governance_class: "ordinary", delete_authority: false })).target_refs.find(ref => ref.role === "primary").id);
+      assert.equal((await commit(gone, null, null)).outcome, "missing");
+      assert.notEqual((await artifactById(gone.id)).access_digest_missing_at, null);
+      // None is listed or loadable again.
+      assert.deepEqual(await mine(), []);
+      await assert.rejects(backfill({ action: "load", connection_id: target.connection, artifact_id: track.id }), /backfill_denied/);
+      // An Owner approved update writes a digest and clears the missing mark.
+      await register({ action: "artifact_update", profile_id: target.profile, artifact_id: track.id, base_version: Number(trackAfter.version),
+        path: trackAfter.path, provider_file_id: trackAfter.provider_file_id, provider_file_version: trackAfter.provider_file_version,
+        governance_class: trackAfter.governance_class, delete_authority: trackAfter.delete_authority, provider_access_digest: access });
+      const updated = await artifactById(track.id);
+      assert.equal(updated.provider_access_digest, access); assert.equal(updated.access_digest_missing_at, null);
+      const refused = await adminCall({ action: "artifact_update", profile_id: target.profile, artifact_id: track.id,
+        base_version: Number(updated.version), path: updated.path, provider_file_id: updated.provider_file_id,
+        provider_file_version: updated.provider_file_version, governance_class: updated.governance_class,
+        delete_authority: updated.delete_authority, provider_access_digest: "not-hex" });
+      assert.notEqual(refused.status, "committed", JSON.stringify(refused));
+      assert.equal((await artifactById(track.id)).provider_access_digest, access);
+      // A directory with a sharing digest is never backfilled.
+      const shared = await artifactById((await register({ action: "artifact_register", profile_id: target.profile,
+        path: `${target.root}/${TRACK}/shared`, provider_file_id: `st-shared-${randomUUID()}`, provider_file_version: "1",
+        target_kind: "directory", governance_class: "ordinary", delete_authority: false,
+        provider_sharing_digest: googleDriveSharingDigest(PRIVATE) })).target_refs.find(ref => ref.role === "primary").id);
+      assert.equal(shared.provider_sharing_digest, googleDriveSharingDigest(PRIVATE));
+      assert.deepEqual(await mine(), []);
+      await assert.rejects(backfill({ action: "load", connection_id: target.connection, artifact_id: shared.id }), /backfill_denied/);
     });
 
     await t.test("fix d9d6db4c: a started move that never recorded its attempt is released once its admission expired", async () => {

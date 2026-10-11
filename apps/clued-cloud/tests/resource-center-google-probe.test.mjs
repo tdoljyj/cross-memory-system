@@ -70,7 +70,8 @@ async function fixture(options={}) {
       return {files:files.filter(f=>f.parents?.includes(parent)),incompleteSearch:options.incomplete??(options.boundaryIncomplete && calls.length>=5)??false};
     }
     const result=structuredClone(files.find(f=>f.id===u.pathname.split("/").at(-1)));
-    if(u.searchParams.get("fields")==="id,shared,permissionIds")return {id:result.id,shared:false,permissionIds:["owner-"+result.id]};
+    if(u.searchParams.get("fields")==="id,shared,permissionIds,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)")
+      return {id:result.id,shared:false,permissionIds:["owner-"+result.id],permissions:[{id:"owner-"+result.id,type:"user",role:"owner"}]};
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
     if(options.boundaryDrift && calls.length>=9 && result.id==='root')result.version='2';
     return result;
@@ -105,6 +106,8 @@ test("server directory observation uses pinned secret, fixed GET-only batches an
   // One more batch reads each registered directory's sharing state.
   assert.equal(f.rpcs.length,2); assert.equal(f.calls.length,10);
   for(const directory of f.rpcs[1].observation.directories)assert.match(directory.provider_sharing_digest,/^[0-9a-f]{64}$/);
+  // Storage step 2: and, from the same read, its access digest.
+  for(const directory of f.rpcs[1].observation.directories)assert.match(directory.provider_access_digest,/^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
   assert.equal(JSON.stringify(result).includes("credential"),false);
 });
@@ -152,7 +155,7 @@ test("time spent checking identity is part of the shared observation deadline",a
 test("native HTTP probe route preserves JWT plus fixed issuer and never accepts a report",async()=>{
   const {loadContinuityWorker}=await import("./worker-continuity-loader.mjs"), worker=await loadContinuityWorker();
   const f=await fixture(), origin="https://clued.example.invalid", issuer=randomBytes(32).toString("base64url");
-  const env={CLUED_STORAGE_ACCOUNT_V1:"true",CLUED_STORAGE_GOOGLE_V1:"true",SUPABASE_URL:"https://db.example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture-key",
+  const env={ CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",CLUED_STORAGE_ACCOUNT_V1:"true",CLUED_STORAGE_GOOGLE_V1:"true",SUPABASE_URL:"https://db.example.invalid",SUPABASE_PUBLISHABLE_KEY:"fixture-key",
     CLUED_STORAGE_GOOGLE_CLIENT_ID:f.client,CLUED_STORAGE_CONNECTOR_ISSUER:issuer,CLUED_STORAGE_VAULT_KEYS:JSON.stringify(f.vaultConfig)};
   const request=(body,token="native-fixture")=>new Request(origin+"/v1/storage/google/probe",{method:"POST",headers:{origin,"content-type":"application/json",authorization:"Bearer "+token},body:JSON.stringify(body)});
   const original=globalThis.fetch; let redirect=false;

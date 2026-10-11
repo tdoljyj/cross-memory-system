@@ -1,7 +1,9 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 
 export async function testDirectoryProbe(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const session = randomUUID(), issuer = createHash("sha256").update(randomUUID()).digest("hex");
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
   const native = server.getPgClient(); await native.connect();
@@ -69,6 +71,14 @@ export async function testDirectoryProbe(t, admin, server, user, decision) {
       const q=await prepare(), base=observation(q);
       for(const digest of ["not-hex",{},"A".repeat(64)])
         await assert.rejects(finish(q,{...base,directories:base.directories.map((e,i)=>i?e:{...e,provider_sharing_digest:digest})}),/probe_invalid/);
+    });
+    await t.test("storage step 2: directory observation may carry each directory's access digest",async()=>{
+      const p=await prepare(), o=observation(p);
+      const withDigest={...o,directories:o.directories.map((e,i)=>({...e,provider_access_digest:i?null:"b".repeat(64)}))};
+      assert.equal((await finish(p,withDigest)).status,"metadata_observed");
+      const q=await prepare(), base=observation(q);
+      for(const digest of ["not-hex",{},"B".repeat(64),1])
+        await assert.rejects(finish(q,{...base,directories:base.directories.map((e,i)=>i?e:{...e,provider_access_digest:digest})}),/probe_invalid/);
     });
     await t.test("browser-editable or incomplete observations cannot become evidence",async()=>{
       const p=await prepare(), o=observation(p);

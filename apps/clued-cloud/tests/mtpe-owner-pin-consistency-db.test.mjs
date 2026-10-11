@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -51,6 +53,7 @@ test('owner pin: the Pin the write accepts is the Pin the snapshot selects',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
 
     const userId = uuid();
     const hostToken = hash();
@@ -64,8 +67,14 @@ test('owner pin: the Pin the write accepts is the Pin the snapshot selects',
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const rpc = async (token, name, input = {}) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) value`, [token,input])).rows[0].value
+        : await workerGatewayRpc(workerCaller, name, token, input);
     const write = (input) => rpc(hostToken, 'clued_record_mutate', input);
     const snapshot = () => rpc(hostToken, 'clued_mcp_mtpe_snapshot');
     const validate = () => rpc(hostToken, 'clued_mcp_mtpe_validate');
@@ -82,10 +91,10 @@ test('owner pin: the Pin the write accepts is the Pin the snapshot selects',
     // A project-scoped fixture avoids clued_now_global_uidx (one global 'now' Task per user).
     const projectId = uuid();
     const scope = `project:${projectId}`;
-    assert.equal((await rpc(hostToken, 'clued_project_mutate', {
-      operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
+    assert.equal((await rpc(hostToken, 'clued_project_mutate_v2', {
+      operation: 'create', canonical_project_id: projectId, project_schema_version: 2,
       idempotency_key: uuid(),
-      mutation: { name: 'MTPE Owner Pin', certainty_status: 'confirmed', progress_status: 'active' },
+      mutation: { name: 'MTPE Owner Pin', progress_status: 'active' },
     })).status, 'committed');
 
     const createTask = async (title, typeFields) => {
@@ -188,6 +197,14 @@ test('owner pin: the Pin the write accepts is the Pin the snapshot selects',
     // cancel already names the focus it removes and needs no expected focus.
     assert.equal((await pin('cancel', labelledId, 1)).status, 'committed');
     assert.deepEqual(await focusRows(), []);
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -11,7 +11,7 @@ await build({ entryPoints: ['worker/continuity.ts', 'app/contexts/context-sessio
 stop();
 const { handleContinuityRequest: handle, publicMcpTools } = await import(pathToFileURL(path.join(dir, 'worker/continuity.mjs')));
 const { ContextSession, localDraft } = await import(pathToFileURL(path.join(dir, 'app/contexts/context-session.mjs')));
-const env = { CONTEXT_OWNERSHIP_V11: 'true', SUPABASE_URL: 'https://db.example', SUPABASE_PUBLISHABLE_KEY: 'test-public-key' };
+const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CONTEXT_OWNERSHIP_V11: 'true', SUPABASE_URL: 'https://db.example', SUPABASE_PUBLISHABLE_KEY: 'test-public-key' };
 const request = (route, method = 'POST') => new Request(`https://clued.example${route}`, {
   method, headers: { authorization: 'Bearer clued_bnd_legacy-test', 'content-type': 'application/json' },
   ...(method === 'POST' ? { body: JSON.stringify({ op: 'record_list', mode: 'development_history' }) } : {}),

@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // S2a-1 / BUG-20260924-002: an update merges the top-level type_fields and
 // relations keys it sends; null removes a key; omitted keys are kept.
@@ -51,6 +53,10 @@ test('record updates merge type_fields and relations instead of replacing them',
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    // The complete migration chain must include the formal G6 closeout.
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
+    await allowRawTestBindings(admin);
 
     for (const role of ['anon', 'authenticated', 'service_role']) {
       assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') ok',
@@ -69,11 +75,11 @@ test('record updates merge type_fields and relations instead of replacing them',
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'owner@example.invalid',now())`, [userId]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Owner host',$2,array['context:read','context:write'],array['global'])`, [userId, token]);
-    const anon = server.getPgClient();
-    clients.push(anon);
-    await anon.connect();
-    await anon.query('set role anon');
-    const mutate = async (input) => (await anon.query('select public.clued_record_mutate($1,$2) v', [token, input])).rows[0].v;
+    const gateway = server.getPgClient();
+    clients.push(gateway);
+    await gateway.connect();
+    await setWorkerGatewayCaller(gateway);
+    const mutate = async (input) => (await gateway.query('select public.clued_record_mutate($1,$2) v', [token, input])).rows[0].v;
     const row = async (id) => (await admin.query(
       'select version::int v,type_fields,relations,content_hash from public.clued_memories where id=$1', [id])).rows[0];
     const base = { record_schema_version: 1, lifecycle_status: 'active', scope: 'global',

@@ -1,0 +1,49 @@
+name: contract-placement
+
+# Task af536fcc; ComponentVersioning.v0.2 §2.4. Always a real hosted conclusion.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-placement:
+    name: contract-placement
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Placement and renderer fixtures
+        run: |
+          python3 -m unittest scripts/ci/test_check_contract_placement.py -v
+          node --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs
+      - name: Build actual public bootstrap without the application dependency tree
+        env:
+          CANDIDATE: ${{ github.sha }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/contract-build" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1
+          node "$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild" apps/clued-cloud/worker/continuity.ts \
+            --bundle --platform=node --format=esm --external:js-tiktoken/* \
+            --define:__CLUED_BUILD_SHA__="\"$CANDIDATE\"" --outfile="$RUNNER_TEMP/contract-bootstrap.mjs"
+      - name: Render all actual and synthetic contract parts
+        run: node apps/clued-cloud/scripts/render-agent-contract-budget.mjs --worker-module "$RUNNER_TEMP/contract-bootstrap.mjs" --output "$RUNNER_TEMP/contract-responses.json"
+      - name: Enforce placement and one-time production gate
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          CANDIDATE: ${{ github.sha }}
+        run: python3 scripts/ci/check_contract_placement.py --base "$BASE" --head "$CANDIDATE" --minimum-service-version 0.4.5 --rendered-responses "$RUNNER_TEMP/contract-responses.json"

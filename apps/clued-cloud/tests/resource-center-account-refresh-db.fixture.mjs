@@ -1,7 +1,9 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 const hash = value => createHash("sha256").update(value).digest("hex");
 export async function testAccountRefresh(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const session = randomUUID(), issuer = hash(randomUUID());
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session,user]);
   await admin.query("insert into clued_private.storage_oauth_apps_v1 values($1,'refresh-fixture-client','https://clued.invalid/storage/google/callback',null)", [issuer]);
@@ -277,14 +279,16 @@ export async function testAccountRefresh(t, admin, server, user, decision) {
         } finally {await lock.query("rollback");if(pending)await pending;await lock.end();await admin.query("update auth.sessions set not_after=null where id=$1",[session]);}
       }
     });
-    await t.test("fair polling gets past ten blocked roots to an eleventh healthy connection",async()=>{
+    await t.test("fair polling skips ten blocked roots and serves an eleventh healthy connection at once",async()=>{
       const blocked=[];
       for(let i=0;i<10;i++){const f=await setup(); await manage(f.connection,"enable"); await mutation(f,"uncertain"); blocked.push(f.connection);}
       const healthy=await setup(); await manage(healthy.connection,"enable");
-      const first=await worker({action:"due"}); assert.equal(first.connections.length,10);
-      assert.equal(first.connections.includes(healthy.connection),false);
-      for(const connection of first.connections) await assert.rejects(worker(claim(connection)),/storage_root_has_unresolved_mutation/);
-      const next=await worker({action:"due"}); assert.ok(next.connections.includes(healthy.connection));
+      // BUG-20261007-005: a blocked root is skipped and counted, never listed,
+      // so it cannot take a slot from a healthy connection.
+      const first=await worker({action:"due"});
+      assert.equal(blocked.some(connection=>first.connections.includes(connection)),false);
+      assert.ok(first.connections.includes(healthy.connection)); assert.ok(first.root_busy>=10);
+      for(const connection of blocked) await assert.rejects(worker(claim(connection)),/storage_root_has_unresolved_mutation/);
       assert.equal((await worker(claim(healthy.connection))).status,"acquired");
     });
   }finally{await native.end();await background.end();}

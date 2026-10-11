@@ -72,6 +72,10 @@ const READ_HINTS: Record<string, string> = {
   image_too_large: "The image is larger than 5 MiB or 8000 px on its long edge; downscaling is not available yet. Only metadata is returned.",
 };
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
+/** Fixed hint when the connection's sealed Google access has expired (BUG-20261007-005). */
+export const CREDENTIAL_RENEWAL_HINT = "This storage connection's Google access has expired and Clued has not renewed it yet. " +
+  "Clued renews it automatically, but not while an unfinished storage job on the same root is still being settled. " +
+  "Retry in a few minutes; if reads keep failing, tell the user to check this connection and its jobs on the Clued storage page.";
 
 export class StorageReadError extends Error {
   constructor(readonly code: "storage_read_input_invalid" | "storage_read_unavailable" | "not_found_in_scope" | "cursor_invalid" |
@@ -309,7 +313,9 @@ export async function createStorageReadAgent(config: {
         // The sealed set must have an allowed profile equal to the connection
         // row's recorded profile (StorageNormalUse §2.2 item 6).
         scopeProfile(token.scope) === null || scopeProfile(token.scope) !== admitted.provider_scope_profile ||
-        !Number.isFinite(token.expires_at_ms) || Number(token.expires_at_ms) - clock() <= 60000) fail("storage_read_unavailable");
+        !Number.isFinite(token.expires_at_ms)) fail("storage_read_unavailable");
+      // BUG-20261007-005: an expired credential says so with a fixed hint.
+      if (Number(token.expires_at_ms) - clock() <= 60000) throw new StorageReadError("storage_read_unavailable", { hint: CREDENTIAL_RENEWAL_HINT });
       let used = 0;
       const base = createStorageFetch(config.fetch);
       const budgeted: typeof fetch = async (url, init) => {

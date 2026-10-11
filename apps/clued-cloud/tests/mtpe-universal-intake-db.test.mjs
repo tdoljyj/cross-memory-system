@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -7,6 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -51,6 +54,8 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     const userId = uuid();
     const hostAToken = hash();
@@ -80,18 +85,24 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const rpc = async (token, name, input = {}) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) value`, [token,input])).rows[0].value
+        : await workerGatewayRpc(workerCaller, name, token, input);
     const write = (token, input) => rpc(token, 'clued_record_mutate', input);
     const snapshot = (token = hostAToken) => rpc(token, 'clued_mcp_mtpe_snapshot');
     const validate = (token = hostAToken) => rpc(token, 'clued_mcp_mtpe_validate');
 
     const projectId = uuid();
     const projectScope = `project:${projectId}`;
-    assert.equal((await rpc(hostAToken, 'clued_project_mutate', {
-      operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
+    assert.equal((await rpc(hostAToken, 'clued_project_mutate_v2', {
+      operation: 'create', canonical_project_id: projectId, project_schema_version: 2,
       idempotency_key: uuid(),
-      mutation: { name: 'MTPE Runtime', certainty_status: 'confirmed', progress_status: 'active' },
+      mutation: { name: 'MTPE Runtime', progress_status: 'active' },
     })).status, 'committed');
 
     const blockedId = uuid();
@@ -494,10 +505,10 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
     // A new Project is never inherited by an explicit grant; '*' keeps its meaning.
     const laterProjectId = uuid();
     const laterScope = `project:${laterProjectId}`;
-    assert.equal((await rpc(hostAToken, 'clued_project_mutate', {
-      operation: 'create', canonical_project_id: laterProjectId, project_schema_version: 1,
+    assert.equal((await rpc(hostAToken, 'clued_project_mutate_v2', {
+      operation: 'create', canonical_project_id: laterProjectId, project_schema_version: 2,
       idempotency_key: uuid(),
-      mutation: { name: 'MTPE Later', certainty_status: 'confirmed', progress_status: 'active' },
+      mutation: { name: 'MTPE Later', progress_status: 'active' },
     })).status, 'committed');
     assert.equal((await write(hostAToken, {
       operation: 'create', id: uuid(), record_type: 'task', record_schema_version: 1,
@@ -531,6 +542,14 @@ test('Universal Intake routes every actionable kind and preserves priority, Owne
       .error.unscoped_sources, 1);
     await assert.rejects(anon.query('select clued_private.mtpe_read_set_v1($1,$2)', [userId, 'snapshot']),
       /permission denied/);
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

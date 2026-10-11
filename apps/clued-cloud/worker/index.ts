@@ -10,12 +10,15 @@ import {
   runStorageStagingScheduled,
   runStorageOnboardScheduled,
   runStorageJobQueue,
+  runStorageCloudJob,
   type ContinuityEnv,
   type StorageJobQueueMessage,
 } from "./continuity";
 
 import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } from "./delegated-oauth";
 import { createPdfExtractorCheckGate, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
+import { runStorageQueuedSweepScheduled } from "./storage-queued-dispatch";
+import { runStorageAccessDigestBackfillScheduled } from "./storage-access-digest-backfill";
 
 /** One per isolate: caches the last check result and allows one check in flight (StorageNormalUse §4.5). */
 const pdfExtractorCheck = createPdfExtractorCheckGate();
@@ -103,6 +106,21 @@ const worker = {
       if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_unattempted_release_unavailable" }));
       else if (result.status === "ok" && result.released > 0)
         console.warn(JSON.stringify({ event: "storage_unattempted_released", released: result.released }));
+    }));
+    // BUG-20261008-001: a queued job whose one dispatch was lost or refused is
+    // dispatched again with backoff, and settled after 2 hours instead of staying queued.
+    ctx.waitUntil(runStorageQueuedSweepScheduled(env, { runJob: (_env, reference) => runStorageCloudJob(env, reference) }).then(result => {
+      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_queued_sweep_unavailable" }));
+      else if (result.status === "ok" && (result.settled > 0 || result.dispatched > 0 || result.root_busy > 0))
+        console.warn(JSON.stringify({ event: "storage_queued_sweep", settled: result.settled, dispatched: result.dispatched, root_busy: result.root_busy }));
+    }));
+    // Storage step 2 (Task e2eb07d1): directories with neither digest get their
+    // access digest when Drive still reports their registered version.
+    ctx.waitUntil(runStorageAccessDigestBackfillScheduled(env).then(result => {
+      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_access_digest_backfill_unavailable" }));
+      else if (result.status === "ok" && (result.recorded > 0 || result.missing > 0 || result.skipped > 0))
+        console.warn(JSON.stringify({ event: "storage_access_digest_backfill", recorded: result.recorded,
+          missing: result.missing, skipped: result.skipped }));
     }));
     ctx.waitUntil(runStorageStagingScheduled(env).then(result => {
       if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_staging_sweep_unavailable" }));

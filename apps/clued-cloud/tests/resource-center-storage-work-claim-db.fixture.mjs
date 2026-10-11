@@ -1,5 +1,8 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+
+// raw-binding-grants: the calling test (resource-center-authority-db) calls allowRawTestBindings.
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const JOBS = "public.clued_storage_jobs_router_v2";
@@ -13,6 +16,7 @@ const TRACK = "20_P_产品与体验";
 // anything is created. Claims are rows of clued_private.work_claims_v1; the
 // storage calls go through the real router and batch RPCs.
 export async function testStorageWorkClaim(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const clients = [], claims = [], session = randomUUID(), clientIssuer = sha(randomUUID()), resource = "https://work-claim.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
   const connect = async role => {

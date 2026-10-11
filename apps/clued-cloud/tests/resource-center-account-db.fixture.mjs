@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { testAccountJobs } from "./resource-center-account-jobs-db.fixture.mjs";
@@ -5,6 +6,7 @@ import { testCloudBridge } from "./resource-center-cloud-bridge-db.fixture.mjs";
 const hash = s => createHash("sha256").update(s).digest("hex");
 
 export async function testStorageAccount(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   await admin.query("create table if not exists auth.sessions(id uuid primary key,user_id uuid not null,not_after timestamptz)");
   const session = randomUUID();
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, user]);

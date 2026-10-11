@@ -31,7 +31,7 @@ import "../owner.css";
 // for a bundle.
 type Json = Record<string, unknown>;
 type Choice = "once" | "grant";
-type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[] };
+type Options = { choice: Choice; seconds: number; anyAgent: boolean; scope: string[]; datasetSplitBootstrap?: boolean; datasetSplitCorrection?: boolean };
 type ScopeRow = { resource: string; options: string[] };
 type Issued = { confirmation_token: string; view_digest: string; expires_at: string; view: Json; options: Options };
 type Member = { id: string; issued: Issued | null };
@@ -83,6 +83,10 @@ async function rpc(name: string, input: Json): Promise<Json> {
 }
 
 function issueInput(requestId: string, options: Options, rows: ScopeRow[]): Json {
+  // The fixed bootstrap plan accepts only the requester, the original scope,
+  // at most one hour and one use. "once" is a different, 24-hour Native grant.
+  if (options.datasetSplitBootstrap) return { request_id: requestId, choice: "grant",
+    expires_seconds: 3600, max_uses: 1, grantee: "requester" };
   const grantee = options.anyAgent ? "any_agent" : "requester";
   if (options.choice === "once") return { request_id: requestId, choice: "once", grantee };
   const input: Json = { request_id: requestId, choice: "grant", expires_seconds: options.seconds, grantee };
@@ -136,7 +140,7 @@ export default function OwnerConfirmPage() {
   const [rows, setRows] = useState<ScopeRow[]>([]);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [pending, setPending] = useState<Issued | null>(null);
-  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number; left?: Left[] } | null>(null);
+  const [done, setDone] = useState<{ kind: "granted" | "rejected"; grant?: Json; count?: number; left?: Left[]; corrected?: boolean } | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   // Bundle members (the request on the page included) the Owner unticked.
   const [skipped, setSkipped] = useState<string[]>([]);
@@ -181,10 +185,11 @@ export default function OwnerConfirmPage() {
       // a server without default_choice keeps "grant" and the view's duration.
       const seconds = Number(value.suggested_expires_seconds ?? view.expires_seconds);
       const others = bundleOthers(value.request, id).filter(member => member.status === "pending");
-      const offered = others.length ? [] : scopeRows(value.resource_options);
-      const initial: Options = { choice: value.default_choice === "once" ? "once" : "grant",
-        seconds: Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
-        anyAgent: false, scope: offered.map(row => row.resource) };
+      const datasetSplitBootstrap = value.request.action === "model.dataset_split.bootstrap";
+      const offered = others.length || datasetSplitBootstrap ? [] : scopeRows(value.resource_options);
+      const initial: Options = { choice: datasetSplitBootstrap ? "grant" : value.default_choice === "once" ? "once" : "grant",
+        seconds: datasetSplitBootstrap ? 3600 : Number.isInteger(seconds) && seconds >= 60 ? seconds : 14400,
+        anyAgent: false, scope: offered.map(row => row.resource), datasetSplitBootstrap };
       setRows(offered); setOptions(initial);
       const next: Member[] = others.map(member => ({ id: String(member.request_id), issued: null }));
       setMembers(next); setSkipped([]);
@@ -200,11 +205,24 @@ export default function OwnerConfirmPage() {
   // Step 1: a token over exactly the view these options produce. A newer
   // issue revokes the older token, so only what is on screen can be approved.
   async function issue(id: string, next: Options, generation: number, offered = rows): Promise<Issued | null> {
-    const value = await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
+    const value = next.datasetSplitCorrection
+      ? await rpc("clued_dataset_split_grant_correction_issue_v1", { request_id: id })
+      : await rpc("clued_owner_grant_confirmation_issue_v1", issueInput(id, next, offered));
     if (epoch.current !== generation) return null;
     if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
       || typeof value.expires_at !== "string" || !object(value.confirmation_view)) {
       throw new RequestFailure("确认内容不完整，请刷新页面。");
+    }
+    if (next.datasetSplitBootstrap && (value.confirmation_view.action !== "model.dataset_split.bootstrap"
+      || value.confirmation_view.choice !== "grant" || value.confirmation_view.expires_seconds !== 3600
+      || value.confirmation_view.max_uses !== 1 || !object(value.confirmation_view.grantee)
+      || value.confirmation_view.grantee.any_agent !== false)) {
+      throw new RequestFailure("服务返回的授权范围或期限与这次请求不一致，暂时无法批准。");
+    }
+    if (next.datasetSplitCorrection && (!object(value.confirmation_view.correction)
+      || value.confirmation_view.correction.request_id !== id
+      || value.confirmation_view.correction.previous_grant_id !== "4970e492-d26e-4974-adaa-757b2146b171")) {
+      throw new RequestFailure("修正内容与原申请不一致，暂时无法确认。");
     }
     const result = { confirmation_token: value.confirmation_token, view_digest: value.view_digest,
       expires_at: value.expires_at, view: value.confirmation_view, options: next };
@@ -287,7 +305,8 @@ export default function OwnerConfirmPage() {
       const left: Left[] = [...(mine ? [] : [{ id: requestId, action: actionText(issued?.view, request?.action) }]),
         ...members.filter(member => skipped.includes(member.id))
           .map(member => ({ id: member.id, action: actionText(member.issued?.view) }))];
-      setDone({ kind: "granted", grant: grant ?? result.grant, count: result.count + (mine ? 1 : 0), left });
+      setDone({ kind: "granted", grant: grant ?? result.grant, count: result.count + (mine ? 1 : 0), left,
+        corrected: Boolean(target?.options.datasetSplitCorrection) });
     } catch (failure) {
       if (epoch.current !== generation) return;
       const uncertain = !(failure instanceof RequestFailure) || failure.uncertain;
@@ -366,6 +385,13 @@ export default function OwnerConfirmPage() {
 
   const view = issued?.view ?? null;
   const status = request ? String(request.status ?? "") : "";
+  const oldGrant = request && object(request.grant) ? request.grant : null;
+  const canCorrect = requestId === "af1cabdb-5259-4ca3-94d3-133f1af122c8"
+    && request?.action === "model.dataset_split.bootstrap" && status === "approved_once"
+    && oldGrant?.grant_id === "4970e492-d26e-4974-adaa-757b2146b171"
+    && oldGrant.uses === 0 && oldGrant.max_uses === 1 && oldGrant.revoked === false
+    && Date.parse(String(oldGrant.expires_at)) > Date.now() + 3600_000;
+  const correction = view && object(view.correction) ? view.correction : null;
   const viewRequest = view && object(view.request) ? view.request : null;
   const note = viewRequest && typeof viewRequest.agent_note_unverified === "string" ? viewRequest.agent_note_unverified : "";
   // Re-review 9: a note the admission check wrote (repo.protected_change) is
@@ -409,7 +435,8 @@ export default function OwnerConfirmPage() {
         {done?.kind === "granted" && permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
           <p>权限已加到这个连接上。Agent 重试刚才被拒的操作即可，不用重新连接。</p>
           <p>可以在 <Link href="/oauth/connections">连接管理</Link> 随时收窄或撤销这个连接的权限。</p></section>}
-        {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>已批准</h2>
+        {done?.kind === "granted" && !permission && <section aria-label="已批准" role="status"><h2>{done.corrected ? "授权期限已修正" : "已批准"}</h2>
+          {done.corrected && <p>旧授权已撤销，原申请和批准历史保留；新授权仅给原发起者，在 1 小时内使用 1 次。</p>}
           {(done.count ?? 1) > 1 && <p>同一批 {done.count} 项已批准，每项各自生成一个授权。</p>}
           <p>{done.grant?.max_uses === 1 ? "只允许这一次" : "授权已生效"}，有效期至 {new Date(String(done.grant?.expires_at)).toLocaleString()}。</p>
           <p>Agent 重试时会自动用上这次批准。可以在 <Link href="/grants">我的授权</Link> 随时撤销。</p>
@@ -417,11 +444,31 @@ export default function OwnerConfirmPage() {
             <li key={item.id}><a href={"/confirm/" + item.id}>{item.action}</a></li>)}</ul></>}</section>}
         {done?.kind === "rejected" && <section aria-label="已拒绝" role="status"><h2>已拒绝</h2><p>Agent 不会得到这次授权。</p></section>}
         {!done && request && status !== "pending" && <section aria-label="请求状态"><h2>{STATUS[status] ?? status}</h2>
-          <p>这个请求已不需要处理。{status === "expired" ? "如仍需要，请让 Agent 重新发起。" : ""}</p>
+          <p>{canCorrect ? "原批准已保留。这次动作只接受 1 小时、1 次的授权，可在下方确认收窄期限。" : "这个请求已不需要处理。"}{status === "expired" ? "如仍需要，请让 Agent 重新发起。" : ""}</p>
           {leftover.length > 0 && <><p>同一批还有 {leftover.length} 项等你确认：</p><ul>{leftover.map(member =>
             <li key={String(member.request_id)}><Link href={"/confirm/" + String(member.request_id)}>{String(member.action ?? "")}</Link></li>)}</ul></>}</section>}
+        {!done && canCorrect && !pending && !correction && <section aria-label="修正授权期限">
+          <p>保留这份申请、原发起者和范围。确认后，系统会一次性撤销未使用的旧授权并给出 1 小时、1 次的新授权。</p>
+          <button type="button" disabled={working} onClick={() => void choose({ ...options, choice: "grant",
+            seconds: 3600, anyAgent: false, scope: [], datasetSplitBootstrap: true, datasetSplitCorrection: true })}>查看限时修正</button>
+        </section>}
+        {!done && !pending && correction && view && <section aria-label="确认限时修正">
+          <h2>确认收窄授权期限</h2>
+          <p>原申请和批准历史保留，动作、原发起者和范围保持一致。</p>
+          <dl><dt>动作</dt><dd>{actionText(view)}</dd>
+            <dt>范围</dt><dd><ul>{list(view.resources).map(resource => <li key={resource}>{resource}</li>)}</ul></dd>
+            <dt>原授权</dt><dd>{String(correction.previous_grant_id)}</dd>
+            <dt>原期限</dt><dd>{new Date(String(correction.previous_expires_at)).toLocaleString()}</dd>
+            <dt>新期限</dt><dd>确认后 1 小时内有效，且不超过原期限</dd>
+            <dt>次数</dt><dd>1 次</dd><dt>给谁</dt><dd>{String(grantee?.agent_name ?? "原发起请求的 Agent")}</dd>
+          </dl>
+          <button type="button" disabled={working || !issued} onClick={() => void approve()}>确认限时修正</button>
+          <button type="button" disabled={working} onClick={() => { setIssued(null); setError("");
+            setOptions({ ...options, datasetSplitCorrection: false }); }}>返回原批准</button>
+        </section>}
         {!done && status === "pending" && <>
           {!permission && <section aria-label="选择" className="owner-choice"><h2>怎么批</h2>
+            {options.datasetSplitBootstrap ? <p>仅给发起请求的 Agent，在 1 小时内使用 1 次，范围保持这份请求列出的对象。</p> : <>
             <div className="context-row">
               <button type="button" aria-pressed={options.choice === "once"} disabled={working}
                 onClick={() => void choose({ ...options, choice: "once" })}>只批这一次</button>
@@ -453,6 +500,7 @@ export default function OwnerConfirmPage() {
                 </div>;
               })}
             </fieldset>}
+            </>}
           </section>}
           {view && permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
             <p className="context-muted">以下内容由 Clued 生成，Agent 改不了。批准后权限加到这个连接上，不用重新连接。</p>

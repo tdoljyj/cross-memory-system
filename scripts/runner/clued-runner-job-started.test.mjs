@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { createVerify, generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 
-import { DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED } from "../ci/clued-work-admission.mjs";
-import { DISPATCH_GATED_WORKFLOWS, decide, main, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED } from "../ci/clued-work-admission.mjs";
+import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, decide, main, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { workflowIsGated } from "../ci/clued-work-admission.mjs";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const SHA = "a".repeat(40);
 const HEAD = "b".repeat(40);
@@ -17,11 +22,13 @@ const env = (overrides = {}) => ({
 const prEvent = (base = "main") => JSON.stringify({ pull_request: { number: 9, base: { ref: base }, head: { sha: HEAD } } });
 const files = (...names) => ({ body: { files: names.map((filename) => ({ filename })) } });
 
+// The longest matching key answers: the run's URL is a prefix of its
+// attempts/{n}/jobs URL.
 function fakeFetch(script) {
   const calls = [];
   const fetchImpl = async (url, init) => {
-    calls.push({ url: String(url), auth: init.headers.authorization });
-    const key = Object.keys(script).find((k) => String(url).startsWith(k));
+    calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? "GET", body: init.body });
+    const key = Object.keys(script).filter((k) => String(url).startsWith(k)).sort((a, b) => b.length - a.length)[0];
     const r = key ? (typeof script[key] === "function" ? script[key]() : script[key]) : { status: 500, body: null };
     return { status: r.status ?? 200, json: async () => r.body };
   };
@@ -149,34 +156,391 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.equal(await main({ ...bad, CLUED_RUNNER_HOOK_REPOSITORY: "", CLUED_RUNNER_HOOK_ENFORCE: "true" }, fakeFetch({}).fetchImpl), 1);
     assert.match(lines.at(-1), /check failed: CLUED_RUNNER_HOOK_REPOSITORY is not set/);
     assert.equal(await main({ ...env({ CLUED_RUNNER_HOOK_TOKEN_FILE: "" }), CLUED_RUNNER_HOOK_ENFORCE: "true" }, fakeFetch({}).fetchImpl), 1);
-    assert.match(lines.at(-1), /CLUED_RUNNER_HOOK_TOKEN_FILE is not set/);
+    assert.match(lines.at(-1), /CLUED_RUNNER_HOOK_APP_ID and CLUED_RUNNER_HOOK_APP_KEY_FILE \(or the older CLUED_RUNNER_HOOK_TOKEN_FILE\) are not set/);
     assert.equal(await main({ ...env({ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main" }), CLUED_RUNNER_HOOK_ENFORCE: "true" },
       fakeFetch({}).fetchImpl), 0);
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
+  // Each line names the hook's version, so the Owner can check every runner's copy.
+  assert.equal(HOOK_VERSION, "merge-admission-ungated-rerun");
+  assert.ok(lines.length >= 5);
+  for (const line of lines) assert.ok(line.endsWith(` [hook ${HOOK_VERSION}]`), line);
   const { result } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/x" }, { [LIST]: { status: 403, body: null } })
     .catch((error) => ({ result: { error: error.message } }));
   assert.match(result.error, /returned 403/);
 });
 
-test("runner hook (re-review 3, N-R3): a re-run of a pull request or branch dispatch run is refused", async () => {
-  const workflowChange = { [COMPARE]: files(".github/workflows/heavy.yml") };
-  for (const [overrides, script] of [
-    [{ GITHUB_RUN_ATTEMPT: "2" }, { [COMPARE]: files("apps/x.ts") }],
-    [{}, { [RUN]: thisRun({ run_attempt: 2 }), [COMPARE]: files("apps/x.ts") }],
-    [{ GITHUB_RUN_ATTEMPT: "3" }, workflowChange],
-    [{ GITHUB_RUN_ATTEMPT: "2", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x" }, {}],
-  ]) {
-    const { result, calls } = await run(overrides, script);
-    assert.equal(result.allow, false, JSON.stringify(overrides));
-    assert.match(result.reason, /run attempt [23]; re-runs are refused, push a new commit/);
-    assert.deepEqual(calls.map((c) => c.url), [RUN], "nothing else is read");
+// Re-runs (MergeAdmission v0.1 §8; Owner Decisions 77216370, 1b93760d).
+// Attempt n starts at RUN_STARTED (run_started_at changes per attempt,
+// created_at does not).
+const PULLS = `${API}/pulls/9`;
+const JOBS = (n) => `${API}/actions/runs/555/attempts/${n}/jobs`;
+const RUN_STARTED = "2026-10-04T06:00:00Z";
+const rerunOf = (n, overrides = {}) => thisRun({ run_attempt: n, run_started_at: RUN_STARTED, ...overrides });
+const pull = (overrides = {}) => ({ body: { number: 9, state: "open", base: { ref: "main" }, head: { sha: HEAD }, ...overrides } });
+// This attempt's gate job ("Re-run all jobs" ran it again), and the job being started.
+const SELF_HOSTED = ["self-hosted", "Windows", "X64"];
+const gateJob = (overrides = {}) => ({ id: 77, name: "admission-gate", status: "completed", conclusion: "success", run_attempt: 2,
+  started_at: "2026-10-04T06:00:04Z", labels: SELF_HOSTED, ...overrides });
+const heavyJob = (overrides = {}) => ({ id: 78, name: "trusted-self-hosted", status: "in_progress", conclusion: null, run_attempt: 2,
+  started_at: "2026-10-04T06:01:00Z", labels: SELF_HOSTED, ...overrides });
+const jobsOf = (...jobs) => ({ body: { total_count: jobs.length, jobs } });
+const HEAVY = { GITHUB_JOB: "trusted-self-hosted" };
+const GATE = { GITHUB_JOB: "admission-gate" };
+const GITLEAKS = { GITHUB_JOB: "gitleaks-trusted-self-hosted", GITHUB_WORKFLOW_REF: "o/r/.github/workflows/gitleaks.yml@refs/pull/9/merge" };
+const TRIVY = { GITHUB_JOB: "trivy-trusted-self-hosted", GITHUB_WORKFLOW_REF: "o/r/.github/workflows/trivy.yml@refs/pull/9/merge" };
+const rerun = (n, overrides, script = {}) => run({ GITHUB_RUN_ATTEMPT: String(n), ...overrides }, {
+  [RUN]: rerunOf(n), [PULLS]: pull(), [JOBS(n)]: jobsOf(gateJob({ run_attempt: n }), heavyJob({ run_attempt: n })),
+  [COMPARE]: files("apps/x.ts"), ...script });
+const urls = (calls) => calls.map((c) => c.url);
+
+test("runner hook (Decision 77216370): the admission-gate job of a re-run on the current head starts; the gate judges the re-run", async () => {
+  for (const n of [2, 3, 5]) {
+    const { result, calls } = await rerun(n, GATE);
+    assert.equal(result.allow, true, `attempt ${n}`);
+    assert.equal(result.reason, `pull request #9 changes no workflow; run attempt ${n} on the current head: the admission-gate job judges the re-run itself`);
+    assert.deepEqual(urls(calls), [RUN, PULLS, `${COMPARE}${HEAD}`], "the attempt's jobs are not read for the gate itself");
   }
-  // main's own runs may be re-run.
-  const { result } = await run({ GITHUB_RUN_ATTEMPT: "2", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main" }, {});
+});
+
+test("runner hook (Decision 77216370): a heavy job of \"Re-run all jobs\" starts when this attempt's gate ran again and succeeded", async () => {
+  let { result, calls } = await rerun(2, HEAVY);
   assert.equal(result.allow, true);
+  assert.equal(result.reason, "pull request #9 changes no workflow; run attempt 2 on the current head: admission-gate job 77 ran again in this attempt and succeeded");
+  assert.deepEqual(urls(calls), [RUN, PULLS, `${JOBS(2)}?per_page=100`, `${COMPARE}${HEAD}`]);
+  // Any attempt: the gate enforces the policy's reruns_per_head.
+  ({ result } = await rerun(3, HEAVY));
+  assert.equal(result.allow, true, "attempt 3");
+  // A gate that started the same second as the attempt counts.
+  ({ result } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(heavyJob(), gateJob({ started_at: RUN_STARTED })) }));
+  assert.equal(result.allow, true, "started_at equal to run_started_at");
+  // The API may show the fresh gate as running for a moment after the job that needs it starts: wait for it.
+  let polls = 0;
+  let sleeps;
+  ({ result, sleeps } = await rerun(2, HEAVY, {
+    [JOBS(2)]: () => { polls += 1; return jobsOf(gateJob(polls < 2 ? { status: "in_progress", conclusion: null } : {}), heavyJob()); } }));
+  assert.deepEqual([result.allow, polls, sleeps], [true, 2, [10_000]]);
+});
+
+test("runner hook (Decision 77216370): \"Re-run failed jobs\" and single-job re-runs are refused", async () => {
+  const refused = async (label, overrides, script) => {
+    const { result, calls, sleeps } = await rerun(2, { ...HEAVY, ...overrides }, script);
+    assert.equal(result.allow, false, label);
+    assert.match(result.reason, /^pull request #9, run attempt 2: /, label);
+    assert.equal(calls.some((c) => c.url.startsWith(COMPARE)), false, `${label}: refused before the workflow-change rule`);
+    return { result, calls, sleeps };
+  };
+  // GitHub lists the earlier gate job in the new attempt, successful and with
+  // this attempt's number, but with the earlier attempt's start time.
+  let { result } = await refused("not re-run gate", {}, { [JOBS(2)]: jobsOf(gateJob({ started_at: "2026-10-04T05:00:04Z" }), heavyJob()) });
+  assert.match(result.reason, /admission-gate job 77 started 2026-10-04T05:00:04Z, not in this attempt: it was not re-run/);
+  assert.match(result.reason, /use "Re-run all jobs", not "Re-run failed jobs" or a single job$/);
+  // An attempt that lists no gate job of a workflow main gates (Task 26cced7e: main's copy decides).
+  const G4 = `${API}/contents/.github/workflows/clued-g4-database.yml?ref=`;
+  const g4 = { type: "file", sha: "c".repeat(40), encoding: "base64",
+    content: Buffer.from("jobs:\n  admission-gate:\n    runs-on: [self-hosted]\n", "utf8").toString("base64") };
+  ({ result } = await refused("no gate", {}, { [JOBS(2)]: jobsOf(heavyJob()), [`${G4}${SHA}`]: { body: g4 }, [`${G4}main`]: { body: g4 } }));
+  assert.match(result.reason, /attempt 2 lists no admission-gate job, but \.github\/workflows\/clued-g4-database\.yml: main's copy has an admission-gate job/);
+  for (const conclusion of ["failure", "cancelled", "skipped", "timed_out", null]) {
+    ({ result } = await refused(`gate ${conclusion}`, {}, { [JOBS(2)]: jobsOf(gateJob({ conclusion }), heavyJob()) }));
+    assert.match(result.reason, new RegExp(`admission-gate job 77: completed/${conclusion ?? "none"}`));
+  }
+  // Still running after the wait: refused.
+  let sleeps;
+  ({ result, sleeps } = await refused("gate in_progress", {}, { [JOBS(2)]: jobsOf(gateJob({ status: "in_progress", conclusion: null }), heavyJob()) }));
+  assert.match(result.reason, /admission-gate job 77: in_progress\/none/);
+  assert.equal(sleeps.length, 2, "waited CLUED_RUNNER_HOOK_WAIT_SECONDS");
+  ({ sleeps } = await refused("gate queued, no wait", { CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" },
+    { [JOBS(2)]: jobsOf(gateJob({ status: "queued", conclusion: null }), heavyJob()) }));
+  assert.equal(sleeps.length, 0);
+  for (const name of ["admission-gate / check", "Admission-gate", "admission-gate-2", "trusted / admission-gate", " admission-gate"]) {
+    await refused(`name ${JSON.stringify(name)}`, {}, { [JOBS(2)]: jobsOf(gateJob({ name }), heavyJob()) });
+  }
+  // A list that is not complete may hide nothing, or the gate: refused either way.
+  ({ result } = await refused("total_count > returned", {}, { [JOBS(2)]: { body: { total_count: 101, jobs: [gateJob(), heavyJob()] } } }));
+  assert.match(result.reason, /attempt 2 has 101 jobs and 2 were listed/);
+  await refused("total_count missing", {}, { [JOBS(2)]: { body: { jobs: [gateJob(), heavyJob()] } } });
+  await refused("jobs missing", {}, { [JOBS(2)]: { body: { total_count: 0 } } });
+  // A start time that cannot be read refuses at once.
+  ({ result, sleeps } = await refused("gate started_at unreadable", {}, { [JOBS(2)]: jobsOf(gateJob({ started_at: "yesterday" }), heavyJob()) }));
+  assert.match(result.reason, /admission-gate job 77 has an unreadable started_at "yesterday"/);
+  assert.equal(sleeps.length, 0);
+  for (const run_started_at of [undefined, null, "", "soon"]) {
+    let calls;
+    ({ result, calls } = await refused(`run_started_at ${run_started_at}`, {}, { [RUN]: rerunOf(2, { run_started_at }) }));
+    assert.match(result.reason, /the run has no run_started_at; re-run refused/);
+    assert.deepEqual(urls(calls), [RUN, PULLS], "the jobs are not read without the attempt's start");
+  }
+  // A gate job of another attempt does not count.
+  ({ result } = await refused("gate of attempt 1", {}, { [JOBS(2)]: jobsOf(gateJob({ run_attempt: 1 }), heavyJob()) }));
+  assert.match(result.reason, /admission-gate job 77 belongs to attempt 1, not 2/);
+  // The jobs cannot be read: refused, not thrown.
+  for (const status of [403, 404, 500]) {
+    ({ result } = await refused(`jobs ${status}`, {}, { [JOBS(2)]: { status, body: null } }));
+    assert.match(result.reason, new RegExp(`cannot read attempt 2's jobs \\(GitHub .*/attempts/2/jobs\\?per_page=100 returned ${status}\\)`));
+  }
+  await refused("jobs transport error", {}, { [JOBS(2)]: () => { throw new Error("socket hang up"); } });
+});
+
+test("runner hook (review item 3): the measured \"Re-run failed jobs\" shape is refused", async () => {
+  // Measured on GitHub: in the new attempt the not re-run gate job is listed
+  // with a new id, a later created_at and this attempt's number, successful,
+  // but its started_at is the earlier attempt's, before run_started_at.
+  const listed = gateJob({ id: 9101, run_attempt: 2, status: "completed", conclusion: "success",
+    created_at: "2026-10-04T06:00:02Z", started_at: "2026-10-04T05:00:04Z", completed_at: "2026-10-04T05:00:30Z" });
+  const { result, calls, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(listed, heavyJob({ id: 9102, created_at: "2026-10-04T06:00:02Z" })) });
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /^pull request #9, run attempt 2: no admission-gate job that ran again in this attempt and succeeded \(admission-gate job 9101 started 2026-10-04T05:00:04Z, not in this attempt: it was not re-run\)/);
+  assert.deepEqual(sleeps, [], "refused at once, not waited for");
+  assert.equal(calls.some((c) => c.url.startsWith(COMPARE)), false);
+});
+
+test("runner hook (review MINOR-2): exactly one self-hosted job named admission-gate", async () => {
+  // A second job with the gate's display name (another workflow's job, or one
+  // a called workflow adds) cannot stand in, even when one of them passed.
+  let { result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob(), gateJob({ id: 79 }), heavyJob()) });
+  assert.equal(result.allow, false, "duplicate gate");
+  assert.match(result.reason, /attempt 2 has 2 jobs named admission-gate \(77, 79\); exactly one is required/);
+  assert.deepEqual(sleeps, []);
+  ({ result } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob({ conclusion: "failure" }), gateJob({ id: 79 }), heavyJob()) }));
+  assert.equal(result.allow, false, "duplicate gate, one failed");
+  // Every gate job runs on a self-hosted runner: one without that label is refused.
+  for (const labels of [["ubuntu-latest"], [], undefined, null, "self-hosted"]) {
+    ({ result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob({ labels }), heavyJob()) }));
+    assert.equal(result.allow, false, `labels ${JSON.stringify(labels)}`);
+    assert.match(result.reason, /admission-gate job 77 does not run on a self-hosted runner/);
+    assert.deepEqual(sleeps, []);
+  }
+});
+
+test("runner hook (review NIT-5): a gate job of this attempt not started or not completed yet is waited for", async () => {
+  // Queued without a start time, then running, then done: allowed after polling.
+  let polls = 0;
+  let { result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: () => {
+    polls += 1;
+    const stage = polls === 1 ? { status: "queued", conclusion: null, started_at: null }
+      : polls === 2 ? { status: "in_progress", conclusion: null } : {};
+    return jobsOf(gateJob(stage), heavyJob());
+  } });
+  assert.deepEqual([result.allow, polls, sleeps], [true, 3, [10_000, 10_000]]);
+  // Completed but with no start time yet (the API's lag): pending too.
+  polls = 0;
+  ({ result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: () => {
+    polls += 1;
+    return jobsOf(gateJob(polls === 1 ? { started_at: "" } : {}), heavyJob());
+  } }));
+  assert.deepEqual([result.allow, polls, sleeps.length], [true, 2, 1]);
+  // Still without a start time at the end of the wait: refused then, not at once.
+  for (const started_at of [undefined, null, ""]) {
+    ({ result, sleeps } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(gateJob({ started_at }), heavyJob()) }));
+    assert.equal(result.allow, false, `started_at ${started_at}`);
+    assert.equal(sleeps.length, 2, "waited CLUED_RUNNER_HOOK_WAIT_SECONDS");
+    assert.match(result.reason, /admission-gate job 77: completed\/success, not started\); use "Re-run all jobs"/);
+  }
+  ({ result, sleeps } = await rerun(2, { ...HEAVY, CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" },
+    { [JOBS(2)]: jobsOf(gateJob({ status: "waiting", conclusion: null, started_at: null }), heavyJob()) }));
+  assert.deepEqual([result.allow, sleeps.length], [false, 0]);
+  assert.match(result.reason, /admission-gate job 77: waiting\/none, not started/);
+});
+
+test("runner hook (Decision 77216370): a re-run of an old head, a closed or a retargeted pull request is refused", async () => {
+  const pulls = [
+    ["head moved", pull({ head: { sha: "c".repeat(40) } }), new RegExp(`${HEAD} is not the pull request's current head \\(${"c".repeat(40)}\\); an old head's run may not be re-run`)],
+    ["closed", pull({ state: "closed" }), /the pull request is closed; only an open pull request's current head may be re-run/],
+    ["merged", pull({ state: "closed", merged: true }), /the pull request is closed/],
+    ["retargeted", pull({ base: { ref: "feature" } }), /the pull request now targets feature, not main/],
+    ["no head", pull({ head: null }), /is not the pull request's current head \(unknown\)/],
+    ["404", { status: 404, body: null }, /cannot read the pull request \(GitHub \/repos\/o\/r\/pulls\/9 returned 404\); re-run refused/],
+    ["403", { status: 403, body: null }, /cannot read the pull request \(GitHub \/repos\/o\/r\/pulls\/9 returned 403\)/],
+    ["500", { status: 500, body: null }, /returned 500/],
+    ["transport", () => { throw new Error("ECONNRESET"); }, /cannot read the pull request \(ECONNRESET\)/],
+  ];
+  for (const [kind, overrides] of [["gate", GATE], ["heavy", HEAVY], ["gitleaks", GITLEAKS], ["trivy", TRIVY]]) {
+    for (const [label, answer, reason] of pulls) {
+      const { result, calls } = await rerun(2, overrides, { [PULLS]: answer });
+      assert.equal(result.allow, false, `${kind}: ${label}`);
+      assert.match(result.reason, /^pull request #9, run attempt 2: /);
+      assert.match(result.reason, reason, `${kind}: ${label}`);
+      assert.deepEqual(urls(calls), [RUN, PULLS], `${kind}: ${label}: nothing else is read`);
+    }
+  }
+  // An event without a usable number or head refuses without asking GitHub.
+  for (const event of [JSON.stringify({ pull_request: { base: { ref: "main" }, head: { sha: HEAD } } }),
+    JSON.stringify({ pull_request: { number: 9, base: { ref: "main" }, head: {} } })]) {
+    const fake = fakeFetch({ [RUN]: rerunOf(2), [PULLS]: pull() });
+    const result = await decide({ env: env({ GITHUB_RUN_ATTEMPT: "2", ...GATE }), fetchImpl: fake.fetchImpl, sleep: async () => {},
+      readFile: (p) => (p === "/token" ? "ghp_read\n" : event) });
+    assert.equal(result.allow, false);
+    assert.match(result.reason, /names no (pull request number|head commit); re-run refused/);
+    assert.deepEqual(urls(fake.calls), [RUN]);
+  }
+});
+
+test("runner hook (Decision 1b93760d): gitleaks.yml and trivy.yml may be re-run once on the current head", async () => {
+  for (const overrides of [GITLEAKS, TRIVY]) {
+    const file = workflowPathOf(env(overrides));
+    let { result, calls } = await rerun(2, overrides);
+    assert.equal(result.allow, true, file);
+    assert.equal(result.reason, `pull request #9 changes no workflow; run attempt 2 of ${file} on the current head (one re-run allowed)`);
+    assert.deepEqual(urls(calls), [RUN, PULLS, `${COMPARE}${HEAD}`], "no gate job is looked for");
+    for (const n of [3, 4]) {
+      ({ result, calls } = await rerun(n, overrides));
+      assert.equal(result.allow, false, `${file} attempt ${n}`);
+      assert.equal(result.reason, `pull request #9, run attempt ${n}: ${file} may be re-run once (attempt 2) only`);
+      assert.deepEqual(urls(calls), [RUN, PULLS]);
+    }
+  }
+});
+
+test("runner hook (Task 26cced7e): another ungated workflow may be re-run once, only as main has it", async () => {
+  const BUDGET = { GITHUB_JOB: "runner-budget-policy", GITHUB_WORKFLOW_REF: "o/r/.github/workflows/runner-budget-policy.yml@refs/pull/9/merge" };
+  const FILE = `${API}/contents/.github/workflows/runner-budget-policy.yml?ref=`;
+  const text = (yaml) => Buffer.from(yaml, "utf8").toString("base64");
+  const UNGATED = text("name: runner-budget-policy\njobs:\n  runner-budget-policy:\n    timeout-minutes: 20\n    runs-on: [self-hosted]\n");
+  // The run's own commit (GITHUB_SHA) is compared with main (review NIT-1).
+  const blobs = (head, main, content = UNGATED, headType = "file") => ({ [`${FILE}${SHA}`]: { body: { type: headType, sha: head, encoding: "base64", content } },
+    [`${FILE}main`]: { body: { type: "file", sha: main, encoding: "base64", content } } });
+  const ungated = (n) => ({ [JOBS(n)]: jobsOf(heavyJob({ name: "runner-budget-policy", run_attempt: n })) });
+  let { result, calls } = await rerun(2, BUDGET, { ...ungated(2), ...blobs("c".repeat(40), "c".repeat(40)) });
+  assert.equal(result.allow, true);
+  assert.equal(result.reason, "pull request #9 changes no workflow; run attempt 2 of .github/workflows/runner-budget-policy.yml on the current head: "
+    + "no admission-gate job, the file is main's (one re-run allowed)");
+  assert.deepEqual(urls(calls).sort(), [RUN, PULLS, `${JOBS(2)}?per_page=100`, `${FILE}${SHA}`, `${FILE}main`, `${COMPARE}${HEAD}`].sort());
+  // Only once.
+  ({ result, calls } = await rerun(3, BUDGET, { ...ungated(3), ...blobs("c".repeat(40), "c".repeat(40)) }));
+  assert.equal(result.allow, false);
+  assert.equal(result.reason, "pull request #9, run attempt 3: attempt 3 lists no admission-gate job (attempt 3 has no admission-gate job); "
+    + "a workflow without one may be re-run once (attempt 2) only");
+  assert.equal(calls.some((c) => c.url.startsWith(FILE)), false);
+  // A copy the pull request changed, added or that cannot be read is not re-run.
+  for (const [label, script] of [["changed", blobs("d".repeat(40), "c".repeat(40))],
+    ["added", { [`${FILE}${SHA}`]: { body: { type: "file", sha: "d".repeat(40) } }, [`${FILE}main`]: { status: 404, body: null } }],
+    ["not a file", blobs(null, null)], ["a symlink", blobs("c".repeat(40), "c".repeat(40), UNGATED, "symlink")]]) {
+    ({ result } = await rerun(2, BUDGET, { ...ungated(2), ...script }));
+    assert.equal(result.allow, false, label);
+    assert.match(result.reason, /lists no admission-gate job, but \.github\/workflows\/runner-budget-policy\.yml: its file at a{40} is not main's; an ungated workflow is re-run only as main has it$/, label);
+  }
+  // A gated workflow whose attempt lists no gate job (a single-job re-run) is not taken for an ungated one.
+  const GATED = text("name: g4\njobs:\n  admission-gate:\n    runs-on: [self-hosted]\n  heavy:\n    needs: admission-gate\n");
+  ({ result } = await rerun(2, BUDGET, { ...ungated(2), ...blobs("c".repeat(40), "c".repeat(40), GATED) }));
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /main's copy has an admission-gate job, so it re-runs only with "Re-run all jobs"/);
+  // A file GitHub returns without content (over 1 MB) is not read as ungated.
+  ({ result } = await rerun(2, BUDGET, { ...ungated(2), [`${FILE}${SHA}`]: { body: { type: "file", sha: "c".repeat(40), encoding: "none", content: "" } },
+    [`${FILE}main`]: { body: { type: "file", sha: "c".repeat(40), encoding: "none", content: "" } } }));
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /main's copy cannot be read/);
+  // No literal timeout, or one over the cap: not a short check (review MINOR-1).
+  for (const [label, yaml, why] of [["no timeout", "jobs:\n  m0:\n    runs-on: [self-hosted]\n", /job m0 has no literal timeout-minutes/],
+    ["long timeout", "jobs:\n  m0:\n    timeout-minutes: 360\n    runs-on: [self-hosted]\n", /job m0 may run 360 minutes \(cap 30\)/]]) {
+    ({ result } = await rerun(2, BUDGET, { ...ungated(2), ...blobs("c".repeat(40), "c".repeat(40), text(yaml)) }));
+    assert.equal(result.allow, false, label);
+    assert.match(result.reason, why, label);
+  }
+  ({ result } = await rerun(2, BUDGET, { ...ungated(2), [`${FILE}${SHA}`]: { status: 500, body: null } }));
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /cannot compare \.github\/workflows\/runner-budget-policy\.yml with main/);
+  // The workflow-change rule still applies afterwards: a pull request that changes a workflow needs its successful admission run.
+  ({ result } = await rerun(2, BUDGET, { ...ungated(2), ...blobs("c".repeat(40), "c".repeat(40)),
+    [COMPARE]: files(".github/workflows/other.yml"), [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" })) }));
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /changes \.github\/workflows\/other\.yml; no successful clued-work-admission\.yml run/);
+  // A gated workflow is still judged by its gate: a gate that did not run again in this attempt refuses.
+  ({ result } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(heavyJob(), gateJob({ started_at: "2026-10-04T05:30:00Z" })) }));
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /not in this attempt: it was not re-run/);
+});
+
+test("runner hook (Task 26cced7e, review MINOR-2/3): the short-check reading agrees with the gate guard on every workflow of this branch", async () => {
+  // Any mention of admission-gate counts as gated (fail closed): CRLF, comments and quoted keys included.
+  for (const yaml of ["jobs:\r\n  admission-gate:\r\n    timeout-minutes: 5\r\n", "jobs:\n  admission-gate: # gate\n    timeout-minutes: 5\n",
+    "jobs:\n  'admission-gate':\n    timeout-minutes: 5\n", "jobs:\n  check:\n    timeout-minutes: 5\n    needs: [admission-gate]\n"]) {
+    assert.deepEqual(shortCheckFindings(yaml), ["names admission-gate"], JSON.stringify(yaml));
+  }
+  assert.deepEqual(shortCheckFindings("jobs:\r\n  a:\r\n    timeout-minutes: 20 # short\r\n  b:\r\n    timeout-minutes: 30\r\n"), []);
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows");
+  for (const name of fs.readdirSync(dir).filter((file) => /\.ya?ml$/.test(file))) {
+    const yaml = fs.readFileSync(path.join(dir, name), "utf8");
+    const gatedHere = shortCheckFindings(yaml).includes("names admission-gate");
+    assert.equal(gatedHere || !workflowIsGated(yaml), true, `${name}: the gate guard sees a gate the hook would miss`);
+    if (workflowIsGated(yaml)) assert.equal(gatedHere, true, name);
+  }
+});
+
+test("runner hook (re-review 3, N-R3): a re-run of a hand dispatch off main is still refused, after reading only the run", async () => {
+  const dispatch = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x" };
+  for (const [overrides, script] of [
+    [{ ...dispatch, GITHUB_RUN_ATTEMPT: "2" }, { [RUN]: rerunOf(2) }],
+    [{ ...dispatch, GITHUB_RUN_ATTEMPT: "2" }, {}],
+    [dispatch, { [RUN]: rerunOf(2) }],
+    [{ ...dispatch, GITHUB_RUN_ATTEMPT: "3", ...GATE }, { [RUN]: rerunOf(3) }],
+  ]) {
+    const { result, calls } = await run(overrides, { [PULLS]: pull(), [JOBS(2)]: jobsOf(gateJob(), heavyJob()), ...script });
+    assert.equal(result.allow, false, JSON.stringify(overrides));
+    assert.match(result.reason, /^workflow_dispatch on refs\/heads\/feature\/x: run attempt [23]; re-runs are refused, push a new commit$/);
+    assert.deepEqual(urls(calls), [RUN], "nothing else is read");
+  }
+  // main's own runs may be re-run, the admission workflow's (pull_request_target) without limit.
+  for (const [event, n] of [["push", "2"], ["schedule", "3"], ["pull_request_target", "7"], ["workflow_dispatch", "2"]]) {
+    const { result, calls } = await run({ GITHUB_RUN_ATTEMPT: n, GITHUB_EVENT_NAME: event, GITHUB_REF: "refs/heads/main" }, {});
+    assert.deepEqual([result.allow, calls.length], [true, 0], event);
+  }
   // Without a run id the check fails closed.
   await assert.rejects(run({ GITHUB_RUN_ID: "" }, { [COMPARE]: files("apps/x.ts") }), /GITHUB_RUN_ID is not a run id/);
+});
+
+test("runner hook: the run attempt on the runner and on GitHub must agree", async () => {
+  for (const [label, overrides, apiRun] of [
+    ["runner 2, GitHub 1", { GITHUB_RUN_ATTEMPT: "2", ...GATE }, thisRun()],
+    ["runner unset, GitHub 2", { ...GATE }, rerunOf(2)],
+    ["runner 1, GitHub 2", { GITHUB_RUN_ATTEMPT: "1", ...HEAVY }, rerunOf(2)],
+    ["runner 3, GitHub 2", { GITHUB_RUN_ATTEMPT: "3", ...HEAVY }, rerunOf(2)],
+    ["runner not a number", { GITHUB_RUN_ATTEMPT: "two", ...GATE }, rerunOf(2)],
+    ["runner 0", { GITHUB_RUN_ATTEMPT: "0" }, thisRun({ run_attempt: 0 })],
+    ["GitHub without run_attempt", { GITHUB_RUN_ATTEMPT: "1" }, thisRun({ run_attempt: undefined })],
+    ["GitHub run_attempt not a number", { GITHUB_RUN_ATTEMPT: "2", ...GITLEAKS }, rerunOf("2x")],
+  ]) {
+    const { result, calls } = await run(overrides, { [RUN]: apiRun, [PULLS]: pull(), [JOBS(2)]: jobsOf(gateJob(), heavyJob()),
+      [COMPARE]: files("apps/x.ts") });
+    assert.equal(result.allow, false, label);
+    assert.match(result.reason, /^pull request #9: run attempt .* on the runner and .* on GitHub do not agree; refused$/, label);
+    assert.deepEqual(urls(calls), [RUN], `${label}: nothing else is read`);
+  }
+  // Attempt 1 on both (the runner always sets GITHUB_RUN_ATTEMPT; unset counts as 1).
+  for (const overrides of [{}, { GITHUB_RUN_ATTEMPT: "1" }]) {
+    const { result, calls } = await run(overrides, { [COMPARE]: files("apps/x.ts") });
+    assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes no workflow"]);
+    assert.deepEqual(urls(calls), [RUN, `${COMPARE}${HEAD}`], "a first attempt reads neither the pull request nor the jobs");
+  }
+});
+
+test("runner hook (re-review 3, N-R1): a re-run of a pull request that changes a workflow still needs its successful admission run", async () => {
+  const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
+  for (const overrides of [HEAVY, GATE, GITLEAKS]) {
+    let { result, calls } = await rerun(2, overrides, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" })) });
+    assert.equal(result.allow, false, overrides.GITHUB_JOB);
+    assert.match(result.reason, /^pull request #9 changes \.github\/workflows\/heavy\.yml; no successful clued-work-admission\.yml run on b{40} from this event .*admission run 1: completed\/failure\); run attempt 2 (of \S+ )?on the current head/);
+    assert.equal(urls(calls).at(-1), `${ADMISSION_RUNS}&per_page=100`);
+    ({ result } = await rerun(2, overrides, { ...change, [ADMISSION_RUNS]: admissionRuns() }));
+    assert.equal(result.allow, false, `${overrides.GITHUB_JOB}: no admission run`);
+    ({ result, calls } = await rerun(2, overrides, change));
+    assert.equal(result.allow, true, overrides.GITHUB_JOB);
+    assert.match(result.reason, /^pull request #9 changes \.github\/workflows\/heavy\.yml; admission run 1 succeeded; run attempt 2 (of \S+ )?on the current head/);
+  }
+  // After an Owner grant the pull request body is edited: that event's newer
+  // admission run decides for the re-run, not the first event's failed one.
+  const granted = admissionRun({ id: 2, created_at: "2026-10-04T05:40:00Z" });
+  let { result } = await rerun(2, HEAVY, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" }), granted) });
+  assert.match(result.reason, /admission run 2 succeeded; run attempt 2/);
+  assert.equal(result.allow, true);
+  ({ result } = await rerun(2, HEAVY, { ...change,
+    [ADMISSION_RUNS]: admissionRuns(admissionRun(), admissionRun({ id: 2, created_at: "2026-10-04T05:40:00Z", conclusion: "failure" })) }));
+  assert.equal(result.allow, false, "the newest admission run decides");
+  // The re-run check comes first: a refused re-run never reaches the admission run.
+  let calls;
+  ({ result, calls } = await rerun(2, HEAVY, { ...change, [JOBS(2)]: jobsOf(gateJob({ started_at: "2026-10-04T05:00:04Z" })) }));
+  assert.equal(result.allow, false);
+  assert.equal(calls.some((c) => c.url.startsWith(ADMISSION_RUNS) || c.url.startsWith(COMPARE)), false);
 });
 
 test("runner hook (re-review 3 N-R1, re-review 5 n1): only the admission run of this event decides", async () => {
@@ -217,4 +581,75 @@ test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be 
       GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/main` }, {});
     assert.equal(onMain.result.allow, true, `${file} on main`);
   }
+});
+
+test("runner hook (Decision d8bc893c): with its read-only App configured, the hook calls GitHub as that App", async () => {
+  assert.equal(ADMISSION_APP_ID, ADMISSION_APP, "the same id as the admission script");
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const INSTALLATION = "https://api.github.com/repos/o/r/installation";
+  const MINT = "https://api.github.com/app/installations/77/access_tokens";
+  const NOW = 1_790_000_000;
+  const reads = [];
+  const readFile = (p) => { reads.push(p); return p === "/app.pem" ? pem : p === "/token" ? "ghp_personal\n" : prEvent(); };
+  const decideWith = (overrides, script) => {
+    const fake = fakeFetch({ [INSTALLATION]: { body: { id: 77 } }, [MINT]: { status: 201, body: { token: "ghs_app" } },
+      [RUN]: thisRun(), [COMPARE]: files("apps/x.ts"), ...script });
+    return decide({ env: env({ CLUED_RUNNER_HOOK_APP_ID: "4242", CLUED_RUNNER_HOOK_APP_KEY_FILE: "/app.pem", ...overrides }),
+      fetchImpl: fake.fetchImpl, readFile, now: () => NOW * 1000, sleep: async () => {} })
+      .then((result) => ({ result, calls: fake.calls }), (error) => ({ error: error.message, calls: fake.calls }));
+  };
+
+  const { result, calls } = await decideWith({}, {});
+  assert.equal(result.allow, true);
+  assert.deepEqual(calls.map((c) => [c.method, c.url]), [["GET", INSTALLATION], ["POST", MINT], ["GET", RUN], ["GET", `${COMPARE}${HEAD}`]]);
+  // The App's JWT, signed with its key, asks for the installation token.
+  const jwt = calls[0].auth.replace(/^Bearer /, "");
+  assert.equal(calls[1].auth, `Bearer ${jwt}`);
+  const [header, payload, signature] = jwt.split(".");
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${header}.${payload}`);
+  assert.equal(verifier.verify(publicKey, Buffer.from(signature, "base64url")), true);
+  assert.deepEqual(JSON.parse(Buffer.from(payload, "base64url").toString()), { iat: NOW - 60, exp: NOW + 540, iss: "4242" });
+  // This repository only, actions, contents and pull requests read only, whatever else the App holds.
+  assert.deepEqual(JSON.parse(calls[1].body), { repositories: ["r"], permissions: { actions: "read", contents: "read", pull_requests: "read" } });
+  // Every other call uses the installation token; the personal token file is not read.
+  assert.deepEqual(calls.slice(2).map((c) => c.auth), ["Bearer ghs_app", "Bearer ghs_app"]);
+  assert.equal(reads.includes("/token"), false);
+
+  // A re-run must use the App installation token for the live pull request
+  // read, both for the gate and for a job that waits on the fresh gate.
+  for (const job of [GATE, HEAVY]) {
+    const current = await decideWith({ ...job, GITHUB_RUN_ATTEMPT: "2" }, {
+      [RUN]: rerunOf(2), [PULLS]: pull(), [JOBS(2)]: jobsOf(gateJob(), heavyJob()),
+    });
+    assert.equal(current.result.allow, true, job.GITHUB_JOB);
+    const pullRead = current.calls.find((c) => c.url === PULLS);
+    assert.deepEqual([pullRead.method, pullRead.auth], ["GET", "Bearer ghs_app"], job.GITHUB_JOB);
+    assert.equal(current.calls.some((c) => c.url.startsWith(JOBS(2))), job === HEAVY);
+  }
+  // Adding the read scope must not admit a re-run when GitHub still refuses
+  // the pull request read (for example, an installation not yet approved).
+  const refused = await decideWith({ ...GATE, GITHUB_RUN_ATTEMPT: "2" }, {
+    [RUN]: rerunOf(2), [PULLS]: { status: 403, body: null },
+  });
+  assert.equal(refused.result.allow, false);
+  assert.match(refused.result.reason, /cannot read the pull request .*returned 403.*re-run refused/);
+  assert.equal(refused.calls.some((c) => c.url.startsWith(COMPARE) || c.url.startsWith(JOBS(2))), false);
+
+  const onMain = await decideWith({ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main" }, {});
+  assert.deepEqual([onMain.result.allow, onMain.calls.length], [true, 0], "main's own runs mint no token");
+
+  // The admission App's key would let any job post the admission checks.
+  const admission = await decideWith({ CLUED_RUNNER_HOOK_APP_ID: String(ADMISSION_APP_ID) }, {});
+  assert.match(admission.error, /is the clued-admission App; its key must not be on a runner/);
+  assert.equal(admission.calls.length, 0);
+  // A half-configured App fails; it never falls back to the token file.
+  reads.length = 0;
+  assert.match((await decideWith({ CLUED_RUNNER_HOOK_APP_KEY_FILE: "" }, {})).error, /CLUED_RUNNER_HOOK_APP_KEY_FILE is not set/);
+  assert.match((await decideWith({ CLUED_RUNNER_HOOK_APP_ID: "" }, {})).error, /CLUED_RUNNER_HOOK_APP_ID is not set to an App id/);
+  assert.equal(reads.includes("/token"), false);
+  assert.match((await decideWith({}, { [INSTALLATION]: { status: 404, body: null } })).error, /installation returned 404/);
+  assert.match((await decideWith({}, { [MINT]: { status: 403, body: null } })).error, /access_tokens returned 403/);
+  assert.match((await decideWith({}, { [MINT]: { status: 201, body: {} } })).error, /returned no installation token/);
 });

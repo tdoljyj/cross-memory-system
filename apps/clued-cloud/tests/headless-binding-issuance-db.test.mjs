@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -7,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 
 // Headless Binding issuance (migration 20261004120000, Task 364212a1, Owner
 // Decision 6e0371e3): the Owner issues a least-privilege, expiring Binding
@@ -60,6 +62,8 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
 
     const userId = uuid();
     const otherUser = uuid();
@@ -156,7 +160,8 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     const binding = (await admin.query(`select b.*,a.issuance,a.request_id,a.expires_at auth_expires,a.client_id
       from public.clued_agent_bindings b join clued_private.authorizations_v12 a on a.binding_id=b.id where b.id=$1`,
     [result.binding_id])).rows[0];
-    assert.equal(binding.token_hash, sha256(result.token));
+    assert.equal(binding.token_hash, (await admin.query('select clued_private.credential_verifier_v1($1) v', [sha256(result.token)])).rows[0].v,
+      'the Binding stores the verifier of sha256(token)');
     assert.equal(binding.vendor, 'Headless');
     assert.equal(binding.issuance, 'headless');
     assert.equal(binding.request_id, null);
@@ -279,8 +284,9 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     assert.equal(revoked.find((r) => r.id === rotated.result.binding_id).a_revoked, true);
     assert.equal((await admin.query('select clued_private.binding_expiry_sweep_v1() n')).rows[0].n, 0);
     // OAuth Bindings and legacy Bindings never replaced are not swept.
+    const untouchedHash = hex();
     const untouched = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
-      values($1,'Other','untouched',$2,array['context:read'],array['*']) returning id`, [userId, hex()])).rows[0].id;
+      values($1,'Other','untouched',$2,array['context:read'],array['*']) returning id`, [userId, untouchedHash])).rows[0].id;
     const oauthLike = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'OAuth','expired oauth',$2,array['context:read'],array['global']) returning id`, [userId, hex()])).rows[0].id;
     const issuer = hex();
@@ -311,7 +317,6 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     const untouchedRole = await native('clued_binding_role_confirmation_issue_v1', { binding_id: untouched, role: 'ci-admission', enabled: true });
     assert.equal((await native('clued_binding_role_set_v1',
       { confirmation_token: untouchedRole.confirmation_token, view_digest: untouchedRole.view_digest })).status, 'committed');
-    const untouchedHash = (await admin.query('select token_hash from public.clued_agent_bindings where id=$1', [untouched])).rows[0].token_hash;
     assert.equal((await resolve(untouchedHash, 'context:read', 'global')).rows[0].id, untouched);
     const legacyRevoked = await revokeLegacy({ binding_id: untouched });
     assert.equal(legacyRevoked.status, 'committed', JSON.stringify(legacyRevoked));

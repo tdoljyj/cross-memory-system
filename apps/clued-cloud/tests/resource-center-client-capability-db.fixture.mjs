@@ -1,3 +1,4 @@
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { storageAdminApproval, storageAdminCall } from "./resource-center-storage-admin-db.fixture.mjs";
@@ -9,6 +10,7 @@ const API = "clued_private.storage_client_capability_admin_v2";
 // The storage administrator and all source/evidence objects are synthetic;
 // this fixture is not a deployment, bootstrap or production-registration path.
 export async function testStorageClientCapability(t, admin, server, user, decision) {
+  await allowTestIssuerCredentials(admin);
   const actor = user, foreign = randomUUID(), actorSession = randomUUID(), ownerSession = randomUUID();
   const issuer = hash(randomUUID()), resource = "https://capability-fixture.invalid/mcp";
   const project = (await admin.query("select project_id from public.clued_memories where id=$1", [decision])).rows[0].project_id;
