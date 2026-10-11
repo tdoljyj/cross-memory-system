@@ -10,7 +10,7 @@
 import { BASELINE, STATE_VARIABLE } from "./merge-admission-policy.mjs";
 
 export const DOCS_PATHS = Object.freeze(["docs/**", "development/contracts/**/*.md", "development/authority-index/**/*.md", "*.md",
-  "skills/**/*.md", "!skills/clued/references/agent-contract.md"]);
+  "skills/**/*.md"]);
 
 // One rule row; the step 1 compatibility row unless overridden.
 export const row = (overrides = {}) => ({ work_claim: "enforce", owner_grant: "none", up_to_date: "strict_only", merge_slot: "required",

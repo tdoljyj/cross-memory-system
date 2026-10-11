@@ -98,7 +98,7 @@ class CheckTest(unittest.TestCase):
 
     def test_crlf_checkout_hashes_like_lf(self):
         path = self.repo.dir / "pkg" / "references" / "a.md"
-        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
         self.assertEqual(cc.check(self.repo.dir), [])
 
     def test_marker_must_match_manifest(self):

@@ -13,7 +13,7 @@ const CLUED_COMPONENTS = {
     .components.map((c) => [c.id, String(c.version)])),
   source_commit: null,
 };
-const CONTRACT_SOURCE = (await readFile(new URL('../../../skills/clued/references/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+const CONTRACT_SOURCE = (await readFile(new URL('../../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const CONTRACT_VERSION = contractVersionOf(CONTRACT_SOURCE);
 const CONTRACT_SHA256 = createHash('sha256').update(CONTRACT_SOURCE).digest('hex');
 

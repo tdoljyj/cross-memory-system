@@ -28,7 +28,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -117,7 +117,9 @@ def describe_copy(path: Path, skill: dict, root: Path, newest: str) -> str | Non
         version = cc.read_marker((path / "SKILL.md").read_text(encoding="utf-8"), marker["pattern"])
     except OSError:
         version = None
-    if version is None:
+    if (path / "references" / "agent-contract.md").is_file():
+        state = "carries a bundled agent contract (an older Skill package)"
+    elif version is None:
         state = "has no version (it predates component versioning)"
     elif older(version, newest):
         state = f"is version {version}, the latest is {newest}"
@@ -203,11 +205,11 @@ def resume_report(payload: dict) -> str | None:
     lines = []
     contract_local, contract_served = local.get(CONTRACT_ID), served.get(CONTRACT_ID)
     if contract_served and contract_local and contract_served != contract_local:
-        if older(contract_local, contract_served):
-            lines.append(f"- Agent contract: the service serves version {contract_served}, this checkout has "
-                         f"{contract_local}. Read the served contract (/clued-agent.md) and follow it before any "
-                         "work (agent-contract §1.6); if you cannot, tell the Owner which versions differ and stop.")
-        else:
+        lines.append("- Read the current served contract through clued_agent_bootstrap (all parts) "
+                     "or /clued-agent.md and follow it before work (agent-contract §1.6). "
+                     "A contract change needs no Skill reinstall; if neither path delivers the full text, "
+                     "tell the Owner and stop.")
+        if older(contract_served, contract_local):
             lines.append(f"- Agent contract: this checkout ({contract_local}) is newer than the served one "
                          f"({contract_served}), which is not released yet; the service behaves per {contract_served}.")
     behind = [f"{cid} {local[cid]} < {served[cid]}" for cid in sorted(served)

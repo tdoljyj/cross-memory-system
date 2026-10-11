@@ -2,7 +2,7 @@
 
 Use this workflow for the Clued implementation, architecture, CI and governance. When the task also maintains project memory, load the memory workflow for that operation. Engineering qualification and personal-data permissions remain separate.
 
-Engineering outcomes are material outcomes under [agent-contract.md](agent-contract.md) §3: a merged PR, an applied migration, a release, a closed or newly agreed bug. Record each one in Clued in the same turn it happens, before reporting it to the user.
+Engineering outcomes are material outcomes under the served Agent Contract §3: a merged PR, an applied migration, a release, a closed or newly agreed bug. Obtain the full contract through `clued_agent_bootstrap` (all parts), or `/clued-agent.md` when the Host cannot pass `part`; it wins over this workflow. Record each outcome in Clued in the same turn it happens, before reporting it to the user.
 
 ## Locate and align the real endpoint
 

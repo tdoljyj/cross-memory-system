@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude Code Stop hook: enforce Clued capture (BUG-20260924-001 L3).
 
-skills/clued/references/agent-contract.md §3 requires material outcomes to be
+protocol/agent/agent-contract.md §3 requires material outcomes to be
 written to Clued in the same turn, and §5 requires a checkpoint after writes.
 This hook reads the session transcript when Claude is about to stop and blocks
 the stop once, with a reason, when it finds:
@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 CLUED_WRITE_TOOLS = (
     "clued_record_mutate",
@@ -147,7 +147,7 @@ def owner_answers(entry: dict, body: str) -> str | None:
         return None
     return " ".join(chosen.split())[:120]
 # Text of this hook's own reminders, should the Host log one as a user entry.
-OWN_MESSAGE = "Clued capture guard (skills/clued/references/agent-contract.md"
+OWN_MESSAGE = "Clued capture guard (protocol/agent/agent-contract.md"
 # `gh pr merge` options that take a value.
 GH_VALUE_OPTIONS = {"-R", "--repo", "-t", "--subject", "-b", "--body", "-F", "--body-file",
                     "-A", "--author-email", "--match-head-commit"}
@@ -605,7 +605,7 @@ def run() -> int:
         return 0
     save_reported(path, reported | {finding.key for finding in new})
     print(
-        "Clued capture guard (skills/clued/references/agent-contract.md §3 and §5):\n"
+        "Clued capture guard (protocol/agent/agent-contract.md §3 and §5):\n"
         + "\n".join(finding.message for finding in new)
         + "\nHandle these now, or say in your reply why they need no record or that Clued is "
         "unavailable. Each item is reported once in each state.",

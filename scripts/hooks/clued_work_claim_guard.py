@@ -2,7 +2,7 @@
 """Claude Code hooks for Clued work claims (Work Claim Admission step 6, L3).
 
 development/contracts/execution-admission/WorkClaimAdmission.v0.1.md §4.6 L3 and
-skills/clued/references/agent-contract.md §1.7: claim the active Task with
+protocol/agent/agent-contract.md §1.7: claim the active Task with
 clued_work_claim before spending on work, and answer the other Agents that
 write to you about it (AgentMessaging.v0.1 step 2). One script serves four hook
 events, chosen by the payload's hook_event_name:
@@ -45,7 +45,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 CLAIM_FILE = Path(".clued") / "work-claim.json"
 PUBLIC_CONFIG_SOURCE = Path("apps/clued-cloud/app/supabase-public-config.ts")
@@ -312,7 +312,7 @@ def scannable(command: str) -> str:
 PUBLIC_CONFIG = re.compile(r'return \{ url: "(https://[^"]+)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};')
 
 RULE = (
-    "Clued work claims (skills/clued/references/agent-contract.md §1.7): before work that changes "
+    "Clued work claims (protocol/agent/agent-contract.md §1.7): before work that changes "
     "repository files, runs an install, build or test, starts CI, opens a pull request or dispatches "
     "a subtask, claim its active Task with clued_work_claim (write_set = the paths you will change). "
     "On work_claim_conflict do not start: write to the holder with clued_agent_message_send "
