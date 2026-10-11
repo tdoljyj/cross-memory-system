@@ -1,0 +1,238 @@
+{
+  "schema": "clued.agent-contract-claim-move/1",
+  "base_commit": "b03e3e3c98aa85192c0572a998859f1685ee9dc3",
+  "source_version": 46,
+  "target_version": 47,
+  "source_document_sha256": "1c0c871878acab43e60ecebb4847733c0e1c88e8532edc8712275e91c5e545e2",
+  "groups": {
+    "1": [
+      0,
+      1,
+      2,
+      7,
+      8
+    ],
+    "2": [
+      3,
+      4
+    ],
+    "3": [
+      5,
+      6
+    ],
+    "4": [
+      9,
+      16,
+      20,
+      21,
+      22,
+      23
+    ],
+    "5": [
+      10,
+      11,
+      12
+    ],
+    "6": [
+      13
+    ],
+    "7": [
+      14,
+      15
+    ],
+    "8": [
+      17,
+      18,
+      19
+    ]
+  },
+  "blocks": [
+    {
+      "source_block": 0,
+      "appendix": "A.1",
+      "source_normalized_sha256": "c9e43dfab625c3ef56c22b90573585fb2c71a26ab5a32bc7ae41c2e66d1c1772",
+      "reference_edits": []
+    },
+    {
+      "source_block": 1,
+      "appendix": "A.1",
+      "source_normalized_sha256": "2431febb10b1ff7f41a26a94f50441c298dc8b05adb0de3e00464dbbd74a6a5e",
+      "reference_edits": [
+        {
+          "before": "as for a `work_claim_conflict` below",
+          "after": "as for a `work_claim_conflict` in [Appendix A.3](#appendix-a3)"
+        },
+        {
+          "before": "(below)",
+          "after": "([Appendix A.6](#appendix-a6))"
+        }
+      ]
+    },
+    {
+      "source_block": 2,
+      "appendix": "A.1",
+      "source_normalized_sha256": "848d70bfeaeff5b26daae055926b009656208dee90bd499633e8fd66604f84e6",
+      "reference_edits": []
+    },
+    {
+      "source_block": 7,
+      "appendix": "A.1",
+      "source_normalized_sha256": "2a8635e20a39e290df760fb88b135daa6c8beb9c4c3fdd5e2d1d95eb5a45939d",
+      "reference_edits": []
+    },
+    {
+      "source_block": 8,
+      "appendix": "A.1",
+      "source_normalized_sha256": "95cb816ef652180a68aace3a994cee8ce31df9a60565efbb83084467609f3524",
+      "reference_edits": [
+        {
+          "before": "and you handle it as above.",
+          "after": "and you handle it as in [Appendix A.3](#appendix-a3)."
+        }
+      ]
+    },
+    {
+      "source_block": 3,
+      "appendix": "A.2",
+      "source_normalized_sha256": "eea4af101450cef90ba7b199ea2d7df856eff5f30dd309db6d03430520495ca0",
+      "reference_edits": []
+    },
+    {
+      "source_block": 4,
+      "appendix": "A.2",
+      "source_normalized_sha256": "cb27d392d04a6c56ddfcc4024d83d75f59e93e63357eceaec0f7d74e5d2cd2cb",
+      "reference_edits": [
+        {
+          "before": "then keep that key as above.",
+          "after": "then keep that key as specified in [Appendix A.2](#appendix-a2)."
+        }
+      ]
+    },
+    {
+      "source_block": 5,
+      "appendix": "A.3",
+      "source_normalized_sha256": "464ef14b0071fd582740b4d95c3e8dfe5c8fbd7dae42fee419be6839c112b051",
+      "reference_edits": [
+        {
+          "before": "messages are enabled (below)",
+          "after": "messages are enabled (see [Appendix A.3](#appendix-a3))"
+        },
+        {
+          "before": "messages are disabled (below)",
+          "after": "messages are disabled (see [Appendix A.3](#appendix-a3))"
+        }
+      ]
+    },
+    {
+      "source_block": 6,
+      "appendix": "A.3",
+      "source_normalized_sha256": "d324d7ced1f878e8ebedd0c5d6875273a6f8c8283717f88ee1617b11333d6c70",
+      "reference_edits": []
+    },
+    {
+      "source_block": 9,
+      "appendix": "A.4",
+      "source_normalized_sha256": "0d0b484e830362c281021ee0c27548f4e6bfe3cb336def68eea271d92ec3e2c6",
+      "reference_edits": []
+    },
+    {
+      "source_block": 16,
+      "appendix": "A.4",
+      "source_normalized_sha256": "6d4af165685485d75b682742e5f3ec7b4b160cb1852c85d6948febaee5da393c",
+      "reference_edits": [
+        {
+          "before": "until the pull request merges (above)",
+          "after": "until the pull request merges (see [Appendix A.5](#appendix-a5))"
+        }
+      ]
+    },
+    {
+      "source_block": 20,
+      "appendix": "A.4",
+      "source_normalized_sha256": "8c159933176d8b19860151d2bdbbe7d3fb58b61fabc4d79b1040ca0472363a5d",
+      "reference_edits": []
+    },
+    {
+      "source_block": 21,
+      "appendix": "A.4",
+      "source_normalized_sha256": "dcfc82b81fd417819b9d4b1ee467cd67295a6d5588ba6796052397727d53dcdd",
+      "reference_edits": []
+    },
+    {
+      "source_block": 22,
+      "appendix": "A.4",
+      "source_normalized_sha256": "235c75abdb4c1c54a653f8bd061a48e9b9d46c7ac71cff96c7c342ba76c2a76e",
+      "reference_edits": []
+    },
+    {
+      "source_block": 23,
+      "appendix": "A.4",
+      "source_normalized_sha256": "27e5ca8a0f436b18e68ac78cab7b58574e8a34c372c891933fc22b83ec57879e",
+      "reference_edits": []
+    },
+    {
+      "source_block": 10,
+      "appendix": "A.5",
+      "source_normalized_sha256": "d0229f877436c988e203188e04bb6229924c99e7467505365b64cb95ea2d2052",
+      "reference_edits": []
+    },
+    {
+      "source_block": 11,
+      "appendix": "A.5",
+      "source_normalized_sha256": "5b67bcb0fb27a584c4b63f3762e35003217232bdff4f5cfbd91305c7e63414ea",
+      "reference_edits": []
+    },
+    {
+      "source_block": 12,
+      "appendix": "A.5",
+      "source_normalized_sha256": "21f08d9c68f7985c67f5a4d1015e8a3fbe66c8bf71e745ea3917c8dce8a745f7",
+      "reference_edits": [
+        {
+          "before": "each of its gated runs once (below)",
+          "after": "each of its gated runs once (see [Appendix A.7](#appendix-a7))"
+        }
+      ]
+    },
+    {
+      "source_block": 13,
+      "appendix": "A.6",
+      "source_normalized_sha256": "a9c7558eae2f572a57a7661d12fb9f99938247bcd9cdbb819409907160e8285b",
+      "reference_edits": [
+        {
+          "before": "unless `efficiency` waives it (above)",
+          "after": "unless `efficiency` waives it (see [Appendix A.5](#appendix-a5))"
+        }
+      ]
+    },
+    {
+      "source_block": 14,
+      "appendix": "A.7",
+      "source_normalized_sha256": "7081e076b9726709ae53a7a2c2d7573c109a94ab991276b1847ffa04284cec86",
+      "reference_edits": []
+    },
+    {
+      "source_block": 15,
+      "appendix": "A.7",
+      "source_normalized_sha256": "a876839e8e5b80c8753ce6dffe5e66378e2fff9dcdbc1934f1167271cd845514",
+      "reference_edits": []
+    },
+    {
+      "source_block": 17,
+      "appendix": "A.8",
+      "source_normalized_sha256": "1623f8bbd645c28e1960117b08d41c3fb2320090d332ed237b295d06eb349b4f",
+      "reference_edits": []
+    },
+    {
+      "source_block": 18,
+      "appendix": "A.8",
+      "source_normalized_sha256": "a07b2bed1fa3180c4111e8f8ed18c8beb4cce74e1eacaa07c535a00b2a802eb7",
+      "reference_edits": []
+    },
+    {
+      "source_block": 19,
+      "appendix": "A.8",
+      "source_normalized_sha256": "1569e1365b494e6943e72f2130bf4dc9d7b7ec5736c6a067c3da1fd8abb18012",
+      "reference_edits": []
+    }
+  ]
+}
