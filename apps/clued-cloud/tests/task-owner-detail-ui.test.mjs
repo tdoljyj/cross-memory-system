@@ -212,6 +212,8 @@ test('task detail: completed history preserves the full plan and displays the ou
 
 test('work claims: full canonical Task UUID links to detail, malformed values remain text', async t => {
   const f = fixture(WORK_CLAIMS); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', session('owner'));
+  assert.deepEqual(f.calls.map(call => call.name), ['clued_work_claims_owner_list_v1', 'clued_work_free_handover_setting_v1']);
+  f.calls[1].resolve({ data: { status: 'ok', enabled: true, version: 0, available: false }, error: null });
   f.calls[0].resolve({ data: { status: 'ok', claims: [row(), row({ claim_id: ENDED, task_id: 'javascript:alert(1)' })] }, error: null }); await f.settle();
   const links = f.nodes('a').filter(n => String(n.props.href).startsWith('/tasks'));
   assert.equal(links.length, 1); assert.equal(links[0].props.href, '/tasks?id=' + TASK); assert.equal(f.text(links[0]), TASK);
