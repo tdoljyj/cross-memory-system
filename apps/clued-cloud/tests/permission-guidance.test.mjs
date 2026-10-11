@@ -49,7 +49,9 @@ test('no suggestion is guessed when the context or action cannot be told', () =>
   }
 });
 
-test('the suggestion is a valid connection.permission request and grants nothing by itself', () => {
+// Transport tests prove that ambiguous binding denials reach this formatter
+// only after the connection has been checked live.
+test('a live connection suggestion is valid and grants nothing by itself', () => {
   const { error } = permissionDenial('binding_not_authorized', 'clued_record_mutate', { scope: 'global' }, ['context:write']);
   assert.deepEqual(Object.keys(error.suggested_request).sort(), ['action', 'idempotency_key', 'resources']);
   assert.match(error.suggested_request.resources[0], /^permission:(global|profile|project:[0-9a-f-]{36})\/(read|write|close|restore|audit)$/);
