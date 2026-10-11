@@ -203,6 +203,33 @@ test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the 
   }
 });
 
+test('audit measurement metadata and dispatch preserve the existing gateway and audit authority', async () => {
+  const audit=(await listTools(enabled)).find(tool=>tool.name==='clued_audit_receipts');
+  assert.deepEqual(audit._meta['clued/requiredScopes'], ['audit:read']);
+  assert.equal(audit.annotations.readOnlyHint, true);
+  assert.deepEqual(audit.inputSchema.properties.measurement, {
+    type: 'object', properties: {
+      after_sequence: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
+      end_sequence: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
+      stream_id: { type: 'string', format: 'uuid' },
+      limit: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
+    }, additionalProperties: false,
+  });
+  const input={context_key:'global',measurement:{after_sequence:1,end_sequence:3,stream_id:ID,limit:2}};
+  const mocked=mockFetch(rpc=>{
+    assert.equal(rpc,'clued_mcp_audit_receipts');
+    return Response.json({status:'NOT_MEASURED',reason:'stream_not_started',events:[],official_metric:false});
+  });
+  try {
+    const result=await callTool(enabled,'clued_audit_receipts',input);
+    assert.equal(result.status,200);
+    assert.equal(result.body.result.structuredContent.status,'NOT_MEASURED');
+    assert.equal(result.body.result.structuredContent.official_metric,false);
+    assert.deepEqual(mocked.rpcCalls().map(c=>c.body),[{p_token_hash:tokenHash,p_input:input}]);
+    assert.equal(mocked.rpcCalls()[0].authorization,'Bearer test-worker-gateway');
+  } finally { mocked.restore(); }
+});
+
 test('Model bootstrap metadata requires all existing prerequisites; positive request fixture is separate from production and 32 rows', async () => {
   const requestFixture = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ...enabled, CLUED_MODEL_DOMAIN_SOURCE_V1: 'true', CLUED_MODEL_DOMAIN_BOOTSTRAP_REQUEST_V1: 'true',
     CLUED_OWNER_REQUESTS_V1: 'true' };
