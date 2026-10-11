@@ -496,6 +496,18 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 ## 9. 证据
 
+### 交接后继候选（Task617 / Task7e922；2026-10-12）
+
+本后继仍是未发布候选，不将前文历史生产状态扩展为本后继已验收。Owner Decision `c0e9b0f0` 选择完整旧会话防护，`9f4103bd` 要求服务自由交接与默认开启开关。公开 session/fence、消息或上下文读取都不能代替私有持有证明。
+
+- 服务交换复用既有 GW80 `clued_work_renew_v1`：接收方准备并私留接收凭证，持有方以当前私钥发起，接收方接受。只协调公开请求 ID；双方钥匙不传消息、不进 Canonical。Scope、两 Binding 的当前权限、精确 Task/claim/fence/epoch/资源、撤销、期限、配额和赛马状态重验。Native Owner 默认 On 设置是独立 CAS；Off 禁新交换，已接受操作仅可用其私有原证明完成/恢复。
+- 服务以独立 execution epoch 和 HANDOVER_PENDING 撤销全部历史 head、外部 App checks、auto-merge、旧 PR/dispatch 任务及未解决 publication。可信默认分支 CI 先开 publication 票据再发绿，迟到结果必须反向撤销；不能用“已请求取消”冒充任务已停止。撤销不可确认时不 ACK、不交付新钥匙。普通续期不改变 epoch，受保护 Task 的后继认领不恢复共享 Binding 的无钥匙入口。
+- 异步 storage submit 固化服务器 epoch/请求摘要/资源；load、begin、provider_attempt 与交接共享锁序。旧 queued 零新副作用；已尝试的操作只复核原 journal，原完整验证结果仍可纯结算，无重复 POST、替换 writer 或新许可。激活前须排清无法固化的旧在途任务并核实全部消费端。
+- 保持公开函数集合 GW80/CI8。CI8 `clued_work_verify_v1` 的新 `execution_current` 分支仅作有界只读观察（`p_token_hash=null`、固定精确公开目标，无 Scope/Owner/claim DTO/私钥返回、无写入）；它只补充已合格 GitHub 门/独立 runner 的即时 epoch 观察，不产生执行准入。其他 CI 操作仍需现行 Owner 指定 CI Binding。须在精确源码审核中明确新观察 Caller 与全部负例资格，不能以函数数量相同代替审查。
+- 分三阶段部署：①先合并并批准应用 staged SQL 与 Worker/页面/合同，旧模式兼容，自动交换仍 not-ready；②再合并并部署 CI publication/revoker、分支 gate 与独立 runner，验证真实消费和故障边界；③对精确源码和全部消费证据独立批准激活。新 RPC 未可用时不可将新强制 probe 投入分支门；页面 On 或单元绿色不代表完成。各 PR/生产迁移/发布/启用分别走现行门，保留实际 Receipt。
+
+当前证据仅本机完整 TypeScript、隔离 PG/实际 cloud executor、Native UI 和 CI/runner 单元回归；正式 PR、生产与启用证据仍待完成。
+
 - 全库只读扫描（2026-10-01，本会话委派的只读 agent）：MCP 工具目录 `apps/clued-cloud/worker/continuity.ts:1115-1415` 无 claim／lease／admit 工具；`lease_id`／`lease_expires_at` 列仅存在于 projection refresh job 表；kernel lease／budget 模块仅被 `evals/kernel-next/*` 引用；`.claude/settings.json` 仅 Stop hook。
 - Projection Refresh 实现说明：`apps/clued-cloud/docs/model-program-m0/post-commit-projection-refresh.md`；精确 key 租约：`apps/clued-cloud/supabase/migrations/20260923213100_projection_refresh_exact_key_lease.sql`。
 - N4 预算：`apps/clued-cloud/supabase/migrations/20260930200000_storage_read_budget_n4.sql`。

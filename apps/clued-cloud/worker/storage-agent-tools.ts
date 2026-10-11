@@ -21,7 +21,8 @@ const adoptSource = { type: "string", minLength: 1, maxLength: 1000, description
 const restoreFolder = { type: "string", minLength: 1, maxLength: 1000, description: `Only after an untrash was refused with restore_name_conflict (or reason RESTORE_NAME_CONFLICT), and only when the user chose this option: another registered folder to restore the file into under its own name. ${pathForms} Never choose it yourself.` };
 const restoreName = { type: "string", minLength: 1, maxLength: 255, description: "Only after an untrash was refused with restore_name_conflict (or reason RESTORE_NAME_CONFLICT), and only when the user chose this option: the file's new name in its original folder, which is the original name with \" (n)\" before the extension, n from 1 to 99 (for example note (1).md). Never choose it yourself." };
 const workClaim = { type: "object", required: ["claim_id", "fence"], additionalProperties: false, description: "Optional: your own live work claim covering this write, as clued_work_claim returned it. Without it the write is refused only when another live claim covers the same storage path (work_claim_conflict); with it, the claim must be yours, ACTIVE at this fence and cover every path the write touches (storage:<connection_id>/<path under the registered root>, globs allowed).",
-  properties: { claim_id: idSchema, fence: { type: "integer", minimum: 1 } } };
+  properties: { claim_id: idSchema, fence: { type: "integer", minimum: 1 },
+    lease_key: { type: "string", pattern: "^clued_lk_[0-9a-f]{64}$", description: "Current private claim key, required after Owner handover. Send only in the authenticated call; never put it in a record, Receipt, file or log." } } };
 const targetVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The target file's Drive version as last observed with clued_storage_browse stat; a changed file is refused." };
 const binaryMime = { type: "string", minLength: 3, maxLength: 255, description: "MIME type bound to the destination extension (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp; legacy doc/xls/ppt and macro-carrying packages are refused)." };
 const binarySha = { type: "string", pattern: "^[0-9a-f]{64}$", description: "sha256 of the exact file bytes; Clued checks it on staging and against Drive's checksum after the write." };
@@ -198,12 +199,16 @@ export function isStorageAgentTool(name: unknown): name is "clued_storage_submit
 }
 
 const fileIdPattern = /^[A-Za-z0-9_-]{1,160}$/, versionPattern = /^[1-9][0-9]{0,39}$/;
-/** work_claim {claim_id, fence}: exactly these keys; the server checks the claim itself. */
-const workClaimRef = (v: unknown) => object(v) && Object.keys(v).sort().join(",") === "claim_id,fence" && uuid(v.claim_id) &&
-  typeof v.fence === "number" && Number.isSafeInteger(v.fence) && v.fence >= 1;
+/** The optional private proof is checked server-side, before any side effect. */
+const workClaimRef = (v: unknown) => object(v) && Object.keys(v).every(k => ["claim_id","fence","lease_key"].includes(k)) && uuid(v.claim_id) &&
+  typeof v.fence === "number" && Number.isSafeInteger(v.fence) && v.fence >= 1 &&
+  (!Object.hasOwn(v,"lease_key") || (typeof v.lease_key === "string" && /^clued_lk_[0-9a-f]{64}$/.test(v.lease_key)));
 
 /** Work Claim refusals of a storage write (GenericWorkClaim §4.1), decided before any job or batch exists. */
 const workClaimMessages: Record<string, string> = {
+  work_claim_lease_key_required: "This handed-over claim requires its current private key before a new storage write. Nothing was written. Keep the key only in the authenticated call.",
+  work_claim_lease_key_invalid: "The supplied key is not this claim's current private key. Nothing was written; stop using the old key.",
+  work_claim_handover_pending: "This claim's handover is still revoking old execution grants. No new storage write may start until it completes.",
   work_claim_conflict: "Another live work claim covers this storage path; nothing was written and no job exists. Stop and tell the user which claim and Task hold it; do not retry under another path, job or claim.",
   work_claim_not_found: "The work_claim you passed does not exist. Pass a claim you hold, or none.",
   work_claim_not_holder: "The work_claim you passed belongs to another Binding. Pass a claim you hold, or none.",

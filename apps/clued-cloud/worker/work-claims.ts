@@ -52,7 +52,20 @@ const holderClient = { type: "string", minLength: 1, maxLength: 80, description:
 const holderSessionTitle = { type: "string", minLength: 1, maxLength: 200, description: "Your session's title as the Owner sees it in your client, when you can read it. Self-reported." } as const;
 const leaseKey = {
   type: "string", pattern: "^clued_lk_[0-9a-f]{64}$",
-  description: "The claim's private lease key, from the clued_work_claim or clued_work_takeover answer. Only needed when your Binding is not the holder (after a reconnect, or when the Owner handed the claim to you). Never write it to a file, commit, pull request, record or log.",
+  description: "The claim's current private lease key. Required for offer_handover, authorize_head and every renew/release after a handover, even on the same Binding. Keep it only in this session. Never send it to another Agent or put it in a file, commit, pull request, Record, Event, Receipt, checkpoint or log.",
+} as const;
+
+const headAuthorization = {
+  action: { type: "string", enum: ["authorize_head", "prepare_handover", "offer_handover", "accept_handover", "cancel_handover", "finish_handover"], description: "Optional command through the existing authenticated RPC. For a page-free handover, the receiver prepares and keeps receiver_key private; the holder offers with its current lease_key; the receiver accepts with request_id and receiver_key. Only a public request_id is communicated. These commands do not spend a renewal. No Task, production or broader connection permission is granted." },
+  request_id: uuid,
+  delivery_id: uuid,
+  receiver_key: { type: "string", pattern: "^clued_lk_[0-9a-f]{64}$", description: "Private receiving capability from prepare_handover. Keep only in this session; never send it to another Agent, or put it in a file, record, Event, Receipt, checkpoint or log." },
+  repository: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$" },
+  head_sha: { type: "string", pattern: "^[0-9a-f]{40}$", description: "Full exact commit SHA. No wildcard or future head is authorized." },
+  target_branch: { type: "string", minLength: 1, maxLength: 200, pattern: "^\\S+$" },
+  pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
+  workflow: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,200}\\.ya?ml$", description: "Exact manually dispatched workflow file. Omit for a pull request." },
+  idempotency_key: idempotencyKey,
 } as const;
 
 export const workClaimTools = [
@@ -74,16 +87,25 @@ export const workClaimTools = [
   {
     name: "clued_work_renew",
     description:
-      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. A merge slot ref (merge:<owner>/<name>:<branch>) never conflicts: it joins that branch's merge queue, and merge_queue shows your state (head, waiting, lapsed, out), position and who is ahead. Only the head holds the slot (merge_slot_until, merge_slot_ci); a renewal keeps a waiting place. The head's slot starts when it becomes head and lapses 45 minutes after that or its last renewal, later while CI reports on its pull request, and never after the hard cap; then the next entry becomes head, and a renewal that keeps the ref joins again at the back. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key with a new progress_ref (for example reconnect:<session id>): the renewal then moves the claim to your Binding (transferred: true; fence unchanged), holder_session_ref names your session, and the answer carries a new lease_key that replaces the one you sent; keep it private. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid. After the Owner hands a claim over on the Clued page (new fence, new key), every renew and release must carry the current key, even from the holder Binding; without it they are refused with work_claim_lease_key_required.",
+      "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. A merge slot ref (merge:<owner>/<name>:<branch>) never conflicts: it joins that branch's merge queue, and merge_queue shows your state (head, waiting, lapsed, out), position and who is ahead. Only the head holds the slot (merge_slot_until, merge_slot_ci); a renewal keeps a waiting place. The head's slot starts when it becomes head and lapses 45 minutes after that or its last renewal, later while CI reports on its pull request, and never after the hard cap; then the next entry becomes head, and a renewal that keeps the ref joins again at the back. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key with a new progress_ref (for example reconnect:<session id>): the renewal then moves the claim to your Binding (transferred: true; fence unchanged), holder_session_ref names your session, and the answer carries a new lease_key that replaces the one you sent; keep it private. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid. After the Owner hands a claim over on the Clued page (new fence, new key), every renew and release must carry the current key, even from the holder Binding; without it they are refused with work_claim_lease_key_required." + " Page-free voluntary handover uses action prepare_handover at the receiver, offer_handover at the current private-key holder, then accept_handover at the receiver. Only request_id is shared; receiver_key stays private. After execution protection is active, a reconnect or handover may return pending without a new key until all old executions are revoked; use the original receiving proof to finish or recover, and do not spend while pending. authorize_head approves one exact target with the current key without renewing or granting CI/production permission. The Owner setting defaults On; Off blocks new exchanges, and staged rollout returns work_claim_handover_not_ready. Read Agent Contract Appendix A.2 before these commands.",
     inputSchema: {
       type: "object",
-      required: ["claim_id", "fence", "lease_version", "progress_ref"],
+      oneOf: [
+        { not: { required: ["action"] }, required: ["claim_id", "fence", "lease_version", "progress_ref"] },
+        { properties: { action: { const: "authorize_head" } }, required: ["action", "claim_id", "fence", "lease_version", "lease_key", "repository", "head_sha", "target_branch", "idempotency_key"] },
+        { properties: { action: { const: "prepare_handover" } }, required: ["action", "claim_id", "fence", "holder_label", "idempotency_key"] },
+        { properties: { action: { const: "offer_handover" } }, required: ["action", "request_id", "lease_key"] },
+        { properties: { action: { const: "accept_handover" } }, required: ["action", "request_id", "receiver_key"] },
+        { properties: { action: { const: "cancel_handover" } }, required: ["action", "request_id", "receiver_key"] },
+        { properties: { action: { const: "finish_handover" } }, required: ["action", "delivery_id", "lease_key"] },
+      ],
       properties: {
         scope, claim_id: uuid, fence: { type: "integer", minimum: 1 }, lease_version: { type: "integer", minimum: 1 },
         progress_ref: { type: "string", minLength: 1, maxLength: 200 }, write_set: writeSet, trigger_refs: triggerRefs,
         lease_key: leaseKey, holder_session_ref: { ...holderSessionRef, description: "Host session id, audit only; recorded when lease_key moves the claim to your Binding." },
         holder_label: { ...holderLabel, description: "Replaces the claim's label (see clued_work_claim); omit to keep it." },
         holder_client: holderClient, holder_session_title: holderSessionTitle,
+        ...headAuthorization,
       },
       additionalProperties: false,
     },

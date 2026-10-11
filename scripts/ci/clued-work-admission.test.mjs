@@ -200,7 +200,7 @@ test("enforced: the RPC is called on PostgREST with the publishable key and the 
   assert.match(PUBLIC.url, /^https:\/\/[a-z]+\.supabase\.co$/);
   assert.deepEqual(call.body, {
     p_token_hash: sha256Hex("clued_bnd_test"),
-    p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/worker/index.ts", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE, pr_ref: "o/r#452",
+    p_input: { scope: "global", claim_id: CLAIM, changed_paths: ["apps/clued-cloud/worker/index.ts", "docs/new.md", "docs/old.md"], head_sha: HEAD, base_sha: BASE, pr_ref: "o/r#452", target_branch: "main",
       // Merge Admission v0.1 §10 (step 3): the mode goes into the Receipts.
       admission_mode: { state: "normal", layer: "code", reruns_per_head: outcome.admission_mode.rules.reruns_per_head } },
   });
@@ -947,7 +947,8 @@ test("dispatch admission: verifies the claim on the default branch only, against
   let outcome = await dispatchAdmit({ env: base, fetchImpl, workspace: ROOT });
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.head_sha], [true, "ADMITTED", HEAD]);
   const verify = calls.find((c) => c.method === "POST");
-  assert.deepEqual(verify.body.p_input, { scope: "global", claim_id: CLAIM, head_sha: HEAD, ci_dispatch: true });
+  assert.deepEqual(verify.body.p_input, { scope: "global", claim_id: CLAIM, head_sha: HEAD, ci_dispatch: true,
+    repository: "o/r", target_branch: "feature/x", workflow: "clued-g4-database.yml" });
   assert.equal(verify.body.p_token_hash, sha256Hex("clued_bnd_test"));
 
   ({ fetchImpl } = fakeFetch({ ...script, [VERIFY]: { body: { ...admittedPayload, verdict: "REJECTED", reasons: ["claim_not_current"] } } }));
