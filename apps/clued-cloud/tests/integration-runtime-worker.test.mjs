@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build, stop } from 'esbuild';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import { validateAgentContractResponse } from '../scripts/render-agent-contract-budget.mjs';
 
 // S2c Integration Runtime PR-5 (IntegrationRuntime v0.1.8 §12, §13.8 T-W-1…6): the Worker surface behind
 // CLUED_INTEGRATION_RUNTIME_V1 — tools/list, bootstrap, REST, Binding-channel dispatch and the §11.1 error
@@ -107,22 +108,32 @@ test('contract delivery: actual MCP and HTTP advertise the same LF source, with 
     assert.equal(response.status, 200);
     const result = response.body.result;
     assert.equal(result.isError, false);
-    assert.equal(result.content.length, 2);
-    assert.equal(result.content[1].text, source);
-    assert.deepEqual(result.structuredContent.agent_contract, { version, sha256, part: 1, parts: 1,
-      markdown_in: 'content[1]', url: 'https://clued.test/clued-agent.md' });
-    assert.deepEqual(JSON.parse(result.content[0].text).agent_contract, { version, sha256 });
-    assert.equal(result.structuredContent.authentication, undefined);
+    const parts = result.structuredContent.agent_contract.parts;
+    assert.ok(Number.isInteger(parts) && parts >= 1);
+    const fragments = [];
+    for (let part = 1; part <= parts; part++) {
+      const delivered = part === 1 ? response
+        : await callTool(enabled, 'clued_agent_bootstrap', { part }, { token: null });
+      assert.equal(delivered.status, 200);
+      const item = delivered.body.result;
+      assert.equal(item.isError, false);
+      validateAgentContractResponse(item, { markdown: source, version, sha256 }, part);
+      assert.deepEqual(item.structuredContent.agent_contract, { version, sha256, part, parts,
+        markdown_in: 'content[1]', url: 'https://clued.test/clued-agent.md' });
+      assert.equal(item.structuredContent.authentication, undefined);
+      fragments.push(item.content[1].text);
+    }
+    assert.equal(fragments.join(''), source);
     for (const pathname of ['/v1/continuity/bootstrap', '/.well-known/clued-continuity']) {
       const http = await rest(enabled, 'GET', pathname, { token: null });
       assert.equal(http.status, 200);
       assert.deepEqual(http.body.agent_contract, { version, sha256 });
       assert.equal(JSON.stringify(http.body).includes(source), false);
     }
-    for (const part of [0, 2, 1.5, '1', null]) {
+    for (const part of [0, parts + 1, 1.5, '1', null]) {
       const invalid = await callTool(enabled, 'clued_agent_bootstrap', { part }, { token: null });
       assert.equal(invalid.body.result.isError, true);
-      assert.equal(invalid.body.result.structuredContent.parts, 1);
+      assert.equal(invalid.body.result.structuredContent.parts, parts);
     }
     assert.equal(mocked.calls.length, 0);
   } finally { mocked.restore(); }
