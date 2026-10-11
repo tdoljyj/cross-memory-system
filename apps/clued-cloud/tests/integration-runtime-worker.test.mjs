@@ -413,12 +413,17 @@ test('T-W-4 every 42501 code in the Integration migrations is exactly one class,
       assert.deepEqual(response.body.result.structuredContent, { status: 'rejected',
         error: { code, category: 'conflict', retryable: true }, receipt_id: null, replayed: false, supplemental: { current_version: 4 } });
     }
-    // input invalid (22023) stays an HTTP 400 transport error; an unlisted envelope code is returned unchanged
+    // Invalid input stays an HTTP 400; an unlisted code retains its original
+    // fields and gains the canonical code carrier only on the MCP boundary.
     reply = () => Response.json({ code: '22023', message: 'integration_input_invalid' }, { status: 400 });
     assert.equal((await callTool(enabled, 'clued_integration_status', args)).status, 400);
     reply = () => Response.json({ status: 'rejected', replayed: false, receipt_id: null, error_code: 'IDEMPOTENCY_KEY_CONFLICT' });
-    assert.deepEqual((await callTool(enabled, 'clued_integration_status', args)).body.result.structuredContent,
-      { status: 'rejected', replayed: false, receipt_id: null, error_code: 'IDEMPOTENCY_KEY_CONFLICT' });
+    const unlisted = (await callTool(enabled, 'clued_integration_status', args)).body.result;
+    assert.equal(unlisted.isError, true);
+    assert.deepEqual(unlisted.structuredContent,
+      { status: 'rejected', replayed: false, receipt_id: null, error_code: 'IDEMPOTENCY_KEY_CONFLICT',
+        error: { code: 'IDEMPOTENCY_KEY_CONFLICT', category: 'canonical_result', status: 'rejected' } });
+    assert.deepEqual(JSON.parse(unlisted.content[0].text), unlisted.structuredContent);
     reply = () => Response.json({ status: 'failed', error_code: 'INTERNAL' });
     assert.equal((await callTool(enabled, 'clued_integration_status', args)).body.result.isError, true);
     reply = () => committed({ integration_state: 'ACTIVE' });
