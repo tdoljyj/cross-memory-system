@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { configureTemporaryStorage } from "../../../.github/actions/ci-temporary-storage/setup.mjs";
 import { checkApplicationWorkflows, checkRepositoryWorkflows, checkoutSources, PLATFORM_TEMP_ENVIRONMENT, repositoryTemporaryStorageFindings, sourceFingerprint, stepFingerprint, temporaryStorageFindings } from "../../../.github/actions/ci-temporary-storage/check-workflows.mjs";
 import { createRequire } from "node:module";
+import { runBackupTool } from "../scripts/verify-production-backup-scope.mjs";
 
 const cli = fileURLToPath(new URL("../../../.github/actions/ci-temporary-storage/setup.mjs", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -234,6 +235,10 @@ test("production plaintext backup uses job scratch and retains only its encrypte
   assert.match(step.run, /verified_path="\$backup_tmp\//);
   assert.match(step.run, /encrypted_path="\$evidence_dir\/clued-production-pre-migration\.dump\.enc"/);
   assert.match(step.run, /-v "\$backup_tmp:\/backup"/);
+  assert.match(step.run, /node scripts\/verify-production-backup-scope\.mjs "\$backup_container" "\$backup_tmp"/);
+  assert.match(step.run, /docker rm -f "\$backup_container"/);
+  assert.match(step.run, /"\$scope_proof"/);
+  assert.doesNotMatch(step.run, /--table=/);
 });
 
 function mockCommand(bin, name, source) {
@@ -242,24 +247,114 @@ function mockCommand(bin, name, source) {
   chmodSync(file, 0o700);
 }
 
-test("backup failure cleans plaintext while successful encrypted evidence is retained (mocked tools)", { skip: process.platform !== "linux" }, () => fixture(({ base, root }) => {
+function mockBackupProducer(bin) {
+  // These doubles exercise shell lifecycle only. Actual archive selection and
+  // scope coverage are separately tested with real PostgreSQL client tools.
+  mockCommand(bin, "node", `if [ "$1" = scripts/verify-production-backup-scope.mjs ]; then
+  [ "$MOCK_FAILURE" != scope ] || exit 43
+  printf '%s\\n' '{"verified":true,"scope":["public","clued_private","clued_watchdog","supabase_migrations.schema_migrations"],"inventory_sha256":"fixture-digest","table_data_entries":4}' > "$3/scope-proof.json"
+elif [[ "${'$'}{2:-}" == *'new URL'* ]]; then
+  printf '%s' 'postgresql://fixture:fixture@invalid.test/db'
+else
+  exec "$TEST_NODE_BINARY" "$@"
+fi`);
+  mockCommand(bin, "docker", `if [ "$1" = rm ]; then
+  if [ "$MOCK_FAILURE" = producer-stop ]; then exit 44; fi
+  if [ -n "${'$'}{MOCK_REMOVAL_MARKER:-}" ]; then touch "$MOCK_REMOVAL_MARKER"; fi
+  exit 0
+fi
+if [ "$1" = container ] && [ "$2" = ls ]; then printf fixture-container; exit 0; fi
+while [ "$#" -gt 0 ]; do if [ "$1" = -v ]; then shift; backup="${'$'}{1%:/backup}"; fi; shift; done
+printf "fixture-only backup data\\n" > "$backup/clued-production-pre-migration.dump"
+if [ "$MOCK_FAILURE" = container-start ]; then touch "$MOCK_READY"; sleep 30; fi`);
+}
+
+test("backup tool returns a complete TOC only after large and delayed stdout is drained", async () => {
+  const output = await runBackupTool(process.execPath, ["-e",
+    "process.stdout.write('x'.repeat(2*1024*1024),()=>setTimeout(()=>process.stdout.write('\\nfinal-toc-entry\\n',()=>process.exit(0)),20))"]);
+  assert.equal(output.length, 2 * 1024 * 1024 + "\nfinal-toc-entry\n".length);
+  assert.ok(output.endsWith("\nfinal-toc-entry\n"));
+  await assert.rejects(runBackupTool(process.execPath, ["-e", "process.stdout.write('incomplete');process.exit(1)"]), /tool failed/);
+});
+
+test("both backup stdout readers preserve identifiers and function bodies across split UTF-8 bytes", () => {
+  const helperUrl = new URL("../scripts/verify-production-backup-scope.mjs", import.meta.url);
+  const helperSource = readFileSync(helperUrl, "utf8");
+  const oldSource = helperSource.replace(/^\s*(?:this\.)?child\.stdout\.setEncoding\('utf8'\);\r?\n/gm, "");
+  assert.notEqual(oldSource, helperSource);
+  const oldUrl = "data:text/javascript;base64," + Buffer.from(oldSource).toString("base64");
+  // Isolate the fake producer in a child process. PassThrough preserves exact
+  // write boundaries, so split codepoints cannot accidentally coalesce in an
+  // OS pipe and conceal the regression. The existing test covers real pipes.
+  const program = moduleUrl => `
+    import cp from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { EventEmitter } from 'node:events';
+    import { PassThrough, Writable } from 'node:stream';
+    const helper = await import(${JSON.stringify(moduleUrl)});
+    const expected = JSON.stringify({routine:'clued_private.原生辅助函数(integer)',definition:"SELECT '返回中文'; -- 原生函数体"});
+    async function fragments(child, text) {
+      const bytes=Buffer.from(text), cuts=[0,bytes.indexOf(Buffer.from('原'))+1,bytes.indexOf(Buffer.from('返'))+1,bytes.length];
+      for(let i=1;i<cuts.length;i++) {
+        child.stdout.write(bytes.subarray(cuts[i-1],cuts[i]));
+        await new Promise(resolve=>setImmediate(resolve));
+      }
+    }
+    function finish(child) {
+      child.stdout.end(); child.stderr.end(); child.exitCode=0;
+      queueMicrotask(()=>child.emit('close',0));
+    }
+    cp.spawn=command=>{
+      const child=new EventEmitter();
+      child.pid=1; child.exitCode=null; child.signalCode=null;
+      child.stdout=new PassThrough(); child.stderr=new PassThrough();
+      child.kill=()=>{finish(child);return true;};
+      child.stdin=new Writable({write(chunk,encoding,done){
+        const input=chunk.toString();
+        const marker=/\\\\echo ([a-zA-Z0-9_]+)/.exec(input)?.[1];
+        if(marker) void fragments(child,expected+'\\n'+marker+'\\n');
+        if(input.includes('\\\\q')) finish(child);
+        done();
+      }});
+      if(command==='fixture-unicode') setImmediate(async()=>{await fragments(child,expected);finish(child);});
+      return child;
+    };
+    syncBuiltinESMExports();
+    const output=await helper.runBackupTool('fixture-unicode',[]);
+    const session=new helper.SnapshotSession('clued-production-backup-synthetic-utf8');
+    const snapshot=await session.query('SELECT synthetic_unicode');
+    await session.close();
+    process.stdout.write(JSON.stringify({tool:output===expected,snapshot:snapshot===expected}));
+  `;
+  for (const [moduleUrl, expected] of [[oldUrl,{tool:false,snapshot:false}], [helperUrl.href,{tool:true,snapshot:true}]]) {
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", program(moduleUrl)], { encoding:"utf8", timeout:10000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    assert.deepEqual(JSON.parse(child.stdout), expected);
+  }
+});
+
+test("backup cleanup retains verified evidence and refuses a producer it cannot stop (mocked tools)", { skip: process.platform !== "linux" }, () => fixture(({ base, root }) => {
   const source = parse(readFileSync(new URL("../../../.github/workflows/clued-cloud-production-release.yml", import.meta.url), "utf8"));
   const script = source.jobs.release.steps.find(s => s.name === "Create and verify encrypted pre-migration backup").run;
   const bin = path.join(base, "bin");
   mkdirSync(bin);
-  mockCommand(bin, "node", "printf '%s' 'postgresql://fixture:fixture@invalid.test/db'");
-  mockCommand(bin, "docker", 'while [ "$#" -gt 0 ]; do if [ "$1" = -v ]; then shift; backup="${1%:/backup}"; fi; shift; done\nprintf "fixture-only backup data\\n" > "$backup/clued-production-pre-migration.dump"');
+  mockBackupProducer(bin);
   mockCommand(bin, "openssl", 'decrypt=false; input=""; output=""; while [ "$#" -gt 0 ]; do case "$1" in -d) decrypt=true;; -in) shift; input="$1";; -out) shift; output="$1";; esac; shift; done\nif [ "$MOCK_FAILURE" = encrypt ] && [ "$decrypt" = false ]; then exit 42; fi\ncp -- "$input" "$output"\nif [ "$MOCK_FAILURE" = verify ] && [ "$decrypt" = true ]; then printf corruption >> "$output"; fi');
-  for (const failure of ["none", "encrypt", "verify"]) {
+  for (const failure of ["none", "scope", "encrypt", "verify", "producer-stop"]) {
     const cwd = path.join(base, "backup-" + failure);
     mkdirSync(cwd);
     const child = spawnSync("bash", ["-c", script], { cwd, encoding: "utf8", env: {
       ...process.env, PATH: bin + ":/usr/bin:/bin", RUNNER_TEMP: root,
       CLUED_ATTESTATION_DATABASE_URL: "postgresql://fixture:fixture@invalid.test/db", CLUED_PRODUCTION_BACKUP_KEY: "fixture-only-key",
-      GITHUB_SHA: "fixture-source", MOCK_FAILURE: failure,
+      GITHUB_SHA: "fixture-source", MOCK_FAILURE: failure, TEST_NODE_BINARY: process.execPath,
     } });
     assert.equal(child.status === 0, failure === "none", child.stderr);
-    assert.deepEqual(readdirSync(root), [], failure + ": plaintext scratch survived");
+    if (failure === "producer-stop") {
+      assert.match(child.stderr, /Could not prove this job's backup producer stopped/);
+      const retained = readdirSync(root);
+      assert.equal(retained.length, 1);
+      assert.ok(existsSync(path.join(root, retained[0], "clued-production-pre-migration.dump")), "unproven cleanup was misreported");
+    } else assert.deepEqual(readdirSync(root), [], failure + ": plaintext scratch survived");
     const evidence = path.join(cwd, ".sites-runtime/release-evidence");
     assert.ok(!existsSync(path.join(evidence, "clued-production-pre-migration.dump")));
     assert.ok(!existsSync(path.join(evidence, "clued-production-pre-migration.dump.verified")));
@@ -268,6 +363,7 @@ test("backup failure cleans plaintext while successful encrypted evidence is ret
       const manifest = JSON.parse(readFileSync(path.join(evidence, "production-backup-manifest.json"), "utf8"));
       assert.equal(manifest.source_commit, "fixture-source");
       assert.ok(manifest.dump_bytes > 0);
+      assert.equal(manifest.scope_verification.verified, true);
     }
   }
 }));
@@ -313,18 +409,18 @@ test("the actual composite bootstrap works with Python and no Node on PATH", () 
   assert.deepEqual(readdirSync(root), []);
 }));
 
-test("backup cancellation removes plaintext scratch without a real database or deployment", { skip: process.platform !== "linux" }, async () => {
+for (const phase of ["container-start", "encrypt"]) test("backup cancellation during " + phase + " removes its producer and plaintext scratch", { skip: process.platform !== "linux" }, async () => {
   const base = mkdtempSync(path.join(os.tmpdir(), "ci-backup-cancel-test-"));
-  const root = path.join(base, "job-temp"), bin = path.join(base, "bin"), marker = path.join(base, "encrypt-started");
+  const root = path.join(base, "job-temp"), bin = path.join(base, "bin"), marker = path.join(base, "phase-started"), removed = path.join(base, "container-removed");
   mkdirSync(root); mkdirSync(bin);
   const source = parse(readFileSync(new URL("../../../.github/workflows/clued-cloud-production-release.yml", import.meta.url), "utf8"));
   const script = source.jobs.release.steps.find(s => s.name === "Create and verify encrypted pre-migration backup").run;
-  mockCommand(bin, "node", "printf '%s' 'postgresql://fixture:fixture@invalid.test/db'");
-  mockCommand(bin, "docker", 'while [ "$#" -gt 0 ]; do if [ "$1" = -v ]; then shift; backup="${1%:/backup}"; fi; shift; done\nprintf "fixture-only backup data\\n" > "$backup/clued-production-pre-migration.dump"');
+  mockBackupProducer(bin);
   mockCommand(bin, "openssl", 'touch "$MOCK_READY"\nsleep 30');
   const child = spawn("bash", ["-c", script], { cwd: base, detached: true, stdio: ["ignore", "ignore", "pipe"], env: {
     ...process.env, PATH: bin + ":/usr/bin:/bin", RUNNER_TEMP: root, MOCK_READY: marker,
     CLUED_ATTESTATION_DATABASE_URL: "postgresql://fixture:fixture@invalid.test/db", CLUED_PRODUCTION_BACKUP_KEY: "fixture-only-key", GITHUB_SHA: "fixture-source",
+    MOCK_FAILURE: phase, MOCK_REMOVAL_MARKER: removed, TEST_NODE_BINARY: process.execPath,
   } });
   let finished = false, stderr = "";
   child.stderr.on("data", chunk => { stderr += chunk; });
@@ -334,10 +430,11 @@ test("backup cancellation removes plaintext scratch without a real database or d
   try {
     const deadline = Date.now() + 5000;
     while (!existsSync(marker) && !finished && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.ok(existsSync(marker), "mock encrypt did not start: " + stderr);
+    assert.ok(existsSync(marker), "mock cancellation phase did not start: " + stderr);
     process.kill(-child.pid, "SIGTERM");
     const result = await exited;
     assert.notEqual(result.code, 0);
+    assert.ok(existsSync(removed), "owned producer survived cancellation: " + stderr);
     assert.deepEqual(readdirSync(root), [], "plaintext survived cancellation: " + stderr);
   } finally {
     if (!finished) { try { process.kill(-child.pid, "SIGKILL"); } catch {} await exited; }

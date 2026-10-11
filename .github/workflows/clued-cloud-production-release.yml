@@ -132,10 +132,26 @@ jobs:
           dump_path="$backup_tmp/clued-production-pre-migration.dump"
           encrypted_path="$evidence_dir/clued-production-pre-migration.dump.enc"
           verified_path="$backup_tmp/clued-production-pre-migration.dump.verified"
+          scope_proof="$backup_tmp/scope-proof.json"
+          backup_container="clued-production-backup-$(basename "$backup_tmp")"
           cleanup_plaintext() {
             original_status=$?
             cleanup_status=0
-            for plaintext in "$dump_path" "$verified_path"; do
+            # Stop the only container that can write the allocated scratch
+            # before removing plaintext, including on cancellation/failure.
+            # Discover by the allocated scratch ownership label even when a
+            # cancellation arrives before docker run returns its receipt.
+            container_id=$(docker container ls --all --quiet \
+              --filter "name=^/${backup_container}$" \
+              --filter "label=clued.backup-scratch=$backup_tmp") || cleanup_status=1
+            if [ -n "$container_id" ]; then
+              docker rm -f "$backup_container" >/dev/null || cleanup_status=1
+            fi
+            if [ "$cleanup_status" -ne 0 ]; then
+              echo "::error::Could not prove this job's backup producer stopped; plaintext cleanup cannot be verified" >&2
+              exit 1
+            fi
+            for plaintext in "$dump_path" "$verified_path" "$scope_proof"; do
               if [ -f "$plaintext" ]; then
                 shred -u -- "$plaintext" || cleanup_status=1
               fi
@@ -151,12 +167,18 @@ jobs:
           trap 'exit 130' INT
           trap 'exit 143' TERM
           database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
-          docker run --rm \
+          docker run --rm -d --name "$backup_container" \
+            --label "clued.backup-scratch=$backup_tmp" \
             --user "$(id -u):$(id -g)" \
             -e DATABASE_URL="$database_url" \
             -v "$backup_tmp:/backup" \
-            postgres:17-alpine \
-            sh -ceu 'pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-privileges --schema=public --schema=clued_private --schema=clued_watchdog --table=supabase_migrations.schema_migrations --file=/backup/clued-production-pre-migration.dump && pg_restore --list /backup/clued-production-pre-migration.dump >/dev/null'
+            postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929 \
+            sh -ceu 'sleep 3600' >/dev/null
+          # One consistent archive: pg_dump -t would override all -n selectors.
+          # The publisher first refuses any migration-schema object beyond the
+          # history table and its necessary dependencies, then verifies actual
+          # table/data/routine catalog coverage against the same exported snapshot.
+          node scripts/verify-production-backup-scope.mjs "$backup_container" "$backup_tmp"
           dump_sha256=$(sha256sum "$dump_path" | cut -d' ' -f1)
           dump_bytes=$(wc -c < "$dump_path" | tr -d ' ')
           openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
@@ -167,10 +189,9 @@ jobs:
             -pass env:CLUED_PRODUCTION_BACKUP_KEY
           test "$(sha256sum "$verified_path" | cut -d' ' -f1)" = "$dump_sha256"
           encrypted_sha256=$(sha256sum "$encrypted_path" | cut -d' ' -f1)
-          printf '{\n  "contract": "clued.production-pre-migration-backup.v1",\n  "source_commit": "%s",\n  "database_project": "clued-prod",\n  "scope": ["public", "clued_private", "clued_watchdog", "supabase_migrations.schema_migrations"],\n  "dump_sha256": "%s",\n  "dump_bytes": %s,\n  "encrypted_sha256": "%s",\n  "created_at": "%s"\n}\n' \
-            "$GITHUB_SHA" "$dump_sha256" "$dump_bytes" "$encrypted_sha256" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          node -e 'const fs=require("node:fs"); const proof=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(proof.verified!==true) throw new Error("Unverified backup scope"); process.stdout.write(JSON.stringify({contract:"clued.production-pre-migration-backup.v1",source_commit:process.env.GITHUB_SHA,database_project:"clued-prod",scope:proof.scope,scope_verification:proof,dump_sha256:process.argv[2],dump_bytes:Number(process.argv[3]),encrypted_sha256:process.argv[4],created_at:new Date().toISOString()},null,2)+"\n")' \
+            "$scope_proof" "$dump_sha256" "$dump_bytes" "$encrypted_sha256" \
             > "$evidence_dir/production-backup-manifest.json"
-          shred -u "$dump_path" "$verified_path"
       # It connects once (select 1), so a wrong password or host fails here,
       # before the grant step uses one of the Owner's grants (trial run
       # 37155374056 used its grant and then failed to authenticate).
