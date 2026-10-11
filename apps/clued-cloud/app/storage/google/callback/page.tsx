@@ -6,10 +6,18 @@ import { supabase } from "../../../supabase-browser";
 
 const isProfile = (value: unknown): value is "legacy" | "normal" | "full" =>
   value === "legacy" || value === "normal" || value === "full";
+const isMasterState = (value: unknown): value is "on" | "off" | "partial" => value === "on" || value === "off" || value === "partial";
 // One in-memory delivery across React remounts. Never persist the Google code,
 // state or provider credentials in browser storage; never feed it to Clued auth.
 type Delivery = { receipt: string; owner: string; refreshEnabled?: boolean; recovery?: boolean; originalReceipt?: string; originalUnconfirmed?: boolean;
-  scopeProfile?: "legacy" | "normal" | "full"; requestedProfile?: "legacy" | "normal" | "full"; normalUse?: boolean; onboard?: boolean };
+  scopeProfile?: "legacy" | "normal" | "full"; requestedProfile?: "legacy" | "normal" | "full"; normalUse?: boolean; onboard?: boolean;
+  masterState?: "on" | "off" | "partial" };
+function masterResultText(result: Delivery) {
+  if (result.masterState === "on" && result.scopeProfile === "full") return "。全部 Agent 文件操作已开启";
+  if (result.masterState === "off") return "。全部 Agent 文件操作已停止";
+  if (result.masterState === "partial") return "。Agent 文件操作部分开启，请返回连接页核对实际权限";
+  return result.masterState === "on" || result.requestedProfile === "full" ? "。全部 Agent 文件操作尚未确认，请返回连接页核对总开关" : "";
+}
 let delivery: Promise<Delivery> | undefined;
 class CallbackFailure extends Error {}
 const reasons: Record<string, string> = {
@@ -101,7 +109,7 @@ function finish(): Promise<Delivery> {
     }).catch(() => null);
     const body: unknown = await response?.json().catch(() => null);
     const result = body as { status?: unknown; receipt_id?: unknown; refresh_enabled?: unknown; purpose?: unknown;
-      provider_scope_profile?: unknown; requested_scope_profile?: unknown; normal_use_enabled?: unknown } | null;
+      provider_scope_profile?: unknown; requested_scope_profile?: unknown; normal_use_enabled?: unknown; master_state?: unknown } | null;
     if (!response?.ok || result?.status !== "completed" || typeof result.receipt_id !== "string") {
       // Render only our fixed allowlist, never raw server/Google error text.
       const reason = body && typeof body === "object" && "reason" in body ? body.reason : null;
@@ -121,7 +129,7 @@ function finish(): Promise<Delivery> {
         }
       } catch { /* Unknown remains unknown; never exchange the code twice. */ }
       const message = typeof reason === "string" && Object.hasOwn(reasons, reason) ? reasons[reason] : "连接未确认，请返回连接页检查状态";
-      throw new CallbackFailure(message + "。此操作不会开启文件写入；不会自动重试或放宽权限。");
+      throw new CallbackFailure(message + "。请核对连接状态和原回执；不会自动重试或放宽权限。");
     }
     if (result.purpose === "credential_recovery")
       return await settleOriginal(state, data.session.access_token, data.session.user.id, result.receipt_id);
@@ -129,11 +137,13 @@ function finish(): Promise<Delivery> {
       ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}),
       ...(isProfile(result.provider_scope_profile) ? { scopeProfile: result.provider_scope_profile } : {}),
       ...(isProfile(result.requested_scope_profile) ? { requestedProfile: result.requested_scope_profile } : {}),
+      ...(isMasterState(result.master_state) ? { masterState: result.master_state } : {}),
       ...(typeof result.normal_use_enabled === "boolean" ? { normalUse: result.normal_use_enabled } : {}) };
     return { receipt: result.receipt_id, owner: data.session.user.id,
       ...(typeof result.refresh_enabled === "boolean" ? { refreshEnabled: result.refresh_enabled } : {}),
       ...(isProfile(result.provider_scope_profile) ? { scopeProfile: result.provider_scope_profile } : {}),
       ...(isProfile(result.requested_scope_profile) ? { requestedProfile: result.requested_scope_profile } : {}),
+      ...(isMasterState(result.master_state) ? { masterState: result.master_state } : {}),
       ...(typeof result.normal_use_enabled === "boolean" ? { normalUse: result.normal_use_enabled } : {}) };
   })();
   return delivery;
@@ -153,33 +163,35 @@ export default function StorageGoogleCallback() {
     });
     void finish().then(async result => {
       const current = await supabase.auth.getSession();
-      if (active && !changed && !current.error && current.data.session?.user.id === result.owner)
-        setMessage(result.onboard ? "Google Drive 连接已建立，资料根目录已登记。回执：" + result.receipt +
-          (result.normalUse === true ? "。正常使用已开启" : result.scopeProfile === "legacy" && result.requestedProfile === "normal"
-            ? "。未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启，Agent 可查看目录结构" : "。Agent 可查看目录结构") +
+      if (!active || changed || current.error || current.data.session?.user.id !== result.owner) return;
+      const masterText = masterResultText(result);
+      if (result.onboard) {
+        setMessage("Google Drive 连接已建立，资料根目录已登记。回执：" + result.receipt +
+          (masterText || (result.normalUse === true ? "。正常使用已开启" : result.scopeProfile === "legacy" && result.requestedProfile === "normal"
+            ? "。未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启，Agent 可查看目录结构" : "。Agent 可查看目录结构")) +
           (result.refreshEnabled === true ? "。后台自动续期已开启" : "。后台自动续期未开启：连接约 1 小时后读写都不可用") +
-          "。客户端仍须通过存储资格审核后才能使用。" :
-          result.recovery ? "恢复凭据已安全保存。回执：" + result.receipt +
+          "。客户端仍须通过存储资格审核后才能使用。");
+      } else if (result.recovery) {
+        setMessage("恢复凭据已安全保存。回执：" + result.receipt +
           (result.originalReceipt ? "。原任务结果已自动核验并登记。回执：" + result.originalReceipt :
             result.originalUnconfirmed ? "。原任务结果尚未确认，请查询原任务回执；不会自动重试或重新授权" :
               "。本次授权沿用旧的凭据恢复流程，请返回查询原任务") +
-          "。连接停用状态、Agent 权限和后台续签设置未改变；没有重新创建文件。" :
-          "连接凭据已安全保存。回执：" + result.receipt +
+          "。连接停用状态、Agent 权限和后台续签设置未改变；没有重新创建文件。");
+      } else {
+        // Legacy scope upgrades retain their narrower result. A master result
+        // claims all permissions only with an explicit ON and real full scope.
+        const legacyScopeText = result.requestedProfile === "full" ? (result.scopeProfile === "full" ? "。已允许管理已有文件（完整云端硬盘权限）"
+          : "。未授予“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”，管理已有文件未允许" +
+            (result.scopeProfile === "legacy" ? "；也未授予“查看你 Google 云端硬盘中的所有文件”，正常使用不可用" : "")) : "";
+        const legacyReadText = result.scopeProfile === "legacy" && (result.requestedProfile === "normal" || result.normalUse !== undefined)
+          ? "。未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启"
+          : result.normalUse === true ? "。正常使用已开启" : result.normalUse === false ? "。正常使用未自动开启，请返回连接页开启" : "";
+        setMessage("连接凭据已安全保存。回执：" + result.receipt +
           (typeof result.refreshEnabled === "boolean" ? (result.refreshEnabled ? "。后台续签已开启" : "。后台续签保持关闭") : "") +
-          // StorageFullCapability P7: a full request (or a reconnect of a full
-          // connection) says whether Google granted the full scope.
-          (result.requestedProfile === "full" ? (result.scopeProfile === "full" ? "。已允许管理已有文件（完整云端硬盘权限）"
-            : "。未授予“查看、修改、创建和删除你 Google 云端硬盘中的所有文件”，管理已有文件未允许" +
-              (result.scopeProfile === "legacy" ? "；也未授予“查看你 Google 云端硬盘中的所有文件”，正常使用不可用" : "")) : "") +
-          // StorageNormalUse §2.3: a partial grant keeps normal use off and says
-          // why, whether normal use was requested or a normal connection was only
-          // reconnected (the saved credential follows what Google granted).
-          (result.scopeProfile === "legacy" && (result.requestedProfile === "normal" || result.normalUse !== undefined)
-            ? "。未授予“查看你 Google 云端硬盘中的所有文件”，正常使用未开启"
-            : result.normalUse === true ? "。正常使用已开启"
-              : result.normalUse === false ? "。正常使用未自动开启，请返回连接页开启" : "") +
-          "。文件操作仍需独立授权与执行验收。");
-    }, error => { if (active && !changed) setMessage(error instanceof CallbackFailure ? error.message : "连接尚未确认，请返回连接页检查状态。正式写入不会因此开启。"); });
+          (result.masterState ? masterText : legacyScopeText + legacyReadText + masterText) +
+          "。执行仍须通过目录和客户端检查。");
+      }
+    }, error => { if (active && !changed) setMessage(error instanceof CallbackFailure ? error.message : "连接尚未确认，请返回连接页检查状态和原回执。"); });
     return () => { active = false; data.subscription.unsubscribe(); };
   }, []);
   return <main className="mx-auto max-w-2xl px-6 py-16"><h1 className="text-2xl font-semibold">Google 连接</h1>
