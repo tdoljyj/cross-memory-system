@@ -247,6 +247,11 @@ def load_tests(loader, tests, pattern):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     tests.addTests(loader.loadTestsFromModule(module, pattern=pattern))
+    replay_path = ROOT / "tests/test_model_program_m2_saved_report_runner.py"
+    replay_spec = importlib.util.spec_from_file_location("m2_saved_report_specifications", replay_path)
+    replay_module = importlib.util.module_from_spec(replay_spec)
+    replay_spec.loader.exec_module(replay_module)
+    tests.addTests(loader.loadTestsFromModule(replay_module, pattern=pattern))
     return tests
 
 
