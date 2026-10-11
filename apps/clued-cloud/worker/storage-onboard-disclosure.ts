@@ -1,13 +1,16 @@
-/** StorageNormalUse.v0.1 §8.1 step 1 and §8.2: the onboarding disclosure
- * `clued.storage-onboard-disclosure/1`. The page shows exactly this text and
+/** Versioned onboarding disclosures. The original /1 read-only consent is
+ * retained byte-for-byte; /2 adds the Owner-approved master default. The page
+ * shows exactly this text and
  * the Worker renders it again from the same inputs to compute the SHA-256 the
  * database stores with the attempt and in the Owner's Decision. Any change to
  * the text needs a new disclosure version (database first). The page imports
  * this module; it depends only on the scope module (no runtime services).
  */
 import { GOOGLE_DRIVE_FILE_SCOPE } from "./storage-google-scopes";
+import { renderMasterDisclosure } from "./storage-master-disclosure";
 
-export const ONBOARD_DISCLOSURE_VERSION = "clued.storage-onboard-disclosure/1";
+export const ONBOARD_LEGACY_DISCLOSURE_VERSION = "clued.storage-onboard-disclosure/1";
+export const ONBOARD_DISCLOSURE_VERSION = "clued.storage-onboard-disclosure/2";
 export const ONBOARD_DEFAULT_ROOT_NAME = "Clued_资料中心";
 export const ONBOARD_DEFAULT_TRACKS: readonly string[] = Object.freeze(["资料", "项目", "归档"]);
 
@@ -51,8 +54,16 @@ export const normalUseDisclosureText = (root: string) =>
   "默认每小时额度：读取 256 MB、上传 256 MB。关闭“正常使用”会立即停止读正文、按内容搜索和上传，但不会收回 Google 授权；“撤回全部文件读取授权”会断开该 Google 账号在 Clued 中的所有连接。";
 
 /** The full text the Owner confirms with “确认并连接 Google Drive” (§8.1 step 1). */
-export function renderOnboardDisclosure(choice: OnboardChoice): string {
+export function renderOnboardDisclosure(choice: OnboardChoice, version = ONBOARD_DISCLOSURE_VERSION): string {
   const name = choice.root.name, tracks = choice.tracks.map(track => `「${track}」`).join("");
+  if (version === ONBOARD_DISCLOSURE_VERSION) return `点击“确认并连接 Google Drive”即表示你确认：Clued 使用你 Google 云端硬盘中的「${name}」作为资料根目录` +
+    (choice.root.mode === "new" ? `，在“我的云端硬盘”下新建该目录及子目录${tracks}` : `，并在该目录下新建子目录${tracks}`) +
+    "，并以你的名义记录这一决定。" +
+    (choice.normal_use ? "\n" + renderMasterDisclosure(name) + "\n连接完成并取得完整授权后，总开关默认全开。\n"
+      : "\n连接完成后，总开关关闭，全部 Agent 文件操作停止。\n") +
+    (choice.default_refresh ? "Clued 会在后台自动续期 Google 授权，直到你关闭或断开连接。" : "") +
+    "你可以随时在连接页关闭总开关或断开连接。";
+  if (version !== ONBOARD_LEGACY_DISCLOSURE_VERSION) throw new TypeError("unknown onboard disclosure");
   return `点击“确认并连接 Google Drive”即表示你确认：Clued 使用你 Google 云端硬盘中的「${name}」作为资料根目录` +
     (choice.root.mode === "new" ? `，在“我的云端硬盘”下新建该目录及子目录${tracks}` : `，并在该目录下新建子目录${tracks}`) +
     "，并以你的名义记录这一决定；你授权的 Agent 可以在该目录内查看目录结构、新建文件和子目录。" +
