@@ -38,9 +38,10 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    let wholeRootPreMasterDefinition;
+    let wholeRootPreMasterDefinition,reconnectRetryPredecessorDefinition;
     for(const file of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort()){
       if(file.endsWith('_storage_master_control_v1.sql'))wholeRootPreMasterDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
+      if(file.endsWith('_storage_reconnect_retry_v1.sql'))reconnectRetryPredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       try{await db.query(await fs.readFile(path.join(cloud,'supabase/migrations',file),'utf8'));}catch(e){throw new Error('Migration '+file+': '+e.message,{cause:e});}
     }
     const closeout=await findGatewayCloseoutMigration(cloud);
@@ -95,6 +96,29 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       finally{await db.query('revoke execute on function public.clued_storage_owner_lifecycle_v1(text,jsonb) from clued_worker_gateway');}
       await native.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({sub:owner,role:'clued_worker_gateway',session_id:session})]);
       await assert.rejects(listing(),e=>e.code==='42501');await login(native);
+    });
+    await t.test('reconnect retry successor pins exact source and Native ACL; replay is unchanged and drift makes no DDL changes',async()=>{
+      const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261011101500_storage_reconnect_retry_v1.sql'),'utf8');
+      const catalog=async()=>(await db.query("select pg_get_userbyid(proowner) owner,prosecdef,proconfig,proacl::text acl,encode(sha256(convert_to(prosrc,'UTF8')),'hex') source_hash from pg_proc where oid=$1::regprocedure",[rpcName])).rows[0];
+      const successor=await catalog();assert.equal(successor.source_hash,'dfc42609cbfa7af4086259c093f6993e1a541ceda8a4c1dd399a88983c3d9317');
+      await db.query(sql);assert.deepEqual(await catalog(),successor);
+      assert.ok(reconnectRetryPredecessorDefinition);await db.query('begin');
+      try{await db.query(reconnectRetryPredecessorDefinition);assert.equal((await catalog()).source_hash,'52ac7fd31ce54b212dc528d657bddb21641d7896e4b93d859ac0131c54d3e00d');
+        await db.query(sql);assert.deepEqual(await catalog(),successor);
+      }finally{await db.query('rollback');}
+      for(const tamper of ['alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) owner to authenticated',
+        'alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) security invoker',
+        'alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) set search_path=public',
+        'grant execute on function public.clued_storage_owner_lifecycle_v1(text,jsonb) to anon','source']){
+        await db.query('begin');try{
+          if(tamper==='source'){const v=(await db.query('select pg_get_functiondef($1::regprocedure) def,prosrc from pg_proc where oid=$1::regprocedure',[rpcName])).rows[0];
+            await db.query(v.def.replace(v.prosrc,()=>v.prosrc+'\n-- synthetic drift\n'));
+          }else await db.query(tamper);
+          const before=await catalog();await db.query('savepoint retry_drift');
+          await assert.rejects(db.query(sql),e=>e.code==='42501'&&e.message==='storage_reconnect_retry_upgrade_unqualified');
+          await db.query('rollback to savepoint retry_drift');assert.deepEqual(await catalog(),before);
+        }finally{await db.query('rollback');}
+      }
     });
     await t.test('whole-root forward upgrade pins source, Owner/definer/config/ACL; replay is idempotent and drift fails without side effects',async()=>{
       const successorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
@@ -279,12 +303,52 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       const r=await root();await disconnect(r.connection);const old=await row(r.connection),entry=(await listing()).connections.find(c=>c.id===r.connection);
       const req={action:'reconnect_begin',...await connectionInput(r.connection),root_stop_generation:entry.root_stop_generation,
         request_id:id(),confirmation:confirm(r,{normal_use:false})};
-      const first=await call(req);await assert.rejects(call({...req,request_id:id()}),e=>e.code==='40001');
+      const first=await call(req);
       await db.query('update clued_private.storage_owner_lifecycle_v1 set expires_at=clock_timestamp()-interval \'1 second\' where id=$1',[first.attempt_id]);
       const next=await call({...req,request_id:id()});assert.notEqual(next.connection_id,first.connection_id);
       assert.equal((await row(first.connection_id)).state,'revoked');assert.deepEqual(await row(r.connection),old);
       assert.equal((await listing()).connections.filter(c=>c.profile_id===r.profile).length,1);
       assert.equal((await listing()).connections.find(c=>c.id===r.connection).root_stopped,true);
+    });
+    await t.test('closed consent can be replaced immediately; its old state never claims and full activation stays fresh',async()=>{
+      const r=await root();await disconnect(r.connection);const old=await row(r.connection),entry=(await listing()).connections.find(c=>c.id===r.connection);
+      const req={action:'reconnect_begin',...await connectionInput(r.connection),root_stop_generation:entry.root_stop_generation,
+        request_id:id(),confirmation:{contract:'clued.storage-owner-confirmation/3',root_folder_id:r.rootId,confirmed:true,
+          master_enabled:true,disclosure_version:'clued.storage-master-disclosure/1'}};
+      const first=await call(req),d=await outer({action:'describe',connection_id:first.connection_id}),oldState=sha(id());
+      await outer({action:'prepare',connection_id:first.connection_id,connection_version:d.connection_version,attempt_id:id(),state_hash:oldState,
+        verifier_envelope:envelope(),requested_scope_profile:'full',full_scope:{disclosure_version:'clued.storage-master-disclosure/1'}});
+      assert.equal((await call({action:'recover',attempt_id:first.attempt_id})).status,'waiting');
+      await assert.rejects(call({...req,request_id:id(),root_stop_generation:entry.root_stop_generation+1}),e=>e.code==='42501');
+      await assert.rejects(call({...req,request_id:id(),confirmation:{...req.confirmation,confirmed:false}}),e=>e.code==='42501');
+      const second=await call({...req,request_id:id()});assert.notEqual(second.connection_id,first.connection_id);
+      assert.deepEqual(await row(r.connection),old);assert.equal((await row(first.connection_id)).state,'revoked');
+      assert.equal((await call({action:'recover',attempt_id:first.attempt_id})).status,'cancelled');
+      assert.equal((await listing()).connections.find(c=>c.id===r.connection).root_stopped,true);
+      await assert.rejects(callback({action:'claim',state_hash:oldState}),e=>e.code==='42501');
+      const next=await outer({action:'describe',connection_id:second.connection_id}),state=sha(id());
+      await outer({action:'prepare',connection_id:second.connection_id,connection_version:next.connection_version,attempt_id:id(),state_hash:state,
+        verifier_envelope:envelope(),requested_scope_profile:'full',full_scope:{disclosure_version:'clued.storage-master-disclosure/1'}});
+      await callback({action:'claim',state_hash:state});await callback({action:'complete',state_hash:state,
+        provider_subject:'synthetic-provider-owner',credential_envelope:envelope(),provider_scope_profile:'full'});
+      const done=await call({action:'reconnect_activate',state_hash:state});assert.equal(done.master_state,'on');assert.equal(done.refresh_enabled,false);
+      assert.equal((await listing()).connections.filter(c=>c.profile_id===r.profile).length,1);
+      assert.equal((await listing()).connections.find(c=>c.profile_id===r.profile).id,second.connection_id);
+      assert.deepEqual(await row(r.connection),old);
+    });
+    await t.test('a claimed OAuth exchange blocks replacement and expired recovery without changing its reservation',async()=>{
+      const r=await root();await disconnect(r.connection);const entry=(await listing()).connections.find(c=>c.id===r.connection);
+      const req={action:'reconnect_begin',...await connectionInput(r.connection),root_stop_generation:entry.root_stop_generation,
+        request_id:id(),confirmation:confirm(r,{normal_use:false})};
+      const first=await call(req),d=await outer({action:'describe',connection_id:first.connection_id}),state=sha(id());
+      await outer({action:'prepare',connection_id:first.connection_id,connection_version:d.connection_version,attempt_id:id(),state_hash:state,
+        verifier_envelope:envelope(),requested_scope_profile:'legacy'});
+      await callback({action:'claim',state_hash:state});const before=await row(first.connection_id);
+      await assert.rejects(call({...req,request_id:id()}),e=>e.code==='40001');assert.deepEqual(await row(first.connection_id),before);
+      await db.query('update clued_private.storage_owner_lifecycle_v1 set expires_at=clock_timestamp()-interval \'1 second\' where id=$1',[first.attempt_id]);
+      await assert.rejects(call({action:'recover',attempt_id:first.attempt_id}),e=>e.code==='40001');
+      assert.deepEqual(await row(first.connection_id),before);
+      assert.equal((await db.query('select state from clued_private.storage_owner_lifecycle_v1 where id=$1',[first.attempt_id])).rows[0].state,'prepared');
     });
     await t.test('explicit normal choice on fresh consent enables only its normal read set, not refresh or old extra write levels',async()=>{
       const r=await root();await disconnect(r.connection);const entry=(await listing()).connections.find(c=>c.id===r.connection);

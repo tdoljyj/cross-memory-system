@@ -16,6 +16,7 @@ const currentnessMigration = '20260924121000_project_lifecycle_successor_v2_fron
 const issuerMigration = '20261009070001_issuer_identity_credentials_v1.sql';
 const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
 const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
+const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
 const storageOwnerLifecycleMigrations = [
   '20261010055701_storage_owner_lifecycle_v1.sql',
   '20261010150000_storage_owner_root_trash_scope_v2.sql',
@@ -61,7 +62,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -428,6 +429,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       // successor requires their actual production definitions, so install it
       // only after this fixture has replayed every deferred cutover.
       await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageMasterMigration),'utf8'));
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageReconnectRetryMigration),'utf8'));
       await assertGatewayCloseoutBoundary(admin);
       assert.ok((await admin.query("select to_regclass('clued_private.storage_master_controls_v1') as table_id")).rows[0].table_id);
       const signature='public.clued_storage_owner_lifecycle_v1(text,jsonb)';

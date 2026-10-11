@@ -224,6 +224,30 @@ test("cancelling while a metadata preview is pending keeps late results closed a
  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==="delete").length,0);
 });
 
+test("closing consent leaves an immediate explicit retry entry with fresh exact master confirmation",async()=>{
+ const f=await ready([{...revoked,pending_lifecycle:{attempt_id:connection.id,operation:"reconnect",state:"prepared",execution_permitted:false}}]);
+ assert.match(f.text(),/关闭授权页后，可以重新打开/);assert.equal(f.requests.length,1);assert.equal(f.navigation.length,0);
+ f.click("重新打开 Google 授权");await f.settle();assert.equal(f.requests.length,1);
+ f.click("取消");await f.settle();assert.equal(f.requests.length,1);assert.equal(f.navigation.length,0);
+ f.click("重新打开 Google 授权");f.click("确认并前往 Google 授权");await f.settle();
+ const b=JSON.parse(f.requests[1].init.body);assert.equal(b.action,"reconnect");assert.equal(b.connection_id,revoked.id);
+ assert.equal(b.base_version,revoked.version);assert.equal(b.root_stop_generation,revoked.root_stop_generation);
+ assert.equal(b.confirmation.master_enabled,true);assert.equal(b.confirmation.root_folder_id,revoked.root_folder_id);
+ f.respond(1,{authorization_url:"https://accounts.google.com/o/oauth2/v2/auth?synthetic=fresh"});await f.settle();
+ assert.deepEqual(f.navigation,["https://accounts.google.com/o/oauth2/v2/auth?synthetic=fresh"]);
+});
+test("unknown reconnect or delete effects never offer an authorization retry",async()=>{
+ for(const [operation,state]of[["reconnect","started"],["reconnect","uncertain"],["delete","prepared"],["delete","uncertain"]]){
+  const f=await ready([{...revoked,pending_lifecycle:{attempt_id:connection.id,operation,state,execution_permitted:false}}]);
+  assert.ok(!f.text().includes("重新打开 Google 授权"));assert.match(f.text(),/核对上次操作结果/);assert.equal(f.requests.length,1);
+ }
+});
+test("waiting recovery keeps retry visible and gives no ten-minute instruction or automatic OAuth request",async()=>{
+ const c={...revoked,pending_lifecycle:{attempt_id:connection.id,operation:"reconnect",state:"prepared",execution_permitted:false}};
+ const f=await ready([c]);f.click("核对上次操作结果");await f.settle();f.respond(1,{status:"waiting",execution_permitted:false});
+ await f.settle();f.respond(2,listing([c]));await f.settle();
+ assert.match(f.text(),/重新打开 Google 授权/);assert.ok(!f.text().includes("最长 10 分钟"));assert.equal(f.requests.length,3);assert.equal(f.navigation.length,0);
+});
 test("cancelled reconnect recovery restores the explicit reconnect entry without automatic OAuth restart",async()=>{
  const f=await ready([{...revoked,pending_lifecycle:{attempt_id:connection.id,operation:"reconnect",state:"prepared",execution_permitted:false}}]);
  f.click("核对上次操作结果");await f.settle();assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:"recover",attempt_id:connection.id});
