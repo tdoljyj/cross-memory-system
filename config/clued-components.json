@@ -41,7 +41,7 @@
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "dc48f016fe559ec3951b20c8647ab45720ebb28905b6f392433a9570f1f74363",
+      "content_sha256": "8a14ff521b756a0b41cb03ae3f109fdbd466eff7f1a7fa8872a887945fa42e06",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
