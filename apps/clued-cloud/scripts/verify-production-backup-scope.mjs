@@ -14,7 +14,10 @@ const diagnosticStages = new Set(['setup','snapshot_begin','snapshot_export','ca
   'rollback_cleanup','session_close','proof_write','unknown']);
 const diagnosticReasons = new Set(['INTERNAL_ERROR','ASSERTION_REFUSED','JSON_INVALID','TOOL_START_FAILED',
   'TOOL_NONZERO','SNAPSHOT_START_FAILED','SNAPSHOT_HOLDER_EXIT','PSQL_SERVER_ERROR','SNAPSHOT_QUERY_TIMEOUT',
-  'SNAPSHOT_IO_ERROR','SNAPSHOT_CLOSE_FAILED','SNAPSHOT_CLOSE_FORCED','SNAPSHOT_CLOSE_UNCONFIRMED']);
+  'SNAPSHOT_IO_ERROR','SNAPSHOT_CLOSE_FAILED','SNAPSHOT_CLOSE_FORCED','SNAPSHOT_CLOSE_UNCONFIRMED',
+  'TOC_LINE_INVALID','TOC_KIND_UNREVIEWED','TOC_OBJECT_OUTSIDE_SNAPSHOT','TOC_DATA_UNEXPECTED',
+  'TOC_METADATA_UNBOUND','TOC_OBJECT_MISSING','TOC_DATA_MISSING',
+  'TOC_DEFAULT_DEFINITION_REQUIRED','TOC_DEFAULT_MISSING','ARCHIVE_SQL_INVALID']);
 const diagnosticSignals = new Set(['SIGINT','SIGTERM','SIGKILL','SIGHUP','SIGABRT','SIGPIPE','SIGQUIT','SIGSEGV']);
 const sqlstateClasses = new Set(['00','01','02','03','08','09','0A','0B','0F','0L','0P','0Z','20','21','22',
   '23','24','25','26','27','28','2B','2D','2F','34','38','39','3B','3D','3F','40','42','44','53','54','55',
@@ -100,7 +103,8 @@ const objectQueries = [
       when 'm' then 'MATERIALIZED VIEW' when 'f' then 'FOREIGN TABLE' when 'S' then 'SEQUENCE'
       when 'i' then 'INDEX' when 'I' then 'INDEX' else 'IMPLICIT RELATION' end,c.relname,
     coalesce(i.indrelid,0),c.relkind in ('r','p','v','m','f','S') or
-      (c.relkind in ('i','I') and not exists(select 1 from pg_constraint k where k.conindid=c.oid)),
+      (c.relkind in ('i','I') and not exists(select 1 from pg_constraint k where k.conindid=c.oid
+        and k.conrelid=i.indrelid and k.contype in ('p','u','x'))),
     null,c.relkind::text,c.reltype from pg_class c join pg_namespace n on n.oid=c.relnamespace
     left join pg_index i on i.indexrelid=c.oid where n.nspname in ${selected}`,
   `select 'pg_proc'::regclass::oid,p.oid,n.nspname,
@@ -118,7 +122,7 @@ const objectQueries = [
     k.contype in ('p','u','f','x') or (k.contype='c' and not k.convalidated),null,null,0
     from pg_constraint k join pg_namespace n on n.oid=k.connamespace where n.nspname in ${selected}`,
   `select 'pg_attrdef'::regclass::oid,d.oid,n.nspname,'DEFAULT',a.attname,c.oid,
-    a.attgenerated='',null,null,0 from pg_attrdef d join pg_class c on c.oid=d.adrelid
+    a.attgenerated='',pg_get_expr(d.adbin,d.adrelid),c.relkind::text,0 from pg_attrdef d join pg_class c on c.oid=d.adrelid
     join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid and a.attnum=d.adnum
     where n.nspname in ${selected}`,
   `select 'pg_trigger'::regclass::oid,t.oid,n.nspname,'TRIGGER',t.tgname,c.oid,not t.tgisinternal,null,null,0
@@ -207,28 +211,119 @@ function ancillaryIsBound(entry, inventory) {
     (entry.oid === o.oid || (entry.oid === 0 && entry.tag.startsWith(o.schema + ' ' + o.name + ' '))) &&
     (o.schema !== 'supabase_migrations' || entry.kind === 'ROW SECURITY'));
 }
-export function verifyArchiveScope(inventory, toc) {
+// Publish only the fixed predicate code. Keep the original assertion and
+// never serialize TOC tags, object names, catalog definitions or raw errors.
+function archiveAssert(reason, condition, message) {
+  try { assert.ok(condition, message); }
+  catch (error) { failureMetadata.set(error, { reason_code:reason }); throw error; }
+}
+// pg_restore's table-only schema output is read, never executed. Compare
+// canonical default-expression tokens within the exact parent table/column.
+// Quoted values and identifiers stay opaque; comments cannot supply evidence.
+function schemaTokens(sql) {
+  const tokens=[];
+  for(let i=0;i<sql.length;){
+    if(/\s/.test(sql[i])){i++;continue;}
+    if(sql.startsWith('--',i)){i=sql.indexOf('\n',i);if(i<0)break;continue;}
+    if(sql.startsWith('/*',i)){let depth=1;i+=2;while(i<sql.length&&depth){
+      if(sql.startsWith('/*',i)){depth++;i+=2;}else if(sql.startsWith('*/',i)){depth--;i+=2;}else i++;
+    }archiveAssert('ARCHIVE_SQL_INVALID',depth===0,'Unterminated archive comment');continue;}
+    if(sql[i]==='\\'){i=sql.indexOf('\n',i);if(i<0)break;continue;}
+    const dollar=/^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
+    if(dollar){const end=sql.indexOf(dollar[0],i+dollar[0].length);
+      archiveAssert('ARCHIVE_SQL_INVALID',end>=0,'Unterminated archive dollar quote');
+      tokens.push({kind:'literal',value:sql.slice(i,end+dollar[0].length)});i=end+dollar[0].length;continue;}
+    if(sql[i]==="'"||sql[i]==='"'){
+      const quote=sql[i],start=i++;let value='',closed=false;
+      const escaped=quote==="'"&&start>0&&/[eE]/.test(sql[start-1])&&(start<2||!/[A-Za-z0-9_$]/.test(sql[start-2]));
+      while(i<sql.length){if(sql[i]===quote){if(sql[i+1]===quote){value+=quote;i+=2;continue;}i++;closed=true;break;}
+        if(escaped&&sql[i]==='\\'){value+=sql.slice(i,i+2);i+=2;}else value+=sql[i++];}
+      archiveAssert('ARCHIVE_SQL_INVALID',closed,'Unterminated archive quoted token');
+      tokens.push({kind:quote==='"'?'quoted':'literal',value:quote==='"'?value:sql.slice(start,i)});continue;
+    }
+    const word=/^[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_$\u0080-\uFFFF]*/.exec(sql.slice(i));
+    if(word){tokens.push({kind:'word',value:word[0].toLowerCase()});i+=word[0].length;continue;}
+    const number=/^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(sql.slice(i));
+    if(number){tokens.push({kind:'number',value:number[0]});i+=number[0].length;continue;}
+    const operator=/^[+*/<>=~!@#%^&|?:-]+/.exec(sql.slice(i));
+    if(operator){tokens.push({kind:'symbol',value:operator[0]});i+=operator[0].length;continue;}
+    tokens.push({kind:'symbol',value:sql[i++]});
+  }
+  return tokens;
+}
+function inlineDefaultIsBound(object,parent,tokens) {
+  const expected=schemaTokens(object.definition);
+  const keyword=(token,value)=>token?.kind==='word'&&token.value===value;
+  const identifier=(token,value)=>['word','quoted'].includes(token?.kind)&&token.value===value;
+  const symbol=(token,value)=>token?.kind==='symbol'&&token.value===value;
+  const same=(a,b)=>a?.value===b?.value&&(a?.kind===b?.kind||
+    (['word','quoted'].includes(a?.kind)&&['word','quoted'].includes(b?.kind)));
+  for(let i=0;i<tokens.length;i++){
+    const tableAt=keyword(tokens[i+1],'unlogged')?i+2:i+1;
+    if((i>0&&!symbol(tokens[i-1],';'))||!keyword(tokens[i],'create')||!keyword(tokens[tableAt],'table')||
+      !identifier(tokens[tableAt+1],parent.schema)||!symbol(tokens[tableAt+2],'.')||
+      !identifier(tokens[tableAt+3],parent.name)||!symbol(tokens[tableAt+4],'('))continue;
+    let depth=1,brackets=0,start=tableAt+5,matched=false;
+    for(let j=start;j<tokens.length&&depth;j++){
+      if(symbol(tokens[j],'['))brackets++;if(symbol(tokens[j],']'))brackets--;
+      if(symbol(tokens[j],'('))depth++;if(symbol(tokens[j],')'))depth--;
+      if((symbol(tokens[j],',')&&depth===1&&brackets===0)||(symbol(tokens[j],')')&&depth===0)){
+        const column=tokens.slice(start,j);start=j+1;
+        if(identifier(column[0],object.name)){
+          const at=column.findIndex(token=>keyword(token,'default'));
+          if(at>=0&&expected.length&&expected.every((token,k)=>same(token,column[at+1+k]))){
+            const next=column[at+1+expected.length];
+            // pg_dump appends only the column's NOT NULL flag after DEFAULT.
+            // NOT IN or COLLATE still belongs to the expression.
+            if(!next||(keyword(next,'not')&&keyword(column[at+2+expected.length],'null')&&
+              column.length===at+3+expected.length))matched=true;
+          }
+        }
+      }
+      if(depth===0&&brackets===0&&matched){
+        for(let end=j+1;end<tokens.length;end++){
+          if(symbol(tokens[end],';'))return true;
+          if(keyword(tokens[end],'create'))break;
+        }
+      }
+    }
+  }
+  return false;
+}
+export function verifyArchiveScope(inventory, toc, tableDefinitions) {
   validateInventory(inventory);
+  const tableTokens=typeof tableDefinitions==='string'?schemaTokens(tableDefinitions):null;
   const entries = toc.split(/\r?\n/).filter(line => line && !line.startsWith(';')).map(line => {
     const m = /^(\d+); (\d+) (\d+) (.*)$/.exec(line);
-    assert.ok(m, 'Unrecognized archive TOC line');
+    archiveAssert('TOC_LINE_INVALID', m, 'Unrecognized archive TOC line');
     const kind = tocKinds.find(k => m[4].startsWith(k + ' '));
-    assert.ok(kind, 'Unreviewed archive entry kind');
+    archiveAssert('TOC_KIND_UNREVIEWED', kind, 'Unreviewed archive entry kind');
     return { catalog: Number(m[2]), oid: Number(m[3]), kind, tag: m[4].slice(kind.length + 1) };
   });
   const known = new Map(inventory.objects.map(o => [`${o.catalog}:${o.oid}`, o]));
   for (const entry of entries) {
-    if (entry.catalog !== 0) assert.ok(known.has(`${entry.catalog}:${entry.oid}`), 'Archive contains an object outside snapshot scope');
+    if (entry.catalog !== 0) archiveAssert('TOC_OBJECT_OUTSIDE_SNAPSHOT', known.has(`${entry.catalog}:${entry.oid}`), 'Archive contains an object outside snapshot scope');
     else if (['TABLE DATA','MATERIALIZED VIEW DATA'].includes(entry.kind)) {
-      assert.ok(inventory.data.some(o => o.oid === entry.oid && o.kind === entry.kind), 'Archive contains unexpected table data');
-    } else assert.ok(ancillaryIsBound(entry, inventory), 'Archive contains unbound metadata');
+      archiveAssert('TOC_DATA_UNEXPECTED', inventory.data.some(o => o.oid === entry.oid && o.kind === entry.kind), 'Archive contains unexpected table data');
+    } else archiveAssert('TOC_METADATA_UNBOUND', ancillaryIsBound(entry, inventory), 'Archive contains unbound metadata');
   }
   for (const object of inventory.objects.filter(o => o.required)) {
-    assert.ok(entries.some(e => e.catalog === object.catalog && e.oid === object.oid &&
+    const separate=entries.some(e=>e.catalog===object.catalog&&e.oid===object.oid&&e.kind===object.kind);
+    if(object.kind==='DEFAULT'&&!separate){
+      const parent=inventory.objects.find(o=>o.catalog===1259&&o.oid===object.parent_oid&&
+        o.kind==='TABLE'&&['r','p'].includes(o.relation_kind)&&o.schema===object.schema);
+      if(parent){
+        archiveAssert('TOC_DEFAULT_DEFINITION_REQUIRED',typeof tableDefinitions==='string','Inline default definitions need archive evidence');
+        archiveAssert('TOC_DEFAULT_MISSING',entries.some(e=>e.catalog===parent.catalog&&e.oid===parent.oid&&e.kind==='TABLE')&&
+          typeof object.definition==='string'&&inlineDefaultIsBound(object,parent,tableTokens),'Archive is missing a snapshot column default');
+        continue;
+      }
+    }
+    archiveAssert('TOC_OBJECT_MISSING', entries.some(e => e.catalog === object.catalog && e.oid === object.oid &&
       (e.kind === object.kind || (object.kind === 'CONSTRAINT' && e.kind === 'CHECK CONSTRAINT'))),
     'Archive is missing a snapshot catalog object');
   }
-  for (const object of inventory.data) assert.ok(entries.some(e => e.catalog === 0 && e.oid === object.oid && e.kind === object.kind),
+  for (const object of inventory.data) archiveAssert('TOC_DATA_MISSING', entries.some(e => e.catalog === 0 && e.oid === object.oid && e.kind === object.kind),
     'Archive is missing snapshot table data');
   return {
     contract: 'clued.production-backup-scope.v1', verified: true,
@@ -256,6 +351,9 @@ export async function createVerifiedBackup({ session, runPg, dumpPath, onDiagnos
     const snapshot = await session.query('SELECT pg_export_snapshot()');
     assert.match(snapshot, /^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9]+$/, 'Invalid exported snapshot');
     tracker.success(); tracker.begin('catalog_query');
+    // Match pg_dump's deparser path so custom default functions/types qualify
+    // identically. This remains local to the existing READ ONLY transaction.
+    await session.query("SET LOCAL search_path = ''");
     const catalog = await session.query(BACKUP_INVENTORY_SQL);
     tracker.success(); tracker.begin('catalog_parse');
     const inventory = JSON.parse(catalog);
@@ -266,7 +364,16 @@ export async function createVerifiedBackup({ session, runPg, dumpPath, onDiagnos
     tracker.success(); tracker.begin('archive_list');
     const toc = await runPg('pg_restore', ['--list', dumpPath]);
     tracker.success(); tracker.begin('toc_verify');
-    const proof = verifyArchiveScope(inventory, toc);
+    let proof;
+    try { proof = verifyArchiveScope(inventory, toc); }
+    catch(error){
+      if(backupFailureDiagnostic(error).reason_code!=='TOC_DEFAULT_DEFINITION_REQUIRED')throw error;
+      const tables=inventory.objects.filter(o=>o.kind==='TABLE'&&['r','p'].includes(o.relation_kind));
+      const definitions=await runPg('pg_restore',['--schema-only','--section=pre-data','--no-owner','--no-privileges',
+        '--file=-',...BACKUP_SCHEMAS.map(schema=>'--schema='+schema),
+        ...[...new Set(tables.map(o=>o.name))].map(name=>'--table='+name),dumpPath]);
+      proof=verifyArchiveScope(inventory,toc,definitions);
+    }
     tracker.success(); tracker.begin('holder_check');
     await session.query('SELECT 1'); // A lost snapshot holder is a refusal, too.
     tracker.success(); tracker.begin('transaction_rollback');

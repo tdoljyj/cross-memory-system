@@ -156,6 +156,38 @@ test('actual PostgreSQL backup selection, catalog coverage and migration scope f
       await assert.rejects(createVerifiedBackup({ session:await db.session(),runPg:db.runPg,dumpPath:db.dumpPath('after-race.dump') }),/Migration scope/);
       await db.sql('drop table supabase_migrations.concurrent_extra');
     });
+    await t.test('actual inline defaults and FK target indexes remain fully covered', async () => {
+      await db.sql(`create table public.inline_default_probe(id integer default 42,
+        created_at timestamptz default now(), custom integer default public.fixture_rpc(1),
+        numbers integer[] default array[1,2], "中文列" text default '中文', ordinary integer);
+        create unlogged table public.unlogged_default_probe(value boolean default true);
+        create table public.index_parent(id integer);
+        create unique index standalone_fk_target on public.index_parent(id);
+        create table public.index_child(parent_id integer references public.index_parent(id));
+        alter view public.fixture_view alter column value set default 'view-default';`);
+      const dump=db.dumpPath('inline-defaults.dump');
+      assert.equal((await createVerifiedBackup({session:await db.session(),runPg:db.runPg,dumpPath:dump})).verified,true);
+      const session=await db.session();let expanded;
+      try {await session.query("SET search_path = ''");expanded=JSON.parse(await session.query(BACKUP_INVENTORY_SQL));}
+      finally {await session.close();}
+      const archiveToc=await db.runPg('pg_restore',['--list',dump]);
+      const sql=await db.runPg('pg_restore',['--schema-only','--section=pre-data','--file=-',
+        '--table=inline_default_probe','--table=unlogged_default_probe',dump]);
+      assert.doesNotMatch(archiveToc,/DEFAULT public inline_default_probe/);
+      assert.match(sql,/id integer DEFAULT 42/);
+      assert.equal(verifyArchiveScope(expanded,archiveToc,sql).verified,true);
+      for(const changed of [sql.replace('DEFAULT 42',''),sql.replace('DEFAULT 42','DEFAULT 43'),
+        sql.replace('DEFAULT 42','/* DEFAULT 42 */')]){
+        assert.throws(()=>verifyArchiveScope(expanded,archiveToc,changed),/missing a snapshot column default/);
+      }
+      for(const omitted of ['DEFAULT public fixture_public id','DEFAULT public fixture_view value',
+        'INDEX public standalone_fk_target']){
+        const missing=archiveToc.split('\n').filter(line=>!line.includes(omitted)).join('\n');
+        assert.notEqual(missing,archiveToc,'Negative fixture did not remove a real archive object');
+        assert.throws(()=>verifyArchiveScope(expanded,missing,sql),/missing a snapshot/);
+      }
+      assert.equal(expanded.objects.find(o=>o.name==='standalone_fk_target'&&o.kind==='INDEX').required,true);
+    });
   } finally {
     if (db) await db.close();
     await fs.rm(dir,{ recursive:true,force:true });

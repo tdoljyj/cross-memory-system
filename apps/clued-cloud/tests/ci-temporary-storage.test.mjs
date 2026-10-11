@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { configureTemporaryStorage } from "../../../.github/actions/ci-temporary-storage/setup.mjs";
 import { checkApplicationWorkflows, checkRepositoryWorkflows, checkoutSources, PLATFORM_TEMP_ENVIRONMENT, repositoryTemporaryStorageFindings, sourceFingerprint, stepFingerprint, temporaryStorageFindings } from "../../../.github/actions/ci-temporary-storage/check-workflows.mjs";
 import { createRequire } from "node:module";
-import { runBackupTool, createVerifiedBackup, backupFailureDiagnostic, sqlstateCollector } from "../scripts/verify-production-backup-scope.mjs";
+import { runBackupTool, createVerifiedBackup, backupFailureDiagnostic, sqlstateCollector, verifyArchiveScope } from "../scripts/verify-production-backup-scope.mjs";
 
 const cli = fileURLToPath(new URL("../../../.github/actions/ci-temporary-storage/setup.mjs", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -347,6 +347,81 @@ test("SQLSTATE collection accepts only bounded exact severity lines and never ca
   }
   collector.reset(); collector.accept("psql:<stdin>:3: ERROR:  42P01\n");
   assert.equal(collector.value,"42P01");
+});
+
+function archiveFixture() {
+  const schemas=["public","clued_private","clued_watchdog","supabase_migrations"];
+  const objects=schemas.map((schema,index)=>({catalog:2615,oid:10+index,schema,kind:"SCHEMA",name:schema,
+    parent_oid:0,row_type_oid:0,required:true,extension_member:false}));
+  objects.push({catalog:1259,oid:100,schema:"supabase_migrations",kind:"TABLE",name:"schema_migrations",
+    parent_oid:0,row_type_oid:110,relation_kind:"r",required:true,extension_member:false},
+    {catalog:1247,oid:110,schema:"supabase_migrations",kind:"TYPE",name:"schema_migrations",
+      parent_oid:100,row_type_oid:111,required:false,extension_member:false},
+    {catalog:1247,oid:111,schema:"supabase_migrations",kind:"TYPE",name:"_schema_migrations",
+      parent_oid:110,row_type_oid:0,required:false,extension_member:false});
+  const inventory={objects,data:[{oid:100,schema:"supabase_migrations",kind:"TABLE DATA"}]};
+  const lines=schemas.map((schema,index)=>`${index+1}; 2615 ${10+index} SCHEMA - ${schema} postgres`);
+  lines.push("20; 1259 100 TABLE supabase_migrations schema_migrations postgres",
+    "21; 0 100 TABLE DATA supabase_migrations schema_migrations postgres");
+  return {inventory,lines};
+}
+test("archive refusals identify the exact fixed predicate without publishing private TOC tags", () => {
+  const {inventory,lines}=archiveFixture();
+  assert.equal(verifyArchiveScope(inventory,lines.join("\n")).verified,true);
+  const cases=[
+    [lines.concat("private_tag_canary"),"TOC_LINE_INVALID"],
+    [lines.concat("90; 0 0 UNREVIEWED_KIND private_tag_canary"),"TOC_KIND_UNREVIEWED"],
+    [lines.concat("90; 1259 999 TABLE public private_tag_canary postgres"),"TOC_OBJECT_OUTSIDE_SNAPSHOT"],
+    [lines.concat("90; 0 999 TABLE DATA public private_tag_canary postgres"),"TOC_DATA_UNEXPECTED"],
+    [lines.concat("90; 0 0 COMMENT - DATABASE private_tag_canary postgres"),"TOC_METADATA_UNBOUND"],
+    [lines.filter(line=>!line.includes("2615 10 ")),"TOC_OBJECT_MISSING"],
+    [lines.filter(line=>!line.includes("TABLE DATA")),"TOC_DATA_MISSING"],
+  ];
+  for(const [toc,expected] of cases){
+    assert.throws(()=>verifyArchiveScope(inventory,toc.join("\n")),error=>{
+      assert.equal(error.name,"AssertionError");
+      const diagnostic=backupFailureDiagnostic(error);
+      assert.equal(diagnostic.reason_code,expected);
+      assert.ok(!JSON.stringify(diagnostic).includes("private_tag_canary"));
+      return true;
+    });
+  }
+});
+
+test("inline default evidence binds the exact table, column and complete expression", () => {
+  const {inventory,lines}=archiveFixture();
+  inventory.objects.push({catalog:1259,oid:200,schema:'public',kind:'TABLE',name:'default_probe',
+    parent_oid:0,row_type_oid:0,relation_kind:'r',required:true,extension_member:false},
+    {catalog:2604,oid:201,schema:'public',kind:'DEFAULT',name:'value',parent_oid:200,row_type_oid:0,
+      required:true,extension_member:false,definition:'true'});
+  lines.push('30; 1259 200 TABLE public default_probe postgres');
+  const toc=lines.join('\n');
+  const ddl=expression=>`CREATE TABLE public.default_probe (value boolean DEFAULT ${expression});`;
+  assert.equal(verifyArchiveScope(inventory,toc,ddl('true')).verified,true);
+  assert.equal(verifyArchiveScope(inventory,toc,ddl('true NOT NULL')).verified,true);
+  assert.equal(verifyArchiveScope(inventory,toc,ddl('true').replace('CREATE TABLE','CREATE UNLOGGED TABLE')).verified,true);
+  for(const columns of ['value boolean DEFAULT true, other integer',
+    'other integer, value boolean DEFAULT true, last integer',
+    'value boolean DEFAULT true, CHECK (value IS NOT NULL)']){
+    assert.equal(verifyArchiveScope(inventory,toc,`CREATE TABLE public.default_probe (${columns});`).verified,true);
+  }
+  assert.throws(()=>verifyArchiveScope(inventory,toc),error=>backupFailureDiagnostic(error).reason_code==='TOC_DEFAULT_DEFINITION_REQUIRED');
+  for(const sql of [ddl('false'),ddl('true NOT IN (true)'),ddl('true AND false'),
+    'CREATE TABLE public.default_probe (value boolean);',
+    '/* '+ddl('true')+' */',"SELECT '"+ddl('true')+"';",'SELECT $$'+ddl('true')+'$$;',
+    ddl('true').replace('public.default_probe','clued_private.default_probe'),
+    ddl('true').replace('value boolean','other boolean'),
+    ddl('true').slice(0,-2),ddl('true').replace('DEFAULT true','CHECK (true)')]){
+    assert.throws(()=>verifyArchiveScope(inventory,toc,sql),error=>backupFailureDiagnostic(error).reason_code==='TOC_DEFAULT_MISSING');
+  }
+  for(const expression of ["'literal, (default) \\'::text","E'escape\\\\path'::text",'ARRAY[1, 2]',
+    "'中文'::text",'public.custom_default()', '(1 + 2)']){
+    inventory.objects.at(-1).definition=expression;
+    assert.equal(verifyArchiveScope(inventory,toc,ddl(expression)).verified,true);
+  }
+  const view=inventory.objects.find(o=>o.oid===200);view.kind='VIEW';view.relation_kind='v';
+  const viewToc=toc.replace('TABLE public default_probe','VIEW public default_probe');
+  assert.throws(()=>verifyArchiveScope(inventory,viewToc,ddl('true')),error=>backupFailureDiagnostic(error).reason_code==='TOC_OBJECT_MISSING');
 });
 
 test("backup preserves its primary refusal while separately reporting rollback and close failures", async () => {
