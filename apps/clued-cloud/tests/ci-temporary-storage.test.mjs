@@ -4,11 +4,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { configureTemporaryStorage } from "../../../.github/actions/ci-temporary-storage/setup.mjs";
 import { checkApplicationWorkflows, checkRepositoryWorkflows, checkoutSources, PLATFORM_TEMP_ENVIRONMENT, repositoryTemporaryStorageFindings, sourceFingerprint, stepFingerprint, temporaryStorageFindings } from "../../../.github/actions/ci-temporary-storage/check-workflows.mjs";
 import { createRequire } from "node:module";
-import { runBackupTool } from "../scripts/verify-production-backup-scope.mjs";
+import { runBackupTool, createVerifiedBackup, backupFailureDiagnostic, sqlstateCollector } from "../scripts/verify-production-backup-scope.mjs";
 
 const cli = fileURLToPath(new URL("../../../.github/actions/ci-temporary-storage/setup.mjs", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -282,7 +282,10 @@ test("both backup stdout readers preserve identifiers and function bodies across
   const helperSource = readFileSync(helperUrl, "utf8");
   const oldSource = helperSource.replace(/^\s*(?:this\.)?child\.stdout\.setEncoding\('utf8'\);\r?\n/gm, "");
   assert.notEqual(oldSource, helperSource);
-  const oldUrl = "data:text/javascript;base64," + Buffer.from(oldSource).toString("base64");
+  const variantDirectory = mkdtempSync(path.join(os.tmpdir(), "ci-backup-utf8-variant-"));
+  const oldFile = path.join(variantDirectory,"old-helper.mjs");
+  writeFileSync(oldFile,oldSource);
+  const oldUrl = pathToFileURL(oldFile).href;
   // Isolate the fake producer in a child process. PassThrough preserves exact
   // write boundaries, so split codepoints cannot accidentally coalesce in an
   // OS pipe and conceal the regression. The existing test covers real pipes.
@@ -326,11 +329,159 @@ test("both backup stdout readers preserve identifiers and function bodies across
     await session.close();
     process.stdout.write(JSON.stringify({tool:output===expected,snapshot:snapshot===expected}));
   `;
-  for (const [moduleUrl, expected] of [[oldUrl,{tool:false,snapshot:false}], [helperUrl.href,{tool:true,snapshot:true}]]) {
+  try { for (const [moduleUrl, expected] of [[oldUrl,{tool:false,snapshot:false}], [helperUrl.href,{tool:true,snapshot:true}]]) {
     const child = spawnSync(process.execPath, ["--input-type=module", "-e", program(moduleUrl)], { encoding:"utf8", timeout:10000 });
     assert.equal(child.status, 0, child.stderr || child.error?.message);
     assert.deepEqual(JSON.parse(child.stdout), expected);
+  } } finally { rmSync(variantDirectory,{recursive:true,force:true}); }
+});
+
+test("SQLSTATE collection accepts only bounded exact severity lines and never captures raw errors", () => {
+  const collector=sqlstateCollector();
+  collector.accept("ERROR:  42"); collector.accept("501\r\n");
+  assert.equal(collector.value,"42501");
+  for (const input of ["ERROR: TABLE\n","ERROR: 42501 private_object\n",
+    "psql: error: postgresql://password_canary@host/body_canary 42501\n",
+    "x".repeat(1024)+"ERROR: 42501\n","ERROR: 42501"]) {
+    collector.reset(); collector.accept(input); assert.equal(collector.value,null);
   }
+  collector.reset(); collector.accept("psql:<stdin>:3: ERROR:  42P01\n");
+  assert.equal(collector.value,"42P01");
+});
+
+test("backup preserves its primary refusal while separately reporting rollback and close failures", async () => {
+  const primary=new Error("postgresql://password_canary@host_canary/private_object SELECT body_canary");
+  const rollback=new Error("rollback_secret_canary"), closed=new Error("close_secret_canary");
+  const session={query:async sql=>{if(sql.startsWith("BEGIN"))return "";
+    if(sql==="ROLLBACK")throw rollback; throw primary;},close:async()=>{throw closed;}};
+  // The former finally path demonstrably replaces this primary failure.
+  const old=async()=>{let begun=false;try{await session.query("BEGIN");begun=true;await session.query("SELECT");}
+    finally{if(begun)await session.query("ROLLBACK").catch(()=>{});await session.close();}};
+  assert.equal(await old().catch(error=>error),closed);
+  const reports=[];
+  const actual=await createVerifiedBackup({session,runPg:async()=>assert.fail("No dump after snapshot refusal"),
+    dumpPath:"unused",onDiagnostic:report=>reports.push(report)}).catch(error=>error);
+  assert.equal(actual,primary);
+  const original=backupFailureDiagnostic(actual);
+  assert.equal(original.stage,"snapshot_export"); assert.equal(original.phase,"primary");
+  assert.equal(original.reason_code,"INTERNAL_ERROR");
+  assert.deepEqual(reports.filter(r=>r.event==="error").map(r=>[r.stage,r.phase]),
+    [["snapshot_export","primary"],["rollback_cleanup","cleanup"],["session_close","cleanup"]]);
+  const published=JSON.stringify([original,...reports]);
+  for(const canary of ["postgresql://","password_canary","host_canary","private_object","body_canary",
+    "rollback_secret_canary","close_secret_canary"])assert.ok(!published.includes(canary));
+});
+
+test("throwing or rejecting diagnostic observers cannot bypass guards, replace primary failure or prevent close", async () => {
+  const primary=new Error("synthetic snapshot refusal"), observer=new Error("observer_private_canary");
+  for(const mode of ["throw-primary-begin","throw-error","throw-success","throw-close-begin","reject-all"]){
+    const queries=[];let closes=0,dumps=0;
+    const session={query:async sql=>{queries.push(sql);if(sql.startsWith("BEGIN")||sql==="ROLLBACK")return "";throw primary;},
+      close:async()=>{closes++;}};
+    const onDiagnostic=record=>{
+      if(mode==="reject-all")return Promise.reject(observer);
+      if((mode==="throw-primary-begin"&&record.event==="begin"&&record.phase==="primary")||
+        (mode==="throw-error"&&record.event==="error")||(mode==="throw-success"&&record.event==="success")||
+        (mode==="throw-close-begin"&&record.event==="begin"&&record.stage==="session_close"))throw observer;
+    };
+    const outcome=await createVerifiedBackup({session,dumpPath:"unused",onDiagnostic,
+      runPg:async()=>{dumps++;assert.fail("No dump is allowed after failed snapshot export");}}).catch(error=>error);
+    await new Promise(resolve=>setImmediate(resolve)); // Observe Promise rejection handling, too.
+    assert.equal(outcome,primary,mode);
+    assert.equal(backupFailureDiagnostic(outcome).reason_code,"INTERNAL_ERROR");
+    assert.deepEqual(queries,["BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY","SELECT pg_export_snapshot()","ROLLBACK"],mode);
+    assert.equal(dumps,0,mode);assert.equal(closes,1,mode);
+  }
+});
+
+test("snapshot shutdown has finite waits, shares its result and never treats force or exit alone as close proof", () => {
+  const helperUrl=new URL("../scripts/verify-production-backup-scope.mjs",import.meta.url);
+  const program=`
+    import assert from 'node:assert/strict'; import cp from 'node:child_process';
+    import {syncBuiltinESMExports} from 'node:module'; import {EventEmitter} from 'node:events';
+    import {PassThrough,Writable} from 'node:stream';
+    const helper=await import(${JSON.stringify(helperUrl.href)});
+    let scenario='never',child;
+    cp.spawn=()=>{child=new EventEmitter();child.pid=1;child.exitCode=null;child.signalCode=null;
+      child.stdout=new PassThrough();child.stderr=new PassThrough();child.signals=[];child.unref=()=>{};
+      child.stdin=new Writable({write(chunk,encoding,done){done();}});
+      child.stdin.on('finish',()=>{if(scenario==='normal')queueMicrotask(()=>child.emit('close',0,null));});
+      child.kill=signal=>{child.signals.push(signal);if(scenario==='throw')throw new Error('private_kill_canary');
+        if(scenario==='forced')queueMicrotask(()=>child.emit('close',0,null));return false;};return child;};
+    syncBuiltinESMExports();
+    const oldSession=new helper.SnapshotSession('clued-production-backup-synthetic-old',{graceMs:20,termMs:20,killMs:20});
+    const oldChild=child;
+    const oldClose=async()=>{await new Promise(resolve=>{const timer=setTimeout(()=>oldChild.kill('SIGTERM'),20);
+      oldChild.once('close',()=>{clearTimeout(timer);resolve();});oldChild.stdin.end('\\\\q\\n');});};
+    const pending=oldClose();
+    assert.equal(await Promise.race([pending.then(()=>false),new Promise(r=>setTimeout(()=>r(true),80))]),true);
+    oldChild.emit('close',0,null);await pending; // Do not leave the reference test pending.
+    const verdicts=[];
+    for(scenario of ['never','throw','forced','normal','delayed']){
+      const session=new helper.SnapshotSession('clued-production-backup-synthetic-current',{graceMs:100,termMs:20,killMs:20});
+      const active=child,started=performance.now();
+      if(scenario==='delayed'){active.exitCode=0;active.emit('exit',0,null);setTimeout(()=>active.emit('close',0,null),40);}
+      const first=session.close();assert.equal(session.close(),first);
+      const result=await first.then(()=>null,error=>helper.backupFailureDiagnostic(error));
+      assert.ok(performance.now()-started<500);
+      if(scenario==='never'||scenario==='throw')assert.equal(result.reason_code,'SNAPSHOT_CLOSE_UNCONFIRMED');
+      if(scenario==='forced'){assert.equal(result.reason_code,'SNAPSHOT_CLOSE_FORCED');assert.equal(result.exit_code,0);}
+      if(scenario==='normal'||scenario==='delayed'){assert.equal(result,null);assert.deepEqual(active.signals,[]);}
+      if(scenario==='delayed')assert.ok(performance.now()-started>=30);
+      verdicts.push({scenario,reason:result?.reason_code??'graceful'});
+    }
+    process.stdout.write(JSON.stringify({old_wait:'pending',current:verdicts}));
+  `;
+  const child=spawnSync(process.execPath,["--input-type=module","-e",program],{encoding:"utf8",timeout:5000});
+  assert.equal(child.status,0,child.stderr||child.error?.message);
+  assert.equal(JSON.parse(child.stdout).old_wait,"pending");
+  assert.ok(!child.stdout.includes("private_kill_canary"));
+});
+
+test("refused backup CLI exits nonzero with inherited pipes so owned producer cleanup can run", {skip:process.platform!=="linux"}, () => {
+  const base=mkdtempSync(path.join(os.tmpdir(),"ci-backup-pipe-close-test-"));
+  const bin=path.join(base,"bin"),scratch=path.join(base,"scratch");mkdirSync(bin);mkdirSync(scratch);
+  const helper=fileURLToPath(new URL("../scripts/verify-production-backup-scope.mjs",import.meta.url));
+  const source=readFileSync(helper,"utf8");
+  const oldSource=source.replace(/  close\(\) \{\n    this\.closeResult \?\?= this\.closeBounded\(\);\n    return this\.closeResult;\n  \}/,
+    `  async close(){if(!this.child.pid||this.child.exitCode!==null||this.child.signalCode!==null)return;
+      await new Promise(resolve=>{const t=setTimeout(()=>this.child.kill('SIGTERM'),5000);
+        this.child.once('close',()=>{clearTimeout(t);resolve();});this.child.stdin.end('\\\\q\\n');});}`);
+  assert.notEqual(source,oldSource);
+  const oldFile=path.join(base,"old-helper.mjs");writeFileSync(oldFile,oldSource);
+  const driver=path.join(base,"docker-driver.mjs");
+  writeFileSync(driver,`import fs from 'node:fs';import {spawn} from 'node:child_process';
+    const descendant=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore','inherit','inherit']});
+    fs.writeFileSync(process.env.MOCK_DESCENDANT,String(descendant.pid));
+    process.stderr.write('FATAL: postgresql://password_canary@host_canary/private_object body_canary\\n');
+    process.exit(0);`);
+  mockCommand(bin,"docker",'exec "$TEST_NODE_BINARY" "$MOCK_DOCKER_DRIVER"');
+  try {
+    for(const [variant,file] of [["old",oldFile],["current",helper]]){
+      const marker=path.join(base,variant+"-descendant");
+      const boot=`const ordinary=setTimeout;globalThis.setTimeout=(f,n,...a)=>ordinary(f,n===60000?500:n===5000||n===2000?30:n,...a);
+        process.argv=[process.execPath,${JSON.stringify(file)},'clued-production-backup-synthetic-pipe',${JSON.stringify(scratch)}];
+        await import(${JSON.stringify(pathToFileURL(file).href)});`;
+      let actual;
+      try {
+        actual=spawnSync(process.execPath,["--input-type=module","-e",boot],{encoding:"utf8",timeout:2000,env:{...process.env,
+          PATH:bin+path.delimiter+process.env.PATH,TEST_NODE_BINARY:process.execPath,MOCK_DOCKER_DRIVER:driver,MOCK_DESCENDANT:marker}});
+      } finally {
+        if(existsSync(marker)){const pid=Number(readFileSync(marker,"utf8"));assert.ok(Number.isSafeInteger(pid)&&pid>1);
+          try{process.kill(pid,"SIGKILL");}catch(error){if(error.code!=="ESRCH")throw error;}}
+      }
+      if(variant==="old")assert.equal(actual.error?.code,"ETIMEDOUT","Old CLI unexpectedly released its inherited pipes");
+      else {
+        assert.equal(actual.error,undefined);assert.equal(actual.status,1,actual.stderr);
+        const reports=(actual.stdout+"\n"+actual.stderr).split("\n").filter(line=>line.startsWith("{")).map(line=>JSON.parse(line));
+        assert.ok(reports.some(r=>r.stage==="session_close"&&r.reason_code==="SNAPSHOT_CLOSE_UNCONFIRMED"&&r.observed_close===false));
+        assert.ok(reports.some(r=>r.event==="refused"&&r.stage==="snapshot_begin"&&
+          ["SNAPSHOT_QUERY_TIMEOUT","SNAPSHOT_IO_ERROR"].includes(r.reason_code)));
+        for(const canary of ["postgresql://","password_canary","host_canary","private_object","body_canary"])
+          assert.ok(!(actual.stdout+actual.stderr).includes(canary));
+      }
+    }
+  } finally {rmSync(base,{recursive:true,force:true});}
 });
 
 test("backup cleanup retains verified evidence and refuses a producer it cannot stop (mocked tools)", { skip: process.platform !== "linux" }, () => fixture(({ base, root }) => {
