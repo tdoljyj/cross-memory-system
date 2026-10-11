@@ -3,15 +3,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
-import EmbeddedPostgres from 'embedded-postgres';
-import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
+const { default: EmbeddedPostgres } = await import(pathToFileURL(path.join(sourceApp,'node_modules/embedded-postgres/dist/index.js')));
+const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
 
 // Independent Global execution-intent currentness regression. Synthetic
 // accounts and a temporary PostgreSQL only; no real grant or production.
-const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const candidateFile = '20261011041300_dataset_split_native_grant_binding_successor_v1.sql';
 const repo = path.resolve(app, '../..');
+const sourceRepo = path.resolve(sourceApp,'../..');
 const TASK = '1502fd80-8ff8-4adc-b4f5-da6d462f4f8a';
 const PROJECT = '0597aa60-9b98-4da6-a4ab-63d7705b632f';
 const REQUEST = 'af1cabdb-5259-4ca3-94d3-133f1af122c8';
@@ -27,15 +30,15 @@ async function freePort() {
 
 test('Native Owner validates a Project Task with a registered Global intent through real currentness',
   { timeout: 300000 }, async t => {
-  const root = path.resolve(repo, 'work/host-harness/dataset-split-native-currentness-scope');
+  const root = path.resolve(repo, 'work/host-harness/ngcs');
   await fs.mkdir(root, { recursive: true });
   assert.equal((await fs.realpath(root)).toLowerCase(), root.toLowerCase());
-  const dir = await fs.mkdtemp(path.join(root, 'scope-'));
+  const dir = await fs.mkdtemp(path.join(root, 'p-'));
   const ownership = { run_id: uid(), root, dir };
   await fs.writeFile(path.join(dir, 'Ownership.json'), JSON.stringify(ownership), { flag: 'wx' });
   const oldTemp = Object.fromEntries(['TEMP', 'TMP', 'TMPDIR'].map(k => [k, process.env[k]]));
   for (const k of Object.keys(oldTemp)) process.env[k] = dir;
-  const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'database'), user: 'postgres',
+  const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'db'), user: 'postgres',
     password: hash(), port: await freePort(), persistent: true, createPostgresUser: false,
     postgresFlags: ['-c', 'io_method=sync', '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, proc;
@@ -51,9 +54,9 @@ test('Native Owner validates a Project Task with a registered Global intent thro
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    const migrationDir = path.join(app, 'supabase/migrations');
+    const migrationDir = path.join(sourceApp, 'supabase/migrations');
     const names = (await fs.readdir(migrationDir)).filter(n => n.endsWith('.sql')).sort();
-    for (const name of names.filter(n => n !== successor)) {
+    for (const name of names.filter(n => n !== successor && n !== candidateFile)) {
       try { await db.query(await fs.readFile(path.join(migrationDir, name), 'utf8')); }
       catch (e) { throw new Error('Migration ' + name + ': ' + e.message, { cause: e }); }
     }
@@ -85,7 +88,7 @@ test('Native Owner validates a Project Task with a registered Global intent thro
       record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)
       values($1,$2,'Synthetic scope task','Isolated test','project',$3,'task','active',1,'active',$4,
       '{"execution_bucket":"next"}','{}','{}','observed','Synthetic fixture')`, [TASK, owner, PROJECT, scope]);
-    const plan = JSON.parse(await fs.readFile(path.join(repo, 'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'), 'utf8'));
+    const plan = JSON.parse(await fs.readFile(path.join(sourceRepo, 'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'), 'utf8'));
     const resources = [...Object.values(plan.targets).map(id => 'record:' + id),
       ...Object.values(plan.owner_anchor_refs).map(r => `record:${r.id}@${r.version}#${r.content_hash}`),
       'repo:tdoljyj/cross-memory-system/8a975c42ddba3ee7a80fe54a4223b7f590014b67/development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'].sort();
@@ -100,6 +103,15 @@ test('Native Owner validates a Project Task with a registered Global intent thro
     await db.query('update clued_private.owner_requests_v1 set grant_id=null where id=$1', [REQUEST]);
     await db.query('update clued_private.owner_grants_v1 set id=$1 where id=$2', [OLD, old.grant.grant_id]);
     await db.query('update clued_private.owner_requests_v1 set grant_id=$1 where id=$2', [OLD, REQUEST]);
+    // Genuine G6 claim and exact three target resources. This does not alter
+    // the predecessor's Global-currentness rejection or grant evidence.
+    const ownClaim=await rpc('clued_work_claim_v1',{scope,task_id:TASK,
+      holder_label:'Synthetic registered-Global same-Binding holder',
+      holder_client:'isolated Node test',holder_session_ref:'scope-correction-'+uid(),
+      write_set:Object.values(plan.targets).map(id=>'record:'+id),idempotency_key:'scope-claim-'+uid()});
+    assert.equal(ownClaim.status,'committed');
+
+
     await db.query(`insert into public.clued_memories(id,user_id,title,content,scope,record_type,status,
       record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)
       values($1,$2,'Synthetic Global intent','Only test registration','global','decision','active',1,'active','global',
@@ -107,6 +119,7 @@ test('Native Owner validates a Project Task with a registered Global intent thro
         rationale: 'Synthetic registered intent', execution_intents: [{ id: intentId, completion_criteria: 'Synthetic scope regression' }] }]);
     await db.query(`update public.clued_memories set type_fields=type_fields || jsonb_build_object('execution_intent',$2::jsonb) where id=$1`,
       [TASK, { id: intentId, source_id: sourceId, source_version: 1, source_scope: 'global' }]);
+
     const view = () => native('clued_dataset_split_grant_correction_view_v1', { request_id: REQUEST });
     const fence = async scopes => (await db.query('select clued_private.record_currentness_fence($1,$2,$3) v', [owner, TASK, scopes])).rows[0].v;
     const original = (await db.query('select pg_get_functiondef($1::regprocedure) v', ['clued_private.dataset_split_grant_correction_context_v1(uuid,uuid)'])).rows[0].v;
@@ -128,6 +141,9 @@ test('Native Owner validates a Project Task with a registered Global intent thro
         "clued_private.record_currentness_fence(p_owner,m.id,array['global',s])"));
       await assert.rejects(db.query(successorText), /dataset_split_correction_context_source_changed/);
     });
+    // Apply only after the exact 175022 scope-only regression has proved its
+    // original source replacement. The new successor must not hide that case.
+    await db.query(await fs.readFile(path.join(app,'supabase/migrations',candidateFile),'utf8'));
     await t.test('Native view and issue validate Global source without changing grant resources or usage', async () => {
       const v = await view(); assert.equal(v.status, 'eligible');
       assert.deepEqual(v.confirmation_view.resources, resources);
