@@ -2,13 +2,16 @@
 
 Status: implementation candidate, not deployed or accepted as complete R9 measurement.
 Task: `c20f91d3-baf9-4e2c-ac69-d1455ed4c57c`.
-Owner forward-window decision: `40904bf6-2217-4c5f-b372-471cc8a8acee@1`.
+Original forward-window decision (historical seven-day duration): `40904bf6-2217-4c5f-b372-471cc8a8acee@1`.
+Current duration successor: `af3f6be2-c025-4ecb-bb84-48b0c13fd7d0@1` (continuous 72 hours).
 
 ## Acceptance boundary
 
-Retain original historical results and NOT_MEASURED gaps. Only after all five qualified sources are installed and continuity is proven does T0 start a continuous seven-day R9 window. Hosted fees use complete UTC days, by workflow/SKU/gross/discount/net with workload attribution. This decision grants neither production installation nor broader access, and never turns a candidate, mock test or elapsed duration into acceptance.
+Retain original historical results and NOT_MEASURED gaps. The original seven-day duration is historical; the successor changes only that duration to continuous 72 hours. All five sources must be formally installed, with source qualification, actual authentication/permissions, a complete denominator and natural continuity verified before T0 starts the 72-hour R9 window. T0 remains null until these prerequisites pass; the Owner's duration choice, a commit or a synthetic test does not start it. Hosted fees use complete UTC days, by workflow/SKU/gross/discount/net with workload attribution. These decisions grant neither production installation nor broader access, and never turn a candidate, mock test or elapsed duration into acceptance. The original frozen acceptance-options file and its accepted bytes remain unchanged.
 
 ## Private evidence core
+
+The active migration is `20261011033947_merge_admission_measurement_history_atomic_v1.sql`, generated with the installed official CLI. It wraps the original definition in one PL/pgSQL DO block, so both a reset and the configured production publisher can apply it atomically. The publisher's outer transaction still binds the schema change and its exact-byte migration-history row; the publisher is unchanged. The original `20261011005515_merge_admission_measurement_history_v1.sql` was never applied by this task and is preserved byte-for-byte under `supabase/history-only/` solely as the transaction-control negative fixture. That directory is outside `supabase/ledger/history-only/`; the fixture is not represented as an applied production row. Its immutable original also remains in merge commit `7ad67401f57dfcabcfe4e4cd1ea59d358cb14376`. Neither the retired pending file nor a successful local wrapper test establishes production installation. Old exact-7ad production grants must not be used for this successor.
 
 The generated SQL migration creates two private, RLS-enabled tables. Per-user sequence allocation and append happen in the source transaction. A rollback rolls both back. Policy/claim/queue-marker snapshots are seeded under source-table locks; accounts first active later receive a policy boundary before the first change. Source hashes cover the existing FIFO, deadline, stamp, merge-ref projection, profile and recorder definitions.
 
@@ -21,6 +24,21 @@ The private page core has no public grants. An optional `measurement` branch in 
 Direct update/delete/truncate of events is refused. Account erasure keeps the new ledger's own FK cascade semantics; no pruning API is added. Existing unrelated whole-account deletion limitations remain outside this change. All new tables/functions revoke access from PUBLIC, anon, authenticated and service_role. No new secret, permission, role, budget or public SECURITY DEFINER entry point is introduced.
 
 ## Remaining integration requirements
+
+### Capability metadata schema /1
+
+Migration `20261011050507_merge_admission_measurement_capabilities_v1.sql` adds private `merge_measurement_capabilities_v1(uuid)` and extends the existing authenticated audit measurement response. Its single DO block is compatible with the unchanged publisher's schema/history transaction; the public signature, ACL and `audit:read` permission remain unchanged.
+
+| Response field | Required semantics |
+| --- | --- |
+| `stream_id`, `end_sequence`, `started_at`, `source_digest` | One fixed, rechecked header; never substitute the helper's latest stream or tail. |
+| `capabilities` | `clued.authenticated-measurement-capabilities/1`; fixed catalog/trigger/clock fields only, validated twice. |
+| `capability_fingerprint` | SHA256 of the validated metadata projection; not an independent trusted pin or continuous-DDL proof. |
+| `served_observed_at` | Server observation after the final reads and contributor authorization; not a commit timestamp. |
+| `source_auth`, `source_continuity`, `commit_clock_qualified`, `official_metric` | Always false in this phase. |
+| `t0` | Always null in this phase. |
+
+The caller user comes only from the existing resolver. Every context contributing at or before the fixed end is authorized before and after the final reads. Invalid or changing pins/capabilities, unavailable sources and incomplete authorization return `NOT_MEASURED` with an empty event array; unreadable contributors must not be filtered into a smaller denominator. No clock-continuity sidecar, new writer, setting, permission or public RPC is installed by this migration.
 
 The authenticated metadata reader remains a candidate until independently reviewed, installed and naturally qualified. A repository-qualified consumer and its source/provenance checks are still required. Existing CI token/measurement App boundaries must be preserved. Cross-context claims cannot leak through a project-scoped reader or be silently omitted from a supposedly complete queue denominator.
 

@@ -3,11 +3,11 @@
 export const CLUED_COMPONENTS_SCHEMA = "clued.components/1";
 export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
-  "skill.clued": "1.0.19",
-  "agent-contract": "46",
-  "mcp.server": "0.4.6",
+  "skill.clued": "1.0.20",
+  "agent-contract": "47",
+  "mcp.server": "0.4.8",
   "hook.capture-guard": "1.0.1",
-  "hook.work-claim-guard": "1.1.3",
+  "hook.work-claim-guard": "1.1.4",
   "hook.version-check": "1.0.1",
   "hook.run-python": "1.0.0",
   "hook.settings": "1.1.1",
@@ -15,4 +15,4 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.update-clued-skills": "1.0.0",
   "script.memory-sync": "1.0.0"
 };
-export const MCP_SERVER_VERSION = "0.4.6";
+export const MCP_SERVER_VERSION = "0.4.8";

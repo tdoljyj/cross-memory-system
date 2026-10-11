@@ -155,9 +155,14 @@ test('actions creates one bundle through clued_owner_request_bundle_v1 (Permissi
     // actions with action or resources is refused before the database.
     const mixed = (await (await worker.fetch(mcp(bindingToken, TOOL, { ...args, action: 'release.production' }), enabled, ctx)).json()).result;
     assert.equal(mixed.isError, true);
-    assert.deepEqual(mixed.structuredContent, { status: 'rejected', error_code: 'owner_request_bundle_invalid' });
+    assert.deepEqual(mixed.structuredContent, { status: 'rejected', error_code: 'owner_request_bundle_invalid',
+      error: { code: 'owner_request_bundle_invalid', category: 'canonical_result', status: 'rejected' } });
+    assert.deepEqual(JSON.parse(mixed.content[0].text), mixed.structuredContent);
     const status = (await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID, actions: args.actions }), enabled, ctx)).json()).result;
-    assert.deepEqual(status.structuredContent, { status: 'rejected', error_code: 'owner_request_status_fields_invalid' });
+    assert.equal(status.isError, true);
+    assert.deepEqual(status.structuredContent, { status: 'rejected', error_code: 'owner_request_status_fields_invalid',
+      error: { code: 'owner_request_status_fields_invalid', category: 'canonical_result', status: 'rejected' } });
+    assert.deepEqual(JSON.parse(status.content[0].text), status.structuredContent);
     assert.equal(calls.length, 1);
   } finally { restore(); }
 });
@@ -175,7 +180,9 @@ test('request_id alone reads status; mixing it with create fields is refused bef
 
     const mixed = (await (await worker.fetch(mcp(bindingToken, TOOL, { request_id: REQUEST_ID, action: 'release.production' }), enabled, ctx)).json()).result;
     assert.equal(mixed.isError, true);
-    assert.deepEqual(mixed.structuredContent, { status: 'rejected', error_code: 'owner_request_status_fields_invalid' });
+    assert.deepEqual(mixed.structuredContent, { status: 'rejected', error_code: 'owner_request_status_fields_invalid',
+      error: { code: 'owner_request_status_fields_invalid', category: 'canonical_result', status: 'rejected' } });
+    assert.deepEqual(JSON.parse(mixed.content[0].text), mixed.structuredContent);
     assert.equal(calls.length, 1);
 
     // session_ref with request_id is a status read; the session is dropped.
@@ -221,7 +228,9 @@ test('database contract rejections become tool errors naming the rule; other fai
     const args = { action: 'deploy.anything', resources: ['repo:x/y/**'], idempotency_key: 'unknown-action' };
     const rejected = (await (await worker.fetch(mcp(bindingToken, TOOL, args), enabled, ctx)).json()).result;
     assert.equal(rejected.isError, true);
-    assert.deepEqual(rejected.structuredContent, { status: 'rejected', error_code: 'owner_grant_action_unknown' });
+    assert.deepEqual(rejected.structuredContent, { status: 'rejected', error_code: 'owner_grant_action_unknown',
+      error: { code: 'owner_grant_action_unknown', category: 'canonical_result', status: 'rejected' } });
+    assert.deepEqual(JSON.parse(rejected.content[0].text), rejected.structuredContent);
 
     reply = () => Response.json({ code: '22023', message: 'work_claim_resource_kind_unknown' }, { status: 400 });
     const kind = (await (await worker.fetch(mcp(bindingToken, TOOL, { ...args, action: 'release.production', resources: ['zz:x'] }), enabled, ctx)).json()).result;

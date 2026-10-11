@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.19",
+      "version": "1.0.20",
       "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "59a444d5f80e09d375b0ed39366b5b37edc3fd4a352f654546704fc68f3c6aab",
+      "content_sha256": "645400187ff54c7652383b28d9b0b3ec476a3222d046968ea3e655dfb30a99d1",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "46",
+      "version": "47",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "40948d05fe3c6c10b5dda4bb195ccfb405a343d7f6a906a0020576f3e485d79f",
+      "content_sha256": "8a14ff521b756a0b41cb03ae3f109fdbd466eff7f1a7fa8872a887945fa42e06",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,7 +50,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.4.6",
+      "version": "0.4.8",
       "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
@@ -71,13 +71,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.3",
+      "version": "1.1.4",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "559b477c957f4add2128eb0e6c03d821b470346ec48e3f641db2785f26e22a8e",
+      "content_sha256": "2cd752247e9aa9d9707e5cc16d5edf193ea020bdb2dd82b42b6ba83d4890ee78",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
