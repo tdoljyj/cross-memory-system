@@ -5,9 +5,9 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
+import EmbeddedPostgres from 'embedded-postgres';
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
-const { default: EmbeddedPostgres } = await import(pathToFileURL(path.join(sourceApp,'node_modules/embedded-postgres/dist/index.js')));
 const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
 
 // Independent Global execution-intent currentness regression. Synthetic

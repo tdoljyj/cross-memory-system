@@ -75,6 +75,16 @@
             "job_id": "isolated-candidate-untrusted-hosted",
             "definition_sha256": "e0203dc254798cf57298dad21757857373626fbdb2b96fd9d7753829197a052a"
           }
+        ],
+        "46939bb50dd33184fe16511a5e0e21d01ab19414": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "f7b6f2b34c1a8e2e6768393d50376d7dbd1e7e91186e9d8140b2440f48c99f9a"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "57133a69ff75999c0d64f951a81d4245c7d94631c8c17dc22021f61c51638d92"
+          }
         ]
       }
     },

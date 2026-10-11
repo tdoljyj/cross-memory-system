@@ -5,15 +5,15 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
+import EmbeddedPostgres from 'embedded-postgres';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
-const { default: EmbeddedPostgres } = await import(pathToFileURL(path.join(sourceApp,'node_modules/embedded-postgres/dist/index.js')));
 const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
 const { findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog } = await import(pathToFileURL(path.join(sourceApp,'tests/worker-gateway-caller-fixture.mjs')));
 
 // Real isolated PostgreSQL and synthetic accounts/IDs only. No production,
 // real Owner approval, DomainAuthority, DataGate, M2 or model qualification.
-const candidateDir = path.resolve(app,'../..');
 const candidateFile = '20261011041300_dataset_split_native_grant_binding_successor_v1.sql';
 const repo = path.resolve(app, '../..');
 const sourceRepo = path.resolve(sourceApp,'../..');
@@ -67,6 +67,7 @@ for (const scene of ['boundaries','consume-race']) test(`Native Binding successo
       catch (e) { throw new Error('Migration ' + name + ': ' + e.message, { cause: e }); }
     }
     await allowRawTestBindings(db);
+    await allowTestIssuerCredentials(db);
     const owner = uid(), other = uid(), token = hash();
     await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'correction@example.invalid',now()),($2,'other@example.invalid',now())",[owner,other]);
     const originalBinding = (await db.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
