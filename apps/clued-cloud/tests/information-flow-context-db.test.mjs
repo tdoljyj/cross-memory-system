@@ -376,7 +376,13 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
         'a Binding without context:read is denied by resolve_binding');
       const noReadMcp = await call('clued_context_pack', { scope: 'global' }, rawNoRead);
       assert.notEqual(noReadMcp.status, 'ok');
-      assert.match(JSON.stringify(noReadMcp), /not authorized|denied|401|403|binding/i);
+      // This raw fixture has no v12 authorization lifecycle. Status lookup
+      // must refuse it without suggesting permissions for an unknown grant.
+      assert.deepEqual(noReadMcp, {
+        code: -32000,
+        message: 'authorization_revoked_or_expired',
+        data: { code: '42501' },
+      });
 
       // ---- Policy validation at issue (22023 codes, no token row).
       const issue = async (input, claims = fresh(userId)) =>
