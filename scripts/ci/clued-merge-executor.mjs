@@ -103,6 +103,11 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
   if (rules.auto_merge !== "allowed") return stop(`auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer`);
   const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution });
   if (seen.state === "failed" || seen.state === "running") return stop(`CI ${seen.state}: ${seen.reason}`);
+  // The final barrier forbids any active PR run, including uncounted runs.
+  // Only a complete observation can take this early wait; other idle states
+  // still need qualification so that admitted gate-only recovery remains possible.
+  if (seen.state === 'idle' && Array.isArray(seen.active_runs) && seen.active_runs.length)
+    return stop(`waiting for active CI: ${seen.reason}`);
   // GitHub's auto-merge waits only for the ruleset's required checks, and no gated workflow is
   // required: act only once every CI workflow that ran on the head passed, its gated jobs run,
   // as the direct merge does (Task 114d43cf). The executor runs after each slot report, that is
