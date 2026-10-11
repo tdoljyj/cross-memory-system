@@ -1,3 +1,4 @@
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -216,7 +217,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
           (select count(*) from pg_policies p where p.schemaname = 'clued_private' and p.tablename = c.relname) policies,
           bool_or(has_table_privilege(r.rolname, c.oid, 'select,insert,update,delete,truncate,references,trigger')) any_privilege
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+        cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
         where n.nspname = 'clued_private' and c.relname = any($1) group by c.oid, c.relname, c.relkind, c.relrowsecurity,
           c.relacl, c.relowner order by c.relname`, [TABLES]);
       assert.deepEqual(rows.map((r) => r.relname), [...TABLES].sort());
@@ -236,7 +237,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       const { rows } = await admin.query(`select p.oid::regprocedure::text f,
           bool_or(has_function_privilege(r.rolname, p.oid, 'execute')) any_execute
         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+        cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
         where (n.nspname = 'clued_private' and p.proname like 'integration\\_%')
            or (n.nspname = 'public' and (p.proname like 'clued\\_integration\\_%' or p.proname = 'clued_user_integration_v1'))
         group by p.oid`);
@@ -253,7 +254,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     const executors = async () => (await admin.query(`select p.proname, array_agg(r.rolname order by r.rolname) filter (where
         has_function_privilege(r.rolname, p.oid, 'execute')) roles
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      cross join (values ('anon'), ('authenticated'), ('service_role')) r(rolname)
+      cross join (select rolname::text as rolname from pg_roles where rolname in ('anon','authenticated','service_role','clued_worker_gateway','clued_p5_gateway')) r
       where n.nspname = 'public' and p.proname = any($1)
       group by p.proname order by p.proname`, [[...BINDING_RPCS, 'clued_user_integration_v1']])).rows;
 
@@ -267,12 +268,17 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
 
     // every later migration, in production order
     for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+    const gateway=await connect();
+    await gateway.query('set session authorization authenticator');
+    await setWorkerGatewayCaller(gateway);
+    await findGatewayCloseoutMigration(root);
+    await assertGatewayCloseoutBoundary(admin);
 
-    await t.test('T-S-2 after the security hygiene migration: the Binding path is anon only', async () => {
+    await t.test('T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout', async () => {
       const rows = await executors();
       assert.equal(rows.length, BINDING_RPCS.length + 1);
       for (const row of rows) {
-        assert.deepEqual(row.roles, row.proname === 'clued_user_integration_v1' ? ['authenticated'] : ['anon'], row.proname);
+        assert.deepEqual(row.roles, row.proname === 'clued_user_integration_v1' ? ['authenticated'] : ['clued_worker_gateway'], row.proname);
       }
     });
 
@@ -289,10 +295,30 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         from unnest(array['test.complete','test.noauth','test.tenant']) h`, [FULL]);
 
     // ---- channel helpers -------------------------------------------------------------------------
-    const rpc = async (client, name, binding, input) =>
-      (await client.query(`select public.${name}($1, $2::jsonb) r`, [binding.hash ?? binding, JSON.stringify(input)])).rows[0].r;
+    // Concurrent compound fixtures seed rows and hold locks on their original
+    // backend. Switch only that public call's real role, retaining its transaction/PID.
+    // A failed SQL statement leaves an open transaction aborted; its existing outer
+    // rollback restores the transactional SET and the original SQLSTATE is preserved.
+    const roleQueues=new WeakMap();
+    const requestRole = (client,role,body) => {
+      const next=(roleQueues.get(client) ?? Promise.resolve()).catch(()=>{}).then(async()=>{
+      const prior=(await client.query("select current_setting('role') role,current_setting('request.jwt.claims',true) claims")).rows[0];
+      await client.query("select set_config('role',$1,false),set_config('request.jwt.claims',$2,false)",[role,JSON.stringify({role})]);
+      try { return await body(); }
+      finally {
+        try { await client.query("select set_config('role',$1,false),set_config('request.jwt.claims',$2,false)",[prior.role,prior.claims ?? '']); }
+        catch(error) { if(error.code!=='25P02') throw error; }
+      }
+      });
+      roleQueues.set(client,next);
+      return next;
+    };
+    const rpc = async (client, name, binding, input) => client===admin
+      ? workerGatewayRpc(gateway,name,binding.hash ?? binding,input)
+      : requestRole(client,'clued_worker_gateway',async() => (await client.query(`select public.${name}($1, $2::jsonb) r`,[binding.hash ?? binding,JSON.stringify(input)])).rows[0].r);
     const native = async (client, user, input) => {
       await client.query('begin');
+      await client.query('set local role authenticated');
       try {
         await client.query(`select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', '{}', true)`, [user]);
         const result = (await client.query('select public.clued_user_integration_v1($1::jsonb) r', [JSON.stringify(input)])).rows[0].r;
@@ -515,8 +541,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       const ba = await oauthBinding(user, { client: 'det' }); const bb = await oauthBinding(user, { client: 'det' });
       const ra = await open(ba, {}); const rb = await open(bb, {});
       await c1.query('begin');
-      const a = (await c1.query('select public.clued_integration_create_or_bind_v1($1, $2::jsonb) r', [ba.hash,
-        JSON.stringify({ idempotency_key: key(), request_id: ra.request_id, binding_intent: 'CREATE_OR_BIND' })])).rows[0].r;
+      const a = await rpc(c1,'clued_integration_create_or_bind_v1',ba,
+        { idempotency_key: key(), request_id: ra.request_id, binding_intent: 'CREATE_OR_BIND' });
       const pid = (await c2.query('select pg_backend_pid() p')).rows[0].p;
       const pending = bind(bb, rb.request_id, 'CREATE_OR_BIND', c2);
       let waiting = null;
@@ -534,8 +560,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       const bc = await oauthBinding(user, { client: 'rollback' }); const bd = await oauthBinding(user, { client: 'rollback' });
       const rc = await open(bc, {}); const rd = await open(bd, {});
       await c1.query('begin');
-      await c1.query('select public.clued_integration_create_or_bind_v1($1, $2::jsonb) r', [bc.hash,
-        JSON.stringify({ idempotency_key: key(), request_id: rc.request_id, binding_intent: 'CREATE_OR_BIND' })]);
+      await rpc(c1,'clued_integration_create_or_bind_v1',bc,
+        { idempotency_key: key(), request_id: rc.request_id, binding_intent: 'CREATE_OR_BIND' });
       const pendingD = bind(bd, rd.request_id, 'CREATE_OR_BIND', c2);
       await new Promise((resolve) => setTimeout(resolve, 100));
       await c1.query('rollback');
@@ -614,8 +640,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       const k1 = (await integration(id)).claim_key_sha256;
       const c1 = await connect(); const observer = await connect(); const c3 = await connect();
       await c1.query('begin');
-      const moved = (await c1.query('select public.clued_integration_identity_update_v1($1, $2::jsonb) r', [b.hash,
-        JSON.stringify({ idempotency_key: key(), integration_id: id, base_version: (await integration(id)).version, tenant: tenant('K2') })])).rows[0].r;
+      const moved = await rpc(c1,'clued_integration_identity_update_v1',b,
+        { idempotency_key: key(), integration_id: id, base_version: (await integration(id)).version, tenant: tenant('K2') });
       assert.equal(moved.status, 'committed', JSON.stringify(moved));
       const seen = (await observer.query(`select claim_key_sha256 from clued_private.integration_claims_v1
         where integration_id = $1 and claim_status = 'CURRENT'`, [id])).rows;
@@ -1268,6 +1294,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       const id = (await install(b, { host: 'anthropic.claude', host_surface: 'chat' })).supplemental.integration_id;
       // the Owner revokes the connection in Clued's connection page (manage_v12 revoke)
       await admin.query('begin');
+      await admin.query('set local role authenticated');
       await admin.query(`select set_config('request.jwt.claim.sub', $1, true)`, [user]);
       await admin.query(`select public.clued_authorization_manage_v12($1::jsonb)`, [JSON.stringify({ op: 'revoke', binding_id: b.id, base_version: 1 })]);
       await admin.query('commit');
@@ -1334,6 +1361,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         environment: 'canonical', actions: ['read', 'write'] }] });
       // the Owner reduces b1 to read while it is the CURRENT connection
       await admin.query('begin');
+      await admin.query('set local role authenticated');
       await admin.query(`select set_config('request.jwt.claim.sub', $1, true)`, [user]);
       await admin.query(`select public.clued_authorization_manage_v12($1::jsonb)`, [JSON.stringify({ op: 'reduce', binding_id: b1.id, base_version: 1,
         selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }] })]);
@@ -1609,6 +1637,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       await expectCode(native(admin, user, { op: 'declare', integration_id: id }), 'invalid_integration_operation');
       // an OAuth client JWT is not a Native session
       await admin.query('begin');
+      await admin.query('set local role authenticated');
       try {
         await admin.query(`select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', '{"client_id":"x"}', true)`, [user]);
         await expectCode(admin.query(`select public.clued_user_integration_v1('{"op":"list"}'::jsonb)`), 'direct_human_session_required');
@@ -1616,6 +1645,11 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
         await admin.query('rollback');
       }
     });
+    const closeout=await findGatewayCloseoutMigration(root);
+    const callerCatalog=await snapshotCallerCatalog(admin);
+    await apply(closeout);
+    assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog,'G6 replay preserves current Native/Binding definitions and ACL');
+    await assertGatewayCloseoutBoundary(admin);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop();
@@ -1631,7 +1665,7 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
     databaseDir: directory, user: 'postgres', password: sha(uid()), port: await freePort(),
     persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
-  let db;
+  let db, gateway;
   try {
     await server.initialise();
     await server.start();
@@ -1653,6 +1687,10 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
       try { await db.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
+    gateway=server.getPgClient();await gateway.connect();
+    await gateway.query('set session authorization authenticator');
+    await setWorkerGatewayCaller(gateway);
+    await assertGatewayCloseoutBoundary(db);
     await allowRawTestBindings(db);
     await allowTestIssuerCredentials(db);
     const columns = (await db.query(`select array_agg(attname::text) c from pg_attribute
@@ -1666,7 +1704,7 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
         values ($1, 'Test', $2, $3) returning id`, [user, name, sha(token)]);
       return { id: rows[0].id, hash: sha(token) };
     };
-    const call = async (name, b, input) => (await db.query(`select public.${name}($1, $2::jsonb) r`, [b.hash, JSON.stringify(input)])).rows[0].r;
+    const call = async (name,b,input) => workerGatewayRpc(gateway,name,b.hash,input);
     const b1 = await binding('first');
     const b2 = await binding('second');
     const opened = await call('clued_integration_request_open_v1', b1, { request_key: key('request'), intent: 'create_or_bind',
@@ -1679,6 +1717,7 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
     assert.equal(status.integration.evaluation.valid, true);
     const native = async (input) => {
       await db.query('begin');
+      await db.query('set local role authenticated');
       try {
         await db.query(`select set_config('request.jwt.claim.sub', $1, true), set_config('request.jwt.claims', '{}', true)`, [user]);
         const result = (await db.query('select public.clued_user_integration_v1($1::jsonb) r', [JSON.stringify(input)])).rows[0].r;
@@ -1694,7 +1733,13 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
       host_surface: 'default', adapter_family: 'legacy', adapter_version: '0.1', installation_phase: 'COMPLETED' });
     assert.equal(adopted.status, 'committed', JSON.stringify(adopted));
     assert.equal((await native({ op: 'list' })).integrations.length, 2);
+    const closeout=await findGatewayCloseoutMigration(root);
+    const callerCatalog=await snapshotCallerCatalog(db);
+    await db.query(await fs.readFile(path.join(root,'supabase/migrations',closeout),'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(db),callerCatalog,'G6 replay preserves the no-P5 shape');
+    await assertGatewayCloseoutBoundary(db);
   } finally {
+    if (gateway) await gateway.end().catch(()=>{});
     if (db) await db.end().catch(() => {});
     await server.stop();
   }

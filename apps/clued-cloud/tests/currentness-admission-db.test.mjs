@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, CLOSEOUT_MIGRATION, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -46,7 +47,9 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
         $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((name) => name.endsWith('.sql')).sort()) {
+    // The terminal-source fixture below is a historical v1 Project. Preserve
+    // that receipt family, then apply the real closeout before testing G6.
+    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((name) => name.endsWith('.sql') && name !== CLOSEOUT_MIGRATION).sort()) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -61,7 +64,11 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
-    const rpc = async (name, input) => (await anon.query(`select public.${name}($1,$2) value`, [tokenHash, input])).rows[0].value;
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
+    const rpc = async (name, input) => await workerGatewayRpc(workerCaller, name, tokenHash, input);
     // A global-scope change invalidates both Global projections; admission waits for
     // the refresh Worker. This drains the queue the way the Worker does.
     const workerToken = hash();
@@ -73,8 +80,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
       (binding_id,user_id,target_scope,projection_key,granted_by)
       values($1,$2,'global','global.priority_frontier','test-worker'),
             ($1,$2,'global','global.__aggregate__','test-worker')`, [workerId, userId]);
-    const worker = async (name, input = {}) => (await anon.query(`select public.${name}($1,$2) value`,
-      [workerToken, input])).rows[0].value;
+    const worker = async (name, input = {}) => await workerGatewayRpc(workerCaller, name, workerToken, input);
     const drainProjections = async () => {
       for (let round = 0; round < 6; round += 1) {
         await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
@@ -198,7 +204,8 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     const projectScope = `project:${projectId}`;
     await admin.query(`update public.clued_agent_bindings set context_keys=array['global','system:projects']
       where user_id=$1`, [userId]);
-    const createdProject = await rpc('clued_project_mutate', {
+    const legacyProject = async (input) => (await anon.query('select public.clued_project_mutate($1,$2) value', [tokenHash,input])).rows[0].value;
+    const createdProject = await legacyProject({
       operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
       idempotency_key: uuid(),
       mutation: { name: 'Released project', certainty_status: 'confirmed', progress_status: 'active' },
@@ -218,7 +225,7 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     assert.equal(projectState.status, 'committed');
     const projectStateReceiptId = (await admin.query('select receipt_id from public.clued_memories where id=$1',
       [projectStateId])).rows[0].receipt_id;
-    const completedProject = await rpc('clued_project_mutate', {
+    const completedProject = await legacyProject({
       operation: 'complete', canonical_project_id: projectId, project_schema_version: 1,
       base_version: 1, idempotency_key: uuid(),
       mutation: { closure_summary: 'Production deployed', closed_reason: 'Release complete' },
@@ -226,6 +233,8 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     assert.equal(completedProject.status, 'committed');
     const terminalReceiptId = (await admin.query('select receipt_id from public.clued_projects where id=$1',
       [projectId])).rows[0].receipt_id;
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', await findGatewayCloseoutMigration(root)), 'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
     assert.deepEqual((await rpc('clued_record_list', {
       level: 'global', record_type: 'state',
     })).records, []);
@@ -527,6 +536,13 @@ test('T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile', { 
     });
     assert.deepEqual({ status: narrowedCoverage.status, error: narrowedCoverage.error },
       { status: 'conflict', error: 'current_truth_changed_since_resume' });
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

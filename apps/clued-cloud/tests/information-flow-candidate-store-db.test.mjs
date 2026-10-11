@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const vendored = path.resolve(root, '../../development/contracts/information-flow/vendored/m0a');
@@ -185,6 +186,10 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
@@ -192,7 +197,7 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
     await human.query("select set_config('request.jwt.claim.sub',$1,false)", [userId]);
 
     const agent = async (token, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [token, input])).rows[0].v;
+      await workerGatewayRpc(workerCaller, name, token, input);
     const native = async (name, input) =>
       (await human.query(`select public.${name}($1,$2) v`, [input, sha256(JSON.stringify(input))])).rows[0].v;
     const snapshot = async () => (await admin.query(`select
@@ -370,13 +375,14 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
     const entries = (await admin.query(`select p.proname,
         has_function_privilege('anon',p.oid,'execute') anon,
         has_function_privilege('authenticated',p.oid,'execute') authenticated,
-        has_function_privilege('service_role',p.oid,'execute') service_role
+        has_function_privilege('service_role',p.oid,'execute') service_role,
+        has_function_privilege('clued_worker_gateway',p.oid,'execute') gateway
       from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where n.nspname='public' and p.proname like 'clued\\_%intake\\_%' order by 1`)).rows;
-    assert.deepEqual(entries.map((row) => [row.proname, row.anon, row.authenticated, row.service_role]), [
-      ['clued_intake_list', true, false, false], ['clued_intake_submit', true, false, false],
-      ['clued_intake_withdraw', true, false, false], ['clued_user_intake_list', false, true, false],
-      ['clued_user_intake_submit', false, true, false], ['clued_user_intake_withdraw', false, true, false]]);
+    assert.deepEqual(entries.map((row) => [row.proname, row.anon, row.authenticated, row.service_role, row.gateway]), [
+      ['clued_intake_list', false, false, false, true], ['clued_intake_submit', false, false, false, true],
+      ['clued_intake_withdraw', false, false, false, true], ['clued_user_intake_list', false, true, false, false],
+      ['clued_user_intake_submit', false, true, false, false], ['clued_user_intake_withdraw', false, true, false, false]]);
     await assert.rejects(human.query('select public.clued_intake_submit($1,$2)', [tokenA, submitInput]), /permission denied/);
     await assert.rejects(anon.query('select public.clued_user_intake_submit($1,$2)', [submitInput, hash()]), /permission denied/);
     await assert.rejects(anon.query('select clued_private.intake_submit_core_v1($1,null,$2,$3)',
@@ -384,6 +390,13 @@ test('Information Flow S1 candidate store: isolation, validation, idempotency, p
     await human.query(`select set_config('request.jwt.claims','{"client_id":"delegated-oauth"}',false)`);
     await assert.rejects(native('clued_user_intake_submit', { ...submitInput, idempotency_key: 'if-s1-native-0002' }),
       /direct_human_session_required/);
+    // Reapply the actual formal closeout after all fixture scenarios; no skip.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

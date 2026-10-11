@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claim Admission v0.1, step 7 review fixes (migration
 // 20261002050000_work_claims_admission_hardening): glob-against-glob conflicts
@@ -125,8 +126,20 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     };
     const anon = await connect();
     const anon2 = await connect();
+    // A distinct GW connection for each original transport preserves real
+    // concurrent transactions; CI and permission-negative callers stay anon.
+    const workerClients = new Map();
+    const workerClient = async (transport) => {
+      if (!workerClients.has(transport)) workerClients.set(transport, (async () => {
+        const client = server.getPgClient(); clients.push(client);
+        await client.connect(); await setWorkerGatewayCaller(client); return client;
+      })());
+      return await workerClients.get(transport);
+    };
     const rpc = async (client, token, name, input) =>
-      (await client.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await client.query(`select public.${name}($1,$2) value`, [token,input])).rows[0].value
+        : await workerGatewayRpc(await workerClient(client), name, token, input);
     const call = (token, name, input) => rpc(anon, token, name, input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const createTask = async (title) => committed(await call(tokens.A, 'clued_record_mutate', {
@@ -349,6 +362,14 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     // still the only anon entry that touches it.
     await assert.rejects(() => anon.query('update clued_private.work_claims_v1 set bound_pr=null'), /permission denied/);
     await assert.rejects(() => anon.query("select clued_private.work_claim_globs_intersect('a','a')"), /permission denied/);
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

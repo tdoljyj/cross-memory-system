@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claims merge slot (migration 20261006120000, Task f89eaf0a, Owner
 // Decisions 0edf7889 and 2ea795e4): the slot merge:<owner>/<name>:<branch> is
@@ -86,6 +87,10 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
@@ -96,7 +101,9 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
     };
     const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
+        : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const rejected = (result, code) => {
       assert.deepEqual([result.status, result.error_code], ['rejected', code], JSON.stringify(result));
@@ -586,6 +593,14 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
         assert.equal(allowed, false, `${role} can execute ${fn}`);
       }
     }
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

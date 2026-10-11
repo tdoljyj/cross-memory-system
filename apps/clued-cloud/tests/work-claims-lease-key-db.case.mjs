@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claim private lease key (migration 20261005190000, Task f165eb56,
 // Decision 22b9bd9e): claim and takeover return a key once and store only its
@@ -81,8 +82,14 @@ test('work claims: a private lease key lets another Binding of the same user ren
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const workerCaller = server.getPgClient();
+    clients.push(workerCaller);
+    await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+      CI_SIGNATURES.includes(name + '(text,jsonb)')
+        ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
+        : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
     const rejected = (result, code) => {
       assert.deepEqual([result.status, result.error_code], ['rejected', code], JSON.stringify(result));
@@ -250,7 +257,7 @@ test('work claims: a private lease key lets another Binding of the same user ren
     }
 
     // --- Nobody but the definer can call the helpers. ---
-    for (const role of ['anon', 'authenticated', 'service_role']) {
+    for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
       for (const fn of ['work_claim_lease_key_hash_v1', 'work_claim_lease_key_issue_v1',
         'work_claim_with_lease_key_v1', 'work_claim_lease_access_v1']) {
         const allowed = (await admin.query(`select bool_or(has_function_privilege($1,p.oid,'execute')) v
@@ -259,7 +266,7 @@ test('work claims: a private lease key lets another Binding of the same user ren
         assert.equal(allowed, false, `${role} can execute ${fn}`);
       }
     }
-    for (const role of ['authenticated', 'service_role']) {
+    for (const role of ['anon', 'authenticated', 'service_role']) {
       for (const fn of ['clued_work_claim_v1', 'clued_work_renew_v1', 'clued_work_release_v1', 'clued_work_takeover_v1']) {
         const allowed = (await admin.query(`select has_function_privilege($1,$2::regprocedure,'execute') v`,
           [role, `public.${fn}(text,jsonb)`])).rows[0].v;
@@ -267,9 +274,17 @@ test('work claims: a private lease key lets another Binding of the same user ren
       }
     }
     for (const fn of ['clued_work_claim_v1', 'clued_work_renew_v1', 'clued_work_release_v1', 'clued_work_takeover_v1']) {
-      assert.equal((await admin.query(`select has_function_privilege('anon',$1::regprocedure,'execute') v`,
-        [`public.${fn}(text,jsonb)`])).rows[0].v, true, `anon cannot execute ${fn}`);
+      assert.equal((await admin.query(`select has_function_privilege('clued_worker_gateway',$1::regprocedure,'execute') v`,
+        [`public.${fn}(text,jsonb)`])).rows[0].v, true, `gateway cannot execute ${fn}`);
     }
+    // The real formal migration is installed by the full chain and replays
+    // unchanged after the original business/concurrency/negative matrix.
+    const closeoutMigration = await findGatewayCloseoutMigration(root);
+    const closeoutBefore = await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
+    await assertGatewayCloseoutBoundary(admin);
+
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

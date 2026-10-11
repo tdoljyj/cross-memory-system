@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { bindResourceCenterMutation } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
+import { setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 const hash = s => createHash("sha256").update(s).digest("hex");
 
 export async function testAccountJobs(t, admin, server, { user, decision, profile, connection, bindings, grant, revoke }) {
-  const caller = server.getPgClient(); const competitor = server.getPgClient();
-  await caller.connect(); await competitor.connect(); await caller.query("set role anon");
-  const submit = async (job, mutation, index=0, client=caller, conn=connection) => (await client.query(
-    "select public.clued_storage_jobs_v1($1,$2::jsonb) value", [bindings[index].token, JSON.stringify({ action:"submit", connection_id:conn, job_id:job, mutation })])).rows[0].value;
-  const inspect = async job => (await caller.query("select public.clued_storage_jobs_v1($1,$2::jsonb) value", [bindings[1].token,
-    JSON.stringify({ action:"inspect", connection_id:connection, job_id:job })])).rows[0].value;
+  const caller = server.getPgClient(); const competitor = server.getPgClient(); const workerContender = server.getPgClient();
+  await caller.connect(); await competitor.connect(); await workerContender.connect();
+  await setWorkerGatewayCaller(caller); await setWorkerGatewayCaller(workerContender);
+  // The separate operator competitor below tests private journal transactions;
+  // public job submission must use real gateway role plus its matching JWT claim.
+  const submit = async (job, mutation, index=0, client=caller, conn=connection) => workerGatewayRpc(client,
+    'clued_storage_jobs_v1',bindings[index].token,{ action:"submit", connection_id:conn, job_id:job, mutation });
+  const inspect = async job => workerGatewayRpc(caller,'clued_storage_jobs_v1',bindings[1].token,
+    { action:"inspect", connection_id:connection, job_id:job });
   const mutation = { operation:"create", destination_path:"/account/Clued_资料中心/20_P_产品与体验/example.txt", target_kind:"file", content:"one exact payload" };
   const job = randomUUID(); let queued;
   const pendingJob = randomUUID();
@@ -17,7 +21,7 @@ export async function testAccountJobs(t, admin, server, { user, decision, profil
     await t.test("one account job has a durable receipt and concurrent cross-client submits cannot duplicate it", async () => {
       await admin.query("update clued_private.storage_client_grants_v1 set actions=array['inspect','create_file'] where connection_id=$1 and binding_id=$2", [connection,bindings[1].binding]);
       try {
-        const results = await Promise.all([submit(job,mutation),submit(job,mutation,1,competitor)]);
+        const results = await Promise.all([submit(job,mutation),submit(job,mutation,1,workerContender)]);
         assert.equal(results.filter(r=>!r.replayed).length,1);
         assert.equal(new Set(results.map(r=>r.receipt_id)).size,1);
         queued=results[0]; assert.equal(queued.status,"queued"); assert.equal(queued.execution_permitted,false);
@@ -213,5 +217,5 @@ export async function testAccountJobs(t, admin, server, { user, decision, profil
       await admin.query("insert into clued_private.storage_client_grants_v1(connection_id,binding_id,authorization_version,actions,expires_at,receipt_id) select $2,binding_id,authorization_version,actions,expires_at,receipt_id from clued_private.storage_client_grants_v1 where connection_id=$1 and binding_id=$3",[connection,replacement,bindings[0].binding]);
       await assert.rejects(submit(job,mutation,0,caller,replacement),/storage_job_identity_conflict/);
     });
-  }finally{await caller.end();await competitor.end();}
+  }finally{await caller.end();await competitor.end();await workerContender.end();}
 }

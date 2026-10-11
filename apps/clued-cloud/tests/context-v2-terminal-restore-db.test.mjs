@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import EmbeddedPostgres from "embedded-postgres";
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uuid = () => crypto.randomUUID();
@@ -70,9 +71,10 @@ test("terminal restore binds explicit intent to the exact closeout Receipt", { t
     clients.push(anon);
     await anon.connect();
     await anon.query("set role anon");
-    const rpc = async (input) =>
-      (await anon.query("select public.clued_record_mutate($1,$2) value",
-        [tokenHash, input])).rows[0].value;
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
+    const rpc = input => workerGatewayRpc(workerCaller,'clued_record_mutate',tokenHash,input);
     const base = {
       record_type: "task", record_schema_version: 1, scope: "global",
       authority: "user_explicit", user_confirmed: true,
@@ -159,7 +161,7 @@ test("terminal restore binds explicit intent to the exact closeout Receipt", { t
     const connections = [];
     for (let i = 0; i < 3; i++) {
       const client = server.getPgClient(); clients.push(client);
-      await client.connect(); await client.query('set role anon');
+      await client.connect(); await setWorkerGatewayCaller(client);
       await client.query('begin'); connections.push(client);
     }
     const [a, c, b] = connections;
@@ -222,6 +224,12 @@ test("terminal restore binds explicit intent to the exact closeout Receipt", { t
     await admin.query('update auth.users set banned_until=null,deleted_at=now() where id=$1', [userId]);
     await assert.rejects(ownerWrite, /account/);
     assert.equal(await countReceipts(), receiptCount);
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -75,8 +76,11 @@ test('global-scope record and Event changes invalidate and rebuild both Global p
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    // Worker transport is distinct from anonymous CI doors and permission-denial probes.
+    const workerCaller=server.getPgClient();clients.push(workerCaller);await workerCaller.connect();
+    await setWorkerGatewayCaller(workerCaller);
     const rpc = async (token, name, input = {}) =>
-      (await anon.query(`select public.${name}($1,$2) value`, [token, input])).rows[0].value;
+      await workerGatewayRpc(workerCaller,name,token,input);
     const write = (input) => rpc(hostToken, 'clued_record_mutate', input);
 
     const heads = async () => ({
@@ -188,10 +192,11 @@ test('global-scope record and Event changes invalidate and rebuild both Global p
 
     // Project-scoped changes keep their existing invalidation of both projections.
     const projectId = uuid();
-    assert.equal((await rpc(hostToken, 'clued_project_mutate', {
-      operation: 'create', canonical_project_id: projectId, project_schema_version: 1,
+    assert.equal((await rpc(hostToken, 'clued_project_mutate_v2', {
+      operation: 'create', canonical_project_id: projectId, project_schema_version: 2,
+      recognition: { confidence: 1, reason: 'Explicit synthetic Project fixture', source: 'v2_agent_recognition', source_refs: [] },
       idempotency_key: uuid(),
-      mutation: { name: 'Scoped', certainty_status: 'confirmed', progress_status: 'active' },
+      mutation: { name: 'Scoped', progress_status: 'active' },
     })).status, 'committed');
     assert.equal((await write({
       operation: 'create', id: uuid(), record_type: 'task', record_schema_version: 1,
@@ -204,6 +209,12 @@ test('global-scope record and Event changes invalidate and rebuild both Global p
     assertInvalidatedBoth(afterEvent, await heads(), 'project Task create');
     await drain();
     await assertCurrent('after project rebuild');
+    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    await assertGatewayCloseoutBoundary(admin);
+    const closedCatalog=await snapshotCallerCatalog(admin);
+    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
+    await assertGatewayCloseoutBoundary(admin);
+    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
