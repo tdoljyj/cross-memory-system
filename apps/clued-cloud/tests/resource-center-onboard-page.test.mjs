@@ -59,7 +59,7 @@ function fixture(google = {}) {
     respond(i, value, status = 200) { calls[i].resolve({ ok: status < 400, status, json: async () => value }); } };
 }
 const config = (extra = {}) => ({ enabled: true, allowed: true, picker: null, picker_reason: "picker_unconfigured", refresh_available: true,
-  refresh_token_count: 0, attempts: [], disclosure_version: "clued.storage-onboard-disclosure/1", ...extra });
+  refresh_token_count: 0, attempts: [], disclosure_version: "clued.storage-onboard-disclosure/2", ...extra });
 const picker = { api_key: "fixture-picker-api-key", app_id: "123456789012", client_id: "fixture.apps.googleusercontent.com" };
 
 test("onboarding closed or outside the allowlist shows a fixed message and no confirmation button", async () => {
@@ -75,12 +75,16 @@ test("default new root: pre-ticked options, the exact Worker disclosure, one beg
   const f = fixture(); await f.settle(); f.respond(0, config()); await f.settle();
   const choice = { root: { mode: "new", name: "Clued_资料中心" }, tracks: ["资料", "项目", "归档"], normal_use: true, default_refresh: true };
   assert.ok(f.text().includes(disclosure.renderOnboardDisclosure(choice)), "the page shows the text the Worker binds");
+  assert.match(f.text(),/连接后开启全部 Agent 文件操作（默认）/);assert.match(f.text(),/完整授权后，总开关默认全开/);
+  assert.match(f.text(),/查看、修改、创建和删除你 Google 云端硬盘中的所有文件/);
+  assert.equal(f.find(n=>n.type==="input"&&n.props.type==="checkbox").props.checked,true);
   // Missing Picker configuration: "choose an existing folder" is disabled with the fixed reason.
   const pickedRadio = f.find(n => n.type === "input" && n.props.type === "radio" && n.props.checked === false);
   assert.equal(pickedRadio.props.disabled, true); assert.match(f.text(), /需要维护者先配置 Google Picker/);
-  f.button("确认并连接 Google Drive").props.onClick(); await f.settle();
+  const confirm=f.button("确认并连接 Google Drive");confirm.props.onClick();confirm.props.onClick();await f.settle();
+  assert.equal(f.calls.length,2,"duplicate confirmation dispatches only one begin");
   assert.equal(f.calls[1].url, "/v1/storage/onboard/begin");
-  assert.deepEqual(JSON.parse(f.calls[1].init.body), { ...choice, disclosure_version: "clued.storage-onboard-disclosure/1" });
+  assert.deepEqual(JSON.parse(f.calls[1].init.body), { ...choice, disclosure_version: "clued.storage-onboard-disclosure/2" });
   f.respond(1, { authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=x", onboard_attempt_id: "a" }); await f.settle();
   assert.deepEqual(f.assigned, ["https://accounts.google.com/o/oauth2/v2/auth?client_id=x"]);
   // A refusal shows only the fixed text for its reason.
@@ -88,6 +92,17 @@ test("default new root: pre-ticked options, the exact Worker disclosure, one beg
   g.button("确认并连接 Google Drive").props.onClick(); await g.settle();
   g.respond(1, { error: "x", reason: "refresh_token_limit" }, 403); await g.settle();
   assert.match(g.text(), /授权次数已达上限/); assert.deepEqual(g.assigned, []);
+});
+test("leaving the onboarding choice unconfirmed sends no permission change, and explicit OFF is not silently enabled",async()=>{
+  const f=fixture();await f.settle();f.respond(0,config());await f.settle();
+  assert.equal(f.calls.length,1);assert.equal(f.assigned.length,0,"loading the default is not consent");
+  f.find(n=>n.type==="input"&&n.props.type==="checkbox").props.onChange({target:{checked:false}});f.render();
+  assert.match(f.text(),/连接完成后，总开关关闭，全部 Agent 文件操作停止/);
+  assert.equal(f.calls.length,1,"changing the draft does not grant permissions");
+  f.button("确认并连接 Google Drive").props.onClick();await f.settle();
+  const body=JSON.parse(f.calls[1].init.body);assert.equal(body.normal_use,false);assert.equal(body.disclosure_version,"clued.storage-onboard-disclosure/2");
+  f.respond(1,{status:"completed",receipt_id:"wrong-stage-receipt",master_state:"on",provider_scope_profile:"full"});await f.settle();
+  assert.equal(f.assigned.length,0);assert.ok(!f.text().includes("全部 Agent 文件操作已开启"));
 });
 
 test("Picker token: a scope superset is discarded with no revoke and no Picker; exact drive.file opens the Picker and stays in the page", async () => {

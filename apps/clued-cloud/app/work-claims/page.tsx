@@ -74,6 +74,8 @@ const STATES: Record<string, string> = { ACTIVE: "有效", DRAINING: "收尾中"
 const OUTCOMES: Record<string, string> = { completed: "完成", abandoned: "放弃" };
 const ENDED_HOURS = 24;
 const shortId = (value: unknown) => typeof value === "string" && /^[0-9a-f]{8}-/i.test(value) ? value.slice(0, 8).toLowerCase() : "";
+const taskUrl = (value: unknown) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+  ? "/tasks?id=" + value.toLowerCase() : null;
 // "owner/repo#123" → its GitHub page; anything else is shown as text.
 function pullUrl(ref: unknown) {
   const match = /^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})#([0-9]{1,10})$/.exec(text(ref));
@@ -244,6 +246,7 @@ function claimRow(claim: Json, now: number, onHandover: (() => void) | null, wor
   const live = state === "ACTIVE" || state === "DRAINING";
   const renewals = Number.isInteger(claim.renewals) ? String(claim.renewals) : "?";
   const maxRenewals = Number.isInteger(claim.max_renewals) ? String(claim.max_renewals) : "?";
+  const task = taskUrl(claim.task_id);
   return <div key={text(claim.claim_id)} className="owner-grant">
     <dl>
       <dt>Agent</dt><dd>{text(claim.holder_client) ? <>{text(claim.holder_client)} <span className="context-muted">（Agent 自报）</span></> : <span className="context-muted">客户端未报</span>}
@@ -252,7 +255,7 @@ function claimRow(claim: Json, now: number, onHandover: (() => void) | null, wor
         {" · "}{link ? <a href={link} target="_blank" rel="noreferrer">打开会话 {ref}</a> : ref ? <code>{ref}</code> : <span className="context-muted">会话 ID 未报</span>}
         {codex && <>{" · "}<code>codex resume {ref}</code></>}</dd>
       <dt>在做什么</dt><dd>{text(claim.holder_label) ? <>{text(claim.holder_label)} <span className="context-muted">（Agent 自报）</span></> : <span className="context-muted">（Agent 没有填标签）</span>}</dd>
-      <dt>任务</dt><dd>{text(claim.task_title) || "（无标题）"} <code>{text(claim.task_id)}</code> · {text(claim.context_key)}</dd>
+      <dt>任务</dt><dd>{text(claim.task_title) || "（无标题）"} {task ? <Link href={task}><code>{text(claim.task_id)}</code></Link> : <code>{text(claim.task_id)}</code>} · {text(claim.context_key)}</dd>
       <dt>认领</dt><dd><code>{text(claim.claim_id)}</code> · fence {String(claim.fence)}{claim.lease_key_required === true && " · 已交接过，续租必须带钥匙"}</dd>
       <dt>状态</dt><dd>{STATES[state] ?? state}{state === "RELEASED" && text(claim.released_outcome) && "（" + (OUTCOMES[text(claim.released_outcome)] ?? text(claim.released_outcome)) + "）"}
         {!live && text(claim.ended_at) && " · 结束于 " + beijing(claim.ended_at)}</dd>
