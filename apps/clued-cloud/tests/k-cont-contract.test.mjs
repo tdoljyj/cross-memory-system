@@ -7,7 +7,7 @@ const migration = readFileSync(
   "utf8",
 );
 const continuity = readFileSync(new URL("../worker/continuity.ts", import.meta.url), "utf8");
-const agentContract = readFileSync(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8");
+const agentContract = readFileSync(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8");
 const records = readFileSync(new URL("../worker/records.ts", import.meta.url), "utf8");
 const resumeImportBudgetDelta = readFileSync(
   new URL("../supabase/migrations/20260921204000_k_cont_resume_import_budget_delta.sql", import.meta.url),

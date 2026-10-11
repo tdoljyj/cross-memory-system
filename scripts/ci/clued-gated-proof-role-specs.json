@@ -65,6 +65,16 @@
             "job_id": "isolated-candidate-untrusted-hosted",
             "definition_sha256": "e0203dc254798cf57298dad21757857373626fbdb2b96fd9d7753829197a052a"
           }
+        ],
+        "1eedcb3435610b3ebdfff4573218979b7e3d665d": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "a4136deb30b3241f9487b622f1fcc713118c0295f3f14d8cdb857a67f712fd03"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "e0203dc254798cf57298dad21757857373626fbdb2b96fd9d7753829197a052a"
+          }
         ]
       }
     },
@@ -165,6 +175,16 @@
     ".github/workflows/public-mcp-protocol.yml": {
       "sources": {
         "c62873ae4a666830d4ea399a06ee426a52bdfb7f": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "51ecdcc63e3ca08ebbb0d752f42c6c5b464a71012e89d0cbfa265131cb9a92cb"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "3a6fa39122d2af8665d3167b3faf6714c56a60b5fe8b4a6121a6bd9e4a655245"
+          }
+        ],
+        "cdd4a4a1e55c3e59b933b8617fdd9c44310f2078": [
           {
             "job_id": "trusted-self-hosted",
             "definition_sha256": "51ecdcc63e3ca08ebbb0d752f42c6c5b464a71012e89d0cbfa265131cb9a92cb"

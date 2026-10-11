@@ -98,7 +98,7 @@ function mockFetch(handler) {
 const committed = (supplemental = {}) => Response.json({ status: 'committed', replayed: false, receipt_id: 'receipt-1', supplemental });
 
 test('contract delivery: actual MCP and HTTP advertise the same LF source, with one text copy and invalid-part errors', async () => {
-  const source = (await fs.readFile(path.join(root, '../../skills/clued/references/agent-contract.md'), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await fs.readFile(path.join(root, '../../protocol/agent/agent-contract.md'), 'utf8')).replace(/\r\n/g, '\n');
   const version = Number(/^Contract version: (\d+)$/m.exec(source)[1]);
   const sha256 = crypto.createHash('sha256').update(source).digest('hex');
   const mocked = mockFetch(() => { throw new Error('public contract delivery must not call a database'); });
@@ -129,7 +129,7 @@ test('contract delivery: actual MCP and HTTP advertise the same LF source, with 
 });
 
 test('contract delivery: every successful MCP and HTTP resume reports source identity with work claims off or on', async () => {
-  const source = (await fs.readFile(path.join(root, '../../skills/clued/references/agent-contract.md'), 'utf8')).replace(/\r\n/g, '\n');
+  const source = (await fs.readFile(path.join(root, '../../protocol/agent/agent-contract.md'), 'utf8')).replace(/\r\n/g, '\n');
   const version = Number(/^Contract version: (\d+)$/m.exec(source)[1]);
   const sha256 = crypto.createHash('sha256').update(source).digest('hex');
   const mocked = mockFetch((rpc) => {

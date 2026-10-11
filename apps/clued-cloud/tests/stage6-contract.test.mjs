@@ -31,7 +31,7 @@ test("the Worker passes the release's served-contract check against the reposito
   // Worker after deploy; run the same check against this Worker before merge,
   // so a contract version bump cannot leave the bootstrap behind.
   const worker = await loadWorker();
-  const contract = await readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8");
+  const contract = await readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8");
   const [served, bootstrap] = await Promise.all([
     worker.fetch(new Request("https://clued.test/clued-agent.md"), baseEnv, ctx).then((r) => r.text()),
     worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx).then((r) => r.json()),
@@ -215,7 +215,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
 test("repository Skill, project rules and root snapshot share the v1.6 authority boundary", async () => {
   const [skill, contract, agents, rootAgents, manifestText] = await Promise.all([
     readFile(new URL("../../../skills/clued/SKILL.md", import.meta.url), "utf8"),
-    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8").then((text) => text.replace(/\r\n/g, "\n")),
+    readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8").then((text) => text.replace(/\r\n/g, "\n")),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../../../memory/manifest.json", import.meta.url), "utf8"),
@@ -225,7 +225,9 @@ test("repository Skill, project rules and root snapshot share the v1.6 authority
   assert.match(contract, /only online Canonical Store/);
   assert.match(contract, /never dual-write Markdown/);
   assert.match(contract, /read-only, versioned export/);
-  for (const text of [skill, agents, rootAgents]) {
+  assert.match(skill, /clued_agent_bootstrap/);
+  assert.doesNotMatch(skill, /references\/agent-contract\.md/);
+  for (const text of [agents, rootAgents]) {
     assert.match(text, /agent-contract\.md/);
   }
   assert.match(rootAgents, /clued_record_mutate/);
@@ -238,7 +240,7 @@ test("repository Skill, project rules and root snapshot share the v1.6 authority
 test("the Worker serves the single agent contract and advertises capture", async () => {
   const worker = await loadWorker();
   const [source, response, bootstrap] = await Promise.all([
-    readFile(new URL("../../../skills/clued/references/agent-contract.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../protocol/agent/agent-contract.md", import.meta.url), "utf8"),
     worker.fetch(new Request("https://clued.test/clued-agent.md"), baseEnv, ctx),
     worker.fetch(new Request("https://clued.test/v1/continuity/bootstrap"), baseEnv, ctx),
   ]);
