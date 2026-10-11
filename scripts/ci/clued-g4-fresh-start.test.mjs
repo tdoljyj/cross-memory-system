@@ -191,20 +191,38 @@ const listen = async port => {
 const close = server => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 
 test('PORT1: a real occupied inbucket port changes the prepared block and remains verifiable', async () => {
-  const f = workflowFixture(38151441285, 2);
-  delete f.runtime.portProbe; // The real default Node exclusive TCP probe.
-  const occupied = await listen(47864);
+  let f, occupied, selected;
   try {
+    // Acquire only our own fixture listener. Existing runner services are
+    // neither a test failure nor resources this test may close.
+    for (let offset = 0; offset < PORT_BLOCK_LIMIT; offset++) {
+      const run = 38151441285 + offset;
+      const candidateEnv = { ...env, GITHUB_RUN_ID: String(run), GITHUB_RUN_ATTEMPT: '2' };
+      const base = portCandidates(candidateEnv)[0];
+      try {
+        occupied = await listen(base + 4);
+        selected = { run, base, port: base + 4 };
+        break;
+      } catch (error) {
+        if (error.code !== 'EADDRINUSE') throw error;
+      }
+    }
+    assert.ok(selected, 'a bounded test-owned occupied-port fixture is required');
+    f = workflowFixture(selected.run, 2);
+    delete f.runtime.portProbe; // The real default Node exclusive TCP probe.
     const result = await prepare(f.e, f.runtime);
     const actual = fs.readFileSync(path.join(f.app, 'config.toml'), 'utf8');
-    assert.doesNotMatch(actual, /port = 47864(?:\n|$)/, 'the occupied preferred block cannot be selected');
+    assert.doesNotMatch(actual, new RegExp(`port = ${selected.port}(?:\\n|$)`), 'the occupied preferred block cannot be selected');
     assert.ok(portCandidates(f.e).includes(result.port_base));
-    assert.notEqual(result.port_base, 47860);
+    assert.notEqual(result.port_base, selected.base);
     const marker = verifyConfiguration(f.e, f.runtime).marker;
     assert.equal(marker.port_base, result.port_base);
     assert.equal(actual, freshConfig(config, f.e, marker.port_base));
     assert.equal(verify(f.e, f.runtime).history_matches, true);
-  } finally { await close(occupied); f.dispose(); }
+  } finally {
+    try { if (occupied) await close(occupied); }
+    finally { f?.dispose(); }
+  }
 });
 
 test('PORT2: real exclusive probes report occupancy and release all partial reservations', async () => {
