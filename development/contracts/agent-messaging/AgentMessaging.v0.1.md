@@ -91,6 +91,6 @@ Owner 决定 `2bacda7a`（2026-10-08）：Agent 消息由一个账号级开关�
 - Worker（`worker/agent-messages.ts`）：resume 和续租折入的 `agent_inbox` 带 `messages_enabled`；关闭时附 `messages_disabled_notice`。
 - 页面 `/agent-messages`：显示当前状态和是否默认，一个按钮切换；首页导航加入口。
 
-**第 2 步**（Task `613fad7e`，本 PR 实现）：合同 v46 写明开关开启时在已授权工作内收发协调消息不逐条询问 Owner；关闭或返回 `agent_messages_disabled` 时不发送、不回复、不绕过，只向 Owner 说明联系人和协调原因，不请 Owner 打开开关。§4 错误表、Clued Skill 1.0.19 和 `.claude/settings.json` 同步；两个消息工具已加入放行表。Claude Code 收件钩子 1.1.3 在关闭时保留读取要求，取消答复催促和未答复 Stop 阻挡。本步骤不新增数据库迁移；合入与 Worker 生产发布回执由该 Task 记录，生产合同以 `/clued-agent.md` 的实际交付为准。
+**第 2 步代码**（Task `613fad7e`，PR [#730](https://github.com/tdoljyj/cross-memory-system/pull/730)，已完成）：合同 v46 写明开关开启时在已授权工作内收发协调消息不逐条询问 Owner；关闭或返回 `agent_messages_disabled` 时不发送、不回复、不绕过，只向 Owner 说明联系人和协调原因，不请 Owner 打开开关。§4 错误表、Clued Skill 1.0.19 和 `.claude/settings.json` 同步；两个消息工具已加入放行表。Claude Code 收件钩子 1.1.3 在关闭时保留读取要求，取消答复催促和未答复 Stop 阻挡。本步骤不新增数据库迁移；合入与 Worker 生产发布回执由该 Task 记录，生产合同以 `/clued-agent.md` 的实际交付为准。
 
 **上线**：生产迁移 `20261008190000_agent_messages_switch_v1.sql`（`migration.production`）和 Worker 发布（`release.production`）由 Owner 在 Clued 页面批准。迁移先于 Worker 上线也安全：Worker 读不到 `agent_messages_enabled` 时按开启处理。
