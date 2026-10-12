@@ -3,6 +3,9 @@
  * scope-upgrade disclosures: they remain valid for their narrower actions. */
 export const MASTER_DISCLOSURE_VERSION = "clued.storage-master-disclosure/1";
 export const MASTER_RECONNECT_CONFIRMATION = "clued.storage-owner-confirmation/3";
+export const REFRESH_RECONNECT_CONFIRMATION = "clued.storage-owner-confirmation/4";
+export const RECONNECT_REFRESH_DISCLOSURE_VERSION = "clued.storage-reconnect-refresh-disclosure/1";
+export const RECONNECT_REFRESH_DISCLOSURE = "授权成功后，允许 Clued 在后台自动续签此连接，直到你关闭后台续签或断开连接。不会恢复旧连接的续签授权。不开启时，授权到期后需要重新连接。";
 
 export const renderMasterDisclosure = (root: string) =>
   `开启总开关后，你授权的 Agent 可以在「${root}」内查看文件名和目录、读取文件内容、按内容搜索、新建文件与目录、上传支持的文件，并纳管你自己拥有的已有文件和文件夹。纳管后可以改名、移动、覆盖文本内容、移入回收站和恢复，也可以移动整个文件夹。已有对象仍须先纳管，每次操作仍须通过目录和任务检查，并留下回执。\n` +
