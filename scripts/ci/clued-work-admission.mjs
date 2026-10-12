@@ -73,9 +73,11 @@
 // finishes in seconds without an install.
 
 import { createHash, createSign, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { proxyBootstrapArguments } from "../runner/clued-runner-job-started.mjs";
 
 import {
   effectiveProtectedPaths,
@@ -2433,6 +2435,20 @@ export function withTokenHint(text) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // Both the trusted publisher and the branch gate use native fetch. Reuse
+  // the installed hook's bounded routing setup without changing credentials,
+  // TLS, admission rules or any machine setting.
+  try {
+    const proxyArguments = proxyBootstrapArguments();
+    if (proxyArguments) {
+      const child = spawnSync(process.execPath, proxyArguments, { env: process.env, stdio: "inherit" });
+      if (child.error) throw new Error("The proxy-enabled admission process could not start.");
+      process.exit(Number.isInteger(child.status) ? child.status : 1);
+    }
+  } catch (error) {
+    console.error(`::error title=admission-gate::${error.message}`);
+    process.exit(1);
+  }
   main().then((code) => process.exit(code), (error) => {
     console.error(error);
     process.exit(1);

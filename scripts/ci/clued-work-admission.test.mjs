@@ -4,7 +4,28 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+
+test("admission CLI honors configured proxy routing and preserves child exit semantics before network work", () => {
+  const script = fileURLToPath(new URL("./clued-work-admission.mjs", import.meta.url));
+  const source = { ...process.env, HTTP_PROXY: "http://127.0.0.1:9", HTTPS_PROXY: "http://127.0.0.1:9",
+    GITHUB_REPOSITORY: "o/r", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main", CLUED_DEFAULT_BRANCH: "main" };
+  for (const key of ["NODE_OPTIONS", "NODE_USE_ENV_PROXY", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"]) delete source[key];
+  const admitted = spawnSync(process.execPath, [script, "--mode", "gate"], { env: source, encoding: "utf8", timeout: 5000 });
+  assert.equal(admitted.error, undefined);
+  if (!process.allowedNodeEnvironmentFlags.has("--use-env-proxy")) {
+    assert.equal(admitted.status, 1);
+    assert.match(admitted.stderr, /runtime cannot use/);
+    return;
+  }
+  assert.equal(admitted.status, 0, admitted.stderr);
+  assert.match(admitted.stdout, /"admitted": true/);
+  const refused = spawnSync(process.execPath, [script, "--mode", "unknown-fixture-mode"], { env: source, encoding: "utf8", timeout: 5000 });
+  assert.equal(refused.error, undefined);
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /usage: clued-work-admission/);
+});
 
 import {
   ADMISSION_APP_ID,
