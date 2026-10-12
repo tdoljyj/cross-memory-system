@@ -28,6 +28,8 @@ async function fixture(options={}){
   const metadata=()=>({id:'synthetic-root',name:'Actual Drive folder',mimeType:'application/vnd.google-apps.folder',parents:['my-drive'],version:rootVersion,
     trashed,ownedByMe:true,isAppAuthorized:true,capabilities:{canTrash:true}});
   const lifecycle=await createStorageOwnerLifecycle({vault,oauth:{async start(...args){oauthCalls.push(args);return {authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic'};}},
+    ...(options.clock?{clock:options.clock}:{}),
+    ...(options.preflight?{credential_preflight:async(...args)=>options.preflight(...args,{descriptor,row})}:{}),
     rpc:async input=>{
       calls.push(input);
       if(options.rpc) {const answer=await options.rpc(input,{descriptor,row});if(answer!==undefined)return answer;}
@@ -70,6 +72,29 @@ test('real metadata location is separate from virtual registration path; closed 
   const f=await fixture(),r=await f.lifecycle.list(f.owner),entry=r.connections[0];
   assert.equal(entry.physical_location.path,'我的云端硬盘 / Actual Drive folder');assert.equal(entry.managed_root,'/clued-cloud/google-drive/synthetic-root');
   assert.equal(entry.root_name,'Stale registered label');assert.doesNotMatch(JSON.stringify(r),/synthetic-access-token|credential_envelope|provider_subject|admission/);
+});
+
+test('list reloads safe current state after renewal; the returned CAS is usable by the next Owner action',async()=>{
+  const f=await fixture({preflight:async(owner,connection,operation,{descriptor,row})=>{
+    assert.equal(operation,'owner_metadata');descriptor.connection_version=3;row.version=3;
+    row.refresh_enabled=true;return {status:'ready',credential_version:1};
+  }});
+  const entry=(await f.lifecycle.list(f.owner)).connections[0];
+  assert.equal(entry.version,3);assert.equal(entry.refresh_enabled,true);
+  assert.equal(entry.physical_location.status,'verified');
+  assert.equal(f.calls.filter(x=>x.action==='list').length,2);
+  assert.doesNotMatch(JSON.stringify(entry),/credential_envelope|provider_subject|synthetic-access-token/);
+});
+
+test('list discards provider observations when current Native state changes after preflight',async()=>{
+  let lists=0;
+  const f=await fixture({preflight:async()=>({status:'ready',credential_version:1}),rpc:(input,{row})=>{
+    if(input.action==='list'&&++lists===2)return {contract:'clued.storage-owner-lifecycle/1',complete:true,
+      connections:[{...row,version:4,state:'revoked',auth_mode:'revoked',root_stopped:true,refresh_enabled:false}]};
+  }});
+  const entry=(await f.lifecycle.list(f.owner)).connections[0];
+  assert.equal(entry.version,4);assert.equal(entry.state,'revoked');assert.equal(entry.refresh_enabled,false);
+  assert.equal(entry.physical_location.status,'unavailable');
 });
 test('only authenticated files/root alias permits omitted My Drive parents; ordinary ancestor missing parents denies location',async()=>{
   const f=await fixture({descriptor:{root_parent_id:'ordinary-parent'},fetch:u=>{
@@ -202,6 +227,15 @@ test('Native revalidation refusal cannot send PATCH or leak arbitrary database/u
   const result=await f.lifecycle.delete(f.owner,await f.deletion());assert.equal(result.status,'uncertain');assert.equal(f.patches(),0);
   assert.doesNotMatch(JSON.stringify(result),/synthetic-refresh-token/);
 });
+test('expired credential during an unknown Root trash recovery never replays PATCH or uses ordinary quiet-root preflight',async()=>{
+  let now=Date.now(),preflights=0;
+  const f=await fixture({lost:true,clock:()=>now,preflight:async()=>{preflights++;return {status:'ready',credential_version:1};}});
+  const uncertain=await f.lifecycle.delete(f.owner,await f.deletion());assert.equal(uncertain.status,'uncertain');assert.equal(f.patches(),1);
+  const calls=preflights,provider=f.provider.length;now+=3600001;
+  await assert.rejects(f.lifecycle.recover(f.owner,uncertain.attempt_id),error=>error.reason==='fresh_authorization_required');
+  assert.equal(preflights,calls);assert.equal(f.provider.length,provider);assert.equal(f.patches(),1);
+});
+
 test('unknown prepare completion only looks up the request; never retries a Native write or starts Drive effect',async()=>{
   const recovered=randomUUID();
   const f=await fixture({rpc:input=>{

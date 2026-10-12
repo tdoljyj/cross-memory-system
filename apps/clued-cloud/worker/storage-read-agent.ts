@@ -1,4 +1,5 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import type { StorageDemandResult } from "./storage-demand-refresh";
 import { createStorageGoogleMetadataBatch, isDriveTransient } from "./storage-google-metadata-batch";
 import { createStorageFetch } from "./storage-fetch";
 import { isStorageScopeProfile, scopeProfile, scopeProfileCovers } from "./storage-google-scopes";
@@ -236,6 +237,7 @@ const valid = (raw: unknown): raw is Data => object(raw) && typeof raw.id === "s
 export async function createStorageReadAgent(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; receipt_keys: unknown; cursor_key: unknown;
+  credential_preflight?: (input: Data) => Promise<StorageDemandResult>;
   fetch?: typeof fetch; clock?: () => number;
   /** The PDF_EXTRACTOR service binding (clued-storage-pdf); PDF reads fail closed without it. */
   pdf_extractor?: unknown;
@@ -279,6 +281,13 @@ export async function createStorageReadAgent(config: {
     const hmac = Object.values(condition).some(v => v !== undefined) ? await conditionHmac(input.connection_id, condition) : null;
     const objectId = input.operation === "stat" || input.operation === "read" ? input.object_id : input.operation === "list" ? input.folder_id : input.operation === "search" ? input.within : undefined;
     const expectedClass = input.operation === "read" ? "read_content" : "read";
+    if (config.credential_preflight) {
+      const ready = await config.credential_preflight({ token_hash, input: { connection_id: input.connection_id,
+        operation: input.operation, ...(objectId ? { object_id: objectId } : {}),
+        ...(hmac ? { condition_hmac: hmac, key_id: receiptRing.current } : {}),
+        ...(input.operation === "search" && input.text ? { content_search: true } : {}) } });
+      if (ready.status !== "ready") throw new StorageReadError("storage_read_unavailable", { hint: CREDENTIAL_RENEWAL_HINT });
+    }
     let admitted: Data = {};
     try {
       admitted = await config.rpc({ token_hash, input: { action: "admit", connection_id: input.connection_id, operation: input.operation,
