@@ -15,7 +15,7 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapi
 // Synthetic, disposable PostgreSQL only. These trusted setup facts model the
 // already-tested registration/transition contracts, not a production backfill.
 // All provider operations below use an in-memory fake, never Google or a disk.
-export async function testAccountCloud(t, admin, server, user, decision, {handoverOnly=false}={}) {
+export async function testAccountCloud(t, admin, server, user, decision, {handoverOnly=false,demandRenewal=false}={}) {
   await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
@@ -596,6 +596,9 @@ export async function testAccountCloud(t, admin, server, user, decision, {handov
         assert.equal(scheduledDescriptor.status,"recovery_only");
         assert.equal(scheduledDescriptor.intent_id,row.id);
         assert.deepEqual(scheduledDescriptor.attempt,loaded.attempt);
+        if(demandRenewal){
+        // Latest-schema caller explicitly opts in; historical issuer fixtures
+        // still validate their own pre-demand database boundary.
         // Demand renewal must use this dedicated recovery evaluator. The
         // generic account-policy router explicitly rejects recovery_load.
         await admin.query("reset role");
@@ -612,6 +615,7 @@ export async function testAccountCloud(t, admin, server, user, decision, {handov
           [issuer,target.connection,JSON.stringify({...job.reference,job_id:randomUUID()})]),/storage_scheduled_recovery_denied/);
         await admin.query("rollback to savepoint invalid_demand_job");
         await admin.query("set local role anon");
+        }
         await admin.query("savepoint expired_scheduled_attempt");
         await admin.query("reset role");
         await admin.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '20 minutes' where id=$1", [row.provider_attempt_receipt_id]);

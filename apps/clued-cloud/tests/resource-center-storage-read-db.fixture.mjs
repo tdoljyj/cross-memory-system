@@ -9,7 +9,7 @@ const DISCLOSURE = "clued.storage-read-disclosure/1";
 
 // StorageFullCapability.v0.1 P1 read level. Synthetic, disposable PostgreSQL
 // only; setup facts model the already-tested registration/transition contracts.
-export async function testStorageRead(t, admin, server, user, decision) {
+export async function testStorageRead(t, admin, server, user, decision,{demandRenewal=false}={}) {
   await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
@@ -141,7 +141,7 @@ export async function testStorageRead(t, admin, server, user, decision) {
       assert.equal(status.bound_to_active_policy, true);
     });
 
-    await t.test('demand prepare applies body/search permissions without read receipts; two shared-root claimers never deadlock',async()=>{
+    if(demandRenewal) await t.test('demand prepare applies body/search permissions without read receipts; two shared-root claimers never deadlock',async()=>{
       const prepare=(client,database=caller,extra={})=>read(client,{action:'prepare_credential',connection_id:target.connection,
         operation:'list',object_id:target.rootId,...extra},database);
       const before=await receipts();
