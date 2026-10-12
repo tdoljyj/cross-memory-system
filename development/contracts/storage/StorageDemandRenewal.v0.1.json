@@ -1,0 +1,37 @@
+{
+  "contract": "clued.storage-demand-renewal/1",
+  "version": "0.1",
+  "qualification": "staged",
+  "reviewed_plan_sha256": "379bf3a91f8d593bd20e3662d9c5c412f791c34043edb5b96d78a97c1bbad98f",
+  "approval_record": "a9d4dddd-6a62-4592-8b0c-30af5711301b",
+  "idle_scheduler_enabled": false,
+  "idle_keepalive_days": 30,
+  "active_refresh_margin_seconds": 300,
+  "demand_min_validity_seconds": 60,
+  "demand_max_validity_seconds": 300,
+  "caller_wait_max_seconds": 30,
+  "defaults": { "new_connection_renewal": true, "reconnect_renewal": true },
+  "invariants": [
+    "agent_master_does_not_toggle_renewal",
+    "native_authorizes_original_operation_before_credential_preflight",
+    "renewal_is_not_operation_admission",
+    "fresh_authorization_and_versions_are_rechecked_after_renewal",
+    "one_durable_claim_per_connection_exchange",
+    "unknown_provider_outcome_never_causes_another_exchange",
+    "manual_stop_and_disconnect_win_over_late_results",
+    "completed_oauth_replay_never_reopens_a_manual_stop",
+    "credentials_and_private_proofs_remain_server_only",
+    "recovery_is_bound_to_the_original_job_and_never_replays_a_write",
+    "settings_page_and_enabled_switch_do_not_keep_connections_active",
+    "provider_token_expiry_and_revocation_limits_remain_authoritative",
+    "unrelated_minute_cron_responsibilities_are_preserved"
+  ],
+  "activation_requires": [
+    "all_demand_consumers_integrated",
+    "database_and_http_regressions_pass",
+    "independent_exact_source_review_pass",
+    "current_head_formal_ci_pass",
+    "normal_source_merge_and_exact_production_gates",
+    "qualified_demand_runtime_deployed_before_idle_scheduler_activation"
+  ]
+}

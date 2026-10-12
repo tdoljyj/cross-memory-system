@@ -4,6 +4,7 @@ import { RESOURCE_CENTER_POLICY_VERSION } from "../../../kernel/policy/resource-
 import { createHash } from "node:crypto";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import type { StorageDemandResult } from "./storage-demand-refresh";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
 
@@ -56,6 +57,7 @@ export function storageProbeDiagnostic(error: unknown) {
 export async function createStorageGoogleProbe(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
+  credential_preflight?: (connectionId: string) => Promise<StorageDemandResult>;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || typeof config.rpc !== "function") fail();
   const vault = await createStorageCredentialVault(config.vault);
@@ -66,6 +68,7 @@ export async function createStorageGoogleProbe(config: {
     try {
       if (!object(input) || Object.keys(input).length !== 1 || typeof input.connection_id !== "string" || !uuid.test(input.connection_id)) fail();
       stage = "prepare";
+      if (config.credential_preflight && (await config.credential_preflight(input.connection_id)).status !== "ready") fail();
       const prepared = await config.rpc({ action: "prepare", connection_id: input.connection_id });
       stage = "descriptor";
       const d = prepared.descriptor;

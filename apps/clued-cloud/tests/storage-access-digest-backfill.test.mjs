@@ -26,40 +26,58 @@ const FLAGS = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", CLUED_STORAGE_ACC
   CLUED_STORAGE_EXECUTOR_V1: "true", CLUED_STORAGE_CONNECTOR_ISSUER: "i".repeat(40), CLUED_STORAGE_GOOGLE_CLIENT_ID: CLIENT,
   SUPABASE_URL: "https://db.example.test", SUPABASE_PUBLISHABLE_KEY: "publishable" };
 
-async function fixture({ drive = {}, token = {}, load = {}, directories } = {}) {
+async function fixture({ drive = {}, token = {}, load = {}, directories, renewal = false, enabled = true } = {}) {
   const vaultConfig = { current_key_id: "k1", keys: { k1: randomBytes(32).toString("base64url") } };
   const vault = await createStorageCredentialVault(vaultConfig);
   const owner = randomUUID(), connection = randomUUID(), artifact = randomUUID();
   const context = { owner_id: owner, connection_id: connection, provider: "google-drive", provider_subject: "subject",
     oauth_client_id: CLIENT, credential_version: 3 };
-  const envelope = await vault.seal(JSON.stringify({ access_token: "synthetic-private-access", token_type: "Bearer", scope: SCOPE,
+  let version=3;
+  let envelope = await vault.seal(JSON.stringify({ access_token: "synthetic-private-access", refresh_token:'synthetic-private-refresh-token', token_type: "Bearer", scope: SCOPE,
     expires_at_ms: Date.now() + 3600000, ...token }), context);
   const calls = [], driveUrls = [];
   const fetch = async (input, init) => {
     const url = new URL(String(input));
+    if(url.origin==='https://oauth2.googleapis.com'){
+      calls.push({action:'provider_token'});return Response.json({access_token:'synthetic-private-access',token_type:'Bearer',expires_in:3600});
+    }
     if (url.origin === "https://www.googleapis.com") {
       driveUrls.push(url);
+      if(renewal&&url.pathname.endsWith('/about'))return Response.json({user:{me:true,permissionId:'subject'}});
+      if(renewal&&url.pathname.endsWith('/root'))return Response.json({id:'root',parents:['parent'],mimeType:'application/vnd.google-apps.folder',
+        trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
       if (drive.status) return new Response("{}", { status: drive.status });
       return Response.json({ id: "folder", version: "7", permissions: PERMISSIONS, ...drive.body });
     }
-    assert.equal(url.pathname, "/rest/v1/rpc/clued_storage_access_digest_backfill_v1");
+    assert.ok(['/rest/v1/rpc/clued_storage_access_digest_backfill_v1','/rest/v1/rpc/clued_storage_refresh_worker_v1'].includes(url.pathname));
     assert.equal(new Headers(init.headers).get('authorization'), 'Bearer test-worker-gateway');
     assert.equal(new Headers(init.headers).get('apikey'), FLAGS.SUPABASE_PUBLISHABLE_KEY);
     const body = JSON.parse(init.body);
     assert.match(body.p_issuer_hash, /^[0-9a-f]{64}$/);
     const input2 = body.p_input;
     calls.push(input2);
+    if(url.pathname.endsWith('/clued_storage_refresh_worker_v1')){
+      if(input2.action==='prepare_credential')return Response.json({contract:'clued.storage-demand-preflight/1',...context,
+        credential_version:version,credential_envelope:envelope,provider_scope_profile:'legacy',delegation_version:1,
+        renewal_enabled:enabled,refresh_state:'idle',proof:'clued_srp_'+'b'.repeat(64)});
+      if(input2.action==='observe_credential')return Response.json({status:'current'});
+      if(input2.action==='claim')return Response.json({...context,credential_version:version,credential_envelope:envelope,status:'acquired',
+        attempt_id:input2.attempt_id,root_folder_id:'root',root_parent_id:'parent',expires_at:new Date(Date.now()+120000).toISOString()});
+      if(input2.action==='commit'){version++;envelope=input2.credential_envelope;return Response.json({status:'committed'});}
+      throw Error('unexpected refresh RPC');
+    }
     if (input2.action === "due") return Response.json({ status: "ok",
       directories: directories ?? [{ connection_id: connection, artifact_id: artifact }] });
     if (input2.action === "load") return Response.json({ status: "read_only", owner_id: owner, connection_id: connection,
-      artifact_id: artifact, provider: "google-drive", provider_subject: "subject", oauth_client_id: CLIENT, credential_version: 3,
+      artifact_id: artifact, provider: "google-drive", provider_subject: "subject", oauth_client_id: CLIENT, credential_version: version,
       credential_envelope: envelope, provider_file_id: "folder", registered_version: "7", row_version: 2,
       execution_permitted: false, ...load });
     if (input2.action === "commit") return Response.json({ status: "committed", artifact_id: artifact,
       outcome: input2.found && input2.observed_version === "7" && input2.access_digest ? "recorded" : "missing", execution_permitted: false });
     throw new Error("unexpected rpc");
   };
-  const env = { ...FLAGS, CLUED_STORAGE_VAULT_KEYS: JSON.stringify(vaultConfig) };
+  const env = { ...FLAGS, CLUED_STORAGE_VAULT_KEYS: JSON.stringify(vaultConfig),...(renewal?{
+    CLUED_STORAGE_REFRESH_V1:'true',CLUED_STORAGE_GOOGLE_CLIENT_SECRET:'synthetic-client-secret'}:{}) };
   return { env, fetch, calls, driveUrls, connection, artifact };
 }
 
@@ -120,4 +138,26 @@ test("a transient, credential or foreign answer commits nothing", async () => {
     assert.deepEqual(await runStorageAccessDigestBackfillScheduled(f.env, { fetch: f.fetch }), { status: "ok", recorded: 0, missing: 0, skipped: 1 });
     assert.deepEqual(f.calls.map(call => call.action), ["due", "load"], JSON.stringify(drive));
   }
+});
+
+test('expired eligible maintenance renews once, reloads its artifact and reads it with the new version',async()=>{
+  const f=await fixture({renewal:true,token:{expires_at_ms:Date.now()-1000}});
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled(f.env,{fetch:f.fetch}),{status:'ok',recorded:1,missing:0,skipped:0});
+  assert.equal(f.calls.filter(call=>call.action==='provider_token').length,1);
+  const finalPrepare=f.calls.findLastIndex(call=>call.action==='prepare_credential');
+  assert.ok(f.calls.findIndex(call=>call.action==='load')>finalPrepare,'operation reloads current artifact after renewal');
+  assert.ok(f.calls.filter(call=>call.action==='prepare_credential').every(call=>call.request.artifact_id===f.artifact));
+});
+
+test('renewal off preserves valid maintenance use; an expired token never exchanges and empty due never creates a vault',async()=>{
+  const valid=await fixture({renewal:true,enabled:false});
+  assert.equal((await runStorageAccessDigestBackfillScheduled(valid.env,{fetch:valid.fetch})).recorded,1);
+  assert.equal(valid.calls.some(call=>call.action==='claim'||call.action==='provider_token'),false);
+  const expired=await fixture({renewal:true,enabled:false,token:{expires_at_ms:Date.now()-1000}});
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled(expired.env,{fetch:expired.fetch}),{status:'ok',recorded:0,missing:0,skipped:1});
+  assert.equal(expired.driveUrls.length,0);assert.equal(expired.calls.some(call=>call.action==='claim'),false);
+  const empty=await fixture({renewal:true,directories:[]});
+  assert.deepEqual(await runStorageAccessDigestBackfillScheduled({...empty.env,CLUED_STORAGE_VAULT_KEYS:'invalid'},
+    {fetch:empty.fetch}),{status:'ok',recorded:0,missing:0,skipped:0});
+  assert.deepEqual(empty.calls.map(call=>call.action),['due']);
 });

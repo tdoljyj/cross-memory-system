@@ -312,6 +312,11 @@ def load_tests(loader, tests, pattern):
     observed_response_module = importlib.util.module_from_spec(observed_response_spec)
     observed_response_spec.loader.exec_module(observed_response_module)
     tests.addTests(loader.loadTestsFromModule(observed_response_module, pattern=pattern))
+    decision_path = ROOT / "tests/test_model_decision_candidate_projection.py"
+    decision_spec = importlib.util.spec_from_file_location("m2_decision_projection_specifications", decision_path)
+    decision_module = importlib.util.module_from_spec(decision_spec)
+    decision_spec.loader.exec_module(decision_module)
+    tests.addTests(loader.loadTestsFromModule(decision_module, pattern=pattern))
     return tests
 
 
