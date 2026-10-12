@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
+import {setWorkerGatewayCaller} from './worker-gateway-caller-fixture.mjs';
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const ACTIONS = ["inspect", "create_file", "create_topic"];
@@ -14,7 +15,7 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file https://www.googleapi
 // Synthetic, disposable PostgreSQL only. These trusted setup facts model the
 // already-tested registration/transition contracts, not a production backfill.
 // All provider operations below use an in-memory fake, never Google or a disk.
-export async function testAccountCloud(t, admin, server, user, decision) {
+export async function testAccountCloud(t, admin, server, user, decision, {handoverOnly=false}={}) {
   await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
@@ -27,7 +28,8 @@ export async function testAccountCloud(t, admin, server, user, decision) {
     database.fixturePid = (await database.query("select pg_backend_pid() pid")).rows[0].pid;
     return database;
   };
-  const native = await connect("authenticated"), caller = await connect("anon"), competing = await connect("anon"), operator = await connect();
+  const native = await connect("authenticated"), caller = await connect(handoverOnly?"clued_worker_gateway":"anon"), competing = await connect("anon"), operator = await connect();
+  if(handoverOnly)await setWorkerGatewayCaller(caller);
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, user]);
   await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
     [user, JSON.stringify({ sub: user, session_id: session })]);
@@ -86,10 +88,10 @@ export async function testAccountCloud(t, admin, server, user, decision) {
     return { ...target, policy };
   };
   const cloud = async (input, database = caller) => (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value;
-  const submit = async (target, client, suffix = randomUUID()) => {
+  const submit = async (target, client, suffix = randomUUID(), extra={}) => {
     const reference = { connection_id: target.connection, job_id: randomUUID() };
     const mutation = { operation: "create", target_kind: "file", destination_path: target.root + `/20_P_产品与体验/${suffix}.txt`, content: "isolated account cloud UTF-8 fixture" };
-    const result = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "submit", ...reference, mutation })])).rows[0].value;
+    const result = (await caller.query(`select ${JOBS}($1,$2::jsonb) value`, [client.token, JSON.stringify({ action: "submit", ...reference, mutation, ...extra })])).rows[0].value;
     assert.equal(result.status, "queued", JSON.stringify(result)); return { reference, mutation, result };
   };
   const legacyGrant = async (target, client) => {
@@ -176,8 +178,10 @@ export async function testAccountCloud(t, admin, server, user, decision) {
     assert.equal(storage.posts, 0); assert.equal((await jobRow(job)).intent_id, null);
     return request;
   };
-  const captureVerified = async () => {
-    const initial = await createRoot(), client = await bind(initial), target = await activate(initial), job = await submit(target, client), storage = provider(target);
+  const captureVerified = async workClaimSetup => {
+    const initial = await createRoot(), client = await bind(initial), target = await activate(initial);
+    const extra=workClaimSetup?await workClaimSetup(target,client):{};
+    const job = await submit(target, client, randomUUID(), extra), storage = provider(target);
     const fetch = storage.fetch; storage.io = 0;
     storage.fetch = async (...args) => { storage.io++; return fetch(...args); };
     let captured;
@@ -203,6 +207,135 @@ export async function testAccountCloud(t, admin, server, user, decision) {
     intent_id: sample.original.id, base_version: Number(sample.original.version), request_sha256: sample.original.request_sha256,
     verified_receipt_id: recorded.verified_receipt_id, verified_digest: recorded.verified_digest });
   try {
+    if(handoverOnly){
+      await admin.query("update clued_private.work_claim_execution_policy_v1 set activated_at=clock_timestamp(),qualification_commit=$1",['f'.repeat(40)]);
+      await t.test('activation refuses an unmapped old job; an unclaimed new job keeps its original collision proof',async()=>{
+        const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
+        const job=await submit(target,client);
+        const proof=(await admin.query('select * from clued_private.work_claim_storage_authorizations_v1 where owner_id=$1 and job_id=$2',
+          [user,job.reference.job_id])).rows[0];
+        assert.ok(proof);assert.equal(proof.claim_id,null);assert.equal(proof.execution_epoch,null);
+        assert.ok(proof.resources.length>0);await cloud({action:'load',...job.reference});
+        // Removing the synthetic capture models a job that predates the
+        // staging migration. No backfill manufactures execution authority.
+        await admin.query('delete from clued_private.work_claim_storage_authorizations_v1 where owner_id=$1 and job_id=$2',
+          [user,job.reference.job_id]);
+        const before=await counters();
+        await assert.rejects(cloud({action:'load',...job.reference}),/work_claim_job_authorization_missing/);
+        await assert.rejects(admin.query('select clued_private.storage_job_begin_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_job_authorization_missing/);
+        await assert.rejects(admin.query('select clued_private.storage_job_provider_attempt_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_job_authorization_missing/);
+        assert.equal((await jobRow(job)).intent_id,null);assert.deepEqual(await counters(),before);
+      });
+      const claimFor=async(target,client)=>{
+        const task=randomUUID();
+        await admin.query(`insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status,
+          record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)
+          values($1,$2,'cloud handover','fixture','project',$3,'task','active',1,'active',$4,
+          '{"execution_bucket":"next"}','{}','{}','observed','isolated fixture')`,[task,user,project,'project:'+project]);
+        const claim=(await admin.query(`insert into clued_private.work_claims_v1
+          (user_id,task_id,context_key,holder_binding_id,holder_session_ref,holder_label,write_set,fence,
+          issued_at,expires_at,hard_deadline_at,status,idempotency_key)
+          values($1,$2,$3,$4,'original-cloud-agent','cloud handover fixture',$5,1,clock_timestamp(),
+            clock_timestamp()+interval '2 hours',clock_timestamp()+interval '1 day','ACTIVE',$6) returning *`,
+          [user,task,'project:'+project,client.id,[`storage:${target.connection}/20_P_产品与体验/**`],randomUUID()])).rows[0];
+        const key=(await admin.query('select clued_private.work_claim_lease_key_issue_v1($1) v',[claim.claim_id])).rows[0].v;
+        return {claim,key,ref:{claim_id:claim.claim_id,fence:Number(claim.fence),lease_key:key}};
+      };
+      const handover=async claim=>{
+        const preview=(await native.query('select public.clued_work_claim_handover_confirmation_issue_v1($1::jsonb) v',
+          [{claim_id:claim.claim_id}])).rows[0].v;
+        assert.equal(preview.status,'issued');
+        const result=(await native.query('select public.clued_work_claim_handover_v1($1::jsonb) v',
+          [{confirmation_token:preview.confirmation_token,view_digest:preview.view_digest}])).rows[0].v;
+        assert.equal(result.status,'committed');return result;
+      };
+      await t.test('a later claim colliding with an unclaimed job prevents new execution under its frozen resources',async()=>{
+        const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
+        const job=await submit(target,client);await cloud({action:'load',...job.reference});
+        await claimFor(target,client);
+        const before=await counters();
+        await assert.rejects(cloud({action:'load',...job.reference}),/work_claim_job_resources_changed/);
+        assert.equal((await jobRow(job)).intent_id,null);assert.deepEqual(await counters(),before);
+      });
+      await t.test('closing the declared Task refuses its queued job before a new journal or provider attempt',async()=>{
+        const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
+        const original=await claimFor(target,client),job=await submit(target,client,randomUUID(),{work_claim:original.ref});
+        await cloud({action:'load',...job.reference});
+        await admin.query("update public.clued_memories set lifecycle_status='completed' where id=$1",[original.claim.task_id]);
+        const before=await counters();
+        await assert.rejects(cloud({action:'load',...job.reference}),/work_claim_task_unavailable/);
+        await assert.rejects(admin.query('select clued_private.storage_job_provider_attempt_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_task_unavailable/);
+        assert.equal((await jobRow(job)).intent_id,null);assert.deepEqual(await counters(),before);
+      });
+      await t.test('handover invalidates queued job load, begin and provider_attempt before any new journal or provider effect',async()=>{
+        const initial=await createRoot(),client=await bind(initial),target=await activate(initial);
+        const original=await claimFor(target,client),job=await submit(target,client,randomUUID(),{work_claim:original.ref});
+        const proof=(await admin.query('select * from clued_private.work_claim_storage_authorizations_v1 where owner_id=$1 and job_id=$2',
+          [user,job.reference.job_id])).rows[0];
+        assert.equal(proof.claim_id,original.claim.claim_id);assert.equal(proof.execution_epoch,'1');
+        assert.equal(proof.request_digest,(await jobRow(job)).request_digest);assert.ok(proof.resources.length>0);
+        await cloud({action:'load',...job.reference});
+        await handover(original.claim);
+        const before=await counters();
+        await assert.rejects(cloud({action:'load',...job.reference}),/work_claim_job_epoch_stale/);
+        await assert.rejects(admin.query('select clued_private.storage_job_begin_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_job_epoch_stale/);
+        await assert.rejects(admin.query('select clued_private.storage_job_provider_attempt_v2($1,$2,$3,$4::jsonb)',
+          [user,job.reference.job_id,sha(randomUUID()),{}]),/work_claim_job_epoch_stale/);
+        assert.equal((await jobRow(job)).intent_id,null);assert.deepEqual(await counters(),before);
+        const persisted=JSON.stringify([await jobRow(job),proof]);
+        assert.equal(persisted.includes(original.key),false);
+        assert.equal(persisted.includes(sha(original.key)),false);
+      });
+      await t.test('an attempted old job is recovery-only after handover and never POSTs again',async()=>{
+        let original;
+        const captured=await captureVerified(async(target,client)=>{
+          original=await claimFor(target,client);return {work_claim:original.ref};
+        });
+        assert.equal(captured.storage.posts,1);assert.ok(captured.original.provider_attempt);
+        await handover(original.claim);
+        await assert.rejects(cloud({action:'load',...captured.job.reference}),/work_claim_job_epoch_stale/);
+        await executor(captured.target,captured.storage).run(captured.job.reference);
+        assert.equal(captured.storage.posts,1,'restarting an old executor cannot repeat provider POST');
+        await admin.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '20 minutes' where id=$1",
+          [captured.original.provider_attempt_receipt_id]);
+        // Recovery is the existing Native Owner path, never a client command.
+        await admin.query('begin');
+        let recovered;
+        try{
+          await admin.query('update clued_private.storage_connections_v1 set credential_envelope=$2::jsonb where id=$1',
+            [captured.target.connection,{contract:'clued.storage-credential/1',key_id:'fixture',nonce:'A'.repeat(16),ciphertext:'B'.repeat(24)}]);
+          await admin.query('set local role authenticated');
+          await admin.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)",
+            [user,JSON.stringify({sub:user,session_id:session})]);
+          recovered=(await admin.query('select public.clued_storage_native_recovery_load_v2($1,$2::jsonb) v',
+            [issuerSecret,{action:'recovery_load',...captured.job.reference}])).rows[0].v;
+        }finally{await admin.query('rollback');}
+        assert.equal(recovered.status,'recovery_only');assert.notEqual(recovered.execution_permitted,true);
+        assert.equal(recovered.intent_id,captured.original.id);
+        assert.deepEqual((await journal(captured.job)).provider_attempt,captured.original.provider_attempt);
+      });
+      await t.test('an original verified result settles after handover without provider I/O or a replacement writer',async()=>{
+        let original;
+        const sample=await captureVerified(async(target,client)=>{
+          original=await claimFor(target,client);return {work_claim:original.ref};
+        });
+        const recorded=await cloud(sample.record);assert.equal(recorded.status,'verified');
+        await handover(original.claim);
+        const before=await counters(),beforeIo=sample.storage.io;
+        sample.storage.fetch=async()=>{sample.storage.io++;throw new Error('provider I/O forbidden during settlement');};
+        const result=await cloud(settleInput(sample,recorded));
+        assert.equal(result.status,'committed');assert.equal(result.intent_id,sample.original.id);
+        assert.equal((await journal(sample.job)).state,'committed');
+        const after=await counters();assert.equal(after.writers,before.writers);assert.equal(after.intents,before.intents);
+        assert.equal(sample.storage.io,beforeIo);assert.equal(sample.storage.posts,1);
+        assert.deepEqual((await journal(sample.job)).provider_attempt,sample.original.provider_attempt);
+      });
+      return;
+    }
     await t.test("cloud and job routers have exact mode/snapshot quadrants and no API access to private cores", async () => {
       for (const signature of ["storage_cloud_worker_v2(text,jsonb)", "storage_jobs_policy_core_v2(text,jsonb)",
         "storage_cloud_job_current_v2(uuid,uuid)", "storage_job_begin_v2(uuid,uuid,text,jsonb)",

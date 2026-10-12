@@ -17,6 +17,7 @@ const issuerMigration = '20261009070001_issuer_identity_credentials_v1.sql';
 const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
 const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
+const workClaimHandoverMigration = '20261011131755_work_claim_handover_execution_v1.sql';
 const storageOwnerLifecycleMigrations = [
   '20261010055701_storage_owner_lifecycle_v1.sql',
   '20261010150000_storage_owner_root_trash_scope_v2.sql',
@@ -62,7 +63,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== workClaimHandoverMigration && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -435,6 +436,15 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       const signature='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
       for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
         assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,signature])).rows[0].allowed,role==='authenticated',role);
+    });
+    await t.test('work-claim handover follows the real deferred gateway/storage dependencies without changing caller grants',async()=>{
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',workClaimHandoverMigration),'utf8'));
+      await assertGatewayCloseoutBoundary(admin);
+      assert.ok((await admin.query("select to_regclass('clued_private.work_claim_storage_authorizations_v1') as table_id")).rows[0].table_id);
+      assert.equal((await admin.query('select clued_private.work_claim_execution_enabled_v1() as active')).rows[0].active,false);
+      const signature='clued_private.work_claim_ci_command_v1(text,jsonb)';
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
+        assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,signature])).rows[0].allowed,false,role);
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

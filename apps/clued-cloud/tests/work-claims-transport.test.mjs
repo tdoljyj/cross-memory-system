@@ -79,7 +79,12 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.equal(byName.clued_work_claim.annotations.idempotentHint, true);
   assert.equal(byName.clued_work_renew.annotations.idempotentHint, false);
   assert.deepEqual(byName.clued_work_claim.inputSchema.required, ['task_id', 'write_set', 'idempotency_key', 'holder_label']);
-  assert.deepEqual(byName.clued_work_renew.inputSchema.required, ['claim_id', 'fence', 'lease_version', 'progress_ref']);
+  assert.deepEqual(byName.clued_work_renew.inputSchema.oneOf[0],
+    {not:{required:['action']},required:['claim_id','fence','lease_version','progress_ref']});
+  const commands=Object.fromEntries(byName.clued_work_renew.inputSchema.oneOf.slice(1).map(branch=>[branch.properties.action.const,branch.required]));
+  assert.deepEqual(commands.prepare_handover,['action','claim_id','fence','holder_label','idempotency_key']);
+  assert.deepEqual(commands.offer_handover,['action','request_id','lease_key']);
+  assert.deepEqual(commands.accept_handover,['action','request_id','receiver_key']);
   assert.deepEqual(byName.clued_work_release.inputSchema.required, ['claim_id', 'fence', 'outcome']);
   assert.deepEqual(byName.clued_work_verify.inputSchema.required, ['claim_id']);
   assert.deepEqual(byName.clued_work_takeover.inputSchema.required, ['claim_id', 'idempotency_key', 'holder_label']);
@@ -88,7 +93,8 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   // The private lease key (migration 20261005190000) is an optional input of renew and release only.
   for (const name of ['clued_work_renew', 'clued_work_release']) {
     assert.equal(byName[name].inputSchema.properties.lease_key.pattern, '^clued_lk_[0-9a-f]{64}$', name);
-    assert.ok(!byName[name].inputSchema.required.includes('lease_key'), name);
+    const required=name==='clued_work_renew'?byName[name].inputSchema.oneOf[0].required:byName[name].inputSchema.required;
+    assert.ok(!required.includes('lease_key'), name);
   }
   for (const name of ['clued_work_claim', 'clued_work_verify', 'clued_work_takeover']) {
     assert.equal(byName[name].inputSchema.properties.lease_key, undefined, name);
@@ -170,6 +176,35 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
     }
     assert.equal(calls.length, WORK_TOOLS.length * 2);
   } finally { restore(); }
+});
+
+test('page-free handover commands preserve private receiving proofs only in the authenticated tool response',async()=>{
+  const worker=await loadContinuityWorker();
+  const receiveKey=`clued_lk_${'c'.repeat(64)}`,leaseKey=`clued_lk_${'d'.repeat(64)}`;
+  const requestId='77777777-7777-4777-8777-777777777777';
+  const inputs=[
+    {action:'prepare_handover',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:2,
+      holder_label:'private receiver',holder_session_ref:'receiver',idempotency_key:'receiving:exact-operation'},
+    {action:'offer_handover',scope:'global',request_id:requestId,lease_key:leaseKey},
+    {action:'accept_handover',scope:'global',request_id:requestId,receiver_key:receiveKey},
+  ];
+  const {calls,restore}=mockFetch(({body})=>Response.json(body.p_input.action==='prepare_handover'
+    ?{status:'committed',request_id:requestId,receiver_key:receiveKey}
+    :body.p_input.action==='offer_handover'?{status:'committed',request_id:requestId,state:'offered'}
+      :{status:'pending',delivery_id:requestId,execution_epoch:3}));
+  try{
+    for(const input of inputs){
+      const response=await worker.fetch(mcp(bindingToken,'clued_work_renew',input),enabled,ctx);
+      const result=(await response.json()).result;
+      assert.equal(result.isError,false);assert.deepEqual(calls.at(-1).body.p_input,input);
+      assert.equal(calls.at(-1).rpc,'clued_work_renew_v1');
+      assert.notEqual(calls.at(-1).body.p_token_hash,bindingToken);
+      if(input.action==='prepare_handover')assert.equal(result.structuredContent.receiver_key,receiveKey);
+      if(input.action==='accept_handover'){
+        assert.equal(result.structuredContent.status,'pending');assert.equal('lease_key' in result.structuredContent,false);
+      }
+    }
+  }finally{restore();}
 });
 
 test('a conflict or budget rejection is a structured result, not a transport error', async () => {
