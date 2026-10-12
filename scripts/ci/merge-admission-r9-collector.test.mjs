@@ -525,3 +525,91 @@ test('attempt creation metadata changing between independent reads is rejected',
   const f=wireProjectionFixture({mutateAfter:true}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
   assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'native_attempt_reported_creation_changed');
 });
+
+test('late no-step skipped projections preserve timestamps beyond the run update',async()=>{
+  const r=run(38284356268,{created_at:'2026-10-12T17:27:45Z',run_started_at:'2026-10-12T17:27:45Z',updated_at:'2026-10-12T17:27:46Z',conclusion:'skipped'});
+  const j=job(r.id,{id:114929091627,name:'public-mcp-gate-receipt-evaluate',conclusion:'skipped',created_at:'2026-10-12T17:27:55Z',started_at:'2026-10-12T17:27:55Z',completed_at:'2026-10-12T17:27:46Z',steps:[]});
+  const f=nativeRequest({runs:[r],jobs:[j]}),n=await Native.captureNativeAttempt({request:f.request,repository,runId:String(r.id),attempt:1});
+  assert.equal(n.status,'COMPLETE');assert.equal(n.packet.jobs[0].created_at,'2026-10-12T17:27:55.000Z');
+  assert.equal(C.nativeCompletionMembership(n.packet,{start:'2026-10-12T17:27:00Z',end:'2026-10-12T17:28:00Z'}).membership,'IN_WINDOW');
+  assert.equal(Native.inspectNativePopulationStore(n.store_raw).status,'VALID_DATA_STORE');
+});
+
+test('Native check-only rows added after a workflow preserve metadata without extending execution',async()=>{
+  const r=run(38280832886,{created_at:'2026-10-12T16:56:07Z',run_started_at:'2026-10-12T16:56:07Z',updated_at:'2026-10-12T16:56:50Z'}),
+    j=job(r.id,{id:114921378190,name:'public-mcp-gate-receipt-verdict',created_at:'2026-10-12T17:06:46Z',started_at:'2026-10-12T17:06:46Z',completed_at:'2026-10-12T17:06:46Z',labels:[],steps:[],html_url:'https://github.com/'+repository+'/runs/114921378190'});
+  const f=nativeRequest({runs:[r],jobs:[j]}),n=await Native.captureNativeAttempt({request:f.request,repository,runId:String(r.id),attempt:1});
+  assert.equal(n.status,'COMPLETE');assert.equal(n.packet.jobs[0].reported_check_url,j.html_url);
+  assert.equal(Native.nativeJobIsNonExecution(n.packet.jobs[0]),true);assert.equal(Native.inspectNativePopulationStore(n.store_raw).status,'VALID_DATA_STORE');
+  assert.equal(C.nativeCompletionMembership(n.packet,{start:'2026-10-12T16:56:00Z',end:'2026-10-12T17:00:00Z'}).membership,'IN_WINDOW');
+  for(const change of [{html_url:'https://github.com/other/repo/runs/114921378190'},{labels:['ubuntu-latest']},{steps:[{number:1,name:'actual work',status:'completed',conclusion:'success',started_at:j.started_at,completed_at:j.completed_at}]},{completed_at:'2026-10-12T17:06:47Z'}]){
+    const bad=nativeRequest({runs:[r],jobs:[{...j,...change}]}),q=await Native.captureNativeAttempt({request:bad.request,repository,runId:String(r.id),attempt:1});
+    assert.equal(q.status,'PARTIAL');
+  }
+});
+
+function uncappedDirectoryFixture({grow=true,remove=false,ascending=false}={}){
+  const old=Array.from({length:250},(_,i)=>run(250-i,{created_at:'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:01Z',updated_at:'2026-10-09T00:01:00Z'}));
+  const fresh=Array.from({length:3},(_,i)=>run(500-i,{created_at:'2026-10-12T00:00:00Z',run_started_at:'2026-10-12T00:00:01Z',updated_at:'2026-10-12T00:01:00Z'}));
+  let changed=false,calls=0,active=0,max=0;
+  return {get calls(){return calls;},get max(){return max;},async request(route){
+    const u=new URL(route,'https://native.invalid');assert.equal(u.pathname,'/repos/'+repository+'/actions/runs');assert.equal(u.searchParams.has('created'),false);
+    const page=Number(u.searchParams.get('page'));calls++;active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,2));active--;
+    if(page>1)changed=true;let rows=changed?(remove?old.slice(1):grow?[...fresh,...old]:old):old;
+    if(ascending)rows=[...rows].reverse().map((r,i)=>({...r,created_at:i?'2026-10-09T00:00:01Z':'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:02Z'}));
+    return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
+  }};
+}
+
+test('uncapped directory closes all historical members despite a growing post-window prefix',async()=>{
+  const f=uncappedDirectoryFixture(),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.population.initial_total,250);assert.equal(r.population.closing_total,250);
+  assert.equal(r.population.complete,true);assert.equal(r.fresh,0);assert.equal(f.calls,8);assert.ok(f.max<=4);
+});
+
+test('uncapped directory refuses changed retention or an unproved provider order',async()=>{
+  for(const options of [{remove:true},{ascending:true}]){
+    const f=uncappedDirectoryFixture(options),r=await C.collectIncrementalNative({request:f.request,repository,window});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
+  }
+});
+
+test('the current Native main observer is disclosed outside its own terminal denominator',async()=>{
+  const live=run(42,{status:'in_progress',conclusion:null}),f=nativeRequest({runs:[live],jobs:[]}),observer={run_id:'42',run_attempt:1,head_sha:head};
+  const r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,observer});
+  assert.equal(r.native.status,'COMPLETE');assert.equal(r.native.population.complete,true);
+  assert.equal(r.native.population.current_observer_exclusion.run_id,'42');assert.equal(r.native.population_packets.length,0);
+  assert.equal(r.t0,null);assert.equal(r.official_metric,false);
+});
+
+test('self-observation exclusion cannot hide another workflow or a terminal measurement',async()=>{
+  for(const live of [run(42,{status:'in_progress',conclusion:null,path:'.github/workflows/clued-g4-database.yml'}),run()]){
+    const f=nativeRequest({runs:[live]}),r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+      observer:{run_id:'42',run_attempt:1,head_sha:head}});
+    assert.equal(r.native.population.current_observer_exclusion,undefined);
+    assert.ok(r.gaps.includes('CURRENT_OBSERVER_NATIVE_ROLE_NOT_PROVED'));assert.equal(r.official_metric,false);
+  }
+});
+
+test('a live report exclusion retains all earlier terminal ordinal captures',async()=>{
+  const first=run(),latest=run(42,{run_attempt:2,status:'in_progress',conclusion:null,run_started_at:'2026-10-10T10:15:00Z',updated_at:'2026-10-10T10:15:01Z'}),
+    f=nativeRequest({runs:[latest],jobs:[job()],mutation:route=>route.endsWith('/attempts/1')?{ok:true,body:first}:null});
+  const r=await C.collectIncrementalNative({request:f.request,repository,window,observer:{run_id:'42',run_attempt:2,head_sha:head}});
+  assert.equal(r.status,'COMPLETE');assert.deepEqual(Object.keys(JSON.parse(r.store_raw).packets),['42:1']);assert.equal(r.fresh,1);
+});
+
+test('an observer ordinal moving after its independent proof cannot omit the now-historical execution',async()=>{
+  const first=run(),live1=run(42,{status:'in_progress',conclusion:null}),live2=run(42,{run_attempt:2,status:'in_progress',conclusion:null,
+    run_started_at:'2026-10-11T00:01:00Z',updated_at:'2026-10-11T00:01:01Z'});let rootReads=0;
+  const f=nativeRequest({runs:[live2],jobs:[job()],mutation:route=>{
+    if(route.includes('/actions/artifacts?'))return {ok:true,body:{total_count:0,artifacts:[]}};
+    if(route.endsWith('/actions/runs/42'))return {ok:true,body:++rootReads===1?live1:live2};
+    if(route.endsWith('/attempts/1'))return {ok:true,body:first};return null;
+  }});
+  const r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+    observer:{run_id:'42',run_attempt:1,head_sha:head}});
+  assert.equal(r.native.status,'PARTIAL');assert.equal(r.native.population.complete,false);
+  assert.ok(r.native.gaps.some(g=>g.reason_code==='CURRENT_OBSERVER_INVENTORY_CHANGED'));
+  assert.ok(JSON.parse(r.native.store_raw).packets['42:1']);assert.equal(r.native.population.current_observer_exclusion,undefined);
+  assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
