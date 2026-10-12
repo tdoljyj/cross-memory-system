@@ -73,7 +73,8 @@ function nativeWireRun(run) {
 }
 export function nativeJobIsNonExecution(job) {
   return Array.isArray(job.steps)&&job.steps.length===0&&
-    (job.conclusion==='skipped'||job.reported_check_url===`https://github.com/${NATIVE_REPOSITORY}/runs/${job.id}`&&
+    (job.conclusion==='skipped'||job.conclusion==='cancelled'&&job.created_at===job.started_at&&
+      (job.completed_at===null||job.completed_at<=job.created_at)||job.reported_check_url===`https://github.com/${NATIVE_REPOSITORY}/runs/${job.id}`&&
       Array.isArray(job.labels)&&job.labels.length===0&&job.created_at===job.started_at&&job.started_at===job.completed_at);
 }
 function normalizeJob(value, run) {
@@ -87,7 +88,9 @@ function normalizeJob(value, run) {
   const checkProjection=value.html_url===checkUrl||value.reported_check_url===checkUrl;
   if((value.reported_check_url!==undefined&&value.reported_check_url!==checkUrl)||checkProjection&&
     (!Array.isArray(value.labels)||value.labels.length!==0||!Array.isArray(value.steps)||value.steps.length!==0||created!==started||started!==completed))fail('invalid_native_check_projection');
-  const nonExecution=value.conclusion==='skipped'&&Array.isArray(value.steps)&&value.steps.length===0||checkProjection;
+  const cancelledScheduler=value.conclusion==='cancelled'&&Array.isArray(value.steps)&&value.steps.length===0&&created===started&&
+    (completed===null||completed<=created);
+  const nonExecution=value.conclusion==='skipped'&&Array.isArray(value.steps)&&value.steps.length===0||cancelledScheduler||checkProjection;
   // Executed jobs must fit the run envelope. Native no-op scheduler/check
   // projections can be published later; their times never bound execution.
   if ((!nonExecution&&(created<run.created_at || created>run.updated_at)) ||
