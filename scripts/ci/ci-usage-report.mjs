@@ -670,6 +670,8 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
         sourceContractRaw: runtime.source_contract_raw,
         naturalSelection:runtime.natural_selection??null,liveClock:runtime.clock??null,
         runtimeInputs:runtime,
+        observer:env.GITHUB_RUN_ID&&env.GITHUB_RUN_ATTEMPT&&env.GITHUB_SHA?
+          {run_id:env.GITHUB_RUN_ID,run_attempt:Number(env.GITHUB_RUN_ATTEMPT),head_sha:env.GITHUB_SHA}:null,
         onStore: (nativeRaw) => { mkdir(cacheDir, {recursive: true});
           writeFile(path.join(cacheDir, "r9-native-pending.json"), nativeRaw); }});
       mkdir(cacheDir, {recursive: true});

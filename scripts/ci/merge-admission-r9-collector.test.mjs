@@ -573,3 +573,27 @@ test('uncapped directory refuses changed retention or an unproved provider order
     assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
   }
 });
+
+test('the current Native main observer is disclosed outside its own terminal denominator',async()=>{
+  const live=run(42,{status:'in_progress',conclusion:null}),f=nativeRequest({runs:[live],jobs:[]}),observer={run_id:'42',run_attempt:1,head_sha:head};
+  const r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,observer});
+  assert.equal(r.native.status,'COMPLETE');assert.equal(r.native.population.complete,true);
+  assert.equal(r.native.population.current_observer_exclusion.run_id,'42');assert.equal(r.native.population_packets.length,0);
+  assert.equal(r.t0,null);assert.equal(r.official_metric,false);
+});
+
+test('self-observation exclusion cannot hide another workflow or a terminal measurement',async()=>{
+  for(const live of [run(42,{status:'in_progress',conclusion:null,path:'.github/workflows/clued-g4-database.yml'}),run()]){
+    const f=nativeRequest({runs:[live]}),r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+      observer:{run_id:'42',run_attempt:1,head_sha:head}});
+    assert.equal(r.native.population.current_observer_exclusion,undefined);
+    assert.ok(r.gaps.includes('CURRENT_OBSERVER_NATIVE_ROLE_NOT_PROVED'));assert.equal(r.official_metric,false);
+  }
+});
+
+test('a live report exclusion retains all earlier terminal ordinal captures',async()=>{
+  const first=run(),latest=run(42,{run_attempt:2,status:'in_progress',conclusion:null,run_started_at:'2026-10-10T10:15:00Z',updated_at:'2026-10-10T10:15:01Z'}),
+    f=nativeRequest({runs:[latest],jobs:[job()],mutation:route=>route.endsWith('/attempts/1')?{ok:true,body:first}:null});
+  const r=await C.collectIncrementalNative({request:f.request,repository,window,observer:{run_id:'42',run_attempt:2,head_sha:head}});
+  assert.equal(r.status,'COMPLETE');assert.deepEqual(Object.keys(JSON.parse(r.store_raw).packets),['42:1']);assert.equal(r.fresh,1);
+});

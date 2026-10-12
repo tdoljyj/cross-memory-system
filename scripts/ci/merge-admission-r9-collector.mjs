@@ -303,7 +303,7 @@ const nativeAdmissionKind=(r,jobs,e)=>e.admission_sources.some(s=>[s.workflow_pa
   !(jobs.length>0&&jobs.every(j=>j.name==='clued-work-adopt'));
 // Skip sealed terminal packets as a batch after the initial/closing Native
 // inventory barriers. Only newly missing/changed attempt packets need jobs.
-export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{}}){
+export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null}){
   let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null;const gaps=[];let fresh=0,fromSealed=0;
   try{
     if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
@@ -319,6 +319,10 @@ export async function collectIncrementalNative({request,repository,window,authen
         status:run.status,conclusion:run.conclusion,created_at:run.created_at,run_started_at:run.run_started_at,updated_at:run.updated_at,pull_requests:run.pull_requests};
       const latestMatches=latest&&JSON.stringify(latest.run)===JSON.stringify(normalized);
       for(let attempt=1;attempt<=run.run_attempt;attempt++){
+        // Only the independently verified currently executing observer is
+        // outside its own execution denominator. Older ordinal packets remain.
+        if(observer?.run_id===run.id&&observer.run_attempt===attempt&&run.path.split('@')[0]===R9_PUBLISHER_PATH&&
+          run.head_sha===observer.head_sha&&run.status==='in_progress')continue;
         if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end))continue;
         const existing=packets[run.id+':'+attempt];
         if(latestMatches&&existing){localSealed++;continue;}
@@ -358,7 +362,8 @@ export async function collectIncrementalNative({request,repository,window,authen
     const unknownStarts=populationPackets.filter(p=>p.run.run_started_at===null).map(p=>key(p.run));
     return {status:gaps.length?'PARTIAL':'COMPLETE',store_raw:storeRaw,attempts,population_packets:populationPackets,all_population_packets:retainedPackets,gaps,fresh,from_sealed:fromSealed,
       population:{initial_total:initial.total,closing_total:closing.total,cohort_digest:hash(first),complete:gaps.length===0,
-        scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts}};
+        scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts,
+        ...(observer?{current_observer_exclusion:{...observer,reason_code:'CURRENT_IN_PROGRESS_OBSERVER_IS_NOT_ITS_OWN_TERMINAL_EXECUTION'}}:{})}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),store_raw:storeRaw,attempts:[],gaps,fresh,from_sealed:fromSealed,
     population:{initial_total:initial?.total??null,closing_total:null,complete:false}};}
 }
@@ -526,12 +531,20 @@ export function bindClockSource(packetClock,selectionRaw,repository,window){
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),source_authenticated:false,official_metric:false};}
 }
 
-export async function collectR9Measurement({request,budget,repository,window,sourceContractRaw=null,naturalSelection=null,liveClock=null,runtimeInputs=null,cacheRaw=emptyR9ArtifactCache(repository),onStore=()=>{}}){
-  const slice=r9RequestSlice(request,budget),gaps=[];let contract=null,restored=null,native=null;
+export async function collectR9Measurement({request,budget,repository,window,sourceContractRaw=null,naturalSelection=null,liveClock=null,runtimeInputs=null,cacheRaw=emptyR9ArtifactCache(repository),onStore=()=>{},observer=null}){
+  const slice=r9RequestSlice(request,budget),gaps=[];let contract=null,restored=null,native=null,verifiedObserver=null,observerProved=observer===null;
   if(!slice.allowance)return {status:'partial',reason_code:'MEASUREMENT_APP_REQUIRED',metrics:null,t0:null,cache_raw:cacheRaw,sealed_packet:null};
   try{contract=await loadR9DefaultBranchContract({request:slice.request,repository});restored=await restoreArtifact(slice.request,repository,contract,cacheRaw);
     if(!restored.packet)gaps.push(restored.reason_code);
-    native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.packet?.native_store_raw??null,onStore});
+    if(observer!==null)try{
+      if(!exact(observer,['run_id','run_attempt','head_sha'])||!id(observer.run_id)||!Number.isSafeInteger(observer.run_attempt)||observer.run_attempt<1||!sha(observer.head_sha))fail('CURRENT_OBSERVER_IDENTITY_INVALID');
+      const r=await bodyOf(slice.request,`/repos/${repository}/actions/runs/${observer.run_id}`),wf=await sourceText(slice.request,repository,R9_PUBLISHER_PATH,observer.head_sha);
+      if(String(r.id)!==String(observer.run_id)||r.run_attempt!==observer.run_attempt||r.head_sha!==observer.head_sha||r.status!=='in_progress'||
+        r.path.split('@')[0]!==R9_PUBLISHER_PATH||!['schedule','workflow_dispatch'].includes(r.event)||r.head_branch!==contract.default_branch||
+        r.head_repository?.full_name!==repository||!Array.isArray(r.pull_requests)||r.pull_requests.length||!publisherRole(contract,wf.blob,wf.text))fail('CURRENT_OBSERVER_NATIVE_ROLE_NOT_PROVED');
+      verifiedObserver={run_id:String(r.id),run_attempt:r.run_attempt,head_sha:r.head_sha};observerProved=true;
+    }catch(e){gaps.push(reason(e));}
+    native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.packet?.native_store_raw??null,onStore,observer:verifiedObserver});
     if(native.status!=='COMPLETE')gaps.push(native.reason_code??'NATIVE_POPULATION_INCOMPLETE');
   }catch(e){gaps.push(reason(e));}
   const packet=restored?.packet,metrics={};let four=null,clock=null,binding=null,selection=null;
@@ -582,7 +595,7 @@ export async function collectR9Measurement({request,budget,repository,window,sou
   // Fresh Source provenance is proved by real immutable original-job
   // artifacts plus the independent protected-main Source registry.
   const authenticated=restored?.status==='AUTHENTICATED_SEALED_ARTIFACT'||naturalSelectionBound&&naturalInputs?.status==='NATIVE_ORIGIN_BOUND';
-  const fourQualified=authenticated&&native?.status==='COMPLETE'&&binding?.complete===true&&four?.candidate_ready===true&&
+  const fourQualified=authenticated&&observerProved&&native?.status==='COMPLETE'&&binding?.complete===true&&four?.candidate_ready===true&&
     !gaps.some(g=>/FOUR_SOURCE|NATURAL_|NATIVE_/.test(g));
   const clockQualified=authenticated&&clock?.candidate_ready===true&&clock.status==='UNIQUE_VALUE_CANDIDATE';
   const qualified=fourQualified&&clockQualified;
