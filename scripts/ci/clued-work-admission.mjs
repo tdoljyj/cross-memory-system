@@ -1131,6 +1131,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
         head_sha: pr.head.sha,
         base_sha: pr.base.sha,
         pr_ref: outcome.pr_ref,
+        target_branch: pr.base.ref,
         // Merge Admission v0.1 §10 (step 3): the Receipts of the binding and
         // of a newly admitted head name the mode it was judged in. A service
         // before migration 20261009010000 ignores the key.
@@ -1859,7 +1860,8 @@ export async function dispatchAdmit({ env, fetchImpl, workspace }) {
   // The dispatched head is metered against the Task's CI budget like a pull
   // request head (re-review MAJOR-6), and the run records the head it
   // admitted, which the heavy workflow's gate compares with its own commit.
-  const verified = await verifyClaim(fetchImpl, env, { scope, claim_id: claimId, head_sha: commit.sha, ci_dispatch: true }, workspace);
+  const verified = await verifyClaim(fetchImpl, env, { scope, claim_id: claimId, head_sha: commit.sha,
+    ci_dispatch: true, repository: env.GITHUB_REPOSITORY, target_branch: ref, workflow }, workspace);
   if (verified.kind === "rpc_unavailable") throw new Error(`Clued ${VERIFY_RPC} is not deployed (${verified.detail}).`);
   if (verified.kind === "refused") throw new Error(`Clued refused the verification request (${verified.detail}).`);
   outcome.verdict = verified.verdict;
