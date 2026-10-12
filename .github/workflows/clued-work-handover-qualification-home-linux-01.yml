@@ -58,6 +58,9 @@ jobs:
           persist-credentials: false
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.19.0
       - name: Verify source candidate or protected installed code
         shell: bash
         env:

@@ -287,6 +287,12 @@
             "job_id": "qualify",
             "definition_sha256": "e84b9ce2b0cd2f40c5aa5bf444371f5401967da009a74bbef4fb10a60003be0c"
           }
+        ],
+        "f1e02e5ebbfe582daf43e7b22a527914a4ab1218": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "2c3c34a3c702cd2347ac42440dac10aee31edd469aa4f45f3f04ab21199712f6"
+          }
         ]
       }
     },
@@ -296,6 +302,12 @@
           {
             "job_id": "qualify",
             "definition_sha256": "8b896ab99a95b2506eb3e325130b17fbf829dd9e318c75fe8295767599f1bd44"
+          }
+        ],
+        "c4aee6b6a1dd789072906dd39ffba2d6a99a3988": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "76196eeeafd9542ab208af9e0ebd27ca25e3b2fd20280df985632c3d783bfa67"
           }
         ]
       }
@@ -307,6 +319,12 @@
             "job_id": "qualify",
             "definition_sha256": "4e011c10357e6502eecaac39174b3a6788a867d7852e0c997047f3e616d3a5a4"
           }
+        ],
+        "411f13aab6f5b1688ed4878a9a0802176e6b52de": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "561b6a72b00ce0ca6eb7f664a35e48067235ec0b8dd8b417e07b5db4425b87dd"
+          }
         ]
       }
     },
@@ -316,6 +334,12 @@
           {
             "job_id": "qualify",
             "definition_sha256": "58eb3085c352024cdfea1d87c92c4219535d4d166d16404fb14067d3a14bf22b"
+          }
+        ],
+        "30f95c881e816cdbbe27aec150d30eae616744cc": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "e40d5b8f38a94b8db9b84bc4ba2e3c385d8b53889be68561461b066cec9182b1"
           }
         ]
       }
@@ -327,6 +351,12 @@
             "job_id": "qualify",
             "definition_sha256": "16da64565e70cae45a086e954f72dbd5e48bd9dadf8d98cf009cc50133323020"
           }
+        ],
+        "2ac1aba2a9fd236bcdedac39ac9a435248c8b02e": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "ec55c050878f235f0cce61c4f82756bd7ef269291369cad6c82a40d10a9b9edb"
+          }
         ]
       }
     },
@@ -337,6 +367,12 @@
             "job_id": "qualify",
             "definition_sha256": "eb04e70511879cf5904791288d67acec6f98483b9f7562ff477b70e4bf412f0a"
           }
+        ],
+        "6e9cf8df20614d82d878ad95c3787659ed3cfb4b": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "f1d041c7970e498dc863cde6ef5b0060c71e73cd44f9fdc3142439e64fb53c93"
+          }
         ]
       }
     },
@@ -346,6 +382,12 @@
           {
             "job_id": "qualify",
             "definition_sha256": "700881a6084d45e86eeca228aab8e8afe0967c34db4e6e8dc14533dc733e5153"
+          }
+        ],
+        "0a6d9ec09e4d6a7e02aba6c40a96b3502a7b894c": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "db1af5846e54c9f7ce843ca0ad2a4b91018f5b3e92c331722a27490c61aed92f"
           }
         ]
       }
