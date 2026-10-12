@@ -85,7 +85,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "merge-admission-ungated-rerun";
+export const HOOK_VERSION = "work-handover-current-epoch-v1";
 
 // The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
@@ -513,11 +513,54 @@ export async function decide({ env, fetchImpl, readFile = fs.readFileSync, sleep
   throw new Error(`unreachable event ${event}`);
 }
 
+// The existing GitHub verdict is necessary. Just before starting a branch
+// job, independently observe the service's current execution epoch as well.
+// The public configuration is read from trusted default-branch contents,
+// never from a pull request's checkout or environment overrides. The query
+// carries no Binding token, private lease key, or admission App credential.
+export async function decideWithCurrentEpoch(options) {
+  const result = await decide(options);
+  const { env, fetchImpl, readFile = fs.readFileSync, now = () => Date.now() } = options;
+  if (!result.allow || (MAIN_EVENTS.has(env.GITHUB_EVENT_NAME) && env.GITHUB_REF ===
+    `refs/heads/${(env.CLUED_RUNNER_HOOK_DEFAULT_BRANCH ?? "").trim() || "main"}`)) return result;
+  const repository = env.CLUED_RUNNER_HOOK_REPOSITORY;
+  const defaultBranch = (env.CLUED_RUNNER_HOOK_DEFAULT_BRANCH ?? "").trim() || "main";
+  const token = await readToken({ env, fetchImpl, readFile, now, repository });
+  const configuration = await github(fetchImpl, token, `/repos/${repository}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=${encodeURIComponent(defaultBranch)}`);
+  if (configuration?.type !== "file" || configuration.encoding !== "base64"
+    || typeof configuration.content !== "string" || configuration.content.length > 32768)
+    throw new Error("Trusted Clued public configuration is unavailable");
+  const source = Buffer.from(configuration.content, "base64").toString("utf8");
+  const match = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(source);
+  if (!match) throw new Error("Trusted Clued public configuration is invalid");
+  let target;
+  if (env.GITHUB_EVENT_NAME === "pull_request") {
+    const payload = JSON.parse(String(readFile(env.GITHUB_EVENT_PATH, "utf8")));
+    target = { repository, head_sha: payload.pull_request.head.sha,
+      pr_ref: `${repository}#${payload.pull_request.number}`, target_branch: payload.pull_request.base.ref };
+  } else {
+    target = { repository, head_sha: env.GITHUB_SHA, target_branch: env.GITHUB_REF_NAME,
+      workflow: result.workflow.slice(".github/workflows/".length) };
+  }
+  const response = await fetchImpl(`${match[1]}/rest/v1/rpc/clued_work_verify_v1`, {
+    method: "POST", signal: AbortSignal.timeout(10000), headers: { apikey: match[2], authorization: `Bearer ${match[2]}`, "content-type": "application/json" },
+    body: JSON.stringify({ p_token_hash: null, p_input: { action: "execution_current", ...target } }),
+  });
+  if (response.status !== 200) throw new Error(`Clued execution epoch unavailable (${response.status})`);
+  const observation = await response.json();
+  if (observation?.status !== "ok" || typeof observation.guard_required !== "boolean"
+    || (observation.guard_required && typeof observation.epoch_current !== "boolean"))
+    throw new Error("Clued execution epoch observation is invalid");
+  if (observation.guard_required && !observation.epoch_current)
+    return { ...result, allow: false, reason: "work claim execution epoch is stale or handover is pending" };
+  return result;
+}
+
 export async function main(env = process.env, fetchImpl = globalThis.fetch) {
   const enforce = /^(1|true|on|enabled)$/i.test((env.CLUED_RUNNER_HOOK_ENFORCE ?? "").trim());
   let result;
   try {
-    result = await decide({ env, fetchImpl });
+    result = await decideWithCurrentEpoch({ env, fetchImpl });
   } catch (error) {
     result = { allow: false, reason: `check failed: ${error instanceof Error ? error.message : String(error)}` };
   }
