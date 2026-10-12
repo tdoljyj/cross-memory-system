@@ -5,6 +5,89 @@ const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof v
   Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
 export const roleDefinitionDigest=job=>digest(JSON.stringify(canonical(job)));
 export const workflowBlob=text=>createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+export const FUTURE_WORKFLOW_PURPOSE='work_handover_consumer_qualification';
+const FUTURE_CONSUMERS=new Set(['company-linux-01','company-linux-02','company-linux-03','company-linux-04',
+  'home-linux-01','company-win-01','home-win-01']);
+const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+const exactKeys=(value,keys)=>value && typeof value==='object' && !Array.isArray(value) &&
+  same(Object.keys(value).sort(),[...keys].sort());
+// Only this bounded installation purpose is implemented. An acceptance binds
+// all Source bytes and independently assigned roles, not a path-level permit.
+export function futureWorkflowSubject(entry,roles) {
+  return digest(JSON.stringify(canonical({file:entry.file,consumer_id:entry.consumer_id,purpose:entry.purpose,
+    source_profile:entry.source_profile,workflow_definition:entry.workflow_definition,
+    exact_source_acceptance_scope:entry.exact_source_acceptance_scope,roles})));
+}
+
+export function futureWorkflowCatalogue(registry,specs) {
+  const bad=reason=>({passed:false,state:'unknown',reason});
+  try {
+    if(registry?.schema!=='clued.gated-proof-profiles/2' || specs?.schema!=='clued.gated-proof-role-specs/2')
+      return bad('future catalogue schema missing');
+    const entries=registry.future_workflows??[],roleEntries=specs.future_workflows??[];
+    if(!Array.isArray(entries) || !Array.isArray(roleEntries) || entries.length>7 || roleEntries.length!==entries.length)
+      return bad('future catalogue bounds differ');
+    const files=new Set(),blobs=new Set();
+    for(const entry of entries) {
+      const blob=entry?.source_profile?.workflow_blob;
+      if(!exactKeys(entry,['file','consumer_id','registration_status','purpose','source_profile','workflow_definition',
+        'exact_source_acceptance_scope','source_acceptance']) || !FUTURE_CONSUMERS.has(entry.consumer_id) || entry.file!==
+        `.github/workflows/clued-work-handover-qualification-${entry.consumer_id}.yml` ||
+        entry.registration_status!=='accepted_not_installed' || !/^[a-f0-9]{40}$/.test(blob??'') ||
+        files.has(entry.file) || blobs.has(blob) || Object.hasOwn(registry.workflows??{},entry.file) ||
+        Object.hasOwn(specs.workflows??{},entry.file))
+        return bad('future file/blob is invalid, duplicate or active');
+      files.add(entry.file);blobs.add(blob);
+      const matches=roleEntries.filter(role=>role?.file===entry.file && role.workflow_blob===blob);
+      if(matches.length!==1 || !exactKeys(matches[0],['file','workflow_blob','roles']) || roleEntries.some(role=>!files.has(role?.file) &&
+        !entries.some(value=>value.file===role?.file)))return bad('future independent role catalogue differs');
+    }
+    if(new Set(roleEntries.map(role=>role?.file)).size!==roleEntries.length)return bad('future roles duplicate');
+    return {passed:true,state:'qualified',entries};
+  } catch {return bad('future catalogue invalid');}
+}
+
+export function acceptedFutureWorkflowSource(registry,specs,file,blob,{repository}={}) {
+  const bad=reason=>({passed:false,state:'unknown',reason});
+  try {
+    const catalogue=futureWorkflowCatalogue(registry,specs);
+    if(!catalogue.passed)return catalogue;
+    const entries=catalogue.entries.filter(entry=>entry.file===file && entry.source_profile.workflow_blob===blob);
+    if(entries.length!==1)return bad('exact future source is not independently enrolled');
+    const entry=entries[0],profile=entry.source_profile,acceptance=entry.source_acceptance,scope=entry.exact_source_acceptance_scope;
+    const roles=specs.future_workflows.find(role=>role.file===file && role.workflow_blob===blob)?.roles;
+    const picked=registeredWorkflowSource({schema:registry.schema,workflows:{[file]:profile}},file,blob);
+    if(!picked.passed || profile.gated!==true || Object.hasOwn(profile,'accepted_sources') ||
+      entry.purpose!==FUTURE_WORKFLOW_PURPOSE || !Array.isArray(roles) || roles.length!==profile.primary_ids.length ||
+      rolesForSource({schema:specs.schema,workflows:{[file]:{sources:{[blob]:roles}}}},file,blob)===null ||
+      roles.some(role=>!profile.primary_ids.includes(role.job_id)))return bad('future purpose/profile/roles invalid');
+    // Registration binds the full parsed definition with the locked parser.
+    // Runtime trusts that accepted default Source, but recompiles every role
+    // restriction and command digest without loading any PR code or parser.
+    if(!entry.workflow_definition || roles.some(role=>!exactKeys(role,['job_id','definition_sha256','definition']) || !role.definition ||
+      roleDefinitionDigest(role.definition)!==role.definition_sha256 ||
+      !same(role.definition,entry.workflow_definition.jobs?.[role.job_id])))return bad('future full role definition differs');
+    const compiled=compileRegisteredWorkflow(profile.source_yaml,{primary_ids:profile.primary_ids,
+      parseYaml:()=>entry.workflow_definition,accepted_roles:roles});
+    if(!same(compiled,profile))return bad('future compiled Source differs');
+    const expectedScope={repository,default_branch:'main',operation:'new_workflow_file_installation',file,
+      purpose:FUTURE_WORKFLOW_PURPOSE,consumer_id:entry.consumer_id,workflow_blob:blob,source_sha256:profile.source_sha256,
+      primary_ids:profile.primary_ids,roles:roles.map(role=>({job_id:role.job_id,definition_sha256:role.definition_sha256})),
+      command_digests:profile.routes.map(route=>({job_id:route.job_id,
+        command_digests:route.command_digests})),workflow_definition_sha256:roleDefinitionDigest(entry.workflow_definition),
+      frozen_gate_sha256:scope?.frozen_gate_sha256};
+    if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository??'') ||
+      !/^[a-f0-9]{64}$/.test(scope?.frozen_gate_sha256??'') || !same(scope,expectedScope))
+      return bad('future exact Source acceptance scope differs');
+    if(!exactKeys(acceptance,['status','authority','decision_ref','receipt_id','subject_sha256']) ||
+      acceptance.status!=='accepted' || acceptance.authority!=='owner' ||
+      !/^clued:decision:[a-f0-9-]{36}@v[1-9][0-9]*$/.test(acceptance.decision_ref??'') ||
+      !UUID.test(acceptance.decision_ref.slice(15).split('@')[0]) || !UUID.test(acceptance.receipt_id??'') ||
+      acceptance.subject_sha256!==futureWorkflowSubject(entry,roles))return bad('future Source Owner acceptance missing or revoked');
+    return {passed:true,state:'qualified',scope:'accepted_future_workflow_source',entry,profile,roles};
+  } catch {return bad('future Source acceptance invalid');}
+}
 const CACHE_OBSERVER='Observe npm HTTP cache events';
 const CACHE_COMMAND='node "$GITHUB_WORKSPACE/scripts/ci/npm-cache-observation.mjs"';
 const CACHE_CONDITION="${{ !cancelled() && (steps.classify.outcome != 'success' || steps.classify.outputs.run_full != 'false') }}";

@@ -1,11 +1,12 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
-import {workflowBlob,registeredWorkflowSource,rolesForSource} from './clued-workflow-profile.mjs';
+import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource} from './clued-workflow-profile.mjs';
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 
 const SHA=/^[a-f0-9]{40}$/;
 const REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -96,18 +97,33 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
     const catalog=await boundWorkflowCatalog({read,repository,tip:snapshot.tip,head,
       defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,diff});
     if(!catalog.passed)return catalog;
+    const immutableSources=new Map();
+    const sourceRead=async route=>{
+      // This cache lives only inside this observation and only on the future
+      // installation path. Its values have complete UTF-8/blob proof at an
+      // immutable commit. Mutable PR/main/run/attempt and platform Source
+      // identity reads always retain the authenticated fresh read below.
+      const match=/^\/repos\/([^/]+\/[^/]+)\/contents\/([^?]+)\?ref=([a-f0-9]{40})$/.exec(route);
+      const cacheable=catalog.future_installations.length>0 && match?.[1]===repository && safePath(match[2]);
+      if(cacheable && immutableSources.has(route))return structuredClone(immutableSources.get(route));
+      const content=await read(route);
+      if(cacheable && immutableSources.size<64 && decodedWorkflow(content,match[2],content?.sha)!==null)
+        immutableSources.set(route,structuredClone(content));
+      return content;
+    };
     const sources=new Map();
-    const sourceFor=async(file,run)=>workflowSourceOf({read,graphRead,repository,
-      headRepository:diff.descriptor.head_repository,file,run,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,serverURL});
+    const sourceFor=async(file,run)=>workflowSourceOf({read:sourceRead,graphRead,repository,
+      headRepository:diff.descriptor.head_repository,file,run,registry:catalog.source_registry,
+      roleSpecs:catalog.source_roles,serverURL});
     const proof=await qualifiedCI({read,repository,head,prNumber,workflows:catalog.workflows,profiles:catalog.profiles,
       authorizeSource:async({file,run})=>{
         const source=await sourceFor(file,run);
         if(!source.passed || source.workflow_blob!==catalog.workflows.get(file))return false;
         sources.set(run.id,source);return true;
       },
-      qualifyRunIdentity:async({run,jobs})=>(await boundRunIdentity({read,readLog,source:sources.get(run.id),run,jobs,
+      qualifyRunIdentity:async({run,jobs})=>(await boundRunIdentity({read:sourceRead,readLog,source:sources.get(run.id),run,jobs,
         repository,head,prNumber,trustedGateBlob:snapshot.files['scripts/ci/clued-work-admission.mjs']})).passed===true,
-      qualifyDocumentation:async({run,jobs})=>(await boundDocumentationAttempt({read,readLog,source:sources.get(run.id),run,jobs,
+      qualifyDocumentation:async({run,jobs})=>(await boundDocumentationAttempt({read:sourceRead,readLog,source:sources.get(run.id),run,jobs,
         repository,head,prNumber,trustedSources:Object.fromEntries(DOC_SOURCES.map(file=>[file,snapshot.files[file]]))})).passed===true,
       revalidateSources:async({runs})=>{
         if(!await snapshotCurrent())return false;
@@ -144,6 +160,32 @@ function workflowDirectory(body) {
   }
   return entries;
 }
+
+// Contents directory arrays have no completeness count. Future enrollment
+// additionally binds the exact directory through three non-recursive Git
+// trees; a truncated listing cannot hide an installed or extra workflow.
+async function completeWorkflowDirectory({read,repository,commit}) {
+  const descriptor=await read(`/repos/${repository}/git/commits/${commit}`);
+  if(descriptor?.sha!==commit || !SHA.test(descriptor.tree?.sha??''))return null;
+  let treeSha=descriptor.tree.sha;
+  for(const part of ['.github','workflows',null]) {
+    const body=await read(`/repos/${repository}/git/trees/${treeSha}`);
+    if(body?.sha!==treeSha || body.truncated!==false || !Array.isArray(body.tree) || body.tree.length>=1000 ||
+      body.tree.some(entry=>!safePath(entry?.path) || entry.path.includes('/') || !SHA.test(entry.sha??'')) ||
+      new Set(body.tree.map(entry=>entry.path)).size!==body.tree.length)return null;
+    if(part!==null) {
+      const entry=body.tree.find(entry=>entry.path===part);
+      if(entry?.type!=='tree' || entry.mode!=='040000')return null;
+      treeSha=entry.sha;
+    } else {
+      if(body.tree.some(entry=>entry.type!=='blob' || !['100644','100755'].includes(entry.mode)))return null;
+      return new Map(body.tree.map(entry=>[`.github/workflows/${entry.path}`,entry.sha]));
+    }
+  }
+  return null;
+}
+const sameDirectory=(a,b)=>a instanceof Map && b instanceof Map && a.size===b.size &&
+  [...a].every(([file,blob])=>b.get(file)===blob);
 
 // This is a bounded negative trigger classifier, not a general YAML parser.
 // It only accepts explicit event keys. Alias/merge/quoted/flow ambiguity in
@@ -318,7 +360,16 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     const atDefault=workflowDirectory(await read(`/repos/${repository}/contents/.github/workflows?ref=${tip}`));
     const atHead=workflowDirectory(await read(`/repos/${repository}/contents/.github/workflows?ref=${head}`));
     if(!atDefault || !atHead)return unknown('workflow directory incomplete');
+    const future=futureWorkflowCatalogue(registry,roleSpecs);
+    if(!future.passed)return future;
+    if(future.entries.some(entry=>atDefault.has(entry.file)))return unknown('future Source is already installed without active promotion');
+    const futureInstalls=future.entries.filter(entry=>atHead.has(entry.file));
+    const futureChanged=future.entries.some(entry=>diff.changedFiles?.includes(entry.file));
+    if((futureInstalls.length || futureChanged) && (!sameDirectory(atDefault,await completeWorkflowDirectory({read,repository,commit:tip})) ||
+      !sameDirectory(atHead,await completeWorkflowDirectory({read,repository,commit:head}))))
+      return unknown('future workflow Git tree/directory incomplete or differs');
     const sources=new Map(),selected={schema:registry.schema,workflows:{}};
+    const sourceRegistry={...registry,workflows:{...registry.workflows}},sourceRoles={...roleSpecs,workflows:{...roleSpecs.workflows}};
     for(const [file,blob] of defaultWorkflows) {
       if(atDefault.get(file)!==blob)return unknown('trusted checkout/default catalogue differs');
       const headBlob=atHead.get(file),source=registeredWorkflowSource(registry,file,headBlob);
@@ -331,6 +382,20 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     for(const [file,blob] of atHead) {
       if(!/\.ya?ml$/.test(file) || defaultWorkflows.has(file) || atDefault.get(file)===blob)continue;
       const text=decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${head}`),file,blob);
+      if(!atDefault.has(file) && future.entries.some(entry=>entry.file===file)) {
+        const enrollment=acceptedFutureWorkflowSource(registry,roleSpecs,file,blob,{repository});
+        if(!enrollment.passed)return enrollment;
+        if(diff.descriptor.default_branch!==enrollment.entry.exact_source_acceptance_scope.default_branch)
+          return unknown('future installation default branch is outside accepted scope');
+        const gates=workflowJobs(text).filter(job=>job.name==='admission-gate');
+        if(text!==enrollment.profile.source_yaml || workflowFormFindings(text).length || !workflowIsGated(text) ||
+          gateFindings(text,null).length || gates.length!==1 || createHash('sha256').update(gates[0].lines.join('\n')).digest('hex')!==
+          enrollment.entry.exact_source_acceptance_scope.frozen_gate_sha256)
+          return unknown('future workflow bytes/form/FrozenGate differ');
+        sources.set(file,blob);selected.workflows[file]=enrollment.profile;
+        sourceRegistry.workflows[file]=enrollment.profile;sourceRoles.workflows[file]={sources:{[blob]:enrollment.roles}};
+        continue;
+      }
       if(text===null || workflowFormFindings(text).length || workflowIsGated(text))
         return unknown('non-CI workflow became gated or has ambiguous source');
       if(atDefault.has(file)) {
@@ -347,7 +412,8 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
       commits:diff.commits,diffComplete:true,sourceQualified:true});
     if(!targets.passed)return targets;
     return {passed:true,state:'qualified',scope:'applicable_workflow_catalogue',workflows:targets.workflows,
-      profiles:selected,default_directory:[...atDefault],head_directory:[...atHead]};
+      profiles:selected,source_registry:sourceRegistry,source_roles:sourceRoles,
+      future_installations:futureInstalls.map(entry=>entry.file),default_directory:[...atDefault],head_directory:[...atHead]};
   } catch {return unknown('workflow catalogue read failed');}
 }
 

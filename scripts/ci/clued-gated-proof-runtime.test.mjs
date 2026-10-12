@@ -6,8 +6,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource} from './clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource,futureWorkflowSubject} from './clued-workflow-profile.mjs';
 import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
+import {createHash} from 'node:crypto';
+import {workflowJobs} from './clued-work-admission.mjs';
+import {applicableCI} from './clued-gated-proof.mjs';
 const repository='o/r',headRepository='fork/r',file='.github/workflows/fixture.yml';
 const sha='a'.repeat(40),head='b'.repeat(40);
 const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,path:file,
@@ -237,6 +240,232 @@ test('complete catalogue retains counted CI when a PR deletes its gate; non-CI e
   const existingShort=async route=>route.includes('/contents/.github/workflows?')?
     directory(route.includes('ref='+tip)?oldShort:newShort):content(other,route.includes('ref='+tip)?oldShort:newShort);
   assert.equal((await call({read:existingShort})).passed,true);
+});
+
+function futureExecutionWorld({trustedFuture=true,acceptance='accepted',critical='success',primary='success',
+  staleAttempt=false,moveMain=false,truncateHead=false,truncateDefault=false,treeTruncated=false,
+  actualSourceDiffers=false,alreadyInstalled=false,gateHashDiffers=false,defaultBranch='main'}={}) {
+  const w=executionWorld(),saved=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const savedRoles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const consumer_id='company-linux-01',futureFile=`.github/workflows/clued-work-handover-qualification-${consumer_id}.yml`;
+  const registered=saved.future_workflows?.find(entry=>entry.file===futureFile),profile=structuredClone(
+    registered?.source_profile??saved.workflows[futureFile]);
+  const independent=structuredClone(registered?savedRoles.future_workflows.find(role=>role.file===futureFile).roles:
+    savedRoles.workflows[futureFile].sources[profile.workflow_blob]);
+  const definition=structuredClone(registered?.workflow_definition??{on:{pull_request:profile.pull_request},jobs:{'admission-gate':{},
+    ...Object.fromEntries(independent.map(role=>[role.job_id,role.definition]))}});
+  const entry=registered?structuredClone(registered):{file:futureFile,consumer_id,registration_status:'accepted_not_installed',
+    purpose:'work_handover_consumer_qualification',source_profile:profile,workflow_definition:definition,
+    exact_source_acceptance_scope:{repository,default_branch:'main',operation:'new_workflow_file_installation',file:futureFile,
+      purpose:'work_handover_consumer_qualification',consumer_id,workflow_blob:profile.workflow_blob,source_sha256:profile.source_sha256,
+      primary_ids:profile.primary_ids,roles:independent.map(({job_id,definition_sha256})=>({job_id,definition_sha256})),
+      command_digests:profile.routes.map(({job_id,command_digests})=>({job_id,command_digests})),
+      workflow_definition_sha256:roleDefinitionDigest(definition),frozen_gate_sha256:createHash('sha256')
+        .update(workflowJobs(profile.source_yaml).find(job=>job.name==='admission-gate').lines.join('\n')).digest('hex')}};
+  const roles={file:futureFile,workflow_blob:profile.workflow_blob,roles:independent};
+  entry.exact_source_acceptance_scope.repository=repository;
+  if(gateHashDiffers)entry.exact_source_acceptance_scope.frozen_gate_sha256='a'.repeat(64);
+  entry.source_acceptance={status:acceptance,authority:'owner',
+    decision_ref:'clued:decision:11111111-1111-4111-8111-111111111111@v1',
+    receipt_id:'22222222-2222-4222-8222-222222222222',subject_sha256:futureWorkflowSubject(entry,roles.roles)};
+  const profiles=w.snapshot.profiles,roleSpecs=w.snapshot.roleSpecs;
+  profiles.future_workflows=trustedFuture?[entry]:[];roleSpecs.future_workflows=trustedFuture?[roles]:[];
+  const texts={'scripts/ci/clued-gated-proof-profiles.json':JSON.stringify(profiles),
+    'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(roleSpecs),
+    'scripts/ci/clued-work-admission.mjs':'trusted gate','scripts/ci/clued-docs-only.py':'trusted classifier',
+    'scripts/ci/test_clued_docs_only.py':'trusted classifier tests','config/merge-admission-policy.json':'trusted policy'};
+  w.snapshot.files=Object.fromEntries(Object.entries(texts).map(([name,text])=>[name,workflowBlob(text)]));
+  const futureText=entry.source_profile.source_yaml+(actualSourceDiffers?'\n# unaccepted bytes\n':''),futureBlob=workflowBlob(futureText);
+  const originalProfile=profiles.workflows[file],activeEntry={path:file,sha:originalProfile.workflow_blob,type:'file'};
+  const futureEntry={path:entry.file,sha:futureBlob,type:'file'};
+  const defaultDirectory=[activeEntry,...(alreadyInstalled?[futureEntry]:[])],headDirectory=[activeEntry,futureEntry];
+  const directoryBody=values=>values.map(value=>({...value}));
+  const native={...run,status:'completed',conclusion:'success',pull_requests:[{number:5}]};
+  const futureRun={...native,id:17,node_id:'WFR_future',path:entry.file};
+  const content=(name,text)=>({path:name,sha:workflowBlob(text),type:'file',encoding:'base64',
+    size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')});
+  const trees=new Map();
+  const treeBody=(sha,tree)=>({sha,truncated:treeTruncated,tree});
+  for(const [commit,directory,offset] of [[w.snapshot.tip,defaultDirectory,3],[head,headDirectory,6]]) {
+    const ids=[offset,offset+1,offset+2].map(n=>String(n).repeat(40));
+    trees.set('commit:'+commit,{sha:commit,tree:{sha:ids[0]}});
+    trees.set(ids[0],treeBody(ids[0],[{path:'.github',type:'tree',mode:'040000',sha:ids[1]}]));
+    trees.set(ids[1],treeBody(ids[1],[{path:'workflows',type:'tree',mode:'040000',sha:ids[2]}]));
+    trees.set(ids[2],treeBody(ids[2],directory.map(value=>({path:value.path.split('/').at(-1),type:'blob',mode:'100644',sha:value.sha}))));
+  }
+  const baseRead=w.read;let branches=0;
+  w.read=async route=>{
+    w.calls.push(route);
+    if(route.includes('/branches/'+defaultBranch))return {commit:{sha:++branches>1&&moveMain?'d'.repeat(40):w.snapshot.tip}};
+    if(route.endsWith('/pulls/5'))return {...w.pr,changed_files:1,base:{...w.pr.base,ref:defaultBranch,
+      repo:{...w.pr.base.repo,default_branch:defaultBranch}}};
+    if(route.includes('/compare/'))return {base_commit:{sha:w.pr.base.sha},merge_base_commit:{sha:w.pr.base.sha},total_commits:1,
+      commits:[{sha:head}],files:[{filename:entry.file,status:'added'}]};
+    if(route.includes('/contents/.github/workflows?')) {
+      const atDefault=route.includes('ref='+w.snapshot.tip),values=atDefault?defaultDirectory:headDirectory;
+      return directoryBody(atDefault&&truncateDefault?values.slice(1):!atDefault&&truncateHead?values.slice(0,1):values);
+    }
+    if(route.includes('/git/commits/'))return trees.get('commit:'+route.split('/').at(-1));
+    if(route.includes('/git/trees/'))return trees.get(route.split('/').at(-1));
+    if(route.includes('/contents/')) {
+      const name=route.split('/contents/')[1].split('?')[0];
+      if(name===entry.file)return content(name,futureText);
+      if(Object.hasOwn(texts,name))return content(name,texts[name]);
+      return baseRead(route);
+    }
+    if(route.includes('/actions/runs?'))return {total_count:2,workflow_runs:[native,futureRun]};
+    if(route.includes(`/actions/runs/${futureRun.id}/attempts/`))return {total_count:2,jobs:[
+      {id:18,run_id:17,run_attempt:2,name:'admission-gate',status:'completed',conclusion:'success',labels:['self-hosted']},
+      {id:19,run_id:17,run_attempt:2,name:entry.source_profile.routes[0].name,status:'completed',conclusion:primary,
+        labels:['self-hosted'],steps:Object.entries(entry.source_profile.routes[0].required_steps)
+          .flatMap(([name,count])=>Array.from({length:count},()=>({name,status:'completed',conclusion:critical})))}]};
+    if(route.endsWith('/actions/runs/17'))return staleAttempt?{...futureRun,run_attempt:3}:futureRun;
+    if(route.endsWith('/actions/runs/7'))return native;
+    return baseRead(route);
+  };
+  w.graphRead=async(query,{node})=>{
+    if(node!=='WFR_future')return payload();
+    return {data:{node:{databaseId:17,runAttempt:2,event:'pull_request',file:{path:entry.file,repositoryName:repository,
+      repositoryFileUrl:`https://github.com/${repository}/blob/${head}/${entry.file}`,run:{databaseId:17,runAttempt:2}}}}};
+  };
+  return {...w,entry,roleEntry:roles,trees};
+}
+test('accepted not-installed default Source qualifies a new exact workflow through the existing full execution proof',async()=>{
+  const w=futureExecutionWorld(),proof=await qualifyPrExecution(w);
+  assert.equal(proof.passed,true);assert.equal(proof.observation_context.workflow_files.length,2);
+  assert.ok(proof.observation_context.workflow_files.includes(w.entry.file));
+  assert.equal(w.snapshot.workflows.size,1,'future enrollment does not change the active default CI count');
+  assert.ok(w.calls.some(route=>route.includes('/git/trees/')));
+  assert.equal(w.calls.some(route=>route.endsWith('/contents/scripts/ci/clued-gated-proof-profiles.json?ref='+head)),false,
+    'head registry cannot provide Source trust');
+});
+test('head self-enrollment, missing/revoked acceptance, existing files and non-exact future bytes remain unknown',async()=>{
+  for(const settings of [{trustedFuture:false},{acceptance:'candidate'},{acceptance:'revoked'},
+    {actualSourceDiffers:true},{alreadyInstalled:true},{gateHashDiffers:true},{defaultBranch:'trunk'}])
+    assert.equal((await qualifyPrExecution(futureExecutionWorld(settings))).state,'unknown');
+});
+test('future directory proof rejects contents omission, truncated trees and hidden additional workflow files',async()=>{
+  for(const settings of [{truncateHead:true},{truncateDefault:true},{treeTruncated:true}])
+    assert.equal((await qualifyPrExecution(futureExecutionWorld(settings))).state,'unknown');
+  const hidden=futureExecutionWorld(),tree=hidden.trees.get('8'.repeat(40));
+  tree.tree.push({path:'hidden.yml',type:'blob',mode:'100644',sha:'f'.repeat(40)});
+  assert.equal((await qualifyPrExecution(hidden)).state,'unknown');
+});
+test('future enrollment never qualifies skipped execution, an old attempt or a changed final default tip',async()=>{
+  for(const settings of [{critical:'skipped'},{critical:'neutral'},{primary:'skipped'},
+    {staleAttempt:true},{moveMain:true}])assert.equal((await qualifyPrExecution(futureExecutionWorld(settings))).passed,false);
+});
+
+function sevenConsumerExecutionWorld({moveMain=false}={}) {
+  const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const roleSpecs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const tip='c'.repeat(40),base='d'.repeat(40),merge='e'.repeat(40);
+  const promoted=!(profiles.future_workflows?.length);
+  if(promoted) {
+    // Preserve the same fixture after the separately governed active promotion.
+    const one=futureExecutionWorld().entry;
+    profiles.future_workflows=[];roleSpecs.future_workflows=[];
+    for(const consumer_id of ['company-linux-01','company-linux-02','company-linux-03','company-linux-04',
+      'home-linux-01','company-win-01','home-win-01']) {
+      const name=`.github/workflows/clued-work-handover-qualification-${consumer_id}.yml`,p=profiles.workflows[name];
+      const roles=roleSpecs.workflows[name].sources[p.workflow_blob];
+      const definition={on:{pull_request:p.pull_request},jobs:{'admission-gate':{},...Object.fromEntries(roles.map(role=>[role.job_id,role.definition]))}};
+      const entry={...structuredClone(one),file:name,consumer_id,source_profile:p,workflow_definition:definition,
+        exact_source_acceptance_scope:{...structuredClone(one.exact_source_acceptance_scope),file:name,consumer_id,
+          workflow_blob:p.workflow_blob,source_sha256:p.source_sha256,primary_ids:p.primary_ids,
+          roles:roles.map(({job_id,definition_sha256})=>({job_id,definition_sha256})),
+          command_digests:p.routes.map(({job_id,command_digests})=>({job_id,command_digests})),
+          workflow_definition_sha256:roleDefinitionDigest(definition)}};
+      profiles.future_workflows.push(entry);roleSpecs.future_workflows.push({file:name,workflow_blob:p.workflow_blob,roles});
+      delete profiles.workflows[name];delete roleSpecs.workflows[name];
+    }
+  }
+  for(const entry of profiles.future_workflows) {
+    const roles=roleSpecs.future_workflows.find(role=>role.file===entry.file).roles;
+    entry.exact_source_acceptance_scope.repository=repository;
+    entry.source_acceptance={status:'accepted',authority:'owner',
+      decision_ref:'clued:decision:11111111-1111-4111-8111-111111111111@v1',
+      receipt_id:'22222222-2222-4222-8222-222222222222',subject_sha256:futureWorkflowSubject(entry,roles)};
+  }
+  const workflows=new Map(Object.entries(profiles.workflows).map(([name,p])=>[name,p.workflow_blob]));
+  const texts={'scripts/ci/clued-gated-proof-profiles.json':JSON.stringify(profiles),
+    'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(roleSpecs),'scripts/ci/clued-work-admission.mjs':'trusted gate',
+    'scripts/ci/clued-docs-only.py':'trusted classifier','scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
+    'config/merge-admission-policy.json':'trusted policy'};
+  const snapshot={tip,checkout:tip,profiles,roleSpecs,workflows,
+    files:Object.fromEntries(Object.entries(texts).map(([name,text])=>[name,workflowBlob(text)]))};
+  const all={...profiles.workflows,...Object.fromEntries(profiles.future_workflows.map(entry=>[entry.file,entry.source_profile]))};
+  const changedFiles=[...profiles.future_workflows.map(entry=>entry.file),'scripts/ci/clued-gated-proof-profiles.json',
+    'scripts/ci/clued-gated-proof-role-specs.json','.github/workflows/clued-merge-slot-ci.yml','.github/actions/ci-temporary-storage/coverage.json'];
+  const targets=applicableCI({workflows:new Map(Object.entries(all).map(([name,p])=>[name,p.workflow_blob])),
+    profiles:{workflows:all},changedFiles,commits:1,diffComplete:true,sourceQualified:true}).workflows;
+  assert.equal(workflows.size,13);assert.equal(targets.size,12);
+  const runs=[...targets].map(([name],i)=>({...run,id:100+i,node_id:'WFR_'+i,path:name,status:'completed',conclusion:'success',pull_requests:[]}));
+  const jobs=new Map(runs.map(native=>{
+    const profile=all[native.path],entries=profile.routes.map((route,i)=>({id:native.id*10+i+1,run_id:native.id,run_attempt:2,
+      name:route.name,labels:route.self_hosted?['self-hosted']:['ubuntu-latest'],status:'completed',conclusion:i?'skipped':'success',
+      steps:i?[]:Object.entries(route.required_steps).flatMap(([name,count])=>Array.from({length:count},()=>({name,status:'completed',conclusion:'success'})))}));
+    if(profile.gated)entries.push({id:native.id*10,run_id:native.id,run_attempt:2,name:'admission-gate',status:'completed',
+      conclusion:'success',labels:['self-hosted']});
+    return [native.id,entries];
+  }));
+  const defaultDirectory=[...workflows].map(([path,sha])=>({path,sha,type:'file'}));
+  const headDirectory=Object.entries(all).map(([path,p])=>({path,sha:p.workflow_blob,type:'file'}));
+  const trees=new Map();
+  for(const [commit,directory,offset] of [[tip,defaultDirectory,3],[head,headDirectory,6]]) {
+    const ids=[offset,offset+1,offset+2].map(n=>String(n).repeat(40));trees.set('commit:'+commit,{sha:commit,tree:{sha:ids[0]}});
+    trees.set(ids[0],{sha:ids[0],truncated:false,tree:[{path:'.github',type:'tree',mode:'040000',sha:ids[1]}]});
+    trees.set(ids[1],{sha:ids[1],truncated:false,tree:[{path:'workflows',type:'tree',mode:'040000',sha:ids[2]}]});
+    trees.set(ids[2],{sha:ids[2],truncated:false,tree:directory.map(value=>({path:value.path.split('/').at(-1),sha:value.sha,type:'blob',mode:'100644'}))});
+  }
+  const content=(name,text)=>({path:name,sha:workflowBlob(text),type:'file',encoding:'base64',size:Buffer.byteLength(text),
+    content:Buffer.from(text).toString('base64')});
+  const pr={number:5,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
+    base:{sha:base,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:changedFiles.length,commits:1};
+  let reads=0,graphs=0,logs=0,branches=0;const sourceContentReads=new Map();
+  const read=async route=>{
+    reads++;
+    if(route.endsWith('/pulls/5'))return pr;
+    if(route.includes('/branches/main'))return {commit:{sha:++branches>1&&moveMain?base:tip}};
+    if(route.includes('/compare/'))return {base_commit:{sha:base},merge_base_commit:{sha:base},total_commits:1,
+      commits:[{sha:head}],files:changedFiles.map(filename=>({filename,status:filename.endsWith('.yml')?'added':'modified'}))};
+    if(route.includes('/contents/.github/workflows?'))return route.includes('ref='+tip)?defaultDirectory:headDirectory;
+    if(route.includes('/git/commits/'))return route.endsWith(merge)?{sha:merge,parents:[{sha:base},{sha:head}]}:trees.get('commit:'+route.split('/').at(-1));
+    if(route.includes('/git/trees/'))return trees.get(route.split('/').at(-1));
+    if(route.includes('/contents/')) {
+      const name=route.split('/contents/')[1].split('?')[0];
+      sourceContentReads.set(route,(sourceContentReads.get(route)??0)+1);
+      return content(name,Object.hasOwn(texts,name)?texts[name]:all[name].source_yaml);
+    }
+    if(route.includes('/actions/runs?'))return {total_count:runs.length,workflow_runs:runs};
+    const id=Number(/\/actions\/runs\/(\d+)/.exec(route)?.[1]);
+    if(route.includes('/attempts/'))return {total_count:jobs.get(id).length,jobs:jobs.get(id)};
+    return runs.find(native=>native.id===id);
+  };
+  const graphRead=async(query,{node})=>{
+    graphs++;const native=runs.find(value=>value.node_id===node);
+    return {data:{node:{databaseId:native.id,runAttempt:2,event:'pull_request',file:{path:native.path,repositoryName:repository,
+      repositoryFileUrl:`https://github.com/${repository}/blob/${head}/${native.path}`,run:{databaseId:native.id,runAttempt:2}}}}};
+  };
+  const readLog=async(job,native)=>{
+    logs++;let text;
+    if(job.name==='admission-gate')text=`[command]/usr/bin/git log -1 --format=%H\n${base}\n${JSON.stringify({mode:'gate',event:'pull_request',
+      head_sha:head,base_sha:base,pr_ref:repository+'#5',enforced:true,admitted:true,verdict:'ADMITTED'},null,2)}`;
+    else text=`[command]/usr/bin/git checkout --progress --force refs/remotes/pull/5/merge\n[command]/usr/bin/git log -1 --format=%H\n${merge}`;
+    return {complete:true,text,job_id:job.id,run_id:native.id,run_attempt:2};
+  };
+  return {repository,head,prNumber:5,snapshot,read,graphRead,readLog,sourceContentReads,counts:()=>({reads,graphs,logs,total:reads+graphs+logs})};
+}
+test('all seven future consumers and five existing workflows fit the unchanged request budget with empty native membership',async t=>{
+  const w=sevenConsumerExecutionWorld(),proof=await qualifyPrExecution(w);
+  assert.equal(proof.passed,true,JSON.stringify({proof,counts:w.counts()}));
+  assert.equal(proof.observation_context.workflow_files.length,12);
+  assert.equal(w.counts().logs,12);assert.equal(w.counts().graphs,24,'platform Source identity is re-read for every final run');
+  assert.ok(w.counts().total<=160);
+  t.diagnostic(JSON.stringify({guarded_reads:w.counts(),applicable_workflows:12,empty_memberships:12}));
+  const gateReads=[...w.sourceContentReads].filter(([route])=>route.endsWith('/contents/scripts/ci/clued-work-admission.mjs?ref='+'d'.repeat(40)));
+  assert.equal(gateReads[0][1],1,'only one immutable verified checkout Source read is shared within this observation');
+  assert.equal((await qualifyPrExecution(sevenConsumerExecutionWorld({moveMain:true}))).state,'unknown');
 });
 test('documentation independently reconstructs old event-base to actual merge checkout and regular file modes',async()=>{
   const eventBase='1'.repeat(40),firstParent='2'.repeat(40),checkout='3'.repeat(40);
