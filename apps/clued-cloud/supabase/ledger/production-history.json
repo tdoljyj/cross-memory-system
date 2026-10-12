@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-11T07:03:51.229Z",
-  "history_through": "20261011065026",
-  "row_count": 242,
+  "exported_at": "2026-10-12T02:18:11Z",
+  "history_through": "20261012021804",
+  "row_count": 246,
   "rows": [
     {
       "version": "20260823154017",
@@ -1939,6 +1939,38 @@
       "statements_md5": "2a06690582ca186354871ebefe1d0483",
       "statements_length": 45365,
       "source": "migrations/20261011035952_storage_master_control_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261011083600",
+      "name": "merge_admission_measurement_history_atomic_v1",
+      "statements_md5": "b1dbbf91539f36ff673462f098c71e82",
+      "statements_length": 21389,
+      "source": "migrations/20261011033947_merge_admission_measurement_history_atomic_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012021547",
+      "name": "dataset_split_native_grant_binding_successor_v1",
+      "statements_md5": "abab10df689d237c63403c8303999418",
+      "statements_length": 12607,
+      "source": "migrations/20261011041300_dataset_split_native_grant_binding_successor_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012021758",
+      "name": "merge_admission_measurement_capabilities_v1",
+      "statements_md5": "4a587808691c64db3e0882c4342250dc",
+      "statements_length": 21175,
+      "source": "migrations/20261011050507_merge_admission_measurement_capabilities_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012021804",
+      "name": "storage_reconnect_retry_v1",
+      "statements_md5": "f8f162e21bd0d32e3f58e72a1e9d3a36",
+      "statements_length": 3780,
+      "source": "migrations/20261011101500_storage_reconnect_retry_v1.sql",
       "transform": "identical"
     }
   ],
