@@ -30,6 +30,23 @@ const {workflowBlob}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued
 const repository='tdoljyj/cross-memory-system',head='a'.repeat(40),window={start:'2026-10-10T00:00:00.000Z',end:'2026-10-11T00:00:00.000Z'};
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const scope={project_id:'0597aa60-9b98-4da6-a4ab-63d7705b632f',queue_ref:'merge:tdoljyj/cross-memory-system:main'};
+test('Native admission membership distinguishes skipped evaluator plus adoption from an executed or unknown evaluator',()=>{
+  const workflow='.github/workflows/clued-work-admission.yml',expected=JSON.stringify({admission_sources:[{
+    workflow_path:workflow,reverify_workflow_path:'.github/workflows/clued-work-admission-reverify.yml'}]}),
+    at='2026-10-10T10:00:01.000Z',r={run_id:'42',run_attempt:1,path:workflow,head_sha:'a'.repeat(40),pull_requests:[727],
+      status:'completed',conclusion:'success',created_at:'2026-10-10T10:00:00.000Z',run_started_at:at,updated_at:'2026-10-10T10:01:00.000Z'},
+    skipped={id:'43',name:'clued-work-admission',status:'completed',conclusion:'skipped',created_at:at,started_at:at,completed_at:at,steps:[]},
+    cancelled={...skipped,conclusion:'cancelled',completed_at:'2026-10-10T10:00:00.000Z'},
+    adopt={id:'44',name:'clued-work-adopt',status:'completed',conclusion:'success',created_at:at,started_at:at,completed_at:at,
+      steps:[{name:'Report the merge',status:'completed',conclusion:'success'}]};
+  for(const [jobs,kind] of [[[skipped,adopt],'other'],[[skipped],'other'],[[cancelled],'other'],[[adopt],'other'],[[],'admission'],
+    [[{...cancelled,steps:[{name:'Evaluate',status:'completed',conclusion:'failure'}]}],'admission'],
+    [[{...cancelled,started_at:'2026-10-10T10:00:02.000Z'}],'admission']]){
+    const native={population_packets:[{run:r,jobs}]},before=JSON.stringify(native),rows=C.mapNativeAttemptsForFourSource(native,expected,window);
+    assert.equal(rows.length,1);assert.equal(rows[0].kind,kind);assert.equal(rows[0].status,r.status);assert.equal(rows[0].conclusion,r.conclusion);
+    assert.equal(JSON.stringify(native),before);
+  }
+});
 const run=(id=42,extra={})=>({id,run_attempt:1,workflow_id:7,path:C.R9_PUBLISHER_PATH,event:'schedule',head_sha:head,
   status:'completed',conclusion:'success',created_at:'2026-10-10T10:00:00Z',run_started_at:'2026-10-10T10:00:01Z',updated_at:'2026-10-10T10:10:00Z',
   pull_requests:[],head_branch:'main',head_repository:{full_name:repository},...extra});

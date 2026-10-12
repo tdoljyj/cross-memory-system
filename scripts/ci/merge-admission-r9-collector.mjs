@@ -326,7 +326,7 @@ async function fullInventory(request,repository,window,rangesRead){
 }
 const selected=(items,w)=>items.filter(r=>timestampMicros(r.created_at)<timestampMicros(w.end)&&timestampMicros(r.updated_at)>=timestampMicros(w.start));
 const nativeAdmissionKind=(r,jobs,e)=>e.admission_sources.some(s=>[s.workflow_path,s.reverify_workflow_path].includes(r.path.split('@')[0]))&&
-  !(jobs.length>0&&jobs.every(j=>j.name==='clued-work-adopt'));
+  (jobs.length===0||jobs.some(j=>j.name!=='clued-work-adopt'&&!nativeJobIsNonExecution(j)));
 // Skip sealed terminal packets as a batch after the initial/closing Native
 // inventory barriers. Only newly missing/changed attempt packets need jobs.
 export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null}){
@@ -460,7 +460,7 @@ export function mapNativeAttemptsForFourSource(native,expectedRaw,window,{profil
     const r=n.run,m=r.status==='completed'?nativeCompletionMembership(n,window):null;
     const interval=m?.lower_us===undefined?null:{lower_at:isoMicros(m.lower_us),upper_at:isoMicros(m.upper_us),basis:'native_job_completion_lower_and_terminal_update_upper_bounds'};
     return {run_id:r.run_id,attempt:r.run_attempt,pr_number:r.pull_requests.length===1?r.pull_requests[0]:null,head_sha:r.head_sha,
-      kind:nativeAdmissionKind(r,n.jobs,e)?'admission':profiles&&registeredWorkflowSource(profiles,r.path.split('@')[0],workflowBlobs[r.path.split('@')[0]])?.passed?'ci':'other',status:r.status,conclusion:r.conclusion,
+      kind:nativeAdmissionKind(r,n.jobs,e)?'admission':!admissionPaths.has(r.path.split('@')[0])&&profiles&&registeredWorkflowSource(profiles,r.path.split('@')[0],workflowBlobs[r.path.split('@')[0]])?.passed?'ci':'other',status:r.status,conclusion:r.conclusion,
       started_at:r.run_started_at,completed_at:null,terminal_interval:interval};
   });
 }

@@ -361,3 +361,32 @@ test('minimal credential public pin is domain-separated from the actual RPC cred
   assert.notEqual(r9CredentialFingerprint('mock-only'),sha256('mock-only'));
   assert.match(r9CredentialFingerprint('mock-only'),/^[a-f0-9]{64}$/);
 });
+
+test('Native zero-execution producers retain attempts without requiring an unexecuted export',async()=>{
+  const workflow='.github/workflows/clued-work-admission.yml',descriptor={registration_status:'registered',workflow_path:workflow,
+    workflow_blob:base,job_id:'admission',job_name:'source-job',source_paths:['scripts/ci/clued-work-admission.mjs'],required_steps:['Export','Upload']},
+    selection={repository:env.GITHUB_REPOSITORY,head_sha:base,natural_producers:[descriptor]},at='2026-10-12T21:30:00.000Z',
+    n={run:{run_id:'42',run_attempt:1,status:'completed',conclusion:'success',path:workflow},jobs:[]};
+  const skipped={id:'43',name:'source-job',status:'completed',conclusion:'skipped',created_at:at,started_at:at,completed_at:at,steps:[]},
+    cancelled={...skipped,conclusion:'cancelled',completed_at:'2026-10-12T21:29:59.000Z'};
+  for(const j of [skipped,cancelled]){
+    n.jobs=[j,{id:'44',name:'clued-work-adopt',status:'completed',conclusion:'success',steps:[{name:'Report the merge',status:'completed',conclusion:'success'}]}];
+    const original=JSON.stringify(n);let calls=0;
+    const result=await collectNaturalSourceArtifacts({request:async()=>{calls++;throw Error('UNEXPECTED_ARTIFACT_READ');},
+      repository:env.GITHUB_REPOSITORY,native:{status:'COMPLETE',population_packets:[n]},selection,readZip:b=>b.toString()});
+    assert.equal(result.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(result.gaps));assert.equal(result.entries.length,0);assert.equal(calls,0);
+    assert.equal(JSON.stringify(n),original);assert.equal(result.source_authenticated,false);assert.equal(result.official_metric,false);
+  }
+  for(const j of [{...cancelled,started_at:'2026-10-12T21:30:01.000Z'},
+    {...cancelled,steps:[{name:'Export',status:'completed',conclusion:'failure'}]},
+    {...skipped,conclusion:'success'}, {...skipped,steps:[{name:'Export',status:'completed',conclusion:'skipped'}]}]){
+    n.jobs=[j];let calls=0;
+    const result=await collectNaturalSourceArtifacts({request:async()=>{calls++;return {ok:true,body:{total_count:0,artifacts:[]}};},
+      repository:env.GITHUB_REPOSITORY,native:{status:'COMPLETE',population_packets:[n]},selection,readZip:b=>b.toString()});
+    assert.equal(result.status,'PARTIAL');assert.ok(result.gaps.some(g=>g.code==='NATURAL_EXPECTED_ARTIFACT_MISSING_OR_DUPLICATE'));assert.equal(calls,1);
+  }
+  n.jobs=[skipped,skipped];
+  const duplicate=await collectNaturalSourceArtifacts({request:async()=>{throw Error('UNEXPECTED_READ');},repository:env.GITHUB_REPOSITORY,
+    native:{status:'COMPLETE',population_packets:[n]},selection,readZip:b=>b.toString()});
+  assert.equal(duplicate.status,'PARTIAL');assert.ok(duplicate.gaps.some(g=>g.code==='NATURAL_PRODUCER_NATIVE_JOB_MISSING_OR_DUPLICATE'));
+});

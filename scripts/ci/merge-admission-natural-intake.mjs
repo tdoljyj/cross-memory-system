@@ -2,6 +2,7 @@
 // no token, retry, trigger, Clued append or inferred operation/cancellation cause.
 import {createHash} from 'node:crypto';
 import {readNaturalArtifact,admissionEnvelopeInput,operationEnvelopeInput} from './merge-admission-source-producer.mjs';
+import {nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
 export const NATURAL_CACHE_SCHEMA='clued.r9-natural-origin-cache/1';
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const blob=x=>createHash('sha1').update('blob '+Buffer.byteLength(x)+'\0').update(x).digest('hex');
@@ -50,7 +51,12 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       if(r.status!=='completed'){gaps.push({run_key:r.run_id+':'+r.run_attempt,code:'NATURAL_PRODUCER_RUN_NOT_TERMINAL'});continue;}
       const runKey=r.run_id+':'+r.run_attempt,jobs=n.jobs.filter(j=>j.name===d.job_name);
       if(jobs.length!==1){gaps.push({run_key:runKey,code:'NATURAL_PRODUCER_NATIVE_JOB_MISSING_OR_DUPLICATE'});continue;}
-      const j=jobs[0],artifactName=`clued-r9-natural-source-${r.run_id}-${r.run_attempt}-${d.job_id}`,key=runKey+':'+d.job_id;
+      const j=jobs[0];
+      // The independently complete Native population retains these terminal
+      // attempts. A producer which never executed has no local stream to export;
+      // this is not a successful producer or permission to omit executed gaps.
+      if(['skipped','cancelled'].includes(j.conclusion)&&nativeJobIsNonExecution(j))continue;
+      const artifactName=`clued-r9-natural-source-${r.run_id}-${r.run_attempt}-${d.job_id}`,key=runKey+':'+d.job_id;
       const restored=cache.get(key);
       if(restored&&restored.native_run_digest===digest(JSON.stringify(r))&&restored.native_jobs_digest===digest(JSON.stringify(n.jobs))&&
         restored.descriptor_digest===digest(JSON.stringify(d))&&sourceBytes[restored.checkout_sha]){entries.push(restored);continue;}
