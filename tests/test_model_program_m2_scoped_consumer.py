@@ -292,6 +292,11 @@ def load_tests(loader, tests, pattern):
     workflow_module = importlib.util.module_from_spec(workflow_spec)
     workflow_spec.loader.exec_module(workflow_module)
     tests.addTests(loader.loadTestsFromModule(workflow_module, pattern=pattern))
+    records_path = ROOT / "tests/test_model_completion_v2_records.py"
+    records_spec = importlib.util.spec_from_file_location("m2_completion_v2_specifications", records_path)
+    records_module = importlib.util.module_from_spec(records_spec)
+    records_spec.loader.exec_module(records_module)
+    tests.addTests(loader.loadTestsFromModule(records_module, pattern=pattern))
     return tests
 
 
