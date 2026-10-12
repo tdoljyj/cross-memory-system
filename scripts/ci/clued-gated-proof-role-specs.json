@@ -279,6 +279,76 @@
           }
         ]
       }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-01.yml": {
+      "sources": {
+        "b47505e87aafa29cad48fc9f10f04edba2e93eb1": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "e84b9ce2b0cd2f40c5aa5bf444371f5401967da009a74bbef4fb10a60003be0c"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-02.yml": {
+      "sources": {
+        "2458de261e5ca4ec646e1296754533139a3eb124": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "8b896ab99a95b2506eb3e325130b17fbf829dd9e318c75fe8295767599f1bd44"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-03.yml": {
+      "sources": {
+        "c7770d99379010b6f63ad04ac8e29235cfc0534f": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "4e011c10357e6502eecaac39174b3a6788a867d7852e0c997047f3e616d3a5a4"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-linux-04.yml": {
+      "sources": {
+        "b44807c1a12149c67bdaea9a3359567690a380ce": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "58eb3085c352024cdfea1d87c92c4219535d4d166d16404fb14067d3a14bf22b"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-home-linux-01.yml": {
+      "sources": {
+        "60dc692842a516de50b70ef86eae6b782f920c55": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "16da64565e70cae45a086e954f72dbd5e48bd9dadf8d98cf009cc50133323020"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-company-win-01.yml": {
+      "sources": {
+        "7229b255c2a2f3150d3288dbe4f7a8ed3afa0867": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "eb04e70511879cf5904791288d67acec6f98483b9f7562ff477b70e4bf412f0a"
+          }
+        ]
+      }
+    },
+    ".github/workflows/clued-work-handover-qualification-home-win-01.yml": {
+      "sources": {
+        "10000a122e72b925a795dfedc4830b08db9a8609": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "700881a6084d45e86eeca228aab8e8afe0967c34db4e6e8dc14533dc733e5153"
+          }
+        ]
+      }
     }
   }
 }
