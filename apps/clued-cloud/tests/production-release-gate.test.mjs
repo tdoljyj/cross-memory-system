@@ -256,7 +256,7 @@ test('production backup mode encrypts and verifies the dump before removing plai
   assert.match(backup, /-e DATABASE_URL=\"\$database_url\"/);
   assert.match(backup, /node scripts\/verify-production-backup-scope\.mjs "\$backup_container" "\$backup_tmp"/);
   assert.match(publisher, /const toc = await runPg\('pg_restore', \['--list', dumpPath\]\)/);
-  assert.match(publisher, /const proof = verifyArchiveScope\(inventory, toc\)/);
+  assert.match(publisher, /proof = verifyArchiveScope\(inventory, toc\)/);
   assert.match(publisher, /'exec pg_restore "\$@"'/);
   assert.match(publisher, /const proof = await createVerifiedBackup\(\{ session, runPg, dumpPath:/);
   assert.match(publisher, /fs\.writeFile\(path\.join\(scratch, 'scope-proof\.json'\), JSON\.stringify\(proof\)/);
