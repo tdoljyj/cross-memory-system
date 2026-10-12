@@ -592,15 +592,29 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
   assert.match(fs.readFileSync(output("s2"), "utf8"), /\*\*Mode:\*\* `frozen` · source `CLUED_MERGE_ADMISSION_STATE`/);
 
   const posts = [];
+  const publicationInputs = [];
   const appFetch = async (url, init = {}) => {
     const target = String(url);
     if (init.method === "POST" && target.endsWith("/check-runs")) posts.push(JSON.parse(init.body));
-    const body = target.endsWith("/installation") ? { id: 99 } : target.endsWith("/access_tokens") ? { token: "ghs_app" } : { id: posts.length };
-    return { ok: true, status: 201, json: async () => body };
+    let body, status = 200;
+    if (target.includes("/rest/v1/rpc/clued_work_verify_v1")) {
+      publicationInputs.push(JSON.parse(init.body).p_input);
+      body = { status: "ok", publication_required: false };
+    } else if (target.endsWith("/pulls/9")) {
+      body = { state: "open", head: { sha: HEAD }, base: { sha: BASE, ref: "main" }, changed_files: 1,
+        body: `Clued-Work-Claim: ${CLAIM}` };
+    } else if (target.includes("/pulls/9/files?")) body = [{ filename: "docs/change.md", status: "modified" }];
+    else if (target.endsWith("/installation")) body = { id: 99 };
+    else if (target.endsWith("/access_tokens")) { body = { token: "ghs_app" }; status = 201; }
+    else if (init.method === "POST" && target.endsWith("/check-runs")) { body = { id: posts.length }; status = 201; }
+    else throw new Error(`Unexpected publication fixture request: ${target}`);
+    return { ok: true, status, json: async () => body, text: async () => JSON.stringify(body), headers: { get: () => null } };
   };
   const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   const pem = privateKey.export({ type: "pkcs8", format: "pem" });
-  const appEnv = { GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: API, GITHUB_RUN_ID: "77", CLUED_ADMISSION_APP_ID: "1", CLUED_ADMISSION_APP_PRIVATE_KEY: pem,
+  const appEnv = { GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: API, GITHUB_RUN_ID: "77", GITHUB_TOKEN: "synthetic-gh",
+    CLUED_CONTEXT_READ_TOKEN: "synthetic-clued", CLUED_SUPABASE_URL: "https://supabase.test", CLUED_SUPABASE_PUBLISHABLE_KEY: "synthetic-public",
+    CLUED_ADMISSION_APP_ID: "1", CLUED_ADMISSION_APP_PRIVATE_KEY: pem,
     ADMISSION_HEAD_SHA: HEAD, ADMISSION_PR_NUMBER: "9" };
   await appCheck({ env: { ...appEnv, ADMISSION_OUTCOME: "success", ADMISSION_VERDICT: "ADMITTED", ADMISSION_MODE: "normal · code · reruns 0",
     ADMISSION_MERGE_SLOT: "not_required" }, fetchImpl: appFetch, now: () => 1_800_000_000_000 });
@@ -608,6 +622,8 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
     ["clued-admission-verified", "ADMITTED [normal · code · reruns 0]"],
     ["clued-merge-slot", "not_required(code, normal)"],
   ]);
+  assert.equal(publicationInputs.length, 2);
+  assert.ok(publicationInputs.every(input => input.action === "publication_begin" && input.head_sha === HEAD && input.pr_ref === "o/r#9"));
   // Without a mode (an admission step from before this change, or one that
   // stopped before it), the title is the verdict alone.
   posts.length = 0;

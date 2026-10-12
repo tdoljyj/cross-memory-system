@@ -719,6 +719,26 @@
         }
       }
     },
+    "clued-work-claim-handover-revoke.yml": {
+      "jobs": {
+        "revoke": {
+          "mode": "job-temp",
+          "purpose": "handover revocation and publication reconciliation",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
     "contract-placement.yml": {
       "jobs": {
         "contract-placement": {

@@ -132,6 +132,8 @@ jobs:
           ADMISSION_MERGE_SLOT_TIP: ${{ steps.admit.outputs.merge_slot_tip }}
           ADMISSION_CLAIM_ID: ${{ steps.admit.outputs.claim_id }}
           ADMISSION_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
         run: node scripts/ci/clued-work-admission.mjs --mode app-check

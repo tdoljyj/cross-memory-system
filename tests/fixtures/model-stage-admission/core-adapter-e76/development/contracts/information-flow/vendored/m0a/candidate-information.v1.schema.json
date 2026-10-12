@@ -1,0 +1,267 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clued.pixelgrav.com/schemas/candidate-information.v1.json",
+  "title": "Clued Candidate Information Extraction v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "segment_id",
+    "items"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "candidate_information.v1"
+    },
+    "segment_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    }
+  },
+  "$defs": {
+    "entityMention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "mention",
+        "role"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "person",
+            "project",
+            "organization",
+            "place",
+            "artifact",
+            "account",
+            "product",
+            "other"
+          ]
+        },
+        "mention": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "role": {
+          "enum": [
+            "subject",
+            "actor",
+            "owner",
+            "target",
+            "requester",
+            "recipient",
+            "participant",
+            "creator",
+            "context",
+            "other"
+          ]
+        }
+      }
+    },
+    "temporalMention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "source_text",
+        "source_message_id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "observed_at",
+            "event_at",
+            "due_at",
+            "valid_from",
+            "valid_to"
+          ]
+        },
+        "source_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "source_message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "sourceAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "exact_quote"
+      ],
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "exact_quote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_local_id",
+        "item_type",
+        "claim",
+        "summary",
+        "action_level",
+        "priority",
+        "entity_mentions",
+        "topics",
+        "temporal_mentions",
+        "source_anchors",
+        "confidence",
+        "uncertainties",
+        "sensitivity_hint"
+      ],
+      "properties": {
+        "candidate_local_id": {
+          "type": "string",
+          "pattern": "^item_[A-Za-z0-9_-]+$",
+          "maxLength": 128
+        },
+        "item_type": {
+          "enum": [
+            "fact",
+            "preference",
+            "decision",
+            "task",
+            "status",
+            "event",
+            "artifact",
+            "issue",
+            "unclassified"
+          ]
+        },
+        "claim": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "action_level": {
+          "enum": [
+            "needs_action",
+            "needs_attention",
+            "reference"
+          ]
+        },
+        "priority": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "high",
+            "medium",
+            "low",
+            null
+          ]
+        },
+        "entity_mentions": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/entityMention"
+          }
+        },
+        "topics": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "temporal_mentions": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/temporalMention"
+          }
+        },
+        "source_anchors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/sourceAnchor"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "uncertainties": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "sensitivity_hint": {
+          "enum": [
+            "none",
+            "personal",
+            "sensitive",
+            "high"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "item_type": {
+                "const": "task"
+              }
+            },
+            "required": [
+              "item_type"
+            ]
+          },
+          "then": {},
+          "else": {
+            "properties": {
+              "priority": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
