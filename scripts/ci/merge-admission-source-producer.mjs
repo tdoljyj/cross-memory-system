@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {timestampMicros} from './merge-admission-measurement-history.mjs';
 export const NATURAL_EVENT_SCHEMA='clued.merge-admission-natural-source-event/1';
 export const NATURAL_DIRECTORY='.clued-r9-source-events';
 export const NATURAL_ARTIFACT_SCHEMA='clued.merge-admission-natural-artifact/1';
@@ -29,7 +30,18 @@ const prReference=x=>{
   if(typeof x!=='string'||x.length>250||/\s/.test(x)||! /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*#[1-9][0-9]{0,15}$/.test(x))return null;
   const n=Number(x.slice(x.lastIndexOf('#')+1));return Number.isSafeInteger(n)?x:null;
 };
-const timestamp=x=>typeof x==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?Z$/.test(x)&&Number.isFinite(Date.parse(x))?x:null;
+// Canonicalize actual SQL offsets without rounding their microseconds. Missing
+// or invalid RPC time stays missing; producer event_at is never a substitute.
+const timestamp=x=>{
+  try{
+    const micros=timestampMicros(x);if(x.endsWith('Z'))return x;
+    let seconds=micros/1000000n,fraction=micros%1000000n;
+    if(fraction<0n){seconds--;fraction+=1000000n;}
+    const utc=new Date(Number(seconds*1000n)).toISOString();
+    if(!/^\d{4}-/.test(utc))return null;
+    return utc.slice(0,19)+'.'+String(fraction).padStart(6,'0')+'Z';
+  }catch{return null;}
+};
 const digest=x=>createHash('sha256').update(x).digest('hex');
 export const naturalRoundId=keys=>{const h=digest(JSON.stringify([...keys].sort())).slice(0,32);return [h.slice(0,8),h.slice(8,12),h.slice(12,16),h.slice(16,20),h.slice(20)].join('-');};
 const refs=rows=>Array.isArray(rows)?rows.slice(0,2000).map(r=>({run_id:id(r.id??r.run_id),attempt:number(r.run_attempt),
@@ -242,7 +254,7 @@ export function admissionEnvelopeInput({finalEvent,inputEvent,claimEvent,appEven
   const observed=timestamp(observedAt)??finalEvent.event_at;
   const claim_id=f.claim_id;
   const receipt=uuid(claimReceiptId)??uuid(c?.head_admitted_receipt_id);
-  const disposition=['ERROR','PR_NOT_OPEN'].includes(f.verdict)&&claim_id===null?'not_evaluated':claim_id===null?'missing':c?.response_kind==='verdict'&&c?.verdict==='ADMITTED'&&receipt?'valid':
+  const disposition=['ERROR','PR_NOT_OPEN'].includes(f.verdict)&&claim_id===null?'not_evaluated':claim_id===null?'missing':c?.response_kind==='verdict'&&c?.verdict==='ADMITTED'?'valid':
     c?.response_kind==='verdict'&&c?.verdict==='REJECTED'?'rejected':'unverified';
   const rpc=['valid','rejected'].includes(disposition);
   const claim={disposition,claim_id,verified_at:rpc?(c?.verified_at??null):null,rpc_verdict:rpc?c.verdict:null,
