@@ -75,11 +75,15 @@ function normalizeJob(value, run) {
   if (!object(value) || id(value.run_id)!==run.run_id || ordinal(value.run_attempt)!==run.run_attempt ||
       value.status!=='completed' || !CONCLUSIONS.has(value.conclusion)) fail('invalid_native_job_member');
   const created=time(value.created_at),started=time(value.started_at ?? null,true),completed=time(value.completed_at ?? null,true);
+  // GitHub's zero-step skipped jobs report scheduler metadata, including
+  // observed completed_at before created_at. Preserve those raw values, but
+  // never interpret them as an execution interval or a successful primary.
+  const nonExecution=value.conclusion==='skipped'&&Array.isArray(value.steps)&&value.steps.length===0;
   // Creation must fit the associated Native run envelope even when execution
   // timestamps are absent. updated_at remains an update bound, not completion.
   if (created<run.created_at || created>run.updated_at ||
-      (started!==null && (created>started || run.run_started_at===null || started<run.run_started_at)) ||
-      (completed!==null && (created>completed || (started!==null && started>completed) || completed>run.updated_at)) ||
+      (!nonExecution && started!==null && (created>started || run.run_started_at===null || started<run.run_started_at)) ||
+      (!nonExecution && completed!==null && (created>completed || (started!==null && started>completed) || completed>run.updated_at)) ||
       (completed===null && !['cancelled','skipped'].includes(value.conclusion))) fail('invalid_native_job_time');
   if (!Array.isArray(value.labels) || value.labels.length>100 || !Array.isArray(value.steps) || value.steps.length>10000) fail('invalid_native_job_details');
   const stepIds=new Set();
@@ -98,10 +102,11 @@ function normalizeJob(value, run) {
     labels:value.labels.map(label=>text(label,200)),steps};
 }
 const keyOf = run => `${run.run_id}:${run.run_attempt}`;
-function packetOf(run,jobs) {
+function packetOf(run,jobs,reportedAttemptCreation=null) {
   const sorted=[...jobs].sort((a,b)=>compareId(a.id,b.id));
   return {run,jobs:sorted,run_digest:digest(run),jobs_digest:digest(sorted),job_count:sorted.length,
-    timing_basis:{attempt_start:'native_run_started_at_nullable',terminal_update:'native_updated_at_not_completion_time'}};
+    timing_basis:{attempt_start:'native_run_started_at_nullable',terminal_update:'native_updated_at_not_completion_time',
+      ...(reportedAttemptCreation!==null&&reportedAttemptCreation!==run.created_at?{reported_attempt_created_at:time(reportedAttemptCreation)}:{})}};
 }
 function validateStore(raw,repository) {
   const value=rawJson(raw);
@@ -112,7 +117,7 @@ function validateStore(raw,repository) {
     if (!exact(p,['run','jobs','run_digest','jobs_digest','job_count','timing_basis']) || !Array.isArray(p.jobs)) fail('invalid_attempt_store');
     const run=normalizeRun(nativeWireRun(p.run));
     if (run.status!=='completed' || key!==keyOf(run) || p.jobs.length>MAX_JOBS) fail('invalid_attempt_store');
-    const jobs=p.jobs.map(job=>normalizeJob(job,run)),packet=packetOf(run,jobs);
+    const jobs=p.jobs.map(job=>normalizeJob(job,run)),packet=packetOf(run,jobs,p.timing_basis?.reported_attempt_created_at??null);
     if (JSON.stringify(packet)!==JSON.stringify(p)) fail('invalid_attempt_store');
     for (const job of jobs) { if (owners.has(job.id)) fail('duplicate_native_job_identity');owners.set(job.id,key); }
     let list=runs.get(run.run_id);if(!list){list=[];runs.set(run.run_id,list);}list.push(packet);
@@ -179,7 +184,11 @@ async function capture(call,repository,runId,attempt,store) {
   const root=`/repos/${repository}/actions/runs/${runId}`;
   const before=normalizeRun(await call.get(root));
   if(before.run_id!==runId || attempt>before.run_attempt)fail('native_run_barrier_invalid');
-  const run=normalizeRun(await call.get(`${root}/attempts/${attempt}`));
+  const wireAttempt=await call.get(`${root}/attempts/${attempt}`),reportedCreation=time(wireAttempt.created_at);
+  // /runs/{id} owns the original run creation identity. The attempt DTO can
+  // report a different creation timestamp (observed even on attempt 1).
+  // Retain that separate report; do not substitute it for original creation.
+  const run=normalizeRun({...wireAttempt,created_at:before.created_at});
   if(run.run_id!==runId||run.run_attempt!==attempt||!sameRunIdentity(before,run))fail('native_attempt_identity_changed');
   if(run.status!=='completed')fail('native_attempt_not_terminal');
   const existing=store.packets[keyOf(run)];let first,last,jobs,cacheUsed=false;
@@ -190,11 +199,13 @@ async function capture(call,repository,runId,attempt,store) {
     last=await paged(call,`${root}/attempts/${attempt}/jobs`,'jobs',row=>normalizeJob(row,run),MAX_JOBS);
     if(first.digest!==last.digest||first.total_count!==last.total_count)fail('native_jobs_changed_at_close');jobs=first.items;
   }
-  const afterAttempt=normalizeRun(await call.get(`${root}/attempts/${attempt}`));
+  const wireAfterAttempt=await call.get(`${root}/attempts/${attempt}`);
+  if(time(wireAfterAttempt.created_at)!==reportedCreation)fail('native_attempt_reported_creation_changed');
+  const afterAttempt=normalizeRun({...wireAfterAttempt,created_at:before.created_at});
   const after=normalizeRun(await call.get(root));
   if(digest(afterAttempt)!==digest(run))fail('native_attempt_changed_at_close');
   if(digest(before)!==digest(after))fail('native_latest_attempt_changed');
-  const packet=packetOf(run,jobs),key=keyOf(run);
+  const packet=packetOf(run,jobs,reportedCreation),key=keyOf(run);
   if(existing && JSON.stringify(existing)!==JSON.stringify(packet))fail('immutable_attempt_packet_conflict');
   const next={...store,packets:{...store.packets,[key]:packet}};
   const verified=validateStore(serialize(next),repository);
