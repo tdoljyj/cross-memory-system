@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { identity, freshConfig, requireUnused, verifyHistory, migrationSources, verifySourceState, verifyContainer,
-  prepare, verify, verifyConfiguration } from './clued-g4-fresh-start.mjs';
+import { createServer } from 'node:net';
+import { pathToFileURL } from 'node:url';
+const { identity, freshConfig, requireUnused, verifyHistory, migrationSources, verifySourceState, verifyContainer,
+  prepare, verify, verifyConfiguration, portCandidates, probePorts, PORT_BLOCK_LIMIT } = await import(process.env.CLUED_G4_TEST_MODULE_PATH ?
+    pathToFileURL(process.env.CLUED_G4_TEST_MODULE_PATH).href : new URL('./clued-g4-fresh-start.mjs', import.meta.url));
+const fixtureFile = relative => process.env.CLUED_G4_TEST_REPO_ROOT ? path.join(process.env.CLUED_G4_TEST_REPO_ROOT, relative) : new URL('../../' + relative, import.meta.url);
 
 const env = { GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: 'a'.repeat(40), GITHUB_REPOSITORY: 'owner/repo' };
 const config = 'project_id = "clued-cloud"\nport = 54321\nport = 54322\nshadow_port = 54320\nport = 54323\nport = 54324\nport = 54327\nport = 54329\n[db.seed]\nenabled = false\n[other]\nvalue = true\n';
@@ -60,7 +64,7 @@ test('unknown identity, project template, port set or enabled seed never qualifi
 });
 
 test('the real committed configuration retains its commented seed section and all unrelated settings', () => {
-  const source = fs.readFileSync(new URL('../../apps/clued-cloud/supabase/config.toml', import.meta.url), 'utf8');
+  const source = fs.readFileSync(fixtureFile('apps/clued-cloud/supabase/config.toml'), 'utf8');
   const actual = freshConfig(source, env);
   assert.match(actual, /project_id = "clued-g4-100-1"/);
   assert.match(actual, /major_version = 17/);
@@ -91,16 +95,16 @@ test('migration source digest detects changed bytes, rejects invalid and duplica
   } finally { fs.rmSync(dir, { recursive: true }); }
 });
 
-function workflowFixture(run) {
+function workflowFixture(run, attempt = 1) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-g4-flow-test-'));
   const app = path.join(root, 'apps/clued-cloud/supabase');
   fs.mkdirSync(path.join(app, 'migrations'), { recursive: true });
   fs.writeFileSync(path.join(app, 'config.toml'), config);
   fs.writeFileSync(path.join(app, 'migrations/202608230001_first.sql'), 'select 1;\n');
-  const e = { ...env, GITHUB_RUN_ID: String(run), RUNNER_TEMP: root, GITHUB_ENV: path.join(root, 'github-env'),
-    CLUED_G4_FRESH_PROJECT: `clued-g4-${run}-1` };
+  const e = { ...env, GITHUB_RUN_ID: String(run), GITHUB_RUN_ATTEMPT: String(attempt), RUNNER_TEMP: root, GITHUB_ENV: path.join(root, 'github-env'),
+    CLUED_G4_FRESH_PROJECT: `clued-g4-${run}-${attempt}` };
   const calls = [];
-  const runtime = { platform: 'linux', git: (verb, ref) => {
+  const runtime = { platform: 'linux', portProbe: async () => true, git: (verb, ref) => {
     if (verb === 'show') return config;
     if (verb === 'status') return fs.readFileSync(path.join(app, 'config.toml'), 'utf8') === config ? '' : ' M apps/clued-cloud/supabase/config.toml';
     return ref === 'HEAD' ? e.GITHUB_SHA : root;
@@ -116,10 +120,10 @@ function workflowFixture(run) {
   return { root, app, e, calls, runtime, dispose: () => fs.rmSync(root, { recursive: true }) };
 }
 
-test('prepare and verify perform the actual file transitions and only a fixed local read query', () => {
+test('prepare and verify perform the actual file transitions and only a fixed local read query', async () => {
   const f = workflowFixture(110);
   try {
-    assert.equal(prepare(f.e, f.runtime).fresh_inventory, true);
+    assert.equal((await prepare(f.e, f.runtime)).fresh_inventory, true);
     assert.equal(verify(f.e, f.runtime).history_matches, true);
     assert.doesNotThrow(() => verifyConfiguration(f.e, f.runtime));
     assert.match(fs.readFileSync(f.e.GITHUB_ENV, 'utf8'), /DOCKER_HOST=unix:\/\/\/var\/run\/docker.sock/);
@@ -128,30 +132,30 @@ test('prepare and verify perform the actual file transitions and only a fixed lo
   } finally { f.dispose(); }
 });
 
-test('a partial prepare cannot authorize verify or cleanup', () => {
+test('a partial prepare cannot authorize verify or cleanup', async () => {
   const f = workflowFixture(111);
   try {
-    assert.throws(() => prepare(f.e, { ...f.runtime, fs: { ...fs, appendFileSync: () => { throw new Error('write interrupted'); } } }));
+    await assert.rejects(() => prepare(f.e, { ...f.runtime, fs: { ...fs, appendFileSync: () => { throw new Error('write interrupted'); } } }));
     assert.throws(() => verify(f.e, f.runtime), /fresh_marker_identity/);
     assert.throws(() => verifyConfiguration(f.e, f.runtime), /fresh_marker_identity/);
     assert.equal(f.calls.some((args) => args[0] === 'exec'), false);
   } finally { f.dispose(); }
 });
 
-test('existing containers fail before configuration or marker is written', () => {
+test('existing containers fail before configuration or marker is written', async () => {
   const f = workflowFixture(112);
   try {
-    assert.throws(() => prepare(f.e, { ...f.runtime, docker: (...args) =>
+    await assert.rejects(() => prepare(f.e, { ...f.runtime, docker: (...args) =>
       args[0] === 'ps' && !args.includes('--filter') ? 'supabase_db_clued-g4-112-1' : f.runtime.docker(...args) }));
     assert.equal(fs.readFileSync(path.join(f.app, 'config.toml'), 'utf8'), config);
     assert.equal(fs.existsSync(f.e.GITHUB_ENV), false);
   } finally { f.dispose(); }
 });
 
-test('post-start source or target changes prevent any history query and cleanup qualification', () => {
+test('post-start source or target changes prevent any history query and cleanup qualification', async () => {
   const f = workflowFixture(113);
   try {
-    prepare(f.e, f.runtime);
+    await prepare(f.e, f.runtime);
     const changed = { ...f.runtime, git: (verb, ref) => verb === 'rev-parse' && ref === 'HEAD' ? 'b'.repeat(40) : f.runtime.git(verb, ref) };
     assert.throws(() => verify(f.e, changed), /fresh_checkout_changed/);
     assert.throws(() => verifyConfiguration({ ...f.e, CLUED_G4_FRESH_PROJECT: 'foreign-project' }, f.runtime));
@@ -160,7 +164,7 @@ test('post-start source or target changes prevent any history query and cleanup 
 });
 
 test('both G4 routes prove freshness before start, keep every database test, and guard cleanup', () => {
-  const text = fs.readFileSync(new URL('../../.github/workflows/clued-g4-database.yml', import.meta.url), 'utf8');
+  const text = fs.readFileSync(fixtureFile('.github/workflows/clued-g4-database.yml'), 'utf8');
   const routes = text.split(/^  database-gate-(?:trusted-self-hosted|untrusted-hosted):$/m).slice(1);
   assert.equal(routes.length, 2);
   for (const route of routes) {
@@ -174,4 +178,109 @@ test('both G4 routes prove freshness before start, keep every database test, and
     assert.ok(route.indexOf('--guard-cleanup') < route.indexOf('supabase stop --no-backup'));
     assert.match(route, /uses: \.\/\.github\/actions\/ci-temporary-storage/);
   }
+});
+
+const listen = async port => {
+  const server = createServer(socket => socket.destroy());
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen({ host: '0.0.0.0', port, exclusive: true }, resolve);
+  });
+  return server;
+};
+const close = server => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+
+test('PORT1: a real occupied inbucket port changes the prepared block and remains verifiable', async () => {
+  let f, occupied, selected;
+  try {
+    // Acquire only our own fixture listener. Existing runner services are
+    // neither a test failure nor resources this test may close.
+    for (let offset = 0; offset < PORT_BLOCK_LIMIT; offset++) {
+      const run = 38151441285 + offset;
+      const candidateEnv = { ...env, GITHUB_RUN_ID: String(run), GITHUB_RUN_ATTEMPT: '2' };
+      const base = portCandidates(candidateEnv)[0];
+      try {
+        occupied = await listen(base + 4);
+        selected = { run, base, port: base + 4 };
+        break;
+      } catch (error) {
+        if (error.code !== 'EADDRINUSE') throw error;
+      }
+    }
+    assert.ok(selected, 'a bounded test-owned occupied-port fixture is required');
+    f = workflowFixture(selected.run, 2);
+    delete f.runtime.portProbe; // The real default Node exclusive TCP probe.
+    const result = await prepare(f.e, f.runtime);
+    const actual = fs.readFileSync(path.join(f.app, 'config.toml'), 'utf8');
+    assert.doesNotMatch(actual, new RegExp(`port = ${selected.port}(?:\\n|$)`), 'the occupied preferred block cannot be selected');
+    assert.ok(portCandidates(f.e).includes(result.port_base));
+    assert.notEqual(result.port_base, selected.base);
+    const marker = verifyConfiguration(f.e, f.runtime).marker;
+    assert.equal(marker.port_base, result.port_base);
+    assert.equal(actual, freshConfig(config, f.e, marker.port_base));
+    assert.equal(verify(f.e, f.runtime).history_matches, true);
+  } finally {
+    try { if (occupied) await close(occupied); }
+    finally { f?.dispose(); }
+  }
+});
+
+test('PORT2: real exclusive probes report occupancy and release all partial reservations', async () => {
+  const occupied = await listen(0), first = await listen(0);
+  const used = occupied.address().port, free = first.address().port;
+  await close(first);
+  try {
+    assert.equal(await probePorts([free]), true);
+    assert.equal(await probePorts([free, used]), false);
+    const released = await listen(free); await close(released);
+    await assert.rejects(() => probePorts(['47864']), /fresh_probe_ports/);
+  } finally { await close(occupied); }
+  assert.equal(await probePorts([used]), true);
+});
+
+test('PORT3: selection is bounded and unknown or failed probes cannot write preparation', async () => {
+  for (const outcome of [false, undefined, new Error('EACCES')]) {
+    const f = workflowFixture(121); let probes = 0;
+    try {
+      await assert.rejects(() => prepare(f.e, { ...f.runtime, portProbe: async ports => {
+        probes++; assert.equal(ports.length, 7); assert.equal(new Set(ports).size, 7);
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      } }), outcome === false ? /fresh_no_available_port_block/ : outcome === undefined ? /fresh_probe_unknown/ : /EACCES/);
+      assert.equal(probes, outcome === false ? PORT_BLOCK_LIMIT : 1);
+      assert.equal(fs.readFileSync(path.join(f.app, 'config.toml'), 'utf8'), config);
+      assert.equal(fs.existsSync(f.e.GITHUB_ENV), false);
+      assert.equal(fs.existsSync(path.join(f.root, 'clued-g4-fresh-121-1.json')), false);
+    } finally { f.dispose(); }
+  }
+});
+
+test('PORT4: selected marker base and all existing source/config/identity pins are mandatory', async () => {
+  const f = workflowFixture(122); let probes = 0;
+  try {
+    await prepare(f.e, { ...f.runtime, portProbe: async () => ++probes > 1 });
+    const markerFile = path.join(f.root, 'clued-g4-fresh-122-1.json');
+    const original = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+    assert.equal(original.port_base, portCandidates(f.e)[1]);
+    assert.doesNotThrow(() => verifyConfiguration(f.e, f.runtime));
+    for (const mutate of [m => delete m.port_base, m => m.port_base = '46230', m => m.port_base = 45000,
+      m => m.port_base++, m => m.checkout_sha = 'b'.repeat(40), m => m.project = 'foreign',
+      m => m.prepared = false, m => m.source_config_sha256 = '0'.repeat(64), m => m.config_sha256 = '0'.repeat(64)]) {
+      const marker = structuredClone(original); mutate(marker); fs.writeFileSync(markerFile, JSON.stringify(marker));
+      assert.throws(() => verifyConfiguration(f.e, f.runtime));
+    }
+    fs.writeFileSync(markerFile, JSON.stringify(original));
+    fs.appendFileSync(path.join(f.app, 'config.toml'), '# unrelated edit\n');
+    assert.throws(() => verifyConfiguration(f.e, f.runtime), /fresh_configuration_changed/);
+    assert.equal(f.calls.some(args => args[0] === 'exec'), false);
+  } finally { f.dispose(); }
+});
+
+test('PORT5: explicit config bases are typed, aligned and bounded; selection wraps with a fixed limit', () => {
+  for (const base of [null, '46000', 44990, 55000, 46005, NaN, Infinity])
+    assert.throws(() => freshConfig(config, env, base), /fresh_port_base/);
+  assert.match(freshConfig(config, env, 46020), /port = 46021/);
+  const candidates = portCandidates({ ...env, GITHUB_RUN_ID: '999' });
+  assert.equal(candidates.length, PORT_BLOCK_LIMIT); assert.equal(new Set(candidates).size, PORT_BLOCK_LIMIT);
+  assert.deepEqual(candidates.slice(0, 2), [54990, 45000]);
 });

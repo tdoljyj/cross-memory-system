@@ -148,7 +148,8 @@
             }
           ],
           "retained_artifacts": [
-            "ci-usage-report.json"
+            "ci-usage-report.json",
+            "r9-sealed-packet.json"
           ],
           "persistent_action_caches": [
             ".ci-usage-cache"
@@ -566,7 +567,9 @@
               "repository": null
             }
           ],
-          "retained_artifacts": [],
+          "retained_artifacts": [
+            ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json"
+          ],
           "persistent_action_caches": []
         }
       }
@@ -586,7 +589,9 @@
               "repository": null
             }
           ],
-          "retained_artifacts": [],
+          "retained_artifacts": [
+            ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json"
+          ],
           "persistent_action_caches": []
         }
       }
@@ -658,7 +663,9 @@
               "repository": null
             }
           ],
-          "retained_artifacts": [],
+          "retained_artifacts": [
+            ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json"
+          ],
           "persistent_action_caches": []
         }
       }
@@ -678,7 +685,9 @@
               "repository": null
             }
           ],
-          "retained_artifacts": [],
+          "retained_artifacts": [
+            ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json"
+          ],
           "persistent_action_caches": []
         }
       }
@@ -698,7 +707,9 @@
               "repository": null
             }
           ],
-          "retained_artifacts": [],
+          "retained_artifacts": [
+            ".clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json"
+          ],
           "persistent_action_caches": []
         },
         "clued-work-adopt": {

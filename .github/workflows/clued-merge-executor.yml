@@ -30,6 +30,31 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      measurement_opt_in:
+        description: Explicit holder operation through the recorded original gates
+        type: boolean
+        default: false
+      measurement_operation:
+        description: The explicitly requested operation
+        type: choice
+        options: [update_branch, cancel_ci_attempt]
+      measurement_pr:
+        description: Exact current pull request number
+        type: string
+      measurement_head:
+        description: Exact current pull request head SHA
+        type: string
+      measurement_run:
+        description: Exact Native run id for an optional cancellation
+        type: string
+      measurement_attempt:
+        description: Exact Native run attempt for an optional cancellation
+        type: string
+      measurement_reason:
+        description: Explicit holder intent; actual main-move evidence is still required
+        type: choice
+        options: [GENERAL_UPDATE, MAIN_MOVED_REQUIRES_RERUN]
 
 permissions:
   # Full reruns of admitted gate-only runs use this workflow token, not the App.
@@ -62,6 +87,7 @@ jobs:
       - name: Self-test the merge slot report and executor (no network, mocked fetch)
         run: node --test scripts/ci/clued-merge-slot-ci.test.mjs scripts/ci/clued-merge-executor.test.mjs
       - name: Report the CI state of the pull requests holding a merge slot
+        if: ${{ !inputs.measurement_opt_in }}
         env:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
@@ -78,3 +104,14 @@ jobs:
           CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-merge-executor.mjs
+      - name: Export the closed local natural R9 packet
+        if: ${{ always() }}
+        run: node scripts/ci/merge-admission-source-producer.mjs --export executor
+      - name: Preserve natural R9 source observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json
+          if-no-files-found: warn
+          retention-days: 90
