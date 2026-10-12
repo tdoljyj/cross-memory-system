@@ -9,6 +9,7 @@ const blob=x=>createHash('sha1').update('blob '+Buffer.byteLength(x)+'\0').updat
 const sha=x=>typeof x==='string'&&/^[a-f0-9]{40}$/.test(x);
 const id=x=>typeof x==='string'&&/^[1-9][0-9]{0,19}$/.test(x)||Number.isSafeInteger(x)&&x>0;
 const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
+const canonical=x=>Array.isArray(x)?x.map(canonical):object(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const code=e=>/^[A-Z0-9_]{1,100}$/.test(e?.message??'')?e.message:'NATURAL_INTAKE_FAILED';
 const refuse=x=>{throw Error(x);};
 async function body(request,route,options){const r=await request(route,options);if(r?.ok!==true)refuse('NATURAL_SHARED_REQUEST_STOPPED');return r.body;}
@@ -30,11 +31,46 @@ async function source(request,repository,file,ref){
   if(b.length>1024*1024||Buffer.from(text).compare(b)||blob(b)!==x.sha)refuse('NATURAL_NATIVE_SOURCE_INVALID');
   return {text,blob:x.sha,sha256:digest(b)};
 }
+// A positive scheduler duration is not execution evidence. For this exact
+// hosted slot producer only, independently prove that no runner was assigned.
+// Never broaden the Native chronology predicate or infer cancellation cause.
+async function unassignedSlotProducer(request,repository,n,d,selection,sourceMemo){
+  const r=n.run,j=n.jobs.find(x=>x.name===d.job_name);
+  if(r.path.split('@')[0]!=='.github/workflows/clued-merge-slot-ci.yml'||r.event!=='workflow_run'||
+    d.job_id!=='report'||d.job_name!=='clued-merge-slot-ci'||r.conclusion!=='cancelled'||n.jobs.length!==1||
+    j?.status!=='completed'||j.conclusion!=='cancelled'||!Array.isArray(j.steps)||j.steps.length||j.created_at!==j.started_at)return null;
+  const origin=await body(request,`/repos/${repository}/actions/runs/${r.run_id}/attempts/${r.run_attempt}`);
+  if(String(origin?.id)!==r.run_id||origin.run_attempt!==r.run_attempt||origin.head_sha!==r.head_sha||
+    origin.status!=='completed'||origin.conclusion!=='cancelled'||origin.event!=='workflow_run'||typeof origin.path!=='string'||
+    origin.path.split('@')[0]!==d.workflow_path||origin.head_branch!==selection.default_branch||origin.head_repository?.full_name!==repository)return null;
+  const sourceKey=r.head_sha+':'+d.workflow_path;
+  if(!sourceMemo.has(sourceKey))sourceMemo.set(sourceKey,await source(request,repository,d.workflow_path,r.head_sha));
+  if(sourceMemo.get(sourceKey).blob!==d.workflow_blob)return null;
+  const history=await body(request,`/repos/${repository}/compare/${r.head_sha}...${selection.head_sha}`);
+  if(!['ahead','identical'].includes(history?.status)||history.merge_base_commit?.sha!==r.head_sha)return null;
+  const read=async()=>{
+    const b=await body(request,`/repos/${repository}/actions/runs/${r.run_id}/attempts/${r.run_attempt}/jobs?per_page=100&page=1`);
+    if(b?.total_count!==1||!Array.isArray(b.jobs)||b.jobs.length!==1)return null;
+    const w=b.jobs[0];
+    if(String(w?.id)!==j.id||String(w.run_id)!==r.run_id||w.run_attempt!==r.run_attempt||w.name!==j.name||
+      w.status!==j.status||w.conclusion!==j.conclusion||!Array.isArray(w.steps)||w.steps.length||
+      w.runner_id!==0||w.runner_name!==''||w.runner_group_id!==0||w.runner_group_name!==''||
+      !Array.isArray(w.labels)||w.labels.length!==1||w.labels[0]!=='ubuntu-slim')return null;
+    for(const field of ['created_at','started_at','completed_at'])if(w[field]===null?j[field]!==null:
+      typeof w[field]!=='string'||new Date(w[field]).toISOString()!==j[field])return null;
+    return canonical(w);
+  };
+  const first=await read(),last=await read();
+  if(!first||!last||JSON.stringify(first)!==JSON.stringify(last))return null;
+  return {run_key:r.run_id+':'+r.run_attempt,job_id:j.id,workflow_blob:d.workflow_blob,
+    native_jobs_digest:digest(JSON.stringify(n.jobs)),before_digest:digest(JSON.stringify(first)),after_digest:digest(JSON.stringify(last)),
+    basis:'COMPLETE_STABLE_NATIVE_UNASSIGNED_HOSTED_SLOT_PRODUCER',runner_id:0,runner_name:'',runner_group_id:0,runner_group_name:'',labels:['ubuntu-slim']};
+}
 // The accepted report writer can later seal these data + Native-origin proofs
 // together. A restored batch is reused only after that writer is independently
 // authenticated; an actions/cache hit or a JSON authority flag is insufficient.
 export async function collectNaturalSourceArtifacts({request,repository,native,selection,readZip,authenticatedEntries=[],authenticatedSourceBytes={},authenticatedAppChecks={}}){
-  const entries=[],gaps=[],before=[],after=[],sourceBytes={...authenticatedSourceBytes},checks={...authenticatedAppChecks},sourceMemo=new Map();
+  const entries=[],gaps=[],before=[],after=[],nonExecutionProofs=[],sourceBytes={...authenticatedSourceBytes},checks={...authenticatedAppChecks},sourceMemo=new Map();
   try{
     if(native?.status!=='COMPLETE'||selection?.repository!==repository||!sha(selection.head_sha)||typeof readZip!=='function')refuse('NATURAL_INDEPENDENT_INPUTS_MISSING');
     const descriptors=selection.natural_producers;
@@ -56,6 +92,8 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       // attempts. A producer which never executed has no local stream to export;
       // this is not a successful producer or permission to omit executed gaps.
       if(['skipped','cancelled'].includes(j.conclusion)&&nativeJobIsNonExecution(j))continue;
+      const unassigned=await unassignedSlotProducer(request,repository,n,d,selection,sourceMemo);
+      if(unassigned){nonExecutionProofs.push(unassigned);continue;}
       const artifactName=`clued-r9-natural-source-${r.run_id}-${r.run_attempt}-${d.job_id}`,key=runKey+':'+d.job_id;
       const restored=cache.get(key);
       if(restored&&restored.native_run_digest===digest(JSON.stringify(r))&&restored.native_jobs_digest===digest(JSON.stringify(n.jobs))&&
@@ -106,7 +144,7 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
         checks[check]={id:q.id,app:{id:q.app?.id},name:q.name,head_sha:q.head_sha,status:q.status,conclusion:q.conclusion,external_id:q.external_id};}}
   }catch(e){gaps.push({code:code(e)});}
   return {schema:NATURAL_CACHE_SCHEMA,status:gaps.length?'PARTIAL':'NATIVE_ORIGIN_BOUND',entries,gaps,
-    source_bytes:sourceBytes,app_checks:checks,artifact_population:{before,after},source_authenticated:false,official_metric:false,t0:null,
+    source_bytes:sourceBytes,app_checks:checks,artifact_population:{before,after},non_execution_proofs:nonExecutionProofs,source_authenticated:false,official_metric:false,t0:null,
     whole_population:'MANUAL_OWNER_HOLDER_OPERATION_AND_FINAL_ROUND_JOURNALS_NOT_ESTABLISHED'};
 }
 // Export concrete bridges instead of asking the collector to infer business

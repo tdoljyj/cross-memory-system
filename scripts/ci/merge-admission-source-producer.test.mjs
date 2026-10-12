@@ -390,3 +390,50 @@ test('Native zero-execution producers retain attempts without requiring an unexe
     native:{status:'COMPLETE',population_packets:[n]},selection,readZip:b=>b.toString()});
   assert.equal(duplicate.status,'PARTIAL');assert.ok(duplicate.gaps.some(g=>g.code==='NATURAL_PRODUCER_NATIVE_JOB_MISSING_OR_DUPLICATE'));
 });
+
+test('positive-duration cancelled slot requires stable complete unassigned Hosted runner metadata and registered main origin',async()=>{
+  const workflow='.github/workflows/clued-merge-slot-ci.yml',wf='name: immutable declared slot fixture\n',created='2026-10-12T21:29:56.000Z',completed='2026-10-12T21:30:08.000Z',
+    descriptor={registration_status:'registered',workflow_path:workflow,workflow_blob:gitBlob(wf),job_id:'report',job_name:'clued-merge-slot-ci',
+      source_paths:['scripts/ci/clued-merge-slot-ci.mjs'],required_steps:['Export','Upload']},
+    selection={repository:env.GITHUB_REPOSITORY,head_sha:head,default_branch:'main',natural_producers:[descriptor]},
+    job={id:'43',name:descriptor.job_name,status:'completed',conclusion:'cancelled',created_at:created,started_at:created,completed_at:completed,labels:['ubuntu-slim'],steps:[]},
+    n={run:{run_id:'42',run_attempt:1,status:'completed',conclusion:'cancelled',head_sha:base,path:workflow,event:'workflow_run'},jobs:[job]},
+    origin={id:42,run_attempt:1,status:'completed',conclusion:'cancelled',head_sha:base,path:workflow,event:'workflow_run',head_branch:'main',head_repository:{full_name:env.GITHUB_REPOSITORY}},
+    wire={...job,id:43,run_id:42,run_attempt:1,runner_id:0,runner_name:'',runner_group_id:0,runner_group_name:''};
+  const collect=async variant=>{
+    let reads=0;const routes=[];
+    const request=async route=>{routes.push(route);
+      if(route.endsWith('/attempts/1'))return {ok:true,body:variant?.origin??origin};
+      if(route.includes('/contents/'))return {ok:true,body:{type:'file',path:workflow,encoding:'base64',sha:gitBlob(wf),content:Buffer.from(wf).toString('base64')}};
+      if(route.includes('/compare/'))return {ok:true,body:variant?.history??{status:'ahead',merge_base_commit:{sha:base}}};
+      if(route.includes('/jobs?')){reads++;return {ok:true,body:variant?.jobs?.(reads)??{total_count:1,jobs:[wire]}};}
+      if(route.includes('/artifacts?'))return {ok:true,body:{total_count:0,artifacts:[]}};
+      throw Error('UNMOCKED');
+    };
+    const result=await collectNaturalSourceArtifacts({request,repository:env.GITHUB_REPOSITORY,native:{status:'COMPLETE',population_packets:[n]},
+      selection:variant?.selection??selection,readZip:b=>b.toString()});return {result,routes,reads};
+  };
+  const before=JSON.stringify(n),valid=await collect();
+  assert.equal(valid.result.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(valid.result.gaps));assert.equal(valid.reads,2);
+  assert.equal(valid.result.entries.length,0);assert.equal(valid.result.non_execution_proofs.length,1);
+  assert.equal(valid.result.non_execution_proofs[0].before_digest,valid.result.non_execution_proofs[0].after_digest);
+  assert.equal(valid.result.source_authenticated,false);assert.equal(valid.result.official_metric,false);assert.equal(JSON.stringify(n),before);
+  const changed=w=>({total_count:1,jobs:[{...wire,...w}]});
+  for(const variant of [
+    {jobs:()=>changed({runner_id:7,runner_name:'assigned'})},
+    {jobs:()=>changed({runner_group_id:7})},
+    {jobs:()=>changed({runner_name:undefined})},
+    {jobs:()=>changed({labels:['self-hosted']})},
+    {jobs:()=>changed({steps:[{name:'Run producer',status:'completed',conclusion:'cancelled'}]})},
+    {jobs:()=>changed({id:44})},
+    {jobs:()=>changed({started_at:'2026-10-12T21:29:57.000Z'})},
+    {jobs:()=>({total_count:2,jobs:[wire]})},
+    {jobs:i=>i===1?{total_count:1,jobs:[wire]}:changed({html_url:'changed'})},
+    {origin:{...origin,head_repository:{full_name:'fork/repo'}}},
+    {history:{status:'behind',merge_base_commit:{sha:base}}},
+    {selection:{...selection,natural_producers:[{...descriptor,workflow_blob:head}]}}
+  ]){
+    const refused=await collect(variant);assert.equal(refused.result.status,'PARTIAL',JSON.stringify(variant));
+    assert.equal(refused.result.non_execution_proofs.length,0);assert.ok(refused.result.gaps.some(g=>g.code==='NATURAL_EXPECTED_ARTIFACT_MISSING_OR_DUPLICATE'));
+  }
+});
