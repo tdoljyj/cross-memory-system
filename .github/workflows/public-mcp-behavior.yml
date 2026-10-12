@@ -176,6 +176,10 @@ jobs:
         uses: ./.github/actions/ci-temporary-storage
         with:
           isolate-promptfoo: 'true'
+      - name: Prepare hosted Docker capacity
+        run: |
+          node --test ../../scripts/ci/public-mcp-hosted-space.test.mjs
+          node ../../scripts/ci/public-mcp-hosted-space.mjs
       - run: npm ci
       - name: Isolate this run's Supabase project and ports
         run: |

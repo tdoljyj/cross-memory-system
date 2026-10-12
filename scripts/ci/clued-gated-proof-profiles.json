@@ -2137,9 +2137,9 @@
     },
     ".github/workflows/public-mcp-behavior.yml": {
       "registration_status": "registered",
-      "workflow_blob": "0ec7b02e3842c3a9635fed01cd8dbcf5731886d3",
-      "source_sha256": "65d8ec156ce21475c4f16864ccc0e5611de3400f481109fde02a1eceda36c6e9",
-      "source_yaml": "name: public-mcp-behavior\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); push events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, site-company]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;\n          # restoring the ~860 MB Actions cache on top of it only adds download time.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - run: npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5\n      - name: Serialize fixed public MCP ports with other runners on this host\n        run: |\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" acquire public-mcp-ports\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then\n            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n          fi\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" release public-mcp-ports\n          exit \"$cleanup_result\"\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - run: npm ci\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then\n            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n          fi\n          exit \"$cleanup_result\"\n",
+      "workflow_blob": "05aaf31c642cee6be608b4aa1f635f6f1f9df5ec",
+      "source_sha256": "e34956bbce71d3dfc7f45004ff3d594bda27352846083b490ecc4533c2d5344a",
+      "source_yaml": "name: public-mcp-behavior\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); push events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, site-company]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;\n          # restoring the ~860 MB Actions cache on top of it only adds download time.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - run: npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5\n      - name: Serialize fixed public MCP ports with other runners on this host\n        run: |\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" acquire public-mcp-ports\n      - name: Isolate this run's Supabase project and ports\n        run: |\n          node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs\n          node ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if [ -f \"$RUNNER_TEMP/public-mcp-supabase-isolation.json\" ]; then\n            if node ../../scripts/ci/public-mcp-supabase-isolation.mjs verify; then\n              npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n            else\n              cleanup_result=1\n            fi\n          fi\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" release public-mcp-ports\n          exit \"$cleanup_result\"\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - name: Prepare hosted Docker capacity\n        run: |\n          node --test ../../scripts/ci/public-mcp-hosted-space.test.mjs\n          node ../../scripts/ci/public-mcp-hosted-space.mjs\n      - run: npm ci\n      - name: Isolate this run's Supabase project and ports\n        run: |\n          node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs\n          node ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if [ -f \"$RUNNER_TEMP/public-mcp-supabase-isolation.json\" ]; then\n            if node ../../scripts/ci/public-mcp-supabase-isolation.mjs verify; then\n              npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n            else\n              cleanup_result=1\n            fi\n          fi\n          exit \"$cleanup_result\"\n",
       "primary_ids": [
         "trusted-self-hosted",
         "untrusted-hosted"
@@ -2160,6 +2160,7 @@
           "required_steps": {
             "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5": 1,
             "Serialize fixed public MCP ports with other runners on this host": 1,
+            "Isolate this run's Supabase project and ports": 1,
             "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": 1,
             "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": 1,
             "Run npm run mcp:isolated:fixture": 2,
@@ -2177,6 +2178,9 @@
             "Serialize fixed public MCP ports with other runners on this host": [
               "b98671a0c8edfc04908618e49f74d0fb314831c9c88ce07a17249e347604c615"
             ],
+            "Isolate this run's Supabase project and ports": [
+              "6f0b87e7aae022563d9cf4c10888180941c007dff9dc5912c9b62f86c2b04fb8"
+            ],
             "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": [
               "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
             ],
@@ -2203,7 +2207,7 @@
               "7e09e54920550c9496558458afe80bf0171472c0a1ba187051605f33d099744f"
             ],
             "Stop isolated services": [
-              "96b74c91073b588066c677c08e013919dab46ae124862c0cc6a6782d9d3a85d2"
+              "4966e0d460686c9fd8fc3ea434bf8950bdc881b89f9174e5f1621b3329245eda"
             ]
           }
         },
@@ -2212,7 +2216,9 @@
           "name": "public-mcp-behavior",
           "self_hosted": false,
           "required_steps": {
+            "Prepare hosted Docker capacity": 1,
             "Run npm ci": 1,
+            "Isolate this run's Supabase project and ports": 1,
             "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": 1,
             "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": 1,
             "Run npm run mcp:isolated:fixture": 2,
@@ -2224,8 +2230,14 @@
             "Stop isolated services": 1
           },
           "command_digests": {
+            "Prepare hosted Docker capacity": [
+              "68c347f6f524337bc848c14da67c94ab22e6720749979b672d4d3974fedc4726"
+            ],
             "Run npm ci": [
               "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+            ],
+            "Isolate this run's Supabase project and ports": [
+              "6f0b87e7aae022563d9cf4c10888180941c007dff9dc5912c9b62f86c2b04fb8"
             ],
             "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": [
               "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
@@ -2253,12 +2265,136 @@
               "7e09e54920550c9496558458afe80bf0171472c0a1ba187051605f33d099744f"
             ],
             "Stop isolated services": [
-              "7d574836fda6b7ef3031c53c1ca8f44ad1d40aff950a04fbbb7001310d930b9a"
+              "b4d90941b2fd84cab9c663bc32c1c239cea5b09fb21f7332fa04f4b0e44401f2"
             ]
           }
         }
       ],
       "accepted_sources": [
+        {
+          "registration_status": "registered",
+          "workflow_blob": "0ec7b02e3842c3a9635fed01cd8dbcf5731886d3",
+          "source_sha256": "65d8ec156ce21475c4f16864ccc0e5611de3400f481109fde02a1eceda36c6e9",
+          "source_yaml": "name: public-mcp-behavior\n\non:\n  pull_request:\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n  push:\n    branches: [main]\n    paths:\n      - '.github/workflows/public-mcp-*.yml'\n      - 'apps/clued-cloud/**'\n      - 'protocol/continuity/v1/**'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE); push events are admitted.\n  # Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  trusted-self-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              github.event.pull_request.head.repo.full_name == github.repository &&\n              github.actor == github.repository_owner)))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-self-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, site-company]\n    timeout-minutes: 25\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm that npm ci reuses below;\n          # restoring the ~860 MB Actions cache on top of it only adds download time.\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - run: npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5\n      - name: Serialize fixed public MCP ports with other runners on this host\n        run: |\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" acquire public-mcp-ports\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then\n            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n          fi\n          \"$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh\" release public-mcp-ports\n          exit \"$cleanup_result\"\n\n  untrusted-hosted:\n    name: >-\n      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||\n             (github.event_name == 'pull_request' &&\n              (github.event.pull_request.head.repo.full_name != github.repository ||\n               github.actor != github.repository_owner))))\n          && 'public-mcp-behavior' || 'public-mcp-behavior-hosted-skipped' }}\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' && (\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner)))\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n    env:\n      PROMPTFOO_DISABLE_TELEMETRY: \"true\"\n      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n        with:\n          isolate-promptfoo: 'true'\n      - run: npm ci\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start\n      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed\n      - run: npm run mcp:isolated:fixture\n      - name: Allocate a behavior-only loopback port\n        run: |\n          mcp_port=\"$(node evals/public-mcp/start-isolated.mjs allocate)\"\n          echo \"MCP_ISOLATED_PORT=$mcp_port\" >> \"$GITHUB_ENV\"\n          echo \"MCP_ISOLATED_URL=http://127.0.0.1:$mcp_port/mcp\" >> \"$GITHUB_ENV\"\n      - name: Start isolated MCP\n        timeout-minutes: 2\n        run: |\n          setsid node evals/public-mcp/start-isolated.mjs &\n          node evals/public-mcp/start-isolated.mjs record \"$!\" > \"$RUNNER_TEMP/public-mcp.pid\"\n          node evals/public-mcp/start-isolated.mjs ready \"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n      - run: npm run mcp:eval:positive\n      - run: npm run mcp:isolated:fixture\n      - run: npm run mcp:eval:negative\n      - run: npm run test:p5:postgres\n      - name: Stop isolated services\n        if: always()\n        timeout-minutes: 2\n        run: |\n          cleanup_result=0\n          if [ -f \"$RUNNER_TEMP/public-mcp.pid\" ]; then\n            mcp_pid=\"$(cat \"$RUNNER_TEMP/public-mcp.pid\")\"\n            node evals/public-mcp/start-isolated.mjs stop \"$mcp_pid\" || cleanup_result=1\n          fi\n          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then\n            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1\n          fi\n          exit \"$cleanup_result\"\n",
+          "primary_ids": [
+            "trusted-self-hosted",
+            "untrusted-hosted"
+          ],
+          "pull_request": {
+            "paths": [
+              ".github/workflows/public-mcp-*.yml",
+              "apps/clued-cloud/**",
+              "protocol/continuity/v1/**"
+            ]
+          },
+          "gated": true,
+          "routes": [
+            {
+              "job_id": "trusted-self-hosted",
+              "name": "public-mcp-behavior",
+              "self_hosted": true,
+              "required_steps": {
+                "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5": 1,
+                "Serialize fixed public MCP ports with other runners on this host": 1,
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": 1,
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": 1,
+                "Run npm run mcp:isolated:fixture": 2,
+                "Allocate a behavior-only loopback port": 1,
+                "Start isolated MCP": 1,
+                "Run npm run mcp:eval:positive": 1,
+                "Run npm run mcp:eval:negative": 1,
+                "Run npm run test:p5:postgres": 1,
+                "Stop isolated services": 1
+              },
+              "command_digests": {
+                "Run npm ci --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=5": [
+                  "c957d6f6f02e57c59eaa32c5a69dea148d7b860a276c1590b1d35003b724f93e"
+                ],
+                "Serialize fixed public MCP ports with other runners on this host": [
+                  "b98671a0c8edfc04908618e49f74d0fb314831c9c88ce07a17249e347604c615"
+                ],
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": [
+                  "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
+                ],
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": [
+                  "7d498cbcb1d24798cd06541795db4411e9ae5f06d0e469e70cc22eeb2f68416c"
+                ],
+                "Run npm run mcp:isolated:fixture": [
+                  "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7",
+                  "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7"
+                ],
+                "Allocate a behavior-only loopback port": [
+                  "268ad0b3cbcbb6085ac1491082352a2a0687dc12c071b1b9e404232ea8f136e6"
+                ],
+                "Start isolated MCP": [
+                  "6182c906ddb20fbad60ae40100719758c60dadcad516d1ef46f499b728c11c7b"
+                ],
+                "Run npm run mcp:eval:positive": [
+                  "f1842aff62969729ce45a0392c3d261a0d126872154529218061826b06ee96c2"
+                ],
+                "Run npm run mcp:eval:negative": [
+                  "c52c627cbfd5ff95d75f64afbb09866203ed231671309af2d4a60e6269edb389"
+                ],
+                "Run npm run test:p5:postgres": [
+                  "7e09e54920550c9496558458afe80bf0171472c0a1ba187051605f33d099744f"
+                ],
+                "Stop isolated services": [
+                  "96b74c91073b588066c677c08e013919dab46ae124862c0cc6a6782d9d3a85d2"
+                ]
+              }
+            },
+            {
+              "job_id": "untrusted-hosted",
+              "name": "public-mcp-behavior",
+              "self_hosted": false,
+              "required_steps": {
+                "Run npm ci": 1,
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": 1,
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": 1,
+                "Run npm run mcp:isolated:fixture": 2,
+                "Allocate a behavior-only loopback port": 1,
+                "Start isolated MCP": 1,
+                "Run npm run mcp:eval:positive": 1,
+                "Run npm run mcp:eval:negative": 1,
+                "Run npm run test:p5:postgres": 1,
+                "Stop isolated services": 1
+              },
+              "command_digests": {
+                "Run npm ci": [
+                  "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+                ],
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start": [
+                  "6291e44b79536a726e3aeca7eaa8e5889a4cde8728edd8b6c59fc42c0dddfd81"
+                ],
+                "Run npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed": [
+                  "7d498cbcb1d24798cd06541795db4411e9ae5f06d0e469e70cc22eeb2f68416c"
+                ],
+                "Run npm run mcp:isolated:fixture": [
+                  "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7",
+                  "4d34a9797a352a0fb13114a26d5933d1ea4fa78a127162c06eb944929228a5a7"
+                ],
+                "Allocate a behavior-only loopback port": [
+                  "268ad0b3cbcbb6085ac1491082352a2a0687dc12c071b1b9e404232ea8f136e6"
+                ],
+                "Start isolated MCP": [
+                  "6182c906ddb20fbad60ae40100719758c60dadcad516d1ef46f499b728c11c7b"
+                ],
+                "Run npm run mcp:eval:positive": [
+                  "f1842aff62969729ce45a0392c3d261a0d126872154529218061826b06ee96c2"
+                ],
+                "Run npm run mcp:eval:negative": [
+                  "c52c627cbfd5ff95d75f64afbb09866203ed231671309af2d4a60e6269edb389"
+                ],
+                "Run npm run test:p5:postgres": [
+                  "7e09e54920550c9496558458afe80bf0171472c0a1ba187051605f33d099744f"
+                ],
+                "Stop isolated services": [
+                  "7d574836fda6b7ef3031c53c1ca8f44ad1d40aff950a04fbbb7001310d930b9a"
+                ]
+              }
+            }
+          ]
+        },
         {
           "registration_status": "registered",
           "workflow_blob": "3cb4a7bc0f87d9d4a1d6ec8eac08519b4ee01bfc",
