@@ -71,6 +71,11 @@ function nativeWireRun(run) {
     head_sha:run.head_sha,status:run.status,conclusion:run.conclusion,created_at:run.created_at,
     run_started_at:run.run_started_at,updated_at:run.updated_at,pull_requests:run.pull_requests.map(number=>({number}))};
 }
+export function nativeJobIsNonExecution(job) {
+  return Array.isArray(job.steps)&&job.steps.length===0&&
+    (job.conclusion==='skipped'||job.reported_check_url===`https://github.com/${NATIVE_REPOSITORY}/runs/${job.id}`&&
+      Array.isArray(job.labels)&&job.labels.length===0&&job.created_at===job.started_at&&job.started_at===job.completed_at);
+}
 function normalizeJob(value, run) {
   if (!object(value) || id(value.run_id)!==run.run_id || ordinal(value.run_attempt)!==run.run_attempt ||
       value.status!=='completed' || !CONCLUSIONS.has(value.conclusion)) fail('invalid_native_job_member');
@@ -78,10 +83,14 @@ function normalizeJob(value, run) {
   // GitHub's zero-step skipped jobs report scheduler metadata, including
   // observed completed_at before created_at. Preserve those raw values, but
   // never interpret them as an execution interval or a successful primary.
-  const nonExecution=value.conclusion==='skipped'&&Array.isArray(value.steps)&&value.steps.length===0;
-  // Creation must fit the associated Native run envelope even when execution
-  // timestamps are absent. updated_at remains an update bound, not completion.
-  if (created<run.created_at || created>run.updated_at ||
+  const checkUrl=`https://github.com/${NATIVE_REPOSITORY}/runs/${id(value.id)}`;
+  const checkProjection=value.html_url===checkUrl||value.reported_check_url===checkUrl;
+  if((value.reported_check_url!==undefined&&value.reported_check_url!==checkUrl)||checkProjection&&
+    (!Array.isArray(value.labels)||value.labels.length!==0||!Array.isArray(value.steps)||value.steps.length!==0||created!==started||started!==completed))fail('invalid_native_check_projection');
+  const nonExecution=value.conclusion==='skipped'&&Array.isArray(value.steps)&&value.steps.length===0||checkProjection;
+  // Executed jobs must fit the run envelope. Native no-op scheduler/check
+  // projections can be published later; their times never bound execution.
+  if ((!nonExecution&&(created<run.created_at || created>run.updated_at)) ||
       (!nonExecution && started!==null && (created>started || run.run_started_at===null || started<run.run_started_at)) ||
       (!nonExecution && completed!==null && (created>completed || (started!==null && started>completed) || completed>run.updated_at)) ||
       (completed===null && !['cancelled','skipped'].includes(value.conclusion))) fail('invalid_native_job_time');
@@ -99,7 +108,7 @@ function normalizeJob(value, run) {
   }).sort((a,b)=>a.number-b.number);
   return {id:id(value.id),run_id:run.run_id,run_attempt:run.run_attempt,name:text(value.name),status:value.status,
     conclusion:value.conclusion,created_at:created,started_at:started,completed_at:completed,
-    labels:value.labels.map(label=>text(label,200)),steps};
+    labels:value.labels.map(label=>text(label,200)),steps,...(checkProjection?{reported_check_url:checkUrl}:{})};
 }
 const keyOf = run => `${run.run_id}:${run.run_attempt}`;
 function packetOf(run,jobs,reportedAttemptCreation=null) {
@@ -131,7 +140,7 @@ function validateStore(raw,repository) {
       // updated_at is not a completion clock. Only actual start/job end values
       // can demonstrate contradictory execution overlap between ordinals.
       if (b.run_started_at!==null && ((a.run_started_at!==null&&a.run_started_at>b.run_started_at) ||
-          prior.jobs.some(job=>job.completed_at!==null&&job.completed_at>b.run_started_at))) fail('attempt_chronology_invalid');
+          prior.jobs.some(job=>!nativeJobIsNonExecution(job)&&job.completed_at!==null&&job.completed_at>b.run_started_at))) fail('attempt_chronology_invalid');
     }
   }
   return {schema:NATIVE_POPULATION_SCHEMA,repository,packets};

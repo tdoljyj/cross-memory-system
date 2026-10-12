@@ -2,7 +2,7 @@
 // report request function; no token, retry, parallel worker or new CI trigger.
 import {createHash} from 'node:crypto';
 import {inflateRawSync} from 'node:zlib';
-import {captureNativeAttempt,emptyNativePopulationStore,inspectNativePopulationStore} from './merge-admission-native-population.mjs';
+import {captureNativeAttempt,emptyNativePopulationStore,inspectNativePopulationStore,nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
 import {readMergeAdmissionFourSources,parseFourSourceRawData} from './merge-admission-four-sources.mjs';
 import {integrateClockSourceCandidate} from './merge-admission-clock-source.mjs';
 import {registeredWorkflowSource,rolesForSource,workflowBlob} from './clued-workflow-profile.mjs';
@@ -206,7 +206,7 @@ function inventoryIdentity(r){
 // new attempt is never lost by a created>=opening filter. GitHub caps filtered
 // searches at 1000; split complete inclusive overlapping ranges rather than paging a
 // truncated filtered search. New runs created after close cannot change it.
-async function inventory(request,repository,window){
+async function rangeInventory(request,repository,window){
   // Unix epoch is a fixed inclusive lower bound of this API's nonnegative
   // creation-time grammar. No created>=opening filter can omit old reruns.
   const low=0,high=Number((timestampMicros(window.end)+999n)/1000n);
@@ -248,6 +248,39 @@ async function inventory(request,repository,window){
   // excludes any extra same-second outside member, without inventing a gap.
   const fixed=items.filter(r=>timestampMicros(r.created_at)<timestampMicros(window.end));
   return {items:sorted(fixed),total:fixed.length,created_cutoff:window.end,ranges_read:rangesRead};
+}
+// Read the uncapped endpoint once per directory barrier. New runs after the
+// fixed close may grow only the leading prefix. Deduplicate shifted pages,
+// then independently close that prefix and prove the fixed denominator.
+// The old split-range path remains for a prefix wider than one full page;
+// neither path drops old-created reruns or spends outside the shared budget.
+async function inventory(request,repository,window){
+  const root=`/repos/${repository}/actions/runs?per_page=100`,cutoff=timestampMicros(window.end);
+  const read=async page=>{const b=await bodyOf(request,root+'&page='+page);
+    if(!Number.isSafeInteger(b?.total_count)||b.total_count<0||b.total_count>MAX_RUNS||!Array.isArray(b.workflow_runs)||
+      b.workflow_runs.length!==Math.max(0,Math.min(100,b.total_count-(page-1)*100)))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
+    const rows=b.workflow_runs.map(inventoryIdentity);
+    if(rows.some((r,i)=>i>0&&timestampMicros(rows[i-1].created_at)<timestampMicros(r.created_at)))fail('NATIVE_INVENTORY_ORDER_UNPROVED');
+    return {total:b.total_count,rows};};
+  const first=await read(1),prefix=first.rows.filter(r=>timestampMicros(r.created_at)>=cutoff);
+  if(prefix.length===100)return rangeInventory(request,repository,window);
+  const expected=first.total-prefix.length,ids=new Map();let total=first.total,lastCreated=null;
+  const append=rows=>{for(const r of rows){if(timestampMicros(r.created_at)>=cutoff)continue;
+    const prior=ids.get(r.id);if(prior){if(!same(prior,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
+    const at=timestampMicros(r.created_at);if(lastCreated!==null&&at>lastCreated)fail('NATIVE_INVENTORY_ORDER_UNPROVED');
+    lastCreated=at;ids.set(r.id,r);}};
+  append(first.rows);
+  for(let page=2;page<=Math.ceil(total/100);){
+    const width=Math.min(4,Math.ceil(total/100)-page+1);
+    const batch=await Promise.allSettled(Array.from({length:width},(_,i)=>read(page+i)));
+    const bad=batch.find(r=>r.status==='rejected');if(bad)throw bad.reason;
+    for(const {value:b} of batch){if(b.total<first.total)fail('NATIVE_INVENTORY_RETENTION_CHANGED');total=Math.max(total,b.total);append(b.rows);}page+=width;
+  }
+  if(first.total>100){const closing=await read(1),afterPrefix=closing.rows.filter(r=>timestampMicros(r.created_at)>=cutoff);
+    if(afterPrefix.length===100||closing.total-afterPrefix.length!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_CHANGED');
+    for(const r of closing.rows.filter(r=>timestampMicros(r.created_at)<cutoff))if(!same(ids.get(r.id),r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');}
+  if(ids.size!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_UNPROVED');
+  return {items:sorted([...ids.values()]),total:ids.size,created_cutoff:window.end,ranges_read:0,directory_mode:'UNCAPPED_FIXED_PREFIX_BARRIER'};
 }
 async function fullInventory(request,repository,window,rangesRead){
   // A dense timestamp cannot be split below the API's precision. Fall back to
@@ -375,7 +408,7 @@ export function nativeCompletionMembership(packet,window){
   try{
     const r=packet.run;if(r.status!=='completed')fail('NATIVE_COMPLETION_NOT_TERMINAL');
     let lower=timestampMicros(r.created_at),upper=timestampMicros(r.updated_at);
-    for(const j of packet.jobs)for(const at of j.conclusion==='skipped'&&j.steps.length===0?[j.created_at]:[j.created_at,j.started_at,j.completed_at])if(at!==null){const t=timestampMicros(at);if(t>lower)lower=t;}
+    for(const j of packet.jobs)for(const at of nativeJobIsNonExecution(j)?[]:[j.created_at,j.started_at,j.completed_at])if(at!==null){const t=timestampMicros(at);if(t>lower)lower=t;}
     const from=timestampMicros(window.start),to=timestampMicros(window.end);
     if(lower>upper||from>=to)fail('NATIVE_COMPLETION_BOUNDS_INVALID');
     const membership=lower>=from&&upper<to?'IN_WINDOW':upper<from||lower>=to?'OUTSIDE_WINDOW':'UNKNOWN';
