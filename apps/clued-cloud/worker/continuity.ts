@@ -1537,22 +1537,20 @@ const tools = [
   {
     name: "clued_audit_receipts",
     description:
-      "Read recent immutable receipts and session compliance. With measurement, read fixed-watermark private merge-admission journal pages under existing audit:read authority; every contributing context must be authorized. Pages are raw transaction fragments, not official metrics or complete wall-clock history.",
+      "Read recent receipts, compliance and fixed-watermark journal pages. Typed clock_open and clock_seal persist bounded private queue observations and create a new epoch or seal on each call. Clock pages read a fixed seal. These observations do not establish source acceptance or official metrics.",
     inputSchema: {
       type: "object",
       properties: {
         context_key: { type: "string" },
         limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
         measurement: {
-          type: "object",
-          properties: {
-            after_sequence: { type: "integer", minimum: 0, maximum: 9007199254740991 },
-            end_sequence: { type: "integer", minimum: 0, maximum: 9007199254740991 },
-            stream_id: { type: "string", format: "uuid" },
-            limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
-          },
-          additionalProperties: false,
-        },
+  "oneOf": [
+    {"type":"object","properties":{"after_sequence":{"type":"integer","minimum":0,"maximum":9007199254740991},"end_sequence":{"type":"integer","minimum":0,"maximum":9007199254740991},"stream_id":{"type":"string","format":"uuid"},"limit":{"type":"integer","minimum":1,"maximum":500,"default":100}},"additionalProperties":false},
+    {"type":"object","required":["operation","queue_ref"],"properties":{"operation":{"const":"clock_open"},"queue_ref":{"type":"string","pattern":"^merge:[a-z0-9_.-]+/[a-z0-9_.-]+:[a-z0-9_.-]+$"}},"additionalProperties":false},
+    {"type":"object","required":["operation","queue_ref","epoch_id","pins"],"properties":{"operation":{"const":"clock_seal"},"queue_ref":{"type":"string","pattern":"^merge:[a-z0-9_.-]+/[a-z0-9_.-]+:[a-z0-9_.-]+$"},"epoch_id":{"type":"string","format":"uuid"},"pins":{"type":"object","required":["epoch_id","stream_id","clock_generation_id","foundation_digest","catalog_digest"],"properties":{"epoch_id":{"type":"string","format":"uuid"},"stream_id":{"type":"string","format":"uuid"},"clock_generation_id":{"type":"string","format":"uuid"},"foundation_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"catalog_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}},"additionalProperties":false}},"additionalProperties":false},
+    {"type":"object","required":["operation","queue_ref","seal_id","pins","seal_pins"],"properties":{"operation":{"const":"clock_page"},"queue_ref":{"type":"string","pattern":"^merge:[a-z0-9_.-]+/[a-z0-9_.-]+:[a-z0-9_.-]+$"},"seal_id":{"type":"string","format":"uuid"},"pins":{"type":"object","required":["epoch_id","stream_id","clock_generation_id","foundation_digest","catalog_digest"],"properties":{"epoch_id":{"type":"string","format":"uuid"},"stream_id":{"type":"string","format":"uuid"},"clock_generation_id":{"type":"string","format":"uuid"},"foundation_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"catalog_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}},"additionalProperties":false},"seal_pins":{"type":"object","required":["end_sequence","closing_us","catalog_digest"],"properties":{"end_sequence":{"type":"integer","minimum":0,"maximum":9007199254740991},"closing_us":{"type":"string","pattern":"^-?[0-9]{1,19}$"},"catalog_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}},"additionalProperties":false},"after_sequence":{"type":"integer","minimum":0,"maximum":999999,"default":0},"limit":{"type":"integer","minimum":1,"maximum":500,"default":100}},"additionalProperties":false}
+  ]
+},
       },
       additionalProperties: false,
     },
@@ -1635,7 +1633,7 @@ export const publicToolPolicies = {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
   },
   clued_audit_receipts: {
-    scopes: ["audit:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+    scopes: ["audit:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
   },
   clued_project_mutate: {
     scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
@@ -2093,8 +2091,26 @@ function recordValidationRejection(error: unknown) {
 // PermissionSimplification §3.2: the connection lacks a context or action the
 // call needs. Returned as a tool error carrying what to request; a revoked or
 // expired connection stays an HTTP 403, since only reconnecting helps there.
+// Only the typed SQL target-denial code suppresses unsafe resource guessing.
+function clockAuditTargetRejection(error: unknown, name: string, args: unknown) {
+  if (!(error instanceof HttpError) || error.status !== 403 ||
+    (error.details as Record<string, unknown> | null | undefined)?.code !== "42501") return null;
+  if (name === "clued_audit_receipts" && error.message === "clock_transport_contributor_not_authorized") {
+    const measurement = args && typeof args === "object" && !Array.isArray(args)
+      ? (args as Record<string, unknown>).measurement : undefined;
+    const operation = measurement && typeof measurement === "object" && !Array.isArray(measurement)
+      ? (measurement as Record<string, unknown>).operation : undefined;
+    if (["clock_open", "clock_seal", "clock_page"].includes(String(operation))) {
+      return { status: "rejected", error: { code: "clock_target_permission_denied", category: "permission",
+        message: "This connection cannot read the complete requested queue observation. The missing contributing permission cannot be inferred safely from this call. Review this exact target with the Owner; no broader permission is suggested." } };
+    }
+  }
+  return null;
+}
 async function permissionRejection(error: unknown, name: string, args: unknown,
   request: Request, env: ContinuityEnv) {
+  const clockDenial = clockAuditTargetRejection(error, name, args);
+  if (clockDenial) return clockDenial;
   if (!(error instanceof HttpError) || error.status !== 403) return null;
   const details = error.details as Record<string, unknown> | null | undefined;
   if (details?.code !== "42501") return null;
@@ -2795,8 +2811,15 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
   const path = new URL(request.url).pathname as keyof typeof restToolByPath;
   const tool = restToolByPath[path];
   const input = await parseBody(request);
+  let rpcValue: unknown;
+  try { rpcValue = await callRpc(request, env, tool, input); }
+  catch (error) {
+    const clockDenial = clockAuditTargetRejection(error, tool, input);
+    if (clockDenial) return json(clockDenial, 403, corsHeaders(request));
+    throw error;
+  }
   const result = await withWorkClaims(request, env, tool, input,
-    withAuthorityCapture(tool, sanitizeCluedResult(await callRpc(request, env, tool, input), tool)));
+    withAuthorityCapture(tool, sanitizeCluedResult(rpcValue, tool)));
   return json(result, 200, corsHeaders(request));
 }
 

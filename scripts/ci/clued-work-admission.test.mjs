@@ -892,6 +892,14 @@ test("workflows: only base-branch jobs in the clued-admission environment get th
   // Merge Admission step 3: clued-merge-slot-ci reports CI states with the same token; step 5:
   // clued-merge-executor reads the queue heads with it.
   assert.deepEqual(holders.sort(), ["clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml", "clued-work-claim-handover-revoke.yml"]);
+  const measurement = fs.readFileSync(path.join(dir, "clued-ci-usage-report.yml"), "utf8");
+  assert.doesNotMatch(measurement, /^ {2}pull_request(?:_target)?:/m, "the measurement credential never enters a PR workflow");
+  assert.match(measurement, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}/);
+  assert.match(measurement, /environment: clued-admission/);
+  assert.doesNotMatch(measurement, /secrets\.CLUED_ADMISSION_CLUED_TOKEN/);
+  assert.match(measurement, /CLUED_CONTEXT_READ_TOKEN: \$\{\{ secrets\.CLUED_R9_CLOCK_READ_TOKEN \}\}/);
+  const clockReader = fs.readFileSync(path.join(ROOT, "scripts/ci/merge-admission-r9-runtime-inputs.mjs"), "utf8");
+  assert.ok(clockReader.indexOf("CLOCK_CREDENTIAL_IS_NOT_THE_ACCEPTED_MINIMAL_BINDING") < clockReader.indexOf("const sealed=await rpc("), "an unaccepted credential cannot reach the clock without the accepted minimal-binding fingerprint");
   const admission = fs.readFileSync(path.join(dir, "clued-work-admission.yml"), "utf8");
   assert.doesNotMatch(admission, /^ {2}pull_request:/m, "no pull_request trigger: PR-edited copies never run");
   assert.match(admission, /^ {2}pull_request_target:$/m);

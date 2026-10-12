@@ -68,7 +68,11 @@ jobs:
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Self-test the usage report (no network, mocked fetch)
-        run: node --test scripts/ci/ci-usage-report.test.mjs
+        run: |
+          node --test scripts/ci/ci-usage-report.test.mjs
+          node --test scripts/ci/merge-admission-r9-collector.test.mjs
+      # Collector tests use checkout-relative helpers. Private review folders
+      # are neither restored nor used by this default-branch workflow.
       # Cache entries are immutable, so each run saves under its own key and
       # restores the newest earlier one.
       - name: Restore and save the per-run job cache
@@ -83,6 +87,11 @@ jobs:
           CI_USAGE_DAYS: ${{ inputs.days || 7 }}
           CLUED_MEASURE_APP_ID: ${{ secrets.CLUED_MEASURE_APP_ID }}
           CLUED_MEASURE_APP_KEY: ${{ secrets.CLUED_MEASURE_APP_KEY }}
+          # R9 proposes a separate, explicitly accepted audit-only reader.
+          # This source does not create a credential or install a Secret.
+          # Missing/unaccepted identity leaves the clock NOT_MEASURED; never
+          # borrow the admission writer's credential or enlarge its scopes.
+          CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_R9_CLOCK_READ_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/ci-usage-report.mjs
       - name: Upload the report
@@ -91,5 +100,13 @@ jobs:
         with:
           name: ci-usage-report
           path: ci-usage-report.json
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Preserve sealed R9 incremental packets
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: merge-admission-r9-sealed-packets
+          path: r9-sealed-packet.json
           if-no-files-found: warn
           retention-days: 90
