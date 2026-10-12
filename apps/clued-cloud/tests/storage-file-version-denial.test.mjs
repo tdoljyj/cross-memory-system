@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { fixture, ids, root } from "./resource-center-cloud-executor.fixture.mjs";
 import { cloudDispatchOutcome } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 
 const { build } = createRequire(import.meta.url)("esbuild");
-const loaded = build({ entryPoints: [new URL("../worker/storage-agent-tools.ts", import.meta.url).pathname.replace(/^\/([A-Za-z]:\/)/, "$1")],
+const loaded = build({ entryPoints: [fileURLToPath(new URL("../worker/storage-agent-tools.ts", import.meta.url))],
   bundle: true, write: false, format: "esm", platform: "node", logLevel: "silent" })
   .then(result => import("data:text/javascript;base64," + Buffer.from(result.outputFiles[0].text).toString("base64")));
 
