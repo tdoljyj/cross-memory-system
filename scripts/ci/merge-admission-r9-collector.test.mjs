@@ -433,3 +433,39 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
   assert.equal(result.metrics.update_main_rounds.official_metric,true);assert.equal(result.metrics.update_main_rounds.value,0);assert.equal(result.metrics.cancellation_causes.denominator,0);
   assert.equal(result.metrics.wasted_final_rounds.activity_coverage.delivery_through_window_end,'UNKNOWN');assert.equal(result.t0,null);
 });
+
+test('same-source main advance needs the complete independent source bytes, not a matching flag',()=>{
+  const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),admission={script_blob:'a'.repeat(40)},path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
+    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[{workflow_path:path,workflow_blob:wf}]},
+    selection={admission_source:admission,workflow_blobs:{[path]:wf}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles)};
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,contract),true);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,admission_source:{script_blob:'c'.repeat(40)}},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,workflow_blobs:{[path]:'c'.repeat(40)}},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,roles:{roles:['changed']}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot({...cfg,admission_source:null},{...selection,admission_source:null},runtime,contract),false);
+});
+
+test('source equivalence cannot replace raw profile/role digest pins with reformatted or malformed bytes',()=>{
+  const profiles='{"workflows":{}}',roles='{"roles":[]}',admission={script_blob:'a'.repeat(40)},
+    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[]},
+    selection={admission_source:admission,workflow_blobs:{}},contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles)};
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'{"workflows": {}}',role_specs_raw:roles},contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'not-json',role_specs_raw:roles},contract),false);
+});
+
+test('bounded parallel Native captures retain every member under the same request function',async()=>{
+  const runs=Array.from({length:7},(_,i)=>({id:420+i,run_attempt:1,workflow_id:8,head_sha:'a'.repeat(40),path:'.github/workflows/test.yml',event:'pull_request',status:'completed',conclusion:'success',
+    created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z',updated_at:'2026-10-09T00:00:05Z',pull_requests:[]}));
+  let active=0,maximum=0,calls=0;
+  const request=async route=>{calls++;active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,2));active--;
+    const u=new URL(route,'https://native.invalid');
+    if(u.pathname.endsWith('/actions/runs'))return {ok:true,body:{total_count:runs.length,workflow_runs:structuredClone(runs)}};
+    const id=Number(u.pathname.match(/\/runs\/(\d+)/)?.[1]),r=runs.find(x=>x.id===id);assert.ok(r);
+    if(u.pathname.endsWith('/jobs'))return {ok:true,body:{total_count:1,jobs:[{id:1000+id,run_id:id,run_attempt:1,name:'test',status:'completed',conclusion:'success',
+      created_at:'2026-10-09T00:00:02Z',started_at:'2026-10-09T00:00:03Z',completed_at:'2026-10-09T00:00:04Z',labels:['ubuntu-slim'],steps:[]}]}};
+    return {ok:true,body:structuredClone(r)};
+  };
+  const result=await C.collectIncrementalNative({request,repository,window:{start:'2026-10-09T00:00:00Z',end:'2026-10-09T00:00:10Z'}});
+  assert.equal(result.status,'COMPLETE');assert.equal(result.population_packets.length,7);assert.equal(Object.keys(JSON.parse(result.store_raw).packets).length,7);
+  assert.ok(maximum>1);assert.ok(maximum<=4);assert.equal(calls,44);assert.equal(result.population.complete,true);
+});
