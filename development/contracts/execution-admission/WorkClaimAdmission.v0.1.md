@@ -507,7 +507,11 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 保持公开函数集合 GW80/CI8。CI8 `clued_work_verify_v1` 的新 `execution_current` 分支仅作有界只读观察（`p_token_hash=null`、固定精确公开目标，无 Scope/Owner/claim DTO/私钥返回、无写入）；它只补充已合格 GitHub 门/独立 runner 的即时 epoch 观察，不产生执行准入。其他 CI 操作仍需现行 Owner 指定 CI Binding。须在精确源码审核中明确新观察 Caller 与全部负例资格，不能以函数数量相同代替审查。
 - 分三阶段部署：①先合并并批准应用 staged SQL 与 Worker/页面/合同，旧模式兼容，自动交换仍 not-ready；②再合并并部署 CI publication/revoker、分支 gate 与独立 runner，验证真实消费和故障边界；③对精确源码和全部消费证据独立批准激活。新 RPC 未可用时不可将新强制 probe 投入分支门；页面 On 或单元绿色不代表完成。各 PR/生产迁移/发布/启用分别走现行门，保留实际 Receipt。
 
-当前证据仅本机完整 TypeScript、隔离 PG/实际 cloud executor、Native UI 和 CI/runner 单元回归；正式 PR、生产与启用证据仍待完成。
+每阶段部署必须固定已合并的真实 source commit，并使用配置 publisher 的独立输入：先获得该提交的只读 preflight 和已验证加密 backup；`migrate` 只指定本阶段实际审查的 migration 文件名，不隐含全部 pending migration，`deploy` 另走精确提交的发布门。保留两个动作各自的真实 Receipt，启动 workflow 不是完成证明。
+
+消费端阶段的资格必须逐一覆盖实际独立安装的 runner 和所有可信 CI 发布路径；配置从 trusted default branch 读取，旧成功不替代即时 epoch，未知或不可达必须拒绝。原机器保护、只读 hook App 和 wrapper 不因安装而放宽，安装副本不会自动随 Git 更新。激活前须盘点已有 claim、旧未固化队列、历史 head、PR/dispatch 与未收口 publication；只发送取消请求不能作为停止证明，未查明外部效果的票据保持 open。激活是第三阶段单独精确 SQL/Owner 门，不能由开关 On、staged 服务已部署或候选测试绿色推导。
+
+当前证据包括本机完整 TypeScript、隔离 PG/实际 cloud executor、Native UI 和 CI/runner 单元回归；正式 PR744 的准确 head 检查独立判断，生产、消费端安装与启用证据仍待完成。
 
 - 全库只读扫描（2026-10-01，本会话委派的只读 agent）：MCP 工具目录 `apps/clued-cloud/worker/continuity.ts:1115-1415` 无 claim／lease／admit 工具；`lease_id`／`lease_expires_at` 列仅存在于 projection refresh job 表；kernel lease／budget 模块仅被 `evals/kernel-next/*` 引用；`.claude/settings.json` 仅 Stop hook。
 - Projection Refresh 实现说明：`apps/clued-cloud/docs/model-program-m0/post-commit-projection-refresh.md`；精确 key 租约：`apps/clued-cloud/supabase/migrations/20260923213100_projection_refresh_exact_key_lease.sql`。
