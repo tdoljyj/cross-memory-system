@@ -513,7 +513,7 @@ test('no-op skipped scheduler timestamps are retained as metadata, never executi
 });
 test('cancelled or successful execution retains the original contradictory-time rejection',async()=>{
   for(const conclusion of ['cancelled','success']){
-    const f=wireProjectionFixture({jobConclusion:conclusion,jobEnded:'2026-10-12T16:54:44Z'}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+    const f=wireProjectionFixture({jobConclusion:conclusion,jobEnded:'2026-10-12T16:54:44Z',skipSteps:[{number:1,name:'actual execution',status:'completed',conclusion:'success',started_at:'2026-10-12T16:54:45Z',completed_at:'2026-10-12T16:54:45Z'}]}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
     assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'invalid_native_job_time');
   }
 });
@@ -641,4 +641,16 @@ test('a newer authenticated artifact cannot erase older independently authentica
   assert.ok(JSON.parse(r.native.store_raw).packets['42:1']);assert.equal(JSON.parse(r.cache_raw).artifact_id,'10');
   assert.equal(r.metrics.update_main_rounds.value,null);assert.equal(r.metrics.queue_depth_p95.value,null);assert.equal(r.t0,null);
   assert.equal(f.routes.filter(r=>r.endsWith('/actions/artifacts/9/zip')).length,0);
+});
+
+test('actual cancelled no-step scheduler rows retain cancellation without claiming an execution interval',async()=>{
+  const r=run(38288051247,{path:'.github/workflows/clued-g4-database.yml',created_at:'2026-10-12T18:00:48Z',run_started_at:'2026-10-12T18:00:48Z',updated_at:'2026-10-12T18:02:42Z',conclusion:'cancelled'}),
+    j=job(r.id,{id:114941745530,name:'Verify prior PR tested tree',conclusion:'cancelled',created_at:'2026-10-12T18:02:42Z',started_at:'2026-10-12T18:02:42Z',completed_at:'2026-10-12T18:02:41Z',steps:[],labels:['ubuntu-slim']});
+  const f=nativeRequest({runs:[r],jobs:[j]}),n=await Native.captureNativeAttempt({request:f.request,repository,runId:String(r.id),attempt:1});
+  assert.equal(n.status,'COMPLETE');assert.equal(n.packet.jobs[0].conclusion,'cancelled');assert.equal(Native.nativeJobIsNonExecution(n.packet.jobs[0]),true);
+  assert.equal(n.packet.jobs[0].completed_at,'2026-10-12T18:02:41.000Z');assert.equal(Native.inspectNativePopulationStore(n.store_raw).status,'VALID_DATA_STORE');
+  for(const change of [{started_at:'2026-10-12T18:02:43Z'},{steps:[{number:1,name:'actual execution',status:'completed',conclusion:'success',started_at:'2026-10-12T18:02:42Z',completed_at:'2026-10-12T18:02:42Z'}]},{conclusion:'success'}]){
+    const bad=nativeRequest({runs:[r],jobs:[{...j,...change}]}),q=await Native.captureNativeAttempt({request:bad.request,repository,runId:String(r.id),attempt:1});
+    assert.equal(q.status,'PARTIAL');assert.equal(q.reason_code,'invalid_native_job_time');
+  }
 });
