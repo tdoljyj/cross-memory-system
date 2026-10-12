@@ -42,6 +42,9 @@ HOSTED_ONLY_ALLOWLIST = {
     "clued-work-admission-reverify.yml": (
         "Work Claim Admission hourly re-verification: re-runs a passing admission check whose claim expired or moved; default-branch code only, no application dependency install, no pull request trigger."
     ),
+    "clued-work-claim-handover-revoke.yml": (
+        "Task 6176fdcc private-handover consumer: a bounded five-minute sweep on the default branch revokes required App checks and confirms stopped old PR/dispatch jobs before ACK. The admission Binding and App remain in the isolated clued-admission environment, never on a self-hosted runner; no application dependency install or pull-request trigger."
+    ),
     "clued-merge-slot-ci.yml": (
         "Merge Admission step 3: reports the CI state of the pull requests holding a merge slot to Clued when a pull request's CI run completes, then executes the merge queue head in the same trusted job; default-branch code only, seconds of work, no application dependency install, no pull request trigger."
     ),

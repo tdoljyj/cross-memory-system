@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
 
-import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED } from "../ci/clued-work-admission.mjs";
-import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, decide, main, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED, resolvePublicSupabaseConfig } from "../ci/clued-work-admission.mjs";
+import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, decide, decideWithCurrentEpoch, main, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
 import { workflowIsGated } from "../ci/clued-work-admission.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -54,6 +54,32 @@ const run = async (overrides, script, event = prEvent()) => {
 const COMPARE = `${API}/compare/main...`;
 const LIST = `${API}/contents/.github/workflows?ref=`;
 const listing = (entries) => ({ body: Object.entries(entries).map(([name, sha]) => ({ path: `.github/workflows/${name}`, type: "file", sha })) });
+
+test("runner current epoch: old successful GitHub admission cannot start a handed-over job", async () => {
+  const root=path.resolve(import.meta.dirname,"../..");
+  const configuration=fs.readFileSync(path.join(root,"apps/clued-cloud/app/supabase-public-config.ts"),"utf8");
+  const publicConfig=resolvePublicSupabaseConfig({},root);
+  const rpc=`${publicConfig.url}/rest/v1/rpc/clued_work_verify_v1`;
+  const configUrl=`${API}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=main`;
+  const execute=async observation=>{
+    const fake=fakeFetch({[RUN]:thisRun(),[COMPARE]:files(),
+      [configUrl]:{body:{type:"file",encoding:"base64",content:Buffer.from(configuration).toString("base64")}},
+      [rpc]:observation});
+    const result=await decideWithCurrentEpoch({env:env({CLUED_SUPABASE_URL:"https://attacker.invalid",CLUED_SUPABASE_PUBLISHABLE_KEY:"fake"}),
+      fetchImpl:fake.fetchImpl,readFile:p=>p==="/token"?"ghp_read":prEvent()});
+    return {result,calls:fake.calls};
+  };
+  const current=await execute({body:{status:"ok",guard_required:true,epoch_current:true}});
+  assert.equal(current.result.allow,true);
+  const stale=await execute({body:{status:"ok",guard_required:true,epoch_current:false}});
+  assert.equal(stale.result.allow,false);assert.match(stale.result.reason,/epoch is stale/);
+  const query=stale.calls.find(c=>c.url===rpc);
+  assert.equal(query.auth,`Bearer ${publicConfig.key}`);
+  assert.deepEqual(JSON.parse(query.body),{p_token_hash:null,p_input:{action:"execution_current",repository:"o/r",head_sha:HEAD,pr_ref:"o/r#9",target_branch:"main"}});
+  assert.equal(stale.calls.some(c=>c.url.startsWith("https://attacker.invalid")),false);
+  await assert.rejects(execute({status:503,body:null}),/epoch unavailable/);
+  await assert.rejects(execute({body:{status:"ok",guard_required:true,epoch_current:null}}),/observation is invalid/);
+});
 
 test("runner hook: main's own runs start without any call", async () => {
   for (const event of ["push", "schedule", "workflow_run", "pull_request_target", "workflow_dispatch"]) {
@@ -162,7 +188,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "merge-admission-ungated-rerun");
+  assert.equal(HOOK_VERSION, "work-handover-current-epoch-v1");
   assert.ok(lines.length >= 5);
   for (const line of lines) assert.ok(line.endsWith(` [hook ${HOOK_VERSION}]`), line);
   const { result } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/x" }, { [LIST]: { status: 403, body: null } })
