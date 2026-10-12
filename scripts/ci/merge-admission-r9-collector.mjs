@@ -175,21 +175,42 @@ async function restoreArtifact(request,repository,contract,cacheRaw){
     let lastRefusal=null;
     const cache=parseFourSourceRawData(cacheRaw);
     if(!exact(cache,['schema','repository','artifact_id','zip_base64'])||cache.schema!==R9_CACHE_SCHEMA||cache.repository!==repository)fail('CACHE_SCHEMA_INVALID');
-    if(cache.artifact_id!==null){
-      if(!id(cache.artifact_id)||typeof cache.zip_base64!=='string'||cache.zip_base64.length>MAX_BYTES*1.4)fail('CACHE_SCHEMA_INVALID');
-      const restored=await verifyR9SealedArtifact({request,repository,contract,artifactId:cache.artifact_id,zipBytes:Buffer.from(cache.zip_base64,'base64')});
-      if(restored.status==='AUTHENTICATED_SEALED_ARTIFACT')return restored;
-      lastRefusal=restored.reason_code;
-      // A refused old candidate cannot be republished as authenticated data.
+    if(cache.artifact_id!==null&&(!id(cache.artifact_id)||typeof cache.zip_base64!=='string'||cache.zip_base64.length>MAX_BYTES*1.4))fail('CACHE_SCHEMA_INVALID');
+    // Cache bytes accelerate one immutable artifact; they never choose the
+    // current artifact or erase authenticated incremental history.
+    const list=async()=>{const rows=[],seen=new Set();let total=null;
+      for(let page=1;page<=20;page++){
+        const b=await bodyOf(request,`/repos/${repository}/actions/artifacts?name=${R9_ARTIFACT_NAME}&per_page=100&page=${page}`);
+        if(!Number.isSafeInteger(b?.total_count)||b.total_count<0||total!==null&&total!==b.total_count||!Array.isArray(b.artifacts)||
+          b.artifacts.length!==Math.min(100,b.total_count-rows.length))fail('ARTIFACT_LIST_INVALID');
+        total=b.total_count;for(const a of b.artifacts){if(!id(a.id)||seen.has(String(a.id)))fail('ARTIFACT_LIST_INVALID');seen.add(String(a.id));rows.push(a);}
+        if(rows.length===total)return rows;
+      }fail('ARTIFACT_LIST_PAGE_CAP');};
+    const before=await list(),qualified=[];
+    for(const a of [...before].sort((a,b)=>BigInt(a.id)>BigInt(b.id)?-1:1)){
+      if(a.name!==R9_ARTIFACT_NAME||a.expired!==false)continue;
+      const proof=await verifyR9SealedArtifact({request,repository,contract,artifactId:a.id,
+        zipBytes:String(a.id)===String(cache.artifact_id)&&cache.zip_base64!==null?Buffer.from(cache.zip_base64,'base64'):undefined});
+      if(proof.packet)qualified.push(proof);else lastRefusal=proof.reason_code;
     }
-    // Discover the latest exact-name artifact. Missing/expired origin is a gap,
-    // not permission to trust the actions/cache restore key.
-    for(let page=1;page<=20;page++){
-      const b=await bodyOf(request,`/repos/${repository}/actions/artifacts?name=${R9_ARTIFACT_NAME}&per_page=100&page=${page}`);
-      if(!Number.isSafeInteger(b?.total_count)||!Array.isArray(b.artifacts)||b.artifacts.length>100)fail('ARTIFACT_LIST_INVALID');
-      for(const a of b.artifacts){if(a.name===R9_ARTIFACT_NAME&&a.expired===false){const proof=await verifyR9SealedArtifact({request,repository,contract,artifactId:a.id});if(proof.packet)return proof;lastRefusal=proof.reason_code;}}
-      if(b.artifacts.length<100)return {status:'PARTIAL',reason_code:lastRefusal??'AUTHENTICATED_SEALED_ARTIFACT_MISSING',packet:null};
-    }fail('ARTIFACT_LIST_PAGE_CAP');
+    const after=await list();if(!same(before,after))fail('ARTIFACT_LIST_CHANGED_AT_CLOSE');
+    if(!qualified.length)return {status:'PARTIAL',reason_code:lastRefusal??'AUTHENTICATED_SEALED_ARTIFACT_MISSING',packet:null};
+    const merged=JSON.parse(emptyNativePopulationStore(repository)),variants=new Map();
+    for(const q of qualified)for(const [key,p] of Object.entries(JSON.parse(q.packet.native_store_raw).packets)){
+      if(!variants.has(key))variants.set(key,[]);variants.get(key).push({artifact_id:q.artifact_id,packet:p});
+    }
+    const revalidated=[];
+    for(const [key,rows] of variants){
+      if(rows.every(x=>same(x.packet,rows[0].packet)))merged.packets[key]=rows[0].packet;
+      else{
+        const [runId,attempt]=key.split(':'),fresh=await captureNativeAttempt({request,repository,runId,attempt:Number(attempt)});
+        if(fresh.status!=='COMPLETE'||rows.some(x=>['run_id','head_sha','created_at','workflow_id','path','event'].some(k=>x.packet.run[k]!==fresh.packet.run[k])))fail('AUTHENTICATED_NATIVE_STORE_CONFLICT');
+        merged.packets[key]=fresh.packet;revalidated.push({key,artifact_ids:rows.map(x=>x.artifact_id),native_capture:fresh.native_capture});
+      }
+    }
+    const raw=JSON.stringify(merged);if(inspectNativePopulationStore(raw,repository).status!=='VALID_DATA_STORE')fail('AUTHENTICATED_NATIVE_STORE_UNION_INVALID');
+    const latest=qualified[0];return {...latest,authenticated_native_store_raw:raw,
+      proof:{...latest.proof,native_history_union:{artifact_ids:qualified.map(x=>x.artifact_id),packet_count:Object.keys(merged.packets).length,revalidated_conflicts:revalidated}}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),packet:null};}
 }
 
@@ -260,15 +281,17 @@ async function inventory(request,repository,window){
     if(!Number.isSafeInteger(b?.total_count)||b.total_count<0||b.total_count>MAX_RUNS||!Array.isArray(b.workflow_runs)||
       b.workflow_runs.length!==Math.max(0,Math.min(100,b.total_count-(page-1)*100)))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
     const rows=b.workflow_runs.map(inventoryIdentity);
-    if(rows.some((r,i)=>i>0&&timestampMicros(rows[i-1].created_at)<timestampMicros(r.created_at)))fail('NATIVE_INVENTORY_ORDER_UNPROVED');
+    if(rows.some((r,i)=>i>0&&BigInt(rows[i-1].id)<=BigInt(r.id)))fail('NATIVE_INVENTORY_ORDER_UNPROVED');
     return {total:b.total_count,rows};};
   const first=await read(1),prefix=first.rows.filter(r=>timestampMicros(r.created_at)>=cutoff);
   if(prefix.length===100)return rangeInventory(request,repository,window);
-  const expected=first.total-prefix.length,ids=new Map();let total=first.total,lastCreated=null;
-  const append=rows=>{for(const r of rows){if(timestampMicros(r.created_at)>=cutoff)continue;
+  const expected=first.total-prefix.length,ids=new Map(),all=new Map(),initialMax=first.rows.length?BigInt(first.rows[0].id):0n;let total=first.total,lastId=null;
+  const append=rows=>{for(const r of rows){
+    const old=all.get(r.id);if(old){if(!same(old,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
+    if(lastId!==null&&BigInt(r.id)>lastId)fail('NATIVE_INVENTORY_ORDER_UNPROVED');lastId=BigInt(r.id);all.set(r.id,r);
+    if(timestampMicros(r.created_at)>=cutoff){if(!prefix.some(p=>p.id===r.id))fail('NATIVE_INVENTORY_PREFIX_NOT_CLOSED');continue;}
     const prior=ids.get(r.id);if(prior){if(!same(prior,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
-    const at=timestampMicros(r.created_at);if(lastCreated!==null&&at>lastCreated)fail('NATIVE_INVENTORY_ORDER_UNPROVED');
-    lastCreated=at;ids.set(r.id,r);}};
+    ids.set(r.id,r);}};
   append(first.rows);
   for(let page=2;page<=Math.ceil(total/100);){
     const width=Math.min(4,Math.ceil(total/100)-page+1);
@@ -278,7 +301,10 @@ async function inventory(request,repository,window){
   }
   if(first.total>100){const closing=await read(1),afterPrefix=closing.rows.filter(r=>timestampMicros(r.created_at)>=cutoff);
     if(afterPrefix.length===100||closing.total-afterPrefix.length!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_CHANGED');
-    for(const r of closing.rows.filter(r=>timestampMicros(r.created_at)<cutoff))if(!same(ids.get(r.id),r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');}
+    const added=closing.rows.filter(r=>!all.has(r.id));
+    if(added.some(r=>BigInt(r.id)<=initialMax||timestampMicros(r.created_at)<cutoff)||closing.total-first.total!==added.length)fail('NATIVE_INVENTORY_HEAD_ADDITIONS_UNPROVED');
+    for(const r of closing.rows){if(all.has(r.id)&&!same(all.get(r.id),r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');all.set(r.id,r);}
+    if(all.size!==closing.total)fail('NATIVE_INVENTORY_WHOLE_DENOMINATOR_UNPROVED');}
   if(ids.size!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_UNPROVED');
   return {items:sorted([...ids.values()]),total:ids.size,created_cutoff:window.end,ranges_read:0,directory_mode:'UNCAPPED_FIXED_PREFIX_BARRIER'};
 }
@@ -546,7 +572,7 @@ export async function collectR9Measurement({request,budget,repository,window,sou
         r.head_repository?.full_name!==repository||!Array.isArray(r.pull_requests)||r.pull_requests.length||!publisherRole(contract,wf.blob,wf.text))fail('CURRENT_OBSERVER_NATIVE_ROLE_NOT_PROVED');
       verifiedObserver={run_id:String(r.id),run_attempt:r.run_attempt,head_sha:r.head_sha};observerProved=true;
     }catch(e){gaps.push(reason(e));}
-    native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.packet?.native_store_raw??null,onStore,observer:verifiedObserver});
+    native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.authenticated_native_store_raw??restored.packet?.native_store_raw??null,onStore,observer:verifiedObserver});
     if(native.status!=='COMPLETE')gaps.push(native.reason_code??'NATIVE_POPULATION_INCOMPLETE');
   }catch(e){gaps.push(reason(e));}
   const packet=restored?.packet,metrics={};let four=null,clock=null,binding=null,selection=null;
