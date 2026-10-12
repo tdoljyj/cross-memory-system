@@ -199,10 +199,16 @@ function claimObservation(c,o,policy,state,layer,start,decision){
 }
 function appObservation(a,i,o,step,selection){
   if(a===null)return {state:'not_observed'};
-  if(!exact(a,['id','app_id','name','head_sha','pr_number','run_id','run_attempt','external_id','status','conclusion'])||
+  const publication=a.publication_observation;
+  const expectedExternal=`pr:${i.pr_number}:run:${id(i.run_id)}`+(publication?`:publication:${publication.publication_id}`:'');
+  if(publication&&(!exact(publication,['publication_id','begin_receipt_id','begin_execution_epoch','finish_receipt_id','finish_execution_epoch','finish_status','must_revoke'])||
+    !uuid(publication.publication_id)||!uuid(publication.begin_receipt_id)||!uuid(publication.finish_receipt_id)||
+    !Number.isSafeInteger(publication.begin_execution_epoch)||publication.begin_execution_epoch<1||
+    publication.finish_execution_epoch!==publication.begin_execution_epoch||publication.finish_status!=='committed'||publication.must_revoke!==false))bad();
+  if(!exact(a,['id','app_id','name','head_sha','pr_number','run_id','run_attempt','external_id','status','conclusion',...(publication?['publication_observation']:[])])||
     a.app_id!==SOURCE.app_id||a.name!=='clued-admission-verified'||a.head_sha!==i.head_sha||
     a.pr_number!==i.pr_number||id(a.run_id)!==id(i.run_id)||a.run_attempt!==i.run_attempt||
-    a.external_id!==`pr:${i.pr_number}:run:${id(i.run_id)}`||a.status!=='completed'||
+    a.external_id!==expectedExternal||a.status!=='completed'||
     !['success','failure'].includes(a.conclusion)||o.verdict==='PR_NOT_OPEN')bad();
   let expected=null;
   if(i.entry==='required')expected=step===null?null:step==='success'?'success':'failure';

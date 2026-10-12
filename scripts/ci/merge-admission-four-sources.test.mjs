@@ -112,6 +112,17 @@ function nativeAdmission({conclusion='success',entry='required'}={}){
 }
 function addAdmission(p,opts){const a=nativeAdmission(opts);p.attempts.push(a.run);p.targets.push(a.t);p.admission_batches.push(a.batch);
   p.admissions.push({target_key:a.k,packet_raw:JSON.stringify(a.ep),collected_at:time(7)});return {p:seal(p),a};}
+test('current guarded publication suffix retains its real settlement while malformed, revoked and wrong-epoch publications fail closed',()=>{
+  const {p,a}=addAdmission(packet()),publication={publication_id:uuid(20),begin_receipt_id:uuid(21),begin_execution_epoch:3,
+    finish_receipt_id:uuid(22),finish_execution_epoch:3,finish_status:'committed',must_revoke:false};
+  a.ep.app_observation.external_id+=`:publication:${publication.publication_id}`;a.ep.app_observation.publication_observation=publication;
+  p.admissions[0].packet_raw=JSON.stringify(a.ep);assert.equal(call(seal(p)).candidate_ready,true);
+  for(const patch of [{must_revoke:true},{finish_execution_epoch:4},{finish_receipt_id:null},{finish_status:'rejected'}]){
+    const bad=structuredClone(a.ep);Object.assign(bad.app_observation.publication_observation,patch);
+    p.admissions[0].packet_raw=JSON.stringify(bad);assert.notEqual(call(seal(p)).candidate_ready,true);}
+  const missing=structuredClone(a.ep);delete missing.app_observation.publication_observation;p.admissions[0].packet_raw=JSON.stringify(missing);
+  assert.notEqual(call(seal(p)).candidate_ready,true);
+});
 function gap(ep){ep.final_decision_observed=false;ep.timing={decision_at:null,observed_at:time(6)};ep.outcome=null;ep.claim_observation=null;
   ep.admit_step_outcome=null;ep.app_observation=null;return ep;}
 function operationFixture({start=10,main=base,status=202,after=true}={}){

@@ -16,6 +16,13 @@ const sha=x=>typeof x==='string'&&/^[a-f0-9]{40}$/.test(x)?x:null;
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(x)?x:null;
 const number=x=>Number.isSafeInteger(Number(x))&&Number(x)>0?Number(x):null;
 const id=x=>typeof x==='string'&&/^[1-9][0-9]{0,19}$/.test(x)?x:Number.isSafeInteger(x)&&x>0?String(x):null;
+const appExternal=x=>typeof x==='string'&&/^pr:[1-9][0-9]{0,9}:run:[1-9][0-9]{0,19}(?::publication:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})?$/.test(x)?x:null;
+const publicationOf=x=>x?{publication_id:uuid(x.publication_id),begin_receipt_id:uuid(x.begin_receipt_id),
+  begin_execution_epoch:number(x.begin_execution_epoch),finish_receipt_id:uuid(x.finish_receipt_id),
+  finish_execution_epoch:number(x.finish_execution_epoch),finish_status:x.finish_status==='committed'?'committed':null,
+  must_revoke:typeof x.must_revoke==='boolean'?x.must_revoke:null}:null;
+const currentPublication=p=>p&&uuid(p.publication_id)&&uuid(p.begin_receipt_id)&&uuid(p.finish_receipt_id)&&
+  number(p.begin_execution_epoch)&&p.begin_execution_epoch===p.finish_execution_epoch&&p.finish_status==='committed'&&p.must_revoke===false;
 const scope=x=>typeof x==='string'&&/^(global|project:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.test(x)?x:null;
 const safe=x=>typeof x==='string'&&/^[A-Za-z0-9_./:@-]{1,250}$/.test(x)?x:null;
 const prReference=x=>{
@@ -86,6 +93,7 @@ export function formatNaturalPayload(kind,data={}){
       admit_step_outcome:['success','failure','skipped','cancelled'].includes(data.admitStepOutcome)?data.admitStepOutcome:null,
       check_run_id:id(data.result?.check_run_id),posted:data.result?.posted===true,
       conclusion:['success','failure'].includes(data.result?.conclusion)?data.result.conclusion:null,
+      external_id:appExternal(data.result?.external_id),publication_observation:publicationOf(data.result?.publication_observation),
       posting_state:data.result?.posted===true?'posted':data.failure_code==='APP_NOT_CONFIGURED'?'not_configured':data.failure_code==='HEAD_NOT_REPORTED'?'head_not_reported':'post_failed',
       run_attempt_binding:'NATIVE_CONFIRMATION_REQUIRED'};
     case 'operation_request':return {operation_id:uuid(data.operation_id),action:safe(data.action),scope:scope(data.scope),...prOf(data.pr),
@@ -191,6 +199,10 @@ export async function observeEvaluation(core,args,recorder){
 // any real head-admission receipt; the event alone cannot invent those fields.
 export function admissionEnvelopeInput({finalEvent,inputEvent,claimEvent,appEvent,selectionEvent,nativeIdentity,appNativeObservation,sourceCheckoutSha,claimReceiptId=null,observedAt=null}={}){
   const missing=[];const f=finalEvent?.payload,c=claimEvent?.payload,a=appEvent?.payload;
+  const legacyExternal=`pr:${nativeIdentity?.pr_number}:run:${id(nativeIdentity?.run_id)}`;
+  const publication=a?.publication_observation??null;
+  const expectedExternal=publication?`${legacyExternal}:publication:${publication.publication_id}`:legacyExternal;
+  if(publication&&(!currentPublication(publication)||a.external_id!==expectedExternal))missing.push('ACTUAL_PUBLICATION_CURRENT_EPOCH_UNBOUND');
   if(finalEvent?.schema!==NATURAL_EVENT_SCHEMA||finalEvent.kind!=='admission_final')missing.push('NATURAL_FINAL_EVENT_MISSING');
   if(!nativeIdentity?.native_pr||!nativeIdentity?.native_run)missing.push('ACTUAL_NATIVE_IDENTITY_MISSING');
   if(!sha(sourceCheckoutSha))missing.push('ACTUAL_EXECUTED_CHECKOUT_MISSING');
@@ -207,7 +219,7 @@ export function admissionEnvelopeInput({finalEvent,inputEvent,claimEvent,appEven
     appNativeObservation?.head_sha!==f.head_sha||appNativeObservation?.app?.id!==5164952))missing.push('ACTUAL_APP_CHECK_OBSERVATION_MISSING');
   if(a?.check_run_id&&(!appNativeObservation||String(appNativeObservation.id)!==a.check_run_id||appNativeObservation.app?.id!==5164952||
     appNativeObservation.head_sha!==a.head_sha||appNativeObservation.name!==a.app_check_name||appNativeObservation.status!=='completed'||
-    appNativeObservation.conclusion!==a.conclusion||appNativeObservation.external_id!==`pr:${nativeIdentity?.pr_number}:run:${id(nativeIdentity?.run_id)}`))
+    appNativeObservation.conclusion!==a.conclusion||appNativeObservation.external_id!==expectedExternal))
     missing.push('ACTUAL_APP_EVENT_BINDING_INVALID');
   if(missing.length)return {status:'PARTIAL',missing,packet:null,source_authenticated:false,official_metric:false,t0:null};
   // Exact DTO projection; a raw response or credential is never copied.
@@ -238,8 +250,8 @@ export function admissionEnvelopeInput({finalEvent,inputEvent,claimEvent,appEven
   if(claimEvent&&(c.claim_id!==claim_id||c.head_sha!==i.head_sha)||disposition==='valid'&&!timestamp(c.verified_at))
     return {status:'PARTIAL',missing:['CLAIM_NATIVE_EVENT_BINDING_INVALID'],packet:null,source_authenticated:false,official_metric:false,t0:null};
   const app=a?.check_run_id&&appNativeObservation?{id:a.check_run_id,app_id:number(appNativeObservation.app?.id),name:a.app_check_name,
-    head_sha:a.head_sha,pr_number:a.pr_number,run_id:i.run_id,run_attempt:i.run_attempt,external_id:`pr:${i.pr_number}:run:${i.run_id}`,
-    status:'completed',conclusion:a.conclusion}:null;
+    head_sha:a.head_sha,pr_number:a.pr_number,run_id:i.run_id,run_attempt:i.run_attempt,external_id:appNativeObservation.external_id,
+    status:'completed',conclusion:a.conclusion,...(publication?{publication_observation:publication}:{})}:null;
   const packet={schema:'clued.final-admission-observation/1',identity:i,timing:{decision_at:f.final_decision_observed?finalEvent.event_at:null,observed_at:observed},
     final_decision_observed:f.final_decision_observed,
     outcome:f.final_decision_observed?{mode:f.mode,event:'pull_request_target',enforced:f.enforced,

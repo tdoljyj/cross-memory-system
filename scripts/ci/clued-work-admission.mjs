@@ -2064,6 +2064,7 @@ export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(),
   if (!appId || !key) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
   const repository = env.GITHUB_REPOSITORY;
   let publication = null;
+  let publicationSettlement = null;
   let publicationScope = "global";
   let publicationPostStarted = false;
   try {
@@ -2116,6 +2117,7 @@ export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(),
         throw new Error(`publication settlement failed: ${finishReply.detail}`);
       }
       const finished = finishReply.body;
+      publicationSettlement = finished;
       if (finished.must_revoke) {
         await appRequest(fetchImpl, env, "PATCH", `/repos/${repository}/check-runs/${check.id}`, token.token, {
           status: "completed", conclusion: "failure", output: {
@@ -2126,7 +2128,14 @@ export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(),
         success = false;
       }
     }
-    return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null };
+    return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null,
+      ...(publication?.publication_id ? { external_id: externalId, publication_observation: {
+        publication_id: publication.publication_id, begin_receipt_id: publication.receipt_id,
+        begin_execution_epoch: publication.execution_epoch ?? publication.claim?.execution_epoch,
+        finish_receipt_id: publicationSettlement?.receipt_id,
+        finish_execution_epoch: publicationSettlement?.execution_epoch,
+        finish_status: publicationSettlement?.status, must_revoke: publicationSettlement?.must_revoke,
+      }} : {}) };
   } catch (error) {
     if (publication?.publication_id && !publicationPostStarted) {
       // This path knows the check POST was never sent. An uncertain POST

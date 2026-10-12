@@ -20,7 +20,7 @@ registerHooks({resolve(specifier,context,next){
   }return next(specifier,context);
 }});
 const {loadIndependentR9RuntimeInputs,R9_RUNTIME_CONFIG,r9CredentialFingerprint}=await import('./merge-admission-r9-runtime-inputs.mjs');
-const {evaluate,reverify,appCheck}=await import('./clued-work-admission.mjs');
+const {evaluate,reverify,appCheck,postAppCheck}=await import('./clued-work-admission.mjs');
 const {appRequest}=await import('./clued-managed-auto-merge.mjs');
 const {runRecordedHolderOperation}=await import('./clued-merge-executor.mjs');
 const {collectNaturalSourceArtifacts,mapNaturalSourceEvents}=await import('./merge-admission-natural-intake.mjs');
@@ -138,6 +138,48 @@ test('actual App posting failures are preserved as failures and projected withou
   assert.equal(result.posted,false);assert.equal(events.filter(e=>e.kind==='app_check').length,2);
   assert.ok(events.every(e=>e.payload.posting_state==='post_failed'));assert.ok(!JSON.stringify(events).includes('SECRET'));
 });
+test('actual publication begin/finish evidence survives the recorder and binds Native suffix; revoked or mismatched epochs never qualify',async()=>{
+  const uid=n=>'10000000-0000-4000-8000-'+String(n).padStart(12,'0'),pub=uid(20),claim=uid(21),begin=uid(22),finish=uid(23);
+  const key=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs8',format:'pem'});
+  for(const revoked of [false,true]){
+    const events=[],r=recorder(e=>events.push(e));let posted=null,patches=0;
+    const fetchImpl=async(url,init={})=>{let body;
+      if(url.includes('/rpc/clued_work_verify_v1')){const input=JSON.parse(init.body).p_input;
+        body=input.action==='publication_begin'?{verdict:'ADMITTED',publication_id:pub,receipt_id:begin,execution_epoch:3}:
+          {status:'committed',receipt_id:finish,execution_epoch:3,must_revoke:revoked};}
+      else if(url.endsWith('/pulls/727'))body={state:'open',head:{sha:head},base:{sha:base,ref:'main'},changed_files:1,body:`Clued-Work-Claim: ${claim}`};
+      else if(url.includes('/pulls/727/files?'))body=[{filename:'docs/test.md',status:'modified'}];
+      else if(url.endsWith('/installation'))body={id:99};
+      else if(url.endsWith('/access_tokens'))body={token:'mock-app-only'};
+      else if(url.endsWith('/check-runs')&&init.method==='POST'){posted=JSON.parse(init.body);body={id:555};}
+      else if(url.endsWith('/check-runs/555')&&init.method==='PATCH'){patches++;body={id:555};}
+      else throw Error('Unexpected mocked original publication request');
+      return Response.json(body);
+    };
+    const result=await postAppCheck({env:{...env,GITHUB_TOKEN:'mock-gh-only',CLUED_CONTEXT_READ_TOKEN:'mock-binding-only',
+      CLUED_SUPABASE_URL:'https://supabase.test',CLUED_SUPABASE_PUBLISHABLE_KEY:'mock-public',CLUED_ADMISSION_APP_ID:'5164952',
+      CLUED_ADMISSION_APP_PRIVATE_KEY:key,ADMISSION_OUTCOME:'success'},headSha:head,prNumber:727,success:true,title:'test',summary:'test',
+      observation_recorder:r,fetchImpl});
+    assert.equal(result.posted,true);assert.equal(patches,revoked?1:0);assert.equal(result.conclusion,revoked?'failure':'success');
+    assert.equal(posted.external_id,`pr:727:run:42:publication:${pub}`);
+    const observed=events[0];assert.equal(observed.payload.publication_observation.finish_receipt_id,finish);
+    assert.ok(!JSON.stringify(events).includes('mock-binding-only'));assert.ok(!JSON.stringify(events).includes('mock-app-only'));
+    const native={repository:env.GITHUB_REPOSITORY,pr_number:727,head_sha:head,run_id:'42',run_attempt:1,
+      native_pr:{number:727,head_sha:head,base_repository:env.GITHUB_REPOSITORY,base_ref:'main',default_branch:'main',state:'open',draft:false},
+      native_run:{id:'42',run_attempt:1,event:'pull_request_target',path:'.github/workflows/clued-work-admission.yml',head_sha:base,head_branch:'main',pull_requests:[727],status:'completed',conclusion:'success',run_started_at:at},
+      native_job:{id:'101',run_id:'42',run_attempt:1,name:'clued-work-admission',status:'completed',conclusion:'success'}};
+    const f={...observed,kind:'admission_final',source:{...observed.source,executed_checkout_sha:subject},payload:{entry:'required',final_decision_observed:true,head_sha:head,pr_ref:env.GITHUB_REPOSITORY+'#727',claim_id:null,verdict:'ADMITTED',admitted:true,reason_codes:[]}};
+    const app={id:555,app:{id:5164952},name:'clued-admission-verified',head_sha:head,status:'completed',conclusion:result.conclusion,external_id:posted.external_id};
+    const args={finalEvent:f,appEvent:observed,nativeIdentity:native,appNativeObservation:app,sourceCheckoutSha:subject};
+    const mapped=admissionEnvelopeInput(args);assert.equal(mapped.status,revoked?'PARTIAL':'ENVELOPE_INPUT_CANDIDATE');
+    if(!revoked){assert.equal(mapped.packet.app_observation.external_id,posted.external_id);
+      const mismatched=structuredClone(observed);mismatched.payload.publication_observation.finish_execution_epoch=4;
+      assert.equal(admissionEnvelopeInput({...args,appEvent:mismatched}).status,'PARTIAL');
+      assert.equal(admissionEnvelopeInput({...args,appNativeObservation:{...app,external_id:`pr:728:run:42:publication:${pub}`}}).status,'PARTIAL');
+      const absent=structuredClone(observed);absent.payload.publication_observation=null;
+      assert.equal(admissionEnvelopeInput({...args,appEvent:absent}).status,'PARTIAL');}
+  }
+});
 test('a known no-prior-green candidate records exclusion and a closed original reverify loop, without network use outside mocks',async()=>{
   const events=[],r=recorder(e=>events.push(e)),pr={number:727,draft:false,head:{sha:head},base:{sha:base,ref:'main',repo:{default_branch:'main',full_name:env.GITHUB_REPOSITORY}}};
   const result=await reverify({env:{...env,GITHUB_TOKEN:'mock-only',CLUED_ADMISSION_APP_ID:'5164952',CLUED_ADMISSION_APP_PRIVATE_KEY:'mock-only'},
@@ -250,15 +292,30 @@ test('real loader wire obtains a separately pinned forward epoch through the act
   const auth={schema:'clued.clock-audit-transport-auth/1',status:'AUTHENTICATED_TARGET_READ',context_key:'project:'+targetScope.project_id,
     queue_ref:targetScope.queue_ref,transport_definition_digest:'c'.repeat(64),binding_scope_fingerprint:'d'.repeat(64),contributor_count:1};
   const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
-    env:{CLUED_CONTEXT_READ_TOKEN:'mock-only',CLUED_SUPABASE_URL:'https://clock.example.invalid',CLUED_SUPABASE_PUBLISHABLE_KEY:'mock-public'},
-    fetchImpl:async(url,init)=>{const b=JSON.parse(init.body),m=b.p_input.measurement;calls.push(m.operation);assert.equal(b.p_input.context_key,'project:'+targetScope.project_id);
-      assert.equal(b.p_token_hash,sha256('mock-only'));assert.ok(url.endsWith('/rpc/clued_mcp_audit_receipts'));
+    env:{CLUED_CONTEXT_READ_TOKEN:'mock-only'},
+    fetchImpl:async(url,init)=>{const b=JSON.parse(init.body),m=b.measurement;calls.push(m.operation);assert.equal(b.context_key,'project:'+targetScope.project_id);
+      assert.equal(url,'https://clued.pixelgrav.com/v1/continuity/audit');assert.equal(init.redirect,'error');
+      assert.equal(init.headers.authorization,'Bearer mock-only');assert.equal(init.headers.apikey,undefined);
+      assert.equal(b.p_token_hash,undefined);assert.equal(b.p_input,undefined);
       return Response.json(m.operation==='clock_seal'?{status:'ok',operation:m.operation,pins,seal_pins:{end_sequence:0,closing_us:closing,catalog_digest:pins.catalog_digest},
         measurement:{seal_id:uid(4)},server_auth:auth}:{status:'ok',operation:m.operation,server_auth:auth,measurement:{status:'ok',after_sequence:0,next_sequence:0,has_more:false,
           epoch:{epoch_id:uid(1),queue_ref:targetScope.queue_ref,opening_us:opening},seal:{closing_us:closing}}});}});
   assert.deepEqual(calls,['clock_seal','clock_page']);assert.equal(r.status,'R9_RUNTIME_INPUT_CANDIDATE');
   assert.equal(r.window.start,'2026-10-08T06:00:00.000000Z');assert.equal(r.window.end,'2026-10-11T06:00:03.000000Z');
   assert.equal(r.forward_epoch.required_continuous_hours,72);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+test('clock intake never substitutes public database credentials for a denied or wrong audit Binding',async()=>{
+  const uid=n=>'10000000-0000-4000-8000-'+String(n).padStart(12,'0'),epoch={epoch_id:uid(1),activation_receipt_id:uid(9),
+    opening_us:'1791442800000000',pins:{epoch_id:uid(1)}};
+  for(const [token,expected,requests] of [['wrong-only','CLOCK_CREDENTIAL_IS_NOT_THE_ACCEPTED_MINIMAL_BINDING',0],
+    ['mock-only','CLOCK_TYPED_TRANSPORT_UNAVAILABLE',1]]){
+    const f=runtimeFixture(epoch);let calls=0;
+    const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
+      env:{CLUED_CONTEXT_READ_TOKEN:token,CLUED_SUPABASE_URL:'https://must-not-be-used.invalid',CLUED_SUPABASE_PUBLISHABLE_KEY:'public-must-not-be-used'},
+      fetchImpl:async(url,init)=>{calls++;assert.equal(url,'https://clued.pixelgrav.com/v1/continuity/audit');
+        assert.equal(init.headers.authorization,'Bearer mock-only');return Response.json({status:'rejected'},{status:403});}});
+    assert.equal(calls,requests);assert.equal(r.reason_code,expected);assert.equal(r.window,null);assert.equal(r.t0,null);
+  }
 });
 test('an inactive recorder does not query checkout identity or perform a hidden Git read',()=>{
   let queried=0;const r=createNaturalRecorder({env:{},workspace:repo,sourceUrl:import.meta.url,readCheckout:()=>{queried++;throw Error('FORBIDDEN');}});

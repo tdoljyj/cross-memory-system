@@ -1,8 +1,10 @@
 // Real default-branch source selection and existing C1 forward-epoch intake.
 // No packet-provided source/window, new token, retry, trigger or budget pool.
 import {createHash} from 'node:crypto';
-import {resolvePublicSupabaseConfig} from './clued-work-admission.mjs';
 export const R9_RUNTIME_CONFIG='scripts/ci/merge-admission-r9-source.json';
+// The accepted Worker authenticates the revocable audit Binding and owns its
+// gateway database identity. A public Supabase caller cannot invoke GW80.
+const CLOCK_AUDIT_URL='https://clued.pixelgrav.com/v1/continuity/audit';
 const hash=x=>createHash('sha256').update(x).digest('hex');
 // RPC's plain token hash is itself a credential. Never publish it. This
 // domain-separated pin cannot be submitted as p_token_hash to that RPC.
@@ -58,13 +60,13 @@ export async function loadIndependentR9RuntimeInputs({request,budget,repository,
       !Number.isSafeInteger(cfg.minimum_clock_binding?.contributor_count)||cfg.minimum_clock_binding.contributor_count<1)
       return partial('ACCEPTED_MINIMAL_CLOCK_BINDING_NOT_INSTALLED');
     if(r9CredentialFingerprint(env.CLUED_CONTEXT_READ_TOKEN)!==cfg.minimum_clock_binding.credential_fingerprint)return partial('CLOCK_CREDENTIAL_IS_NOT_THE_ACCEPTED_MINIMAL_BINDING');
-    stage='CLOCK_TYPED_TRANSPORT_UNAVAILABLE';const endpoint=resolvePublicSupabaseConfig(env,workspace);
+    stage='CLOCK_TYPED_TRANSPORT_UNAVAILABLE';
     const rpc=async measurement=>{
       if(budget.stopped||budget.deadline!==null&&budget.clock()>=budget.deadline)throw Error();
       const timeout=budget.deadline===null?10000:Math.max(1,Math.min(10000,Math.floor(budget.deadline-budget.clock())));
-      const response=await fetchImpl(`${endpoint.url}/rest/v1/rpc/clued_mcp_audit_receipts`,{method:'POST',signal:AbortSignal.timeout(timeout),
-        headers:{apikey:endpoint.key,authorization:`Bearer ${endpoint.key}`,'content-type':'application/json'},
-        body:JSON.stringify({p_token_hash:hash(env.CLUED_CONTEXT_READ_TOKEN),p_input:{context_key:'project:'+cfg.scope.project_id,measurement}})});
+      const response=await fetchImpl(CLOCK_AUDIT_URL,{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),
+        headers:{authorization:`Bearer ${env.CLUED_CONTEXT_READ_TOKEN}`,'content-type':'application/json'},
+        body:JSON.stringify({context_key:'project:'+cfg.scope.project_id,measurement})});
       if(!response.ok)throw Error();const r=await response.json(),a=r.server_auth;
       if(r.status!=='ok'||a?.schema!=='clued.clock-audit-transport-auth/1'||a.status!=='AUTHENTICATED_TARGET_READ'||
         a.context_key!=='project:'+cfg.scope.project_id||a.queue_ref!==cfg.scope.queue_ref||a.transport_definition_digest!==cfg.clock.transport_definition_digest||
