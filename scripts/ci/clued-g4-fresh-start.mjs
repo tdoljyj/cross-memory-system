@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:net';
 
 const CONFIG = 'apps/clued-cloud/supabase/config.toml';
 const SOCKET = 'unix:///var/run/docker.sock';
@@ -22,13 +23,22 @@ export function identity(env) {
     checkout_sha: env.GITHUB_SHA, project: `clued-g4-${run}-${attempt}` };
 }
 
-export function freshConfig(source, env) {
+export const PORT_BLOCK_LIMIT = 16;
+export function portCandidates(env) {
   const id = identity(env);
+  const index = (id.run_id % 1000 + (id.run_attempt - 1) % 1000) % 1000;
+  return Array.from({ length: PORT_BLOCK_LIMIT }, (_, offset) => 45000 + ((index + offset) % 1000) * 10);
+}
+const validBase = (base) => Number.isSafeInteger(base) && base >= 45000 && base <= 54990 && base % 10 === 0;
+
+export function freshConfig(source, env, base = portCandidates(env)[0]) {
+  const id = identity(env);
+  need(validBase(base), 'fresh_port_base');
   need(source.split('project_id = "clued-cloud"').length === 2, 'fresh_project_source');
   const seed = /^\[db\.seed\][ \t]*\n([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(source)?.[1];
   need(seed && /^[ \t]*enabled[ \t]*=[ \t]*false[ \t]*$/m.test(seed), 'fresh_seed_must_be_disabled');
-  // Consecutive attempts receive different project/volume identities and ports.
-  const base = 45000 + ((id.run_id + id.run_attempt - 1) % 1000) * 10;
+  // Project/volume identity is attempt-specific. The selected bounded block is
+  // persisted by prepare; verification never guesses the initial block again.
   let count = 0;
   const result = source.replace('project_id = "clued-cloud"', `project_id = "${id.project}"`)
     .replace(/^([ \t]*(?:port|shadow_port)[ \t]*=[ \t]*)5432([0-9])$/gm, (_, leading, digit) => {
@@ -36,6 +46,33 @@ export function freshConfig(source, env) {
     });
   need(count === 7, 'fresh_seven_ports');
   return result;
+}
+
+export async function probePorts(ports) {
+  need(Array.isArray(ports) && ports.length > 0 && ports.length <= 7 &&
+    new Set(ports).size === ports.length && ports.every(port => Number.isSafeInteger(port) && port > 0 && port <= 65535), 'fresh_probe_ports');
+  const servers = [];
+  try {
+    for (const port of ports) {
+      const server = createServer(socket => socket.destroy());
+      servers.push(server);
+      try {
+        await new Promise((resolve, reject) => {
+          const error = cause => { server.off('listening', listening); reject(cause); };
+          const listening = () => { server.off('error', error); resolve(); };
+          server.once('error', error); server.once('listening', listening);
+          server.listen({ host: '0.0.0.0', port, exclusive: true });
+        });
+      } catch (error) {
+        if (error.code === 'EADDRINUSE') return false;
+        throw error;
+      }
+    }
+    return true;
+  } finally {
+    await Promise.all(servers.filter(server => server.listening).map(server =>
+      new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
+  }
 }
 
 export function requireUnused({ labelledContainers, labelledVolumes, volumeNames, containerNames }, project) {
@@ -87,10 +124,22 @@ function markerPath(env) {
   return path.join(env.RUNNER_TEMP, `clued-g4-fresh-${id.run_id}-${id.run_attempt}.json`);
 }
 function readMarker(env, filesystem = fs) {
-  const id = identity(env);
   const marker = JSON.parse(filesystem.readFileSync(markerPath(env), 'utf8'));
+  verifyMarkerIdentity(marker, env);
+  return marker;
+}
+function verifyMarkerIdentity(marker, env) {
+  const id = identity(env);
   need(marker.schema === 'clued.g4.fresh-start/1' && marker.prepared === true &&
-    Object.entries(id).every(([key, value]) => marker[key] === value), 'fresh_marker_identity');
+    Object.entries(id).every(([key, value]) => marker[key] === value) &&
+    validBase(marker.port_base) && portCandidates(env).includes(marker.port_base), 'fresh_marker_identity');
+}
+// The default marker is read from this exact attempt's host file. Explicit
+// marker input is a test boundary, never proof of Owner/source authorization.
+export function verifyPreparedConfiguration(source, actual, env, marker = readMarker(env)) {
+  verifyMarkerIdentity(marker, env);
+  need(marker.source_config_sha256 === hash(source) && marker.config_sha256 === hash(actual) &&
+    actual === freshConfig(source, env, marker.port_base), 'fresh_configuration_changed');
   return marker;
 }
 function configAt(root) { return path.join(root, CONFIG); }
@@ -103,10 +152,10 @@ function requireLocal(env, runtime) {
 }
 
 // Test-only command boundaries; the CLI always uses these fixed host defaults.
-const adapters = (overrides = {}) => ({ git: defaultGit, docker: defaultDocker, fs,
+const adapters = (overrides = {}) => ({ git: defaultGit, docker: defaultDocker, fs, portProbe: probePorts,
   platform: process.platform, ...overrides });
 
-export function prepare(env = process.env, overrides) {
+export async function prepare(env = process.env, overrides) {
   const runtime = adapters(overrides);
   const { git, docker, fs } = runtime;
   requireLocal(env, runtime);
@@ -117,7 +166,7 @@ export function prepare(env = process.env, overrides) {
   need(!fs.existsSync(path.join(root, 'apps/clued-cloud/supabase/.temp/project-ref')), 'fresh_linked_project_refused');
   const source = git('show', `HEAD:${CONFIG}`);
   need(fs.readFileSync(configAt(root), 'utf8') === source, 'fresh_config_source_changed');
-  const config = freshConfig(source, env);
+  freshConfig(source, env);
   const filter = `label=com.supabase.cli.project=${id.project}`;
   requireUnused({
     labelledContainers: lines(docker('ps', '-a', '--filter', filter, '--format', '{{.ID}}')),
@@ -126,9 +175,21 @@ export function prepare(env = process.env, overrides) {
     // The CLI checks its exact db volume even if an old one has lost its label.
     volumeNames: lines(docker('volume', 'ls', '--format', '{{.Name}}')),
   }, id.project);
+  let config, base;
+  for (const candidate of portCandidates(env)) {
+    const rendered = freshConfig(source, env, candidate);
+    const ports = [...source.matchAll(/^[ \t]*(?:port|shadow_port)[ \t]*=[ \t]*5432([0-9])$/gm)]
+      .map(match => candidate + Number(match[1]));
+    const available = await runtime.portProbe(ports);
+    need(typeof available === 'boolean', 'fresh_probe_unknown');
+    if (available) { config = rendered; base = candidate; break; }
+  }
+  need(config !== undefined, 'fresh_no_available_port_block');
+  // Probes release their sockets before Supabase starts. A later competing bind
+  // still fails normally; there is no startup retry or foreign-resource cleanup.
   const migrations = migrationSources(path.join(root, 'apps/clued-cloud/supabase/migrations'));
   const marker = { schema: 'clued.g4.fresh-start/1', ...id, prepared: false,
-    source_config_sha256: hash(source), config_sha256: hash(config), migrations };
+    port_base: base, source_config_sha256: hash(source), config_sha256: hash(config), migrations };
   // An attempt's prior marker is never silently reused, nor is any old volume deleted.
   fs.writeFileSync(markerPath(env), JSON.stringify(marker) + '\n', { flag: 'wx' });
   fs.writeFileSync(configAt(root), config);
@@ -136,7 +197,7 @@ export function prepare(env = process.env, overrides) {
   fs.appendFileSync(env.GITHUB_ENV, `CLUED_G4_FRESH_PROJECT=${id.project}\nDOCKER_HOST=${SOCKET}\nDOCKER_CONTEXT=default\n`);
   marker.prepared = true;
   fs.writeFileSync(markerPath(env), JSON.stringify(marker) + '\n');
-  return { project: id.project, fresh_inventory: true, migrations: migrations.length };
+  return { project: id.project, fresh_inventory: true, migrations: migrations.length, port_base: base };
 }
 
 export function verifyConfiguration(env, overrides) {
@@ -148,9 +209,7 @@ export function verifyConfiguration(env, overrides) {
   verifySourceState(marker, { head: git('rev-parse', 'HEAD').trim(),
     dirty: git('status', '--porcelain', '--untracked-files=no') });
   const source = git('show', `HEAD:${CONFIG}`);
-  need(marker.source_config_sha256 === hash(source) &&
-    fs.readFileSync(configAt(root), 'utf8') === freshConfig(source, env) &&
-    marker.config_sha256 === hash(fs.readFileSync(configAt(root))), 'fresh_configuration_changed');
+  verifyPreparedConfiguration(source, fs.readFileSync(configAt(root), 'utf8'), env, marker);
   need(env.CLUED_G4_FRESH_PROJECT === marker.project, 'fresh_cleanup_target_missing');
   return { root, marker };
 }
@@ -176,7 +235,7 @@ export function verify(env = process.env, overrides) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const mode = process.argv[2];
-  const result = mode === '--prepare' ? prepare() : mode === '--verify' ? verify() :
+  const result = mode === '--prepare' ? await prepare() : mode === '--verify' ? verify() :
     mode === '--guard-cleanup' ? (verifyConfiguration(process.env), { cleanup_target_verified: true }) :
       (() => { throw new Error('fresh_unknown_mode'); })();
   console.log(JSON.stringify(result));

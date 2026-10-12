@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import {loadIndependentR9RuntimeInputs} from './merge-admission-r9-runtime-inputs.mjs';
+import {emptyNativePopulationStore} from './merge-admission-native-population.mjs';
 // Merge Admission v0.1 §12.1 (Task f70546e5): CI usage measurement, version 1.
 // The clued-ci-usage-report workflow runs this daily and by hand on a hosted
 // runner, from the default branch. It reads GitHub with an installation token
@@ -60,6 +62,9 @@ import { fileURLToPath } from "node:url";
 
 import { appJwt } from "./clued-work-admission.mjs";
 import { collectAttribution, attributionMetrics } from "./ci-usage-attribution.mjs";
+import {collectR9Measurement,emptyR9ArtifactCache,R9_CACHE_FILE,R9_PACKET_FILE,R9_SOURCE_PATHS,
+  R9_PUBLISHER_PATH,sealR9Packet} from './merge-admission-r9-collector.mjs';
+import {workflowBlob} from './clued-workflow-profile.mjs';
 
 export const REQUEST_CAP = 200;
 export const APP_REQUEST_CAP = 2000;
@@ -189,7 +194,12 @@ export function isRateLimited(response, bodyText = "") {
 // budget or the rate limit stops the run. Any other non-OK answer throws.
 export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
-  return async function request(route) {
+  return async function request(route, {responseType = "json"} = {}) {
+    if (responseType !== "json" && responseType !== "bytes") throw new Error("Unsupported response type.");
+    // Binary artifact downloads still spend this same request budget. The
+    // native artifact endpoint handles its redirect; fetch strips Authorization
+    // on a cross-origin redirect. Raw caller URLs never enter this API.
+    if (responseType === "bytes" && (typeof route !== "string" || !/^\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/artifacts\/[1-9][0-9]*\/zip$/.test(route))) throw new Error("Unsupported binary artifact route.");
     if (budget.stopped) return { ok: false, stopped: budget.stopped };
     if (budget.used >= budget.cap) {
       budget.stopped = "request_cap";
@@ -224,6 +234,15 @@ export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) 
       return { ok: false, stopped: budget.stopped };
     }
     if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
+    if (responseType === "bytes") {
+      const chunks = []; let size = 0;
+      for await (const chunk of response.body) {
+        size += chunk.byteLength;
+        if (size > 32 * 1024 * 1024) throw new Error("Artifact exceeds the bounded packet limit.");
+        chunks.push(Buffer.from(chunk));
+      }
+      return { ok: true, body: Buffer.concat(chunks) };
+    }
     return { ok: true, body: await response.json() };
   };
 }
@@ -615,11 +634,13 @@ export function renderSummary(report) {
 export async function main(env = process.env, fetchImpl = globalThis.fetch, {
   now = new Date(), readFile = fs.readFileSync, writeFile = fs.writeFileSync, mkdir = fs.mkdirSync,
   appendFile = fs.appendFileSync, log = console.log, logError = console.error, clock = Date.now,
+  r9SourceContractRaw = null,
 } = {}) {
   const repository = env.GITHUB_REPOSITORY;
   const workspace = env.GITHUB_WORKSPACE || process.cwd();
   const cacheDir = env.CI_USAGE_CACHE_DIR || path.join(workspace, CACHE_DIR);
   let cache = null;
+  let r9 = null;
   try {
     if (!repository) throw new Error("GITHUB_REPOSITORY is not set.");
     const window = windowOf(now, parseDays(env.CI_USAGE_DAYS));
@@ -633,6 +654,42 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
       ? createBudget({ cap: APP_REQUEST_CAP, source: "app", deadline, clock })
       : createBudget({ deadline, clock });
     const request = budgetedFetch(fetchImpl, env, budget, access.token);
+    // R9 gets the first bounded scheduling share of the SAME measurement App
+    // request/time/floor budget. The legacy collector retains all remaining
+    // requests; no fallback token is spent on this new segment.
+    if (access.source === "app") {
+      let raw = emptyR9ArtifactCache(repository);
+      try { raw = readFile(path.join(cacheDir, R9_CACHE_FILE), "utf8"); } catch {}
+      const runtime = r9SourceContractRaw === null
+        ? await loadIndependentR9RuntimeInputs({request,budget,repository,env,workspace,fetchImpl})
+        : {source_contract_raw:r9SourceContractRaw,window:JSON.parse(r9SourceContractRaw).window,clock:null};
+      if(!runtime.window) r9={status:"PARTIAL",reason_code:runtime.reason_code,repository,window:null,
+        metrics:{},gaps:[runtime.reason_code],official_metric:false,source_authenticated:false,t0:null,cache_raw:raw,next_native_store_raw:emptyNativePopulationStore(repository),bootstrap_only:true};
+      else r9 = await collectR9Measurement({request, budget, repository,
+        window: runtime.window, cacheRaw: raw,
+        sourceContractRaw: runtime.source_contract_raw,
+        naturalSelection:runtime.natural_selection??null,liveClock:runtime.clock??null,
+        runtimeInputs:runtime,
+        onStore: (nativeRaw) => { mkdir(cacheDir, {recursive: true});
+          writeFile(path.join(cacheDir, "r9-native-pending.json"), nativeRaw); }});
+      mkdir(cacheDir, {recursive: true});
+      writeFile(path.join(cacheDir, R9_CACHE_FILE), r9.cache_raw ?? raw);
+      // Pending bytes are durable preparation, never an authenticated restore.
+      // The immutable artifact supplies their real origin on the next run.
+      if (r9.next_native_store_raw && env.GITHUB_RUN_ID && env.GITHUB_RUN_ATTEMPT && env.GITHUB_SHA) {
+        try {
+          const sourceBlobs = Object.fromEntries(R9_SOURCE_PATHS.map(file =>
+            [file, workflowBlob(readFile(path.join(workspace, file), "utf8"))]));
+          const sealed = sealR9Packet({repository, publisher: {run_id: env.GITHUB_RUN_ID,
+            run_attempt: Number(env.GITHUB_RUN_ATTEMPT), head_sha: env.GITHUB_SHA,
+            workflow_path: R9_PUBLISHER_PATH, job_id: "report"}, sourceBlobs,
+            window: r9.window, sealedAt: new Date().toISOString(),
+            nativeStoreRaw: r9.next_native_store_raw,fourSource:r9.authenticated_source_inputs?.four_source??null,
+            clock:runtime.clock??r9.authenticated_source_inputs?.clock??null,naturalInputs:r9.natural_inputs??null});
+          writeFile(path.join(workspace, R9_PACKET_FILE), sealed);
+        } catch { r9.gaps ??= []; r9.gaps.push("CURRENT_WRITER_SOURCE_PACKET_NOT_AVAILABLE"); }
+      }
+    }
     const collected = await collectUsage({ request, repository, window, cache });
     // Extra attribution uses only the independent measurement App pool, after
     // the existing run/job collection. No new secret or workflow privilege.
@@ -643,6 +700,16 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
         pulls_requested: collected.pulls.length, pulls_complete: 0, errors: 1 } }; }
     }
     const report = buildReport({ repository, window, collected, budget, now });
+    // Keep the original workload metrics/UTC window unchanged. New official
+    // values enter only through the independent source/role/population proof.
+    if (r9) {
+      const {native, cache_raw, next_native_store_raw, authenticated_source_inputs, sealed_packet,natural_inputs,native_attempt_rows, ...summary} = r9;
+      summary.natural_source_coverage=natural_inputs?{status:natural_inputs.status,count:natural_inputs.entries.length,gaps:natural_inputs.gaps,whole_population:natural_inputs.whole_population}:null;
+      report.r9 = {...summary, native_coverage: native ? {status: native.status,
+        fresh: native.fresh, from_sealed: native.from_sealed, population: native.population,
+        gaps: native.gaps, reason_code: native.reason_code ?? null} : null};
+      applyR9Metrics(report, r9);
+    }
     writeFile(env.CI_USAGE_REPORT_PATH || path.join(workspace, REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`);
     log(JSON.stringify({ window: report.window, coverage: report.coverage, api_requests: report.metrics.api_requests }, null, 2));
     if (env.GITHUB_STEP_SUMMARY) appendFile(env.GITHUB_STEP_SUMMARY, renderSummary(report));
@@ -658,6 +725,16 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
     // What was fetched is kept, also when the run stopped early or failed.
     if (cache) saveCache(cacheDir, cache, writeFile, mkdir);
   }
+}
+
+// A separately scoped forward epoch remains in report.r9. It may not overwrite
+// workload metrics for another UTC interval or repository.
+export function applyR9Metrics(report, r9) {
+  if (!r9?.official_metric || r9.repository !== report.repository ||
+      r9.window?.start !== report.window.start || r9.window?.end !== report.window.end) return false;
+  for (const [name, metric] of Object.entries(r9.metrics ?? {}))
+    if (metric.official_metric === true && metric.source_authenticated === true && metric.status === 'measured') report.metrics[name] = metric;
+  return true;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

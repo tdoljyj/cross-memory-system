@@ -21,6 +21,9 @@ on:
       - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - 'scripts/ci/merge-admission-measurement-history*.mjs'
       - 'apps/clued-cloud/tests/merge-admission-measurement-history-db.test.mjs'
+      - 'scripts/ci/merge-admission-clock-source.mjs'
+      - 'scripts/ci/merge-admission-clock-source.test.mjs'
+      - 'apps/clued-cloud/tests/merge-admission-measurement-clock-target-db.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
@@ -36,6 +39,9 @@ on:
       - 'scripts/ci/clued-g4-fresh-start.test.mjs'
       - 'scripts/ci/merge-admission-measurement-history*.mjs'
       - 'apps/clued-cloud/tests/merge-admission-measurement-history-db.test.mjs'
+      - 'scripts/ci/merge-admission-clock-source.mjs'
+      - 'scripts/ci/merge-admission-clock-source.test.mjs'
+      - 'apps/clued-cloud/tests/merge-admission-measurement-clock-target-db.test.mjs'
       - apps/clued-cloud/package.json
       - apps/clued-cloud/package-lock.json
       - apps/clued-cloud/supabase/**
@@ -189,7 +195,10 @@ jobs:
       - name: Verify measurement journal transactions and FIFO replay
         run: |
           node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
+          node scripts/run-tests.mjs --test tests/merge-admission-measurement-clock-target-db.test.mjs
+          node scripts/run-tests.mjs --test tests/merge-admission-clock-audit-transport-db.test.mjs
           node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
+          node --test ../../scripts/ci/merge-admission-clock-source.test.mjs
 
       - name: Verify actual PostgreSQL17 production backup coverage
         run: |
@@ -313,7 +322,10 @@ jobs:
       - name: Verify measurement journal transactions and FIFO replay
         run: |
           node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
+          node scripts/run-tests.mjs --test tests/merge-admission-measurement-clock-target-db.test.mjs
+          node scripts/run-tests.mjs --test tests/merge-admission-clock-audit-transport-db.test.mjs
           node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
+          node --test ../../scripts/ci/merge-admission-clock-source.test.mjs
 
       - name: Verify actual PostgreSQL17 production backup coverage
         run: |

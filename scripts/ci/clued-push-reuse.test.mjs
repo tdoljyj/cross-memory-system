@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
-import { evaluatePush, validateEvidence, testedTreeReport, isolatedConfig, readReportZip, TARGETS, REPORT_NAME } from './clued-push-reuse.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { prepare, identity } from './clued-g4-fresh-start.mjs';
+const { evaluatePush, validateEvidence, testedTreeReport, isolatedConfig, readReportZip, TARGETS, REPORT_NAME } = await import(process.env.CLUED_PUSH_REUSE_TEST_MODULE_PATH ?
+  pathToFileURL(process.env.CLUED_PUSH_REUSE_TEST_MODULE_PATH).href : new URL('./clued-push-reuse.mjs', import.meta.url));
+const fixtureFile = relative => process.env.CLUED_G4_TEST_REPO_ROOT ? path.join(process.env.CLUED_G4_TEST_REPO_ROOT, relative) : new URL('../../' + relative, import.meta.url);
 
 const M = 'a'.repeat(40), H = 'b'.repeat(40), T = 'c'.repeat(40), C = 'd'.repeat(40);
 const file = 'clued-g4-database.yml';
@@ -155,12 +161,15 @@ test('only the seven exact run-specific port/project changes qualify, never arbi
   const prEnv = { ...env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_SHA: C, GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '2' };
   const git = (verb, ref) => verb === 'status' ? 'M apps/clued-cloud/supabase/config.toml' :
     verb === 'show' ? source : ref === 'HEAD' ? C : T;
-  const result = testedTreeReport(prEnv, event, git, () => expected);
-  assert.equal(result.isolation.profile, 'fixed-seven-ports/2');
+  const marker = { schema: 'clued.g4.fresh-start/1', ...identity(prEnv), prepared: true, port_base: 46010,
+    source_config_sha256: createHash('sha256').update(source).digest('hex'),
+    config_sha256: createHash('sha256').update(expected).digest('hex') };
+  const result = testedTreeReport(prEnv, event, git, () => expected, () => marker);
+  assert.equal(result.isolation.profile, 'selected-seven-ports/3');
   assert.equal(result.isolation.run_attempt, 2);
-  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('major_version = 17', 'major_version = 18')));
-  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('46011', '46012')));
-  assert.throws(() => testedTreeReport(prEnv, event, (verb, ref) => verb === 'status' ? '' : git(verb, ref), () => expected));
+  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('major_version = 17', 'major_version = 18'), () => marker));
+  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('46011', '46012'), () => marker));
+  assert.throws(() => testedTreeReport(prEnv, event, (verb, ref) => verb === 'status' ? '' : git(verb, ref), () => expected, () => marker));
   assert.throws(() => isolatedConfig(source.replace('port = 54329\n', ''), file, 100, 2));
   assert.throws(() => isolatedConfig(source, file, 100));
   const ifConfig = isolatedConfig(source, 'information-flow-e2e.yml', 100);
@@ -170,7 +179,7 @@ test('only the seven exact run-specific port/project changes qualify, never arbi
 
 test('workflow integration leaves the registered admission gate unchanged and records proof after tests', () => {
   for (const file of Object.keys(TARGETS)) {
-    const text = fs.readFileSync(new URL(`../../.github/workflows/${file}`, import.meta.url), 'utf8');
+    const text = fs.readFileSync(fixtureFile(`.github/workflows/${file}`), 'utf8');
     assert.match(text, /needs: \[admission-gate, push-reuse\]/);
     assert.match(text, /needs\.admission-gate\.outputs\.admitted == 'true' &&\s+\(!cancelled\(\) && needs\.admission-gate\.result == 'success'/);
     assert.match(text, /github\.event_name != 'push' \|\| needs\.push-reuse\.result != 'success' \|\|\s+needs\.push-reuse\.outputs\.run_heavy != 'false'/);
@@ -188,4 +197,56 @@ test('workflow integration leaves the registered admission gate unchanged and re
     assert.match(text, /if: success\(\) && github\.event_name == 'pull_request'/);
     assert.match(text, /node-version: 22\.23\.3/);
   }
+});
+
+test('PORT6: the actual prepared alternate block produces a marker-bound tree report', async () => {
+  const source = 'project_id = "clued-cloud"\nport = 54321\nport = 54322\nshadow_port = 54320\nport = 54323\nport = 54324\nport = 54327\nport = 54329\n[db.seed]\nenabled = false\n';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-g4-reuse-test-'));
+  const app = path.join(root, 'apps/clued-cloud/supabase');
+  fs.mkdirSync(path.join(app, 'migrations'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'config.toml'), source);
+  fs.writeFileSync(path.join(app, 'migrations/202608230001_first.sql'), 'select 1;\n');
+  const prEnv = { ...env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_SHA: C, GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '2',
+    RUNNER_TEMP: root, GITHUB_ENV: path.join(root, 'github-env'), CLUED_G4_FRESH_PROJECT: 'clued-g4-100-2' };
+  const event = { pull_request: { number: 12, user: { login: 'owner' }, head: { sha: H, repo: { full_name: 'owner/repo' } } } };
+  const readConfig = () => fs.readFileSync(path.join(app, 'config.toml'), 'utf8');
+  const git = (verb, ref) => verb === 'show' ? source : verb === 'status' ?
+    (readConfig() === source ? '' : 'M apps/clued-cloud/supabase/config.toml') : ref === 'HEAD' ? C : ref === 'HEAD^{tree}' ? T : root;
+  let probes = 0;
+  try {
+    await prepare(prEnv, { git, platform: 'linux', portProbe: async () => ++probes > 1,
+      docker: (...args) => args[0] === 'context' ? JSON.stringify('unix:///var/run/docker.sock') : '' });
+    const report = testedTreeReport(prEnv, event, git, readConfig); // Default actual marker read.
+    assert.equal(report.isolation.profile, 'selected-seven-ports/3');
+    assert.equal(report.isolation.port_base, 46020);
+    assert.match(report.isolation.fresh_marker_digest, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(readConfig(), isolatedConfig(source, file, 100, 2, report.isolation.port_base));
+    const p = proof(); p.report = report; assert.equal(validateEvidence(p).run_heavy, false);
+    fs.appendFileSync(path.join(app, 'config.toml'), '# arbitrary tracked edit\n');
+    assert.throws(() => testedTreeReport(prEnv, event, git, readConfig), /fresh_configuration_changed/);
+    fs.writeFileSync(path.join(app, 'config.toml'), isolatedConfig(source, file, 100, 2, 46020));
+    const markerFile = path.join(root, 'clued-g4-fresh-100-2.json');
+    const marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+    for (const mutate of [m => m.port_base = 46010, m => m.config_sha256 = '0'.repeat(64), m => m.source_config_sha256 = '0'.repeat(64),
+      m => m.run_attempt = 1, m => m.prepared = false]) {
+      const altered = structuredClone(marker); mutate(altered); fs.writeFileSync(markerFile, JSON.stringify(altered));
+      assert.throws(() => testedTreeReport(prEnv, event, git, readConfig));
+    }
+  } finally { fs.rmSync(root, { recursive: true }); }
+});
+
+test('PORT7: selected-block evidence remains bounded and malformed or stale proof still requires real work', async () => {
+  const p = proof();
+  Object.assign(p.report.isolation, { profile: 'selected-seven-ports/3', port_base: 46020, fresh_marker_digest: 'sha256:' + '3'.repeat(64) });
+  assert.equal(validateEvidence(p).run_heavy, false);
+  assert.equal((await evaluatePush(env, api(p).fetch)).run_heavy, false);
+  for (const mutate of [x => x.port_base = '46020', x => x.port_base = 46025, x => x.port_base = 45000,
+    x => delete x.port_base, x => x.fresh_marker_digest = 'invalid', x => x.run_attempt = 1,
+    x => x.source_config_digest = 'invalid', x => x.tested_config_digest = 'invalid']) {
+    const q = structuredClone(p); mutate(q.report.isolation);
+    assert.throws(() => validateEvidence(q));
+    assert.equal((await evaluatePush(env, api(q).fetch)).run_heavy, true);
+  }
+  // Historical fixed-block evidence retains its original source/identity gates.
+  assert.equal(validateEvidence(proof()).run_heavy, false);
 });
