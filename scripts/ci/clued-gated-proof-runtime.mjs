@@ -128,7 +128,9 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         if(!finalPr || JSON.stringify(finalPr)!==JSON.stringify(diff.descriptor))return false;
         return (await read(tipRoute))?.commit?.sha===snapshot.tip;
       }});
-    return {...proof,tip:snapshot.tip,default_branch:diff.descriptor.default_branch,pr_number:prNumber,head};
+    return {...proof,tip:snapshot.tip,default_branch:diff.descriptor.default_branch,pr_number:prNumber,head,
+      observation_context:{changed_files:[...diff.changedFiles],commits:diff.commits,default_branch:diff.descriptor.default_branch,
+        workflow_files:[...catalog.workflows.keys()],registry_source_checkout:snapshot.checkout}};
   } catch {return unknown('execution proof read failed');}
 }
 

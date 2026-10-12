@@ -266,12 +266,12 @@ test("measurement App: its read-only installation token reads everything, with t
   assert.deepEqual(JSON.parse(minted.body), { repositories: ["cross-memory-system"], permissions: MEASURE_PERMISSIONS });
   assert.deepEqual(Object.values(MEASURE_PERMISSIONS), ["read", "read", "read", "read", "read"]);
   assert.ok(reads.every((call) => call.headers.authorization === "Bearer app-token"), "never the GITHUB_TOKEN");
-  assert.equal(reads.length, 3 + 1 + 250);
+  assert.equal(reads.length, 3 + 1 + 250 + 1, "the unregistered independent R9 source adds one counted repo-metadata read");
   assert.deepEqual([report.coverage.runs_with_jobs, report.coverage.partial], [250, false]);
   assert.deepEqual([report.metrics.api_requests.token_source, report.metrics.api_requests.cap, report.metrics.api_requests.used],
-    ["app", APP_REQUEST_CAP, 254]);
+    ["app", APP_REQUEST_CAP, 255]);
   assert.match(report.metrics.api_requests.not_measured.by_pool, /App's quota is its own/);
-  assert.match(memory.files.get(ENV.GITHUB_STEP_SUMMARY), /254 of 2000 \(measurement App\)/);
+  assert.match(memory.files.get(ENV.GITHUB_STEP_SUMMARY), /255 of 2000 \(measurement App\)/);
 });
 
 test("measurement App: not configured, not installed or refused falls back to the GITHUB_TOKEN with its cap and says why", async () => {
@@ -559,7 +559,7 @@ test("collectUsage: a run whose job pages are cut short is neither counted nor c
   assert.equal(enough.jobsByRun.get(1).length, 150);
 });
 
-test("the workflow: daily and by hand, hosted, read-only, the measurement App's secrets only, default-branch code", () => {
+test("the workflow: main-only read-only measurement App, with a separate proposed R9 audit reader", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-ci-usage-report.yml"), "utf8");
   assert.ok(!text.includes("\r"), "LF line endings");
   assert.match(text, /^on:\n {2}schedule:\n {4}- cron: "23 3 \* \* \*"\n {2}workflow_dispatch:\n {4}inputs:\n {6}days:\n/m);
@@ -570,9 +570,11 @@ test("the workflow: daily and by hand, hosted, read-only, the measurement App's 
   assert.deepEqual(permissions[1].trim().split("\n").map((line) => line.trim()).sort(),
     ["actions: read", "checks: read", "contents: read", "issues: read", "pull-requests: read"]);
   assert.doesNotMatch(text, /:\s*write\b/);
-  // Owner Decision 00b71629: the App's ID and key, from the clued-admission environment, and no other secret.
+  // Original App permissions and the admission writer boundary remain. R9's
+  // distinct read-only identity is a proposal; installation needs its own door.
   assert.deepEqual([...text.matchAll(/^\s*environment: (.+)$/gm)].map((match) => match[1]), ["clued-admission"]);
-  assert.deepEqual([...text.matchAll(/secrets\.(\w+)/g)].map((match) => match[1]), ["CLUED_MEASURE_APP_ID", "CLUED_MEASURE_APP_KEY"]);
+  assert.deepEqual([...text.matchAll(/secrets\.(\w+)/g)].map((match) => match[1]), ["CLUED_MEASURE_APP_ID", "CLUED_MEASURE_APP_KEY", "CLUED_R9_CLOCK_READ_TOKEN"]);
+  assert.doesNotMatch(text, /secrets\.CLUED_ADMISSION_(?:CLUED_TOKEN|APP_KEY)/);
   assert.match(text, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
   assert.deepEqual([...text.matchAll(/runs-on: (.+)/g)].map((match) => match[1]), ["ubuntu-latest"]);
   assert.match(text, /ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n {10}persist-credentials: false/);
@@ -580,9 +582,9 @@ test("the workflow: daily and by hand, hosted, read-only, the measurement App's 
   assert.match(text, /timeout-minutes: 20/);
   // Every action is pinned to a full commit SHA.
   const uses = [...text.matchAll(/uses: (\S+)/g)].map((match) => match[1]);
-  assert.deepEqual(uses.map((u) => u.split("@")[0]), ["actions/checkout", "./.github/actions/ci-temporary-storage", "actions/cache", "actions/upload-artifact"]);
+  assert.deepEqual(uses.map((u) => u.split("@")[0]), ["actions/checkout", "./.github/actions/ci-temporary-storage", "actions/cache", "actions/upload-artifact", "actions/upload-artifact"]);
   for (const u of uses.filter(x=>!x.startsWith('./'))) assert.match(u, /@[0-9a-f]{40}$/, u);
-  assert.ok(text.indexOf('uses: ./.github/actions/ci-temporary-storage') < text.indexOf('run: node --test scripts/ci/ci-usage-report.test.mjs'));
+  assert.ok(text.indexOf('uses: ./.github/actions/ci-temporary-storage') < text.indexOf('node --test scripts/ci/ci-usage-report.test.mjs'));
   assert.match(text, /path: \.ci-usage-cache\n/);
   assert.match(text, /path: ci-usage-report\.json\n/);
   assert.match(text, /run: node scripts\/ci\/ci-usage-report\.mjs\n/);
