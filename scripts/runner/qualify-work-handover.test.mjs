@@ -27,10 +27,9 @@ test('exact-source simulation preserves six verdicts and never certifies live qu
 });
 test('Windows current protection refuses writable principals, writable runner, non-admin owner or unavailable data',()=>{
   const safe={schema:'clued.windows-hook-protection/1',runner_is_administrator:false,
-    targets:[{owner_is_administrator:true,runner_owns_target:false,untrusted_write_aces:0,runner_write_aces:0},
-      {owner_is_administrator:true,runner_owns_target:false,untrusted_write_aces:0,runner_write_aces:0}]};
+    targets:Array.from({length:4},()=>({owner_is_administrator:true,runner_owns_target:false,untrusted_write_aces:0,runner_write_aces:0}))};
   assert.equal(verifyWindowsProtection(safe).verified,true);
-  for(const targetIndex of [0,1]){
+  for(const targetIndex of [0,1,2,3]){
     for(const [field,value] of [['owner_is_administrator',false],['runner_owns_target',true],['untrusted_write_aces',1],['runner_write_aces',1]]){
       const changed=structuredClone(safe);changed.targets[targetIndex][field]=value;
       assert.throws(()=>verifyWindowsProtection(changed));
@@ -40,12 +39,13 @@ test('Windows current protection refuses writable principals, writable runner, n
   for(const unavailable of [null,{}, {...safe,targets:[]}, {...safe,targets:[{} ,{}]}])
     assert.throws(()=>verifyWindowsProtection(unavailable));
 });
-test('POSIX protection refuses root or unknown runner and writable or non-root-owned code',()=>{
-  const safe={runner_uid:1001,targets:[{uid:0,mode:0o755},{uid:0,mode:0o644}]};
+test('POSIX protection refuses real or effective root and writable code or ancestors',()=>{
+  const safe={runner_uid:1001,runner_euid:1001,targets:[{uid:0,mode:0o644},{uid:0,mode:0o755},{uid:0,mode:0o755},{uid:0,mode:0o755}]};
   assert.equal(verifyPosixProtection(safe).verified,true);
-  for(const runner_uid of [0,undefined,null,-1,NaN])
-    assert.throws(()=>verifyPosixProtection({...safe,runner_uid}));
-  for(const targetIndex of [0,1]){
+  for(const field of ['runner_uid','runner_euid'])
+    for(const value of [0,undefined,null,-1,NaN])
+      assert.throws(()=>verifyPosixProtection({...safe,[field]:value}));
+  for(const targetIndex of [0,1,2,3]){
     for(const [field,value] of [['uid',1001],['mode',0o775],['mode',0o777],['mode',undefined]]){
       const changed=structuredClone(safe);changed.targets[targetIndex][field]=value;
       assert.throws(()=>verifyPosixProtection(changed));

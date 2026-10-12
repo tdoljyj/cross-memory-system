@@ -9,7 +9,7 @@ import {pathToFileURL,fileURLToPath} from 'node:url';
 export function verifyWindowsProtection(report) {
   assert.ok(report && report.schema==='clued.windows-hook-protection/1', 'Windows protection is unavailable');
   assert.equal(report.runner_is_administrator,false,'An administrator runner can replace its pre-job protection');
-  assert.ok(Array.isArray(report.targets)&&report.targets.length===2,'Windows protection targets are unavailable');
+  assert.ok(Array.isArray(report.targets)&&report.targets.length===4,'Windows protection targets or their ancestors are unavailable');
   for(const target of report.targets){
     assert.equal(target.owner_is_administrator,true,'Windows hook owner can change its protection');
     assert.equal(target.runner_owns_target,false,'Windows runner owns its hook and can change its permissions');
@@ -21,7 +21,8 @@ export function verifyWindowsProtection(report) {
 
 export function verifyPosixProtection(report) {
   assert.ok(Number.isInteger(report?.runner_uid)&&report.runner_uid>0,'A privileged or unknown runner can replace its pre-job protection');
-  assert.ok(Array.isArray(report.targets)&&report.targets.length===2,'Installed protection targets are unavailable');
+  assert.ok(Number.isInteger(report.runner_euid)&&report.runner_euid>0,'An effectively privileged or unknown runner can replace its pre-job protection');
+  assert.ok(Array.isArray(report.targets)&&report.targets.length===4,'Installed protection targets or their ancestors are unavailable');
   for(const target of report.targets){
     assert.equal(target.uid,0,'Installed hook must be administrator-owned');
     assert.ok(Number.isInteger(target.mode),'Installed hook permissions are unavailable');
@@ -39,9 +40,12 @@ $runnerOwnerSids = @($identity.User.Value) + @($identity.Groups | ForEach-Object
 $trusted = @('S-1-5-18','S-1-5-32-544')
 # Include actual local Administrator members, never caller-supplied owners.
 $trusted += @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value })
-$writeMask = 0xD0156
 $targets = @()
-foreach ($target in @('C:\ProgramData\CluedRunnerHook','C:\ProgramData\CluedRunnerHook\clued-runner-job-started.mjs')) {
+foreach ($target in @('C:\','C:\ProgramData','C:\ProgramData\CluedRunnerHook','C:\ProgramData\CluedRunnerHook\clued-runner-job-started.mjs')) {
+  # Ancestors must not let the runner rename/delete the protected subtree,
+  # delete its child, or grant those rights. Creating unrelated siblings alone
+  # does not permit replacement of an existing protected child.
+  $writeMask = if ($target -eq 'C:\' -or $target -eq 'C:\ProgramData') { 0xD0040 } else { 0xD0156 }
   $item = Get-Item -LiteralPath $target -Force -ErrorAction Stop
   if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Redirected hook protection target.' }
   $acl = Get-Acl -LiteralPath $target -ErrorAction Stop
@@ -50,6 +54,7 @@ foreach ($target in @('C:\ProgramData\CluedRunnerHook','C:\ProgramData\CluedRunn
   $runnerWrites = 0
   foreach ($ace in $acl.Access) {
     if ($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+    if ($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
     if (([int]$ace.FileSystemRights -band $writeMask) -eq 0) { continue }
     $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier])
     if ($trusted -notcontains $sid.Value) { $untrustedWrites++ }
@@ -88,15 +93,17 @@ if (!candidate) assert.equal(hookPath, path.resolve(installedPath), 'Qualificati
 assert.equal(fs.lstatSync(hookPath).isSymbolicLink(), false, 'Redirected hook is refused');
 if (!candidate) {
   const parent=path.dirname(hookPath);
-  assert.equal(fs.lstatSync(parent).isSymbolicLink(), false, 'Redirected hook directory is refused');
+  const protectionPaths=[hookPath,parent,path.dirname(parent),path.parse(hookPath).root];
+  for(const target of protectionPaths)
+    assert.equal(fs.lstatSync(target).isSymbolicLink(),false,'Redirected hook directory or ancestor is refused');
   if(process.platform==='win32'){
     readWindowsProtection();
   }else{
-    const targets=[parent,hookPath].map(target=>{
+    const targets=protectionPaths.map(target=>{
       const stat=fs.statSync(target);
       return {uid:stat.uid,mode:stat.mode};
     });
-    verifyPosixProtection({runner_uid:process.getuid?.(),targets});
+    verifyPosixProtection({runner_uid:process.getuid?.(),runner_euid:process.geteuid?.(),targets});
   }
 }
 const digest = () => createHash('sha256').update(fs.readFileSync(hookPath)).digest('hex');
