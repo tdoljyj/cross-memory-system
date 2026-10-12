@@ -127,6 +127,34 @@ test('a disabled flag refuses the call before any database request', async () =>
   } finally { restore(); }
 });
 
+test('Host annotations never enter strict private work-claim commands or supply missing proof, for Binding and OAuth callers', async () => {
+  const worker = await loadContinuityWorker();
+  const business = { action: 'authorize_head', scope: 'global', claim_id: '22222222-2222-4222-8222-222222222222',
+    fence: 1, lease_version: 1, lease_key: `clued_lk_${'a'.repeat(64)}`, repository: 'owner/repository',
+    head_sha: 'b'.repeat(40), target_branch: 'main', idempotency_key: 'host-meta-head-fixture' };
+  const { calls, restore } = mockFetch(({ body }) => {
+    assert.equal(Object.hasOwn(body.p_input, '_meta'), false);
+    return Response.json(body.p_input.lease_key ? { status: 'committed', authorization_id: 'fixture' }
+      : { status: 'rejected', error_code: 'work_claim_lease_key_required' });
+  });
+  try {
+    for (const token of [bindingToken, oauthToken]) {
+      const annotated = { ...business, _meta: { callId: 'host-call', clientInfo: { name: 'host' },
+        authority: 'owner', scope: 'project:other', lease_key: `clued_lk_${'c'.repeat(64)}` } };
+      const result = await (await worker.fetch(mcp(token, 'clued_work_renew', annotated), enabled, ctx)).json();
+      assert.equal(result.result.structuredContent.status, 'committed');
+      const command = calls.findLast(call => call.rpc === 'clued_work_renew_v1' || call.tool === 'clued_work_renew');
+      assert.deepEqual(command.body.p_input, business);
+      const { lease_key: ignored, ...missing } = annotated;
+      const rejected = await (await worker.fetch(mcp(token, 'clued_work_renew', missing), enabled, ctx)).json();
+      assert.equal(rejected.result.structuredContent.error_code, 'work_claim_lease_key_required');
+      const last = calls.findLast(call => call.rpc === 'clued_work_renew_v1' || call.tool === 'clued_work_renew');
+      assert.equal(Object.hasOwn(last.body.p_input, 'lease_key'), false);
+      assert.equal(last.body.p_input.scope, 'global');
+    }
+  } finally { restore(); }
+});
+
 test('Binding and OAuth callers reach the same step-1 RPCs with the arguments passed through', async () => {
   const worker = await loadContinuityWorker();
   const expectedRpc = {
