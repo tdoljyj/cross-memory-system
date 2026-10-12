@@ -19,8 +19,9 @@ const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
 const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refresh_default_v1.sql';
 // This scenario reconstructs the lifecycle transition before handover support.
-// Keep its exact dependent migration with the excluded foundation; the full
-// handover/activation database scenarios apply and verify both migrations.
+// Defer the exact migration family until the historical lifecycle assertions
+// and gateway/storage prerequisites below have been replayed. The final
+// subtest then installs both migrations and checks the unchanged caller grants.
 const workClaimHandoverMigration = '20261011131755_work_claim_handover_execution_v1.sql';
 const workClaimHandoverMigrations = [
   workClaimHandoverMigration,
