@@ -72,7 +72,7 @@
 // No dependencies: Node 20+ fetch, crypto and fs only, so a hosted runner
 // finishes in seconds without an install.
 
-import { createHash, createSign } from "node:crypto";
+import { createHash, createSign, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,6 +110,23 @@ export function resolvePublicSupabaseConfig(env, workspace, readFile = fs.readFi
   const match = /return \{ url: "(https:\/\/[^"]+)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(text);
   if (!match) throw new Error(`${PUBLIC_CONFIG_SOURCE} has no recognizable public default; set CLUED_SUPABASE_URL and CLUED_SUPABASE_PUBLISHABLE_KEY.`);
   return { url: match[1].replace(/\/$/, ""), key: match[2], source: PUBLIC_CONFIG_SOURCE };
+}
+
+// Read only the current epoch of a target whose GitHub gate has already
+// qualified it. A public observation cannot create or refresh an admission.
+// No CI Binding, lease key, or GitHub App private key is needed on a runner.
+export async function executionEpochCurrent(fetchImpl, env, workspace, input) {
+  const config = resolvePublicSupabaseConfig(env, workspace);
+  const response = await fetchImpl(`${config.url}/rest/v1/rpc/clued_work_verify_v1`, {
+    method: "POST", signal: AbortSignal.timeout(10000), headers: { apikey: config.key, authorization: `Bearer ${config.key}`, "content-type": "application/json" },
+    body: JSON.stringify({ p_token_hash: null, p_input: { action: "execution_current", ...input } }),
+  });
+  if (response.status !== 200) throw new Error(`Clued execution epoch unavailable (${response.status})`);
+  const result = await response.json();
+  if (result?.status !== "ok" || typeof result.guard_required !== "boolean"
+    || (result.guard_required && typeof result.epoch_current !== "boolean"))
+    throw new Error("Clued execution epoch observation is invalid");
+  return !result.guard_required || result.epoch_current === true;
 }
 const CLAIM_TRAILER = /^Clued-Work-Claim:[ \t]*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})[ \t]*$/m;
 const SCOPE_TRAILER = /^Clued-Work-Scope:[ \t]*(global|project:[0-9a-fA-F-]{36})[ \t]*$/m;
@@ -1548,7 +1565,7 @@ export const ADMISSION_APP_ID = 5164952;
 // nothing, the gate waits. The run list only locates the run: the authority
 // stays the App check, which only main's admission run can post.
 export const SAME_EVENT_MS = 15_000;
-const EXTERNAL_ID = /^pr:([0-9]{1,10}):run:([0-9]{1,20})$/;
+const EXTERNAL_ID = /^pr:([0-9]{1,10}):run:([0-9]{1,20})(?::publication:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})?$/;
 export function checkNamesPullRequest(check, prNumber) {
   const match = EXTERNAL_ID.exec(String((check && check.external_id) ?? ""));
   return Boolean(match) && Number(match[1]) === Number(prNumber);
@@ -1704,6 +1721,13 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       outcome.verdict = "REJECTED";
       outcome.reasons.push(`${what} ${run.id} concluded ${run.conclusion}`);
     }
+    if (outcome.admitted && !await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
+      repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
+    })) {
+      outcome.admitted = false;
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push("work_claim_execution_epoch_stale");
+    }
     // Merge Admission v0.1 §10: the gate does not read the policy; it reads
     // the mode main's admission run put in the check's title.
     const label = run && run.status === "completed" ? parseModeLabel(run.output && run.output.title) : null;
@@ -1824,6 +1848,11 @@ async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
         outcome.head_sha = env.GITHUB_SHA ?? null;
         if (!admitted) outcome.reasons.push("admission_run_head_unknown");
         else if (admitted !== String(env.GITHUB_SHA ?? "").toLowerCase()) outcome.reasons.push(`admission_run_other_head:${admitted}`);
+      }
+      if (outcome.reasons.length === 0) {
+        if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
+          repository: env.GITHUB_REPOSITORY, head_sha: env.GITHUB_SHA, target_branch: ref, workflow,
+        })) outcome.reasons.push("work_claim_execution_epoch_stale");
       }
       if (outcome.reasons.length === 0) {
         outcome.verdict = "ADMITTED";
@@ -2005,21 +2034,78 @@ export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), hea
   const key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
   if (!appId || !key) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
   const repository = env.GITHUB_REPOSITORY;
+  let publication = null;
+  let publicationScope = "global";
+  let publicationPostStarted = false;
   try {
+    if (success) {
+      if (!env.CLUED_CONTEXT_READ_TOKEN || !env.GITHUB_TOKEN || !/^[0-9]{1,10}$/.test(String(prNumber ?? ""))) {
+        throw new Error("live publication verification credentials or pull request are missing");
+      }
+      const pr = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${prNumber}`);
+      if (pr?.state !== "open" || pr?.head?.sha !== headSha) throw new Error("the publication head is no longer current");
+      const reference = await claimReferenceOf(fetchImpl, env, pr);
+      publicationScope = reference?.scope ?? "global";
+      const paths = await changedPathsOfPullRequest(fetchImpl, env, repository, prNumber);
+      if (paths.file_count !== pr.changed_files) throw new Error("publication changed paths are incomplete");
+      const publicationReply = await cluedRpc(fetchImpl, env, env.GITHUB_WORKSPACE, VERIFY_RPC, {
+        action: "publication_begin", scope: publicationScope, ...(reference ?? {}),
+        pr_ref: `${repository}#${prNumber}`, head_sha: headSha, base_sha: pr.base.sha,
+        target_branch: pr.base.ref, changed_paths: paths.paths, run_id: String(env.GITHUB_RUN_ID),
+        publication_key: randomUUID(),
+      });
+      if (publicationReply.status !== 200 || !publicationReply.body || typeof publicationReply.body !== "object") {
+        throw new Error(`live publication verification failed: ${publicationReply.detail}`);
+      }
+      publication = publicationReply.body;
+      if (typeof publication.scope === "string") publicationScope = publication.scope;
+      if (publication.publication_required !== false && publication.verdict !== "ADMITTED") {
+        success = false; title = "REJECTED: handover authorization changed";
+        summary = "The live work authorization no longer admits this publication.";
+      }
+    }
     const jwt = appJwt(appId, key, Math.floor(now() / 1000));
     const installation = await appRequest(fetchImpl, env, "GET", `/repos/${repository}/installation`, jwt);
     const token = await appRequest(fetchImpl, env, "POST", `/app/installations/${installation.id}/access_tokens`, jwt,
       { repositories: [repository.split("/")[1]], permissions: { checks: "write" } });
     const number = String(prNumber ?? "").trim();
     const runId = String(env.GITHUB_RUN_ID ?? "").trim();
-    const externalId = /^[0-9]{1,10}$/.test(number) && /^[0-9]{1,20}$/.test(runId) ? `pr:${number}:run:${runId}` : undefined;
+    const externalId = /^[0-9]{1,10}$/.test(number) && /^[0-9]{1,20}$/.test(runId)
+      ? `pr:${number}:run:${runId}` + (publication?.publication_id ? `:publication:${publication.publication_id}` : "") : undefined;
+    publicationPostStarted = true;
     const check = await appRequest(fetchImpl, env, "POST", `/repos/${repository}/check-runs`, token.token, {
       name, head_sha: headSha, status: "completed", conclusion: success ? "success" : "failure",
       ...(externalId ? { external_id: externalId } : {}),
       output: { title, summary },
     });
+    if (publication?.publication_id) {
+      const finishReply = await cluedRpc(fetchImpl, env, env.GITHUB_WORKSPACE, VERIFY_RPC, {
+        action: "publication_finish", scope: publicationScope,
+        publication_id: publication.publication_id, check_run_id: String(check.id),
+      });
+      if (finishReply.status !== 200 || finishReply.body?.status !== "committed") {
+        throw new Error(`publication settlement failed: ${finishReply.detail}`);
+      }
+      const finished = finishReply.body;
+      if (finished.must_revoke) {
+        await appRequest(fetchImpl, env, "PATCH", `/repos/${repository}/check-runs/${check.id}`, token.token, {
+          status: "completed", conclusion: "failure", output: {
+            title: "REJECTED: handover superseded this publication",
+            summary: "This publication finished after its execution epoch was revoked.",
+          },
+        });
+        success = false;
+      }
+    }
     return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null };
   } catch (error) {
+    if (publication?.publication_id && !publicationPostStarted) {
+      // This path knows the check POST was never sent. An uncertain POST
+      // leaves its ticket open until its exact external effect is found.
+      await cluedRpc(fetchImpl, env, env.GITHUB_WORKSPACE, VERIFY_RPC, {
+        action: "publication_abort", scope: publicationScope, publication_id: publication.publication_id, not_sent: true,
+      }).catch(() => {});
+    }
     return { posted: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

@@ -79,6 +79,7 @@ const TIP = "7".repeat(39) + "6";
 // The public project values are read from the repository file, never copied here.
 const PUBLIC = resolvePublicSupabaseConfig({}, ROOT);
 const RPC_URL = `${PUBLIC.url}/rest/v1/rpc/clued_work_verify_v1`;
+const EPOCH_URL = RPC_URL;
 
 function event(overrides = {}) {
   return {
@@ -98,6 +99,7 @@ function env(overrides = {}) {
     GITHUB_API_URL: "https://api.test",
     CLUED_CONTEXT_READ_TOKEN: "clued_bnd_test",
     GITHUB_RUN_ID: "9001",
+    GITHUB_WORKSPACE: ROOT,
     ...overrides,
   };
 }
@@ -111,6 +113,8 @@ function fakeFetch(script) {
     calls.push(call);
     const key = Object.keys(script).find((k) => k.startsWith(`${method} `) && call.url.startsWith(k.slice(method.length + 1)));
     let responder = key ? script[key] : undefined;
+    if (!responder && call.url === EPOCH_URL && call.body?.p_input?.action === "execution_current")
+      responder = { body: { status: "ok", guard_required: false, epoch_current: null } };
     // Re-review 10: unless a test scripts them, the base branch's tip is TIP
     // and the head is ahead of it with no files of its own.
     const tipCompare = `https://api.test/repos/o/r/compare/${TIP}...`;
@@ -432,7 +436,7 @@ test("main: exit codes and outputs in the required and gate modes", async () => 
 // --- Step 7 review fixes: base-branch target runs, PR binding, truncation, re-verification.
 
 const freshPull = (overrides = {}) => ({
-  number: 452, draft: false, changed_files: 2,
+  number: 452, state: "open", draft: false, changed_files: 2,
   body: `Edited body\n\nClued-Work-Claim: ${CLAIM}`,
   head: { sha: "d".repeat(40), repo: { full_name: "o/r" } }, base: { sha: BASE, ref: "main" },
   ...overrides,
@@ -699,7 +703,7 @@ test("R1: a late admission cannot promote an expired gate; only a fresh permitte
   assert.deepEqual([second.outcome.admitted, second.outcome.verdict], [true, "ADMITTED"]);
   assert.equal((await run({ GITHUB_RUN_ATTEMPT: "3" })).outcome.verdict, "RERUN_REFUSED");
   assert.equal((await run({ GITHUB_RUN_ATTEMPT: "2" }, 181, { ...current, head: { sha: BASE } })).outcome.verdict, "RERUN_REFUSED");
-  assert.ok(![...first.calls, ...second.calls].some(c => c.method !== "GET"), "the gate does not retry CI or write authorization itself");
+  assert.ok(![...first.calls, ...second.calls].some(c => c.method !== "GET" && c.url !== EPOCH_URL), "the gate only observes; it never retries CI or writes authorization");
   elapsed = 0;
   const boundary = await run({}, 180);
   assert.deepEqual([boundary.outcome.admitted, elapsed], [true, 180], "a trusted check visible at the last poll still counts");
@@ -730,7 +734,19 @@ test("R1: wait overrides cannot restore the old eight-minute polling budget", as
   }
 });
 
-test("gate: deadlines, errors and fork pull requests, without Clued", async () => {
+test("handover gate: a previous green check cannot substitute for the current service epoch", async () => {
+  const run=async observation=>{
+    const fake=fakeFetch({...SELF_RUN,[CHECKS]:{body:{check_runs:[appCheckRun()]}},[`POST ${EPOCH_URL}`]:observation});
+    return gate({env:env({CLUED_CONTEXT_READ_TOKEN:""}),event:withClaim(),eventName:"pull_request",fetchImpl:fake.fetchImpl});
+  };
+  assert.equal((await run({body:{status:"ok",guard_required:true,epoch_current:true}})).admitted,true);
+  const stale=await run({body:{status:"ok",guard_required:true,epoch_current:false}});
+  assert.equal(stale.admitted,false);assert.ok(stale.reasons.includes("work_claim_execution_epoch_stale"));
+  await assert.rejects(run({status:503,body:null}),/epoch unavailable/);
+  await assert.rejects(run({body:{status:"ok",guard_required:true,epoch_current:"true"}}),/observation is invalid/);
+});
+
+test("gate: deadlines, errors and fork pull requests, without private Clued credentials", async () => {
   const gateWith = async (list, extraEnv = {}, sleeps = []) => {
     const { fetchImpl, calls } = fakeFetch({ ...SELF_RUN, [CHECKS]: () => ({ body: { check_runs: typeof list === "function" ? list() : list } }) });
     const outcome = await gate({ env: env({ CLUED_CONTEXT_READ_TOKEN: "", ...extraEnv }), event: withClaim(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { sleeps.push(ms); } });
@@ -738,7 +754,7 @@ test("gate: deadlines, errors and fork pull requests, without Clued", async () =
   };
   const { outcome: admitted, calls } = await gateWith([appCheckRun()]);
   assert.deepEqual([admitted.admitted, admitted.verdict], [true, "ADMITTED"]);
-  assert.ok(!calls.some((c) => c.method === "POST"), "no Clued call, no write");
+  assert.ok(!calls.some((c) => c.method === "POST" && c.url !== EPOCH_URL), "only the bounded public epoch observation is allowed");
 
   // It waits for a check that has not been posted yet.
   let polls = 0;
@@ -801,7 +817,7 @@ test("gate (re-review 2, N3c): the clued-admission App's check decides, never a 
   };
   let { outcome, calls } = await gateWith([check({})]);
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_run.id, outcome.admission_run.workflow_run_id], [true, "ADMITTED", 1, 77]);
-  assert.equal(calls.length, 3, "its own run, the checks, then the admission runs that locate this event's run");
+  assert.equal(calls.length, 4, "its own run, the checks, the admission run, then current execution epoch");
   assert.match(calls[0].url, /\/actions\/runs\/9001$/);
   assert.match(calls[1].url, /check-runs\?check_name=clued-admission-verified&filter=all/);
   assert.match(calls[2].url, /\/actions\/workflows\/clued-work-admission\.yml\/runs\?head_sha=a{40}&event=pull_request_target/);
@@ -854,7 +870,7 @@ test("workflows: only base-branch jobs in the clued-admission environment get th
   }
   // Merge Admission step 3: clued-merge-slot-ci reports CI states with the same token; step 5:
   // clued-merge-executor reads the queue heads with it.
-  assert.deepEqual(holders.sort(), ["clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
+  assert.deepEqual(holders.sort(), ["clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-work-admission-dispatch.yml", "clued-work-admission-reverify.yml", "clued-work-admission.yml", "clued-work-claim-handover-revoke.yml"]);
   const admission = fs.readFileSync(path.join(dir, "clued-work-admission.yml"), "utf8");
   assert.doesNotMatch(admission, /^ {2}pull_request:/m, "no pull_request trigger: PR-edited copies never run");
   assert.match(admission, /^ {2}pull_request_target:$/m);
@@ -896,13 +912,16 @@ test("dispatch gate: admits only a fresh, successful default-branch admission ru
   let { outcome, calls } = await dispatchGateWith(admissionRun());
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.claim_id], [true, "ADMITTED", CLAIM]);
   assert.deepEqual(calls.map((c) => c.url), ["https://api.test/repos/o/r/actions/runs/77",
-    "https://api.test/repos/o/r/actions/runs/77/jobs", "https://api.test/repos/o/r/check-runs/701/annotations"]);
+    "https://api.test/repos/o/r/actions/runs/77/jobs", "https://api.test/repos/o/r/check-runs/701/annotations", EPOCH_URL]);
   // Re-review N3: the admission covers the commit it verified, not a later push to the ref.
   ({ outcome } = await dispatchGateWith(admissionRun(), {}, "77", "e".repeat(40)));
   assert.deepEqual([outcome.admitted, outcome.reasons], [false, [`admission_run_other_head:${"e".repeat(40)}`]]);
   ({ outcome } = await dispatchGateWith(admissionRun(), {}, "77", null));
   assert.deepEqual([outcome.admitted, outcome.reasons], [false, ["admission_run_head_unknown"]]);
-  assert.ok(!calls.some((c) => c.url.startsWith(PUBLIC.url)), "the gate never calls Clued");
+  assert.deepEqual(calls.find(c => c.url === EPOCH_URL).body.p_input,
+    { action: "execution_current", repository: "o/r", head_sha: HEAD, target_branch: "feature/x", workflow: "clued-g4-database.yml" });
+  assert.equal(calls.find(c => c.url === EPOCH_URL).body.p_token_hash, null);
+  assert.equal(calls.find(c => c.url === EPOCH_URL).headers.authorization, `Bearer ${PUBLIC.key}`);
 
   const rejects = [
     [admissionRun({ path: ".github/workflows/other.yml" }), /admission_run_wrong_workflow/],
@@ -1292,9 +1311,10 @@ test("app check: posts the admission result as the App on the evaluated head", a
   assert.ok(crypto.createVerify("RSA-SHA256").update(`${h}.${p}`).verify(publicKey, Buffer.from(sig, "base64url")));
   assert.deepEqual(JSON.parse(Buffer.from(p, "base64url")), { iat: 1_800_000_000 - 60, exp: 1_800_000_000 + 540, iss: "12345" });
 
-  const appEnv = (extra) => ({ GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "https://api.test", GITHUB_RUN_ID: "77",
+  const appEnv = (extra) => env({ GITHUB_RUN_ID: "77", ADMISSION_PR_NUMBER: "452",
     CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: pem, ADMISSION_HEAD_SHA: HEAD, ...extra });
   const script = () => fakeFetch({
+    [FILES]: files, [PULL]: { body: freshPull({head:{sha:HEAD}}) }, [VERIFY]: {body:{...admittedPayload,publication_required:false}},
     "GET https://api.test/repos/o/r/installation": { body: { id: 99 } },
     "POST https://api.test/app/installations/99/access_tokens": { status: 201, body: { token: "ghs_app" } },
     "POST https://api.test/repos/o/r/check-runs": { status: 201, body: { id: 5 } },
@@ -1303,17 +1323,17 @@ test("app check: posts the admission result as the App on the evaluated head", a
     const { fetchImpl, calls } = script();
     const result = await appCheck({ env: appEnv({ ADMISSION_OUTCOME: outcome }), fetchImpl, now: () => 1_800_000_000_000 });
     assert.deepEqual([result.posted, result.conclusion, result.head_sha], [true, conclusion, HEAD], outcome);
-    assert.match(calls[0].headers.authorization, /^Bearer ey/, "installation lookup uses the App JWT");
-    assert.deepEqual(calls[1].body, { repositories: ["r"], permissions: { checks: "write" } });
-    const post = calls[2];
+    assert.match(calls.find(c=>c.url.endsWith('/installation')).headers.authorization, /^Bearer ey/, "installation lookup uses the App JWT");
+    assert.deepEqual(calls.find(c=>c.url.endsWith('/access_tokens')).body, { repositories: ["r"], permissions: { checks: "write" } });
+    const post = calls.find(c=>c.method==='POST'&&c.url.endsWith('/check-runs'));
     assert.equal(post.headers.authorization, "Bearer ghs_app");
     assert.deepEqual([post.body.name, post.body.head_sha, post.body.status, post.body.conclusion], [APP_CHECK_NAME, HEAD, "completed", conclusion]);
-    assert.equal(post.body.external_id, undefined, "no pull request number, no external_id");
+    assert.equal(post.body.external_id, "pr:452:run:77");
   }
   // Re-review 4, m1: the check names its pull request and admission run.
   const named = script();
   await appCheck({ env: appEnv({ ADMISSION_OUTCOME: "success", ADMISSION_PR_NUMBER: "452" }), fetchImpl: named.fetchImpl, now: () => 1_800_000_000_000 });
-  assert.equal(named.calls[2].body.external_id, "pr:452:run:77");
+  assert.equal(named.calls.find(c=>c.method==='POST'&&c.url.endsWith('/check-runs')).body.external_id, "pr:452:run:77");
   // Not configured, or no evaluated head: nothing is posted.
   let quiet = await appCheck({ env: appEnv({ CLUED_ADMISSION_APP_PRIVATE_KEY: "" }), fetchImpl: fakeFetch({}).fetchImpl });
   assert.equal(quiet.posted, false);
@@ -1321,7 +1341,9 @@ test("app check: posts the admission result as the App on the evaluated head", a
   quiet = await appCheck({ env: appEnv({ ADMISSION_HEAD_SHA: "" }), fetchImpl: fakeFetch({}).fetchImpl });
   assert.match(quiet.reason, /no head commit/);
   // An API failure is an error, never a silent pass.
-  const broken = await appCheck({ env: appEnv({ ADMISSION_OUTCOME: "success" }), fetchImpl: fakeFetch({ "GET https://api.test/repos/o/r/installation": { status: 404, body: {} } }).fetchImpl });
+  const broken = await appCheck({ env: appEnv({ ADMISSION_OUTCOME: "success" }), fetchImpl: fakeFetch({
+    [FILES]:files,[PULL]:{body:freshPull({head:{sha:HEAD}})},[VERIFY]:{body:{...admittedPayload,publication_required:false}},
+    "GET https://api.test/repos/o/r/installation": { status: 404, body: {} } }).fetchImpl });
   assert.match(broken.error, /returned 404/);
 });
 
@@ -1721,7 +1743,7 @@ test("owner review: the workflows on main that hold an environment are exactly t
   // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
   assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
     "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
-    "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
+    "clued-work-admission-reverify.yml", "clued-work-admission.yml", "clued-work-claim-handover-revoke.yml"]);
 });
 
 test("evaluate (re-review 7, MAJOR-3): a protected change is admitted only with an Owner Grant on its head", async () => {
@@ -1968,10 +1990,11 @@ test("merge slot: evaluate reports it without changing admission, so the heavy g
 
 test("merge slot: the app-check step posts clued-merge-slot after the admission check, on the same head", async () => {
   const pem = appKeyPem();
-  const appEnv = (extra) => ({ GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "https://api.test", GITHUB_RUN_ID: "77",
+  const appEnv = (extra) => env({ GITHUB_RUN_ID: "77",
     CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: pem, ADMISSION_HEAD_SHA: HEAD, ADMISSION_PR_NUMBER: "452",
     ADMISSION_MERGE_SLOT_REF: SLOT, ADMISSION_CLAIM_ID: CLAIM, ADMISSION_BASE_REF: "main", ...extra });
   const script = () => fakeFetch({
+    [FILES]:files,[PULL]:{body:freshPull({head:{sha:HEAD}})},[VERIFY]:{body:{...admittedPayload,publication_required:false}},
     "GET https://api.test/repos/o/r/installation": { body: { id: 99 } },
     "POST https://api.test/app/installations/99/access_tokens": { status: 201, body: { token: "ghs_app" } },
     "POST https://api.test/repos/o/r/check-runs": (call) => ({ status: 201, body: { id: call.body.name === APP_CHECK_NAME ? 5 : 6 } }),
@@ -1989,6 +2012,7 @@ test("merge slot: the app-check step posts clued-merge-slot after the admission 
   // A failure to post the merge slot check fails the step.
   let posted = 0;
   const flaky = fakeFetch({
+    [FILES]:files,[PULL]:{body:freshPull({head:{sha:HEAD}})},[VERIFY]:{body:{...admittedPayload,publication_required:false}},
     "GET https://api.test/repos/o/r/installation": { body: { id: 99 } },
     "POST https://api.test/app/installations/99/access_tokens": { status: 201, body: { token: "ghs_app" } },
     "POST https://api.test/repos/o/r/check-runs": () => (posted++ === 0 ? { status: 201, body: { id: 5 } } : { status: 502, body: {} }),

@@ -1,5 +1,15 @@
 # Clued self-hosted runner pre-job check
 
+## Private handover rollout candidate
+
+The `work-handover-current-epoch-v1` hook is a staged successor. Install only the reviewed, merged script after the service's execution-current observation RPC is deployed. The hook reads configuration from the repository's trusted default branch using its existing read-only App. PR code and job environment cannot replace that configuration. No Clued CI Binding, private lease key, receiving key or admission App credential belongs on a runner.
+
+Preserve the installed script as the previous version, replace only the script, and retain the existing wrappers, App key, protected settings and runner account. Do not loosen folder permissions. The installed copy does not follow Git automatically. Confirm `[hook work-handover-current-epoch-v1]` from actual job-start logs on every registered runner before treating the fleet as qualified.
+
+Qualification must include a current PR and a gated branch dispatch; stale epoch, unavailable observation and unknown configuration must refuse before job steps. Test the trusted publication begin/finish path and pending revocation with actual stopped runs and revoked required App checks, including an uncertain publication. A cancellation request alone is insufficient. The default-branch revoker must drain the durable contexts, both bounded queues and every historical head, retaining unproved publications as open.
+
+Keep the service execution policy staged throughout installation. Activate only in a separately reviewed exact-source migration after all publication paths and independent runners are qualified, existing claims and queued work are accounted for, and the production authorization gate admits that migration. Unit tests and the page's default-On setting do not activate enforcement. After activation, repeat an actual voluntary receiving flow and prove that the old session cannot authorize a new head or start new queued execution while original provider recovery and settlement remain available.
+
 Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves this repository runs `clued-runner-job-started.mjs` before each job, through the runner's `ACTIONS_RUNNER_HOOK_JOB_STARTED` setting. The check lives on the runner machine, outside the repository. A branch that edits a workflow therefore cannot remove it.
 
 ## What it allows
