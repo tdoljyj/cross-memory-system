@@ -19,6 +19,8 @@ import "../confirm/owner.css";
 type Json = Record<string, unknown>;
 type Issued = { claim_id: string; confirmation_token: string; view_digest: string; expires_at: string; view: Json };
 type Handed = { claim: Json; lease_key: string; receipt_id: string };
+type HandoverSetting = { enabled: boolean; version: number; available: boolean };
+type PendingHandover = { delivery_id: string; receipt_id: string };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const MESSAGES: Record<string, string> = {
   direct_human_session_required: "需要你本人直接登录 Clued，授权给应用的登录不能查看或交接认领。",
@@ -32,6 +34,10 @@ const MESSAGES: Record<string, string> = {
   confirmation_token_revoked: "这次确认已被新的预览取代，请使用最新的预览。",
   confirmation_token_binding_mismatch: "确认与当前登录会话或预览内容不一致，请重新开始。",
   confirmation_view_stale: "认领在两步之间被改过（范围或持有者变了），请重新点“交给新会话”。",
+  work_claim_handover_setting_version_conflict: "设置已在别处改变，请刷新后再操作。",
+  work_claim_handover_not_ready: "自动交接正在完成上线核验，暂时不可用。",
+  work_claim_handover_text_already_delivered: "交接文字已交付过，无法再次显示。",
+  work_claim_handover_stale: "这次交接已被新的交接取代，请刷新认领。",
 };
 class RequestFailure extends Error { constructor(message: string, readonly uncertain = false) { super(message); } }
 
@@ -107,11 +113,14 @@ export default function WorkClaimsPage() {
   const [showEnded, setShowEnded] = useState(false);
   const [issued, setIssued] = useState<Issued | null>(null);
   const [handed, setHanded] = useState<Handed | null>(null);
+  const [handoverSetting, setHandoverSetting] = useState<HandoverSetting | null>(null);
+  const [pendingHandover, setPendingHandover] = useState<PendingHandover | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const current = useRef<Session | null>(null);
   const epoch = useRef(0);
+  const loadSerial = useRef(0);
 
   useEffect(() => {
     const lifetime = epoch;
@@ -123,6 +132,7 @@ export default function WorkClaimsPage() {
       if (!changed) return;
       ++epoch.current;
       setClaims(null); setEnded([]); setShowEnded(false); setIssued(null); setHanded(null); setError(""); setNotice(""); setWorking(false);
+      setHandoverSetting(null); setPendingHandover(null);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -134,14 +144,69 @@ export default function WorkClaimsPage() {
 
   async function load(withEnded = showEnded) {
     const generation = epoch.current;
-    setWorking(true); setError("");
+    const serial = ++loadSerial.current;
+    const stillCurrent = () => epoch.current === generation && loadSerial.current === serial;
+    setWorking(true); setError(""); setHandoverSetting(null);
     try {
-      const value = await rpc("clued_work_claims_owner_list_v1", withEnded ? { ended_within_hours: ENDED_HOURS } : {});
-      if (epoch.current !== generation) return;
-      setClaims(Array.isArray(value.claims) ? value.claims.filter(object) : []);
+      const listed = rpc("clued_work_claims_owner_list_v1", withEnded ? { ended_within_hours: ENDED_HOURS } : {});
+      // Settings may be unavailable during a staged rollout. Their read must
+      // never hold the existing claim list or Task links behind it.
+      void rpc("clued_work_free_handover_setting_v1", {}).then(setting => {
+        if (!stillCurrent()) return;
+        if (typeof setting.enabled !== "boolean" || !Number.isSafeInteger(setting.version)) throw new Error("setting unknown");
+        setHandoverSetting({ enabled: setting.enabled, version: Number(setting.version), available: setting.available === true });
+      }).catch(() => {
+        if (!stillCurrent()) return;
+        setHandoverSetting(null); setNotice("自由交接设置暂时无法读取，请稍后刷新。");
+      });
+      const value = await listed;
+      if (!stillCurrent()) return;
+      const currentClaims = Array.isArray(value.claims) ? value.claims.filter(object) : [];
+      setClaims(currentClaims);
+      const resumable = currentClaims.find(claim => claim.execution_handover_pending === true
+        && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(text(claim.handover_pending_delivery_id)));
+      if (resumable) setPendingHandover({ delivery_id: text(resumable.handover_pending_delivery_id), receipt_id: text(resumable.receipt_id) });
       setEnded(withEnded && Array.isArray(value.ended) ? value.ended.filter(object) : []);
     } catch (failure) {
-      if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取认领。");
+      if (stillCurrent()) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取认领。");
+    } finally { if (stillCurrent()) setWorking(false); }
+  }
+
+  async function changeHandoverSetting(enabled: boolean) {
+    if (!current.current || working || !handoverSetting) return;
+    const generation = epoch.current;
+    setWorking(true); setError("");
+    try {
+      const value = await rpc("clued_work_free_handover_setting_set_v1",
+        { enabled, base_version: handoverSetting.version });
+      if (epoch.current !== generation) return;
+      if (typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version)) {
+        throw new RequestFailure("设置结果尚未确认，请刷新后核对。", true);
+      }
+      setHandoverSetting({ enabled: value.enabled, version: Number(value.version), available: value.available === true });
+      setNotice(value.enabled ? "自由交接已开启。" : "自由交接已关闭。");
+    } catch (failure) {
+      if (epoch.current === generation) {
+        setHandoverSetting(null);
+        setError(failure instanceof RequestFailure ? failure.message : "设置结果尚未确认，请刷新后核对。");
+      }
+    } finally { if (epoch.current === generation) setWorking(false); }
+  }
+
+  async function collectHandover() {
+    if (!current.current || working || !pendingHandover) return;
+    const generation = epoch.current;
+    setWorking(true); setError("");
+    try {
+      const value = await rpc("clued_work_claim_handover_v1", { action: "collect", delivery_id: pendingHandover.delivery_id });
+      if (epoch.current !== generation) return;
+      if (value.status === "pending") { setNotice("仍在撤销旧会话的执行准入。"); return; }
+      if (value.status !== "committed" || typeof value.lease_key !== "string" || !object(value.claim)
+        || typeof value.receipt_id !== "string") throw new RequestFailure("交接结果尚未确认。", true);
+      setHanded({ claim: value.claim, lease_key: value.lease_key, receipt_id: value.receipt_id });
+      setPendingHandover(null); void load();
+    } catch (failure) {
+      if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取交接结果。");
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
@@ -175,6 +240,11 @@ export default function WorkClaimsPage() {
       const value = await rpc("clued_work_claim_handover_v1",
         { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
       if (epoch.current !== generation) return;
+      if (value.status === "pending" && typeof value.delivery_id === "string" && typeof value.receipt_id === "string") {
+        setPendingHandover({ delivery_id: value.delivery_id, receipt_id: value.receipt_id });
+        setNotice("交接正在撤销旧会话的执行准入，完成后才会生成新钥匙。");
+        void load(); return;
+      }
       if (value.status !== "committed") throw new RequestFailure("交接结果尚未确认。", true);
       if (typeof value.lease_key !== "string" || !object(value.claim) || typeof value.receipt_id !== "string") {
         setNotice("这次交接已经完成过，钥匙只显示一次。如果还没交给新会话，请再点一次“交给新会话”。");
@@ -198,9 +268,22 @@ export default function WorkClaimsPage() {
   return <main className="context-page owner-confirm">
     <header><Link href="/">Clued</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims/race">多份模式</Link></header>
     <h1>谁在做哪个任务</h1>
-    <p className="context-muted">这里列出你名下所有正在进行的认领。“标签”是 Agent 自己报的，Clued 无法核实。某个会话卡住时，可以把它的认领“交给新会话”：原会话再也续不了期、也释放不了它，新会话凭这里显示一次的交接文字接着干。</p>
+    <p className="context-muted">这里列出你名下所有正在进行的认领。开启自由交接后，已获授权的 Agent 可以直接通过 Clued 交接，无需你复制钥匙。旧会话无法响应时，也可以使用“交给新会话”恢复。“标签”是 Agent 自己报的，Clued 无法核实。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Clued</Link> 后查看认领。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
+      <section aria-label="自由交接设置">
+        <style>{`.context-page .handover-free-toggle{display:inline-flex;align-items:center;gap:12px;position:relative;font-weight:600}.handover-free-toggle input{position:absolute;left:0;top:0;width:44px;height:26px;opacity:0;margin:0;z-index:1;cursor:pointer}.handover-free-track{display:inline-block;width:44px;height:26px;border-radius:14px;background:#c8c8ce;padding:3px;box-sizing:border-box}.handover-free-track::after{content:"";display:block;width:20px;height:20px;background:#fff;border-radius:50%;box-shadow:0 1px 3px #0002;transition:transform .12s}.handover-free-toggle input:checked+.handover-free-track{background:#f47a36}.handover-free-toggle input:checked+.handover-free-track::after{transform:translateX(18px)}.handover-free-toggle input:focus-visible+.handover-free-track{outline:2px solid #bf520b;outline-offset:3px}.handover-free-toggle input:disabled{cursor:default}.handover-free-toggle input:disabled+.handover-free-track{opacity:.55}@media(prefers-reduced-motion:reduce){.handover-free-track::after{transition:none}}`}</style>
+        {handoverSetting ? <label className="handover-free-toggle"><input type="checkbox" role="switch" aria-label="自由交接"
+          checked={handoverSetting.enabled} disabled={working}
+          onChange={event => void changeHandoverSetting(event.target.checked)} /><span className="handover-free-track" aria-hidden="true" /><span>自由交接</span></label>
+          : <p role="status">自由交接：设置读取中，当前无法修改。</p>}
+        <p className="context-muted">默认开启。允许已获授权的 Agent 通过 Clued 直接交接认领，无需你复制钥匙。关闭后，新的自动交接会被服务拒绝。</p>
+        {handoverSetting && !handoverSetting.available && <p role="status">自由交接尚未开放，设置会在开放后生效。</p>}
+      </section>
+      {pendingHandover && <section aria-label="交接处理中" role="status">
+        <h2>交接处理中</h2><p>正在撤销旧会话的执行准入，完成后会显示交接文字。</p>
+        <button type="button" disabled={working} onClick={() => void collectHandover()}>检查交接状态</button>
+      </section>}
       {handed && <section aria-label="交接文字" role="status"><h2>交接文字（只显示这一次）</h2>
         <p>把下面整段贴给新会话。离开或刷新本页后不会再显示；交给错了就再交接一次，这段会作废。</p>
         <pre>{handoverText(handed.claim, handed.lease_key, handed.receipt_id)}</pre>
@@ -211,7 +294,7 @@ export default function WorkClaimsPage() {
         <p>任务：{text(issued.view.task_title)}（{shortId(issued.view.task_id)}）</p>
         <p>现在的持有者：{text(issued.view.holder_name)}{text(issued.view.holder_vendor) && "（" + text(issued.view.holder_vendor) + "）"}
           {text(issued.view.holder_label) && " · 自报：" + text(issued.view.holder_label)}</p>
-        <p>交接后：原会话的续租和释放都会被拒绝（它拿不到新钥匙）；新钥匙只显示一次；之后每次续租和释放都必须带钥匙。认领编号不变，PR 里的认领标记不用改，所以原会话若还在推送同一个 PR，准入检查不会拦它，请同时停掉原会话。</p>
+        <p>交接会更换钥匙并撤销旧会话的执行准入。服务确认旧准入已撤销后，才会交付新钥匙；钥匙只显示一次。认领编号保持不变。</p>
         <p>预览有效期至 {new Date(issued.expires_at).toLocaleTimeString()}。</p>
         <button type="button" disabled={working} onClick={() => void confirm()}>确认交接</button>
         <button type="button" disabled={working} onClick={() => setIssued(null)}>取消</button>
@@ -257,7 +340,7 @@ function claimRow(claim: Json, now: number, onHandover: (() => void) | null, wor
       <dt>在做什么</dt><dd>{text(claim.holder_label) ? <>{text(claim.holder_label)} <span className="context-muted">（Agent 自报）</span></> : <span className="context-muted">（Agent 没有填标签）</span>}</dd>
       <dt>任务</dt><dd>{text(claim.task_title) || "（无标题）"} {task ? <Link href={task}><code>{text(claim.task_id)}</code></Link> : <code>{text(claim.task_id)}</code>} · {text(claim.context_key)}</dd>
       <dt>认领</dt><dd><code>{text(claim.claim_id)}</code> · fence {String(claim.fence)}{claim.lease_key_required === true && " · 已交接过，续租必须带钥匙"}</dd>
-      <dt>状态</dt><dd>{STATES[state] ?? state}{state === "RELEASED" && text(claim.released_outcome) && "（" + (OUTCOMES[text(claim.released_outcome)] ?? text(claim.released_outcome)) + "）"}
+      <dt>状态</dt><dd>{claim.execution_handover_pending === true ? "交接处理中" : STATES[state] ?? state}{state === "RELEASED" && text(claim.released_outcome) && "（" + (OUTCOMES[text(claim.released_outcome)] ?? text(claim.released_outcome)) + "）"}
         {!live && text(claim.ended_at) && " · 结束于 " + beijing(claim.ended_at)}</dd>
       <dt>领取</dt><dd>{beijing(claim.issued_at)}</dd>
       <dt>到期</dt><dd>{beijing(claim.expires_at)}{live && " · " + remaining(claim.expires_at, now)}</dd>

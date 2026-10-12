@@ -34,14 +34,16 @@ test("current source travels exactly once, while full public metadata stays in c
   const contract = source(markdown);
   const payload = { ...bootstrap, lifecycle: { ...bootstrap.lifecycle, contract: { ...bootstrap.lifecycle.contract, version: contract.version } },
     agent_contract: { version: contract.version, sha256: contract.sha256 } };
-  const [response] = allParts(markdown, payload);
-  assert.equal(response.content.length, 2);
-  assert.equal(response.content[1].text, markdown);
-  assert.deepEqual(JSON.parse(response.content[0].text), payload);
-  assert.equal(response.structuredContent.agent_contract.version, contract.version);
-  assert.equal(response.structuredContent.agent_contract.markdown_in, "content[1]");
-  for (const field of ["endpoints", "authentication", "capabilities"]) assert.equal(field in response.structuredContent, false);
-  assert.equal(JSON.stringify(response.structuredContent).includes("# Clued Agent Contract"), false);
+  const responses = allParts(markdown, payload);
+  for (const [index,response] of responses.entries()) {
+    assert.equal(response.content.length, responses.length === 1 ? 2 : 3);
+    assert.deepEqual(JSON.parse(response.content[0].text), payload);
+    assert.equal(response.structuredContent.agent_contract.version, contract.version);
+    assert.equal(response.structuredContent.agent_contract.markdown_in, "content[1]");
+    for (const field of ["endpoints", "authentication", "capabilities"]) assert.equal(field in response.structuredContent, false);
+    assert.equal(JSON.stringify(response.structuredContent).includes("# Clued Agent Contract"), false);
+    if (responses.length > 1) assert.match(response.content[2].text, index === responses.length - 1 ? /last part/ : /part=/);
+  }
 });
 
 test("oversized contract uses the fewest whole-section parts and an explicit next/last hint", () => {

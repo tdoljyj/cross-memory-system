@@ -19,7 +19,7 @@ const TASK = '11111111-1111-4111-8111-111111111111';
 const KEY = 'clued_lk_' + 'a'.repeat(64);
 
 function fixture(compiled) {
-  const hooks = [], effects = [], calls = [], copied = [];
+  const hooks = [], effects = [], calls = [], copied = [], settingCalls = [];
   let cursor = 0, authCallback, root;
   const equal = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
   const React = {
@@ -31,7 +31,9 @@ function fixture(compiled) {
   };
   const auth = { onAuthStateChange(cb) { authCallback = cb; return { data: { subscription: { unsubscribe() { authCallback = null; } } } }; } };
   const supabase = { auth, rpc(name, args) { let resolve, reject;
-    const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ name, args, resolve, reject }); return promise; } };
+    if (name === 'clued_work_free_handover_setting_v1') return Promise.resolve({ data: { status: 'ok', enabled: true, version: 0, available: true }, error: null });
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    (name === 'clued_work_free_handover_setting_set_v1' ? settingCalls : calls).push({ name, args, resolve, reject }); return promise; } };
   const exports = {};
   vm.runInNewContext(compiled, { exports, require(name) {
     if (name === 'react') return React;
@@ -52,7 +54,7 @@ function fixture(compiled) {
   function buttons(t) { return nodes('button').filter(n => text(n) === t); }
   function button(t) { const n = buttons(t)[0]; assert.ok(n, t); return n; }
   render();
-  return { calls, copied, render, nodes, text, settle, emit, buttons, button, unmount: () => hooks.forEach(h => h?.cleanup?.()) };
+  return { calls, settingCalls, copied, render, nodes, text, settle, emit, buttons, button, unmount: () => hooks.forEach(h => h?.cleanup?.()) };
 }
 
 const session = id => ({ user: { id, email: id + '@example.test' }, access_token: 'fixture-' + id });
@@ -102,7 +104,7 @@ test('work claims page: each live claim shows who holds it, its label as self-re
 test('work claims page: recently ended claims on request, with when and how they ended', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   await listed(f, [row()]);
-  const toggle = f.nodes('input').find(n => n.props.type === 'checkbox');
+  const toggle = f.nodes('input').find(n => n.props.type === 'checkbox' && n.props.role !== 'switch');
   toggle.props.onChange({ target: { checked: true } }); f.render();
   assert.deepEqual(plain(f.calls[1].args), { p_input: { ended_within_hours: 24 } });
   f.calls[1].resolve({ data: { status: 'ok', claims: [row()], ended: [
@@ -188,4 +190,54 @@ test('work claims page: refusals are explained', async t => {
 test('grants page links to the work claims page', t => {
   const f = fixture(GRANTS); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', null);
   assert.ok(f.nodes('a').some(n => n.props.href === '/work-claims'));
+});
+
+test('work claims page: free handover loads On and changes only after the Native CAS result', async t => {
+  const f=fixture(PAGE);t.after(()=>f.unmount());await listed(f);
+  const toggle=()=>f.nodes('input').find(n=>n.props.role==='switch');
+  assert.equal(toggle().props.checked,true);assert.equal(toggle().props.disabled,false);
+  toggle().props.onChange({target:{checked:false}});f.render();
+  assert.equal(toggle().props.checked,true,'no optimistic permission change');
+  assert.equal(toggle().props.disabled,true);
+  assert.deepEqual(plain(f.settingCalls[0].args),{p_input:{enabled:false,base_version:0}});
+  f.settingCalls[0].resolve({data:{status:'committed',enabled:false,version:1},error:null});await f.settle();
+  assert.equal(toggle().props.checked,false);assert.equal(toggle().props.disabled,false);
+  toggle().props.onChange({target:{checked:true}});f.render();
+  assert.deepEqual(plain(f.settingCalls[1].args),{p_input:{enabled:true,base_version:1}});
+  f.settingCalls[1].resolve({data:{status:'rejected',error_code:'work_claim_handover_setting_version_conflict'},error:null});await f.settle();
+  assert.equal(toggle(),undefined);assert.ok(f.text().includes('设置已在别处改变'));
+});
+
+test('work claims page: Pending never claims completion or shows a key before collection', async t => {
+  const f=fixture(PAGE);t.after(()=>f.unmount());await listed(f);
+  f.button('交给新会话').props.onClick();
+  f.calls[1].resolve({data:{status:'issued',confirmation_token:'fixture',view_digest:'d'.repeat(64),
+    expires_at:'2026-10-12T00:00:00Z',confirmation_view:{task_title:'fixture'}},error:null});await f.settle();
+  f.button('确认交接').props.onClick();
+  f.calls[2].resolve({data:{status:'pending',delivery_id:'delivery',receipt_id:'pending-receipt'},error:null});await f.settle();
+  assert.equal(f.nodes('pre').length,0);assert.ok(f.text().includes('交接处理中'));assert.ok(!f.text().includes(KEY));
+  f.calls[3].resolve({data:{status:'ok',claims:[row()]},error:null});await f.settle();
+  f.button('检查交接状态').props.onClick();
+  assert.deepEqual(plain(f.calls[4].args),{p_input:{action:'collect',delivery_id:'delivery'}});
+  f.calls[4].resolve({data:{status:'committed',claim:row(),lease_key:KEY,receipt_id:'done'},error:null});await f.settle();
+  assert.equal(f.nodes('pre').length,1);assert.ok(f.text().includes(KEY));
+});
+
+test('work claims page: a refreshed Native page recovers only its server-returned pending delivery',async t=>{
+  const f=fixture(PAGE);t.after(()=>f.unmount());
+  const delivery='77777777-7777-4777-8777-777777777777';
+  await listed(f,[row({execution_handover_pending:true,handover_pending_delivery_id:delivery})]);
+  assert.ok(f.text().includes('交接处理中'));assert.equal(f.nodes('pre').length,0);
+  f.button('检查交接状态').props.onClick();
+  assert.deepEqual(plain(f.calls[1].args),{p_input:{action:'collect',delivery_id:delivery}});
+});
+
+test('work claims page: a late setting result from another account cannot change the current switch',async t=>{
+  const f=fixture(PAGE);t.after(()=>f.unmount());await listed(f);
+  f.nodes('input').find(n=>n.props.role==='switch').props.onChange({target:{checked:false}});f.render();
+  f.emit('SIGNED_IN',session('second-owner'));
+  f.calls[1].resolve({data:{status:'ok',claims:[]},error:null});await f.settle();
+  f.settingCalls[0].resolve({data:{status:'committed',enabled:false,version:1,available:true},error:null});await f.settle();
+  assert.equal(f.nodes('input').find(n=>n.props.role==='switch').props.checked,true);
+  assert.ok(f.text().includes('second-owner@example.test'));assert.ok(!f.text().includes('自由交接已关闭'));
 });
