@@ -287,6 +287,11 @@ def load_tests(loader, tests, pattern):
     response_module = importlib.util.module_from_spec(response_spec)
     response_spec.loader.exec_module(response_module)
     tests.addTests(loader.loadTestsFromModule(response_module, pattern=pattern))
+    workflow_path = ROOT / "tests/test_model_workflow_saved_scorers.py"
+    workflow_spec = importlib.util.spec_from_file_location("m2_workflow_scorer_specifications", workflow_path)
+    workflow_module = importlib.util.module_from_spec(workflow_spec)
+    workflow_spec.loader.exec_module(workflow_module)
+    tests.addTests(loader.loadTestsFromModule(workflow_module, pattern=pattern))
     return tests
 
 
