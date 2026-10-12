@@ -4,6 +4,7 @@ No model, tokenizer, new corpus, Gold, live qualification or actual usage claim.
 import builtins
 import copy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import types
@@ -16,6 +17,36 @@ OLD.__file__, OLD.__package__ = str(OLD_PATH), ""
 exec(compile(OLD_PATH.read_bytes(), str(OLD_PATH), "exec"), OLD.__dict__)
 B = OLD.private_source("completion_v2_records")
 R = OLD.private_source("completion_saved_response")
+OBSERVED_PATH = ROOT / "tests/test_model_observed_completion_response.py"
+OBSERVED_SPEC = importlib.util.spec_from_file_location("private_v2_observed_fixture", OBSERVED_PATH)
+OBS = importlib.util.module_from_spec(OBSERVED_SPEC)
+OBSERVED_SPEC.loader.exec_module(OBS)
+
+
+def observed_fixture(stop="eog"):
+    index, fields, _, old_observation, payload = fixture()
+    fmt = OBS.binding(stop)
+    frames = [OBS.input_frame(), OBS.sample(), OBS.sample(2, 102, stop == "eog"),
+              OBS.terminal(reason=stop)]
+    sidecar = OBS.sidecar(frames)
+    stdout = payload + (b" [end of text]\n\n\n" if stop == "eog" else b"\n\n")
+    fields["capture"].update(stdout_sha256=hashlib.sha256(stdout).hexdigest(),
+                             stdout_retained_bytes=len(stdout))
+    usage = {k: v for k, v in old_observation["usage"].items()
+             if k not in {"input_tokens", "output_tokens"}}
+    usage["output_bytes"] = len(stdout)
+    observation = OBS.snapshot(stdout, b"", sidecar, fmt, usage=usage)
+    return index, fields, fmt, observation, stdout, sidecar, payload
+
+
+def build_observed(index, fields, fmt, observation, stdout, sidecar, **kwargs):
+    args = {"schema_bundle": OLD.SCHEMAS, "port_digest": OLD.digest,
+            "observation_raw": OLD.encoded(observation), "observation_validator": machine,
+            "lifecycle_validator": lifecycle, "token_record_raw": sidecar,
+            "expected_limits": copy.deepcopy(OBS.LIMITS),
+            "output_validator": lambda *_: fields["result_fields"]["pre_output_schema_validation_status"]}
+    args.update(kwargs)
+    return B.build_observed_completion_records(stdout, b"", fmt, index, fields, **args)
 
 
 def lifecycle(context):
@@ -222,4 +253,117 @@ class CompletionV2RecordSemantics(unittest.TestCase):
         failed(f, o)
         f["result_fields"]["error"] = None
         self.assertIsNone(build(i, f, b, o, p)["result_raw"])
+
+
+class ObservedCompletionV2BridgeSemantics(unittest.TestCase):
+    def test_both_source_stops_connect_to_existing_projector_without_old_pins(self):
+        for stop in ("eog", "predict"):
+            with self.subTest(stop=stop):
+                i, f, b, o, stdout, sidecar, payload = observed_fixture(stop)
+                got = build_observed(i, f, b, o, stdout, sidecar)
+                self.assertEqual(got["gaps"], [])
+                result = json.loads(got["result_raw"])
+                self.assertEqual(result["usage"]["input_tokens"], 2)
+                self.assertEqual(result["usage"]["output_tokens"], 2)
+                self.assertEqual(result["usage"]["output_bytes"], len(stdout))
+                self.assertEqual(got["record"]["payload_raw"], payload)
+                self.assertIs(got["token_record_raw"], sidecar)
+                self.assertEqual(got["token_record_sha256"], hashlib.sha256(sidecar).hexdigest())
+                projected = OLD.project([i], [got["record"]])
+                self.assertEqual(projected["snapshot"][0]["raw_output"], payload)
+                self.assertEqual(got["qualification"], "NOT_ISSUED")
+                self.assertIsNone(build(i, f, b, None, stdout)["result_raw"])
+
+    def test_missing_non_token_accounting_or_time_never_produces_success(self):
+        for key in OBS.M.NON_TOKEN_USAGE_FIELDS:
+            with self.subTest(key=key):
+                i, f, b, o, stdout, sidecar, _ = observed_fixture()
+                del o["usage"][key]
+                got = build_observed(i, f, b, o, stdout, sidecar)
+                self.assertIsNone(got["result_raw"])
+                self.assertIsNone(got["adapted"]["usage"][key])
+                self.assertEqual(got["stdout_raw"], stdout)
+                self.assertEqual(got["token_record_raw"], sidecar)
+
+    def test_failed_process_preserves_usage_and_raw_without_candidate_payload(self):
+        i, f, b, o, stdout, sidecar, _ = observed_fixture()
+        failed(f, o)
+        o["process_outcome"] = "PROCESS_TIMEOUT"
+        got = build_observed(i, f, b, o, stdout, sidecar)
+        self.assertEqual(got["gaps"], [])
+        self.assertFalse(got["adapted"]["candidate_parsed"])
+        self.assertIsNone(got["record"]["payload_raw"])
+        self.assertEqual(json.loads(got["result_raw"])["usage"]["output_tokens"], 2)
+        self.assertEqual(got["stdout_raw"], stdout)
+        self.assertEqual(got["token_record_raw"], sidecar)
+        self.assertEqual(OLD.project([i], [got["record"]])["snapshot"][0]["terminal_status"], "MODEL_TIMEOUT")
+
+    def test_partial_sidecar_and_cleanup_unknown_preserve_unknown_tokens(self):
+        for fault in ("partial", "cleanup", "capture"):
+            with self.subTest(fault=fault):
+                i, f, b, o, stdout, sidecar, _ = observed_fixture()
+                failed(f, o)
+                o["process_outcome"] = "PROCESS_TIMEOUT"
+                if fault == "partial":
+                    sidecar = sidecar.rsplit(b"\n", 2)[0] + b"\n"
+                    o["sidecar_sha256"] = hashlib.sha256(sidecar).hexdigest()
+                elif fault == "cleanup":
+                    o["owned_cleanup_verified"] = False
+                    f["capture"]["owned_cleanup_verified"] = False
+                else:
+                    o["captures"]["sidecar"]["read_error"] = True
+                got = build_observed(i, f, b, o, stdout, sidecar)
+                self.assertIsNone(got["result_raw"])
+                self.assertIsNone(got["adapted"]["usage"]["output_tokens"])
+                self.assertEqual(got["token_record_raw"], sidecar)
+
+    def test_capture_and_cleanup_conflicting_facts_cannot_be_overridden(self):
+        for key, flag in (("stdout", "complete"), ("stderr", "read_error"), (None, None)):
+            i, f, b, o, stdout, sidecar, _ = observed_fixture()
+            if key is None:
+                f["capture"]["owned_cleanup_verified"] = False
+            else:
+                f["capture"][key + "_" + flag] = not f["capture"][key + "_" + flag]
+            got = build_observed(i, f, b, o, stdout, sidecar)
+            self.assertIsNone(got["result_raw"])
+            self.assertTrue(any("FACTS_CONFLICT" in gap for gap in got["gaps"]))
+
+    def test_lifecycle_receives_sidecar_hash_and_mutation_refuses(self):
+        i, f, b, o, stdout, sidecar, _ = observed_fixture()
+        def check(context):
+            self.assertEqual(context["token_record_sha256"], hashlib.sha256(sidecar).hexdigest())
+            self.assertEqual(context["process_observation"]["sidecar_sha256"], context["token_record_sha256"])
+            return lifecycle(context)
+        self.assertIsNotNone(build_observed(i, f, b, o, stdout, sidecar, lifecycle_validator=check)["result_raw"])
+        def mutate(context):
+            context["token_record_sha256"] = "f" * 64
+            return lifecycle(context)
+        self.assertIsNone(build_observed(i, f, b, o, stdout, sidecar, lifecycle_validator=mutate)["result_raw"])
+
+    def test_invalid_source_limits_raw_identity_and_business_validator_refuse(self):
+        for fault in ("source", "limits", "raw", "schema"):
+            i, f, b, o, stdout, sidecar, _ = observed_fixture()
+            extra = {}
+            if fault == "source":
+                b["completion_source_sha256"] = R.RUNTIME_SOURCE_PINS["completion_source_sha256"]
+            elif fault == "limits":
+                extra["expected_limits"] = {**OBS.LIMITS, "output_tokens": True}
+            elif fault == "raw":
+                sidecar += b" "
+            else:
+                extra["output_validator"] = lambda *_: False
+            got = build_observed(i, f, b, o, stdout, sidecar, **extra)
+            self.assertIsNone(got["result_raw"])
+            self.assertEqual(got["stdout_raw"], stdout)
+            self.assertEqual(got["token_record_raw"], sidecar)
+
+    def test_failure_actual_non_token_overrun_retained_and_success_refused(self):
+        i, f, b, o, stdout, sidecar, _ = observed_fixture()
+        o["usage"]["cost_minor_units"] = i["request"]["budgets"]["max_cost_minor_units"] + 1
+        self.assertIsNone(build_observed(i, f, b, o, stdout, sidecar)["result_raw"])
+        failed(f, o, "MODEL_BUDGET_EXCEEDED")
+        o["process_outcome"] = "PROCESS_EXIT"
+        got = build_observed(i, f, b, o, stdout, sidecar)
+        self.assertEqual(json.loads(got["result_raw"])["usage"]["cost_minor_units"], 1)
+        self.assertIn("cost_minor_units", got["budget_breaches"])
 
