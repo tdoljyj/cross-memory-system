@@ -1947,7 +1947,13 @@ async function callRpc(
   if (!token) {
     throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
   }
-  const payload = typeof args === "object" && args ? args : {};
+  const supplied = typeof args === "object" && args ? args : {};
+  // Hosts append reserved MCP annotations inside tool arguments. They are
+  // transport context, never work-claim intent, authority or receiving proof.
+  // Keep the business RPC's strict allowlist and every other argument intact.
+  const payload = name in workClaimRpcByTool && !Array.isArray(supplied)
+    ? Object.fromEntries(Object.entries(supplied).filter(([key]) => key !== "_meta"))
+    : supplied;
   if (name === "clued_record_list") validateRecordListInput(payload);
   if (name === "clued_event_carrier_transition") validateEventCarrierTransitionInput(payload);
   if (name === "clued_record_mutate") validateRecordMutationInput(payload);
