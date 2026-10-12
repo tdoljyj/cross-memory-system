@@ -153,6 +153,20 @@ begin
   if exists(select 1 from clued_private.work_claim_execution_policy_v1 where activated_at is not null) then
     raise exception 'work_claim_activation_already_active';
   end if;
+  -- A historical dispatch can have a metered head but no bound PR. Never infer
+  -- its repository from a Task or silently finish an empty revocation drain.
+  -- Require an existing exact target before allowing the cutover.
+  if exists(select 1 from clued_private.work_claims_v1 w
+      cross join lateral unnest(w.admitted_heads) h(head)
+      where w.bound_pr is null and h.head ~ '^[0-9a-f]{40}$'
+        and exists(select 1 from clued_private.work_claims_v1 prior
+          where prior.user_id=w.user_id and prior.task_id=w.task_id and prior.lease_key_required)
+        and not exists(select 1 from clued_private.work_claim_head_authorizations_v1 a
+          where a.claim_id=w.claim_id and a.head_sha=h.head)
+        and not exists(select 1 from clued_private.work_claim_execution_admissions_v1 a
+          where a.claim_id=w.claim_id and a.head_sha=h.head)) then
+    raise exception 'work_claim_activation_legacy_target_unmapped';
+  end if;
   update clued_private.work_claim_execution_policy_v1 set activated_at=clock_timestamp(),
     qualification_commit=p_qualification_commit;
   -- Historical handovers remain the lineage source. Ordinary unrelated Tasks

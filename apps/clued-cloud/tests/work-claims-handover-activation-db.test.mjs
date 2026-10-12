@@ -76,6 +76,10 @@ test('qualified activation drains legacy execution, preserves private holder and
     const next=await claim(task,'fixture/**');assert.equal(next.status,'committed');assert.equal(next.claim.lease_key_required,false);
     assert.equal((await admit(next.claim,'owner/repository#8','b'.repeat(40))).verdict,'ADMITTED');
     const unrelated=await claim(await createTask('ordinary unrelated'),'ordinary/**');assert.equal(unrelated.status,'committed');
+    const dispatchStart=await claim(await createTask('guarded dispatch'),'dispatch/**');assert.equal(dispatchStart.status,'committed');
+    const dispatch=(await handover(dispatchStart.claim.claim_id)).result;assert.equal(dispatch.status,'committed');
+    await admin.query('update clued_private.work_claims_v1 set admitted_heads=$2::text[] where claim_id=$1',
+      [dispatch.claim.claim_id,['e'.repeat(40)]]);
     const before=(await admin.query(`select claim_id,fence,lease_version,lease_key_hash,bound_pr,admitted_heads,renewals,
       expires_at,hard_deadline_at,write_set,trigger_refs,copy_index from clued_private.work_claims_v1 order by claim_id`)).rows;
     // A metered historical head can predate the new admission table and no
@@ -87,11 +91,20 @@ test('qualified activation drains legacy execution, preserves private holder and
     await assert.rejects(admin.query('select clued_private.work_claim_execution_activate_v1($1)', ['invalid']),/qualification_invalid/);
     const caller=server.getPgClient();clients.push(caller);await caller.connect();await caller.query('set role anon');
     await assert.rejects(caller.query('select clued_private.work_claim_execution_activate_v1($1)', ['f'.repeat(40)]),/permission denied/);
+    await assert.rejects(admin.query('select clued_private.work_claim_execution_activate_v1($1)', ['f'.repeat(40)]),
+      /legacy_target_unmapped/,'unbound historical heads cannot silently escape the drain');
+    assert.equal((await admin.query('select activated_at from clued_private.work_claim_execution_policy_v1')).rows[0].activated_at,null);
+    // The established CI principal supplies a real exact dispatch target while
+    // rollout is staged. It does not invent a PR binding or change the key.
+    assert.equal((await command({claim_id:dispatch.claim.claim_id,ci_dispatch:true,repository:'owner/repository',
+      head_sha:'e'.repeat(40),target_branch:'main',workflow:'clued-g4-database.yml',changed_paths:['dispatch/file']})).verdict,'ADMITTED');
     // Only the isolated fixture's database owner calls this. Production needs
     // a separately approved exact migration bound to real consumer evidence.
     assert.equal((await admin.query('select clued_private.work_claim_execution_activate_v1($1) v',['f'.repeat(40)])).rows[0].v.status,'activated');
     assert.ok((await command({action:'revocations_list'})).revocations.some(row=>row.head_sha==='d'.repeat(40)),
       'historical metered head without a modern admission must be explicitly revoked');
+    assert.ok((await command({action:'revocations_list'})).revocations.some(row=>row.head_sha==='e'.repeat(40)
+      && row.pr_ref===null && row.workflow==='clued-g4-database.yml'),'unbound dispatch uses its actual target');
     assert.deepEqual((await admin.query(`select claim_id,fence,lease_version,lease_key_hash,bound_pr,admitted_heads,renewals,
       expires_at,hard_deadline_at,write_set,trigger_refs,copy_index from clued_private.work_claims_v1 order by claim_id`)).rows,before);
     const state=async id=>(await admin.query('select lease_key_required,execution_epoch,execution_handover_pending from clued_private.work_claims_v1 where claim_id=$1',[id])).rows[0];
