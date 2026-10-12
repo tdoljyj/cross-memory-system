@@ -57,6 +57,7 @@ create or replace function clued_private.work_claim_gate_v1(p_user uuid,p_bindin
   p_mode text,p_resources text[],p_claim jsonb) returns jsonb
 language plpgsql volatile security definer set search_path='' as $$
 declare c clued_private.work_claims_v1%rowtype; b public.clued_agent_bindings%rowtype; code text;
+  safe_detail jsonb:='{}'::jsonb;
 begin
   if p_mode not in ('collision_only','require_claim') or p_door is null or p_operation is null then
     raise exception 'work_claim_gate_invalid' using errcode='22023'; end if;
@@ -73,18 +74,25 @@ begin
     if not found then code:='work_claim_not_found';
     elsif c.holder_binding_id is distinct from p_binding then code:='work_claim_not_holder';
     elsif c.outcome='not_adopted' then code:='copy_not_adopted';
-    elsif c.status<>'ACTIVE' or c.expires_at<=clock_timestamp() then code:='work_claim_not_active';
-    elsif c.fence<>(p_claim->>'fence')::bigint then code:='work_claim_fence_mismatch'; end if;
+    elsif c.fence<>(p_claim->>'fence')::bigint then code:='work_claim_fence_mismatch';
+    elsif c.status<>'ACTIVE' or c.expires_at<=clock_timestamp() then code:='work_claim_not_active'; end if;
     if code is null and (c.execution_handover_pending or p_claim ? 'lease_key'
       or (c.lease_key_required and clued_private.work_claim_execution_enabled_v1())) then
       code:=clued_private.work_claim_execution_key_error_v1(c,p_binding,p_claim->>'lease_key');
     end if;
     if code is not null then
+      if code='work_claim_fence_mismatch' then
+        safe_detail:=jsonb_build_object('expected_fence',c.fence);
+      elsif code='work_claim_not_active' then
+        safe_detail:=jsonb_build_object('claim_status',case when c.status='ACTIVE' then 'EXPIRED' else c.status end);
+      elsif code='copy_not_adopted' then
+        safe_detail:=jsonb_build_object('task_id',c.task_id,'copy_index',c.copy_index);
+      end if;
       select * into b from public.clued_agent_bindings where id=p_binding and user_id=p_user;
       if b.id is null then raise exception 'work_claim_gate_invalid' using errcode='22023'; end if;
       return clued_private.work_claim_reject_log_v1(b,coalesce(c.context_key,'global'),c.task_id,
         (p_claim->>'claim_id')::uuid,p_door||':'||p_operation,code,
-        jsonb_build_object('door',p_door,'resources',coalesce(to_jsonb(p_resources),'[]'::jsonb)));
+        safe_detail||jsonb_build_object('door',p_door,'resources',coalesce(to_jsonb(p_resources),'[]'::jsonb)));
     end if;
   end if;
   return clued_private.work_claim_gate_before_execution_v1(p_user,p_binding,p_door,p_operation,p_mode,
