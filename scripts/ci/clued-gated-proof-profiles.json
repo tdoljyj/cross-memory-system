@@ -3187,10 +3187,10 @@
         "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
       },
       "source_acceptance": {
-        "status": "candidate",
-        "authority": null,
-        "decision_ref": null,
-        "receipt_id": null,
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
         "subject_sha256": "b88ecdd231b39225d584d6c9b6c953ea3cf925697b98dbaf3c36862fee82b24b"
       }
     },
@@ -3391,10 +3391,10 @@
         "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
       },
       "source_acceptance": {
-        "status": "candidate",
-        "authority": null,
-        "decision_ref": null,
-        "receipt_id": null,
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
         "subject_sha256": "e4b01013d27cf8f25facf340b2d5f4bd8bfb0e2b7d88a86f787b62f9295187df"
       }
     },
@@ -3595,10 +3595,10 @@
         "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
       },
       "source_acceptance": {
-        "status": "candidate",
-        "authority": null,
-        "decision_ref": null,
-        "receipt_id": null,
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
         "subject_sha256": "b136679acfaf3b259b96541c3cf8b2c28b039a039af3b9312e02b355b2e75ab7"
       }
     },
@@ -3799,10 +3799,10 @@
         "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
       },
       "source_acceptance": {
-        "status": "candidate",
-        "authority": null,
-        "decision_ref": null,
-        "receipt_id": null,
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
         "subject_sha256": "39deb86504c184e7e31950f555738bec0b69657be4264c67f20f5ad801c35a44"
       }
     },
@@ -4003,10 +4003,10 @@
         "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
       },
       "source_acceptance": {
-        "status": "candidate",
-        "authority": null,
-        "decision_ref": null,
-        "receipt_id": null,
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
         "subject_sha256": "ba74602e8b9c0c79f10565447e99fbb208d086a00ce7aeb6a6924325ec488e9a"
       }
     },
@@ -4207,10 +4207,10 @@
         "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
       },
       "source_acceptance": {
-        "status": "candidate",
-        "authority": null,
-        "decision_ref": null,
-        "receipt_id": null,
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
         "subject_sha256": "f0fed0923d61b859f873fc4fa118f17d724279db5f169fe99a0dd6a5f8b591cc"
       }
     },
@@ -4411,10 +4411,10 @@
         "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
       },
       "source_acceptance": {
-        "status": "candidate",
-        "authority": null,
-        "decision_ref": null,
-        "receipt_id": null,
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
         "subject_sha256": "4cc987fb8861a2b6b3651cad17272a4c2a97a25fc05fdf349bc6f22b13cfce1f"
       }
     }
