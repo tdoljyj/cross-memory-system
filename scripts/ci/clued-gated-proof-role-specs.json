@@ -209,6 +209,16 @@
             "job_id": "untrusted-hosted",
             "definition_sha256": "8d82691a23b560f6b2f2577dadda0820f6fd58af9582d2633d661b88763b4f39"
           }
+        ],
+        "3cb4a7bc0f87d9d4a1d6ec8eac08519b4ee01bfc": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "03a1960869920b29f1ea83500790a22fa46aa71325dac9eb4974d3c115a167fa"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "930cd4c203021cd82e02628dbf3b274749a10cc837e5d8a18a1fc807b87942b6"
+          }
         ]
       }
     },
