@@ -49,7 +49,10 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   const r=await make(),legacy=await rpc(r,{context_key:'global'}),legacyMeasurement=await rpc(r,{context_key:'global',measurement:{limit:1}});
   const candidate=await fs.readFile(path.join(cloud,'supabase/migrations',transportMigration),'utf8');await db.query(candidate);
   const workerSource=await fs.readFile(path.join(cloud,'worker/continuity.ts'),'utf8');
-  assert.equal(hash(workerSource),"2002e9ec99d2bfff36364e20894f02b051129778192be75fc8aa38e9d64d1142");
+  // Bind this current transport regression to the independently reviewed Worker.
+  // The prior 2002e9ec...1142 binding remains in commit 28d57989; R9 registry
+  // and epoch pins are separate and are not changed by this fixture update.
+  assert.equal(hash(workerSource),'331d23cd7f0ceb88fcdcfe71244ad8827d4e6a8fd7ed16da75a252c3060d833e');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'8afae4cbeaecb3430f45dd42c86a8d648b5bfccac9db60569796b3eb96e3a188');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');
   const workerContents=workerSource;
