@@ -437,3 +437,47 @@ test('positive-duration cancelled slot requires stable complete unassigned Hoste
     assert.equal(refused.result.non_execution_proofs.length,0);assert.ok(refused.result.gaps.some(g=>g.code==='NATURAL_EXPECTED_ARTIFACT_MISSING_OR_DUPLICATE'));
   }
 });
+
+
+test('actual RPC offset times retain microseconds, optional receipts do not replace RPC or Native binding',async()=>{
+  const fixture=sourceFixture(),evaluation='10000000-0000-4000-8000-000000000001',claim='10000000-0000-4000-8000-000000000002',
+    four=await import('./merge-admission-four-sources.mjs'),expected={schema:'clued.merge-admission-four-source-expectations/1',repository:env.GITHUB_REPOSITORY,scope:targetScope,
+      admission_sources:[{...fixture.s,source_checkout_sha:subject,default_branch:'main'}],execution_source:{source_checkout_sha:subject,...fixture.execution}};
+  const events=[],r=recorder(e=>events.push(e));
+  r.record('claim_verification',{evaluation_id:evaluation,input:{scope:'project:'+targetScope.project_id,claim_id:claim,head_sha:head},
+    result:{kind:'verdict',verdict:'ADMITTED',reasons:[],payload:{verified_at:'2026-10-11T06:00:02.123456+00:00',claim:{fence:31}}}});
+  r.record('admission_final',{entry:'required',evaluation_id:evaluation,completion:'returned',outcome:{head_sha:head,pr_ref:env.GITHUB_REPOSITORY+'#727',
+    claim_id:claim,enforced:true,admitted:true,verdict:'ADMITTED',reasons:[],admission_mode:{state:'normal',layer:'code'}}});
+  r.record('app_check',{prNumber:727,headSha:head,name:'clued-admission-verified',admitStepOutcome:'success',result:{check_run_id:555,posted:true,conclusion:'success',external_id:'pr:727:run:42'}});
+  for(const e of events)e.source.executed_checkout_sha=subject;
+  const native={repository:env.GITHUB_REPOSITORY,pr_number:727,head_sha:head,run_id:'42',run_attempt:1,
+    native_pr:{number:727,head_sha:head,base_repository:env.GITHUB_REPOSITORY,base_ref:'main',default_branch:'main',state:'open',draft:false},
+    native_run:{id:'42',run_attempt:1,event:'pull_request_target',path:fixture.paths.workflow,head_sha:base,head_branch:'main',pull_requests:[727],status:'completed',conclusion:'success',run_started_at:'2026-10-11T06:00:00.000Z'},
+    native_job:{id:'43',run_id:'42',run_attempt:1,name:'clued-work-admission',status:'completed',conclusion:'success'}},
+    app={id:555,app:{id:5164952},name:'clued-admission-verified',head_sha:head,status:'completed',conclusion:'success',external_id:'pr:727:run:42'},
+    args={finalEvent:events[1],claimEvent:events[0],appEvent:events[2],nativeIdentity:native,appNativeObservation:app,sourceCheckoutSha:subject},
+    check=m=>four.finalAdmissionObservation(m.packet_raw,JSON.stringify(fixture.bytes),JSON.stringify(expected));
+  assert.equal(events[0].payload.verified_at,'2026-10-11T06:00:02.123456Z');assert.equal(events[0].payload.head_admitted_receipt_id,null);
+  for(const receipt of [null,'10000000-0000-4000-8000-000000000003']){
+    const mapped=admissionEnvelopeInput({...args,claimReceiptId:receipt});assert.equal(mapped.status,'ENVELOPE_INPUT_CANDIDATE');
+    assert.equal(mapped.packet.claim_observation.disposition,'valid');assert.equal(mapped.packet.claim_observation.head_admitted_receipt_id,receipt);
+    assert.equal(check(mapped).status,'ADMISSION_PACKET_CANDIDATE');assert.equal(mapped.official_metric,false);assert.equal(mapped.t0,null);
+  }
+  for(const [wire,canonical] of [['2026-10-11T14:00:02.123456+08:00','2026-10-11T06:00:02.123456Z'],
+    ['2026-10-11T01:00:02.000001-05:00','2026-10-11T06:00:02.000001Z'],['2026-10-11T06:00:02+00:00','2026-10-11T06:00:02.000000Z']]){
+    const p=formatNaturalPayload('claim_verification',{result:{payload:{verified_at:wire}}});assert.equal(p.verified_at,canonical);
+  }
+  for(const wire of [null,'2026-02-30T06:00:02.123456+00:00','2026-10-11T06:00:02.1234567+00:00','2026-10-11T06:00:02+99:00','invalid'])
+    assert.equal(formatNaturalPayload('claim_verification',{result:{payload:{verified_at:wire}}}).verified_at,null);
+  const final=formatNaturalPayload('admission_final',{outcome:{claim:{expires_at:'2026-10-11T14:00:02.123456+08:00'},merge_slot:{until:'2026-10-11T06:00:02.000001+00:00'}}});
+  assert.equal(final.claim.expires_at,'2026-10-11T06:00:02.123456Z');assert.equal(final.merge_slot.until,'2026-10-11T06:00:02.000001Z');
+  for(const change of [c=>c.payload.verified_at=null,c=>c.payload.claim_id='10000000-0000-4000-8000-000000000004',c=>c.payload.head_sha=base,c=>c.attempt=2]){
+    const c=structuredClone(events[0]);change(c);assert.equal(admissionEnvelopeInput({...args,claimEvent:c}).status,'PARTIAL');
+  }
+  for(const change of [c=>c.payload.response_kind='error',c=>c.payload.verdict='REJECTED',c=>c.payload.verified_at='2026-10-11T05:59:59.999999Z',c=>c.payload.verified_at='2026-10-11T06:00:03.000001Z']){
+    const c=structuredClone(events[0]);change(c);const m=admissionEnvelopeInput({...args,claimEvent:c});
+    assert.equal(m.status,'ENVELOPE_INPUT_CANDIDATE');assert.notEqual(check(m).status,'ADMISSION_PACKET_CANDIDATE');
+  }
+  const onlyFinal=admissionEnvelopeInput({...args,claimEvent:undefined});assert.equal(onlyFinal.packet.claim_observation.disposition,'unverified');
+  assert.notEqual(check(onlyFinal).status,'ADMISSION_PACKET_CANDIDATE');
+});
