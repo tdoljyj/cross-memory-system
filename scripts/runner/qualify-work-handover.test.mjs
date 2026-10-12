@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
+import {verifyWindowsProtection} from './qualify-work-handover.mjs';
 
 const directory=path.dirname(fileURLToPath(import.meta.url));
 const repository=path.resolve(directory,'../..');
@@ -18,10 +19,26 @@ test('exact-source simulation preserves six verdicts and never certifies live qu
   assert.equal(result.status,0,result.stderr);
   const report=JSON.parse(result.stdout);
   assert.equal(report.boundary,'source_candidate');
+  assert.equal(report.protection_verified,false);
   assert.equal(report.cases.length,6);
   assert.ok(report.cases.every(x=>x.outcome==='pass'));
   for(const key of ['live_pr_qualified','live_dispatch_qualified','external_revocation_qualified','activation_authorized'])
     assert.equal(report[key],false);
+});
+test('Windows current protection refuses writable principals, writable runner, non-admin owner or unavailable data',()=>{
+  const safe={schema:'clued.windows-hook-protection/1',runner_is_administrator:false,
+    targets:[{owner_is_administrator:true,untrusted_write_aces:0,runner_write_aces:0},
+      {owner_is_administrator:true,untrusted_write_aces:0,runner_write_aces:0}]};
+  assert.equal(verifyWindowsProtection(safe).verified,true);
+  for(const targetIndex of [0,1]){
+    for(const [field,value] of [['owner_is_administrator',false],['untrusted_write_aces',1],['runner_write_aces',1]]){
+      const changed=structuredClone(safe);changed.targets[targetIndex][field]=value;
+      assert.throws(()=>verifyWindowsProtection(changed));
+    }
+  }
+  assert.throws(()=>verifyWindowsProtection({...safe,runner_is_administrator:true}));
+  for(const unavailable of [null,{}, {...safe,targets:[]}, {...safe,targets:[{} ,{}]}])
+    assert.throws(()=>verifyWindowsProtection(unavailable));
 });
 test('an accepted repository copy cannot pretend to be the protected installed path',()=>{
   const result=execute(['--hook',path.join(directory,'clued-runner-job-started.mjs')]);

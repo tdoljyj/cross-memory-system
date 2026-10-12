@@ -4,7 +4,55 @@ import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {pathToFileURL,fileURLToPath} from 'node:url';
+
+export function verifyWindowsProtection(report) {
+  assert.ok(report && report.schema==='clued.windows-hook-protection/1', 'Windows protection is unavailable');
+  assert.equal(report.runner_is_administrator,false,'An administrator runner can replace its pre-job protection');
+  assert.ok(Array.isArray(report.targets)&&report.targets.length===2,'Windows protection targets are unavailable');
+  for(const target of report.targets){
+    assert.equal(target.owner_is_administrator,true,'Windows hook owner can change its protection');
+    assert.equal(target.untrusted_write_aces,0,'Windows hook grants write or permission changes to an untrusted principal');
+    assert.equal(target.runner_write_aces,0,'Windows runner can change its own hook protection');
+  }
+  return {verified:true,method:'current_windows_owner_dacl_and_runner_token'};
+}
+
+function readWindowsProtection(){
+  const script=String.raw`
+$ErrorActionPreference = 'Stop'
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$trusted = @('S-1-5-18','S-1-5-32-544')
+# Include actual local Administrator members, never caller-supplied owners.
+$trusted += @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value })
+$writeMask = 0xD0156
+$targets = @()
+foreach ($target in @('C:\ProgramData\CluedRunnerHook','C:\ProgramData\CluedRunnerHook\clued-runner-job-started.mjs')) {
+  $item = Get-Item -LiteralPath $target -Force -ErrorAction Stop
+  if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Redirected hook protection target.' }
+  $acl = Get-Acl -LiteralPath $target -ErrorAction Stop
+  $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+  $untrustedWrites = 0
+  $runnerWrites = 0
+  foreach ($ace in $acl.Access) {
+    if ($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+    if (([int]$ace.FileSystemRights -band $writeMask) -eq 0) { continue }
+    $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier])
+    if ($trusted -notcontains $sid.Value) { $untrustedWrites++ }
+    if ($identity.User.Value -eq $sid.Value -or $principal.IsInRole($sid)) { $runnerWrites++ }
+  }
+  $targets += [ordered]@{ owner_is_administrator=($trusted -contains $ownerSid);untrusted_write_aces=$untrustedWrites;runner_write_aces=$runnerWrites }
+}
+[ordered]@{schema='clued.windows-hook-protection/1';runner_is_administrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);targets=$targets} | ConvertTo-Json -Depth 4 -Compress
+`;
+  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
+    {encoding:'utf8',timeout:10000,windowsHide:true});
+  assert.equal(result.error,undefined,'Windows protection inspection is unavailable');
+  assert.equal(result.status,0,'Windows protection inspection failed');
+  let report;try{report=JSON.parse(result.stdout);}catch{throw new Error('Windows protection report is unavailable');}
+  return verifyWindowsProtection(report);
+}
 
 // Isolated observations exercise the exact protected installed code. They
 // complement, and cannot replace, actual PR/dispatch job and revocation proof.
@@ -12,6 +60,7 @@ const accepted = new Map([
   ['6627684cf0bd92f11085aaa858875381051249456a35f747660f07eaf304abe0', '443a589d0696761104b5bd3c962bf57b34b1ab3f'],
   ['7c35368f8e50f5cd3e73e9edfc8bfe137dc91a3ef66fbdd3e5839bea6226992d', '4f2951a66f995a4a61088f1196399a45521315d3'],
 ]);
+async function main(){
 const args = process.argv.slice(2);
 const candidate = args.includes('--candidate');
 const value = name => { const at=args.indexOf(name); return at<0?null:args[at+1]; };
@@ -24,7 +73,9 @@ assert.equal(fs.lstatSync(hookPath).isSymbolicLink(), false, 'Redirected hook is
 if (!candidate) {
   const parent=path.dirname(hookPath);
   assert.equal(fs.lstatSync(parent).isSymbolicLink(), false, 'Redirected hook directory is refused');
-  if(process.platform!=='win32'){
+  if(process.platform==='win32'){
+    readWindowsProtection();
+  }else{
     for(const target of [parent,hookPath]){
       const stat=fs.statSync(target);
       assert.equal(stat.uid,0,'Installed hook must be administrator-owned');
@@ -103,5 +154,8 @@ assert.equal(digest(),before,'Hook changed during CLI qualification');
 console.log(JSON.stringify({schema:'clued.installed-handover-hook-qualification/1',status:'pass',
   boundary:candidate?'source_candidate':'protected_installed_code',machine:os.hostname(),platform:process.platform,
   node:process.version,uid:process.getuid?.()??null,source_commit:accepted.get(before),source_sha256:before,
-  hook_version:hook.HOOK_VERSION,cases,live_pr_qualified:false,live_dispatch_qualified:false,
+  hook_version:hook.HOOK_VERSION,protection_verified:!candidate,cases,live_pr_qualified:false,live_dispatch_qualified:false,
   external_revocation_qualified:false,activation_authorized:false,observed_at:new Date().toISOString()}));
+}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))
+  main().catch(error=>{console.error(error.message);process.exitCode=1;});
