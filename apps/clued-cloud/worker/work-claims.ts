@@ -68,6 +68,23 @@ const headAuthorization = {
   idempotency_key: idempotencyKey,
 } as const;
 
+const renewProperties = {
+  scope, claim_id: uuid, fence: { type: "integer", minimum: 1 }, lease_version: { type: "integer", minimum: 1 },
+  progress_ref: { type: "string", minLength: 1, maxLength: 200 }, write_set: writeSet, trigger_refs: triggerRefs,
+  lease_key: leaseKey, holder_session_ref: { ...holderSessionRef, description: "Host session id, audit only; recorded when lease_key moves the claim to your Binding." },
+  holder_label: { ...holderLabel, description: "Replaces the claim's label (see clued_work_claim); omit to keep it." },
+  holder_client: holderClient, holder_session_title: holderSessionTitle,
+  ...headAuthorization,
+} as const;
+// Each alternative is a complete object: Hosts that normalize alternatives
+// independently must preserve the surrounding business properties. anyOf
+// also tolerates a Host that cannot apply `not`, without an ambiguous oneOf.
+// SQL remains the command validator and authority boundary.
+const renewCommand = (action: string, required: readonly string[]) => ({
+  type: "object", properties: { ...renewProperties, action: { type: "string", const: action } },
+  required, additionalProperties: false,
+});
+
 export const workClaimTools = [
   {
     name: "clued_work_claim",
@@ -90,23 +107,17 @@ export const workClaimTools = [
       "Extend a claim's lease. Requires a new progress_ref (a head SHA or Receipt id you did not send before): a heartbeat without progress is refused with work_claim_no_progress. Bumps lease_version, never the fence. Bounded by the profile's renewal count and hard deadline. A changed write_set or trigger_refs re-runs conflict detection before it is accepted. A merge slot ref (merge:<owner>/<name>:<branch>) never conflicts: it joins that branch's merge queue, and merge_queue shows your state (head, waiting, lapsed, out), position and who is ahead. Only the head holds the slot (merge_slot_until, merge_slot_ci); a renewal keeps a waiting place. The head's slot starts when it becomes head and lapses 45 minutes after that or its last renewal, later while CI reports on its pull request, and never after the hard cap; then the next entry becomes head, and a renewal that keeps the ref joins again at the back. When your Binding is not the holder (a reconnect gave you a new one), pass the claim's lease_key with a new progress_ref (for example reconnect:<session id>): the renewal then moves the claim to your Binding (transferred: true; fence unchanged), holder_session_ref names your session, and the answer carries a new lease_key that replaces the one you sent; keep it private. Without the right key it is work_claim_not_holder; a wrong key from the holder is work_claim_lease_key_invalid. After the Owner hands a claim over on the Clued page (new fence, new key), every renew and release must carry the current key, even from the holder Binding; without it they are refused with work_claim_lease_key_required." + " Page-free voluntary handover uses action prepare_handover at the receiver, offer_handover at the current private-key holder, then accept_handover at the receiver. Only request_id is shared; receiver_key stays private. After execution protection is active, a reconnect or handover may return pending without a new key until all old executions are revoked; use the original receiving proof to finish or recover, and do not spend while pending. authorize_head approves one exact target with the current key without renewing or granting CI/production permission. The Owner setting defaults On; Off blocks new exchanges, and staged rollout returns work_claim_handover_not_ready. Read Agent Contract Appendix A.2 before these commands.",
     inputSchema: {
       type: "object",
-      oneOf: [
-        { not: { required: ["action"] }, required: ["claim_id", "fence", "lease_version", "progress_ref"] },
-        { properties: { action: { const: "authorize_head" } }, required: ["action", "claim_id", "fence", "lease_version", "lease_key", "repository", "head_sha", "target_branch", "idempotency_key"] },
-        { properties: { action: { const: "prepare_handover" } }, required: ["action", "claim_id", "fence", "holder_label", "idempotency_key"] },
-        { properties: { action: { const: "offer_handover" } }, required: ["action", "request_id", "lease_key"] },
-        { properties: { action: { const: "accept_handover" } }, required: ["action", "request_id", "receiver_key"] },
-        { properties: { action: { const: "cancel_handover" } }, required: ["action", "request_id", "receiver_key"] },
-        { properties: { action: { const: "finish_handover" } }, required: ["action", "delivery_id", "lease_key"] },
+      anyOf: [
+        renewCommand("authorize_head", ["action", "claim_id", "fence", "lease_version", "lease_key", "repository", "head_sha", "target_branch", "idempotency_key"]),
+        renewCommand("prepare_handover", ["action", "claim_id", "fence", "holder_label", "idempotency_key"]),
+        renewCommand("offer_handover", ["action", "request_id", "lease_key"]),
+        renewCommand("accept_handover", ["action", "request_id", "receiver_key"]),
+        renewCommand("cancel_handover", ["action", "request_id", "receiver_key"]),
+        renewCommand("finish_handover", ["action", "delivery_id", "lease_key"]),
+        { type: "object", properties: renewProperties, additionalProperties: false,
+          not: { required: ["action"] }, required: ["claim_id", "fence", "lease_version", "progress_ref"] },
       ],
-      properties: {
-        scope, claim_id: uuid, fence: { type: "integer", minimum: 1 }, lease_version: { type: "integer", minimum: 1 },
-        progress_ref: { type: "string", minLength: 1, maxLength: 200 }, write_set: writeSet, trigger_refs: triggerRefs,
-        lease_key: leaseKey, holder_session_ref: { ...holderSessionRef, description: "Host session id, audit only; recorded when lease_key moves the claim to your Binding." },
-        holder_label: { ...holderLabel, description: "Replaces the claim's label (see clued_work_claim); omit to keep it." },
-        holder_client: holderClient, holder_session_title: holderSessionTitle,
-        ...headAuthorization,
-      },
+      properties: renewProperties,
       additionalProperties: false,
     },
   },

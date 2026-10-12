@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
 import { contractVersionOf } from '../scripts/verify-served-agent-contract.mjs';
 
@@ -28,6 +29,7 @@ const ctx = { waitUntil() {}, passThroughOnException() {} };
 const bindingToken = `clued_bnd_${'w'.repeat(43)}`;
 const oauthToken = 'account-or-legacy-oauth-token';
 const WORK_TOOLS = ['clued_work_claim', 'clued_work_renew', 'clued_work_release', 'clued_work_verify', 'clued_work_takeover'];
+const require=createRequire(import.meta.url);
 
 function mcp(token, name, args = {}, id = 1) {
   return new Request('https://clued.test/mcp', {
@@ -79,9 +81,16 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.equal(byName.clued_work_claim.annotations.idempotentHint, true);
   assert.equal(byName.clued_work_renew.annotations.idempotentHint, false);
   assert.deepEqual(byName.clued_work_claim.inputSchema.required, ['task_id', 'write_set', 'idempotency_key', 'holder_label']);
-  assert.deepEqual(byName.clued_work_renew.inputSchema.oneOf[0],
-    {not:{required:['action']},required:['claim_id','fence','lease_version','progress_ref']});
-  const commands=Object.fromEntries(byName.clued_work_renew.inputSchema.oneOf.slice(1).map(branch=>[branch.properties.action.const,branch.required]));
+  const alternatives=byName.clued_work_renew.inputSchema.anyOf;
+  const normal=alternatives.at(-1);
+  assert.deepEqual(normal.not,{required:['action']});
+  assert.deepEqual(normal.required,['claim_id','fence','lease_version','progress_ref']);
+  const commands=Object.fromEntries(alternatives.slice(0,-1).map(branch=>[branch.properties.action.const,branch.required]));
+  for(const branch of alternatives) {
+    assert.equal(branch.type,'object');assert.equal(branch.additionalProperties,false);
+    for(const [name,definition] of Object.entries(byName.clued_work_renew.inputSchema.properties))
+      if(name!=='action') assert.deepEqual(branch.properties[name],definition,'complete branch preserves '+name);
+  }
   assert.deepEqual(commands.prepare_handover,['action','claim_id','fence','holder_label','idempotency_key']);
   assert.deepEqual(commands.offer_handover,['action','request_id','lease_key']);
   assert.deepEqual(commands.accept_handover,['action','request_id','receiver_key']);
@@ -93,7 +102,7 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   // The private lease key (migration 20261005190000) is an optional input of renew and release only.
   for (const name of ['clued_work_renew', 'clued_work_release']) {
     assert.equal(byName[name].inputSchema.properties.lease_key.pattern, '^clued_lk_[0-9a-f]{64}$', name);
-    const required=name==='clued_work_renew'?byName[name].inputSchema.oneOf[0].required:byName[name].inputSchema.required;
+    const required=name==='clued_work_renew'?normal.required:byName[name].inputSchema.required;
     assert.ok(!required.includes('lease_key'), name);
   }
   for (const name of ['clued_work_claim', 'clued_work_verify', 'clued_work_takeover']) {
@@ -111,6 +120,57 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
   assert.match(byName.clued_work_claim.description, /A continuation takes none/);
   assert.match(byName.clued_work_release.inputSchema.properties.evidence_ref.description, /continue without a token/);
   assert.equal(byName.clued_work_claim._meta['clued/scopeEnforcement'], 'server-side');
+});
+
+test('complete command alternatives preserve validation and Host-normalized private business fields', async () => {
+  const worker=await loadContinuityWorker();
+  const tools=(await (await worker.fetch(list(bindingToken),enabled,ctx)).json()).result.tools;
+  const schema=tools.find(tool=>tool.name==='clued_work_renew').inputSchema;
+  // Existing lockfile dependency, independent JSON Schema implementation.
+  const Ajv=require('ajv');
+  const ajv=new Ajv({allErrors:true,formats:{uuid:/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i}});
+  const validate=ajv.compile(schema);
+  const claim_id='22222222-2222-4222-8222-222222222222',request_id='33333333-3333-4333-8333-333333333333';
+  const common={scope:'project:55555555-5555-4555-8555-555555555555',claim_id,fence:2,lease_version:3};
+  const lease_key='clued_lk_'+'a'.repeat(64),receiver_key='clued_lk_'+'b'.repeat(64);
+  const cases=[
+    {...common,progress_ref:'receipt:fixture-progress'},
+    {...common,action:'authorize_head',lease_key,repository:'owner/repository',head_sha:'c'.repeat(40),
+      target_branch:'main',workflow:'clued-g4-database.yml',idempotency_key:'fixture-authorize'},
+    {scope:common.scope,claim_id,fence:2,action:'prepare_handover',holder_label:'fixture receiver',idempotency_key:'fixture-prepare'},
+    {scope:common.scope,action:'offer_handover',request_id,lease_key},
+    {scope:common.scope,action:'accept_handover',request_id,receiver_key},
+    {scope:common.scope,action:'cancel_handover',request_id,receiver_key},
+    {scope:common.scope,action:'finish_handover',delivery_id:request_id,lease_key},
+  ];
+  const oldSchema={type:'object',properties:schema.properties,additionalProperties:false,oneOf:[
+    {not:{required:['action']},required:schema.anyOf.at(-1).required},
+    ...schema.anyOf.slice(0,-1).map(branch=>({properties:{action:branch.properties.action},required:branch.required})),
+  ]};
+  const oldValidate=ajv.compile(oldSchema);
+  const oldWithoutNot=structuredClone(oldSchema);delete oldWithoutNot.oneOf[0].not;
+  const newWithoutNot=structuredClone(schema);delete newWithoutNot.anyOf.at(-1).not;
+  const withProgress={...cases[1],progress_ref:'head:'+ 'c'.repeat(40)};
+  assert.equal(oldValidate(withProgress),true,'the former schema is valid with full JSON Schema semantics');
+  const limitedOld=ajv.compile(oldWithoutNot);
+  assert.equal(limitedOld(withProgress),false);
+  assert.ok(limitedOld.errors.some(error=>error.keyword==='oneOf'),'ignoring not reproduces ambiguous alternatives');
+  assert.equal(ajv.compile(newWithoutNot)(withProgress),true,'the adapted schema tolerates this limited Host');
+  for(const input of [...cases,{...cases[1],progress_ref:'head:'+ 'c'.repeat(40)}]) {
+    assert.equal(validate(input),true,JSON.stringify(validate.errors));
+    const branch=schema.anyOf.find(branch=>branch.properties.action.const===input.action)??schema.anyOf.at(-1);
+    // A Host may independently clamp an alternative's properties instead of
+    // inheriting outer properties. Every exact business value must survive.
+    const normalized=Object.fromEntries(Object.entries(input).filter(([key])=>Object.hasOwn(branch.properties,key)));
+    assert.deepEqual(normalized,input);
+  }
+  for(const [index,key] of [[0,'progress_ref'],[1,'lease_key'],[1,'head_sha'],[2,'holder_label'],
+    [3,'lease_key'],[4,'receiver_key'],[5,'request_id'],[6,'delivery_id']]) {
+    const bad={...cases[index]};delete bad[key];assert.equal(validate(bad),false,`${cases[index].action??'renew'} missing ${key}`);
+  }
+  for(const bad of [{...cases[1],action:'unknown'}, {...cases[1],head_sha:'*'},
+    {...cases[1],unexpected_authority:true}, {...cases[1],lease_key:'invalid'}, {...cases[0],fence:0}])
+    assert.equal(validate(bad),false);
 });
 
 test('a disabled flag refuses the call before any database request', async () => {
