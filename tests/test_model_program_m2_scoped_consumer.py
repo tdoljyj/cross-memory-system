@@ -297,6 +297,16 @@ def load_tests(loader, tests, pattern):
     records_module = importlib.util.module_from_spec(records_spec)
     records_spec.loader.exec_module(records_module)
     tests.addTests(loader.loadTestsFromModule(records_module, pattern=pattern))
+    observed_path = ROOT / "tests/test_model_observed_completion_execution.py"
+    observed_spec = importlib.util.spec_from_file_location("m2_observed_completion_specifications", observed_path)
+    observed_module = importlib.util.module_from_spec(observed_spec)
+    observed_spec.loader.exec_module(observed_module)
+    tests.addTests(loader.loadTestsFromModule(observed_module, pattern=pattern))
+    token_path = ROOT / "tests/test_model_runtime_observation_records.py"
+    token_spec = importlib.util.spec_from_file_location("m2_runtime_observation_specifications", token_path)
+    token_module = importlib.util.module_from_spec(token_spec)
+    token_spec.loader.exec_module(token_module)
+    tests.addTests(loader.loadTestsFromModule(token_module, pattern=pattern))
     return tests
 
 
