@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {verifyWindowsProtection} from './qualify-work-handover.mjs';
+import {verifyWindowsProtection,verifyPosixProtection} from './qualify-work-handover.mjs';
 
 const directory=path.dirname(fileURLToPath(import.meta.url));
 const repository=path.resolve(directory,'../..');
@@ -27,11 +27,11 @@ test('exact-source simulation preserves six verdicts and never certifies live qu
 });
 test('Windows current protection refuses writable principals, writable runner, non-admin owner or unavailable data',()=>{
   const safe={schema:'clued.windows-hook-protection/1',runner_is_administrator:false,
-    targets:[{owner_is_administrator:true,untrusted_write_aces:0,runner_write_aces:0},
-      {owner_is_administrator:true,untrusted_write_aces:0,runner_write_aces:0}]};
+    targets:[{owner_is_administrator:true,runner_owns_target:false,untrusted_write_aces:0,runner_write_aces:0},
+      {owner_is_administrator:true,runner_owns_target:false,untrusted_write_aces:0,runner_write_aces:0}]};
   assert.equal(verifyWindowsProtection(safe).verified,true);
   for(const targetIndex of [0,1]){
-    for(const [field,value] of [['owner_is_administrator',false],['untrusted_write_aces',1],['runner_write_aces',1]]){
+    for(const [field,value] of [['owner_is_administrator',false],['runner_owns_target',true],['untrusted_write_aces',1],['runner_write_aces',1]]){
       const changed=structuredClone(safe);changed.targets[targetIndex][field]=value;
       assert.throws(()=>verifyWindowsProtection(changed));
     }
@@ -39,6 +39,18 @@ test('Windows current protection refuses writable principals, writable runner, n
   assert.throws(()=>verifyWindowsProtection({...safe,runner_is_administrator:true}));
   for(const unavailable of [null,{}, {...safe,targets:[]}, {...safe,targets:[{} ,{}]}])
     assert.throws(()=>verifyWindowsProtection(unavailable));
+});
+test('POSIX protection refuses root or unknown runner and writable or non-root-owned code',()=>{
+  const safe={runner_uid:1001,targets:[{uid:0,mode:0o755},{uid:0,mode:0o644}]};
+  assert.equal(verifyPosixProtection(safe).verified,true);
+  for(const runner_uid of [0,undefined,null,-1,NaN])
+    assert.throws(()=>verifyPosixProtection({...safe,runner_uid}));
+  for(const targetIndex of [0,1]){
+    for(const [field,value] of [['uid',1001],['mode',0o775],['mode',0o777],['mode',undefined]]){
+      const changed=structuredClone(safe);changed.targets[targetIndex][field]=value;
+      assert.throws(()=>verifyPosixProtection(changed));
+    }
+  }
 });
 test('an accepted repository copy cannot pretend to be the protected installed path',()=>{
   const result=execute(['--hook',path.join(directory,'clued-runner-job-started.mjs')]);

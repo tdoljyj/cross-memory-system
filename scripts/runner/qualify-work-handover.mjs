@@ -12,10 +12,22 @@ export function verifyWindowsProtection(report) {
   assert.ok(Array.isArray(report.targets)&&report.targets.length===2,'Windows protection targets are unavailable');
   for(const target of report.targets){
     assert.equal(target.owner_is_administrator,true,'Windows hook owner can change its protection');
+    assert.equal(target.runner_owns_target,false,'Windows runner owns its hook and can change its permissions');
     assert.equal(target.untrusted_write_aces,0,'Windows hook grants write or permission changes to an untrusted principal');
     assert.equal(target.runner_write_aces,0,'Windows runner can change its own hook protection');
   }
   return {verified:true,method:'current_windows_owner_dacl_and_runner_token'};
+}
+
+export function verifyPosixProtection(report) {
+  assert.ok(Number.isInteger(report?.runner_uid)&&report.runner_uid>0,'A privileged or unknown runner can replace its pre-job protection');
+  assert.ok(Array.isArray(report.targets)&&report.targets.length===2,'Installed protection targets are unavailable');
+  for(const target of report.targets){
+    assert.equal(target.uid,0,'Installed hook must be administrator-owned');
+    assert.ok(Number.isInteger(target.mode),'Installed hook permissions are unavailable');
+    assert.equal(target.mode&0o022,0,'Installed hook must not be writable by other users');
+  }
+  return {verified:true,method:'current_posix_owner_mode_and_runner_uid'};
 }
 
 function readWindowsProtection(){
@@ -23,6 +35,7 @@ function readWindowsProtection(){
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$runnerOwnerSids = @($identity.User.Value) + @($identity.Groups | ForEach-Object { $_.Value })
 $trusted = @('S-1-5-18','S-1-5-32-544')
 # Include actual local Administrator members, never caller-supplied owners.
 $trusted += @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value })
@@ -42,7 +55,10 @@ foreach ($target in @('C:\ProgramData\CluedRunnerHook','C:\ProgramData\CluedRunn
     if ($trusted -notcontains $sid.Value) { $untrustedWrites++ }
     if ($identity.User.Value -eq $sid.Value -or $principal.IsInRole($sid)) { $runnerWrites++ }
   }
-  $targets += [ordered]@{ owner_is_administrator=($trusted -contains $ownerSid);untrusted_write_aces=$untrustedWrites;runner_write_aces=$runnerWrites }
+  # An owner has implicit WRITE_DAC even without a writable Allow ACE.
+  # Include disabled token groups here conservatively, so a filtered admin
+  # token cannot certify its own administrator-owned protection.
+  $targets += [ordered]@{ owner_is_administrator=($trusted -contains $ownerSid);runner_owns_target=($runnerOwnerSids -contains $ownerSid);untrusted_write_aces=$untrustedWrites;runner_write_aces=$runnerWrites }
 }
 [ordered]@{schema='clued.windows-hook-protection/1';runner_is_administrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);targets=$targets} | ConvertTo-Json -Depth 4 -Compress
 `;
@@ -76,11 +92,11 @@ if (!candidate) {
   if(process.platform==='win32'){
     readWindowsProtection();
   }else{
-    for(const target of [parent,hookPath]){
+    const targets=[parent,hookPath].map(target=>{
       const stat=fs.statSync(target);
-      assert.equal(stat.uid,0,'Installed hook must be administrator-owned');
-      assert.equal(stat.mode&0o022,0,'Installed hook must not be writable by other users');
-    }
+      return {uid:stat.uid,mode:stat.mode};
+    });
+    verifyPosixProtection({runner_uid:process.getuid?.(),targets});
   }
 }
 const digest = () => createHash('sha256').update(fs.readFileSync(hookPath)).digest('hex');
