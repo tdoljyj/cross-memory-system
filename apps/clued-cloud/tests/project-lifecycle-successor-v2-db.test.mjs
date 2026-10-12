@@ -18,6 +18,10 @@ const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
 const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
 const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refresh_default_v1.sql';
+const storageDemandRenewalMigrations = [
+  '20261012103238_storage_demand_refresh_prepare_v1.sql',
+  '20261012113128_storage_demand_refresh_runtime_v1.sql',
+];
 // This scenario reconstructs the lifecycle transition before handover support.
 // Defer the exact migration family until the historical lifecycle assertions
 // and gateway/storage prerequisites below have been replayed. The final
@@ -73,7 +77,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      !gatewayProbeMigrations.includes(name))) {
+      !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -443,6 +447,13 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageReconnectRefreshMigration),'utf8'));
       assert.equal((await admin.query("select encode(sha256(convert_to(prosrc,'UTF8')),'hex') h from pg_proc where oid='public.clued_storage_owner_lifecycle_v1(text,jsonb)'::regprocedure")).rows[0].h,
         '5507655146cad446408ddb26136a3c8cbeb84b88ee559aa19114b8f3c03a2238');
+      // Demand renewal depends on the issuer/gateway and all Owner successors;
+      // first preserve the actual old hash assertion, then verify its successor.
+      for(const name of storageDemandRenewalMigrations){
+        await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));
+      }
+      assert.equal((await admin.query("select encode(sha256(convert_to(prosrc,'UTF8')),'hex') h from pg_proc where oid='public.clued_storage_owner_lifecycle_v1(text,jsonb)'::regprocedure")).rows[0].h,
+        'e0637d3279d7f1b6bb77f7b12258f2839c51187f8dbe283a030bbbc694c80740');
       await assertGatewayCloseoutBoundary(admin);
       assert.ok((await admin.query("select to_regclass('clued_private.storage_master_controls_v1') as table_id")).rows[0].table_id);
       const signature='public.clued_storage_owner_lifecycle_v1(text,jsonb)';

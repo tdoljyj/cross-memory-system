@@ -102,6 +102,8 @@ import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-goog
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageOwnerLifecycle, StorageOwnerLifecycleError, type OwnerReconnectInput, type OwnerDeleteInput } from "./storage-owner-lifecycle";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
+import { createStorageDemandRuntime, runStorageDemandRenewalScheduled } from "./storage-demand-runtime";
+import storageDemandPolicy from "../../../development/contracts/storage/StorageDemandRenewal.v0.1.json";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
   storageDestructiveCode, storageDestructiveMessages, storageAdoptCode, storageAdoptMessages, storageTrashBatchInput,
@@ -741,6 +743,18 @@ export async function runProjectionRefreshPipeline(
   return { status: "cycle_limit", processed, cas_conflicts: casConflicts };
 }
 
+async function storageDemandRuntime(env: ContinuityEnv, prepare: (request: Record<string, unknown>) => Promise<Record<string, unknown>>) {
+  if (env.CLUED_STORAGE_REFRESH_V1 !== "true") return null;
+  const issuer=env.CLUED_STORAGE_CONNECTOR_ISSUER;
+  if (!issuer || issuer.length<32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("storage_demand_unavailable");
+  const issuerHash=await sha256(issuer);
+  return createStorageDemandRuntime({client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",
+    client_secret:env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET??"",vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),prepare,
+    refresh_rpc:async input => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
+      method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),signal:AbortSignal.timeout(10000),redirect:"manual",
+    }) as Record<string,unknown>});
+}
+
 export async function runStorageCloudJob(env: ContinuityEnv, reference: {connection_id:string;job_id:string}) {
   if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_JOBS_V1 !== "true" ||
       env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return {status:"disabled"};
@@ -754,6 +768,11 @@ export async function runStorageCloudJob(env: ContinuityEnv, reference: {connect
       method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:input}),
       signal:AbortSignal.timeout(10000),redirect:"manual",
     }) as Record<string,unknown>;
+    const demand=await storageDemandRuntime(env,async request=>await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
+      method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:{action:"prepare_credential",connection_id:request.connection_id,
+        caller_kind:"job",request:{connection_id:request.connection_id,job_id:request.job_id}}}),
+      signal:AbortSignal.timeout(10000),redirect:"manual",
+    }) as Record<string,unknown>);
     const recoveryRefresh=env.CLUED_STORAGE_REFRESH_V1==="true" ? await createStorageGoogleRefresh({
       client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",client_secret:env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET??"",
       vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),rpc:async input => await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
@@ -766,6 +785,7 @@ export async function runStorageCloudJob(env: ContinuityEnv, reference: {connect
       account_policy_v2:env.CLUED_STORAGE_JOBS_V2==="true",
       ...(staging ? { load_staged_content: (input: Record<string, unknown>) =>
         loadStagedContent(staging, input as Parameters<typeof loadStagedContent>[1]) } : {}),
+      credential_preflight:demand ? ref=>demand.job(ref) : undefined,
       recovery_refresh:recoveryRefresh ? ref=>recoveryRefresh.run(ref.connection_id,ref.job_id) : undefined});
     return await executor.run(reference);
   } catch { return {status:"unavailable"}; }
@@ -826,6 +846,10 @@ export async function runStorageRefreshScheduled(env: ContinuityEnv) {
       method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
       signal: AbortSignal.timeout(10000), redirect: "manual",
     }) as Record<string, unknown>;
+    if (storageDemandPolicy.idle_scheduler_enabled) return runStorageDemandRenewalScheduled({
+      client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",client_secret:env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET??"",
+      vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),refresh_rpc:rpc,
+    });
     const due = await rpc({ action: "due" });
     if (!Array.isArray(due.connections) || due.connections.length > 10 || !due.connections.every(c => typeof c === "string")) return { status: "unavailable" };
     // BUG-20261007-005: a refresh held back by an unresolved journal on its root
@@ -833,6 +857,8 @@ export async function runStorageRefreshScheduled(env: ContinuityEnv) {
     // recovery-only refresh); until then reads fail once the token expires.
     if (Number.isSafeInteger(due.root_busy) && Number(due.root_busy) > 0)
       console.warn(JSON.stringify({ event: "storage_refresh_root_busy", connections: Number(due.root_busy) }));
+    const pendingExpired=Number.isSafeInteger(due.pending_expired) && Number(due.pending_expired)>0 ? Number(due.pending_expired) : 0;
+    if (due.connections.length===0) return {status:pendingExpired?"attention_required":"ok",committed:0,unavailable:pendingExpired};
     const refresher = await createStorageGoogleRefresh({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
       client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc });
     let committed = 0, unavailable = Number.isSafeInteger(due.pending_expired) && Number(due.pending_expired)>0 ? Number(due.pending_expired) : 0;
@@ -1192,11 +1218,13 @@ async function storageOwnerLifecycleRuntime(env: ContinuityEnv, token: string) {
       body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
     }) as Record<string, unknown>,
   });
-  return createStorageOwnerLifecycle({ vault, oauth,
-    rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_owner_lifecycle_v1", {
+  const ownerRpc=async (value:Record<string,unknown>) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_owner_lifecycle_v1", {
       method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
       body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),
-    }) as Record<string, unknown>,
+    }) as Record<string,unknown>;
+  const demand=await storageDemandRuntime(env,request=>ownerRpc({action:"prepare_credential",connection_id:request.connection_id,operation:request.operation}));
+  return createStorageOwnerLifecycle({ vault, oauth, rpc:ownerRpc,
+    credential_preflight:demand ? (owner,connection,operation)=>demand.owner(owner,connection,operation) : undefined,
   });
 }
 
@@ -1753,10 +1781,19 @@ async function callStorageRead(request: Request, env: ContinuityEnv, args: unkno
   const issuerHash = await sha256(issuer);
   let agent: Awaited<ReturnType<typeof createStorageReadAgent>>;
   try {
+    const demand=await storageDemandRuntime(env,async request=>{
+      const {caller_kind,token_hash,owner_id,...input}=request;
+      void caller_kind;void owner_id;
+      return await supabaseRequest(env,"/rest/v1/rpc/clued_storage_read_v1",{
+        method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_token_hash:token_hash,p_input:{...input,action:"prepare_credential"}}),
+        signal:AbortSignal.timeout(10000),redirect:"manual",
+      }) as Record<string,unknown>;
+    });
     agent = await createStorageReadAgent({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
       receipt_keys: JSON.parse(env.CLUED_STORAGE_READ_RECEIPT_KEYS), cursor_key: env.CLUED_STORAGE_READ_CURSOR_KEY,
       // §4.5: PDFs are parsed only by the extractor Worker behind this service binding.
       pdf_extractor: env.PDF_EXTRACTOR,
+      credential_preflight:demand ? input=>demand.agent(input) : undefined,
       rpc: async ({ token_hash, input }) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_read_v1", {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_token_hash: token_hash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
@@ -3256,7 +3293,8 @@ async function handleContinuityRequestInner(
     if (url.pathname === "/v1/storage/recovery") {
       validateOrigin(request, env);
       // Recovery remains available when new jobs/execution are disabled. It is
-      // native Owner only and never enters the normal executor or refresh path.
+      // native Owner only; credential renewal is confined to the original
+      // unsettled job. It never enters the normal executor or replays an effect.
       const headers = { ...corsHeaders(request), "cache-control": "no-store" };
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404, headers);
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
@@ -3308,6 +3346,7 @@ async function handleContinuityRequestInner(
             execution_permitted: false }, 200, headers);
         }
         if (verifiedStatus?.status === "none") throw new Error("No original effect");
+        const recoveryAttempt=async()=>{
         let accountDescriptor: Record<string, unknown> | null = null;
         if (verifiedStatus) {
           if (verifiedStatus.status !== "inspection_required" || verifiedStatus.job_id !== reference.job_id ||
@@ -3320,9 +3359,27 @@ async function handleContinuityRequestInner(
           if (accountDescriptor.status !== "recovery_only") throw new Error("Unavailable");
         }
         const recovery = await createStorageCloudRecovery({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
-          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), rpc,
+          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!), rpc, report_expiring:true,
           ...(accountDescriptor?.status === "recovery_only" ? { verified: { descriptor: accountDescriptor, rpc: verifiedRpc } } : {}) });
-        return json(await recovery.run(reference), 200, headers);
+        return recovery.run(reference);
+        };
+        let recovered=await recoveryAttempt();
+        if(recovered.status==="credential_expiring" && env.CLUED_STORAGE_REFRESH_V1==="true"){
+          const refresh=await createStorageGoogleRefresh({client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",
+            client_secret:env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET??"",vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
+            rpc:async value=>await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
+              method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:value}),redirect:"manual",signal:AbortSignal.timeout(10000),
+            }) as Record<string,unknown>});
+          if((await refresh.run(reference.connection_id,reference.job_id)).status==="committed"){
+            // Re-enter the same live Owner RPC before loading the new sealed
+            // version. A late renewal cannot substitute for that Owner session.
+            const freshOwnerStatus=storageAgentResult(await rpc({...reference,action:"recovery_inspect"}),reference);
+            if(["committed","cancelled","denied","attention_required"].includes(String(freshOwnerStatus.status)))
+              return json(freshOwnerStatus,200,headers);
+            recovered=await recoveryAttempt();
+          }
+        }
+        return json(recovered.status==="credential_expiring"?{status:"inspection_required",execution_permitted:false}:recovered,200,headers);
       } catch {
         return json({ status: "inspection_required", execution_permitted: false }, 403, headers);
       }
@@ -3332,12 +3389,17 @@ async function handleContinuityRequestInner(
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
       if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
-      const { token } = await requireSupabaseUser(request, env);
+      const { user, token } = await requireSupabaseUser(request, env);
       try {
         const input = await parseBody(request), issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
         if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
+        const demand=await storageDemandRuntime(env,async prepared=>await supabaseRequest(env,"/rest/v1/rpc/clued_storage_owner_lifecycle_v1",{
+          method:"POST",userToken:token,redirect:"manual",signal:AbortSignal.timeout(10000),
+          body:JSON.stringify({p_issuer_hash:await sha256(issuer),p_input:{action:"prepare_credential",connection_id:prepared.connection_id,operation:"probe"}}),
+        }) as Record<string,unknown>);
         const probe = await createStorageGoogleProbe({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
           vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+          credential_preflight:demand ? connection=>demand.owner(user.id,connection,"probe") : undefined,
           rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_directory_probe_v1", {
             method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
             body: JSON.stringify({ p_issuer_hash: await sha256(issuer), p_input: value }),

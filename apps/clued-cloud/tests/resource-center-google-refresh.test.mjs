@@ -17,7 +17,7 @@ const { createStorageCredentialVault } = await load("storage-credential-vault");
 const scope = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
 const initial = 1700000000000;
 async function fixture(changes = {}) {
-  let now = initial, commitCount = 0;
+  let now = initial, commitCount = 0, claimCount = 0;
   const requests = [], calls = [];
   const context = { owner_id: randomUUID(), connection_id: randomUUID(), provider: "google-drive", provider_subject: "fixture-user",
     oauth_client_id: "fixture.apps.googleusercontent.com", credential_version: 1 };
@@ -29,6 +29,7 @@ async function fixture(changes = {}) {
     rpc: async input => {
       requests.push(structuredClone(input));
       if (input.action === "claim") {
+        if (++claimCount <= (changes.busyClaims ?? 0)) return {status:'busy',connection_id:input.connection_id,attempt_id:input.attempt_id};
         if (changes.claimError) throw new Error("unavailable");
         return { ...context, attempt_id: input.attempt_id, status: "acquired", credential_envelope: envelope,
           root_folder_id: "fixture-root", root_parent_id: "fixture-parent", expires_at: new Date(initial+120000).toISOString(), ...(changes.claim ?? {}) };
@@ -52,7 +53,7 @@ async function fixture(changes = {}) {
         isAppAuthorized: true, capabilities: { canAddChildren: true }, ...(changes.root ?? {}) });
     },
   });
-  return { calls, requests, run: () => refresher.run(context.connection_id), plain: async () => JSON.parse(await vault.open(requests.find(x => x.action === "commit").credential_envelope,
+  return { calls, requests, run: (demandProof) => refresher.run(context.connection_id,undefined,demandProof), plain: async () => JSON.parse(await vault.open(requests.find(x => x.action === "commit").credential_envelope,
     { ...context, credential_version: 2 })) };
 }
 test("account refresh inherits exact scope, preserves omitted refresh token and seals the next revision", async () => {
@@ -71,6 +72,29 @@ test("rotated refresh token persists; lost commit reply retries identical cipher
   assert.deepEqual(await f.run(), { status: "committed" }); assert.equal((await f.plain()).refresh_token, "fixture-rotated-refresh-token");
   const commits = f.requests.filter(x => x.action === "commit"); assert.equal(commits.length, 2); assert.deepEqual(commits[0], commits[1]);
   assert.equal(f.calls.filter(x => x.url.endsWith("/token")).length, 1);
+});
+
+test("demand proof stays server-only and binds the same single claim and identical result retry",async()=>{
+  const proof='clued_srp_'+'a'.repeat(64),f=await fixture({lostCommits:1});
+  const result=await f.run(proof);assert.deepEqual(result,{status:'committed'});
+  assert.ok(f.requests.every(request=>request.demand_proof===proof));
+  const commits=f.requests.filter(request=>request.action==='commit');assert.equal(commits.length,2);assert.deepEqual(commits[0],commits[1]);
+  assert.equal(f.calls.filter(call=>call.url.endsWith('/token')).length,1);
+  assert.doesNotMatch(JSON.stringify(result),/clued_srp_|credential_envelope|token/);
+  const denied=await fixture();assert.equal((await denied.run('forged')).status,'unavailable');
+  assert.equal(denied.requests.length,0);assert.equal(denied.calls.length,0);
+});
+
+test('only definite no-attempt Native busy replies permit bounded identical claim retry',async()=>{
+  const proof='clued_srp_'+'b'.repeat(64),f=await fixture({busyClaims:2});
+  assert.deepEqual(await f.run(proof),{status:'committed'});
+  const claims=f.requests.filter(request=>request.action==='claim');assert.equal(claims.length,3);
+  assert.ok(claims.every(request=>JSON.stringify(request)===JSON.stringify(claims[0])));
+  assert.equal(f.calls.filter(call=>call.url.endsWith('/token')).length,1);
+  const blocked=await fixture({busyClaims:10});assert.equal((await blocked.run(proof)).status,'not_acquired');
+  assert.equal(blocked.requests.length,4);assert.equal(blocked.calls.length,0);
+  const unknown=await fixture({claimError:true});await unknown.run(proof);
+  assert.equal(unknown.requests.length,1);assert.equal(unknown.calls.length,0);
 });
 test("unacquired or failed claim performs no provider request", async () => {
   for (const changes of [{ claimError: true }, { claim: { status: "claimed" } }, { claim: { status: "committed" } }]) {

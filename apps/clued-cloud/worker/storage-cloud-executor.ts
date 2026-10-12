@@ -1,5 +1,6 @@
 import { cloudDispatchOutcome, createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import type { StorageDemandResult } from "./storage-demand-refresh";
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-postcondition.mjs";
 import { createStorageFetch } from "./storage-fetch";
@@ -19,6 +20,7 @@ export async function createStorageCloudWorker(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
   recovery_refresh?: (reference: Reference) => Promise<{status:string}>;
+  credential_preflight?: (reference: Reference) => Promise<StorageDemandResult>;
   account_policy_v2?: boolean;
   // Binary create (StorageNormalUse N3), absent = binary jobs refused. Opens a binary job's staged object as a bounded-memory source (verify + stream), never the whole bytes.
   load_staged_content?: (input: Data) => Promise<{ size: number; sha256: string; readonly verified: boolean; verify(): Promise<void>; stream(): ReadableStream<Uint8Array> }>;
@@ -69,6 +71,8 @@ export async function createStorageCloudWorker(config: {
       verified_result_mode: config.account_policy_v2 === true,
       ...(config.load_staged_content ? { load_staged_content: config.load_staged_content } : {}),
       load_job: async (ref: Reference) => {
+        if (config.credential_preflight && (await config.credential_preflight(ref)).status !== "ready")
+          throw reject("STORAGE_CREDENTIAL_REFRESH_PENDING");
         // BUG-20261008-001: a refused load leaves the job queued (the scheduled sweep
         // dispatches it again); name the fixed cause in the diagnostic instead of UNSPECIFIED.
         let result: Data;
