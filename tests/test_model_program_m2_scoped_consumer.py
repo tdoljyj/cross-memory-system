@@ -267,6 +267,16 @@ def load_tests(loader, tests, pattern):
     input_module = importlib.util.module_from_spec(input_spec)
     input_spec.loader.exec_module(input_module)
     tests.addTests(loader.loadTestsFromModule(input_module, pattern=pattern))
+    request_path = ROOT / "tests/test_model_program_development_invocation_projection.py"
+    request_spec = importlib.util.spec_from_file_location("m2_development_invocation_specifications", request_path)
+    request_module = importlib.util.module_from_spec(request_spec)
+    request_spec.loader.exec_module(request_module)
+    tests.addTests(loader.loadTestsFromModule(request_module, pattern=pattern))
+    saved_path = ROOT / "tests/test_model_program_invocation_saved_projection.py"
+    saved_spec = importlib.util.spec_from_file_location("m2_invocation_saved_specifications", saved_path)
+    saved_module = importlib.util.module_from_spec(saved_spec)
+    saved_spec.loader.exec_module(saved_module)
+    tests.addTests(loader.loadTestsFromModule(saved_module, pattern=pattern))
     return tests
 
 
