@@ -212,11 +212,15 @@ export async function createStorageOwnerLifecycle(configuration: {
   }
   return Object.freeze({
     async list(owner: string) {
-      ownerValid(owner); const b = budget(), listed = await rpc({ action: "list" });
-      if (listed.contract !== "clued.storage-owner-lifecycle/1" || listed.complete !== true || !Array.isArray(listed.connections) || listed.connections.length > 100) return deny();
-      const connections = [];
-      for (const raw of listed.connections) {
-        if (!object(raw) || !UUID.test(String(raw.id)) || !UUID.test(String(raw.profile_id)) || !UUID.test(String(raw.project_id)) ||
+      ownerValid(owner); const b = budget();
+      const readList = async () => {
+        const listed = await rpc({ action: "list" });
+        if (listed.contract !== "clued.storage-owner-lifecycle/1" || listed.complete !== true || !Array.isArray(listed.connections) || listed.connections.length > 100) return deny();
+        return listed.connections;
+      };
+      const safeRow = (raw: unknown) => {
+        if (!object(raw)) return deny();
+        if (!UUID.test(String(raw.id)) || !UUID.test(String(raw.profile_id)) || !UUID.test(String(raw.project_id)) ||
           !FILE.test(String(raw.root_folder_id)) || ![raw.version,raw.profile_version].every(v => Number.isSafeInteger(v) && Number(v)>0) ||
           raw.provider !== "google-drive" || !["awaiting_provider","active","reauthorization_required","revoked"].includes(String(raw.state)) ||
           !["legacy","account_policy","revoked"].includes(String(raw.auth_mode)) ||
@@ -237,10 +241,29 @@ export async function createStorageOwnerLifecycle(configuration: {
             operation: raw.pending_lifecycle.operation, state: raw.pending_lifecycle.state,
             ...(typeof raw.pending_lifecycle.expires_at === "string" && Number.isFinite(Date.parse(raw.pending_lifecycle.expires_at))
               ? { expires_at: raw.pending_lifecycle.expires_at } : {}), execution_permitted: false };
-        let physical: Data = { status: "unavailable", source: "google_drive_metadata" };
-        if (raw.state === "active" && Date.now()<b.deadline) try { const d = await load(owner, String(raw.id)); physical = await location(d, await token(d), b); } catch { /* Registered path is never mislabeled physical. */ }
-        connections.push({ ...row, physical_location: physical });
+        return row;
+      };
+      const listed = await readList();
+      const observed = new Map<string, { descriptor: Descriptor; physical: Data }>();
+      for (const raw of listed) {
+        const row = safeRow(raw);
+        if (row.state === "active" && Date.now()<b.deadline) try {
+          const d = await load(owner, String(row.id));
+          observed.set(String(row.id), { descriptor: d, physical: await location(d, await token(d), b) });
+        } catch { /* Registered path is never mislabeled physical. */ }
       }
+      // Preflight may replace credentials and increment the connection CAS, or
+      // race an Owner stop. Return a fresh Native list, never the preflight's
+      // old permissions/version. Submitted delete confirmations stay untouched.
+      const current = configuration.credential_preflight ? await readList() : listed;
+      const connections = current.map(raw => {
+        const row = safeRow(raw), observation = observed.get(String(row.id)), d = observation?.descriptor;
+        const physical = observation && d && row.state === "active" && row.version === d.connection_version &&
+          row.profile_id === d.profile_id && row.profile_version === d.profile_version &&
+          row.root_folder_id === d.root_folder_id && row.root_parent_id === d.root_parent_id
+          ? observation.physical : { status: "unavailable", source: "google_drive_metadata" };
+        return { ...row, physical_location: physical };
+      });
       return { contract: "clued.storage-owner-lifecycle/1", complete: true, connections };
     },
     async reconnect(owner: string, value: OwnerReconnectInput) {

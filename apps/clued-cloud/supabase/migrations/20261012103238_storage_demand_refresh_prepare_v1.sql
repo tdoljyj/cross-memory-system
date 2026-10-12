@@ -61,13 +61,24 @@ begin
       or coalesce(p_request->>'job_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       or (p_request-array['connection_id','job_id'])<>'{}'::jsonb then
       raise exception 'storage_demand_denied' using errcode='42501'; end if;
-    -- Both paths re-enter their existing current Native job evaluator. Recovery
-    -- remains exact-job and read-only; it cannot authorize another write.
-    result:=public.clued_storage_cloud_worker_router_v2(p_issuer_hash,p_request||jsonb_build_object('action',
-      case when p_kind='recovery' then 'recovery_load' else 'load' end));
+    -- Recovery keeps its existing exact-job/intent/provider-attempt evaluator.
+    -- Normal job load can issue internal reader/writer bindings and receipts;
+    -- it is not a pure read and is never used as recovery authorization.
+    if p_kind='recovery' and c.auth_mode='account_policy' then
+      result:=public.clued_storage_scheduled_recovery_v2(identity,p_request||jsonb_build_object('action','load'));
+    else
+      result:=public.clued_storage_cloud_worker_router_v2(identity,p_request||jsonb_build_object('action',
+        case when p_kind='recovery' then 'recovery_load' else 'load' end));
+    end if;
     if result->>'status' is distinct from (case when p_kind='recovery' then 'recovery_only' else 'queued' end)
       or result->>'connection_id' is distinct from c.id::text or result->>'job_id' is distinct from p_request->>'job_id' then
       raise exception 'storage_demand_denied' using errcode='42501'; end if;
+    if p_kind='recovery' then
+      -- The dedicated evaluator already checks account, profile, source and
+      -- provider-attempt fences, including reauthorization-required recovery.
+      select sc.* into c from clued_private.storage_connections_v1 sc where sc.id=c.id and sc.owner_id=c.owner_id;
+      return c;
+    end if;
   elsif p_kind='maintenance' then
     -- Fixed background issuer plus the live standing delegation; this is not
     -- authority to read files or perform Owner/Agent operations.

@@ -596,6 +596,22 @@ export async function testAccountCloud(t, admin, server, user, decision, {handov
         assert.equal(scheduledDescriptor.status,"recovery_only");
         assert.equal(scheduledDescriptor.intent_id,row.id);
         assert.deepEqual(scheduledDescriptor.attempt,loaded.attempt);
+        // Demand renewal must use this dedicated recovery evaluator. The
+        // generic account-policy router explicitly rejects recovery_load.
+        await admin.query("reset role");
+        const beforeDemandRecovery = await journal(job);
+        const preparedRecovery = (await admin.query("select clued_private.storage_demand_prepare_v1($1,$2,'recovery',null,null,$3::jsonb) value",
+          [issuer,target.connection,JSON.stringify(job.reference)])).rows[0].value;
+        assert.equal(preparedRecovery.contract,"clued.storage-demand-preflight/1");
+        assert.equal(preparedRecovery.connection_id,target.connection);
+        assert.match(preparedRecovery.proof,/^clued_srp_[0-9a-f]{64}$/);
+        assert.deepEqual(await journal(job),beforeDemandRecovery,"preflight cannot replace or settle the original provider effect");
+        assert.equal(storage.posts,1,"recovery preflight cannot dispatch another file write");
+        await admin.query("savepoint invalid_demand_job");
+        await assert.rejects(admin.query("select clued_private.storage_demand_prepare_v1($1,$2,'recovery',null,null,$3::jsonb)",
+          [issuer,target.connection,JSON.stringify({...job.reference,job_id:randomUUID()})]),/storage_scheduled_recovery_denied/);
+        await admin.query("rollback to savepoint invalid_demand_job");
+        await admin.query("set local role anon");
         await admin.query("savepoint expired_scheduled_attempt");
         await admin.query("reset role");
         await admin.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '20 minutes' where id=$1", [row.provider_attempt_receipt_id]);
