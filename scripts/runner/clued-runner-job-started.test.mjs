@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
 
 import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED, resolvePublicSupabaseConfig } from "../ci/clued-work-admission.mjs";
-import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, decide, decideWithCurrentEpoch, main, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
 import { workflowIsGated } from "../ci/clued-work-admission.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -20,6 +21,57 @@ const env = (overrides = {}) => ({
   ...overrides,
 });
 const prEvent = (base = "main") => JSON.stringify({ pull_request: { number: 9, base: { ref: base }, head: { sha: HEAD } } });
+
+const proxyRuntime = overrides => ({ env: {}, execArgv: [], argv: ["node", "/protected/hook.mjs"],
+  allowedFlags: new Set(["--use-env-proxy"]), ...overrides });
+test("proxy bootstrap: no proxy uses the existing process; an established proxy enables native routing without putting its URL in arguments", () => {
+  assert.equal(proxyBootstrapArguments(proxyRuntime()), null);
+  const environment = { HTTPS_PROXY: "http://proxy.example:8080", NO_PROXY: "localhost", CLUED_RUNNER_HOOK_ENFORCE: "true" };
+  const before = { ...environment };
+  assert.deepEqual(proxyBootstrapArguments(proxyRuntime({ env: environment, execArgv: ["--use-bundled-ca"] })),
+    ["--use-bundled-ca", "--use-env-proxy", "/protected/hook.mjs"]);
+  assert.deepEqual(environment, before);
+});
+test("proxy bootstrap: an enabled child does not fork again, including the existing environment and NODE_OPTIONS forms", () => {
+  const env = { https_proxy: "http://proxy.example:8080" };
+  assert.equal(proxyBootstrapArguments(proxyRuntime({ env, execArgv: ["--use-env-proxy"] })), null);
+  assert.equal(proxyBootstrapArguments(proxyRuntime({ env: { ...env, NODE_USE_ENV_PROXY: "1" } })), null);
+  assert.equal(proxyBootstrapArguments(proxyRuntime({ env: { ...env, NODE_OPTIONS: "--use-bundled-ca --use-env-proxy" } })), null);
+});
+test("proxy bootstrap: an unsupported runtime or explicit opt-out refuses before credential and network work", () => {
+  const env = { HTTP_PROXY: "http://proxy.example:8080" };
+  assert.throws(() => proxyBootstrapArguments(proxyRuntime({ env, allowedFlags: new Set() })), /runtime cannot use/);
+  assert.throws(() => proxyBootstrapArguments(proxyRuntime({ env: { ...env, NODE_USE_ENV_PROXY: "0" } })), /explicitly disabled/);
+  assert.throws(() => proxyBootstrapArguments(proxyRuntime({ env, execArgv: ["--no-use-env-proxy"] })), /explicitly disabled/);
+});
+test("proxy bootstrap: bad proxy values fail without exposing the supplied value", () => {
+  for (const value of ["invalid-secret-value", "socks5://proxy.example:1080"]) {
+    assert.throws(() => proxyBootstrapArguments(proxyRuntime({ env: { HTTP_PROXY: value } })), error =>
+      !error.message.includes(value) && /configured HTTP proxy/.test(error.message));
+  }
+});
+test("proxy bootstrap CLI: the child preserves ALLOW/REFUSE and exits without a re-execution loop", () => {
+  const script = fileURLToPath(new URL("./clued-runner-job-started.mjs", import.meta.url));
+  const source = { ...process.env, HTTP_PROXY: "http://127.0.0.1:9", HTTPS_PROXY: "http://127.0.0.1:9",
+    CLUED_RUNNER_HOOK_ENFORCE: "true", CLUED_RUNNER_HOOK_REPOSITORY: "o/r",
+    GITHUB_REPOSITORY: "o/r", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main",
+    GITHUB_WORKFLOW_REF: "o/r/.github/workflows/check.yml@refs/heads/main" };
+  delete source.NODE_USE_ENV_PROXY;
+  delete source.NODE_OPTIONS;
+  const allowed = spawnSync(process.execPath, [script], { env: source, encoding: "utf8", timeout: 5000 });
+  assert.equal(allowed.error, undefined);
+  if (!process.allowedNodeEnvironmentFlags.has("--use-env-proxy")) {
+    assert.equal(allowed.status, 1);
+    assert.match(allowed.stderr, /runtime cannot use/);
+    return;
+  }
+  assert.equal(allowed.status, 0, allowed.stderr);
+  assert.match(allowed.stdout, /ALLOW push on main/);
+  const refused = spawnSync(process.execPath, [script], { env: { ...source, GITHUB_REPOSITORY: "other/repo" }, encoding: "utf8", timeout: 5000 });
+  assert.equal(refused.error, undefined);
+  assert.equal(refused.status, 1);
+  assert.match(refused.stdout, /REFUSE repository other\/repo is not o\/r/);
+});
 const files = (...names) => ({ body: { files: names.map((filename) => ({ filename })) } });
 
 // The longest matching key answers: the run's URL is a prefix of its
@@ -188,7 +240,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "work-handover-current-epoch-v1");
+  assert.equal(HOOK_VERSION, "work-handover-current-epoch-proxy-v1");
   assert.ok(lines.length >= 5);
   for (const line of lines) assert.ok(line.endsWith(` [hook ${HOOK_VERSION}]`), line);
   const { result } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/x" }, { [LIST]: { status: 403, body: null } })
