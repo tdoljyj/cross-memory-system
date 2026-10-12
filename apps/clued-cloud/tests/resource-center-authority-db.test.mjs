@@ -770,7 +770,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       });
       assert.equal(updated.status, "committed");
       assert.deepEqual(await resolve({ mutation: replacement, provider_identity: identity }),
-        { status: "denied", reason: "destination_mismatch" });
+        { status: "denied", reason: "destination_version_mismatch" });
       const next = await resolve({ mutation: replacement, provider_identity: {
         ...identity, destination_file_version: "6",
       } });
