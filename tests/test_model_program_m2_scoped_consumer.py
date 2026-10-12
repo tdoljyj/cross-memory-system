@@ -257,6 +257,11 @@ def load_tests(loader, tests, pattern):
     harness_module = importlib.util.module_from_spec(harness_spec)
     harness_spec.loader.exec_module(harness_module)
     tests.addTests(loader.loadTestsFromModule(harness_module, pattern=pattern))
+    core_path = ROOT / "tests/test_model_program_m2_core_saved_adapter.py"
+    core_spec = importlib.util.spec_from_file_location("m2_core_saved_adapter_specifications", core_path)
+    core_module = importlib.util.module_from_spec(core_spec)
+    core_spec.loader.exec_module(core_module)
+    tests.addTests(loader.loadTestsFromModule(core_module, pattern=pattern))
     return tests
 
 
