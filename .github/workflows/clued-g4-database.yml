@@ -196,6 +196,7 @@ jobs:
         run: |
           node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
           node scripts/run-tests.mjs --test tests/merge-admission-measurement-clock-target-db.test.mjs
+          node scripts/run-tests.mjs --test tests/merge-admission-clock-audit-transport-db.test.mjs
           node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
           node --test ../../scripts/ci/merge-admission-clock-source.test.mjs
 
@@ -314,6 +315,7 @@ jobs:
         run: |
           node scripts/run-tests.mjs --test tests/merge-admission-measurement-history-db.test.mjs
           node scripts/run-tests.mjs --test tests/merge-admission-measurement-clock-target-db.test.mjs
+          node scripts/run-tests.mjs --test tests/merge-admission-clock-audit-transport-db.test.mjs
           node --test ../../scripts/ci/merge-admission-measurement-history.test.mjs
           node --test ../../scripts/ci/merge-admission-clock-source.test.mjs
 
