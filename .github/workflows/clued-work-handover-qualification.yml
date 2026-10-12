@@ -7,8 +7,37 @@ concurrency:
   group: clued-work-handover-qualification
   cancel-in-progress: false
 jobs:
+  admission-gate:
+    name: admission-gate
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
   linux:
-    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main' && github.actor == github.repository_owner)
     name: handover-hook / ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -47,7 +76,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
   windows:
-    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main' && github.actor == github.repository_owner)
     name: handover-hook / ${{ matrix.runner }}
     strategy:
       fail-fast: false
