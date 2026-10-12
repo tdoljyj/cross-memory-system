@@ -50,7 +50,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.5.1",
+      "version": "0.5.0",
       "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {

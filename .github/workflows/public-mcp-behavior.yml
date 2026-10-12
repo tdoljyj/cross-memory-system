@@ -54,9 +54,7 @@ jobs:
       - id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        # This gate deliberately uses trusted base-branch code, which can
-        # precede the CLI proxy fix in the pull request being admitted.
-        run: node --use-env-proxy scripts/ci/clued-work-admission.mjs --mode gate
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
 
   trusted-self-hosted:
     name: >-
@@ -100,10 +98,6 @@ jobs:
       - name: Serialize fixed public MCP ports with other runners on this host
         run: |
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" acquire public-mcp-ports
-      - name: Isolate this run's Supabase project and ports
-        run: |
-          node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs
-          node ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
       - run: npm run mcp:isolated:fixture
@@ -131,12 +125,8 @@ jobs:
             mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
             node evals/public-mcp/start-isolated.mjs stop "$mcp_pid" || cleanup_result=1
           fi
-          if [ -f "$RUNNER_TEMP/public-mcp-supabase-isolation.json" ]; then
-            if node ../../scripts/ci/public-mcp-supabase-isolation.mjs verify; then
-              npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1
-            else
-              cleanup_result=1
-            fi
+          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then
+            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1
           fi
           "$GITHUB_WORKSPACE/scripts/ci/self-hosted/host-port-lock.sh" release public-mcp-ports
           exit "$cleanup_result"
@@ -179,10 +169,6 @@ jobs:
         with:
           isolate-promptfoo: 'true'
       - run: npm ci
-      - name: Isolate this run's Supabase project and ports
-        run: |
-          node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs
-          node ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
       - run: npm run mcp:isolated:fixture
@@ -210,11 +196,7 @@ jobs:
             mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
             node evals/public-mcp/start-isolated.mjs stop "$mcp_pid" || cleanup_result=1
           fi
-          if [ -f "$RUNNER_TEMP/public-mcp-supabase-isolation.json" ]; then
-            if node ../../scripts/ci/public-mcp-supabase-isolation.mjs verify; then
-              npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1
-            else
-              cleanup_result=1
-            fi
+          if npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase status >/dev/null 2>&1; then
+            npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || cleanup_result=1
           fi
           exit "$cleanup_result"
