@@ -212,8 +212,39 @@ test('task detail: completed history preserves the full plan and displays the ou
 
 test('work claims: full canonical Task UUID links to detail, malformed values remain text', async t => {
   const f = fixture(WORK_CLAIMS); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', session('owner'));
+  assert.deepEqual(f.calls.map(call => call.name), ['clued_work_claims_owner_list_v1', 'clued_work_free_handover_setting_v1']);
+  f.calls[1].resolve({ data: { status: 'ok', enabled: true, version: 0, available: false }, error: null });
   f.calls[0].resolve({ data: { status: 'ok', claims: [row(), row({ claim_id: ENDED, task_id: 'javascript:alert(1)' })] }, error: null }); await f.settle();
   const links = f.nodes('a').filter(n => String(n.props.href).startsWith('/tasks'));
   assert.equal(links.length, 1); assert.equal(links[0].props.href, '/tasks?id=' + TASK); assert.equal(f.text(links[0]), TASK);
   assert.ok(f.text().includes('javascript:alert(1)')); assert.ok(!f.nodes('a').some(n => String(n.props.href).startsWith('javascript:')));
+});
+
+for (const settingOutcome of ['pending', 'failure']) {
+  test(`work claims: ${settingOutcome} setting read cannot hold the list or enable an unknown switch`, async t => {
+    const f = fixture(WORK_CLAIMS); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', session('owner'));
+    f.calls[0].resolve({ data: { status: 'ok', claims: [row(), row({ claim_id: ENDED, task_id: 'javascript:alert(1)' })] }, error: null });
+    if (settingOutcome === 'failure') f.calls[1].reject(new Error('setting offline'));
+    await f.settle();
+    const links = f.nodes('a').filter(n => String(n.props.href).startsWith('/tasks'));
+    assert.equal(links.length, 1); assert.equal(links[0].props.href, '/tasks?id=' + TASK);
+    assert.ok(f.text().includes('javascript:alert(1)'));
+    assert.equal(f.nodes('input').filter(n => n.props.role === 'switch').length, 0);
+    assert.equal(f.button('刷新').props.disabled, false);
+  });
+}
+
+test('work claims: late settings from an old refresh or account cannot replace the current account setting', async t => {
+  const f = fixture(WORK_CLAIMS); t.after(() => f.unmount()); f.emit('INITIAL_SESSION', session('owner'));
+  f.calls[0].resolve({ data: { status: 'ok', claims: [row()] }, error: null }); await f.settle();
+  f.button('刷新').props.onClick(); f.render();
+  f.calls[1].resolve({ data: { status: 'ok', enabled: false, version: 1, available: true }, error: null }); await f.settle();
+  assert.equal(f.nodes('input').filter(n => n.props.role === 'switch').length, 0);
+  f.emit('SIGNED_IN', session('new-owner'));
+  f.calls[4].resolve({ data: { status: 'ok', claims: [row({ task_title: 'New owner claim' })] }, error: null });
+  f.calls[5].resolve({ data: { status: 'ok', enabled: true, version: 0, available: true }, error: null }); await f.settle();
+  f.calls[2].resolve({ data: { status: 'ok', claims: [row({ task_title: 'Old owner claim' })] }, error: null });
+  f.calls[3].resolve({ data: { status: 'ok', enabled: false, version: 2, available: true }, error: null }); await f.settle();
+  assert.ok(f.text().includes('New owner claim')); assert.ok(!f.text().includes('Old owner claim'));
+  assert.equal(f.nodes('input').find(n => n.props.role === 'switch').props.checked, true);
 });
