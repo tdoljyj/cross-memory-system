@@ -184,8 +184,8 @@
   "publisher_role": {
     "registration_status": "proposal",
     "workflow_path": ".github/workflows/clued-ci-usage-report.yml",
-    "workflow_blob": "6c4d90c919383eba4ae53bf59ae82e14690f5921",
-    "workflow_source_sha256": "8c4a99fd6a5944e1e2b9ba165775cdfa9d4781536ddfb3fb46cb3229cb211019",
+    "workflow_blob": "6a8dc97f08bdbf2dd4f258a0628acdb89401277e",
+    "workflow_source_sha256": "b439bd0dbc48bd6bc365f77a5a82ea18b47dfd3167c03519c1b302c497873c3f",
     "job_id": "report",
     "job_name": "clued-ci-usage-report",
     "self_hosted": false,
@@ -194,5 +194,17 @@
       "Preserve sealed R9 incremental packets": 1
     }
   },
-  "minimum_clock_binding": null
+  "minimum_clock_binding": null,
+  "bootstrap_clock_reader": {
+    "binding_id": "ff183d75-c7eb-40ea-880b-50988c99401e",
+    "credential_fingerprint": "fcce0ef432ed46c6419284028e8dd0bbea1975c25397a129d7bfa02540dbc9e5",
+    "qualification_status": "PENDING_ACTUAL_CI",
+    "scope": [
+      "global",
+      "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+    ],
+    "actions": [
+      "audit"
+    ]
+  }
 }

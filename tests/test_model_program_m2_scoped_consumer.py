@@ -307,6 +307,11 @@ def load_tests(loader, tests, pattern):
     token_module = importlib.util.module_from_spec(token_spec)
     token_spec.loader.exec_module(token_module)
     tests.addTests(loader.loadTestsFromModule(token_module, pattern=pattern))
+    observed_response_path = ROOT / "tests/test_model_observed_completion_response.py"
+    observed_response_spec = importlib.util.spec_from_file_location("m2_observed_response_specifications", observed_response_path)
+    observed_response_module = importlib.util.module_from_spec(observed_response_spec)
+    observed_response_spec.loader.exec_module(observed_response_module)
+    tests.addTests(loader.loadTestsFromModule(observed_response_module, pattern=pattern))
     return tests
 
 
