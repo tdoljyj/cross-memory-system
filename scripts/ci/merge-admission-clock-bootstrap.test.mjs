@@ -7,9 +7,14 @@ const env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:config.repository,GITHUB_REF:
 const pins={epoch_id:id,stream_id:id,clock_generation_id:id,foundation_digest:'a'.repeat(64),catalog_digest:'b'.repeat(64)};
 const seal_pins={end_sequence:1,closing_us:'1791800001000000',catalog_digest:'b'.repeat(64)};
 const server_auth={schema:'clued.clock-audit-transport-auth/1',status:'AUTHENTICATED_TARGET_READ',required_scope:'audit:read',context_key:'project:'+scope,queue_ref:queue,binding_scope_fingerprint:'c'.repeat(64),transport_definition_digest:'d'.repeat(64),contributor_count:2};
+const epoch={kind:'epoch_snapshot_candidate',...pins,queue_ref:queue,start_sequence:0,opening_us:'1791800000000000',initial_events:[]};
+const closing={kind:'closing_seal_candidate',...pins,...seal_pins,queue_ref:queue,start_sequence:0,opening_us:epoch.opening_us,seal_id:id,candidate_ready:true,ddl_tainted:false,raw_clock_regression_observed:false,raw_sample_gap_observed:false};
+const sampled={status:'ok',stream_id:id,source_digest:pins.foundation_digest,after_sequence:0,next_sequence:1,end_sequence:1,has_more:false,
+ events:[{sequence:1,transaction_id:'123'}],clock_samples:[{sequence:1,transaction_id:'123',raw_us:'1791800000500000'}],
+ epoch,seal:{seal_id:id,epoch_id:id,...seal_pins,raw_regression:false,sample_gap:false,ddl_tainted:false},candidate_ready:true};
 function fixture(transform=x=>x){const calls=[];return {calls,fetchImpl:async(url,init)=>{
  const input=JSON.parse(init.body),op=input.measurement.operation;calls.push({url,input,init});
- const measurement=op==='clock_open'?{kind:'epoch_snapshot_candidate',epoch_id:id,opening_us:'1791800000000000'}:op==='clock_seal'?{seal_id:id}:{status:'ok',has_more:false,events:[]};
+ const measurement=op==='clock_open'?epoch:op==='clock_seal'?closing:sampled;
  return Response.json(transform({status:'ok',operation:op,measurement,pins,seal_pins,server_auth},op));}};}
 test('real flat typed transport opens, seals and reads only a bounded sample; no Source/T0 accepted',async()=>{
  const f=fixture(),r=await qualifyClockReader({env,config,fetchImpl:f.fetchImpl});
@@ -43,4 +48,25 @@ test('epoch pins and between-call Scope drift stay unqualified',async()=>{
 test('oversized and invalid UTF8 response cannot become qualified',async()=>{
  for(const body of [new Uint8Array(512*1024+1),new Uint8Array([0xff,0xff])]){
   const r=await qualifyClockReader({env,config,fetchImpl:async()=>new Response(body)});assert.equal(r.status,'NOT_QUALIFIED');assert.equal(r.t0,null);}
+});
+test('fixed-seal page drift, malformed samples and inconsistent bounds never qualify',async()=>{
+ const changes=[
+  x=>({...x,seal_pins:{...seal_pins,closing_us:'1791800002000000'}}),
+  x=>({...x,measurement:{...sampled,events:null,seal:{...sampled.seal,closing_us:'1791800002000000'}}}),
+  x=>({...x,measurement:{...sampled,epoch:{...epoch,opening_us:'1791800000000001'}}}),
+  x=>({...x,measurement:{...sampled,seal:{...sampled.seal,seal_id:'20000000-0000-4000-8000-000000000002'}}}),
+  x=>({...x,measurement:{...sampled,clock_samples:[]}}),
+  x=>({...x,measurement:{...sampled,clock_samples:[{...sampled.clock_samples[0],transaction_id:'other'}]}}),
+  x=>({...x,measurement:{...sampled,clock_samples:[{...sampled.clock_samples[0],raw_us:'1791800002000000'}]}}),
+  x=>({...x,measurement:{...sampled,events:[sampled.events[0],sampled.events[0]]}}),
+  x=>({...x,measurement:{...sampled,next_sequence:2}}),
+  x=>({...x,measurement:{...sampled,has_more:true}})
+ ];
+ for(const change of changes){const f=fixture((x,op)=>op==='clock_page'?change(x):x),r=await qualifyClockReader({env,config,fetchImpl:f.fetchImpl});
+  assert.equal(r.status,'NOT_QUALIFIED');assert.equal(r.reason_code,'CLOCK_PAGE_NOT_QUALIFIED');assert.equal(f.calls.length,3);assert.equal(r.t0,null);}
+});
+test('a sealed empty epoch is a valid bounded reader observation',async()=>{
+ const f=fixture((x,op)=>op==='clock_open'?x:({...x,seal_pins:{...seal_pins,end_sequence:0},measurement:op==='clock_seal'?{...closing,end_sequence:0}:
+  {...sampled,end_sequence:0,next_sequence:0,events:[],clock_samples:[],seal:{...sampled.seal,end_sequence:0}}}));
+ const r=await qualifyClockReader({env,config,fetchImpl:f.fetchImpl});assert.equal(r.status,'AUTHENTICATED_READER_OBSERVATION');assert.equal(r.sample_page.rows,0);assert.equal(r.t0,null);
 });
