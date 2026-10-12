@@ -1,0 +1,82 @@
+name: Clued installed handover hook qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: clued-work-handover-qualification
+  cancel-in-progress: false
+jobs:
+  linux:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    name: handover-hook / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: clued-ci-company-linux-01
+            route: runner-company-linux-01
+          - runner: clued-ci-company-linux-02
+            route: runner-company-linux-02
+          - runner: clued-ci-company-linux-03
+            route: runner-company-linux-03
+          - runner: clued-ci-company-linux-04
+            route: runner-company-linux-04
+          - runner: clued-ci-home-linux-01
+            route: site-home
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, '${{ matrix.route }}']
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify route and installed code
+        shell: bash
+        env:
+          EXPECTED_RUNNER: ${{ matrix.runner }}
+        run: |
+          set -euo pipefail
+          test "$RUNNER_NAME" = "$EXPECTED_RUNNER"
+          node scripts/runner/qualify-work-handover.mjs \
+            --public-config apps/clued-cloud/app/supabase-public-config.ts > handover-hook-qualification.json
+          cat handover-hook-qualification.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: handover-hook-${{ matrix.runner }}-${{ github.run_id }}
+          path: handover-hook-qualification.json
+          if-no-files-found: error
+          retention-days: 90
+  windows:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    name: handover-hook / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: clued-ci-company-win-01
+            route: site-company
+          - runner: clued-ci-home-win-01
+            route: site-home
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, cap-node24, '${{ matrix.route }}']
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify route and installed code
+        shell: powershell
+        env:
+          EXPECTED_RUNNER: ${{ matrix.runner }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER) { throw 'Runner route mismatch.' }
+          $qualification = & node scripts/runner/qualify-work-handover.mjs --public-config apps/clued-cloud/app/supabase-public-config.ts
+          if ($LASTEXITCODE -ne 0) { throw 'Installed hook qualification failed.' }
+          Set-Content -LiteralPath handover-hook-qualification.json -Value $qualification -Encoding UTF8
+          Write-Output $qualification
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: handover-hook-${{ matrix.runner }}-${{ github.run_id }}
+          path: handover-hook-qualification.json
+          if-no-files-found: error
+          retention-days: 90
