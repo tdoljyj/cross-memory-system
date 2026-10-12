@@ -54,7 +54,9 @@ jobs:
       - id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/ci/clued-work-admission.mjs --mode gate
+        # This gate deliberately uses trusted base-branch code, which can
+        # precede the CLI proxy fix in the pull request being admitted.
+        run: node --use-env-proxy scripts/ci/clued-work-admission.mjs --mode gate
 
   trusted-self-hosted:
     name: >-
