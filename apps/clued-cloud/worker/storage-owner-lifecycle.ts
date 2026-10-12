@@ -1,6 +1,6 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
-import { MASTER_DISCLOSURE_VERSION, MASTER_RECONNECT_CONFIRMATION } from "./storage-master-disclosure";
+import { MASTER_DISCLOSURE_VERSION, MASTER_RECONNECT_CONFIRMATION, REFRESH_RECONNECT_CONFIRMATION, RECONNECT_REFRESH_DISCLOSURE_VERSION } from "./storage-master-disclosure";
 
 // Private Native route composition. Owner comes from requireSupabaseUser, not
 // a browser field; rpc adds SHA256(fixed connector secret) and that user's JWT.
@@ -32,7 +32,9 @@ type Snapshot = { root_folder_id: string; root_parent_id: string; root_version: 
   etag: string; owned_by_me: boolean; can_trash: boolean; trashed: boolean; root_name: string; item_count: number };
 export type OwnerReconnectInput = { connection_id: string; base_version: number; profile_version: number; root_stop_generation: number;
   request_id: string; confirmation: { contract: typeof STORAGE_OWNER_CONFIRMATION; root_folder_id: string; confirmed: true; normal_use: boolean }
-    | { contract: typeof MASTER_RECONNECT_CONFIRMATION; root_folder_id: string; confirmed: true; master_enabled: boolean; disclosure_version: typeof MASTER_DISCLOSURE_VERSION } };
+    | { contract: typeof MASTER_RECONNECT_CONFIRMATION; root_folder_id: string; confirmed: true; master_enabled: boolean; disclosure_version: typeof MASTER_DISCLOSURE_VERSION }
+    | { contract: typeof REFRESH_RECONNECT_CONFIRMATION; root_folder_id: string; confirmed: true; master_enabled: boolean; disclosure_version: typeof MASTER_DISCLOSURE_VERSION;
+      default_refresh: boolean; refresh_disclosure_version: typeof RECONNECT_REFRESH_DISCLOSURE_VERSION } };
 export type OwnerDeleteInput = { connection_id: string; base_version: number; profile_version: number; request_id: string;
   confirmation: { contract: typeof STORAGE_OWNER_CONFIRMATION; root_folder_id: string; confirmed: true; trash_created_root: boolean;
     metadata_digest?: string; root_version?: string } | { contract: typeof STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION;
@@ -237,11 +239,15 @@ export async function createStorageOwnerLifecycle(configuration: {
     async reconnect(owner: string, value: OwnerReconnectInput) {
       ownerValid(owner); input(value, ["connection_id","base_version","profile_version","root_stop_generation","request_id","confirmation"]);
       const confirmation = value.confirmation;
-      const master = confirmation.contract === MASTER_RECONNECT_CONFIRMATION;
+      const refreshConsent = confirmation.contract === REFRESH_RECONNECT_CONFIRMATION;
+      const master = refreshConsent || confirmation.contract === MASTER_RECONNECT_CONFIRMATION;
       if (master) {
-        if (!exact(confirmation, ["contract", "root_folder_id", "confirmed", "master_enabled", "disclosure_version"]) ||
+        if (!exact(confirmation, ["contract", "root_folder_id", "confirmed", "master_enabled", "disclosure_version",
+          ...(refreshConsent ? ["default_refresh", "refresh_disclosure_version"] : [])]) ||
           confirmation.confirmed !== true || typeof confirmation.master_enabled !== "boolean" ||
-          confirmation.disclosure_version !== MASTER_DISCLOSURE_VERSION) deny("confirmation_required");
+          confirmation.disclosure_version !== MASTER_DISCLOSURE_VERSION ||
+          (refreshConsent && (typeof confirmation.default_refresh !== "boolean" ||
+            confirmation.refresh_disclosure_version !== RECONNECT_REFRESH_DISCLOSURE_VERSION))) deny("confirmation_required");
       } else {
         confirm(confirmation, confirmation.root_folder_id, ["normal_use"]);
         if (typeof confirmation.normal_use !== "boolean") deny("input_invalid");
@@ -249,13 +255,15 @@ export async function createStorageOwnerLifecycle(configuration: {
       if (!Number.isSafeInteger(value.root_stop_generation) || value.root_stop_generation < 1) deny("input_invalid");
       const prepared = await rpc({ action: "reconnect_begin", ...value });
       if (prepared.status !== "prepared" || !UUID.test(String(prepared.connection_id)) || !UUID.test(String(prepared.attempt_id))) deny();
-      // No legacy/OFF permission carry; refresh false is unconditional.
+      // Initial-onboarding consent remains false. Fresh reconnect refresh consent
+      // is bound to Native lifecycle activation after a completed Google grant.
       const result = master && confirmation.master_enabled
         ? await configuration.oauth.start(String(prepared.connection_id), false, "full", { disclosure_version: MASTER_DISCLOSURE_VERSION })
         : await configuration.oauth.start(String(prepared.connection_id), false, "keep");
       const url = new URL(result.authorization_url);
       if (url.protocol !== "https:" || url.hostname !== "accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth") deny();
-      return { authorization_url: url.href, connection_id: String(prepared.connection_id), lifecycle_attempt_id: String(prepared.attempt_id), refresh_enabled: false };
+      return { authorization_url: url.href, connection_id: String(prepared.connection_id), lifecycle_attempt_id: String(prepared.attempt_id), refresh_enabled: false,
+        ...(refreshConsent ? { refresh_requested: confirmation.default_refresh } : {}) };
     },
     /** Called ONLY after existing Native Google OAuth.complete has committed.
      * Replay checks the completed OAuth attempt; it never repeats token POST. */

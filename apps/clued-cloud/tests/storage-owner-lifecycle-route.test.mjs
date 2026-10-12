@@ -137,3 +137,26 @@ test('normal precommitted Google callback remains completed when lifecycle activ
   assert.equal(rpcCalls(calls).length, 4);
   assert.equal(calls.filter(c => c.url.endsWith('/auth/v1/user')).length, 4);
 });
+
+test('reconnect callback returns current Native renewal truth instead of the initial OAuth default', async t => {
+  const state='R'.repeat(43),stateHash=createHash('sha256').update(state).digest('hex');
+  let refreshEnabled=true;
+  const calls=mock(t,call=>{
+    if(call.url.endsWith('/clued_storage_oauth_callback_v2')){
+      assert.equal(call.value.p_input.action,'claim');assert.equal(call.value.p_input.state_hash,stateHash);
+      return Response.json({status:'completed',receipt_id:receipt,refresh_enabled:false,provider_scope_profile:'full'});
+    }
+    assert.equal(call.url,db+'/rest/v1/rpc/clued_storage_owner_lifecycle_v1');
+    assert.equal(call.value.p_input.action,'reconnect_activate');assert.equal(call.value.p_input.state_hash,stateHash);
+    return Response.json({status:'completed',receipt_id:receipt,connection_id:connection,
+      master_state:'on',provider_scope_profile:'full',refresh_enabled:refreshEnabled,admission:'private-lifecycle-proof'});
+  });
+  for(const enabled of [true,false]){
+    refreshEnabled=enabled;
+    const response=await worker.fetch(request({state,code:'synthetic-callback-code'},{path:'/v1/storage/google/complete'}),env);
+    assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
+    const result=await response.json();assert.equal(result.refresh_enabled,enabled);assert.equal(result.connection_id,connection);
+    assert.equal(result.master_state,'on');assert.equal(JSON.stringify(result).includes('private-lifecycle-proof'),false);
+  }
+  assert.equal(rpcCalls(calls).length,4,'completed callback never repeats Google token exchange');
+});

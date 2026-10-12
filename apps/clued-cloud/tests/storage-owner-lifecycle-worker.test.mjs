@@ -80,10 +80,40 @@ test('only authenticated files/root alias permits omitted My Drive parents; ordi
   const g=await fixture({rpc:(input,{row})=>input.action==='list'?{contract:'clued.storage-owner-lifecycle/1',complete:true,connections:[{...row,access_digest_missing:{count:1,directories:[{path:'资料',since:new Date().toISOString(),secret:'reject'}]}}]}:undefined});
   await assert.rejects(g.lifecycle.list(g.owner));
 });
-test('reconnect creates new CID via Native RPC, always refresh OFF; browser owner/admission keys rejected before RPC',async()=>{
+test('legacy reconnect creates new CID via Native RPC with refresh OFF; browser owner/admission keys rejected before RPC',async()=>{
   const f=await fixture(),value={...f.base,root_stop_generation:1,confirmation:{contract:STORAGE_OWNER_CONFIRMATION,root_folder_id:'synthetic-root',confirmed:true,normal_use:false}};
   const r=await f.lifecycle.reconnect(f.owner,value);assert.notEqual(r.connection_id,f.connection);assert.deepEqual(f.oauthCalls[0],[r.connection_id,false,'keep']);
   const count=f.calls.length;await assert.rejects(f.lifecycle.reconnect(f.owner,{...value,owner_id:randomUUID()}));assert.equal(f.calls.length,count);assert.equal(f.patches(),0);
+});
+
+test('fresh reconnect binds the default renewal choice to Native consent; invalid or omitted choices never start OAuth',async()=>{
+  for(const default_refresh of [true,false]){
+    const f=await fixture(),value={...f.base,root_stop_generation:1,confirmation:{
+      contract:'clued.storage-owner-confirmation/4',root_folder_id:'synthetic-root',confirmed:true,
+      master_enabled:true,disclosure_version:'clued.storage-master-disclosure/1',default_refresh,
+      refresh_disclosure_version:'clued.storage-reconnect-refresh-disclosure/1'}};
+    const r=await f.lifecycle.reconnect(f.owner,value);
+    assert.equal(r.refresh_requested,default_refresh);assert.equal(r.refresh_enabled,false,'renewal requires successful Google callback');
+    assert.deepEqual(f.calls.find(x=>x.action==='reconnect_begin').confirmation,value.confirmation);
+    assert.deepEqual(f.oauthCalls[0],[r.connection_id,false,'full',{disclosure_version:'clued.storage-master-disclosure/1'}]);
+    const count=f.calls.length;
+    for(const confirmation of [
+      {...value.confirmation,default_refresh:'true'},
+      {...value.confirmation,default_refresh:undefined},
+      {...value.confirmation,refresh_disclosure_version:'clued.storage-master-disclosure/1'},
+      {...value.confirmation,until_revoked:true},
+    ])await assert.rejects(f.lifecycle.reconnect(f.owner,{...value,confirmation}));
+    assert.equal(f.calls.length,count);
+  }
+});
+
+test('reconnect callback projects actual renewal truth without another OAuth exchange',async()=>{
+  for(const refresh_enabled of [true,false]){
+    const f=await fixture({rpc:input=>input.action==='reconnect_activate'?{
+      status:'completed',receipt_id:randomUUID(),connection_id:randomUUID(),refresh_enabled}:undefined});
+    assert.equal((await f.lifecycle.completeReconnect(f.owner,'a'.repeat(43))).refresh_enabled,refresh_enabled);
+    assert.equal(f.oauthCalls.length,0);
+  }
 });
 
 test('master reconnect has its own confirmation and requests full Google scope, without carrying stopped legacy permissions',async()=>{
