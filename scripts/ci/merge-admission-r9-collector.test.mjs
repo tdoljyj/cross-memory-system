@@ -61,6 +61,7 @@ function nativeRequest({runs=[run()],jobs=[job()],artifact=zip(packet()),mutatio
     routes.push(route);const changed=mutation(route,opts,routes.length);if(changed)return changed;
     if(route===`/repos/${repository}`)return {ok:true,body:{full_name:repository,id:1,default_branch:'main',created_at:'2026-01-01T00:00:00Z'}};
     if(route===`/repos/${repository}/branches/main`)return {ok:true,body:{name:'main',commit:{sha:head}}};
+    if(route.includes('/git/trees/'))return {ok:true,body:{truncated:false,tree:Object.entries(content).map(([path,text])=>({path,sha:workflowBlob(text),type:'blob',mode:'100644'}))}};
     if(route.includes('/contents/')){
       const file=route.split('/contents/')[1].split('?')[0];let text=content[file];
       if(file.endsWith('clued-gated-proof-profiles.json'))text=JSON.stringify(sourceContract.profiles);
@@ -435,14 +436,21 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
 });
 
 test('same-source main advance needs the complete independent source bytes, not a matching flag',()=>{
-  const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),admission={script_blob:'a'.repeat(40)},path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
-    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[{workflow_path:path,workflow_blob:wf}]},
-    selection={admission_source:admission,workflow_blobs:{[path]:wf}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles)};
+  const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
+    admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),
+    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[{workflow_path:path,workflow_blob:wf,source_blobs:{[path]:wf}}]},
+    selection={admission_source:admission,workflow_blobs:{[path]:wf}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},
+    contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles),profiles_sha256:digest(profiles),role_specs_sha256:digest(roles),
+      source_tree:Object.fromEntries(['source/script','source/workflow','source/reverify_workflow','source/policy',path].map(p=>[p,{sha:p===path?wf:'a'.repeat(40),type:'blob',mode:'100644'}]))};
   assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,contract),true);
   assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,admission_source:{script_blob:'c'.repeat(40)}},runtime,contract),false);
   assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,workflow_blobs:{[path]:'c'.repeat(40)}},runtime,contract),false);
   assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,roles:{roles:['changed']}}),false);
   assert.equal(C.sameNaturalSourceSnapshot({...cfg,admission_source:null},{...selection,admission_source:null},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,profiles_sha256:digest('{"workflows": {}}')}),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,source_tree:{...contract.source_tree,'source/script':{sha:'c'.repeat(40),type:'blob',mode:'100644'}}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,source_tree:{...contract.source_tree,[path]:{sha:wf,type:'blob',mode:'120000'}}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot({...cfg,natural_producers:[...cfg.natural_producers,{workflow_path:path,workflow_blob:wf,source_blobs:{[path]:'c'.repeat(40)}}]},selection,runtime,contract),false);
 });
 
 test('source equivalence cannot replace raw profile/role digest pins with reformatted or malformed bytes',()=>{
@@ -468,6 +476,17 @@ test('bounded parallel Native captures retain every member under the same reques
   const result=await C.collectIncrementalNative({request,repository,window:{start:'2026-10-09T00:00:00Z',end:'2026-10-09T00:00:10Z'}});
   assert.equal(result.status,'COMPLETE');assert.equal(result.population_packets.length,7);assert.equal(Object.keys(JSON.parse(result.store_raw).packets).length,7);
   assert.ok(maximum>1);assert.ok(maximum<=4);assert.equal(calls,44);assert.equal(result.population.complete,true);
+});
+
+test('a failed directory page drains its existing batch before another stage can spend requests',async()=>{
+  const rows=Array.from({length:500},(_,i)=>run(700+i));let active=0,maximum=0;
+  const request=async route=>{const page=Number(new URL(route,'https://native.invalid').searchParams.get('page'));
+    if(page===1)return {ok:true,body:{total_count:500,workflow_runs:rows.slice(0,100)}};
+    active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,page===2?1:10));active--;
+    if(page===2)throw Error('HTTP_PAGE_FAILED');return {ok:true,body:{total_count:500,workflow_runs:rows.slice((page-1)*100,page*100)}};
+  };
+  const result=await C.collectIncrementalNative({request,repository,window});
+  assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'HTTP_PAGE_FAILED');assert.equal(active,0);assert.equal(maximum,4);
 });
 
 const Native=await import('./merge-admission-native-population.mjs');
