@@ -73,7 +73,7 @@ function nativeRequest({runs=[run()],jobs=[job()],artifact=zip(packet()),mutatio
     if(route.endsWith('/actions/artifacts/9/zip'))return {ok:true,body:artifact};
     if(route.includes('/actions/artifacts?'))return {ok:true,body:{total_count:1,artifacts:[{id:9,name:C.R9_ARTIFACT_NAME,expired:false}]}};
     if(route.includes('/compare/'))return {ok:true,body:{status:'identical',merge_base_commit:{sha:head}}};
-    if(route.includes('/actions/runs?'))return {ok:true,body:{total_count:runs.length,workflow_runs:runs}};
+    if(route.includes('/actions/runs?'))return {ok:true,body:{total_count:runs.length,workflow_runs:[...runs].sort((a,b)=>BigInt(a.id)>BigInt(b.id)?-1:1)}};
     if(route.includes('/jobs?')){const id=Number(/\/runs\/(\d+)/.exec(route)[1]);const members=jobs.filter(j=>j.run_id===id);return {ok:true,body:{total_count:members.length,jobs:members}};}
     const m=/\/actions\/runs\/(\d+)(?:\/attempts\/(\d+))?$/.exec(route);
     if(m)return {ok:true,body:runs.find(r=>String(r.id)===m[1])};
@@ -462,7 +462,7 @@ test('source equivalence cannot replace raw profile/role digest pins with reform
 });
 
 test('bounded parallel Native captures retain every member under the same request function',async()=>{
-  const runs=Array.from({length:7},(_,i)=>({id:420+i,run_attempt:1,workflow_id:8,head_sha:'a'.repeat(40),path:'.github/workflows/test.yml',event:'pull_request',status:'completed',conclusion:'success',
+  const runs=Array.from({length:7},(_,i)=>({id:426-i,run_attempt:1,workflow_id:8,head_sha:'a'.repeat(40),path:'.github/workflows/test.yml',event:'pull_request',status:'completed',conclusion:'success',
     created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z',updated_at:'2026-10-09T00:00:05Z',pull_requests:[]}));
   let active=0,maximum=0,calls=0;
   const request=async route=>{calls++;active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,2));active--;
@@ -479,7 +479,7 @@ test('bounded parallel Native captures retain every member under the same reques
 });
 
 test('a failed directory page drains its existing batch before another stage can spend requests',async()=>{
-  const rows=Array.from({length:500},(_,i)=>run(700+i));let active=0,maximum=0;
+  const rows=Array.from({length:500},(_,i)=>run(1199-i));let active=0,maximum=0;
   const request=async route=>{const page=Number(new URL(route,'https://native.invalid').searchParams.get('page'));
     if(page===1)return {ok:true,body:{total_count:500,workflow_runs:rows.slice(0,100)}};
     active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,page===2?1:10));active--;
@@ -548,14 +548,15 @@ test('Native check-only rows added after a workflow preserve metadata without ex
   }
 });
 
-function uncappedDirectoryFixture({grow=true,remove=false,ascending=false}={}){
+function uncappedDirectoryFixture({grow=true,remove=false,ascending=false,createdInversion=false,replaced=false}={}){
   const old=Array.from({length:250},(_,i)=>run(250-i,{created_at:'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:01Z',updated_at:'2026-10-09T00:01:00Z'}));
   const fresh=Array.from({length:3},(_,i)=>run(500-i,{created_at:'2026-10-12T00:00:00Z',run_started_at:'2026-10-12T00:00:01Z',updated_at:'2026-10-12T00:01:00Z'}));
   let changed=false,calls=0,active=0,max=0;
   return {get calls(){return calls;},get max(){return max;},async request(route){
     const u=new URL(route,'https://native.invalid');assert.equal(u.pathname,'/repos/'+repository+'/actions/runs');assert.equal(u.searchParams.has('created'),false);
     const page=Number(u.searchParams.get('page'));calls++;active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,2));active--;
-    if(page>1)changed=true;let rows=changed?(remove?old.slice(1):grow?[...fresh,...old]:old):old;
+    if(page>1)changed=true;let rows=changed?(remove?old.slice(1):replaced?[fresh[0],...old.slice(1)]:grow?[...fresh,...old]:old):old;
+    if(createdInversion)rows=rows.map((r,i)=>i===106?{...r,created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z'}:r);
     if(ascending)rows=[...rows].reverse().map((r,i)=>({...r,created_at:i?'2026-10-09T00:00:01Z':'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:02Z'}));
     return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
   }};
@@ -612,4 +613,32 @@ test('an observer ordinal moving after its independent proof cannot omit the now
   assert.ok(r.native.gaps.some(g=>g.reason_code==='CURRENT_OBSERVER_INVENTORY_CHANGED'));
   assert.ok(JSON.parse(r.native.store_raw).packets['42:1']);assert.equal(r.native.population.current_observer_exclusion,undefined);
   assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('actual descending Native IDs tolerate the observed one-second creation inversion',async()=>{
+  const f=uncappedDirectoryFixture({grow:false,createdInversion:true}),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.population.initial_total,250);assert.equal(r.population.closing_total,250);
+});
+
+test('a deletion offset by a new head cannot counterfeit the whole fixed denominator',async()=>{
+  const f=uncappedDirectoryFixture({replaced:true}),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
+});
+
+test('a newer authenticated artifact cannot erase older independently authenticated Native increments',async()=>{
+  const seed=await Native.captureNativeAttempt({request:nativeRequest().request,repository,runId:'42',attempt:1});
+  assert.equal(seed.status,'COMPLETE');const old=zip(packet({nativeStoreRaw:seed.store_raw})),newest=zip(packet());
+  const members=[{id:9,name:C.R9_ARTIFACT_NAME,expired:false},{id:10,name:C.R9_ARTIFACT_NAME,expired:false}];
+  const f=nativeRequest({artifact:old,mutation:route=>{
+    if(route.includes('/actions/artifacts?'))return {ok:true,body:{total_count:2,artifacts:members}};
+    if(route.endsWith('/actions/artifacts/10'))return {ok:true,body:{id:10,name:C.R9_ARTIFACT_NAME,expired:false,digest:'sha256:'+digest(newest),workflow_run:{id:42,head_sha:head,head_branch:'main'}}};
+    if(route.endsWith('/actions/artifacts/10/zip'))return {ok:true,body:newest};return null;
+  }});
+  const cache=JSON.stringify({schema:C.R9_CACHE_SCHEMA,repository,artifact_id:'9',zip_base64:old.toString('base64')}),
+    r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,cacheRaw:cache});
+  assert.equal(r.source_authenticated,true);assert.deepEqual(r.source_proof.native_history_union.artifact_ids,['10','9']);
+  assert.equal(r.source_proof.native_history_union.packet_count,1);assert.equal(r.native.from_sealed,1);
+  assert.ok(JSON.parse(r.native.store_raw).packets['42:1']);assert.equal(JSON.parse(r.cache_raw).artifact_id,'10');
+  assert.equal(r.metrics.update_main_rounds.value,null);assert.equal(r.metrics.queue_depth_p95.value,null);assert.equal(r.t0,null);
+  assert.equal(f.routes.filter(r=>r.endsWith('/actions/artifacts/9/zip')).length,0);
 });
