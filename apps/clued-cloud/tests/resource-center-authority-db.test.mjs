@@ -236,13 +236,13 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     // Fast local diagnosis only. CI leaves this unset and runs both complete
     // schema shapes plus every existing Resource Center regression.
     if (focusedCloud) {
-      await testAccountCloud(t, admin, server, USER, DECISION);
+      await testAccountCloud(t, admin, server, USER, DECISION,{demandRenewal:true});
       await qualifyCurrentCallers(t, admin, server, closeoutSql);
       return;
     }
 
     if (focusedRead) {
-      await testStorageRead(t, admin, server, USER, DECISION);
+      await testStorageRead(t, admin, server, USER, DECISION,{demandRenewal:true});
       await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
       await testStorageReadContent(t, admin, server, USER, DECISION);
       await testStorageModifyLevel(t, admin, server, USER, DECISION);
@@ -770,7 +770,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       });
       assert.equal(updated.status, "committed");
       assert.deepEqual(await resolve({ mutation: replacement, provider_identity: identity }),
-        { status: "denied", reason: "destination_mismatch" });
+        { status: "denied", reason: "destination_version_mismatch" });
       const next = await resolve({ mutation: replacement, provider_identity: {
         ...identity, destination_file_version: "6",
       } });
@@ -1118,8 +1118,8 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     await testStorageClientCapability(t, admin, server, USER, DECISION);
     await testStorageSourceReader(t, admin);
     await testStoragePolicyTransition(t, admin, server, USER, DECISION);
-    await testAccountCloud(t, admin, server, USER, DECISION);
-    await testStorageRead(t, admin, server, USER, DECISION);
+    await testAccountCloud(t, admin, server, USER, DECISION,{demandRenewal:true});
+    await testStorageRead(t, admin, server, USER, DECISION,{demandRenewal:true});
     await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
     await testStorageReadContent(t, admin, server, USER, DECISION);
     await testStorageModifyLevel(t, admin, server, USER, DECISION);

@@ -22,13 +22,44 @@
     "profiles_sha256": "ef74db4a6347ad58a3ec1edcc869cfec9b2aa4ac1d7db1d7db215217233b27cb",
     "role_specs_sha256": "b8bc6e91dab41eefa4fa6d68f56f6513a3544def5c9978332e8dfbf3dbd0ff4e"
   },
-  "forward_epoch": null,
-  "clock": null,
-  "registration_status": "proposal",
-  "operation_coverage": null,
+  "forward_epoch": {
+    "epoch_id": "341f83e7-97a7-45cf-88cb-1e18663df4bb",
+    "activation_receipt_id": "48d95aea-b19c-4735-b8a2-739c518ce8d9",
+    "pins": {
+      "epoch_id": "341f83e7-97a7-45cf-88cb-1e18663df4bb",
+      "stream_id": "647da0f9-677a-4165-9139-2cbb0eac86ae",
+      "catalog_digest": "764c1e19c023d821ffe6138d9b62eea685480639e86eedbc3eb301706433c27c",
+      "foundation_digest": "21c38ffc68f2c845f8700af1ab41e69d3e55aaef6aa975d1b30830ef6e549953",
+      "clock_generation_id": "e75919e2-8ced-4b97-84e2-bb36fe06d564"
+    },
+    "opening_us": "1791839973361287"
+  },
+  "clock": {
+    "foundation_digest": "21c38ffc68f2c845f8700af1ab41e69d3e55aaef6aa975d1b30830ef6e549953",
+    "catalog_digest": "764c1e19c023d821ffe6138d9b62eea685480639e86eedbc3eb301706433c27c",
+    "transport_definition_digest": "cbb33c2af49c5232c329bb38ca0d04afc6ccc0c668c16aaee5630a92460aa187"
+  },
+  "registration_status": "registered",
+  "operation_coverage": {
+    "schema": "clued.r9-finite-recorded-operation-coverage/1",
+    "owner_receipt_id": "cb39ade1-fae0-4310-8319-af24dae6b23a",
+    "owner_decision_id": "218ca0b3-dc51-4a64-84a0-25ff352ff7b0",
+    "finite_policy_decision_id": "c889326f-8f2e-4f82-bfdd-0cdbcd48780d",
+    "epoch_id": "341f83e7-97a7-45cf-88cb-1e18663df4bb",
+    "repository": "tdoljyj/cross-memory-system",
+    "scope": {
+      "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "queue_ref": "merge:tdoljyj/cross-memory-system:main"
+    },
+    "mode": "explicit_recorded_origins_during_this_epoch",
+    "original_source_paths": [
+      "scripts/ci/clued-work-admission.mjs",
+      "scripts/ci/clued-merge-executor.mjs"
+    ]
+  },
   "natural_producers": [
     {
-      "registration_status": "proposal",
+      "registration_status": "registered",
       "workflow_path": ".github/workflows/clued-work-admission.yml",
       "workflow_blob": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
       "job_id": "clued-work-admission",
@@ -55,7 +86,7 @@
       ]
     },
     {
-      "registration_status": "proposal",
+      "registration_status": "registered",
       "workflow_path": ".github/workflows/clued-work-admission-reverify.yml",
       "workflow_blob": "8d112ceea21487b9ef871558a2e3bab8decef126",
       "job_id": "reverify",
@@ -86,7 +117,7 @@
       ]
     },
     {
-      "registration_status": "proposal",
+      "registration_status": "registered",
       "workflow_path": ".github/workflows/clued-work-admission-dispatch.yml",
       "workflow_blob": "03974542ffb1df63c195a1ca13a0b14355d81c1a",
       "job_id": "admit",
@@ -115,7 +146,7 @@
       ]
     },
     {
-      "registration_status": "proposal",
+      "registration_status": "registered",
       "workflow_path": ".github/workflows/clued-merge-executor.yml",
       "workflow_blob": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
       "job_id": "execute",
@@ -148,7 +179,7 @@
       ]
     },
     {
-      "registration_status": "proposal",
+      "registration_status": "registered",
       "workflow_path": ".github/workflows/clued-merge-slot-ci.yml",
       "workflow_blob": "cea1b54a12373e71e985b04bebe00b7b63f95606",
       "job_id": "report",
@@ -182,10 +213,10 @@
     }
   ],
   "publisher_role": {
-    "registration_status": "proposal",
+    "registration_status": "registered",
     "workflow_path": ".github/workflows/clued-ci-usage-report.yml",
-    "workflow_blob": "6c4d90c919383eba4ae53bf59ae82e14690f5921",
-    "workflow_source_sha256": "8c4a99fd6a5944e1e2b9ba165775cdfa9d4781536ddfb3fb46cb3229cb211019",
+    "workflow_blob": "6a8dc97f08bdbf2dd4f258a0628acdb89401277e",
+    "workflow_source_sha256": "b439bd0dbc48bd6bc365f77a5a82ea18b47dfd3167c03519c1b302c497873c3f",
     "job_id": "report",
     "job_name": "clued-ci-usage-report",
     "self_hosted": false,
@@ -194,5 +225,27 @@
       "Preserve sealed R9 incremental packets": 1
     }
   },
-  "minimum_clock_binding": null
+  "minimum_clock_binding": {
+    "binding_id": "ff183d75-c7eb-40ea-880b-50988c99401e",
+    "credential_fingerprint": "fcce0ef432ed46c6419284028e8dd0bbea1975c25397a129d7bfa02540dbc9e5",
+    "binding_scope_fingerprint": "01e635644fafc88ebbdcbaf8cfc2e9dfc79cc4717ea06f0f3cef403b58d376cc",
+    "contributor_count": 2,
+    "qualification_run_id": "38280223531",
+    "qualification_attempt": 1,
+    "qualification_job_id": "114915461403",
+    "qualification_artifact_id": "11760224857",
+    "qualification_receipt_id": "a8da0a40-3f36-4d13-8b27-830330499582"
+  },
+  "bootstrap_clock_reader": {
+    "binding_id": "ff183d75-c7eb-40ea-880b-50988c99401e",
+    "credential_fingerprint": "fcce0ef432ed46c6419284028e8dd0bbea1975c25397a129d7bfa02540dbc9e5",
+    "qualification_status": "ACTUAL_CI_AUTHENTICATED_TARGET_READ",
+    "scope": [
+      "global",
+      "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+    ],
+    "actions": [
+      "audit"
+    ]
+  }
 }

@@ -30,6 +30,23 @@ const {workflowBlob}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued
 const repository='tdoljyj/cross-memory-system',head='a'.repeat(40),window={start:'2026-10-10T00:00:00.000Z',end:'2026-10-11T00:00:00.000Z'};
 const digest=x=>createHash('sha256').update(x).digest('hex');
 const scope={project_id:'0597aa60-9b98-4da6-a4ab-63d7705b632f',queue_ref:'merge:tdoljyj/cross-memory-system:main'};
+test('Native admission membership distinguishes skipped evaluator plus adoption from an executed or unknown evaluator',()=>{
+  const workflow='.github/workflows/clued-work-admission.yml',expected=JSON.stringify({admission_sources:[{
+    workflow_path:workflow,reverify_workflow_path:'.github/workflows/clued-work-admission-reverify.yml'}]}),
+    at='2026-10-10T10:00:01.000Z',r={run_id:'42',run_attempt:1,path:workflow,head_sha:'a'.repeat(40),pull_requests:[727],
+      status:'completed',conclusion:'success',created_at:'2026-10-10T10:00:00.000Z',run_started_at:at,updated_at:'2026-10-10T10:01:00.000Z'},
+    skipped={id:'43',name:'clued-work-admission',status:'completed',conclusion:'skipped',created_at:at,started_at:at,completed_at:at,steps:[]},
+    cancelled={...skipped,conclusion:'cancelled',completed_at:'2026-10-10T10:00:00.000Z'},
+    adopt={id:'44',name:'clued-work-adopt',status:'completed',conclusion:'success',created_at:at,started_at:at,completed_at:at,
+      steps:[{name:'Report the merge',status:'completed',conclusion:'success'}]};
+  for(const [jobs,kind] of [[[skipped,adopt],'other'],[[skipped],'other'],[[cancelled],'other'],[[adopt],'other'],[[],'admission'],
+    [[{...cancelled,steps:[{name:'Evaluate',status:'completed',conclusion:'failure'}]}],'admission'],
+    [[{...cancelled,started_at:'2026-10-10T10:00:02.000Z'}],'admission']]){
+    const native={population_packets:[{run:r,jobs}]},before=JSON.stringify(native),rows=C.mapNativeAttemptsForFourSource(native,expected,window);
+    assert.equal(rows.length,1);assert.equal(rows[0].kind,kind);assert.equal(rows[0].status,r.status);assert.equal(rows[0].conclusion,r.conclusion);
+    assert.equal(JSON.stringify(native),before);
+  }
+});
 const run=(id=42,extra={})=>({id,run_attempt:1,workflow_id:7,path:C.R9_PUBLISHER_PATH,event:'schedule',head_sha:head,
   status:'completed',conclusion:'success',created_at:'2026-10-10T10:00:00Z',run_started_at:'2026-10-10T10:00:01Z',updated_at:'2026-10-10T10:10:00Z',
   pull_requests:[],head_branch:'main',head_repository:{full_name:repository},...extra});
@@ -61,6 +78,7 @@ function nativeRequest({runs=[run()],jobs=[job()],artifact=zip(packet()),mutatio
     routes.push(route);const changed=mutation(route,opts,routes.length);if(changed)return changed;
     if(route===`/repos/${repository}`)return {ok:true,body:{full_name:repository,id:1,default_branch:'main',created_at:'2026-01-01T00:00:00Z'}};
     if(route===`/repos/${repository}/branches/main`)return {ok:true,body:{name:'main',commit:{sha:head}}};
+    if(route.includes('/git/trees/'))return {ok:true,body:{truncated:false,tree:Object.entries(content).map(([path,text])=>({path,sha:workflowBlob(text),type:'blob',mode:'100644'}))}};
     if(route.includes('/contents/')){
       const file=route.split('/contents/')[1].split('?')[0];let text=content[file];
       if(file.endsWith('clued-gated-proof-profiles.json'))text=JSON.stringify(sourceContract.profiles);
@@ -72,7 +90,7 @@ function nativeRequest({runs=[run()],jobs=[job()],artifact=zip(packet()),mutatio
     if(route.endsWith('/actions/artifacts/9/zip'))return {ok:true,body:artifact};
     if(route.includes('/actions/artifacts?'))return {ok:true,body:{total_count:1,artifacts:[{id:9,name:C.R9_ARTIFACT_NAME,expired:false}]}};
     if(route.includes('/compare/'))return {ok:true,body:{status:'identical',merge_base_commit:{sha:head}}};
-    if(route.includes('/actions/runs?'))return {ok:true,body:{total_count:runs.length,workflow_runs:runs}};
+    if(route.includes('/actions/runs?'))return {ok:true,body:{total_count:runs.length,workflow_runs:[...runs].sort((a,b)=>BigInt(a.id)>BigInt(b.id)?-1:1)}};
     if(route.includes('/jobs?')){const id=Number(/\/runs\/(\d+)/.exec(route)[1]);const members=jobs.filter(j=>j.run_id===id);return {ok:true,body:{total_count:members.length,jobs:members}};}
     const m=/\/actions\/runs\/(\d+)(?:\/attempts\/(\d+))?$/.exec(route);
     if(m)return {ok:true,body:runs.find(r=>String(r.id)===m[1])};
@@ -400,7 +418,8 @@ if(process.env.CLUED_R9_CHECKOUT_CHILD!=='1')test('M4: default self-test loads a
   const temp=fs.mkdtempSync(path.join(os.tmpdir(),'clued-r9-checkout-'));
   try{
     const paths=[...C.R9_SOURCE_PATHS,...Object.keys(JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8')).workflows),'scripts/ci/ci-usage-attribution.mjs','scripts/ci/merge-admission-policy.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
-      'scripts/ci/clued-work-admission.mjs','.github/workflows/clued-work-admission.yml','.github/workflows/clued-work-admission-reverify.yml','config/merge-admission-policy.json'];
+      'scripts/ci/clued-work-admission.mjs','scripts/runner/clued-runner-job-started.mjs',
+      '.github/workflows/clued-work-admission.yml','.github/workflows/clued-work-admission-reverify.yml','config/merge-admission-policy.json'];
     for(const rel of paths){const author=path.join(here,path.basename(rel)),src=fs.existsSync(author)?author:['scripts/ci/merge-admission-r9-collector.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/ci-usage-report.mjs'].includes(rel)?author:
       rel==='scripts/ci/merge-admission-native-population.mjs'?overrides['merge-admission-native-population.mjs']:rel==='scripts/ci/merge-admission-four-sources.mjs'?overrides['merge-admission-four-sources.mjs']:path.join(repo,rel);
       fs.mkdirSync(path.dirname(path.join(temp,rel)),{recursive:true});fs.copyFileSync(src,path.join(temp,rel));}
@@ -431,4 +450,224 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
   assert.equal(result.activity_coverage.closing_delivery_watermark,null);assert.equal(result.metrics.queue_depth_p95.official_metric,true);assert.equal(result.metrics.queue_depth_p95.value,0);
   assert.equal(result.metrics.update_main_rounds.official_metric,true);assert.equal(result.metrics.update_main_rounds.value,0);assert.equal(result.metrics.cancellation_causes.denominator,0);
   assert.equal(result.metrics.wasted_final_rounds.activity_coverage.delivery_through_window_end,'UNKNOWN');assert.equal(result.t0,null);
+});
+
+test('same-source main advance needs the complete independent source bytes, not a matching flag',()=>{
+  const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
+    admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),
+    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[{workflow_path:path,workflow_blob:wf,source_blobs:{[path]:wf}}]},
+    selection={admission_source:admission,workflow_blobs:{[path]:wf}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},
+    contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles),profiles_sha256:digest(profiles),role_specs_sha256:digest(roles),
+      source_tree:Object.fromEntries(['source/script','source/workflow','source/reverify_workflow','source/policy',path].map(p=>[p,{sha:p===path?wf:'a'.repeat(40),type:'blob',mode:'100644'}]))};
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,contract),true);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,admission_source:{script_blob:'c'.repeat(40)}},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,workflow_blobs:{[path]:'c'.repeat(40)}},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,roles:{roles:['changed']}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot({...cfg,admission_source:null},{...selection,admission_source:null},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,profiles_sha256:digest('{"workflows": {}}')}),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,source_tree:{...contract.source_tree,'source/script':{sha:'c'.repeat(40),type:'blob',mode:'100644'}}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,source_tree:{...contract.source_tree,[path]:{sha:wf,type:'blob',mode:'120000'}}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot({...cfg,natural_producers:[...cfg.natural_producers,{workflow_path:path,workflow_blob:wf,source_blobs:{[path]:'c'.repeat(40)}}]},selection,runtime,contract),false);
+});
+
+test('source equivalence cannot replace raw profile/role digest pins with reformatted or malformed bytes',()=>{
+  const profiles='{"workflows":{}}',roles='{"roles":[]}',admission={script_blob:'a'.repeat(40)},
+    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[]},
+    selection={admission_source:admission,workflow_blobs:{}},contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles)};
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'{"workflows": {}}',role_specs_raw:roles},contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'not-json',role_specs_raw:roles},contract),false);
+});
+
+test('bounded parallel Native captures retain every member under the same request function',async()=>{
+  const runs=Array.from({length:7},(_,i)=>({id:426-i,run_attempt:1,workflow_id:8,head_sha:'a'.repeat(40),path:'.github/workflows/test.yml',event:'pull_request',status:'completed',conclusion:'success',
+    created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z',updated_at:'2026-10-09T00:00:05Z',pull_requests:[]}));
+  let active=0,maximum=0,calls=0;
+  const request=async route=>{calls++;active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,2));active--;
+    const u=new URL(route,'https://native.invalid');
+    if(u.pathname.endsWith('/actions/runs'))return {ok:true,body:{total_count:runs.length,workflow_runs:structuredClone(runs)}};
+    const id=Number(u.pathname.match(/\/runs\/(\d+)/)?.[1]),r=runs.find(x=>x.id===id);assert.ok(r);
+    if(u.pathname.endsWith('/jobs'))return {ok:true,body:{total_count:1,jobs:[{id:1000+id,run_id:id,run_attempt:1,name:'test',status:'completed',conclusion:'success',
+      created_at:'2026-10-09T00:00:02Z',started_at:'2026-10-09T00:00:03Z',completed_at:'2026-10-09T00:00:04Z',labels:['ubuntu-slim'],steps:[]}]}};
+    return {ok:true,body:structuredClone(r)};
+  };
+  const result=await C.collectIncrementalNative({request,repository,window:{start:'2026-10-09T00:00:00Z',end:'2026-10-09T00:00:10Z'}});
+  assert.equal(result.status,'COMPLETE');assert.equal(result.population_packets.length,7);assert.equal(Object.keys(JSON.parse(result.store_raw).packets).length,7);
+  assert.ok(maximum>1);assert.ok(maximum<=4);assert.equal(calls,44);assert.equal(result.population.complete,true);
+});
+
+test('a failed directory page drains its existing batch before another stage can spend requests',async()=>{
+  const rows=Array.from({length:500},(_,i)=>run(1199-i));let active=0,maximum=0;
+  const request=async route=>{const page=Number(new URL(route,'https://native.invalid').searchParams.get('page'));
+    if(page===1)return {ok:true,body:{total_count:500,workflow_runs:rows.slice(0,100)}};
+    active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,page===2?1:10));active--;
+    if(page===2)throw Error('HTTP_PAGE_FAILED');return {ok:true,body:{total_count:500,workflow_runs:rows.slice((page-1)*100,page*100)}};
+  };
+  const result=await C.collectIncrementalNative({request,repository,window});
+  assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'HTTP_PAGE_FAILED');assert.equal(active,0);assert.equal(maximum,4);
+});
+
+const Native=await import('./merge-admission-native-population.mjs');
+const projectionRoot='/repos/'+repository+'/actions/runs/38280673705';
+function wireProjectionFixture({attemptCreated='2026-10-12T16:54:45Z',jobConclusion='cancelled',jobEnded='2026-10-12T16:55:27Z',skipSteps=[],mutateAfter=false}={}){
+  const run={id:38280673705,run_attempt:1,workflow_id:123,head_sha:'a'.repeat(40),path:'.github/workflows/clued-merge-slot-ci.yml',event:'workflow_run',status:'completed',conclusion:'cancelled',created_at:'2026-10-12T16:54:44Z',run_started_at:'2026-10-12T16:54:44Z',updated_at:'2026-10-12T16:55:28Z',pull_requests:[]};
+  const jobs=[{id:114916915569,run_id:run.id,run_attempt:1,name:'clued-merge-slot-ci',status:'completed',conclusion:jobConclusion,created_at:'2026-10-12T16:54:45Z',started_at:'2026-10-12T16:54:45Z',completed_at:jobEnded,labels:['ubuntu-slim'],steps:skipSteps}];
+  let attempts=0;
+  return {async request(route){if(route===projectionRoot)return {ok:true,body:structuredClone(run)};
+    if(route===projectionRoot+'/attempts/1'){attempts++;return {ok:true,body:{...structuredClone(run),created_at:mutateAfter&&attempts>1?'2026-10-12T16:54:46Z':attemptCreated}};}
+    if(route.startsWith(projectionRoot+'/attempts/1/jobs?'))return {ok:true,body:{total_count:jobs.length,jobs:structuredClone(jobs)}};
+    throw Error('unexpected diagnostic route');}};
+}
+test('actual attempt DTO creation does not replace original Native run identity',async()=>{
+  const f=wireProjectionFixture(),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.packet.run.created_at,'2026-10-12T16:54:44.000Z');
+  assert.equal(r.packet.timing_basis.reported_attempt_created_at,'2026-10-12T16:54:45.000Z');
+  assert.equal(r.packet.run.conclusion,'cancelled');assert.equal(Native.inspectNativePopulationStore(r.store_raw).status,'VALID_DATA_STORE');
+});
+test('no-op skipped scheduler timestamps are retained as metadata, never execution',async()=>{
+  const f=wireProjectionFixture({jobConclusion:'skipped',jobEnded:'2026-10-12T16:54:44Z'}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.packet.jobs[0].conclusion,'skipped');
+  assert.equal(r.packet.jobs[0].completed_at,'2026-10-12T16:54:44.000Z');assert.deepEqual(r.packet.jobs[0].steps,[]);
+});
+test('cancelled or successful execution retains the original contradictory-time rejection',async()=>{
+  for(const conclusion of ['cancelled','success']){
+    const f=wireProjectionFixture({jobConclusion:conclusion,jobEnded:'2026-10-12T16:54:44Z',skipSteps:[{number:1,name:'actual execution',status:'completed',conclusion:'success',started_at:'2026-10-12T16:54:45Z',completed_at:'2026-10-12T16:54:45Z'}]}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'invalid_native_job_time');
+  }
+});
+test('skipped label with execution steps cannot bypass execution chronology',async()=>{
+  const f=wireProjectionFixture({jobConclusion:'skipped',jobEnded:'2026-10-12T16:54:44Z',skipSteps:[{number:1,name:'untrusted execution',status:'completed',conclusion:'success',started_at:'2026-10-12T16:54:45Z',completed_at:'2026-10-12T16:54:46Z'}]}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'invalid_native_job_time');
+});
+test('attempt creation metadata changing between independent reads is rejected',async()=>{
+  const f=wireProjectionFixture({mutateAfter:true}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'native_attempt_reported_creation_changed');
+});
+
+test('late no-step skipped projections preserve timestamps beyond the run update',async()=>{
+  const r=run(38284356268,{created_at:'2026-10-12T17:27:45Z',run_started_at:'2026-10-12T17:27:45Z',updated_at:'2026-10-12T17:27:46Z',conclusion:'skipped'});
+  const j=job(r.id,{id:114929091627,name:'public-mcp-gate-receipt-evaluate',conclusion:'skipped',created_at:'2026-10-12T17:27:55Z',started_at:'2026-10-12T17:27:55Z',completed_at:'2026-10-12T17:27:46Z',steps:[]});
+  const f=nativeRequest({runs:[r],jobs:[j]}),n=await Native.captureNativeAttempt({request:f.request,repository,runId:String(r.id),attempt:1});
+  assert.equal(n.status,'COMPLETE');assert.equal(n.packet.jobs[0].created_at,'2026-10-12T17:27:55.000Z');
+  assert.equal(C.nativeCompletionMembership(n.packet,{start:'2026-10-12T17:27:00Z',end:'2026-10-12T17:28:00Z'}).membership,'IN_WINDOW');
+  assert.equal(Native.inspectNativePopulationStore(n.store_raw).status,'VALID_DATA_STORE');
+});
+
+test('Native check-only rows added after a workflow preserve metadata without extending execution',async()=>{
+  const r=run(38280832886,{created_at:'2026-10-12T16:56:07Z',run_started_at:'2026-10-12T16:56:07Z',updated_at:'2026-10-12T16:56:50Z'}),
+    j=job(r.id,{id:114921378190,name:'public-mcp-gate-receipt-verdict',created_at:'2026-10-12T17:06:46Z',started_at:'2026-10-12T17:06:46Z',completed_at:'2026-10-12T17:06:46Z',labels:[],steps:[],html_url:'https://github.com/'+repository+'/runs/114921378190'});
+  const f=nativeRequest({runs:[r],jobs:[j]}),n=await Native.captureNativeAttempt({request:f.request,repository,runId:String(r.id),attempt:1});
+  assert.equal(n.status,'COMPLETE');assert.equal(n.packet.jobs[0].reported_check_url,j.html_url);
+  assert.equal(Native.nativeJobIsNonExecution(n.packet.jobs[0]),true);assert.equal(Native.inspectNativePopulationStore(n.store_raw).status,'VALID_DATA_STORE');
+  assert.equal(C.nativeCompletionMembership(n.packet,{start:'2026-10-12T16:56:00Z',end:'2026-10-12T17:00:00Z'}).membership,'IN_WINDOW');
+  for(const change of [{html_url:'https://github.com/other/repo/runs/114921378190'},{labels:['ubuntu-latest']},{steps:[{number:1,name:'actual work',status:'completed',conclusion:'success',started_at:j.started_at,completed_at:j.completed_at}]},{completed_at:'2026-10-12T17:06:47Z'}]){
+    const bad=nativeRequest({runs:[r],jobs:[{...j,...change}]}),q=await Native.captureNativeAttempt({request:bad.request,repository,runId:String(r.id),attempt:1});
+    assert.equal(q.status,'PARTIAL');
+  }
+});
+
+function uncappedDirectoryFixture({grow=true,remove=false,ascending=false,createdInversion=false,replaced=false}={}){
+  const old=Array.from({length:250},(_,i)=>run(250-i,{created_at:'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:01Z',updated_at:'2026-10-09T00:01:00Z'}));
+  const fresh=Array.from({length:3},(_,i)=>run(500-i,{created_at:'2026-10-12T00:00:00Z',run_started_at:'2026-10-12T00:00:01Z',updated_at:'2026-10-12T00:01:00Z'}));
+  let changed=false,calls=0,active=0,max=0;
+  return {get calls(){return calls;},get max(){return max;},async request(route){
+    const u=new URL(route,'https://native.invalid');assert.equal(u.pathname,'/repos/'+repository+'/actions/runs');assert.equal(u.searchParams.has('created'),false);
+    const page=Number(u.searchParams.get('page'));calls++;active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,2));active--;
+    if(page>1)changed=true;let rows=changed?(remove?old.slice(1):replaced?[fresh[0],...old.slice(1)]:grow?[...fresh,...old]:old):old;
+    if(createdInversion)rows=rows.map((r,i)=>i===106?{...r,created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z'}:r);
+    if(ascending)rows=[...rows].reverse().map((r,i)=>({...r,created_at:i?'2026-10-09T00:00:01Z':'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:02Z'}));
+    return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
+  }};
+}
+
+test('uncapped directory closes all historical members despite a growing post-window prefix',async()=>{
+  const f=uncappedDirectoryFixture(),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.population.initial_total,250);assert.equal(r.population.closing_total,250);
+  assert.equal(r.population.complete,true);assert.equal(r.fresh,0);assert.equal(f.calls,8);assert.ok(f.max<=4);
+});
+
+test('uncapped directory refuses changed retention or an unproved provider order',async()=>{
+  for(const options of [{remove:true},{ascending:true}]){
+    const f=uncappedDirectoryFixture(options),r=await C.collectIncrementalNative({request:f.request,repository,window});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
+  }
+});
+
+test('the current Native main observer is disclosed outside its own terminal denominator',async()=>{
+  const live=run(42,{status:'in_progress',conclusion:null}),f=nativeRequest({runs:[live],jobs:[]}),observer={run_id:'42',run_attempt:1,head_sha:head};
+  const r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,observer});
+  assert.equal(r.native.status,'COMPLETE');assert.equal(r.native.population.complete,true);
+  assert.equal(r.native.population.current_observer_exclusion.run_id,'42');assert.equal(r.native.population_packets.length,0);
+  assert.equal(r.t0,null);assert.equal(r.official_metric,false);
+});
+
+test('self-observation exclusion cannot hide another workflow or a terminal measurement',async()=>{
+  for(const live of [run(42,{status:'in_progress',conclusion:null,path:'.github/workflows/clued-g4-database.yml'}),run()]){
+    const f=nativeRequest({runs:[live]}),r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+      observer:{run_id:'42',run_attempt:1,head_sha:head}});
+    assert.equal(r.native.population.current_observer_exclusion,undefined);
+    assert.ok(r.gaps.includes('CURRENT_OBSERVER_NATIVE_ROLE_NOT_PROVED'));assert.equal(r.official_metric,false);
+  }
+});
+
+test('a live report exclusion retains all earlier terminal ordinal captures',async()=>{
+  const first=run(),latest=run(42,{run_attempt:2,status:'in_progress',conclusion:null,run_started_at:'2026-10-10T10:15:00Z',updated_at:'2026-10-10T10:15:01Z'}),
+    f=nativeRequest({runs:[latest],jobs:[job()],mutation:route=>route.endsWith('/attempts/1')?{ok:true,body:first}:null});
+  const r=await C.collectIncrementalNative({request:f.request,repository,window,observer:{run_id:'42',run_attempt:2,head_sha:head}});
+  assert.equal(r.status,'COMPLETE');assert.deepEqual(Object.keys(JSON.parse(r.store_raw).packets),['42:1']);assert.equal(r.fresh,1);
+});
+
+test('an observer ordinal moving after its independent proof cannot omit the now-historical execution',async()=>{
+  const first=run(),live1=run(42,{status:'in_progress',conclusion:null}),live2=run(42,{run_attempt:2,status:'in_progress',conclusion:null,
+    run_started_at:'2026-10-11T00:01:00Z',updated_at:'2026-10-11T00:01:01Z'});let rootReads=0;
+  const f=nativeRequest({runs:[live2],jobs:[job()],mutation:route=>{
+    if(route.includes('/actions/artifacts?'))return {ok:true,body:{total_count:0,artifacts:[]}};
+    if(route.endsWith('/actions/runs/42'))return {ok:true,body:++rootReads===1?live1:live2};
+    if(route.endsWith('/attempts/1'))return {ok:true,body:first};return null;
+  }});
+  const r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+    observer:{run_id:'42',run_attempt:1,head_sha:head}});
+  assert.equal(r.native.status,'PARTIAL');assert.equal(r.native.population.complete,false);
+  assert.ok(r.native.gaps.some(g=>g.reason_code==='CURRENT_OBSERVER_INVENTORY_CHANGED'));
+  assert.ok(JSON.parse(r.native.store_raw).packets['42:1']);assert.equal(r.native.population.current_observer_exclusion,undefined);
+  assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('actual descending Native IDs tolerate the observed one-second creation inversion',async()=>{
+  const f=uncappedDirectoryFixture({grow:false,createdInversion:true}),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.population.initial_total,250);assert.equal(r.population.closing_total,250);
+});
+
+test('a deletion offset by a new head cannot counterfeit the whole fixed denominator',async()=>{
+  const f=uncappedDirectoryFixture({replaced:true}),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
+});
+
+test('a newer authenticated artifact cannot erase older independently authenticated Native increments',async()=>{
+  const seed=await Native.captureNativeAttempt({request:nativeRequest().request,repository,runId:'42',attempt:1});
+  assert.equal(seed.status,'COMPLETE');const old=zip(packet({nativeStoreRaw:seed.store_raw})),newest=zip(packet());
+  const members=[{id:9,name:C.R9_ARTIFACT_NAME,expired:false},{id:10,name:C.R9_ARTIFACT_NAME,expired:false}];
+  const f=nativeRequest({artifact:old,mutation:route=>{
+    if(route.includes('/actions/artifacts?'))return {ok:true,body:{total_count:2,artifacts:members}};
+    if(route.endsWith('/actions/artifacts/10'))return {ok:true,body:{id:10,name:C.R9_ARTIFACT_NAME,expired:false,digest:'sha256:'+digest(newest),workflow_run:{id:42,head_sha:head,head_branch:'main'}}};
+    if(route.endsWith('/actions/artifacts/10/zip'))return {ok:true,body:newest};return null;
+  }});
+  const cache=JSON.stringify({schema:C.R9_CACHE_SCHEMA,repository,artifact_id:'9',zip_base64:old.toString('base64')}),
+    r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,cacheRaw:cache});
+  assert.equal(r.source_authenticated,true);assert.deepEqual(r.source_proof.native_history_union.artifact_ids,['10','9']);
+  assert.equal(r.source_proof.native_history_union.packet_count,1);assert.equal(r.native.from_sealed,1);
+  assert.ok(JSON.parse(r.native.store_raw).packets['42:1']);assert.equal(JSON.parse(r.cache_raw).artifact_id,'10');
+  assert.equal(r.metrics.update_main_rounds.value,null);assert.equal(r.metrics.queue_depth_p95.value,null);assert.equal(r.t0,null);
+  assert.equal(f.routes.filter(r=>r.endsWith('/actions/artifacts/9/zip')).length,0);
+});
+
+test('actual cancelled no-step scheduler rows retain cancellation without claiming an execution interval',async()=>{
+  const r=run(38288051247,{path:'.github/workflows/clued-g4-database.yml',created_at:'2026-10-12T18:00:48Z',run_started_at:'2026-10-12T18:00:48Z',updated_at:'2026-10-12T18:02:42Z',conclusion:'cancelled'}),
+    j=job(r.id,{id:114941745530,name:'Verify prior PR tested tree',conclusion:'cancelled',created_at:'2026-10-12T18:02:42Z',started_at:'2026-10-12T18:02:42Z',completed_at:'2026-10-12T18:02:41Z',steps:[],labels:['ubuntu-slim']});
+  const f=nativeRequest({runs:[r],jobs:[j]}),n=await Native.captureNativeAttempt({request:f.request,repository,runId:String(r.id),attempt:1});
+  assert.equal(n.status,'COMPLETE');assert.equal(n.packet.jobs[0].conclusion,'cancelled');assert.equal(Native.nativeJobIsNonExecution(n.packet.jobs[0]),true);
+  assert.equal(n.packet.jobs[0].completed_at,'2026-10-12T18:02:41.000Z');assert.equal(Native.inspectNativePopulationStore(n.store_raw).status,'VALID_DATA_STORE');
+  for(const change of [{started_at:'2026-10-12T18:02:43Z'},{steps:[{number:1,name:'actual execution',status:'completed',conclusion:'success',started_at:'2026-10-12T18:02:42Z',completed_at:'2026-10-12T18:02:42Z'}]},{conclusion:'success'}]){
+    const bad=nativeRequest({runs:[r],jobs:[{...j,...change}]}),q=await Native.captureNativeAttempt({request:bad.request,repository,runId:String(r.id),attempt:1});
+    assert.equal(q.status,'PARTIAL');assert.equal(q.reason_code,'invalid_native_job_time');
+  }
 });

@@ -562,7 +562,12 @@ test("collectUsage: a run whose job pages are cut short is neither counted nor c
 test("the workflow: main-only read-only measurement App, with a separate proposed R9 audit reader", () => {
   const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-ci-usage-report.yml"), "utf8");
   assert.ok(!text.includes("\r"), "LF line endings");
-  assert.match(text, /^on:\n {2}schedule:\n {4}- cron: "23 3 \* \* \*"\n {2}workflow_dispatch:\n {4}inputs:\n {6}days:\n/m);
+  assert.match(text, /^on:\n {2}schedule:\n {4}- cron: "23 3 \* \* \*"\n {2}workflow_dispatch:\n {4}inputs:\n/m);
+  const inputs = /^ {2}workflow_dispatch:\n {4}inputs:\n([\s\S]*?)\npermissions:/m.exec(text)?.[1];
+  assert.ok(inputs, "explicit main workflow dispatch inputs");
+  assert.deepEqual([...inputs.matchAll(/^ {6}(\w+):$/gm)].map(m => m[1]), ["operation", "days"]);
+  assert.match(inputs, /^ {6}operation:\n {8}description: .+\n {8}type: choice\n {8}default: report\n {8}options:\n {10}- report\n {10}- qualify_clock_reader\n/m);
+  assert.match(inputs, /^ {6}days:\n {8}description: .+\n {8}type: number\n {8}default: 7\n/m);
   assert.match(text, / {8}default: 7\n/);
   assert.doesNotMatch(text, /^ {2}(pull_request(_target)?|push|workflow_run):/m, "no pull request, push or workflow_run trigger");
   const permissions = /^permissions:\n((?: {2}.+\n)+)/m.exec(text);
@@ -573,7 +578,10 @@ test("the workflow: main-only read-only measurement App, with a separate propose
   // Original App permissions and the admission writer boundary remain. R9's
   // distinct read-only identity is a proposal; installation needs its own door.
   assert.deepEqual([...text.matchAll(/^\s*environment: (.+)$/gm)].map((match) => match[1]), ["clued-admission"]);
-  assert.deepEqual([...text.matchAll(/secrets\.(\w+)/g)].map((match) => match[1]), ["CLUED_MEASURE_APP_ID", "CLUED_MEASURE_APP_KEY", "CLUED_R9_CLOCK_READ_TOKEN"]);
+  assert.deepEqual([...text.matchAll(/secrets\.(\w+)/g)].map((match) => match[1]), ["CLUED_MEASURE_APP_ID", "CLUED_MEASURE_APP_KEY", "CLUED_R9_CLOCK_READ_TOKEN", "CLUED_R9_CLOCK_READ_TOKEN"]);
+  assert.match(text, /- name: Qualify the existing audit-only clock reader\n {8}if: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.operation == 'qualify_clock_reader' \}\}\n {8}env:\n {10}CLUED_CONTEXT_READ_TOKEN: \$\{\{ secrets\.CLUED_R9_CLOCK_READ_TOKEN \}\}\n {8}run: node scripts\/ci\/merge-admission-clock-bootstrap\.mjs\n/);
+  for (const name of ["Restore and save the per-run job cache", "Measure CI usage"])
+    assert.ok(text.includes(`- name: ${name}\n        if: \u0024{{ inputs.operation != 'qualify_clock_reader' }}`));
   assert.doesNotMatch(text, /secrets\.CLUED_ADMISSION_(?:CLUED_TOKEN|APP_KEY)/);
   assert.match(text, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/);
   assert.deepEqual([...text.matchAll(/runs-on: (.+)/g)].map((match) => match[1]), ["ubuntu-latest"]);

@@ -87,6 +87,36 @@ def build_completion_records(stdout_raw, stderr_raw, format_binding, index, reco
                              schema_bundle, port_digest, observation_raw=None,
                              observation_validator=None, lifecycle_validator=None,
                              output_validator=None):
+    """Original b11033 entry; identity and format semantics remain unchanged."""
+    return _build_records(stdout_raw, stderr_raw, format_binding, index, record_fields,
+        schema_bundle=schema_bundle, port_digest=port_digest, observation_raw=observation_raw,
+        observation_validator=observation_validator, lifecycle_validator=lifecycle_validator,
+        output_validator=output_validator, adapt=adapt_completion_response)
+
+
+def build_observed_completion_records(stdout_raw, stderr_raw, format_binding, index, record_fields, *,
+                                     schema_bundle, port_digest, observation_raw=None,
+                                     observation_validator=None, lifecycle_validator=None,
+                                     output_validator=None, token_record_raw=None,
+                                     expected_limits=None):
+    """New e567 Source entry; no old runtime pins or caller-selected adapter."""
+    from observed_completion_response import adapt_observed_completion_response
+    def adapt(stdout, stderr, binding, *, observation_raw, observation_validator):
+        return adapt_observed_completion_response(stdout, stderr, token_record_raw, binding,
+            expected_limits=expected_limits, machine_snapshot_raw=observation_raw,
+            machine_validator=observation_validator)
+    answer = _build_records(stdout_raw, stderr_raw, format_binding, index, record_fields,
+        schema_bundle=schema_bundle, port_digest=port_digest, observation_raw=observation_raw,
+        observation_validator=observation_validator, lifecycle_validator=lifecycle_validator,
+        output_validator=output_validator, adapt=adapt)
+    answer.update(token_record_raw=token_record_raw, token_record_sha256=sha(token_record_raw))
+    return answer
+
+
+def _build_records(stdout_raw, stderr_raw, format_binding, index, record_fields, *,
+                   schema_bundle, port_digest, observation_raw=None,
+                   observation_validator=None, lifecycle_validator=None,
+                   output_validator=None, adapt):
     """Return saved raw evidence, gaps, and v2 result/attempt bytes orNone.
 
     Failure/timeout records may omit payload if all other required actual facts
@@ -160,13 +190,23 @@ def build_completion_records(stdout_raw, stderr_raw, format_binding, index, reco
     if type(tolerance) not in (int, float) or tolerance < 0 or tolerance > req["budgets"]["max_elapsed_ms"]:
         gap("TIMING_POLICY_MISSING_OR_INVALID")
     try:
-        adapted = adapt_completion_response(stdout_raw, stderr_raw, format_binding,
+        adapted = adapt(stdout_raw, stderr_raw, format_binding,
             observation_raw=observation_raw, observation_validator=observation_validator)
         answer["adapted"] = adapted
     except Exception:
         gap("CAPTURE_ADAPTER_REFUSED")
         return answer
     observed = adapted["process_observation"]
+    # The observed entry binds three captures and cleanup in its independently
+    # verified machine snapshot. Supplied record fields cannot contradict it.
+    if "sidecar_raw" in adapted and observed is not None:
+        for stream in ("stdout", "stderr"):
+            for suffix, flag in (("_complete", "complete"), ("_truncated", "truncated"),
+                                 ("_read_error", "read_error")):
+                if not same(capture[stream + suffix], observed["captures"][stream][flag]):
+                    gap("OBSERVED_CAPTURE_FACTS_CONFLICT")
+        if not same(capture["owned_cleanup_verified"], observed["owned_cleanup_verified"]):
+            gap("OBSERVED_CLEANUP_FACTS_CONFLICT")
     if observed is None or any(observed[key] is None for key in ("exit_code", "timed_out", "cancelled")):
         gap("MACHINE_OBSERVATION_OR_CLOSURE_MISSING")
     usage = adapted["usage"]
@@ -176,6 +216,8 @@ def build_completion_records(stdout_raw, stderr_raw, format_binding, index, reco
                "format_binding": adapted["format_binding"], "record_fields": fields,
                "stdout_sha256": sha(stdout_raw), "stderr_sha256": sha(stderr_raw),
                "observation_sha256": sha(observation_raw), "process_observation": observed}
+    if "sidecar_raw" in adapted:
+        context["token_record_sha256"] = adapted["sidecar_sha256"]
     try:
         if not callable(lifecycle_validator):
             raise ValueError("missing lifecycle verifier")

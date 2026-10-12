@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-12T08:11:02.000Z",
-  "history_through": "20261012080707",
-  "row_count": 248,
+  "exported_at": "2026-10-12T17:58:00Z",
+  "history_through": "20261012173742",
+  "row_count": 253,
   "rows": [
     {
       "version": "20260823154017",
@@ -1987,6 +1987,46 @@
       "statements_md5": "d60c0c6eb6bf9bc6b01df89de31325be",
       "statements_length": 6156,
       "source": "migrations/20261012033722_storage_reconnect_refresh_default_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012133214",
+      "name": "merge_admission_measurement_clock_target_v1",
+      "statements_md5": "a82cdf28b002951d21a1cd61654b9432",
+      "statements_length": 29650,
+      "source": "migrations/20261011113259_merge_admission_measurement_clock_target_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012133219",
+      "name": "merge_admission_clock_audit_transport_v1",
+      "statements_md5": "24dc9accd7855d51379bac2be9c3689c",
+      "statements_length": 14559,
+      "source": "migrations/20261012030548_merge_admission_clock_audit_transport_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012154344",
+      "name": "work_claim_handover_legacy_drain_v1",
+      "statements_md5": "5e698b77e9e75f0c1d5de59d42152083",
+      "statements_length": 12518,
+      "source": "migrations/20261012114500_work_claim_handover_legacy_drain_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012173736",
+      "name": "storage_demand_refresh_prepare_v1",
+      "statements_md5": "e94ac8676b38cc148cfa1b15e352856b",
+      "statements_length": 11761,
+      "source": "migrations/20261012103238_storage_demand_refresh_prepare_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261012173742",
+      "name": "storage_demand_refresh_runtime_v1",
+      "statements_md5": "e88122a9e00f01f235ec9d75b94997f2",
+      "statements_length": 18475,
+      "source": "migrations/20261012113128_storage_demand_refresh_runtime_v1.sql",
       "transform": "identical"
     }
   ],

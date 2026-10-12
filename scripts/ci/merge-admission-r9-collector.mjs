@@ -2,7 +2,7 @@
 // report request function; no token, retry, parallel worker or new CI trigger.
 import {createHash} from 'node:crypto';
 import {inflateRawSync} from 'node:zlib';
-import {captureNativeAttempt,emptyNativePopulationStore,inspectNativePopulationStore} from './merge-admission-native-population.mjs';
+import {captureNativeAttempt,emptyNativePopulationStore,inspectNativePopulationStore,nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
 import {readMergeAdmissionFourSources,parseFourSourceRawData} from './merge-admission-four-sources.mjs';
 import {integrateClockSourceCandidate} from './merge-admission-clock-source.mjs';
 import {registeredWorkflowSource,rolesForSource,workflowBlob} from './clued-workflow-profile.mjs';
@@ -98,9 +98,14 @@ export async function loadR9DefaultBranchContract({request,repository}){
   if(branch?.name!==repo.default_branch||!sha(head))fail('NATIVE_DEFAULT_BRANCH_INVALID');
   const profiles=await sourceText(request,repository,'scripts/ci/clued-gated-proof-profiles.json',head);
   const roles=await sourceText(request,repository,'scripts/ci/clued-gated-proof-role-specs.json',head);
+  const tree=await bodyOf(request,`/repos/${repository}/git/trees/${head}?recursive=1`);
+  if(tree.truncated!==false||!Array.isArray(tree.tree)||new Set(tree.tree.map(x=>x.path)).size!==tree.tree.length)fail('NATIVE_SOURCE_TREE_INVALID');
   let r9Registry=null;try{r9Registry=parseFourSourceRawData((await sourceText(request,repository,R9_RUNTIME_CONFIG,head)).text);}catch{}
   return {repository,repository_id:String(repo.id),default_branch:repo.default_branch,head_sha:head,
-    profiles:parseFourSourceRawData(profiles.text),roles:parseFourSourceRawData(roles.text),r9_registry:r9Registry,native_source_refs:[profiles.blob,roles.blob]};
+    profiles:parseFourSourceRawData(profiles.text),roles:parseFourSourceRawData(roles.text),
+    profiles_sha256:hash(profiles.text),role_specs_sha256:hash(roles.text),
+    source_tree:Object.fromEntries(tree.tree.map(x=>[x.path,{sha:x.sha,type:x.type,mode:x.mode}])),
+    r9_registry:r9Registry,native_source_refs:[profiles.blob,roles.blob]};
 }
 // Observation-publisher roles live in the protected R9 registry. Registering a
 // non-PR measurement job must never add it to the gated PR workflow catalogue.
@@ -170,21 +175,42 @@ async function restoreArtifact(request,repository,contract,cacheRaw){
     let lastRefusal=null;
     const cache=parseFourSourceRawData(cacheRaw);
     if(!exact(cache,['schema','repository','artifact_id','zip_base64'])||cache.schema!==R9_CACHE_SCHEMA||cache.repository!==repository)fail('CACHE_SCHEMA_INVALID');
-    if(cache.artifact_id!==null){
-      if(!id(cache.artifact_id)||typeof cache.zip_base64!=='string'||cache.zip_base64.length>MAX_BYTES*1.4)fail('CACHE_SCHEMA_INVALID');
-      const restored=await verifyR9SealedArtifact({request,repository,contract,artifactId:cache.artifact_id,zipBytes:Buffer.from(cache.zip_base64,'base64')});
-      if(restored.status==='AUTHENTICATED_SEALED_ARTIFACT')return restored;
-      lastRefusal=restored.reason_code;
-      // A refused old candidate cannot be republished as authenticated data.
+    if(cache.artifact_id!==null&&(!id(cache.artifact_id)||typeof cache.zip_base64!=='string'||cache.zip_base64.length>MAX_BYTES*1.4))fail('CACHE_SCHEMA_INVALID');
+    // Cache bytes accelerate one immutable artifact; they never choose the
+    // current artifact or erase authenticated incremental history.
+    const list=async()=>{const rows=[],seen=new Set();let total=null;
+      for(let page=1;page<=20;page++){
+        const b=await bodyOf(request,`/repos/${repository}/actions/artifacts?name=${R9_ARTIFACT_NAME}&per_page=100&page=${page}`);
+        if(!Number.isSafeInteger(b?.total_count)||b.total_count<0||total!==null&&total!==b.total_count||!Array.isArray(b.artifacts)||
+          b.artifacts.length!==Math.min(100,b.total_count-rows.length))fail('ARTIFACT_LIST_INVALID');
+        total=b.total_count;for(const a of b.artifacts){if(!id(a.id)||seen.has(String(a.id)))fail('ARTIFACT_LIST_INVALID');seen.add(String(a.id));rows.push(a);}
+        if(rows.length===total)return rows;
+      }fail('ARTIFACT_LIST_PAGE_CAP');};
+    const before=await list(),qualified=[];
+    for(const a of [...before].sort((a,b)=>BigInt(a.id)>BigInt(b.id)?-1:1)){
+      if(a.name!==R9_ARTIFACT_NAME||a.expired!==false)continue;
+      const proof=await verifyR9SealedArtifact({request,repository,contract,artifactId:a.id,
+        zipBytes:String(a.id)===String(cache.artifact_id)&&cache.zip_base64!==null?Buffer.from(cache.zip_base64,'base64'):undefined});
+      if(proof.packet)qualified.push(proof);else lastRefusal=proof.reason_code;
     }
-    // Discover the latest exact-name artifact. Missing/expired origin is a gap,
-    // not permission to trust the actions/cache restore key.
-    for(let page=1;page<=20;page++){
-      const b=await bodyOf(request,`/repos/${repository}/actions/artifacts?name=${R9_ARTIFACT_NAME}&per_page=100&page=${page}`);
-      if(!Number.isSafeInteger(b?.total_count)||!Array.isArray(b.artifacts)||b.artifacts.length>100)fail('ARTIFACT_LIST_INVALID');
-      for(const a of b.artifacts){if(a.name===R9_ARTIFACT_NAME&&a.expired===false){const proof=await verifyR9SealedArtifact({request,repository,contract,artifactId:a.id});if(proof.packet)return proof;lastRefusal=proof.reason_code;}}
-      if(b.artifacts.length<100)return {status:'PARTIAL',reason_code:lastRefusal??'AUTHENTICATED_SEALED_ARTIFACT_MISSING',packet:null};
-    }fail('ARTIFACT_LIST_PAGE_CAP');
+    const after=await list();if(!same(before,after))fail('ARTIFACT_LIST_CHANGED_AT_CLOSE');
+    if(!qualified.length)return {status:'PARTIAL',reason_code:lastRefusal??'AUTHENTICATED_SEALED_ARTIFACT_MISSING',packet:null};
+    const merged=JSON.parse(emptyNativePopulationStore(repository)),variants=new Map();
+    for(const q of qualified)for(const [key,p] of Object.entries(JSON.parse(q.packet.native_store_raw).packets)){
+      if(!variants.has(key))variants.set(key,[]);variants.get(key).push({artifact_id:q.artifact_id,packet:p});
+    }
+    const revalidated=[];
+    for(const [key,rows] of variants){
+      if(rows.every(x=>same(x.packet,rows[0].packet)))merged.packets[key]=rows[0].packet;
+      else{
+        const [runId,attempt]=key.split(':'),fresh=await captureNativeAttempt({request,repository,runId,attempt:Number(attempt)});
+        if(fresh.status!=='COMPLETE'||rows.some(x=>['run_id','head_sha','created_at','workflow_id','path','event'].some(k=>x.packet.run[k]!==fresh.packet.run[k])))fail('AUTHENTICATED_NATIVE_STORE_CONFLICT');
+        merged.packets[key]=fresh.packet;revalidated.push({key,artifact_ids:rows.map(x=>x.artifact_id),native_capture:fresh.native_capture});
+      }
+    }
+    const raw=JSON.stringify(merged);if(inspectNativePopulationStore(raw,repository).status!=='VALID_DATA_STORE')fail('AUTHENTICATED_NATIVE_STORE_UNION_INVALID');
+    const latest=qualified[0];return {...latest,authenticated_native_store_raw:raw,
+      proof:{...latest.proof,native_history_union:{artifact_ids:qualified.map(x=>x.artifact_id),packet_count:Object.keys(merged.packets).length,revalidated_conflicts:revalidated}}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),packet:null};}
 }
 
@@ -201,7 +227,7 @@ function inventoryIdentity(r){
 // new attempt is never lost by a created>=opening filter. GitHub caps filtered
 // searches at 1000; split complete inclusive overlapping ranges rather than paging a
 // truncated filtered search. New runs created after close cannot change it.
-async function inventory(request,repository,window){
+async function rangeInventory(request,repository,window){
   // Unix epoch is a fixed inclusive lower bound of this API's nonnegative
   // creation-time grammar. No created>=opening filter can omit old reruns.
   const low=0,high=Number((timestampMicros(window.end)+999n)/1000n);
@@ -218,8 +244,16 @@ async function inventory(request,repository,window){
       const mid=Math.floor((range.lo+range.hi)/2);ranges.push({lo:mid,hi:range.hi},{lo:range.lo,hi:mid});continue;
     }
     const total=first.total_count,leafIds=new Set();let count=0;
-    for(let page=1;page<=10;page++){
-      const body=page===1?first:await bodyOf(request,route+'&page='+page);
+    const pageCount=Math.max(1,Math.ceil(total/100)),bodies=[first];
+    // Same existing App/slice/floor/deadline, at most four HTTP reads inside
+    // this process. No extra worker, request pool, retry or clipped directory.
+    for(let page=2;page<=pageCount;page+=4){
+      const batch=await Promise.allSettled(Array.from({length:Math.min(4,pageCount-page+1)},(_,i)=>bodyOf(request,route+'&page='+(page+i))));
+      const failed=batch.find(r=>r.status==='rejected');if(failed)throw failed.reason;
+      bodies.push(...batch.map(r=>r.value));
+    }
+    for(let page=1;page<=pageCount;page++){
+      const body=bodies[page-1];
       if(body.total_count!==total||!Array.isArray(body.workflow_runs)||body.workflow_runs.length!==Math.min(100,total-count))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
       for(const row of body.workflow_runs){const run=inventoryIdentity(row),created=timestampMicros(row.created_at);
         if(created<BigInt(range.lo)*1000n||created>BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_RANGE_INVALID');
@@ -228,13 +262,51 @@ async function inventory(request,repository,window){
           if(created!==BigInt(range.lo)*1000n&&created!==BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_DUPLICATE_ID');
           if(!same(prior,run))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');
         }else{ids.set(run.id,run);items.push(run);}count++;if(items.length>MAX_RUNS)fail('NATIVE_INVENTORY_ITEM_CAP');}
-      if(count===total)break;if(page===10)fail('NATIVE_INVENTORY_PAGE_CAP');
+      if(count===total)break;
     }
   }
   // Ceil-to-millisecond search is inclusive; exact microsecond watermark below
   // excludes any extra same-second outside member, without inventing a gap.
   const fixed=items.filter(r=>timestampMicros(r.created_at)<timestampMicros(window.end));
   return {items:sorted(fixed),total:fixed.length,created_cutoff:window.end,ranges_read:rangesRead};
+}
+// Read the uncapped endpoint once per directory barrier. New runs after the
+// fixed close may grow only the leading prefix. Deduplicate shifted pages,
+// then independently close that prefix and prove the fixed denominator.
+// The old split-range path remains for a prefix wider than one full page;
+// neither path drops old-created reruns or spends outside the shared budget.
+async function inventory(request,repository,window){
+  const root=`/repos/${repository}/actions/runs?per_page=100`,cutoff=timestampMicros(window.end);
+  const read=async page=>{const b=await bodyOf(request,root+'&page='+page);
+    if(!Number.isSafeInteger(b?.total_count)||b.total_count<0||b.total_count>MAX_RUNS||!Array.isArray(b.workflow_runs)||
+      b.workflow_runs.length!==Math.max(0,Math.min(100,b.total_count-(page-1)*100)))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
+    const rows=b.workflow_runs.map(inventoryIdentity);
+    if(rows.some((r,i)=>i>0&&BigInt(rows[i-1].id)<=BigInt(r.id)))fail('NATIVE_INVENTORY_ORDER_UNPROVED');
+    return {total:b.total_count,rows};};
+  const first=await read(1),prefix=first.rows.filter(r=>timestampMicros(r.created_at)>=cutoff);
+  if(prefix.length===100)return rangeInventory(request,repository,window);
+  const expected=first.total-prefix.length,ids=new Map(),all=new Map(),initialMax=first.rows.length?BigInt(first.rows[0].id):0n;let total=first.total,lastId=null;
+  const append=rows=>{for(const r of rows){
+    const old=all.get(r.id);if(old){if(!same(old,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
+    if(lastId!==null&&BigInt(r.id)>lastId)fail('NATIVE_INVENTORY_ORDER_UNPROVED');lastId=BigInt(r.id);all.set(r.id,r);
+    if(timestampMicros(r.created_at)>=cutoff){if(!prefix.some(p=>p.id===r.id))fail('NATIVE_INVENTORY_PREFIX_NOT_CLOSED');continue;}
+    const prior=ids.get(r.id);if(prior){if(!same(prior,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
+    ids.set(r.id,r);}};
+  append(first.rows);
+  for(let page=2;page<=Math.ceil(total/100);){
+    const width=Math.min(4,Math.ceil(total/100)-page+1);
+    const batch=await Promise.allSettled(Array.from({length:width},(_,i)=>read(page+i)));
+    const bad=batch.find(r=>r.status==='rejected');if(bad)throw bad.reason;
+    for(const {value:b} of batch){if(b.total<first.total)fail('NATIVE_INVENTORY_RETENTION_CHANGED');total=Math.max(total,b.total);append(b.rows);}page+=width;
+  }
+  if(first.total>100){const closing=await read(1),afterPrefix=closing.rows.filter(r=>timestampMicros(r.created_at)>=cutoff);
+    if(afterPrefix.length===100||closing.total-afterPrefix.length!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_CHANGED');
+    const added=closing.rows.filter(r=>!all.has(r.id));
+    if(added.some(r=>BigInt(r.id)<=initialMax||timestampMicros(r.created_at)<cutoff)||closing.total-first.total!==added.length)fail('NATIVE_INVENTORY_HEAD_ADDITIONS_UNPROVED');
+    for(const r of closing.rows){if(all.has(r.id)&&!same(all.get(r.id),r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');all.set(r.id,r);}
+    if(all.size!==closing.total)fail('NATIVE_INVENTORY_WHOLE_DENOMINATOR_UNPROVED');}
+  if(ids.size!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_UNPROVED');
+  return {items:sorted([...ids.values()]),total:ids.size,created_cutoff:window.end,ranges_read:0,directory_mode:'UNCAPPED_FIXED_PREFIX_BARRIER'};
 }
 async function fullInventory(request,repository,window,rangesRead){
   // A dense timestamp cannot be split below the API's precision. Fall back to
@@ -254,15 +326,20 @@ async function fullInventory(request,repository,window,rangesRead){
 }
 const selected=(items,w)=>items.filter(r=>timestampMicros(r.created_at)<timestampMicros(w.end)&&timestampMicros(r.updated_at)>=timestampMicros(w.start));
 const nativeAdmissionKind=(r,jobs,e)=>e.admission_sources.some(s=>[s.workflow_path,s.reverify_workflow_path].includes(r.path.split('@')[0]))&&
-  !(jobs.length>0&&jobs.every(j=>j.name==='clued-work-adopt'));
+  (jobs.length===0||jobs.some(j=>j.name!=='clued-work-adopt'&&!nativeJobIsNonExecution(j)));
 // Skip sealed terminal packets as a batch after the initial/closing Native
 // inventory barriers. Only newly missing/changed attempt packets need jobs.
-export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{}}){
-  let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null;const gaps=[];let fresh=0,fromSealed=0;
+export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null}){
+  let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null;const gaps=[];let fresh=0,fromSealed=0,observerExcluded=false;
   try{
     if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
     initial=await inventory(request,repository,window);const first=selected(initial.items,window);
-    for(const run of first){
+    for(let offset=0;offset<first.length;offset+=4){
+      const batch=first.slice(offset,offset+4),basis=storeRaw;
+      const outcomes=await Promise.allSettled(batch.map(async run=>{
+        let local=basis,localFresh=0,localSealed=0;const localGaps=[];
+        if(observer?.run_id===run.id&&run.run_attempt!==observer.run_attempt)
+          localGaps.push({key:run.id+':'+run.run_attempt,reason_code:'CURRENT_OBSERVER_INVENTORY_CHANGED'});
       const packets=inspectNativePopulationStore(storeRaw,repository).packets;
       const latest=packets[run.id+':'+run.run_attempt];
       // Normalize the inventory projection to the exact d0fc store grammar.
@@ -270,15 +347,35 @@ export async function collectIncrementalNative({request,repository,window,authen
         status:run.status,conclusion:run.conclusion,created_at:run.created_at,run_started_at:run.run_started_at,updated_at:run.updated_at,pull_requests:run.pull_requests};
       const latestMatches=latest&&JSON.stringify(latest.run)===JSON.stringify(normalized);
       for(let attempt=1;attempt<=run.run_attempt;attempt++){
+        // Only the independently verified currently executing observer is
+        // outside its own execution denominator. Older ordinal packets remain.
+        if(observer?.run_id===run.id&&run.run_attempt===observer.run_attempt&&observer.run_attempt===attempt&&run.path.split('@')[0]===R9_PUBLISHER_PATH&&
+          run.head_sha===observer.head_sha&&run.status==='in_progress'){observerExcluded=true;continue;}
         if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end))continue;
         const existing=packets[run.id+':'+attempt];
-        if(latestMatches&&existing){fromSealed++;continue;}
-        const captured=await captureNativeAttempt({request,repository,runId:run.id,attempt,storeRaw});
-        if(captured.status!=='COMPLETE'){gaps.push({key:run.id+':'+attempt,reason_code:captured.reason_code});
-          if(/request|cap|floor|budget|slice|limit|stop/i.test(captured.reason_code??''))fail('NATIVE_CAPTURE_BUDGET_PARTIAL');continue;}
-        storeRaw=captured.store_raw;fresh++;await onStore(storeRaw);
-        if(captured.barriers?.latest_digest!==hash(normalized))fail('NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH');
+        if(latestMatches&&existing){localSealed++;continue;}
+        const captured=await captureNativeAttempt({request,repository,runId:run.id,attempt,storeRaw:local});
+        if(captured.status!=='COMPLETE'){localGaps.push({key:run.id+':'+attempt,reason_code:captured.reason_code});
+          if(/request|cap|floor|budget|slice|limit|stop/i.test(captured.reason_code??''))break;continue;}
+        local=captured.store_raw;localFresh++;
+        if(captured.barriers?.latest_digest!==hash(normalized))return {local,localFresh,localSealed,localGaps,fatal:'NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH'};
       }
+      return {local,localFresh,localSealed,localGaps};
+      }));
+      // Serialize publication after joining the batch. Never overwrite another
+      // capture's packet; the ordinary store validator checks the full union.
+      const results=outcomes.filter(r=>r.status==='fulfilled').map(r=>r.value),joined=JSON.parse(storeRaw);
+      for(const result of results){
+        for(const [k,p] of Object.entries(JSON.parse(result.local).packets)){
+          if(joined.packets[k]&&!same(joined.packets[k],p))fail('NATIVE_BATCH_PACKET_CONFLICT');joined.packets[k]=p;
+        }
+        fresh+=result.localFresh;fromSealed+=result.localSealed;gaps.push(...result.localGaps);
+      }
+      storeRaw=JSON.stringify(joined);if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
+      await onStore(storeRaw);
+      if(results.some(r=>r.fatal))fail(results.find(r=>r.fatal).fatal);
+      if(outcomes.some(r=>r.status==='rejected'))fail(reason(outcomes.find(r=>r.status==='rejected').reason));
+      if(results.some(r=>r.localGaps.some(g=>/request|cap|floor|budget|slice|limit|stop/i.test(g.reason_code??''))))fail('NATIVE_CAPTURE_BUDGET_PARTIAL');
     }
     const closing=await inventory(request,repository,window);
     if(hash(first)!==hash(selected(closing.items,window)))fail('NATIVE_COHORT_CHANGED_AT_CLOSE');
@@ -293,7 +390,8 @@ export async function collectIncrementalNative({request,repository,window,authen
     const unknownStarts=populationPackets.filter(p=>p.run.run_started_at===null).map(p=>key(p.run));
     return {status:gaps.length?'PARTIAL':'COMPLETE',store_raw:storeRaw,attempts,population_packets:populationPackets,all_population_packets:retainedPackets,gaps,fresh,from_sealed:fromSealed,
       population:{initial_total:initial.total,closing_total:closing.total,cohort_digest:hash(first),complete:gaps.length===0,
-        scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts}};
+        scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts,
+        ...(observerExcluded?{current_observer_exclusion:{...observer,reason_code:'CURRENT_IN_PROGRESS_OBSERVER_IS_NOT_ITS_OWN_TERMINAL_EXECUTION'}}:{})}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),store_raw:storeRaw,attempts:[],gaps,fresh,from_sealed:fromSealed,
     population:{initial_total:initial?.total??null,closing_total:null,complete:false}};}
 }
@@ -319,6 +417,23 @@ const key=a=>String(a.run_id)+':'+(a.attempt??a.run_attempt);
 const atEqual=(a,b)=>a===null&&b===null||a!==null&&b!==null&&timestampMicros(a)===timestampMicros(b);
 const canonical=x=>Array.isArray(x)?x.map(canonical):object(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+// Only byte-pinned source equivalence. History/current main/actual artifact
+// and credential qualification remain independent checks at the caller.
+export function sameNaturalSourceSnapshot(cfg,naturalSelection,runtimeInputs,contract){
+  try{const pins=[...cfg.natural_producers.flatMap(d=>[...Object.entries(d.source_blobs??{}),[d.workflow_path,d.workflow_blob]]),
+      ...['script','workflow','reverify_workflow','policy'].map(k=>[cfg.admission_source[k+'_path'],cfg.admission_source[k+'_blob']])];
+    return object(cfg.admission_source)&&object(naturalSelection.admission_source)&&
+    same(cfg.admission_source,naturalSelection.admission_source)&&
+    same(parseFourSourceRawData(runtimeInputs.proof_profiles_raw),contract.profiles)&&
+    same(parseFourSourceRawData(runtimeInputs.role_specs_raw),contract.roles)&&
+    hash(runtimeInputs.proof_profiles_raw)===cfg.execution_source?.profiles_sha256&&
+    hash(runtimeInputs.role_specs_raw)===cfg.execution_source?.role_specs_sha256&&
+    contract.profiles_sha256===cfg.execution_source?.profiles_sha256&&
+    contract.role_specs_sha256===cfg.execution_source?.role_specs_sha256&&
+    pins.every(([file,pin])=>typeof file==='string'&&sha(pin)&&contract.source_tree?.[file]?.sha===pin&&contract.source_tree[file].type==='blob'&&contract.source_tree[file].mode==='100644')&&
+    Array.isArray(cfg.natural_producers)&&cfg.natural_producers.every(d=>naturalSelection.workflow_blobs[d.workflow_path]===d.workflow_blob);
+  }catch{return false;}
+}
 // updated_at is used only as an upper bound on the already observed completed
 // state, never as completion time. A common cohort across the entire possible
 // interval is a proof; a crossing interval remains UNKNOWN.
@@ -326,7 +441,7 @@ export function nativeCompletionMembership(packet,window){
   try{
     const r=packet.run;if(r.status!=='completed')fail('NATIVE_COMPLETION_NOT_TERMINAL');
     let lower=timestampMicros(r.created_at),upper=timestampMicros(r.updated_at);
-    for(const j of packet.jobs)for(const at of [j.created_at,j.started_at,j.completed_at])if(at!==null){const t=timestampMicros(at);if(t>lower)lower=t;}
+    for(const j of packet.jobs)for(const at of nativeJobIsNonExecution(j)?[]:[j.created_at,j.started_at,j.completed_at])if(at!==null){const t=timestampMicros(at);if(t>lower)lower=t;}
     const from=timestampMicros(window.start),to=timestampMicros(window.end);
     if(lower>upper||from>=to)fail('NATIVE_COMPLETION_BOUNDS_INVALID');
     const membership=lower>=from&&upper<to?'IN_WINDOW':upper<from||lower>=to?'OUTSIDE_WINDOW':'UNKNOWN';
@@ -345,7 +460,7 @@ export function mapNativeAttemptsForFourSource(native,expectedRaw,window,{profil
     const r=n.run,m=r.status==='completed'?nativeCompletionMembership(n,window):null;
     const interval=m?.lower_us===undefined?null:{lower_at:isoMicros(m.lower_us),upper_at:isoMicros(m.upper_us),basis:'native_job_completion_lower_and_terminal_update_upper_bounds'};
     return {run_id:r.run_id,attempt:r.run_attempt,pr_number:r.pull_requests.length===1?r.pull_requests[0]:null,head_sha:r.head_sha,
-      kind:nativeAdmissionKind(r,n.jobs,e)?'admission':profiles&&registeredWorkflowSource(profiles,r.path.split('@')[0],workflowBlobs[r.path.split('@')[0]])?.passed?'ci':'other',status:r.status,conclusion:r.conclusion,
+      kind:nativeAdmissionKind(r,n.jobs,e)?'admission':!admissionPaths.has(r.path.split('@')[0])&&profiles&&registeredWorkflowSource(profiles,r.path.split('@')[0],workflowBlobs[r.path.split('@')[0]])?.passed?'ci':'other',status:r.status,conclusion:r.conclusion,
       started_at:r.run_started_at,completed_at:null,terminal_interval:interval};
   });
 }
@@ -444,21 +559,34 @@ export function bindClockSource(packetClock,selectionRaw,repository,window){
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),source_authenticated:false,official_metric:false};}
 }
 
-export async function collectR9Measurement({request,budget,repository,window,sourceContractRaw=null,naturalSelection=null,liveClock=null,runtimeInputs=null,cacheRaw=emptyR9ArtifactCache(repository),onStore=()=>{}}){
-  const slice=r9RequestSlice(request,budget),gaps=[];let contract=null,restored=null,native=null;
+export async function collectR9Measurement({request,budget,repository,window,sourceContractRaw=null,naturalSelection=null,liveClock=null,runtimeInputs=null,cacheRaw=emptyR9ArtifactCache(repository),onStore=()=>{},observer=null}){
+  const slice=r9RequestSlice(request,budget),gaps=[];let contract=null,restored=null,native=null,verifiedObserver=null,observerProved=observer===null;
   if(!slice.allowance)return {status:'partial',reason_code:'MEASUREMENT_APP_REQUIRED',metrics:null,t0:null,cache_raw:cacheRaw,sealed_packet:null};
   try{contract=await loadR9DefaultBranchContract({request:slice.request,repository});restored=await restoreArtifact(slice.request,repository,contract,cacheRaw);
     if(!restored.packet)gaps.push(restored.reason_code);
-    native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.packet?.native_store_raw??null,onStore});
+    if(observer!==null)try{
+      if(!exact(observer,['run_id','run_attempt','head_sha'])||!id(observer.run_id)||!Number.isSafeInteger(observer.run_attempt)||observer.run_attempt<1||!sha(observer.head_sha))fail('CURRENT_OBSERVER_IDENTITY_INVALID');
+      const r=await bodyOf(slice.request,`/repos/${repository}/actions/runs/${observer.run_id}`),wf=await sourceText(slice.request,repository,R9_PUBLISHER_PATH,observer.head_sha);
+      if(String(r.id)!==String(observer.run_id)||r.run_attempt!==observer.run_attempt||r.head_sha!==observer.head_sha||r.status!=='in_progress'||
+        r.path.split('@')[0]!==R9_PUBLISHER_PATH||!['schedule','workflow_dispatch'].includes(r.event)||r.head_branch!==contract.default_branch||
+        r.head_repository?.full_name!==repository||!Array.isArray(r.pull_requests)||r.pull_requests.length||!publisherRole(contract,wf.blob,wf.text))fail('CURRENT_OBSERVER_NATIVE_ROLE_NOT_PROVED');
+      verifiedObserver={run_id:String(r.id),run_attempt:r.run_attempt,head_sha:r.head_sha};observerProved=true;
+    }catch(e){gaps.push(reason(e));}
+    native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.authenticated_native_store_raw??restored.packet?.native_store_raw??null,onStore,observer:verifiedObserver});
     if(native.status!=='COMPLETE')gaps.push(native.reason_code??'NATIVE_POPULATION_INCOMPLETE');
   }catch(e){gaps.push(reason(e));}
   const packet=restored?.packet,metrics={};let four=null,clock=null,binding=null,selection=null;
   try{selection=sourceContract(sourceContractRaw,repository,window);}catch{gaps.push('INDEPENDENT_SOURCE_CONTRACT_MISSING_OR_INVALID');}
   let naturalSelectionBound=false;
   if(naturalSelection&&contract)try{const cfg=parseFourSourceRawData((await sourceText(slice.request,repository,R9_RUNTIME_CONFIG,contract.head_sha)).text);
-    naturalSelectionBound=naturalSelection.head_sha===contract.head_sha&&cfg.registration_status==='registered'&&
+    let sameSourceLineage=naturalSelection.head_sha===contract.head_sha;
+    if(!sameSourceLineage){const history=await bodyOf(slice.request,`/repos/${repository}/compare/${naturalSelection.head_sha}...${contract.head_sha}`);
+      sameSourceLineage=['ahead','identical'].includes(history.status)&&history.merge_base_commit?.sha===naturalSelection.head_sha;}
+    naturalSelectionBound=sameSourceLineage&&cfg.registration_status==='registered'&&
       same(cfg.natural_producers,naturalSelection.natural_producers)&&same(cfg.operation_coverage,runtimeInputs?.operation_coverage)&&
-      same(cfg.scope,selection?.scope)&&cfg.forward_epoch?.epoch_id===runtimeInputs?.forward_epoch?.epoch_id;
+      same(cfg.scope,selection?.scope)&&cfg.forward_epoch?.epoch_id===runtimeInputs?.forward_epoch?.epoch_id&&
+      (naturalSelection.head_sha===contract.head_sha||
+        sameNaturalSourceSnapshot(cfg,naturalSelection,runtimeInputs,contract));
     if(!naturalSelectionBound)gaps.push('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED');
   }catch{gaps.push('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED');}
   const naturalInputs=naturalSelection&&native?.status==='COMPLETE'?await collectNaturalSourceArtifacts({request:slice.request,repository,native,
@@ -495,7 +623,7 @@ export async function collectR9Measurement({request,budget,repository,window,sou
   // Fresh Source provenance is proved by real immutable original-job
   // artifacts plus the independent protected-main Source registry.
   const authenticated=restored?.status==='AUTHENTICATED_SEALED_ARTIFACT'||naturalSelectionBound&&naturalInputs?.status==='NATIVE_ORIGIN_BOUND';
-  const fourQualified=authenticated&&native?.status==='COMPLETE'&&binding?.complete===true&&four?.candidate_ready===true&&
+  const fourQualified=authenticated&&observerProved&&native?.status==='COMPLETE'&&binding?.complete===true&&four?.candidate_ready===true&&
     !gaps.some(g=>/FOUR_SOURCE|NATURAL_|NATIVE_/.test(g));
   const clockQualified=authenticated&&clock?.candidate_ready===true&&clock.status==='UNIQUE_VALUE_CANDIDATE';
   const qualified=fourQualified&&clockQualified;
