@@ -574,6 +574,26 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       assert.equal((await listing()).connections.find(x=>x.id===r.connection).root_stop_generation,stopped.root_stop_generation);
       assert.equal((await db.query("select count(*)::int n from pg_proc where pronamespace='public'::regnamespace and has_function_privilege('clued_worker_gateway',oid,'EXECUTE')")).rows[0].n,80);
     });
+    await t.test('demand preparation is private, validates current Owner/session and does not issue a read or file intent',async()=>{
+      const r=await root(),before=(await db.query('select count(*)::int n from clued_private.storage_read_receipts_v1')).rows[0].n;
+      const prepare=async(s=session)=>(await db.query('select clued_private.storage_demand_prepare_v1($1,$2,$3,null,$4,$5::jsonb) v',
+        [proof,r.connection,'owner',s,JSON.stringify({operation:'probe'})])).rows[0].v;
+      const current=await prepare();
+      assert.equal(current.contract,'clued.storage-demand-preflight/1');
+      assert.equal(current.connection_id,r.connection);assert.equal(current.owner_id,owner);
+      assert.match(current.proof,/^clued_srp_[0-9a-f]{64}$/);assert.equal(current.renewal_enabled,false);
+      assert.equal((await db.query('select count(*)::int n from clued_private.storage_read_receipts_v1')).rows[0].n,before);
+      assert.equal((await db.query('select proof_hash from clued_private.storage_refresh_demand_proofs_v1 where connection_id=$1',[r.connection])).rows[0].proof_hash,sha(current.proof));
+      await assert.rejects(prepare(otherSession),e=>e.code==='42501');
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway']){
+        assert.equal((await db.query('select has_function_privilege($1,$2,\'EXECUTE\') permitted',[role,
+          'clued_private.storage_demand_prepare_v1(text,uuid,text,text,uuid,jsonb)'])).rows[0].permitted,false);
+        assert.equal((await db.query('select has_table_privilege($1,$2,\'SELECT\') permitted',[role,
+          'clued_private.storage_refresh_demand_proofs_v1'])).rows[0].permitted,false);
+      }
+      await disconnect(r.connection);await assert.rejects(prepare(),e=>e.code==='42501');
+      await assertGatewayCloseoutBoundary(db);
+    });
     await t.test('issuer retirement rejects even read-only recovery; no identity/verifier fallback',async()=>{
       await db.query("update clued_private.issuer_credentials_v1 set state='retired',retired_at=clock_timestamp() where issuer_id=(select id from clued_private.issuer_identities_v1 where legacy_key=$1 and kind='storage')",[proof]);
       await assert.rejects(listing(),e=>e.code==='42501');

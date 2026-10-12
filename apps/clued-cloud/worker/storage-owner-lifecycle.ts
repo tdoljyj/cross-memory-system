@@ -1,4 +1,5 @@
 import { createStorageCredentialVault, type StorageCredentialContext, type StorageCredentialEnvelope } from "./storage-credential-vault";
+import type { StorageDemandResult } from "./storage-demand-refresh";
 import { createStorageFetch } from "./storage-fetch";
 import { MASTER_DISCLOSURE_VERSION, MASTER_RECONNECT_CONFIRMATION, REFRESH_RECONNECT_CONFIRMATION, RECONNECT_REFRESH_DISCLOSURE_VERSION } from "./storage-master-disclosure";
 
@@ -74,6 +75,7 @@ export async function createStorageOwnerLifecycle(configuration: {
   oauth: { start(connectionId: string, defaultRefresh: boolean, scope: "keep" | "full",
     consent?: { disclosure_version: string }): Promise<{ authorization_url: string }> };
   fetch?: typeof fetch; clock?: () => number;
+  credential_preflight?: (owner: string, connectionId: string, operation: "owner_metadata") => Promise<StorageDemandResult>;
 }) {
   const vault = await createStorageCredentialVault(configuration.vault);
   const request = createStorageFetch(configuration.fetch), clock = configuration.clock ?? Date.now;
@@ -86,7 +88,12 @@ export async function createStorageOwnerLifecycle(configuration: {
     }
   };
   const ownerValid = (owner: string) => { if (!UUID.test(owner)) deny("input_invalid"); };
-  const load = async (owner: string, connection: string) => descriptor(await rpc({ action: "describe", connection_id: connection }), owner);
+  const load = async (owner: string, connection: string) => {
+    if (configuration.credential_preflight &&
+        (await configuration.credential_preflight(owner, connection, "owner_metadata")).status !== "ready")
+      deny("fresh_authorization_required");
+    return descriptor(await rpc({ action: "describe", connection_id: connection }), owner);
+  };
   async function token(d: Descriptor) {
     const context: StorageCredentialContext = { owner_id: d.owner_id, connection_id: d.connection_id, provider: "google-drive",
       provider_subject: d.provider_subject, oauth_client_id: d.oauth_client_id, credential_version: d.credential_version };
