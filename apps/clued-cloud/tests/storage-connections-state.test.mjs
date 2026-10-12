@@ -152,12 +152,13 @@ test("same-name roots show physical paths and exact Drive links; internal namesp
 
 test("revoked-root reconnect uses exact CAS and disclosed master consent without creating a new folder",async()=>{
  const f=await ready();f.click("重新连接这个文件夹");await f.settle();assert.equal(f.requests.length,1);
- assert.match(f.text(),/不会另建同名文件夹/);assert.match(f.text(),/后台续签保持关闭/);
+ assert.match(f.text(),/不会另建同名文件夹/);assert.match(f.text(),/后台自动续签（默认选中，可随时停用）/);
  f.click("取消");await f.settle();assert.equal(f.requests.length,1);
  f.click("重新连接这个文件夹");f.click("确认并前往 Google 授权");await f.settle();
  const b=JSON.parse(f.requests[1].init.body);assert.equal(f.requests[1].url,"/v1/storage/lifecycle");
  assert.equal(b.action,"reconnect");assert.equal(b.base_version,1);assert.equal(b.profile_version,1);assert.equal(b.root_stop_generation,1);
- assert.equal(b.confirmation.root_folder_id,connection.root_folder_id);assert.equal(b.confirmation.master_enabled,true);assert.equal(b.confirmation.contract,"clued.storage-owner-confirmation/3");assert.equal(b.confirmation.disclosure_version,"clued.storage-master-disclosure/1");assert.ok(!("normal_use"in b.confirmation));
+ assert.equal(b.confirmation.root_folder_id,connection.root_folder_id);assert.equal(b.confirmation.master_enabled,true);assert.equal(b.confirmation.contract,"clued.storage-owner-confirmation/4");assert.equal(b.confirmation.disclosure_version,"clued.storage-master-disclosure/1");assert.ok(!("normal_use"in b.confirmation));
+ assert.equal(b.confirmation.default_refresh,true);assert.equal(b.confirmation.refresh_disclosure_version,"clued.storage-reconnect-refresh-disclosure/1");
  assert.ok(!("owner_id"in b));assert.ok(!("root_name"in b));assert.ok(!("default_refresh"in b));
  f.respond(1,{authorization_url:"https://accounts.google.com/o/oauth2/v2/auth?synthetic=true"});await f.settle();assert.equal(f.navigation.length,1);
 });
@@ -175,8 +176,21 @@ test("explicitly disabling the reconnect default sends master OFF and cancellati
  f.click("取消");await f.settle();assert.equal(f.requests.length,1);assert.equal(f.navigation.length,0);
  f.click("重新连接这个文件夹");f.check(0,false);f.click("确认并前往 Google 授权");await f.settle();
  const body=JSON.parse(f.requests[1].init.body);assert.equal(body.confirmation.master_enabled,false);
- assert.equal(body.confirmation.contract,"clued.storage-owner-confirmation/3");assert.ok(!("normal_use"in body.confirmation));
+ assert.equal(body.confirmation.contract,"clued.storage-owner-confirmation/4");assert.equal(body.confirmation.default_refresh,true);assert.ok(!("normal_use"in body.confirmation));
  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==="master_set").length,0);assert.equal(f.navigation.length,0);
+});
+
+test("reconnect renewal defaults on each fresh dialog; explicit opt-out is independent of the Agent master switch",async()=>{
+ const f=await ready();f.click("重新连接这个文件夹");await f.settle();
+ const checkboxes=()=>f.nodes().filter(n=>n.type==="input"&&n.props.type==="checkbox");
+ assert.deepEqual(checkboxes().map(n=>n.props.checked),[true,true]);
+ assert.match(f.text(),/直到你关闭后台续签或断开连接/);
+ f.check(1,false);await f.settle();assert.deepEqual(checkboxes().map(n=>n.props.checked),[true,false]);
+ f.click("取消");await f.settle();assert.equal(f.requests.length,1);
+ f.click("重新连接这个文件夹");await f.settle();assert.deepEqual(checkboxes().map(n=>n.props.checked),[true,true]);
+ f.check(1,false);f.click("确认并前往 Google 授权");await f.settle();
+ const body=JSON.parse(f.requests[1].init.body);assert.equal(body.confirmation.master_enabled,true);assert.equal(body.confirmation.default_refresh,false);
+ assert.equal(body.confirmation.refresh_disclosure_version,"clued.storage-reconnect-refresh-disclosure/1");
 });
 
 test("created-root deletion first reads a snapshot; cancel makes no mutation; confirmation is one-shot and exact",async()=>{
