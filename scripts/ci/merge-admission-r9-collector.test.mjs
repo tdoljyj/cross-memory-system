@@ -597,3 +597,19 @@ test('a live report exclusion retains all earlier terminal ordinal captures',asy
   const r=await C.collectIncrementalNative({request:f.request,repository,window,observer:{run_id:'42',run_attempt:2,head_sha:head}});
   assert.equal(r.status,'COMPLETE');assert.deepEqual(Object.keys(JSON.parse(r.store_raw).packets),['42:1']);assert.equal(r.fresh,1);
 });
+
+test('an observer ordinal moving after its independent proof cannot omit the now-historical execution',async()=>{
+  const first=run(),live1=run(42,{status:'in_progress',conclusion:null}),live2=run(42,{run_attempt:2,status:'in_progress',conclusion:null,
+    run_started_at:'2026-10-11T00:01:00Z',updated_at:'2026-10-11T00:01:01Z'});let rootReads=0;
+  const f=nativeRequest({runs:[live2],jobs:[job()],mutation:route=>{
+    if(route.includes('/actions/artifacts?'))return {ok:true,body:{total_count:0,artifacts:[]}};
+    if(route.endsWith('/actions/runs/42'))return {ok:true,body:++rootReads===1?live1:live2};
+    if(route.endsWith('/attempts/1'))return {ok:true,body:first};return null;
+  }});
+  const r=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+    observer:{run_id:'42',run_attempt:1,head_sha:head}});
+  assert.equal(r.native.status,'PARTIAL');assert.equal(r.native.population.complete,false);
+  assert.ok(r.native.gaps.some(g=>g.reason_code==='CURRENT_OBSERVER_INVENTORY_CHANGED'));
+  assert.ok(JSON.parse(r.native.store_raw).packets['42:1']);assert.equal(r.native.population.current_observer_exclusion,undefined);
+  assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});

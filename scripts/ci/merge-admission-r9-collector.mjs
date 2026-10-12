@@ -304,7 +304,7 @@ const nativeAdmissionKind=(r,jobs,e)=>e.admission_sources.some(s=>[s.workflow_pa
 // Skip sealed terminal packets as a batch after the initial/closing Native
 // inventory barriers. Only newly missing/changed attempt packets need jobs.
 export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null}){
-  let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null;const gaps=[];let fresh=0,fromSealed=0;
+  let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null;const gaps=[];let fresh=0,fromSealed=0,observerExcluded=false;
   try{
     if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
     initial=await inventory(request,repository,window);const first=selected(initial.items,window);
@@ -312,6 +312,8 @@ export async function collectIncrementalNative({request,repository,window,authen
       const batch=first.slice(offset,offset+4),basis=storeRaw;
       const outcomes=await Promise.allSettled(batch.map(async run=>{
         let local=basis,localFresh=0,localSealed=0;const localGaps=[];
+        if(observer?.run_id===run.id&&run.run_attempt!==observer.run_attempt)
+          localGaps.push({key:run.id+':'+run.run_attempt,reason_code:'CURRENT_OBSERVER_INVENTORY_CHANGED'});
       const packets=inspectNativePopulationStore(storeRaw,repository).packets;
       const latest=packets[run.id+':'+run.run_attempt];
       // Normalize the inventory projection to the exact d0fc store grammar.
@@ -321,8 +323,8 @@ export async function collectIncrementalNative({request,repository,window,authen
       for(let attempt=1;attempt<=run.run_attempt;attempt++){
         // Only the independently verified currently executing observer is
         // outside its own execution denominator. Older ordinal packets remain.
-        if(observer?.run_id===run.id&&observer.run_attempt===attempt&&run.path.split('@')[0]===R9_PUBLISHER_PATH&&
-          run.head_sha===observer.head_sha&&run.status==='in_progress')continue;
+        if(observer?.run_id===run.id&&run.run_attempt===observer.run_attempt&&observer.run_attempt===attempt&&run.path.split('@')[0]===R9_PUBLISHER_PATH&&
+          run.head_sha===observer.head_sha&&run.status==='in_progress'){observerExcluded=true;continue;}
         if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end))continue;
         const existing=packets[run.id+':'+attempt];
         if(latestMatches&&existing){localSealed++;continue;}
@@ -363,7 +365,7 @@ export async function collectIncrementalNative({request,repository,window,authen
     return {status:gaps.length?'PARTIAL':'COMPLETE',store_raw:storeRaw,attempts,population_packets:populationPackets,all_population_packets:retainedPackets,gaps,fresh,from_sealed:fromSealed,
       population:{initial_total:initial.total,closing_total:closing.total,cohort_digest:hash(first),complete:gaps.length===0,
         scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts,
-        ...(observer?{current_observer_exclusion:{...observer,reason_code:'CURRENT_IN_PROGRESS_OBSERVER_IS_NOT_ITS_OWN_TERMINAL_EXECUTION'}}:{})}};
+        ...(observerExcluded?{current_observer_exclusion:{...observer,reason_code:'CURRENT_IN_PROGRESS_OBSERVER_IS_NOT_ITS_OWN_TERMINAL_EXECUTION'}}:{})}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),store_raw:storeRaw,attempts:[],gaps,fresh,from_sealed:fromSealed,
     population:{initial_total:initial?.total??null,closing_total:null,complete:false}};}
 }
