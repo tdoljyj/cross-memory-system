@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { freshConfig } from './clued-g4-fresh-start.mjs';
+import { freshConfig, portCandidates, verifyPreparedConfiguration } from './clued-g4-fresh-start.mjs';
 
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_BYTES = 64 * 1024;
@@ -33,11 +33,11 @@ const digest = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('h
 const CONFIG = 'apps/clued-cloud/supabase/config.toml';
 const ISOLATED_PROJECTS = { 'clued-g4-database.yml': 'clued-g4', 'information-flow-e2e.yml': 'clued-ife2e' };
 
-export function isolatedConfig(source, workflow, run, attempt) {
+export function isolatedConfig(source, workflow, run, attempt, portBase) {
   if (workflow === 'clued-g4-database.yml') return freshConfig(source, {
     GITHUB_RUN_ID: String(run), GITHUB_RUN_ATTEMPT: String(attempt),
     GITHUB_SHA: '0'.repeat(40), GITHUB_REPOSITORY: 'configuration/template',
-  });
+  }, portBase);
   const prefix = ISOLATED_PROJECTS[workflow];
   requireProof(prefix && Number.isSafeInteger(run) && run > 0 &&
     source.split('project_id = "clued-cloud"').length === 2, 'isolation_project');
@@ -120,10 +120,15 @@ export function validateEvidence({ repository, owner, sha, workflow, merge, pr, 
     report.tree === merge.commit.tree.sha, 'tested_tree_identity');
   const isolated = ISOLATED_PROJECTS[workflow];
   const g4 = workflow === 'clued-g4-database.yml';
-  requireProof(isolated ? report.isolation?.profile === (g4 ? 'fixed-seven-ports/2' : 'fixed-seven-ports/1') &&
+  const selectedBlock = report.isolation?.profile === 'selected-seven-ports/3';
+  requireProof(isolated ? (g4 ? ['fixed-seven-ports/2', 'selected-seven-ports/3'].includes(report.isolation?.profile) :
+    report.isolation?.profile === 'fixed-seven-ports/1') &&
     report.isolation.run_id === run.id && /^sha256:[a-f0-9]{64}$/.test(report.isolation.source_config_digest) &&
     /^sha256:[a-f0-9]{64}$/.test(report.isolation.tested_config_digest) &&
-    (!g4 || report.isolation.run_attempt === run.run_attempt) : report.isolation === null, 'tested_isolation_identity');
+    (!g4 || report.isolation.run_attempt === run.run_attempt) &&
+    (!selectedBlock || portCandidates({ GITHUB_RUN_ID: String(run.id), GITHUB_RUN_ATTEMPT: String(run.run_attempt),
+      GITHUB_SHA: report.checkout_sha, GITHUB_REPOSITORY: repository }).includes(report.isolation.port_base) &&
+      /^sha256:[a-f0-9]{64}$/.test(report.isolation.fresh_marker_digest)) : report.isolation === null, 'tested_isolation_identity');
   return { run_heavy: false, reason: 'prior_pr_tested_identical_tree', source_run_id: run.id,
     source_attempt: run.run_attempt, source_pr: pr.number, tested_tree: report.tree,
     current_sha_pass: false, qualification: 'PR_EVIDENCE_ONLY' };
@@ -206,7 +211,7 @@ export async function evaluatePush(env, fetchImpl = fetch) {
 export function testedTreeReport(env, event, git = (...args) => {
   const result = execFileSync('git', args, { encoding: 'utf8' });
   return args[0] === 'show' ? result : result.trim();
-}, readConfig = () => fs.readFileSync('supabase/config.toml', 'utf8')) {
+}, readConfig = () => fs.readFileSync('supabase/config.toml', 'utf8'), readFreshMarker) {
   requireProof(env.GITHUB_EVENT_NAME === 'pull_request' && TARGETS[env.REUSE_WORKFLOW] &&
     event.pull_request?.head?.repo?.full_name === env.GITHUB_REPOSITORY &&
     env.GITHUB_ACTOR === env.GITHUB_REPOSITORY_OWNER &&
@@ -224,10 +229,13 @@ export function testedTreeReport(env, event, git = (...args) => {
     requireProof(status === `M ${CONFIG}` || status === ` M ${CONFIG}`, 'report_dirty_paths');
     const source = git('show', `HEAD:${CONFIG}`);
     const actual = readConfig();
-    requireProof(actual === isolatedConfig(source, env.REUSE_WORKFLOW, run, attempt), 'report_isolation_diff');
     const g4 = env.REUSE_WORKFLOW === 'clued-g4-database.yml';
-    isolation = { profile: g4 ? 'fixed-seven-ports/2' : 'fixed-seven-ports/1', run_id: run,
-      ...(g4 ? { run_attempt: attempt } : {}),
+    // G4's default marker comes from this attempt's actual prepare file, bound
+    // to source/config hashes and identity. A preview port base is not proof.
+    const marker = g4 ? verifyPreparedConfiguration(source, actual, env, readFreshMarker?.()) : null;
+    requireProof(actual === isolatedConfig(source, env.REUSE_WORKFLOW, run, attempt, marker?.port_base), 'report_isolation_diff');
+    isolation = { profile: g4 ? 'selected-seven-ports/3' : 'fixed-seven-ports/1', run_id: run,
+      ...(g4 ? { run_attempt: attempt, port_base: marker.port_base, fresh_marker_digest: digest(JSON.stringify(marker)) } : {}),
       source_config_digest: digest(source), tested_config_digest: digest(actual) };
   } else requireProof(status === '', 'report_dirty_paths');
   return { schema: 'clued.tested-tree/1', repository: env.GITHUB_REPOSITORY,

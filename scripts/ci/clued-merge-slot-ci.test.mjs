@@ -122,19 +122,25 @@ test("the workflow is triggered by every CI workflow's completion, runs default-
   assert.deepEqual(gateFindings(text, null), [], "hosted only: no admission gate needed");
 });
 
-test("both pending entry points report CI before the executor last in the same trusted job", () => {
+test("both pending entry points report CI before the last executor action; sealed observations cannot authorize execution", () => {
   for (const file of ["clued-merge-executor.yml", "clued-merge-slot-ci.yml"]) {
     const text = fs.readFileSync(path.join(ROOT, ".github", "workflows", file), "utf8");
     assert.match(text, /runs-on: ubuntu-slim\n    timeout-minutes: 10\n    environment: clued-admission\n/);
     assert.match(text, /run: node --test scripts\/ci\/clued-merge-slot-ci\.test\.mjs scripts\/ci\/clued-merge-executor\.test\.mjs/);
     assert.match(text, /permissions:\n(?:  #[^\n]*\n)?  actions: write\n  checks: read\n  contents: read\n  pull-requests: read/);
-    const report = /- name: Report the CI state of the pull requests holding a merge slot\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-slot-ci\.mjs\n/.exec(text);
-    const execute = /- name: Bring the default branch into the queue head, turn on auto-merge or merge it\n {8}timeout-minutes: 5\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-executor\.mjs\n?$/.exec(text);
+    const observerAt = text.indexOf("      - name: Export the closed local natural R9 packet\n");
+    assert.ok(observerAt > 0, "only the explicit local export/artifact tail may follow the executor");
+    const actions = text.slice(0, observerAt), observations = text.slice(observerAt);
+    const report = /- name: Report the CI state of the pull requests holding a merge slot\n(?: {8}if: \$\{\{ !inputs\.measurement_opt_in \}\}\n)? {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-slot-ci\.mjs\n/.exec(actions);
+    const execute = /- name: Bring the default branch into the queue head, turn on auto-merge or merge it\n {8}timeout-minutes: 5\n {8}env:\n((?: {10}[^\n]+\n)+) {8}run: node scripts\/ci\/clued-merge-executor\.mjs\n?$/.exec(actions);
     assert.ok(report && execute, "both steps use the same job; executor is last with default success condition");
     assert.ok(report.index < execute.index, "the slot state is reported before acting on the queue");
     assert.equal(execute[1], report[1], "same main-only App/token/state trust envelope");
     assert.equal((text.match(/run: node scripts\/ci\/clued-merge-executor\.mjs/g) ?? []).length, 1);
-    assert.doesNotMatch(text, /continue-on-error:|if:.*always\(\)/, "failed or cancelled reporting must not authorize execution");
+    assert.doesNotMatch(actions, /continue-on-error:|if:.*always\(\)/, "failed or cancelled reporting must not authorize execution");
+    assert.equal((observations.match(/if: \$\{\{ always\(\) \}\}/g) ?? []).length, 2);
+    assert.match(observations, new RegExp('run: node scripts/ci/merge-admission-source-producer\\.mjs --export '+(file==='clued-merge-executor.yml'?'executor':'slot')));
+    assert.doesNotMatch(observations, /clued-merge-executor\.mjs|CLUED_CONTEXT_READ_TOKEN|CLUED_ADMISSION_APP/, "observers have no merge command or Clued/App credential");
   }
 });
 

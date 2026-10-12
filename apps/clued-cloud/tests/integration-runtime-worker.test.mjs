@@ -217,8 +217,10 @@ test('T-W-1 integration rollback preserves the 36-tool source-OFF baseline; the 
 test('audit measurement metadata and dispatch preserve the existing gateway and audit authority', async () => {
   const audit=(await listTools(enabled)).find(tool=>tool.name==='clued_audit_receipts');
   assert.deepEqual(audit._meta['clued/requiredScopes'], ['audit:read']);
-  assert.equal(audit.annotations.readOnlyHint, true);
-  assert.deepEqual(audit.inputSchema.properties.measurement, {
+  assert.deepEqual(audit.annotations, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
+  const branches=audit.inputSchema.properties.measurement.oneOf;
+  assert.equal(branches.length,4,'legacy pages and the three bounded clock operations remain distinct');
+  assert.deepEqual(branches[0], {
     type: 'object', properties: {
       after_sequence: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
       end_sequence: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
@@ -226,6 +228,17 @@ test('audit measurement metadata and dispatch preserve the existing gateway and 
       limit: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
     }, additionalProperties: false,
   });
+  const operations=new Map(branches.slice(1).map(branch=>[branch.properties.operation.const,branch]));
+  assert.deepEqual([...operations.keys()],['clock_open','clock_seal','clock_page']);
+  for(const branch of operations.values())assert.equal(branch.additionalProperties,false,'clock calls cannot carry arbitrary authority');
+  assert.deepEqual(operations.get('clock_open').required,['operation','queue_ref']);
+  assert.deepEqual(operations.get('clock_seal').required,['operation','queue_ref','epoch_id','pins']);
+  assert.deepEqual(operations.get('clock_page').required,['operation','queue_ref','seal_id','pins','seal_pins']);
+  for(const operation of ['clock_seal','clock_page']){
+    const pins=operations.get(operation).properties.pins;
+    assert.equal(pins.additionalProperties,false);
+    assert.deepEqual(pins.required,['epoch_id','stream_id','clock_generation_id','foundation_digest','catalog_digest']);
+  }
   const input={context_key:'global',measurement:{after_sequence:1,end_sequence:3,stream_id:ID,limit:2}};
   const mocked=mockFetch(rpc=>{
     assert.equal(rpc,'clued_mcp_audit_receipts');

@@ -47,6 +47,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import {createNaturalRecorder} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -273,12 +274,13 @@ function rpcError(name, response) {
   return null;
 }
 
-export async function reportMergeSlots({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync,
+async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspace, readPolicyFile = fs.readFileSync,
   sourceObservationBudgetMs, qualifyExecution }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const hardCap = (mode.policy && mode.policy.merge_slot_hard_cap_minutes) || DEFAULT_HARD_CAP_MINUTES;
   const result = { event: eventName, hard_cap_minutes: hardCap, holders: [], reports: [], skipped: null, notices: [], errors: [] };
+  const observations=arguments[0].observation_recorder;
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   const workflows = ciWorkflows(workspace);
   const qualify = qualifyExecution ?? createExecutionQualifier({ env, fetchImpl, workspace, workflows });
@@ -344,6 +346,7 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
     const prRef = `${repository}#${pr.number}`;
     try {
       let seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution: qualify });
+      observations.record("round_ci_observation",{scope,pr,seen});
       const report = { pr: pr.number, head_sha: pr.head.sha, ci_state: seen.state, reason: seen.reason };
       if (seen.state !== "idle") {
         const current = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${pr.number}`);
@@ -364,6 +367,7 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
           scope, pr_ref: prRef, head_sha: pr.head.sha, ci_state: seen.state,
           ...(seen.state === "failed" ? { reason: [...seen.reason.replace(/[\x00-\x1f\x7f-\x9f]/g, " ")].slice(0, 300).join("") } : { hard_cap_minutes: hardCap }),
         });
+        observations.record("slot_touch",{scope,pr,seen,response});
         const error = rpcError(TOUCH_RPC, response);
         if (error) throw new Error(error);
         Object.assign(report, seen.state === "failed"
@@ -390,6 +394,13 @@ export async function reportMergeSlots({ env, event, eventName, fetchImpl, works
     }
   }
   return result;
+}
+
+export async function reportMergeSlots(args) {
+  const recorder=args.observation_recorder??createNaturalRecorder({env:args.env,workspace:args.workspace,sourceUrl:import.meta.url,sourcePath:"scripts/ci/clued-merge-slot-ci.mjs"});
+  let completion="exception";
+  try {const result=await reportMergeSlotsCore({...args,observation_recorder:recorder});completion="returned";return result;}
+  finally {if(!args.observation_recorder)recorder.finish(completion);}
 }
 
 export function renderSummary(result) {
