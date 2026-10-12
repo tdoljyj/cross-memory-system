@@ -81,11 +81,34 @@
 // It needs Node 18 or newer (the runner bundles one under externals/).
 
 import { createSign } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "work-handover-current-epoch-v1";
+export const HOOK_VERSION = "work-handover-current-epoch-proxy-v1";
+
+// Native fetch otherwise ignores the runner's established proxy settings.
+// Enable Node's own proxy support before any credential or network read,
+// without changing wrappers, protected settings, TLS or job permissions.
+export function proxyBootstrapArguments({ env = process.env, execArgv = process.execArgv,
+  argv = process.argv, allowedFlags = process.allowedNodeEnvironmentFlags } = {}) {
+  const proxies = [env.HTTP_PROXY, env.http_proxy, env.HTTPS_PROXY, env.https_proxy]
+    .filter(value => typeof value === "string" && value.trim());
+  if (!proxies.length) return null;
+  for (const value of proxies) {
+    let protocol;
+    try { protocol = new URL(value).protocol; } catch { throw new Error("The configured HTTP proxy is invalid."); }
+    if (protocol !== "http:" && protocol !== "https:") throw new Error("The configured HTTP proxy protocol is unsupported.");
+  }
+  if (!allowedFlags.has("--use-env-proxy")) throw new Error("The installed Node runtime cannot use the configured HTTP proxy.");
+  if (env.NODE_USE_ENV_PROXY === "0" || execArgv.includes("--no-use-env-proxy")
+    || /(?:^|\s)--no-use-env-proxy(?:\s|$)/.test(env.NODE_OPTIONS ?? ""))
+    throw new Error("Node proxy use is explicitly disabled for this execution.");
+  if (env.NODE_USE_ENV_PROXY === "1" || execArgv.includes("--use-env-proxy")
+    || /(?:^|\s)--use-env-proxy(?:\s|$)/.test(env.NODE_OPTIONS ?? "")) return null;
+  return [...execArgv, "--use-env-proxy", ...argv.slice(1)];
+}
 
 // The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
@@ -571,5 +594,16 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const proxyArguments = proxyBootstrapArguments();
+    if (proxyArguments) {
+      const child = spawnSync(process.execPath, proxyArguments, { env: process.env, stdio: "inherit" });
+      if (child.error) throw new Error("The proxy-enabled hook process could not start.");
+      process.exit(Number.isInteger(child.status) ? child.status : 1);
+    }
+  } catch (error) {
+    console.error(`::error title=Clued runner check::clued-runner-hook: REFUSE ${error.message} [hook ${HOOK_VERSION}]`);
+    process.exit(1);
+  }
   main().then((code) => process.exit(code), (error) => { console.error(error); process.exit(1); });
 }
