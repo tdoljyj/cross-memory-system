@@ -138,6 +138,18 @@ jobs:
           CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
         run: node scripts/ci/clued-work-admission.mjs --mode app-check
 
+      - name: Export the closed local natural R9 packet
+        if: ${{ always() }}
+        run: node scripts/ci/merge-admission-source-producer.mjs --export admission
+      - name: Preserve natural R9 source observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json
+          if-no-files-found: warn
+          retention-days: 90
+
   # GenericWorkClaim §5.3, multi-copy write-back: a merged pull request is
   # reported to Clued once (clued_work_claim_adopt_v1). When its Task runs as
   # a race, the copy bound to this pull request is adopted and the other

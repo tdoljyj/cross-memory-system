@@ -190,7 +190,21 @@ test("runner hook: exit codes, enforcement and failures", async () => {
   // Each line names the hook's version, so the Owner can check every runner's copy.
   assert.equal(HOOK_VERSION, "work-handover-current-epoch-v1");
   assert.ok(lines.length >= 5);
-  for (const line of lines) assert.ok(line.endsWith(` [hook ${HOOK_VERSION}]`), line);
+  const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
+  const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
+  assert.ok(diagnostics.length >= 5);
+  for (const line of diagnostics) assert.ok(line.endsWith(` [hook ${HOOK_VERSION}]`), line);
+  assert.equal(observations.length, diagnostics.length);
+  for (const line of observations) {
+    const observation = JSON.parse(line.slice("clued-r9-pre-job: ".length));
+    assert.equal(observation.hook_version, HOOK_VERSION);
+    assert.equal(observation.phase, "pre_job_permission");
+    assert.equal(observation.native_job_started_at, null);
+    assert.equal(observation.native_job_completed_at, null);
+    assert.equal(observation.source_authenticated, false);
+    assert.equal(observation.official_metric, false);
+    assert.equal(observation.t0, null);
+  }
   const { result } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/x" }, { [LIST]: { status: 403, body: null } })
     .catch((error) => ({ result: { error: error.message } }));
   assert.match(result.error, /returned 403/);

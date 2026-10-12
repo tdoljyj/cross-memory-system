@@ -14,6 +14,7 @@
 // Pure proof tests and consumer tests run offline; main never injects a bypass.
 
 import fs from "node:fs";
+import {createNaturalRecorder,observeMutation,naturalRoundId} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -169,15 +170,16 @@ export async function currentOperationAuthority({env,fetchImpl,workspace,readPol
     if(final?.number!==current.number || final.state!=='open' || final.draft!==false || final.head?.sha!==current.head.sha ||
       final.body!==current.body || final.base?.ref!==current.base.ref || final.base?.repo?.full_name!==repository ||
       finalBranch?.commit?.sha!==tip)return {valid:false};
-    return {valid:true,pr:current,mode,progress_ref:holder.progress_ref};
+    return {valid:true,pr:current,mode,progress_ref:holder.progress_ref,observation_fence:outcome.claim?.fence??null};
   } catch {return {valid:false};}
 }
 
-export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = fs.readFileSync, now = () => Date.now(),
+async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.readFileSync, now = () => Date.now(),
   qualifyExecution, authorizeOperation = currentOperationAuthority }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const result = { state: mode.state, heads: [], actions: [], notices: [], errors: [] };
+  const observations=arguments[0].observation_recorder;
   if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
   // Only pull requests whose body names their claim: an update-branch merge commit carries no
   // trailer, so a claim named only in a commit would be lost (review MINOR-3).
@@ -258,7 +260,7 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       continue;
     }
     const entry = { pr: plan.pr.number, head_sha: plan.pr.head.sha, action: plan.action, reason: plan.reason };
-    let lastPr=plan.pr,lastExecution=plan.execution;
+    let lastPr=plan.pr,lastExecution=plan.execution,lastFence=null;
     if(plan.action==='disable_auto_merge') {
       const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
       if(current?.node_id!==plan.pr.node_id || current.state!=='open' || !managedAutoMerge(current)) {
@@ -283,7 +285,7 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
         lastAuthority.pr.body!==authority.pr.body || lastAuthority.mode.state!==authority.mode.state) {
         result.actions.push({...entry,action:'none',reason:'live authority changed during execution qualification'});continue;
       }
-      lastPr=lastAuthority.pr;lastExecution=final.execution;
+      lastPr=lastAuthority.pr;lastExecution=final.execution;lastFence=lastAuthority.observation_fence??null;
     }
     if (plan.action === "rerun_gated") {
       // Unlike merge/update-branch, the rerun API has no expected-head CAS.
@@ -305,11 +307,23 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
     } else if (plan.action === "update_branch") {
       const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
       if(!matchesOperationPR(current,lastPr,plan.action)) {result.actions.push({...entry,action:'none',reason:'native PR permission changed before update'});continue;}
-      const response = await appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/update-branch`, token,
-        { expected_head_sha: plan.pr.head.sha });
+      const operation_id=observations.newId(),reference=parseClaimReference(current.body);
+      const pre=observations.record("operation_pre",{operation_id,pr:current,main_sha:tip});
+      observations.record("operation_request",{operation_id,pre_observation_id:pre.record_id,action:plan.action,scope:plan.scope,pr:current,expected_head_sha:plan.pr.head.sha,main_sha:tip,claim_id:reference?.claim_id,fence:lastFence,reason_code:'MAIN_MOVED_REQUIRES_RERUN'});
+      const response = await observeMutation(()=>appRequest(fetchImpl, env, "PUT", `/repos/${repository}/pulls/${plan.pr.number}/update-branch`, token,
+        { expected_head_sha: plan.pr.head.sha }),observations,{operation_id,action:plan.action});
       entry.status = response.status;
       // 422: the head moved since it was read, or the merge has a conflict the holder must resolve.
       if (response.status !== 202) entry.error = response.body && response.body.message ? String(response.body.message) : `HTTP ${response.status}`;
+      // One fresh confirmation read, never retrying a 202. Observation failure
+      // preserves the original operation result and remains an explicit gap.
+      try {const post=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
+        const commit=await githubJson(fetchImpl,env,`/repos/${repository}/commits/${post.head.sha}`);
+        if(post.number!==plan.pr.number||post.base?.repo?.full_name!==repository||commit.sha!==post.head.sha||!Array.isArray(commit.parents))throw Error();
+        observations.record('operation_post',{operation_id,pr:post,main_sha:tip,parents:commit.parents.map(x=>x.sha),provider_request_id:response.request_id});
+        if(response.status===202&&post.head.sha!==current.head.sha&&commit.parents.some(x=>x.sha===current.head.sha)&&commit.parents.some(x=>x.sha===tip))
+          observations.record('round_termination',{operation_id,round_id:null,scope:plan.scope,pr:current,main_sha:tip});
+      }catch{observations.record('operation_post_gap',{operation_id});}
     } else if (plan.action==='merge_pull_request') {
       const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
       if(current?.head?.sha!==plan.pr.head.sha || current.state!=='open' || current.draft || current.auto_merge || current.mergeable_state!=='clean') {
@@ -317,10 +331,18 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
       } else if(!await requiredBarrier(fetchImpl,env,repository,plan.pr.head.sha,plan.pr.number,lastExecution,{expectedPR:lastPr,action:plan.action})) {
         entry.action='none';entry.reason='native latest state changed after authority';
       } else {
-        const merged=await appRequest(fetchImpl,env,'PUT',`/repos/${repository}/pulls/${plan.pr.number}/merge`,token,
-          {merge_method:'merge',sha:plan.pr.head.sha});
+        const operation_id=observations.newId();
+        const run_keys=(lastExecution.native_runs??[]).map(r=>String(r.id)+':'+r.run_attempt).sort();
+        observations.record('round_ci_observation',{scope:plan.scope,pr:current,seen:{state:'green',execution:lastExecution}});
+        observations.record("operation_request",{operation_id,action:plan.action,scope:plan.scope,pr:current,expected_head_sha:plan.pr.head.sha,main_sha:tip,fence:lastFence,run_keys,original_round_id:naturalRoundId(run_keys)});
+        const merged=await observeMutation(()=>appRequest(fetchImpl,env,'PUT',`/repos/${repository}/pulls/${plan.pr.number}/merge`,token,
+          {merge_method:'merge',sha:plan.pr.head.sha}),observations,{operation_id,action:plan.action});
         entry.merge_status=merged.status;
-        if(merged.status===200 && merged.body?.merged===true){entry.result='merged';entry.merge_commit=merged.body.sha??null;}
+        if(merged.status===200 && merged.body?.merged===true){entry.result='merged';entry.merge_commit=merged.body.sha??null;
+          try{const post=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${plan.pr.number}`);
+            if(post.number!==plan.pr.number||post.head?.sha!==plan.pr.head.sha||post.merged!==true||post.merge_commit_sha!==merged.body.sha)throw Error();
+            observations.record('merge_native_post',{operation_id,pr:post});
+          }catch{observations.record('operation_post_gap',{operation_id});}}
         else {entry.result=merged.status===405||merged.status===409?'mergeable_now':'merge_refused';
           entry.error=`merge refused: ${merged.body?.message??`HTTP ${merged.status}`}`;}
       }
@@ -329,6 +351,72 @@ export async function runExecutor({ env, fetchImpl, workspace, readPolicyFile = 
     result.actions.push(entry);
   }
   return result;
+}
+
+export async function runExecutor(args) {
+  const recorder=args.observation_recorder??createNaturalRecorder({env:args.env,workspace:args.workspace,sourceUrl:import.meta.url,sourcePath:"scripts/ci/clued-merge-executor.mjs"});
+  let completion="exception";
+  try {const result=await runExecutorCore({...args,observation_recorder:recorder});completion="returned";return result;}
+  finally {if(!args.observation_recorder)recorder.finish(completion);}
+}
+
+// Explicit holder dispatch only. Ordinary automatic dispatch/push behavior is
+// unchanged. This is an original operation entry, not an imported JSON receipt:
+// the code makes the pre/read/request/response/fresh-post itself. No retries.
+export async function runRecordedHolderOperation({env,fetchImpl,workspace,input,observation_recorder,
+  authorizeOperation=currentOperationAuthority,readPolicyFile=fs.readFileSync,now=()=>Date.now(),getToken=executorToken}){
+  const refused=reason=>({status:'REFUSED',reason,operation_id:null});
+  if(env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR!==env.GITHUB_REPOSITORY_OWNER||input?.measurement_opt_in!=='true')return refused('explicit Owner holder dispatch required');
+  if(!['update_branch','cancel_ci_attempt'].includes(input.measurement_operation)||!/^\d+$/.test(String(input.measurement_pr??''))||
+    !Number.isSafeInteger(Number(input.measurement_pr))||Number(input.measurement_pr)<1||!/^[a-f0-9]{40}$/.test(input.measurement_head??''))return refused('invalid exact operation subject');
+  const repository=env.GITHUB_REPOSITORY,pr=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${Number(input.measurement_pr)}`),reference=parseClaimReference(pr?.body);
+  if(!reference||pr.head?.sha!==input.measurement_head||pr.state!=='open'||pr.draft||pr.base?.repo?.full_name!==repository)return refused('current original PR/claim subject required');
+  const branch=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(pr.base.ref)}`),tip=branch?.commit?.sha;
+  const action=input.measurement_operation==='update_branch'?'holder_update_branch':'holder_cancel_ci_attempt';
+  let authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope:reference.scope,action});
+  if(authority?.valid!==true)return refused('current original permission/withdrawal/admission/FIFO gates refused');
+  const recorder=observation_recorder??createNaturalRecorder({env,workspace,sourceUrl:import.meta.url,sourcePath:'scripts/ci/clued-merge-executor.mjs'}),operation_id=recorder.newId();
+  let completion='exception';
+  try{
+    recorder.record('manual_operation_input',{operation_id,action:input.measurement_operation,pr_number:pr.number,expected_head_sha:pr.head.sha,run_id:input.measurement_run,attempt:input.measurement_attempt});
+    const operationToken=input.measurement_operation==='update_branch'?(await getToken({env,fetchImpl,now})).token:null;
+    if(input.measurement_operation==='update_branch'&&!operationToken)return refused('existing operation App permission unavailable');
+    const last=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope:reference.scope,action});
+    if(last?.valid!==true||last.pr.body!==authority.pr.body||last.pr.head.sha!==pr.head.sha||last.mode.state!==authority.mode.state)return refused('final live original authority changed');
+    authority=last;
+    const current=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`),main=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(pr.base.ref)}`);
+    if(!matchesOperationPR(current,authority.pr,input.measurement_operation)||main.commit?.sha!==tip)return refused('final Native PR/default branch changed');
+    const pre=recorder.record('operation_pre',{operation_id,pr:current,main_sha:tip});
+    const requestPayload={operation_id,pre_observation_id:pre.record_id,action:input.measurement_operation,origin:'holder_adapter',scope:reference.scope,pr:current,
+      expected_head_sha:pr.head.sha,main_sha:tip,claim_id:reference.claim_id,fence:authority.observation_fence,
+      reason_code:input.measurement_reason==='MAIN_MOVED_REQUIRES_RERUN'?'MAIN_MOVED_REQUIRES_RERUN':'GENERAL_UPDATE'};
+    let response;
+    if(input.measurement_operation==='update_branch'){
+      recorder.record('operation_request',requestPayload);
+      response=await observeMutation(()=>appRequest(fetchImpl,env,'PUT',`/repos/${repository}/pulls/${pr.number}/update-branch`,operationToken,{expected_head_sha:pr.head.sha}),recorder,{operation_id,action:'update_branch'});
+    }else{
+      if(!/^[1-9][0-9]{0,19}$/.test(input.measurement_run??'')||!/^\d+$/.test(String(input.measurement_attempt??'')))return refused('exact Native cancel attempt required');
+      const r=await githubJson(fetchImpl,env,`/repos/${repository}/actions/runs/${input.measurement_run}`);
+      if(r.head_sha!==pr.head.sha||r.event!=='pull_request'||r.run_attempt!==Number(input.measurement_attempt)||r.status==='completed'||
+        !r.pull_requests?.some(x=>x.number===pr.number))return refused('active associated Native cancel subject changed');
+      recorder.record('cancel_intent',{operation_id,run_id:String(r.id),attempt:r.run_attempt,request_receipt_id:pre.record_id,reason_code:'OWNER_STOP_REQUEST'});
+      recorder.record('operation_request',requestPayload);
+      response=await observeMutation(()=>appRequest(fetchImpl,env,'POST',`/repos/${repository}/actions/runs/${r.id}/cancel`,env.GITHUB_TOKEN),recorder,{operation_id,action:'cancel_ci_attempt'});
+      const postRun=await githubJson(fetchImpl,env,`/repos/${repository}/actions/runs/${r.id}`);
+      if(postRun.id!==r.id||postRun.run_attempt!==r.run_attempt||postRun.head_sha!==r.head_sha)return refused('fresh Native cancel post identity changed');
+      recorder.record('cancel_native_post',{operation_id,run:postRun});
+    }
+    const post=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`);
+    if(post?.number!==pr.number||post.base?.repo?.full_name!==repository||post.base?.ref!==pr.base.ref)return refused('fresh Native post identity unavailable');
+    const commit=await githubJson(fetchImpl,env,`/repos/${repository}/commits/${post.head.sha}`);
+    if(commit?.sha!==post.head.sha||!Array.isArray(commit.parents)||commit.parents.some(x=>!/^[a-f0-9]{40}$/.test(x.sha)))return refused('fresh Native commit post unavailable');
+    recorder.record('operation_post',{operation_id,pr:post,main_sha:tip,parents:commit.parents.map(x=>x.sha),provider_request_id:response.request_id});
+    if(input.measurement_operation==='update_branch'&&response.status===202&&input.measurement_reason==='MAIN_MOVED_REQUIRES_RERUN'&&
+      post.head.sha!==pr.head.sha&&commit.parents.some(x=>x.sha===pr.head.sha)&&commit.parents.some(x=>x.sha===tip))
+      recorder.record('round_termination',{operation_id,round_id:null,scope:reference.scope,pr:current,main_sha:tip});
+    completion='returned';return {status:'RECORDED_ORIGINAL_OPERATION',operation_id,response_status:response.status,
+      native_post_head:post.head.sha,confirmation:post.head.sha===pr.head.sha?'NOT_YET_CHANGED':'ACTUAL_NATIVE_POST_CHANGED',cancel_cause:'UNKNOWN_CAUSE'};
+  }finally{if(!observation_recorder)recorder.finish(completion);}
 }
 
 export function renderSummary(result) {
@@ -343,6 +431,13 @@ export function renderSummary(result) {
 }
 
 export async function main(env = process.env, fetchImpl = globalThis.fetch) {
+  if(env.GITHUB_EVENT_NAME==='workflow_dispatch'&&env.GITHUB_EVENT_PATH){
+    const event=JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH,'utf8'));
+    if(event.inputs?.measurement_opt_in==='true'){
+      const recorded=await runRecordedHolderOperation({env,fetchImpl,workspace:env.GITHUB_WORKSPACE,input:event.inputs});
+      console.log(JSON.stringify(recorded));return recorded.status==='RECORDED_ORIGINAL_OPERATION'?0:1;
+    }
+  }
   const result = await runExecutor({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE });
   console.log(JSON.stringify(result, null, 2));
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, renderSummary(result));
