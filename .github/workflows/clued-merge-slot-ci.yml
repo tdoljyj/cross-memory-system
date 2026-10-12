@@ -39,6 +39,7 @@ on:
       - contract-placement
       - Clued connection authorization candidate
       - Clued G4 Database Gate
+      - Clued installed handover hook qualification
       - design-refs
       - Information Flow M0-D E2E
       - model-program-m2-scoped-consumer
