@@ -1,10 +1,15 @@
 {
   "contract": "clued.storage-demand-renewal/1",
   "version": "0.1",
-  "qualification": "staged",
+  "qualification": "demand_runtime_qualified",
   "reviewed_plan_sha256": "379bf3a91f8d593bd20e3662d9c5c412f791c34043edb5b96d78a97c1bbad98f",
   "approval_record": "a9d4dddd-6a62-4592-8b0c-30af5711301b",
-  "idle_scheduler_enabled": false,
+  "idle_scheduler_enabled": true,
+  "demand_runtime_qualification": {
+    "source_commit": "c84d4777883552e958e0a24e95f1b8e2a84120b8",
+    "production_release_run": 38286464600,
+    "canonical_task_receipt": "b74d33a7-7746-4f36-af70-ba70e47d86f4"
+  },
   "idle_keepalive_days": 30,
   "active_refresh_margin_seconds": 300,
   "demand_min_validity_seconds": 60,

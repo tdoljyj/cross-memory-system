@@ -39,24 +39,28 @@ test("scheduled refresh disabled flags cause zero IO and missing secret fails cl
     assert.equal(calls, 0);
   } finally { globalThis.fetch = previous; }
 });
-test("scheduler uses only fixed private issuer RPC, bounded batch and non-sensitive status", async () => {
-  const previous = globalThis.fetch, calls = []; let connections = [connection], pending = 0;
+test("qualified idle scheduler uses Native due hints and preparation, bounded batch and empty-vault skip", async () => {
+  const previous = globalThis.fetch, calls = []; let connections = [{ connection_id: connection, wake: "keepalive" }], pending = 0;
   globalThis.fetch = async (url, init) => {
     assert.equal(String(url), env.SUPABASE_URL+"/rest/v1/rpc/clued_storage_refresh_worker_v1");
     assert.equal(new Headers(init.headers).get("authorization"), "Bearer test-worker-gateway"); assert.equal(init.redirect, "manual");
     const input = JSON.parse(init.body); calls.push(input);
     assert.equal(input.p_issuer_hash, createHash("sha256").update(issuer).digest("hex"));
-    if (input.p_input.action === "due") return Response.json({ connections, pending_expired: pending });
-    assert.equal(input.p_input.action, "claim"); return Response.json({ status: "claimed" });
+    if (input.p_input.action === "due_demand") return Response.json({ status: "ok", connections, pending_expired: pending });
+    assert.deepEqual(input.p_input, { action: "prepare_credential", connection_id: connection,
+      caller_kind: "maintenance", request: { operation: "scheduled" } });
+    return Response.json({ status: "denied" });
   };
   try {
-    assert.deepEqual(await worker.runStorageRefreshScheduled(env), { status: "attention_required", committed: 0, unavailable: 1 });
+    assert.deepEqual(await worker.runStorageRefreshScheduled(env), { status: "attention_required", ready: 0, unavailable: 1 });
     assert.equal(calls.length, 2); assert.equal(calls[1].p_input.connection_id, connection);
-    connections = Array.from({ length: 11 }, () => randomUUID());
+    connections = Array.from({ length: 11 }, () => ({ connection_id: randomUUID(), wake: "keepalive" }));
     assert.deepEqual(await worker.runStorageRefreshScheduled(env), { status: "unavailable" }); assert.equal(calls.length, 3);
     connections = []; pending = 2;
-    assert.deepEqual(await worker.runStorageRefreshScheduled(env), { status: "attention_required", committed: 0, unavailable: 2 });
+    const noVault = { ...env, CLUED_STORAGE_VAULT_KEYS: "null" };
+    assert.deepEqual(await worker.runStorageRefreshScheduled(noVault), { status: "attention_required", ready: 0, unavailable: 2 });
     pending = 0;
-    assert.deepEqual(await worker.runStorageRefreshScheduled(env), { status: "ok", committed: 0, unavailable: 0 });
+    assert.deepEqual(await worker.runStorageRefreshScheduled(noVault), { status: "ok", ready: 0, unavailable: 0 });
+    assert.equal(calls.length, 5, "empty schedules make only their Native due query");
   } finally { globalThis.fetch = previous; }
 });
