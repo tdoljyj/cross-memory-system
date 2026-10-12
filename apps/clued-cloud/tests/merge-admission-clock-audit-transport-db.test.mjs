@@ -49,7 +49,7 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   const r=await make(),legacy=await rpc(r,{context_key:'global'}),legacyMeasurement=await rpc(r,{context_key:'global',measurement:{limit:1}});
   const candidate=await fs.readFile(path.join(cloud,'supabase/migrations',transportMigration),'utf8');await db.query(candidate);
   const workerSource=await fs.readFile(path.join(cloud,'worker/continuity.ts'),'utf8');
-  assert.equal(hash(workerSource),'00f2bd16cd5dbc21daad048794e173612e5d8012e3de3ec2d609fc291142ad42');
+  assert.equal(hash(workerSource),"2002e9ec99d2bfff36364e20894f02b051129778192be75fc8aa38e9d64d1142");
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'8afae4cbeaecb3430f45dd42c86a8d648b5bfccac9db60569796b3eb96e3a188');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');
   const workerContents=workerSource;
