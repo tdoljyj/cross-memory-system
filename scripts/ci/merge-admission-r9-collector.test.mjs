@@ -400,7 +400,8 @@ if(process.env.CLUED_R9_CHECKOUT_CHILD!=='1')test('M4: default self-test loads a
   const temp=fs.mkdtempSync(path.join(os.tmpdir(),'clued-r9-checkout-'));
   try{
     const paths=[...C.R9_SOURCE_PATHS,...Object.keys(JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8')).workflows),'scripts/ci/ci-usage-attribution.mjs','scripts/ci/merge-admission-policy.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
-      'scripts/ci/clued-work-admission.mjs','.github/workflows/clued-work-admission.yml','.github/workflows/clued-work-admission-reverify.yml','config/merge-admission-policy.json'];
+      'scripts/ci/clued-work-admission.mjs','scripts/runner/clued-runner-job-started.mjs',
+      '.github/workflows/clued-work-admission.yml','.github/workflows/clued-work-admission-reverify.yml','config/merge-admission-policy.json'];
     for(const rel of paths){const author=path.join(here,path.basename(rel)),src=fs.existsSync(author)?author:['scripts/ci/merge-admission-r9-collector.mjs','scripts/ci/merge-admission-r9-collector.test.mjs','scripts/ci/ci-usage-report.mjs'].includes(rel)?author:
       rel==='scripts/ci/merge-admission-native-population.mjs'?overrides['merge-admission-native-population.mjs']:rel==='scripts/ci/merge-admission-four-sources.mjs'?overrides['merge-admission-four-sources.mjs']:path.join(repo,rel);
       fs.mkdirSync(path.dirname(path.join(temp,rel)),{recursive:true});fs.copyFileSync(src,path.join(temp,rel));}
