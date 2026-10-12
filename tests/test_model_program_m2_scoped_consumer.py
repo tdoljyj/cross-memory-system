@@ -262,6 +262,11 @@ def load_tests(loader, tests, pattern):
     core_module = importlib.util.module_from_spec(core_spec)
     core_spec.loader.exec_module(core_module)
     tests.addTests(loader.loadTestsFromModule(core_module, pattern=pattern))
+    input_path = ROOT / "tests/test_model_program_m2_input_generator.py"
+    input_spec = importlib.util.spec_from_file_location("m2_input_generator_specifications", input_path)
+    input_module = importlib.util.module_from_spec(input_spec)
+    input_spec.loader.exec_module(input_module)
+    tests.addTests(loader.loadTestsFromModule(input_module, pattern=pattern))
     return tests
 
 
