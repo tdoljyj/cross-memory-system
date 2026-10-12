@@ -277,6 +277,16 @@ def load_tests(loader, tests, pattern):
     saved_module = importlib.util.module_from_spec(saved_spec)
     saved_spec.loader.exec_module(saved_module)
     tests.addTests(loader.loadTestsFromModule(saved_module, pattern=pattern))
+    completion_path = ROOT / "tests/test_model_local_completion_execution.py"
+    completion_spec = importlib.util.spec_from_file_location("m2_local_completion_specifications", completion_path)
+    completion_module = importlib.util.module_from_spec(completion_spec)
+    completion_spec.loader.exec_module(completion_module)
+    tests.addTests(loader.loadTestsFromModule(completion_module, pattern=pattern))
+    response_path = ROOT / "tests/test_model_completion_saved_response.py"
+    response_spec = importlib.util.spec_from_file_location("m2_completion_response_specifications", response_path)
+    response_module = importlib.util.module_from_spec(response_spec)
+    response_spec.loader.exec_module(response_module)
+    tests.addTests(loader.loadTestsFromModule(response_module, pattern=pattern))
     return tests
 
 
