@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
+import {createStorageCredentialVault} from '../worker/storage-credential-vault.ts';
 
 const worker = await loadContinuityWorker();
 const origin = 'https://clued.example.invalid', db = 'https://db.example.invalid';
@@ -46,6 +47,46 @@ function mock(t, handler = () => { throw Error('unexpected RPC'); }, auth = { id
   return calls;
 }
 const rpcCalls = calls => calls.filter(c => c.url.includes('/rest/v1/rpc/'));
+
+test('real Owner list renews expired credentials and returns fresh safe CAS while keeping JWT and gateway callers distinct',async t=>{
+  const sealed=await createStorageCredentialVault(vault),scope='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly';
+  let version=1,connectionVersion=9,lists=0,exchanges=0;
+  const context={owner_id:owner,connection_id:connection,provider:'google-drive',provider_subject:'subject',oauth_client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID};
+  let envelope=await sealed.seal(JSON.stringify({token_type:'Bearer',access_token:'synthetic-owner-access',refresh_token:'synthetic-owner-refresh',scope,expires_at_ms:Date.now()-1000}),{...context,credential_version:version});
+  const metadata={id:'synthetic-root',name:'Actual root',mimeType:'application/vnd.google-apps.folder',parents:['synthetic-parent'],version:'1',trashed:false,
+    isAppAuthorized:true,ownedByMe:true,capabilities:{canAddChildren:true,canTrash:false}};
+  t.mock.method(globalThis,'fetch',async(url,init)=>{
+    const address=new URL(String(url)),headers=new Headers(init?.headers);
+    if(address.origin==='https://oauth2.googleapis.com'){exchanges++;return Response.json({token_type:'Bearer',access_token:'synthetic-owner-access',expires_in:3600});}
+    if(address.origin==='https://www.googleapis.com'){
+      assert.equal(headers.get('authorization'),'Bearer synthetic-owner-access');
+      if(address.pathname.endsWith('/about'))return Response.json({user:{me:true,permissionId:'subject'}});
+      if(address.pathname.endsWith('/files/root'))return Response.json({id:'synthetic-parent',name:'My Drive',mimeType:metadata.mimeType,trashed:false});
+      return Response.json(metadata,{headers:{etag:'"root-etag"'}});
+    }
+    if(address.pathname==='/auth/v1/user'){assert.equal(headers.get('authorization'),'Bearer '+nativeToken);return Response.json({id:owner});}
+    const input=JSON.parse(init.body).p_input;
+    if(address.pathname.endsWith('/clued_storage_refresh_worker_v1')){
+      assert.equal(headers.get('authorization'),'Bearer synthetic-worker-gateway');
+      if(input.action==='observe_credential')return Response.json({status:'current'});
+      if(input.action==='claim')return Response.json({...context,credential_version:version,credential_envelope:envelope,status:'acquired',
+        attempt_id:input.attempt_id,root_folder_id:'synthetic-root',root_parent_id:'synthetic-parent',expires_at:new Date(Date.now()+120000).toISOString()});
+      if(input.action==='commit'){version++;connectionVersion++;envelope=input.credential_envelope;return Response.json({status:'committed'});}
+    }
+    assert.ok(address.pathname.endsWith('/clued_storage_owner_lifecycle_v1'));assert.equal(headers.get('authorization'),'Bearer '+nativeToken);
+    if(input.action==='list'){lists++;return Response.json({contract:'clued.storage-owner-lifecycle/1',complete:true,
+      connections:[{...row(),version:connectionVersion,state:'active',auth_mode:'account_policy',policy_active:true,root_stopped:false,refresh_enabled:true}]});}
+    if(input.action==='prepare_credential')return Response.json({contract:'clued.storage-demand-preflight/1',...context,credential_version:version,
+      credential_envelope:envelope,provider_scope_profile:'legacy',delegation_version:1,renewal_enabled:true,refresh_state:'idle',proof:'clued_srp_'+'a'.repeat(64)});
+    if(input.action==='describe')return Response.json({...context,connection_version:connectionVersion,profile_id:profile,profile_version:1,
+      credential_version:version,credential_envelope:envelope,root_folder_id:'synthetic-root',root_parent_id:'synthetic-parent',created_by_clued:false});
+    throw Error('unexpected route');
+  });
+  const response=await worker.fetch(request({action:'list'}),{...env,CLUED_STORAGE_REFRESH_V1:'true'});
+  assert.equal(response.status,200);const result=await response.json();assert.equal(exchanges,1);assert.equal(lists,2);
+  assert.equal(result.connections[0].version,10);assert.equal(result.connections[0].physical_location.status,'verified');
+  assert.doesNotMatch(JSON.stringify(result),/synthetic-owner-access|synthetic-owner-refresh|clued_srp_|credential_envelope|owner_id/);
+});
 
 test('lifecycle rejects foreign Origin/non-POST and disabled feature gates before any auth/RPC IO', async t => {
   const calls = mock(t);

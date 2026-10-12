@@ -28,6 +28,7 @@ async function fixture(options={}){
   const metadata=()=>({id:'synthetic-root',name:'Actual Drive folder',mimeType:'application/vnd.google-apps.folder',parents:['my-drive'],version:rootVersion,
     trashed,ownedByMe:true,isAppAuthorized:true,capabilities:{canTrash:true}});
   const lifecycle=await createStorageOwnerLifecycle({vault,oauth:{async start(...args){oauthCalls.push(args);return {authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=synthetic'};}},
+    ...(options.clock?{clock:options.clock}:{}),
     ...(options.preflight?{credential_preflight:async(...args)=>options.preflight(...args,{descriptor,row})}:{}),
     rpc:async input=>{
       calls.push(input);
@@ -226,6 +227,15 @@ test('Native revalidation refusal cannot send PATCH or leak arbitrary database/u
   const result=await f.lifecycle.delete(f.owner,await f.deletion());assert.equal(result.status,'uncertain');assert.equal(f.patches(),0);
   assert.doesNotMatch(JSON.stringify(result),/synthetic-refresh-token/);
 });
+test('expired credential during an unknown Root trash recovery never replays PATCH or uses ordinary quiet-root preflight',async()=>{
+  let now=Date.now(),preflights=0;
+  const f=await fixture({lost:true,clock:()=>now,preflight:async()=>{preflights++;return {status:'ready',credential_version:1};}});
+  const uncertain=await f.lifecycle.delete(f.owner,await f.deletion());assert.equal(uncertain.status,'uncertain');assert.equal(f.patches(),1);
+  const calls=preflights,provider=f.provider.length;now+=3600001;
+  await assert.rejects(f.lifecycle.recover(f.owner,uncertain.attempt_id),error=>error.reason==='fresh_authorization_required');
+  assert.equal(preflights,calls);assert.equal(f.provider.length,provider);assert.equal(f.patches(),1);
+});
+
 test('unknown prepare completion only looks up the request; never retries a Native write or starts Drive effect',async()=>{
   const recovered=randomUUID();
   const f=await fixture({rpc:input=>{

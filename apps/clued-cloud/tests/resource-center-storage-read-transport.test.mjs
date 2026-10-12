@@ -30,8 +30,8 @@ const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway",
 };
 const vault = await createStorageCredentialVault(vaultKeys);
 const context = { owner_id: OWNER, connection_id: CONNECTION, provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "read-client", credential_version: 3 };
-const envelope = async (overrides = {}) => vault.seal(JSON.stringify({ token_type: "Bearer", access_token: "fixture-read-access-token",
-  scope: "https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file", expires_at_ms: Date.now() + 3600000, ...overrides }), context);
+const envelope = async (overrides = {},version=3) => vault.seal(JSON.stringify({ token_type: "Bearer", access_token: "fixture-read-access-token",
+  scope: "https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.file", expires_at_ms: Date.now() + 3600000, ...overrides }), {...context,credential_version:version});
 
 function tree() {
   const files = new Map();
@@ -58,6 +58,9 @@ function harness(options = {}) {
   const drive = options.drive ?? tree(), calls = [];
   const state = { calls, drive, googleRequests: 0, admitError: options.admitError, direct: [], batchPaths: [], fullText: [],
     textPagesLeft: options.textPages ?? 0 };
+  let credentialVersion=3,demandEnvelope;
+  const currentEnvelope=async()=>demandEnvelope??=await envelope({refresh_token:'fixture-refresh-token',
+    ...(options.expiredRenewal?{expires_at_ms:Date.now()-1000}:{})},credentialVersion);
   const reply = parts => {
     const boundary = "batch_" + randomUUID();
     const body = parts.map(({ id, status, json }) => `--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <response-${id}>\r\n\r\n` +
@@ -66,18 +69,39 @@ function harness(options = {}) {
   };
   state.fetch = async (url, init = {}) => {
     const u = new URL(String(url));
+    if(options.renewal&&u.origin==='https://oauth2.googleapis.com'){
+      state.tokenExchanges=(state.tokenExchanges??0)+1;
+      return Response.json({token_type:'Bearer',access_token:'fixture-read-access-token',expires_in:3600});
+    }
+    if(options.renewal&&u.pathname==='/drive/v3/about')return Response.json({user:{me:true,permissionId:'subject-1'}});
+    if(options.renewal&&u.pathname==='/drive/v3/files/'+ROOT&&u.searchParams.get('fields')?.includes('canAddChildren'))
+      return Response.json({id:ROOT,mimeType:FOLDER,parents:[MYDRIVE],trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
     if (u.origin === env.SUPABASE_URL) {
-      assert.equal(u.pathname, "/rest/v1/rpc/clued_storage_read_v1");
       const body = JSON.parse(init.body);
       calls.push(body);
       assert.equal(body.p_issuer_hash, sha(env.CLUED_STORAGE_CONNECTOR_ISSUER));
+      if(options.renewal&&u.pathname.endsWith('/clued_storage_refresh_worker_v1')){
+        assert.equal(new Headers(init.headers).get('authorization'),'Bearer test-worker-gateway');
+        if(body.p_input.action==='observe_credential')return Response.json({status:'current'});
+        if(body.p_input.action==='claim')return Response.json({...context,credential_version:credentialVersion,credential_envelope:await currentEnvelope(),
+          status:'acquired',attempt_id:body.p_input.attempt_id,root_folder_id:ROOT,root_parent_id:MYDRIVE,expires_at:new Date(Date.now()+120000).toISOString()});
+        if(body.p_input.action==='commit'){credentialVersion++;demandEnvelope=body.p_input.credential_envelope;return Response.json({status:'committed'});}
+        throw Error('unexpected demand refresh RPC');
+      }
+      assert.equal(u.pathname, "/rest/v1/rpc/clued_storage_read_v1");
       assert.ok(BINDINGS[body.p_token_hash], "only a real Binding hash reaches the RPC");
+      if(options.renewal&&body.p_input.action==='prepare_credential'){
+        if(options.preflightDenied)return new Response(JSON.stringify({message:'storage_read_denied'}),{status:403});
+        return Response.json({contract:'clued.storage-demand-preflight/1',...context,credential_version:credentialVersion,
+          credential_envelope:await currentEnvelope(),provider_scope_profile:'legacy',delegation_version:1,
+          renewal_enabled:options.renewalEnabled!==false,refresh_state:'idle',proof:'clued_srp_'+'e'.repeat(64)});
+      }
       if (body.p_input.action === "admit") {
         if (state.admitError) return new Response(JSON.stringify({ message: options.admitMessage ?? "storage_read_denied" }), { status: 403 });
         return Response.json({ contract: "clued.storage-read-admission/1", receipt_id: randomUUID(),
           class: options.admitClass ?? (body.p_input.operation === "read" ? "read_content" : "read"), owner_id: OWNER,
           connection_id: body.p_input.connection_id, binding_id: BINDINGS[body.p_token_hash], provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "read-client",
-          credential_version: 3, credential_envelope: options.envelope ?? await envelope(), root_folder_id: ROOT, read_generation: options.generation ?? 1,
+          credential_version: credentialVersion, credential_envelope: options.renewal?await currentEnvelope():options.envelope ?? await envelope(), root_folder_id: ROOT, read_generation: options.generation ?? 1,
           ...("admitScopeProfile" in options ? (options.admitScopeProfile === undefined ? {} : { provider_scope_profile: options.admitScopeProfile })
             : { provider_scope_profile: "legacy" }),
           ...("admitContentProfile" in options ? (options.admitContentProfile === undefined ? {} : { content_profile: options.admitContentProfile })
@@ -179,6 +203,26 @@ async function readBody(args, options = {}, config = env, bearer = token) {
   } finally { globalThis.fetch = before; }
 }
 const names = value => value.items.map(item => item.name);
+
+test('real MCP first use renews an expired permitted credential once and then obtains a fresh admission',async()=>{
+  const h=harness({renewal:true,expiredRenewal:true});
+  const result=await browse({operation:'list'},{harness:h},{...env,CLUED_STORAGE_REFRESH_V1:'true',CLUED_STORAGE_GOOGLE_CLIENT_SECRET:'fixture-client-secret'});
+  assert.equal(result.isError,false,JSON.stringify(result.value));assert.equal(h.tokenExchanges,1);
+  const actions=h.calls.map(call=>call.p_input.action);assert.ok(actions.indexOf('admit')>actions.indexOf('commit'));
+  assert.equal(h.calls.filter(call=>call.p_input.action==='admit').length,1,'preflight is not a second charged admission');
+  assert.doesNotMatch(JSON.stringify(result.value),/clued_srp_|credential_envelope|fixture-read-access-token|fixture-refresh-token/);
+});
+
+test('real MCP preflight rejects unpermitted use before exchange; valid use and renewal off avoid renewal',async()=>{
+  const config={...env,CLUED_STORAGE_REFRESH_V1:'true',CLUED_STORAGE_GOOGLE_CLIENT_SECRET:'fixture-client-secret'};
+  for(const options of [{renewal:true,preflightDenied:true},{renewal:true,expiredRenewal:true,renewalEnabled:false}]){
+    const h=harness(options),result=await browse({operation:'list'},{harness:h},config);
+    assert.equal(result.isError,true);assert.equal(h.tokenExchanges??0,0);assert.equal(h.googleRequests,0);
+    assert.equal(h.calls.some(call=>call.p_input.action==='admit'),false);
+  }
+  const h=harness({renewal:true}),result=await browse({operation:'list'},{harness:h},config);
+  assert.equal(result.isError,false);assert.equal(h.tokenExchanges??0,0);
+});
 
 test("discovery needs account, Google and read flags; the write tools are unaffected", async () => {
   const list = async flags => (await (await worker.fetch(new Request(origin + "/mcp", { method: "POST",
