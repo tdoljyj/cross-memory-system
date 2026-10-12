@@ -1,0 +1,107 @@
+{
+  "commit": "e76a7db7edc6b47b5a719e165f688621efa9580a",
+  "source_role": "PUBLIC_ENGINEERING_SOURCE_COPY_ONLY",
+  "authority_effect": "NONE",
+  "formal_read_qualification": "NOT_ISSUED",
+  "model_calls": 0,
+  "actual_data_acquisition": 0,
+  "original_sources_modified": false,
+  "files": [
+    {
+      "path": "scripts/model-program/score_m2_core_saved_outputs.py",
+      "bytes": 14271,
+      "sha256": "7a0a77880f6627325fbbac9390d8d880450703e8a2c7453bc95858d5e1f71ed3",
+      "git_blob_sha1": "76e5b197bc79a809b0366891d595c8e302ced4df"
+    },
+    {
+      "path": "scripts/model-program/validate_m2_core_synthetic_pilot.py",
+      "bytes": 16058,
+      "sha256": "7c7f02e27267b70a5b2964d1e836841be75bbcea99c34113353c10f1bf8ab621",
+      "git_blob_sha1": "abdee5c4ec5c0fe1b5e69d02ee5581d07155cf4a"
+    },
+    {
+      "path": "scripts/model-program/report_m2_core_dev_quality.py",
+      "bytes": 14833,
+      "sha256": "0a4f0f15a174cc1e63286847cc7119bd07afeb36c2ba5a910f622c407e79992f",
+      "git_blob_sha1": "9f76c1d031be506b6f9c3376d3d533f0f6651307"
+    },
+    {
+      "path": "scripts/model-program/validate_m2_offline_pipeline.py",
+      "bytes": 26234,
+      "sha256": "e0f3aa520b7b686be35ebc12a4146257f478298f3ddcbf14768d781dfd9b0bd9",
+      "git_blob_sha1": "2dad334636ae42baee8071f892df00086e74edba"
+    },
+    {
+      "path": "scripts/model-program/validate_m2_dataset_foundation.py",
+      "bytes": 11230,
+      "sha256": "4851363816c650c83bfd7be00d16e4a61b4d59d816d585b10c3a6f7580fe8d77",
+      "git_blob_sha1": "4e66eaa296b6b7333340a08569fdd0251922283b"
+    },
+    {
+      "path": "scripts/model-program/validate_m2_adopted_definition.py",
+      "bytes": 8308,
+      "sha256": "7b42782161fac04a02cea3e5abcac580dbc66856175c7dc3086dc89fe0fe38b5",
+      "git_blob_sha1": "6d64c8c143332dcfdb2e4b94f256ff6f6fcd11d3"
+    },
+    {
+      "path": "scripts/model-program/validate_m2_dataset_split.py",
+      "bytes": 6784,
+      "sha256": "c80614e2832e665cd3c1a706bd8c59a54a2bf0d14c5637ecfb51347f3263f4e2",
+      "git_blob_sha1": "6d126c4652927cfe9ab07c77401c543fa23d59b9"
+    },
+    {
+      "path": "scripts/model-program/validate_m2_split_mapping.py",
+      "bytes": 5132,
+      "sha256": "14cd0861b675c3d3a24d93fdb7437ce623f29e440cd6070485934c7a1c8970fb",
+      "git_blob_sha1": "d1e1c5b6b4594b26f7f4c91286dd22c171f898de"
+    },
+    {
+      "path": "development/contracts/model-program/m2/CoreSavedOutput.candidate.json",
+      "bytes": 1928,
+      "sha256": "de3e3a5ec905fcd5a119d29cdc6bb94c93f34769a19dd8e813318819a2a2dca4",
+      "git_blob_sha1": "23728b7e65069c07253dc496bbcc404c155dd92f"
+    },
+    {
+      "path": "development/contracts/model-program/m2/CoreSyntheticPilot.candidate.json",
+      "bytes": 2935,
+      "sha256": "386472d78e739b4ed0dfae592290c5cb2e8fa2a84bf45efb32ac5d2b909d2182",
+      "git_blob_sha1": "7b953ffda7ed41706a9f43fc42231000d6907029"
+    },
+    {
+      "path": "development/contracts/model-program/m2/OfflinePipeline.candidate.json",
+      "bytes": 1379,
+      "sha256": "80c3c3222ba5f0c173a56f7ae7c563fd265b2cc231d1c6584081ec10cc9165b9",
+      "git_blob_sha1": "5e221f8aabe71e5c8b488d2edba4129f0a41dfc3"
+    },
+    {
+      "path": "development/contracts/model-program/m2/DatasetSplitDefinition.v0.1.json",
+      "bytes": 5566,
+      "sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77",
+      "git_blob_sha1": "6d94a1e877a93d49cb1b315bf07ad61f0b910e91"
+    },
+    {
+      "path": "development/contracts/information-flow/vendored/m0a/segment-input.v1.schema.json",
+      "bytes": 1809,
+      "sha256": "a4f174a56a3e53bad8c72ba0e888bd012164542920df293466c2e711aaece865",
+      "git_blob_sha1": "92d89d2edcdb0e77fe72b82b911dbe1679dc41b8"
+    },
+    {
+      "path": "development/contracts/information-flow/vendored/m0a/candidate-information.v1.schema.json",
+      "bytes": 5710,
+      "sha256": "52b270b24458a76ae40257df4e9a3d220aad232ba9ee939b2fde96f33b9c7702",
+      "git_blob_sha1": "9c92ed0c933101e8f3891be8a0194ee567a9068b"
+    },
+    {
+      "path": "tests/fixtures/model-program-m2/core-development-candidate.json",
+      "bytes": 77744,
+      "sha256": "dc17097bd3d12c415b2496962815397a98259bb8bab4922799a7eb00d8316eba",
+      "git_blob_sha1": "9555d2ef20c6716008816e3e931d5354b54cab5a"
+    },
+    {
+      "path": "tests/fixtures/model-program-m2/core-saved-synthetic-outputs.json",
+      "bytes": 12937,
+      "sha256": "e9591e5329e000b1f57c3e5842c1d6a48100939a6d26da1e698fb7ab8d748aa7",
+      "git_blob_sha1": "995f0b8063197aeb07f74cfa1cef373bc5fc58c3"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clued.pixelgrav.com/schemas/segment-input.v1.schema.json",
+  "title": "Clued Segment Input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "segment_id",
+    "reference_time",
+    "timezone",
+    "messages"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "segment_input.v1"
+    },
+    "segment_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "reference_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/message"
+      }
+    }
+  },
+  "$defs": {
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message_id",
+        "evidence_id",
+        "author_role",
+        "created_at",
+        "context_only",
+        "content"
+      ],
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "evidence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "author_role": {
+          "enum": [
+            "user",
+            "assistant",
+            "tool",
+            "system"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "context_only": {
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20000
+        }
+      }
+    }
+  }
+}
