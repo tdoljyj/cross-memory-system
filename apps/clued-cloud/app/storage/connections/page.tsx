@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../../supabase-browser";
-import { MASTER_DISCLOSURE_VERSION, MASTER_OFF_DISCLOSURE, MASTER_RECONNECT_CONFIRMATION, renderMasterDisclosure } from "../../../worker/storage-master-disclosure";
+import { MASTER_DISCLOSURE_VERSION, MASTER_OFF_DISCLOSURE, REFRESH_RECONNECT_CONFIRMATION, RECONNECT_REFRESH_DISCLOSURE_VERSION, RECONNECT_REFRESH_DISCLOSURE, renderMasterDisclosure } from "../../../worker/storage-master-disclosure";
 
 type Connection = {
   id: string; version: number; provider: string; state: string; auth_mode: string;
@@ -281,7 +281,7 @@ function refusedDeletePreview(v: unknown, c: Connection): DeletePreviewReason {
   }
   return isObject(v) && v.trash_available === false ? knownDeletePreviewReason(v.reason) : "lifecycle_unavailable";
 }
-type LifecycleDialog = { kind: "reconnect" | "delete"; connection: Connection; masterEnabled: boolean;
+type LifecycleDialog = { kind: "reconnect" | "delete"; connection: Connection; masterEnabled: boolean; defaultRefresh: boolean;
   trashRoot: boolean; reading: boolean; preview?: DeletePreview; previewReason?: DeletePreviewReason };
 const folderHref = (c: Connection) => `https://drive.google.com/drive/folders/${encodeURIComponent(c.root_folder_id)}`;
 const folderName = (c: Connection) => c.physical_location.status === "verified" ? c.physical_location.root_name! : c.root_name;
@@ -849,7 +849,7 @@ export default function StorageConnections() {
     if (operation.current || busy || (c.pending_lifecycle && !(kind === "reconnect"
       && c.pending_lifecycle.operation === "reconnect" && c.pending_lifecycle.state === "prepared"))) return;
     if (kind === "reconnect" && (c.state !== "revoked" || !c.root_stopped || c.root_stop_generation < 1)) return;
-    const next: LifecycleDialog = { kind, connection: c, masterEnabled: kind === "reconnect", trashRoot: false,
+    const next: LifecycleDialog = { kind, connection: c, masterEnabled: kind === "reconnect", defaultRefresh: kind === "reconnect", trashRoot: false,
       reading: kind === "delete" && c.created_by_clued && c.state === "active",
       ...(kind === "delete" ? { previewReason: !c.created_by_clued ? "picked_or_legacy_root" as const
         : c.state !== "active" ? "connection_inactive" as const : "lifecycle_unavailable" as const } : {}) };
@@ -882,8 +882,9 @@ export default function StorageConnections() {
       const confirmation = { contract: "clued.storage-owner-confirmation/1", root_folder_id: c.root_folder_id, confirmed: true };
       const result = await accountRequest(choice.kind === "reconnect"
         ? { action: "reconnect", ...common, root_stop_generation: c.root_stop_generation,
-          confirmation: { ...confirmation, contract: MASTER_RECONNECT_CONFIRMATION,
-            master_enabled: choice.masterEnabled, disclosure_version: MASTER_DISCLOSURE_VERSION } }
+          confirmation: { ...confirmation, contract: REFRESH_RECONNECT_CONFIRMATION,
+            master_enabled: choice.masterEnabled, disclosure_version: MASTER_DISCLOSURE_VERSION,
+            default_refresh: choice.defaultRefresh, refresh_disclosure_version: RECONNECT_REFRESH_DISCLOSURE_VERSION } }
         : { action: "delete", ...common, confirmation: choice.trashRoot && wholeRootPreview(choice.preview!)
           ? { contract: "clued.storage-owner-confirmation/2", root_folder_id: c.root_folder_id, confirmed: true,
             trash_created_root: true, confirmation_mode: "whole_created_root_v2" }
@@ -1119,10 +1120,13 @@ export default function StorageConnections() {
         <a className="underline" href={folderHref(dialog.connection)} target="_blank" rel="noopener noreferrer">打开这个 Drive 文件夹核对</a>
         <p className="my-2 break-all text-sm">文件夹标识：{dialog.connection.root_folder_id}</p>
         {dialog.kind === "reconnect" ? <>
-          <p className="my-3">继续使用这个文件夹和原项目，重新取得 Google 授权，不会另建同名文件夹。后台续签保持关闭，可在连接完成后按需要开启。</p>
+          <p className="my-3">继续使用这个文件夹和原项目，重新取得 Google 授权，不会另建同名文件夹。</p>
           <label className="block"><input type="checkbox" disabled={busy} checked={dialog.masterEnabled}
             onChange={event => { const masterEnabled = event.target.checked; setDialog(current => current ? { ...current, masterEnabled } : null); }} /> 重新连接后开启全部 Agent 文件操作（默认）</label>
           {dialog.masterEnabled && <p className="my-3 whitespace-pre-line text-sm">{renderMasterDisclosure(folderName(dialog.connection))}</p>}
+          <label className="block"><input type="checkbox" disabled={busy} checked={dialog.defaultRefresh}
+            onChange={event => { const defaultRefresh = event.target.checked; setDialog(current => current ? { ...current, defaultRefresh } : null); }} /> 重新连接后后台自动续签（默认选中，可随时停用）</label>
+          <p className="my-3 text-sm">{RECONNECT_REFRESH_DISCLOSURE}</p>
         </> : <>
           <p className="my-3">删除后会停止此连接的文件操作和后台续签，并从连接列表移除；操作记录会保留。</p>
           {dialog.reading ? <p role="status">正在核对文件夹及其中内容……</p> : dialog.preview ? <>

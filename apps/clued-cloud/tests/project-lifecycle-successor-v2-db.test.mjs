@@ -17,6 +17,7 @@ const issuerMigration = '20261009070001_issuer_identity_credentials_v1.sql';
 const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
 const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
+const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refresh_default_v1.sql';
 const workClaimHandoverMigration = '20261011131755_work_claim_handover_execution_v1.sql';
 const storageOwnerLifecycleMigrations = [
   '20261010055701_storage_owner_lifecycle_v1.sql',
@@ -63,7 +64,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== workClaimHandoverMigration && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== workClaimHandoverMigration && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -431,6 +432,9 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       // only after this fixture has replayed every deferred cutover.
       await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageMasterMigration),'utf8'));
       await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageReconnectRetryMigration),'utf8'));
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageReconnectRefreshMigration),'utf8'));
+      assert.equal((await admin.query("select encode(sha256(convert_to(prosrc,'UTF8')),'hex') h from pg_proc where oid='public.clued_storage_owner_lifecycle_v1(text,jsonb)'::regprocedure")).rows[0].h,
+        '5507655146cad446408ddb26136a3c8cbeb84b88ee559aa19114b8f3c03a2238');
       await assertGatewayCloseoutBoundary(admin);
       assert.ok((await admin.query("select to_regclass('clued_private.storage_master_controls_v1') as table_id")).rows[0].table_id);
       const signature='public.clued_storage_owner_lifecycle_v1(text,jsonb)';
