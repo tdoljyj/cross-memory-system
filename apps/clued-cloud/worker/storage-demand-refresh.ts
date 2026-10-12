@@ -40,6 +40,7 @@ export async function createStorageDemandRefresh(config: {
     if (!object(v) || v.contract !== "clued.storage-demand-preflight/1" ||
         v.connection_id !== request.connection_id || !uuid.test(String(v.connection_id)) ||
         !uuid.test(String(v.owner_id)) || v.oauth_client_id !== config.client_id ||
+        (request.owner_id !== undefined && request.owner_id !== v.owner_id) ||
         !/^[A-Za-z0-9_-]{1,255}$/.test(String(v.provider_subject)) ||
         !Number.isSafeInteger(v.credential_version) || Number(v.credential_version) < 1 ||
         !Number.isSafeInteger(v.delegation_version) || Number(v.delegation_version) < 0 ||

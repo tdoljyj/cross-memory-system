@@ -11,8 +11,8 @@
  * version, a 404 or no usable permission list marks the directory as missing a
  * digest, which leaves it matched by version as today. A transient or
  * credential failure commits nothing and the directory waits 30 minutes
- * behind the others. Read only: no Drive write, and an expiring credential is
- * skipped (not refreshed) until the ordinary refresh renews it.
+ * behind the others. Read only: no Drive write. Enabled renewal uses current
+ * Native artifact authorization before refreshing an expiring credential.
  */
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { googleDriveAccessDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
@@ -21,6 +21,7 @@ import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
+import { createStorageDemandRuntime } from "./storage-demand-runtime";
 
 export interface StorageAccessDigestBackfillEnv extends DatabaseGatewayEnv {
   CLUED_STORAGE_ACCOUNT_V1?: string;
@@ -29,6 +30,8 @@ export interface StorageAccessDigestBackfillEnv extends DatabaseGatewayEnv {
   CLUED_STORAGE_EXECUTOR_V1?: string;
   CLUED_STORAGE_CONNECTOR_ISSUER?: string;
   CLUED_STORAGE_GOOGLE_CLIENT_ID?: string;
+  CLUED_STORAGE_GOOGLE_CLIENT_SECRET?: string;
+  CLUED_STORAGE_REFRESH_V1?: string;
   CLUED_STORAGE_VAULT_KEYS?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
@@ -61,14 +64,15 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
   const fetcher = deps.fetch ?? fetch;
   const clock = deps.clock ?? Date.now;
   let rpc: (input: Data) => Promise<Data>;
+  let refreshRpc: (input: Data) => Promise<Data>;
   let due: Data;
   try {
     const defaults = resolveSupabasePublicConfig({});
     const url = (env.SUPABASE_URL ?? defaults.url).replace(/\/$/, "");
     const key = env.SUPABASE_PUBLISHABLE_KEY ?? defaults.key;
     const issuerHash = await sha256(issuer);
-    rpc = async (input: Data) => {
-      const response = await fetcher(`${url}/rest/v1/rpc/clued_storage_access_digest_backfill_v1`, {
+    const native = async (name: string, input: Data) => {
+      const response = await fetcher(`${url}/rest/v1/rpc/${name}`, {
         method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
         headers: { apikey: key, authorization: `Bearer ${gatewayToken}`, "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
@@ -78,6 +82,8 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
       if (!object(value)) throw new Error("storage_access_digest_rpc_failed");
       return value;
     };
+    rpc = input => native("clued_storage_access_digest_backfill_v1", input);
+    refreshRpc = input => native("clued_storage_refresh_worker_v1", input);
     due = await rpc({ action: "due" });
   } catch { return { status: "unavailable" }; }
   const listed = due.directories;
@@ -88,6 +94,13 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
   let vault: Awaited<ReturnType<typeof createStorageCredentialVault>>;
   try { vault = await createStorageCredentialVault(JSON.parse(env.CLUED_STORAGE_VAULT_KEYS)); }
   catch { return { status: "unavailable" }; }
+  let demand: Awaited<ReturnType<typeof createStorageDemandRuntime>> | undefined;
+  if (env.CLUED_STORAGE_REFRESH_V1 === "true") try {
+    demand = await createStorageDemandRuntime({ client_id: clientId, client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "",
+      vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), fetch: fetcher, clock, refresh_rpc: refreshRpc!,
+      prepare: request => refreshRpc!({ action: "prepare_credential", connection_id: request.connection_id,
+        caller_kind: "maintenance", request: { operation: "access_digest", artifact_id: request.artifact_id } }) });
+  } catch { return { status: "unavailable" }; }
   const driveFetch = createStorageFetch(async (input, init) => {
     const url = new URL(String(input));
     if (init?.method !== "GET" || init.body != null || url.origin !== "https://www.googleapis.com" ||
@@ -99,6 +112,7 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
   for (const entry of listed as Reference[]) {
     const reference = { connection_id: entry.connection_id, artifact_id: entry.artifact_id };
     try {
+      if (demand && (await demand.maintenance(reference)).status !== "ready") { skipped++; continue; }
       const d = await rpc({ ...reference, action: "load" });
       if (d.status !== "read_only" || d.connection_id !== reference.connection_id || d.artifact_id !== reference.artifact_id ||
           d.execution_permitted !== false || !UUID.test(String(d.owner_id)) || d.provider !== "google-drive" ||
@@ -109,8 +123,8 @@ export async function runStorageAccessDigestBackfillScheduled(env: StorageAccess
         owner_id: String(d.owner_id), connection_id: reference.connection_id, provider: "google-drive",
         provider_subject: String(d.provider_subject), oauth_client_id: clientId, credential_version: Number(d.credential_version),
       }));
-      // The Drive read must finish well inside the token's life; otherwise wait
-      // for the ordinary refresh and try this directory again later.
+      // Always reload the exact artifact after preflight; it is not a cached
+      // admission, and expiry still bounds the ensuing provider read.
       if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" ||
           token.access_token.length < 16 || scopeProfile(token.scope) === null ||
           !Number.isFinite(token.expires_at_ms) || Number(token.expires_at_ms) - clock() <= 60000) { skipped++; continue; }

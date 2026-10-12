@@ -14,6 +14,7 @@ export async function createStorageGoogleRefresh(config: {
   client_id: string; client_secret: string;
   vault: Parameters<typeof createStorageCredentialVault>[0];
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number;
+  claim_pause?: (milliseconds: number) => Promise<void>;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || config.client_secret.length < 16) throw denied();
   const vault = await createStorageCredentialVault(config.vault), fetcher = createStorageFetch(config.fetch), clock = config.clock ?? Date.now;
@@ -27,13 +28,25 @@ export async function createStorageGoogleRefresh(config: {
     if (!response.ok) throw denied(); return read(response);
   }
   return Object.freeze({
-    async run(connection: string, recoveryJob?: string): Promise<{ status: string }> {
+    async run(connection: string, recoveryJob?: string, demandProof?: string): Promise<{ status: string }> {
       if (!uuid.test(connection)) return { status: "unavailable" };
       if (recoveryJob !== undefined && !uuid.test(recoveryJob)) return { status: "unavailable" };
-      const rpc = (input: Data) => config.rpc({...input,...(recoveryJob ? {recovery_job_id:recoveryJob} : {})});
+      if (demandProof !== undefined && !/^clued_srp_[0-9a-f]{64}$/.test(demandProof)) return { status: "unavailable" };
+      const rpc = (input: Data) => config.rpc({...input,...(recoveryJob ? {recovery_job_id:recoveryJob} : {}),
+        ...(demandProof ? {demand_proof:demandProof} : {})});
       const attempt = crypto.randomUUID();
       let claimed: Data;
-      try { claimed = await rpc({ action: "claim", connection_id: connection, attempt_id: attempt }); }
+      try {
+        const claim = { action: "claim", connection_id: connection, attempt_id: attempt };
+        claimed = await rpc(claim);
+        // Only a definite Native busy result says no attempt was created. A
+        // lost RPC reply is never retried and no Google exchange is repeated.
+        for (let retry = 0; demandProof && claimed.status === "busy" && retry < 3; retry++) {
+          if (claimed.connection_id !== connection || claimed.attempt_id !== attempt) return { status: "unavailable" };
+          await (config.claim_pause ?? (milliseconds => new Promise(resolve => setTimeout(resolve,milliseconds))))(100 * 2 ** retry);
+          claimed = await rpc(claim);
+        }
+      }
       catch { return { status: "unavailable" }; }
       if (claimed.status !== "acquired") return { status: "not_acquired" };
       const failure = async (reason: string) => {

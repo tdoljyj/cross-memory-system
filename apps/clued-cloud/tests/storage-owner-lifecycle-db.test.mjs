@@ -38,11 +38,12 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    let wholeRootPreMasterDefinition,reconnectRetryPredecessorDefinition,reconnectRefreshPredecessorDefinition;
+    let wholeRootPreMasterDefinition,reconnectRetryPredecessorDefinition,reconnectRefreshPredecessorDefinition,demandRuntimePredecessorDefinition;
     for(const file of (await fs.readdir(path.join(cloud,'supabase/migrations'))).filter(n=>n.endsWith('.sql')).sort()){
       if(file.endsWith('_storage_master_control_v1.sql'))wholeRootPreMasterDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       if(file.endsWith('_storage_reconnect_retry_v1.sql'))reconnectRetryPredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       if(file.endsWith('_storage_reconnect_refresh_default_v1.sql'))reconnectRefreshPredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
+      if(file.endsWith('_storage_demand_refresh_runtime_v1.sql'))demandRuntimePredecessorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
       try{await db.query(await fs.readFile(path.join(cloud,'supabase/migrations',file),'utf8'));}catch(e){throw new Error('Migration '+file+': '+e.message,{cause:e});}
     }
     const closeout=await findGatewayCloseoutMigration(cloud);
@@ -126,6 +127,9 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
       }finally{await db.query(currentDefinition);}
     });
     await t.test('refresh successor pins exact source and Native ACL; qualified replay is inert and drift refuses atomically',async()=>{
+      const currentDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
+      if(demandRuntimePredecessorDefinition)await db.query(demandRuntimePredecessorDefinition);
+      try{
       const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261012033722_storage_reconnect_refresh_default_v1.sql'),'utf8');
       const catalog=async()=>(await db.query("select pg_get_userbyid(proowner) owner,prosecdef,proconfig,proacl::text acl,encode(sha256(convert_to(prosrc,'UTF8')),'hex') source_hash from pg_proc where oid=$1::regprocedure",[rpcName])).rows[0];
       const successor=await catalog();assert.equal(successor.source_hash,'5507655146cad446408ddb26136a3c8cbeb84b88ee559aa19114b8f3c03a2238');
@@ -143,6 +147,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
           await db.query('rollback to savepoint refresh_drift');assert.deepEqual(await catalog(),before);
         }finally{await db.query('rollback');}
       }
+      }finally{await db.query(currentDefinition);}
     });
     await t.test('whole-root forward upgrade pins source, Owner/definer/config/ACL; replay is idempotent and drift fails without side effects',async()=>{
       const successorDefinition=(await db.query('select pg_get_functiondef($1::regprocedure) def',[rpcName])).rows[0].def;
@@ -592,6 +597,78 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
           'clued_private.storage_refresh_demand_proofs_v1'])).rows[0].permitted,false);
       }
       await disconnect(r.connection);await assert.rejects(prepare(),e=>e.code==='42501');
+      await assertGatewayCloseoutBoundary(db);
+    });
+    await t.test('staged demand Owner preparation, observation and live renewal claim preserve current CAS and stop races',async()=>{
+      const r=await root();
+      const refresh=async input=>(await db.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) v',[proof,JSON.stringify(input)])).rows[0].v;
+      const prepare=()=>call({action:'prepare_credential',connection_id:r.connection,operation:'probe'});
+      const renewalStatus=async()=>(await native.query('select public.clued_storage_refresh_manage_v1($1::jsonb) v',
+        [JSON.stringify({action:'status',connection_id:r.connection})])).rows[0].v;
+      const manage=async action=>{const s=await renewalStatus();return (await native.query('select public.clued_storage_refresh_manage_v1($1::jsonb) v',
+        [JSON.stringify({action,connection_id:r.connection,base_version:s.connection_version,delegation_version:s.version,
+          idempotency_key:id(),...(action==='enable'?{until_revoked:true}:{})})])).rows[0].v;};
+      await manage('enable');
+      const current=await prepare();assert.equal(current.renewal_enabled,true);
+      const expiry=new Date(Date.now()-1000).toISOString();
+      assert.deepEqual(await refresh({action:'observe_credential',proof:current.proof,credential_version:current.credential_version,expires_at:expiry}),{status:'current'});
+      const observed=(await db.query('select * from clued_private.storage_refresh_activity_v1 where connection_id=$1',[r.connection])).rows[0];
+      assert.equal(observed.last_demand_at,null,'opening an Owner page is not an active background task');
+      assert.equal((await refresh({action:'due_demand'})).connections.some(x=>x.connection_id===r.connection),false,
+        'expired access token alone cannot trigger hourly idle renewal');
+      await db.query("update clued_private.storage_refresh_activity_v1 set keepalive_anchor_at=clock_timestamp()-interval '31 days' where connection_id=$1",[r.connection]);
+      assert.equal((await refresh({action:'due_demand'})).connections.find(x=>x.connection_id===r.connection)?.wake,'keepalive');
+      await refresh({action:'observe_credential',proof:current.proof,credential_version:current.credential_version,expires_at:expiry});
+      assert.equal((await refresh({action:'due_demand'})).connections.find(x=>x.connection_id===r.connection)?.wake,'keepalive',
+        'repeated Owner observations cannot postpone the keepalive anchor');
+      await db.query("update clued_private.storage_refresh_activity_v1 set last_successful_exchange_at=clock_timestamp()-interval '31 days',keepalive_anchor_at=clock_timestamp(),last_demand_at=clock_timestamp() where connection_id=$1",[r.connection]);
+      assert.equal((await refresh({action:'due_demand'})).connections.some(x=>x.connection_id===r.connection),false,
+        'new credential anchor wins over an old exchange; a completed read is not ongoing activity');
+      // Real demand bypasses the access-token wake timestamp, not failure backoff.
+      await db.query("update clued_private.storage_refresh_delegations_v1 set next_refresh_at=clock_timestamp()+interval '1 hour' where connection_id=$1",[r.connection]);
+      const attempt=id(),claim={action:'claim',connection_id:r.connection,attempt_id:attempt,demand_proof:current.proof};
+      const acquired=await refresh(claim);assert.equal(acquired.status,'acquired');
+      const original=await row(r.connection);
+      await manage('disable');
+      await assert.rejects(refresh({action:'commit',connection_id:r.connection,attempt_id:attempt,demand_proof:current.proof,
+        credential_envelope:envelope(),expires_at:new Date(Date.now()+3600000).toISOString()}),e=>e.code==='42501');
+      const stopped=await row(r.connection);assert.equal(stopped.credential_version,original.credential_version);
+      assert.equal((await renewalStatus()).enabled,false);
+      await assert.rejects(refresh({...claim,attempt_id:id()}),e=>e.code==='42501');
+      await assert.rejects(call({action:'prepare_credential',connection_id:r.connection,operation:'probe',owner_id:owner}),e=>e.code==='42501');
+      await assertGatewayCloseoutBoundary(db);
+      const sources=(await db.query("select oid::regprocedure::text signature,encode(sha256(convert_to(prosrc,'UTF8')),'hex') sha from pg_proc where oid=any($1::regprocedure[])",
+        [[rpcName,'clued_private.ii_pub_clued_storage_refresh_worker_v1(text,jsonb)','clued_private.ii_pub_clued_storage_read_v1(text,text,jsonb)']])).rows;
+      console.log('Synthetic staged demand Native source hashes:',JSON.stringify(sources));
+    });
+    await t.test('demand endpoints accept the actual rotated issuer credential and reject historical identity as authentication',async()=>{
+      const r=await root(),rotated=sha(id());
+      await db.query('begin');
+      try{
+        await db.query("update clued_private.issuer_credentials_v1 set state='retired',retired_at=clock_timestamp() where issuer_id=(select id from clued_private.issuer_identities_v1 where legacy_key=$1 and kind='storage')",[proof]);
+        await db.query("insert into clued_private.issuer_credentials_v1(issuer_id,generation,verifier,state,activated_at) select id,2,$2,'active',clock_timestamp() from clued_private.issuer_identities_v1 where legacy_key=$1 and kind='storage'",
+          [proof,'cv1:'+sha('clued.credential-verifier.v1:'+rotated)]);
+        await db.query("set local role authenticated");await login(db);
+        const input={action:'prepare_credential',connection_id:r.connection,operation:'probe'};
+        const current=await call(input,db,rotated);assert.equal(current.connection_id,r.connection);
+        await db.query('savepoint old_identity');await assert.rejects(call(input,db,proof),e=>e.code==='42501');await db.query('rollback to savepoint old_identity');
+        await db.query("reset role");
+        const expiry=new Date(Date.now()+3600000).toISOString();
+        await db.query("set local role clued_worker_gateway");
+        const observed=(await db.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) v',
+          [rotated,JSON.stringify({action:'observe_credential',proof:current.proof,credential_version:current.credential_version,expires_at:expiry})])).rows[0].v;
+        assert.equal(observed.status,'current');
+      }finally{await db.query('rollback');}
+    });
+    await t.test('demand runtime replay preserves GW80 and every function definition/ACL; catalog drift fails atomically',async()=>{
+      const sql=await fs.readFile(path.join(cloud,'supabase/migrations','20261012113128_storage_demand_refresh_runtime_v1.sql'),'utf8');
+      const before=await snapshotCallerCatalog(db);await db.query(sql);assert.deepEqual(await snapshotCallerCatalog(db),before);
+      await db.query('begin');try{
+        await db.query('alter function public.clued_storage_owner_lifecycle_v1(text,jsonb) security invoker');
+        const drift=await snapshotCallerCatalog(db);await db.query('savepoint bad_catalog');
+        await assert.rejects(db.query(sql),/storage_demand_owner_catalog_mismatch/);
+        await db.query('rollback to savepoint bad_catalog');assert.deepEqual(await snapshotCallerCatalog(db),drift);
+      }finally{await db.query('rollback');}
       await assertGatewayCloseoutBoundary(db);
     });
     await t.test('issuer retirement rejects even read-only recovery; no identity/verifier fallback',async()=>{

@@ -141,6 +141,43 @@ export async function testStorageRead(t, admin, server, user, decision) {
       assert.equal(status.bound_to_active_policy, true);
     });
 
+    await t.test('demand prepare applies body/search permissions without read receipts; two shared-root claimers never deadlock',async()=>{
+      const prepare=(client,database=caller,extra={})=>read(client,{action:'prepare_credential',connection_id:target.connection,
+        operation:'list',object_id:target.rootId,...extra},database);
+      const before=await receipts();
+      await assert.rejects(prepare(client,caller,{operation:'read'}),/storage_read_denied/);
+      await assert.rejects(prepare(client,caller,{operation:'search',content_search:true,condition_hmac:sha('condition'),key_id:'k1'}),/storage_read_scope_upgrade_required/);
+      assert.equal(await receipts(),before,'preflight does not reserve or charge a body read');
+      const current=(await native.query('select public.clued_storage_refresh_manage_v1($1::jsonb) value',
+        [JSON.stringify({action:'status',connection_id:target.connection})])).rows[0].value;
+      await native.query('select public.clued_storage_refresh_manage_v1($1::jsonb)',[JSON.stringify({action:'enable',connection_id:target.connection,
+        base_version:current.connection_version,delegation_version:current.version,until_revoked:true,idempotency_key:randomUUID()})]);
+      // Issue proofs in ordinary committed RPCs, then hold the actual private
+      // evaluator's lineage/root S locks in two disposable operator sessions.
+      // Holding prepare transactions would instead contend on proof issuance.
+      const p1=await prepare(client),p2=await prepare(client);
+      const first=await connect(),second=await connect();
+      const refresh=async(database,input)=>(await database.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) value',
+        [issuer,JSON.stringify(input)])).rows[0].value;
+      let attempt;
+      try{
+        await first.query('begin');await second.query('begin');
+        await first.query("select clued_private.storage_read_evaluate_v1($1,$2,'read')",[client.token,target.connection]);
+        await second.query("select clued_private.storage_read_evaluate_v1($1,$2,'read')",[client.token,target.connection]);
+        assert.match(p1.proof,/^clued_srp_[0-9a-f]{64}$/);
+        const a1=randomUUID();
+        const busy=await refresh(first,{action:'claim',connection_id:target.connection,attempt_id:a1,demand_proof:p1.proof});
+        assert.equal(busy.status,'busy','upgrade cannot block while another transaction holds root S');
+        assert.equal((await admin.query('select count(*)::int n from clued_private.storage_refresh_attempts_v1 where id=$1',[a1])).rows[0].n,0);
+        await first.query('commit');
+        attempt=randomUUID();const acquired=await refresh(second,{action:'claim',connection_id:target.connection,attempt_id:attempt,demand_proof:p2.proof});
+        assert.equal(acquired.status,'acquired');await second.query('commit');
+      }finally{await first.query('rollback');await second.query('rollback');}
+      assert.equal((await admin.query('select count(*)::int n from clued_private.storage_refresh_attempts_v1 where connection_id=$1',[target.connection])).rows[0].n,1);
+      await refresh(caller,{action:'fail',connection_id:target.connection,attempt_id:attempt,reason:'provider_unavailable'});
+      assert.equal(await receipts(),before);
+    });
+
     await t.test("admit commits an intent receipt before returning the sealed descriptor; finalize is exact and idempotent", async () => {
       const hmac = sha("condition");
       const admitted = await admit(target, client, { operation: "search", object_id: target.rootId, condition_hmac: hmac, key_id: "k1" });
