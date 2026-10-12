@@ -80,7 +80,7 @@
 //                                  wait for both: up to twice this.
 // It needs Node 18 or newer (the runner bundles one under externals/).
 
-import { createSign } from "node:crypto";
+import { createSign,createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -587,6 +587,18 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
   } catch (error) {
     result = { allow: false, reason: `check failed: ${error instanceof Error ? error.message : String(error)}` };
   }
+  // Same original pre-job point; this does not assert Native job execution.
+  try {
+    const positive=v=>/^[1-9][0-9]{0,19}$/.test(String(v??""))?String(v):null;
+    const key=v=>/^[A-Za-z0-9_./:@-]{1,250}$/.test(String(v??""))?String(v):null;
+    console.log("clued-r9-pre-job: "+JSON.stringify({schema:"clued.merge-admission-runner-observation/1",
+      run_id:positive(env.GITHUB_RUN_ID),attempt:positive(env.GITHUB_RUN_ATTEMPT),logical_job_key:key(env.GITHUB_JOB),
+      repository:key(env.GITHUB_REPOSITORY),workflow:key(result.workflow),hook_version:HOOK_VERSION,
+      source_sha256:createHash("sha256").update(fs.readFileSync(fileURLToPath(import.meta.url))).digest("hex"),
+      observed_at:new Date().toISOString(),allow:result.allow,enforced:enforce,
+      phase:"pre_job_permission",native_job_started_at:null,native_job_completed_at:null,
+      source_authenticated:false,official_metric:false,t0:null}));
+  } catch { /* Observation failure cannot alter the original gate result. */ }
   const line = `clued-runner-hook: ${result.allow ? "ALLOW" : enforce ? "REFUSE" : "WOULD REFUSE"} ${result.reason} [hook ${HOOK_VERSION}]`;
   if (result.allow) { console.log(line); return 0; }
   console.log(enforce ? `::error title=Clued runner check::${line}` : `::warning title=Clued runner check (not enforced)::${line}`);

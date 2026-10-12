@@ -75,6 +75,7 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { proxyBootstrapArguments } from "../runner/clued-runner-job-started.mjs";
@@ -1050,7 +1051,7 @@ function modeOutcome(mode) {
 // readPolicyFile reads config/merge-admission-policy.json of the workspace;
 // the self-tests pass a fixed table so that they never depend on the
 // repository's copy (review MAJOR-1).
-export async function evaluate({ env, event, eventName, fetchImpl, workspace, withSummary, readPolicyFile = fs.readFileSync }) {
+async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withSummary, readPolicyFile = fs.readFileSync, observation_recorder, evaluation_id, observation_entry = "required" }) {
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const outcome = emptyOutcome(eventName);
   outcome.admission_mode = modeOutcome(mode);
@@ -1071,6 +1072,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
   outcome.head_sha = pr.head.sha;
   outcome.base_sha = pr.base.sha;
   outcome.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
+  observation_recorder?.record("admission_selected",{evaluation_id,pr,entry:observation_entry});
   // Merge Admission step 2: auto_merge_disabled can arrive for a pull request
   // that was just merged or closed. It is not judged, and nothing passes.
   if (typeof pr.state === "string" && pr.state !== "open") {
@@ -1173,6 +1175,7 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
       }
     } else {
       verified = result;
+      observation_recorder?.record("claim_verification",{evaluation_id,input:{scope:reference.scope,claim_id:reference.claim_id,head_sha:pr.head.sha},result});
       outcome.verdict = verified.verdict;
       outcome.reasons.push(...verified.reasons);
       const outside = verified.payload.paths_outside_write_set;
@@ -1282,6 +1285,13 @@ export async function evaluate({ env, event, eventName, fetchImpl, workspace, wi
 // It is a check of its own because the heavy workflows' gates follow
 // clued-admission-verified, and they must still run on a head that merely
 // happens to contain the tip.
+
+// Observe the original evaluator; no permission/result/return-code change.
+export async function evaluate(args) {
+  const recorder=args.observation_recorder??createNaturalRecorder({env:args.env,workspace:args.workspace,sourceUrl:import.meta.url,sourcePath:"scripts/ci/clued-work-admission.mjs"});
+  return observeEvaluation(evaluateCore,{...args,observation_close_owned:!args.observation_recorder},recorder);
+}
+
 export const MERGE_SLOT_CHECK_NAME = "clued-merge-slot";
 
 export function mergeSlotRef(repository, branch) {
@@ -1412,7 +1422,7 @@ async function rejudge({ env, fetchImpl, now, pr, outcome, result }) {
     merge_slot: state, merge_slot_passed: slot.success, merge_slot_check_run_id: posted.check_run_id });
 }
 
-export async function reverify({ env, fetchImpl, workspace, now = () => Date.now(), readPolicyFile = fs.readFileSync }) {
+async function reverifyCore({ env, fetchImpl, workspace, now = () => Date.now(), readPolicyFile = fs.readFileSync, observation_recorder }) {
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const stateChange = (env.CLUED_REVERIFY_REASON ?? "").trim() === STATE_CHANGE_REASON;
   const result = { mode: { state: mode.state, source: mode.source, errors: mode.errors },
@@ -1425,14 +1435,22 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
     return result;
   }
   const repository = env.GITHUB_REPOSITORY;
+  const recorder=observation_recorder;
+  const batch_id=recorder.newId(),selected=[];
   const pulls = await githubPaged(fetchImpl, env, `/repos/${repository}/pulls?state=open`);
+  recorder.record("batch_initial",{batch_id,pulls,entry:stateChange?"rejudge":"reverify"});
   for (const pr of pulls) {
-    if (pr.draft || !pr.head || !pr.base) continue;
+    if (pr.draft || !pr.head || !pr.base) {
+      recorder.record("batch_candidate",{batch_id,pr,selection_state:pr.draft?"excluded":"unknown",reason_code:pr.draft?"DRAFT":"NATIVE_PR_IDENTITY_UNAVAILABLE"});
+      continue;
+    }
     const defaultBranch = pr.base.repo && pr.base.repo.default_branch;
-    if (defaultBranch && pr.base.ref !== defaultBranch) continue;
+    if (defaultBranch && pr.base.ref !== defaultBranch) {recorder.record("batch_candidate",{batch_id,pr,selection_state:"excluded",reason_code:"OTHER_BASE"});continue;}
     if (stateChange) {
       try {
-        const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile });
+        const observation_evaluation_id=recorder.newId();selected.push({pr,evaluation_id:observation_evaluation_id});
+        recorder.record("batch_selection",{batch_id,pr,evaluation_id:observation_evaluation_id,entry:"rejudge",criterion:"state_change"});
+        const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile,observation_recorder:recorder,observation_evaluation_id,observation_entry:"rejudge" });
         if (outcome.verdict === "PR_NOT_OPEN") continue;
         await rejudge({ env, fetchImpl, now, pr, outcome, result });
       } catch (error) {
@@ -1446,8 +1464,10 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       // A merge slot that lapsed or was given back since its check passed
       // (Owner Decision 2ea795e4).
       const slotGreen = green(await appChecksOnHead(fetchImpl, env, repository, pr.head.sha, MERGE_SLOT_CHECK_NAME));
-      if (!admissionGreen && !slotGreen) continue;
-      const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile });
+      if (!admissionGreen && !slotGreen) {recorder.record("batch_candidate",{batch_id,pr,selection_state:"excluded",reason_code:"NO_PRIOR_GREEN",admission_green:admissionGreen,slot_green:slotGreen});continue;}
+      const observation_evaluation_id=recorder.newId();selected.push({pr,evaluation_id:observation_evaluation_id});
+      recorder.record("batch_selection",{batch_id,pr,evaluation_id:observation_evaluation_id,entry:"reverify",criterion:"prior_app_green",admission_green:admissionGreen,slot_green:slotGreen});
+      const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace, withSummary: false, readPolicyFile,observation_recorder:recorder,observation_evaluation_id,observation_entry:"reverify" });
       // Closed between the list and the fresh read: nothing to re-verify.
       if (outcome.verdict === "PR_NOT_OPEN") continue;
       const label = outcome.admission_mode && outcome.admission_mode.label;
@@ -1492,10 +1512,19 @@ export async function reverify({ env, fetchImpl, workspace, now = () => Date.now
       if (!posted.posted) throw new Error(`not admitted (${outcome.verdict}) and no failing check could be posted: ${posted.error ?? posted.reason}`);
       result.blocked.push({ pr: pr.number, check_run_id: posted.check_run_id, verdict: outcome.verdict, reasons: outcome.reasons });
     } catch (error) {
+      recorder.record("batch_candidate",{batch_id,pr,selection_state:"unknown",reason_code:"SELECTION_READ_FAILED"});
       result.errors.push({ pr: pr.number, error: error instanceof Error ? error.message : String(error) });
     }
   }
+  recorder.record("batch_closing",{batch_id,selected,completion:"normal"});
   return result;
+}
+
+export async function reverify(args) {
+  const recorder=args.observation_recorder??createNaturalRecorder({env:args.env,workspace:args.workspace,sourceUrl:import.meta.url,sourcePath:"scripts/ci/clued-work-admission.mjs"});
+  let completion="exception";
+  try {const result=await reverifyCore({...args,observation_recorder:recorder});completion="returned";return result;}
+  finally {if(!args.observation_recorder)recorder.finish(completion);}
 }
 
 export function renderReverifySummary(result) {
@@ -1869,7 +1898,7 @@ async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
 
 // The dispatch admission run (step 1 above). Inputs arrive as environment
 // variables; the run must be on the default branch.
-export async function dispatchAdmit({ env, fetchImpl, workspace }) {
+async function dispatchAdmitCore({ env, fetchImpl, workspace }) {
   const outcome = emptyOutcome("workflow_dispatch");
   const workflow = String(env.ADMIT_WORKFLOW ?? "").trim();
   const ref = String(env.ADMIT_REF ?? "").trim();
@@ -2031,12 +2060,13 @@ async function appRequest(fetchImpl, env, method, route, bearer, body) {
 
 // Posts one completed clued-admission-verified check as the App. externalId
 // names the pull request and the run that decided ("pr:<n>:run:<run id>").
-export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber, name = APP_CHECK_NAME }) {
+export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber, name = APP_CHECK_NAME }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? "").trim();
   const key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
   if (!appId || !key) return { posted: false, reason: "the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)" };
   const repository = env.GITHUB_REPOSITORY;
   let publication = null;
+  let publicationSettlement = null;
   let publicationScope = "global";
   let publicationPostStarted = false;
   try {
@@ -2089,6 +2119,7 @@ export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), hea
         throw new Error(`publication settlement failed: ${finishReply.detail}`);
       }
       const finished = finishReply.body;
+      publicationSettlement = finished;
       if (finished.must_revoke) {
         await appRequest(fetchImpl, env, "PATCH", `/repos/${repository}/check-runs/${check.id}`, token.token, {
           status: "completed", conclusion: "failure", output: {
@@ -2099,7 +2130,14 @@ export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), hea
         success = false;
       }
     }
-    return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null };
+    return { posted: true, head_sha: headSha, conclusion: success ? "success" : "failure", check_run_id: check.id ?? null,
+      ...(publication?.publication_id ? { external_id: externalId, publication_observation: {
+        publication_id: publication.publication_id, begin_receipt_id: publication.receipt_id,
+        begin_execution_epoch: publication.execution_epoch ?? publication.claim?.execution_epoch,
+        finish_receipt_id: publicationSettlement?.receipt_id,
+        finish_execution_epoch: publicationSettlement?.execution_epoch,
+        finish_status: publicationSettlement?.status, must_revoke: publicationSettlement?.must_revoke,
+      }} : {}) };
   } catch (error) {
     if (publication?.publication_id && !publicationPostStarted) {
       // This path knows the check POST was never sent. An uncertain POST
@@ -2112,7 +2150,17 @@ export async function postAppCheck({ env, fetchImpl, now = () => Date.now(), hea
   }
 }
 
-export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
+export async function postAppCheck(args) {
+  const recorder=args.observation_recorder??createNaturalRecorder({env:args.env,sourceUrl:import.meta.url,sourcePath:"scripts/ci/clued-work-admission.mjs"});let result=null;
+  try {result=await postAppCheckCore(args);return result;}
+  finally {
+    recorder.record("app_check",{prNumber:args.prNumber,headSha:args.headSha,name:args.name??APP_CHECK_NAME,result,
+      admitStepOutcome:args.env.ADMISSION_OUTCOME,failure_code:!(args.env.CLUED_ADMISSION_APP_ID??"").trim()?"APP_NOT_CONFIGURED":"APP_POST_FAILED"});
+    if(!args.observation_recorder)recorder.finish(result===null?"exception":"returned");
+  }
+}
+
+export async function appCheck({ env, fetchImpl, now = () => Date.now(), observation_recorder }) {
   const headSha = (env.ADMISSION_HEAD_SHA ?? "").trim();
   if (!/^[0-9a-f]{40}$/.test(headSha)) {
     const configured = (env.CLUED_ADMISSION_APP_ID ?? "").trim() && (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? "").trim();
@@ -2124,7 +2172,7 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
   // Merge Admission v0.1 §10: the title names the mode, "ADMITTED [normal · code · reruns 0]".
   const mode = (env.ADMISSION_MODE ?? "").replace(/[\r\n[\]]/g, " ").trim();
   const result = await postAppCheck({
-    env, fetchImpl, now, headSha, success, title: mode ? `${verdict} [${mode}]` : verdict, prNumber: env.ADMISSION_PR_NUMBER,
+    env, fetchImpl, now, observation_recorder, headSha, success, title: mode ? `${verdict} [${mode}]` : verdict, prNumber: env.ADMISSION_PR_NUMBER,
     summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"})${mode ? ` in mode ${mode}` : ""}.`,
   });
   // The merge slot check on the same head (Owner Decision 2ea795e4).
@@ -2133,7 +2181,7 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now() }) {
     tip: (env.ADMISSION_MERGE_SLOT_TIP ?? "").trim(), claimId: (env.ADMISSION_CLAIM_ID ?? "").trim(),
     branch: (env.ADMISSION_BASE_REF ?? "").trim(), mode });
   result.merge_slot = await postAppCheck({
-    env, fetchImpl, now, headSha, success: slot.success, title: slot.title, summary: slot.summary,
+    env, fetchImpl, now, observation_recorder, headSha, success: slot.success, title: slot.title, summary: slot.summary,
     prNumber: env.ADMISSION_PR_NUMBER, name: MERGE_SLOT_CHECK_NAME,
   });
   return result;
@@ -2453,4 +2501,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(error);
     process.exit(1);
   });
+}
+
+// The original dispatch has no per-PR final envelope; retain its real event without assigning a fake target.
+export async function dispatchAdmit(args) {
+  const recorder=createNaturalRecorder({env:args.env,workspace:args.workspace,sourceUrl:import.meta.url,sourcePath:"scripts/ci/clued-work-admission.mjs"});
+  return observeEvaluation(dispatchAdmitCore,{...args,observation_entry:"dispatch_admit",observation_close_owned:true},recorder);
 }

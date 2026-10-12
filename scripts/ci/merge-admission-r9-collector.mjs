@@ -1,0 +1,524 @@
+// Measurement-only integration. Every network operation uses the existing
+// report request function; no token, retry, parallel worker or new CI trigger.
+import {createHash} from 'node:crypto';
+import {inflateRawSync} from 'node:zlib';
+import {captureNativeAttempt,emptyNativePopulationStore,inspectNativePopulationStore} from './merge-admission-native-population.mjs';
+import {readMergeAdmissionFourSources,parseFourSourceRawData} from './merge-admission-four-sources.mjs';
+import {integrateClockSourceCandidate} from './merge-admission-clock-source.mjs';
+import {registeredWorkflowSource,rolesForSource,workflowBlob} from './clued-workflow-profile.mjs';
+import {timestampMicros} from './merge-admission-measurement-history.mjs';
+import {collectNaturalSourceArtifacts} from './merge-admission-natural-intake.mjs';
+import {assembleNaturalFourSourceFrame,excludeQuarantinedMainMoves} from './merge-admission-natural-frame.mjs';
+import {collectNativeActivity} from './merge-admission-native-activity.mjs';
+import {R9_RUNTIME_CONFIG} from './merge-admission-r9-runtime-inputs.mjs';
+
+export const R9_ARTIFACT_NAME='merge-admission-r9-sealed-packets';
+export const R9_PACKET_FILE='r9-sealed-packet.json';
+export const R9_CACHE_FILE='r9-artifact-cache.json';
+export const R9_PACKET_SCHEMA='clued.merge-admission-r9-sealed-packet/2';
+export const R9_CACHE_SCHEMA='clued.merge-admission-r9-artifact-cache/1';
+export const R9_PUBLISHER_PATH='.github/workflows/clued-ci-usage-report.yml';
+export const R9_SOURCE_PATHS=Object.freeze([
+  R9_PUBLISHER_PATH,'scripts/ci/ci-usage-report.mjs','scripts/ci/merge-admission-r9-collector.mjs',
+  'scripts/ci/merge-admission-native-population.mjs','scripts/ci/merge-admission-four-sources.mjs',
+  'scripts/ci/merge-admission-clock-source.mjs','scripts/ci/merge-admission-measurement-history.mjs',
+  'scripts/ci/clued-gated-proof.mjs','scripts/ci/clued-workflow-profile.mjs',
+  'scripts/ci/merge-admission-r9-runtime-inputs.mjs','scripts/ci/merge-admission-source-producer.mjs',
+  'scripts/ci/merge-admission-natural-intake.mjs',
+  'scripts/ci/merge-admission-natural-frame.mjs',
+  'scripts/ci/merge-admission-native-activity.mjs',R9_RUNTIME_CONFIG,
+]);
+const MAX_BYTES=32*1024*1024, MAX_RUNS=100000;
+const hash=x=>createHash('sha256').update(typeof x==='string'||Buffer.isBuffer(x)?x:JSON.stringify(x)).digest('hex');
+const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
+const exact=(x,keys)=>object(x)&&Object.keys(x).sort().join('|')===[...keys].sort().join('|');
+const sha=x=>typeof x==='string'&&/^[a-f0-9]{40}$/.test(x);
+const digest=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
+const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(x);
+const id=x=>typeof x==='number'&&Number.isSafeInteger(x)&&x>0?String(x):typeof x==='string'&&/^[1-9][0-9]{0,19}$/.test(x)?x:null;
+const fail=code=>{throw Error(code);};
+const reason=e=>typeof e?.message==='string'&&/^[A-Z0-9_]{1,100}$/.test(e.message)?e.message:'R9_COLLECTION_FAILED';
+const time=x=>{try{return typeof x==='string'&&timestampMicros(x)>=0n;}catch{return false;}};
+const sorted=x=>[...x].sort((a,b)=>BigInt(a.id)<BigInt(b.id)?-1:BigInt(a.id)>BigInt(b.id)?1:0);
+async function bodyOf(request,route,options){const r=await request(route,options);if(r?.ok!==true)fail('R9_'+String(r?.stopped??'REQUEST_REFUSED').toUpperCase());return r.body;}
+function repositoryOf(repository){if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository??''))fail('REPOSITORY_INVALID');return repository;}
+
+// A slice is a scheduling share of the SAME run budget, not another budget.
+// Exhausting this slice does not stop collectUsage from using the remainder.
+export function r9RequestSlice(request,budget){
+  const allowance=budget.source==='app'&&Number.isSafeInteger(budget.cap)&&Number.isSafeInteger(budget.used??0)
+    ?Math.max(0,Math.min(1500,Math.floor(budget.cap*3/4),budget.cap-(budget.used??0)-500)):0;let used=0;
+  return {get used(){return used;},allowance,async request(route,options){
+    if(used>=allowance)return {ok:false,stopped:'r9_slice_exhausted'};
+    used++;return request(route,options);
+  }};
+}
+export function emptyR9ArtifactCache(repository){return JSON.stringify({schema:R9_CACHE_SCHEMA,repository,artifact_id:null,zip_base64:null});}
+
+// No extraction to disk. Only a bounded, ordinary non-encrypted ZIP containing
+// the one exact JSON member is supported; paths/symlinks/ZIP64 are refused.
+export function readSealedPacketZip(bytes,expectedMember=R9_PACKET_FILE){
+  if(!Buffer.isBuffer(bytes)||bytes.length>MAX_BYTES||bytes.length<22)fail('ARTIFACT_ZIP_INVALID');
+  let end=-1;for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65557);i--)if(bytes.readUInt32LE(i)===0x06054b50){end=i;break;}
+  if(end<0||bytes.readUInt16LE(end+4)!==0||bytes.readUInt16LE(end+6)!==0||bytes.readUInt16LE(end+8)!==1||
+    bytes.readUInt16LE(end+10)!==1||end+22+bytes.readUInt16LE(end+20)!==bytes.length)fail('ARTIFACT_ZIP_INVALID');
+  const at=bytes.readUInt32LE(end+16),size=bytes.readUInt32LE(end+12);
+  if(at+size!==end||at+46>end||bytes.readUInt32LE(at)!==0x02014b50)fail('ARTIFACT_ZIP_INVALID');
+  const flags=bytes.readUInt16LE(at+8),method=bytes.readUInt16LE(at+10),compressed=bytes.readUInt32LE(at+20),length=bytes.readUInt32LE(at+24);
+  const names=bytes.readUInt16LE(at+28),extra=bytes.readUInt16LE(at+30),comment=bytes.readUInt16LE(at+32),offset=bytes.readUInt32LE(at+42);
+  if((flags&~0x808)!==0||![0,8].includes(method)||length>MAX_BYTES||bytes.readUInt16LE(at+34)!==0||
+    (bytes.readUInt32LE(at+38)>>>16&0xf000)===0xa000||at+46+names+extra+comment!==end||
+    bytes.subarray(at+46,at+46+names).toString('utf8')!==expectedMember||offset+30>at||bytes.readUInt32LE(offset)!==0x04034b50||
+    bytes.readUInt16LE(offset+6)!==flags||bytes.readUInt16LE(offset+8)!==method||
+    ((flags&8)===0&&(bytes.readUInt32LE(offset+18)!==compressed||bytes.readUInt32LE(offset+22)!==length))||
+    bytes.readUInt16LE(offset+26)!==names)fail('ARTIFACT_ZIP_INVALID');
+  const start=offset+30+names+bytes.readUInt16LE(offset+28);
+  const dataEnd=start+compressed;
+  if(bytes.subarray(offset+30,offset+30+names).toString('utf8')!==expectedMember||dataEnd>at)fail('ARTIFACT_ZIP_INVALID');
+  if(flags&8){const n=at-dataEnd;let d=dataEnd;
+    if(n===16&&bytes.readUInt32LE(d)===0x08074b50)d+=4;else if(n!==12)fail('ARTIFACT_ZIP_INVALID');
+    if(bytes.readUInt32LE(d)!==bytes.readUInt32LE(at+16)||bytes.readUInt32LE(d+4)!==compressed||bytes.readUInt32LE(d+8)!==length)fail('ARTIFACT_ZIP_INVALID');
+  }else if(dataEnd!==at)fail('ARTIFACT_ZIP_INVALID');
+  const raw=method===0?bytes.subarray(start,dataEnd):inflateRawSync(bytes.subarray(start,dataEnd),{maxOutputLength:MAX_BYTES});
+  if(raw.length!==length||Buffer.from(raw.toString('utf8')).compare(raw)!==0)fail('ARTIFACT_ZIP_INVALID');
+  return raw.toString('utf8');
+}
+async function sourceText(request,repository,file,ref){
+  const p=await bodyOf(request,`/repos/${repository}/contents/${file}?ref=${encodeURIComponent(ref)}`);
+  if(p?.type!=='file'||p.path!==file||p.encoding!=='base64'||typeof p.content!=='string'||!sha(p.sha))fail('NATIVE_SOURCE_INVALID');
+  const bytes=Buffer.from(p.content.replace(/\s/g,''),'base64'),text=bytes.toString('utf8');
+  if(bytes.length>MAX_BYTES||Buffer.from(text).compare(bytes)!==0||workflowBlob(text)!==p.sha)fail('NATIVE_SOURCE_INVALID');
+  return {text,blob:p.sha};
+}
+export async function loadR9DefaultBranchContract({request,repository}){
+  repositoryOf(repository);
+  const repo=await bodyOf(request,`/repos/${repository}`);
+  if(repo?.full_name!==repository||!id(repo.id)||typeof repo.default_branch!=='string'||!repo.default_branch||repo.default_branch.length>200)fail('NATIVE_REPOSITORY_INVALID');
+  const branch=await bodyOf(request,`/repos/${repository}/branches/${encodeURIComponent(repo.default_branch)}`),head=branch?.commit?.sha;
+  if(branch?.name!==repo.default_branch||!sha(head))fail('NATIVE_DEFAULT_BRANCH_INVALID');
+  const profiles=await sourceText(request,repository,'scripts/ci/clued-gated-proof-profiles.json',head);
+  const roles=await sourceText(request,repository,'scripts/ci/clued-gated-proof-role-specs.json',head);
+  let r9Registry=null;try{r9Registry=parseFourSourceRawData((await sourceText(request,repository,R9_RUNTIME_CONFIG,head)).text);}catch{}
+  return {repository,repository_id:String(repo.id),default_branch:repo.default_branch,head_sha:head,
+    profiles:parseFourSourceRawData(profiles.text),roles:parseFourSourceRawData(roles.text),r9_registry:r9Registry,native_source_refs:[profiles.blob,roles.blob]};
+}
+// Observation-publisher roles live in the protected R9 registry. Registering a
+// non-PR measurement job must never add it to the gated PR workflow catalogue.
+function publisherRole(contract,wfBlob,wfText){
+  const cfg=contract.r9_registry,r=cfg?.publisher_role;
+  if(cfg?.schema==='clued.r9-runtime-source-selection/1'&&cfg.repository===contract.repository&&cfg.registration_status==='registered'&&
+    r?.registration_status==='registered'&&r.workflow_path===R9_PUBLISHER_PATH&&r.workflow_blob===wfBlob&&r.workflow_source_sha256===hash(wfText)&&
+    r.job_id==='report'&&r.self_hosted===false&&r.job_name==='clued-ci-usage-report'&&object(r.required_steps)&&
+    r.required_steps['Measure CI usage']===1&&Object.values(r.required_steps).every(n=>Number.isSafeInteger(n)&&n>0))
+    return {job_id:r.job_id,name:r.job_name,self_hosted:false,required_steps:r.required_steps};
+  // Retain the already supported actual registered-source contract; no default
+  // or proposed role becomes registered by hashing/compiling itself.
+  const p=registeredWorkflowSource(contract.profiles,R9_PUBLISHER_PATH,wfBlob),roles=rolesForSource(contract.roles,R9_PUBLISHER_PATH,wfBlob);
+  return p.passed&&roles?.some(r=>r.job_id==='report')?p.profile.routes.find(r=>r.job_id==='report'):null;
+}
+function packetShape(raw,repository){
+  const p=parseFourSourceRawData(raw);
+  if(!exact(p,['schema','repository','publisher','source_blobs','window','sealed_at','native_store_raw','four_source','clock','natural_inputs'])||
+    p.schema!==R9_PACKET_SCHEMA||p.repository!==repository||!exact(p.publisher,['run_id','run_attempt','head_sha','workflow_path','job_id'])||
+    !id(p.publisher.run_id)||!Number.isSafeInteger(p.publisher.run_attempt)||p.publisher.run_attempt<1||!sha(p.publisher.head_sha)||
+    p.publisher.workflow_path!==R9_PUBLISHER_PATH||p.publisher.job_id!=='report'||
+    p.window!==null&&(!exact(p.window,['start','end'])||!time(p.window.start)||!time(p.window.end)||timestampMicros(p.window.start)>=timestampMicros(p.window.end))||!time(p.sealed_at)||
+    !exact(p.source_blobs,R9_SOURCE_PATHS)||Object.values(p.source_blobs).some(v=>!sha(v))||
+    inspectNativePopulationStore(p.native_store_raw,repository).status!=='VALID_DATA_STORE'||
+    p.four_source!==null&&(!exact(p.four_source,['packet_raw','expected_sources_raw'])||Object.values(p.four_source).some(x=>typeof x!=='string'))||
+    p.clock!==null&&(![ ['pages_raw','options_raw'],['pages_raw','options_raw','transport_raw'] ].some(keys=>exact(p.clock,keys))||Object.values(p.clock).some(x=>typeof x!=='string'))||
+    p.natural_inputs!==null&&(!object(p.natural_inputs)||p.natural_inputs.schema!=='clued.r9-natural-origin-cache/1'||!Array.isArray(p.natural_inputs.entries)||!Array.isArray(p.natural_inputs.gaps)))fail('SEALED_PACKET_SCHEMA_INVALID');
+  if(p.window===null&&(p.four_source!==null||p.clock!==null||p.natural_inputs!==null||Object.keys(inspectNativePopulationStore(p.native_store_raw,repository).packets??{}).length))fail('BOOTSTRAP_PACKET_CANNOT_CONTAIN_OBSERVATIONS');
+  return p;
+}
+
+// Proves an entire immutable artifact once, including all enclosed packets.
+// Legacy runs.json and caller-provided authority/source flags are never read.
+export async function verifyR9SealedArtifact({request,repository,contract,artifactId,zipBytes}){
+  try{
+    if(contract?.repository!==repository||!id(artifactId))fail('ARTIFACT_ID_INVALID');
+    const metadata=await bodyOf(request,`/repos/${repository}/actions/artifacts/${artifactId}`);
+    if(String(metadata?.id)!==String(artifactId)||metadata.name!==R9_ARTIFACT_NAME||metadata.expired!==false||
+      typeof metadata.digest!=='string'||!/^sha256:[a-f0-9]{64}$/.test(metadata.digest)||!id(metadata.workflow_run?.id)||
+      !sha(metadata.workflow_run?.head_sha)||metadata.workflow_run?.head_branch!==contract.default_branch)fail('ARTIFACT_NATIVE_METADATA_INVALID');
+    const bytes=zipBytes??await bodyOf(request,`/repos/${repository}/actions/artifacts/${artifactId}/zip`,{responseType:'bytes'});
+    if(!Buffer.isBuffer(bytes)||hash(bytes)!==metadata.digest.slice(7))fail('ARTIFACT_DIGEST_MISMATCH');
+    const packet=packetShape(readSealedPacketZip(bytes),repository),p=packet.publisher;
+    if(String(metadata.workflow_run.id)!==String(p.run_id)||metadata.workflow_run.head_sha!==p.head_sha)fail('ARTIFACT_RUN_BINDING_INVALID');
+    const native=await captureNativeAttempt({request,repository,runId:p.run_id,attempt:p.run_attempt});
+    if(native.status!=='COMPLETE'||native.packet.run.status!=='completed'||native.packet.run.conclusion!=='success'||
+      native.packet.run.head_sha!==p.head_sha||native.packet.run.path.split('@')[0]!==R9_PUBLISHER_PATH||
+      !['schedule','workflow_dispatch'].includes(native.packet.run.event))fail('ARTIFACT_PUBLISHER_RUN_UNQUALIFIED');
+    const run=await bodyOf(request,`/repos/${repository}/actions/runs/${p.run_id}/attempts/${p.run_attempt}`);
+    if(run?.head_repository?.full_name!==repository||run?.head_branch!==contract.default_branch||!Array.isArray(run.pull_requests)||run.pull_requests.length)fail('ARTIFACT_PUBLISHER_ORIGIN_INVALID');
+    const compare=await bodyOf(request,`/repos/${repository}/compare/${p.head_sha}...${contract.head_sha}`);
+    if(!['ahead','identical'].includes(compare?.status)||compare.merge_base_commit?.sha!==p.head_sha)fail('PUBLISHER_NOT_DEFAULT_BRANCH_HISTORY');
+    const wf=await sourceText(request,repository,R9_PUBLISHER_PATH,p.head_sha),route=publisherRole(contract,packet.source_blobs[R9_PUBLISHER_PATH],wf.text);
+    if(!route)fail('USAGE_PUBLISHER_SOURCE_NOT_REGISTERED');
+    if(!route||route.self_hosted!==false)fail('USAGE_PUBLISHER_ROLE_INVALID');
+    const jobs=native.packet.jobs.filter(j=>j.name===route.name);
+    if(jobs.length!==1||jobs[0].conclusion!=='success'||jobs[0].labels.some(l=>l.toLowerCase()==='self-hosted')||
+      Object.entries(route.required_steps).some(([name,count])=>jobs[0].steps.filter(s=>s.name===name&&s.status==='completed'&&s.conclusion==='success').length!==count))fail('USAGE_PUBLISHER_EXECUTION_INCOMPLETE');
+    for(const file of R9_SOURCE_PATHS){const source=await sourceText(request,repository,file,p.head_sha);if(source.blob!==packet.source_blobs[file])fail('PUBLISHER_SOURCE_BYTES_MISMATCH');}
+    return {status:'AUTHENTICATED_SEALED_ARTIFACT',packet,zip_bytes:bytes,artifact_id:String(artifactId),
+      proof:{kind:'NATIVE_ARTIFACT_DIGEST_DEFAULTBRANCH_REGISTERED_SOURCE_ROLE',repository_id:contract.repository_id,
+        run_id:String(p.run_id),run_attempt:p.run_attempt,head_sha:p.head_sha,artifact_digest:metadata.digest,contract_head:contract.head_sha}};
+  }catch(e){return {status:'PARTIAL',reason_code:reason(e),packet:null};}
+}
+async function restoreArtifact(request,repository,contract,cacheRaw){
+  try{
+    let lastRefusal=null;
+    const cache=parseFourSourceRawData(cacheRaw);
+    if(!exact(cache,['schema','repository','artifact_id','zip_base64'])||cache.schema!==R9_CACHE_SCHEMA||cache.repository!==repository)fail('CACHE_SCHEMA_INVALID');
+    if(cache.artifact_id!==null){
+      if(!id(cache.artifact_id)||typeof cache.zip_base64!=='string'||cache.zip_base64.length>MAX_BYTES*1.4)fail('CACHE_SCHEMA_INVALID');
+      const restored=await verifyR9SealedArtifact({request,repository,contract,artifactId:cache.artifact_id,zipBytes:Buffer.from(cache.zip_base64,'base64')});
+      if(restored.status==='AUTHENTICATED_SEALED_ARTIFACT')return restored;
+      lastRefusal=restored.reason_code;
+      // A refused old candidate cannot be republished as authenticated data.
+    }
+    // Discover the latest exact-name artifact. Missing/expired origin is a gap,
+    // not permission to trust the actions/cache restore key.
+    for(let page=1;page<=20;page++){
+      const b=await bodyOf(request,`/repos/${repository}/actions/artifacts?name=${R9_ARTIFACT_NAME}&per_page=100&page=${page}`);
+      if(!Number.isSafeInteger(b?.total_count)||!Array.isArray(b.artifacts)||b.artifacts.length>100)fail('ARTIFACT_LIST_INVALID');
+      for(const a of b.artifacts){if(a.name===R9_ARTIFACT_NAME&&a.expired===false){const proof=await verifyR9SealedArtifact({request,repository,contract,artifactId:a.id});if(proof.packet)return proof;lastRefusal=proof.reason_code;}}
+      if(b.artifacts.length<100)return {status:'PARTIAL',reason_code:lastRefusal??'AUTHENTICATED_SEALED_ARTIFACT_MISSING',packet:null};
+    }fail('ARTIFACT_LIST_PAGE_CAP');
+  }catch(e){return {status:'PARTIAL',reason_code:reason(e),packet:null};}
+}
+
+function inventoryIdentity(r){
+  if(!id(r?.id)||!Number.isSafeInteger(r.run_attempt)||r.run_attempt<1||r.run_attempt>100||!id(r.workflow_id)||!sha(r.head_sha)||
+    typeof r.path!=='string'||!time(r.created_at)||!time(r.updated_at)||r.created_at>r.updated_at||
+    r.run_started_at!==null&&(!time(r.run_started_at)||r.run_started_at<r.created_at||r.run_started_at>r.updated_at)||
+    !Array.isArray(r.pull_requests)||!['completed','queued','in_progress','requested','waiting','pending'].includes(r.status))fail('NATIVE_INVENTORY_INVALID');
+  return {id:String(r.id),run_attempt:r.run_attempt,workflow_id:String(r.workflow_id),path:r.path,event:r.event,head_sha:r.head_sha,status:r.status,
+    conclusion:r.conclusion??null,created_at:new Date(r.created_at).toISOString(),updated_at:new Date(r.updated_at).toISOString(),
+    run_started_at:r.run_started_at===null?null:new Date(r.run_started_at).toISOString(),pull_requests:r.pull_requests.map(p=>p.number).sort((a,b)=>a-b)};
+}
+// Fixed created upper watermark includes all historical runs, so an old run's
+// new attempt is never lost by a created>=opening filter. GitHub caps filtered
+// searches at 1000; split complete inclusive overlapping ranges rather than paging a
+// truncated filtered search. New runs created after close cannot change it.
+async function inventory(request,repository,window){
+  // Unix epoch is a fixed inclusive lower bound of this API's nonnegative
+  // creation-time grammar. No created>=opening filter can omit old reruns.
+  const low=0,high=Number((timestampMicros(window.end)+999n)/1000n);
+  if(low>high)fail('NATIVE_INVENTORY_WATERMARK_INVALID');
+  const items=[],ids=new Map(),ranges=[{lo:low,hi:high}];let rangesRead=0;
+  while(ranges.length){
+    if(++rangesRead>4096)fail('NATIVE_INVENTORY_RANGE_CAP');
+    const range=ranges.pop(),date=x=>new Date(x).toISOString();
+    const route=`/repos/${repository}/actions/runs?created=${encodeURIComponent(date(range.lo)+'..'+date(range.hi))}&per_page=100`;
+    const first=await bodyOf(request,route+'&page=1');
+    if(!Number.isSafeInteger(first?.total_count)||first.total_count<0||!Array.isArray(first.workflow_runs))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
+    if(first.total_count>=1000){
+      if(range.hi-range.lo<=1)return fullInventory(request,repository,window,rangesRead);
+      const mid=Math.floor((range.lo+range.hi)/2);ranges.push({lo:mid,hi:range.hi},{lo:range.lo,hi:mid});continue;
+    }
+    const total=first.total_count,leafIds=new Set();let count=0;
+    for(let page=1;page<=10;page++){
+      const body=page===1?first:await bodyOf(request,route+'&page='+page);
+      if(body.total_count!==total||!Array.isArray(body.workflow_runs)||body.workflow_runs.length!==Math.min(100,total-count))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
+      for(const row of body.workflow_runs){const run=inventoryIdentity(row),created=timestampMicros(row.created_at);
+        if(created<BigInt(range.lo)*1000n||created>BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_RANGE_INVALID');
+        if(leafIds.has(run.id))fail('NATIVE_INVENTORY_DUPLICATE_ID');leafIds.add(run.id);
+        const prior=ids.get(run.id);if(prior){
+          if(created!==BigInt(range.lo)*1000n&&created!==BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_DUPLICATE_ID');
+          if(!same(prior,run))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');
+        }else{ids.set(run.id,run);items.push(run);}count++;if(items.length>MAX_RUNS)fail('NATIVE_INVENTORY_ITEM_CAP');}
+      if(count===total)break;if(page===10)fail('NATIVE_INVENTORY_PAGE_CAP');
+    }
+  }
+  // Ceil-to-millisecond search is inclusive; exact microsecond watermark below
+  // excludes any extra same-second outside member, without inventing a gap.
+  const fixed=items.filter(r=>timestampMicros(r.created_at)<timestampMicros(window.end));
+  return {items:sorted(fixed),total:fixed.length,created_cutoff:window.end,ranges_read:rangesRead};
+}
+async function fullInventory(request,repository,window,rangesRead){
+  // A dense timestamp cannot be split below the API's precision. Fall back to
+  // the unfiltered complete endpoint within the SAME scheduling share. This
+  // also supports providers that ignore the optional search filter; no clipped
+  // 1000-row result can be accepted as complete.
+  const items=[],seen=new Set();let total=null;
+  for(let page=1;page<=1000;page++){
+    const b=await bodyOf(request,`/repos/${repository}/actions/runs?per_page=100&page=${page}`);
+    if(!Number.isSafeInteger(b?.total_count)||b.total_count<0||b.total_count>MAX_RUNS||total!==null&&b.total_count!==total||
+      !Array.isArray(b.workflow_runs))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
+    total=b.total_count;if(b.workflow_runs.length!==Math.min(100,total-items.length))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
+    for(const row of b.workflow_runs){const r=inventoryIdentity(row);if(seen.has(r.id))fail('NATIVE_INVENTORY_DUPLICATE_ID');seen.add(r.id);items.push(r);}
+    if(items.length===total){const fixed=items.filter(r=>timestampMicros(r.created_at)<timestampMicros(window.end));
+      return {items:sorted(fixed),total:fixed.length,created_cutoff:window.end,ranges_read:rangesRead,search_fallback:'COMPLETE_UNFILTERED_DENSE_RANGE'};}
+  }fail('NATIVE_INVENTORY_PAGE_CAP');
+}
+const selected=(items,w)=>items.filter(r=>timestampMicros(r.created_at)<timestampMicros(w.end)&&timestampMicros(r.updated_at)>=timestampMicros(w.start));
+const nativeAdmissionKind=(r,jobs,e)=>e.admission_sources.some(s=>[s.workflow_path,s.reverify_workflow_path].includes(r.path.split('@')[0]))&&
+  !(jobs.length>0&&jobs.every(j=>j.name==='clued-work-adopt'));
+// Skip sealed terminal packets as a batch after the initial/closing Native
+// inventory barriers. Only newly missing/changed attempt packets need jobs.
+export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{}}){
+  let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null;const gaps=[];let fresh=0,fromSealed=0;
+  try{
+    if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
+    initial=await inventory(request,repository,window);const first=selected(initial.items,window);
+    for(const run of first){
+      const packets=inspectNativePopulationStore(storeRaw,repository).packets;
+      const latest=packets[run.id+':'+run.run_attempt];
+      // Normalize the inventory projection to the exact d0fc store grammar.
+      const normalized={run_id:run.id,run_attempt:run.run_attempt,workflow_id:run.workflow_id,path:run.path,event:run.event,head_sha:run.head_sha,
+        status:run.status,conclusion:run.conclusion,created_at:run.created_at,run_started_at:run.run_started_at,updated_at:run.updated_at,pull_requests:run.pull_requests};
+      const latestMatches=latest&&JSON.stringify(latest.run)===JSON.stringify(normalized);
+      for(let attempt=1;attempt<=run.run_attempt;attempt++){
+        if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end))continue;
+        const existing=packets[run.id+':'+attempt];
+        if(latestMatches&&existing){fromSealed++;continue;}
+        const captured=await captureNativeAttempt({request,repository,runId:run.id,attempt,storeRaw});
+        if(captured.status!=='COMPLETE'){gaps.push({key:run.id+':'+attempt,reason_code:captured.reason_code});
+          if(/request|cap|floor|budget|slice|limit|stop/i.test(captured.reason_code??''))fail('NATIVE_CAPTURE_BUDGET_PARTIAL');continue;}
+        storeRaw=captured.store_raw;fresh++;await onStore(storeRaw);
+        if(captured.barriers?.latest_digest!==hash(normalized))fail('NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH');
+      }
+    }
+    const closing=await inventory(request,repository,window);
+    if(hash(first)!==hash(selected(closing.items,window)))fail('NATIVE_COHORT_CHANGED_AT_CLOSE');
+    const all=inspectNativePopulationStore(storeRaw,repository).packets;
+    const retainedPackets=Object.values(all).filter(p=>first.some(r=>r.id===p.run.run_id));
+    // Historical ordinal captures are retained durably, but a terminal upper
+    // bound before opening proves that row is outside this forward population.
+    // Explicit natural references are added below; no old-history recovery is
+    // made a prerequisite merely because an old run was rerun in this epoch.
+    const populationPackets=retainedPackets.filter(p=>p.run.status!=='completed'||timestampMicros(p.run.updated_at)>=timestampMicros(window.start));
+    const attempts=populationPackets.filter(p=>p.run.run_started_at!==null&&timestampMicros(p.run.run_started_at)>=timestampMicros(window.start)&&timestampMicros(p.run.run_started_at)<timestampMicros(window.end));
+    const unknownStarts=populationPackets.filter(p=>p.run.run_started_at===null).map(p=>key(p.run));
+    return {status:gaps.length?'PARTIAL':'COMPLETE',store_raw:storeRaw,attempts,population_packets:populationPackets,all_population_packets:retainedPackets,gaps,fresh,from_sealed:fromSealed,
+      population:{initial_total:initial.total,closing_total:closing.total,cohort_digest:hash(first),complete:gaps.length===0,
+        scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts}};
+  }catch(e){return {status:'PARTIAL',reason_code:reason(e),store_raw:storeRaw,attempts:[],gaps,fresh,from_sealed:fromSealed,
+    population:{initial_total:initial?.total??null,closing_total:null,complete:false}};}
+}
+const unavailable=reason_code=>({status:'partial',value:null,reason_code,official_metric:false,source_authenticated:false});
+
+// The runtime obtains this selection independently of a cached packet, from
+// its accepted target/source configuration. It is a selection, not authority.
+function sourceContract(raw,repository,window){
+  const c=parseFourSourceRawData(raw);
+  if(!exact(c,['schema','repository','scope','window','four_expected_sources_raw','clock'])||
+    c.schema!=='clued.merge-admission-r9-source-contract/1'||c.repository!==repository||
+    !exact(c.scope,['project_id','queue_ref'])||!uuid(c.scope.project_id)||
+    !c.scope.queue_ref.startsWith('merge:'+repository.toLowerCase()+':')||
+    !exact(c.window,['start','end'])||timestampMicros(c.window.start)!==timestampMicros(window.start)||
+    timestampMicros(c.window.end)!==timestampMicros(window.end)||
+    c.four_expected_sources_raw!==null&&typeof c.four_expected_sources_raw!=='string'||
+    c.clock!==null&&(!exact(c.clock,['foundation_digest','catalog_digest','transport_definition_digest'])||Object.values(c.clock).some(x=>!digest(x))))fail('INDEPENDENT_SOURCE_CONTRACT_INVALID');
+  if(c.four_expected_sources_raw!==null){const f=parseFourSourceRawData(c.four_expected_sources_raw);
+    if(f.repository!==c.repository||!same(f.scope,c.scope))fail('FOUR_SOURCE_INDEPENDENT_TARGET_MISMATCH');}
+  return c;
+}
+const key=a=>String(a.run_id)+':'+(a.attempt??a.run_attempt);
+const atEqual=(a,b)=>a===null&&b===null||a!==null&&b!==null&&timestampMicros(a)===timestampMicros(b);
+const canonical=x=>Array.isArray(x)?x.map(canonical):object(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
+const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+// updated_at is used only as an upper bound on the already observed completed
+// state, never as completion time. A common cohort across the entire possible
+// interval is a proof; a crossing interval remains UNKNOWN.
+export function nativeCompletionMembership(packet,window){
+  try{
+    const r=packet.run;if(r.status!=='completed')fail('NATIVE_COMPLETION_NOT_TERMINAL');
+    let lower=timestampMicros(r.created_at),upper=timestampMicros(r.updated_at);
+    for(const j of packet.jobs)for(const at of [j.created_at,j.started_at,j.completed_at])if(at!==null){const t=timestampMicros(at);if(t>lower)lower=t;}
+    const from=timestampMicros(window.start),to=timestampMicros(window.end);
+    if(lower>upper||from>=to)fail('NATIVE_COMPLETION_BOUNDS_INVALID');
+    const membership=lower>=from&&upper<to?'IN_WINDOW':upper<from||lower>=to?'OUTSIDE_WINDOW':'UNKNOWN';
+    return {membership,lower_us:String(lower),upper_us:String(upper),timing_basis:'native_job_completion_lower_and_terminal_update_upper_bounds',exact_completed_at:null};
+  }catch{return {membership:'UNKNOWN',reason_code:'NATIVE_COMPLETION_BOUNDS_UNAVAILABLE',exact_completed_at:null};}
+}
+const isoMicros=us=>{const x=BigInt(us);return new Date(Number(x/1000000n)*1000).toISOString().slice(0,19)+'.'+(x%1000000n).toString().padStart(6,'0')+'Z';};
+// A root workflow completion POINT is absent from the actual GitHub DTO. Keep
+// the proven interval instead. Normalized attempt rows remain a data stage;
+// Native artifact/target authentication is independently enforced above.
+export function mapNativeAttemptsForFourSource(native,expectedRaw,window,{profilesRaw=null,workflowBlobs={}}={}){
+  const e=parseFourSourceRawData(expectedRaw),admissionPaths=new Set(e.admission_sources.flatMap(s=>[s.workflow_path,s.reverify_workflow_path]));
+  const profiles=profilesRaw===null?null:parseFourSourceRawData(profilesRaw);
+  if(profiles&&hash(profilesRaw)!==e.execution_source.profiles_sha256)fail('INDEPENDENT_NATIVE_KIND_SELECTION_MISMATCH');
+  return (native.population_packets??[]).map(n=>{
+    const r=n.run,m=r.status==='completed'?nativeCompletionMembership(n,window):null;
+    const interval=m?.lower_us===undefined?null:{lower_at:isoMicros(m.lower_us),upper_at:isoMicros(m.upper_us),basis:'native_job_completion_lower_and_terminal_update_upper_bounds'};
+    return {run_id:r.run_id,attempt:r.run_attempt,pr_number:r.pull_requests.length===1?r.pull_requests[0]:null,head_sha:r.head_sha,
+      kind:nativeAdmissionKind(r,n.jobs,e)?'admission':profiles&&registeredWorkflowSource(profiles,r.path.split('@')[0],workflowBlobs[r.path.split('@')[0]])?.passed?'ci':'other',status:r.status,conclusion:r.conclusion,
+      started_at:r.run_started_at,completed_at:null,terminal_interval:interval};
+  });
+}
+function jobProjection(j){
+  return {id:String(j.id),run_id:String(j.run_id),run_attempt:j.run_attempt,name:j.name,status:j.status,conclusion:j.conclusion,
+    created_at:j.created_at===undefined?undefined:new Date(j.created_at).toISOString(),started_at:j.started_at===null?null:new Date(j.started_at).toISOString(),
+    completed_at:j.completed_at===null?null:new Date(j.completed_at).toISOString(),labels:[...j.labels].sort(),
+    steps:j.steps.map(s=>({number:s.number,name:s.name,status:s.status,conclusion:s.conclusion,
+      started_at:s.started_at===null?null:new Date(s.started_at).toISOString(),completed_at:s.completed_at===null?null:new Date(s.completed_at).toISOString()})).sort((a,b)=>a.number-b.number)};
+}
+// Only compares supplied evidence to actual, immutable Native captures. This
+// helper does not grant provenance; collectR9Measurement owns that promotion.
+export function bindFourSourceNativePopulation(packetRaw,native,expectedRaw){
+  try{
+    const p=parseFourSourceRawData(packetRaw),e=parseFourSourceRawData(expectedRaw);
+    const inspected=inspectNativePopulationStore(native.store_raw,p.repository);
+    if(inspected.status!=='VALID_DATA_STORE'||native.population?.complete!==true||p.repository!==e.repository||!same(p.scope,e.scope))fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
+    const actual=inspected.packets,supplied=new Map(p.attempts.map(a=>[key(a),a]));
+    const registry=parseFourSourceRawData(p.proof_profiles_raw);
+    if(supplied.size!==p.attempts.length)fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
+    for(const n of native.population_packets??native.attempts??[])if(!supplied.has(key(n.run)))fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
+    for(const a of supplied.values()){
+      const n=actual[key(a)],r=n?.run;
+      if(!r||a.status!==r.status||a.conclusion!==r.conclusion||!atEqual(a.started_at,r.run_started_at))fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
+      // Admission's target PR head differs legitimately from its trusted main
+      // run head. Bind that separate identity through its actual envelope below.
+      if(a.kind!=='admission'&&a.head_sha!==r.head_sha)fail('FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
+      if(a.completed_at!==null){
+        // d0fc has no exact root-workflow completion fact. Being inside bounds
+        // is insufficient to promote a selected representative into one.
+        if(r.completed_at===undefined||!atEqual(a.completed_at,r.completed_at))fail('UNSOURCED_NATIVE_TERMINAL_POINT');
+        const t=timestampMicros(a.completed_at);
+        if(t>timestampMicros(r.updated_at)||n.jobs.some(j=>j.completed_at!==null&&timestampMicros(j.completed_at)>t))fail('FOUR_SOURCE_NATIVE_TERMINAL_TIME_CONTRADICTORY');
+        const m=nativeCompletionMembership(n,p.window),inside=t>=timestampMicros(p.window.start)&&t<timestampMicros(p.window.end);
+        if(m.lower_us!==undefined&&t<BigInt(m.lower_us))fail('FOUR_SOURCE_NATIVE_TERMINAL_TIME_CONTRADICTORY');
+        if(m.membership==='UNKNOWN')fail('FOUR_SOURCE_NATIVE_TERMINAL_MEMBERSHIP_UNKNOWN');
+        if(inside!==(m.membership==='IN_WINDOW'))fail('FOUR_SOURCE_NATIVE_TERMINAL_MEMBERSHIP_MISMATCH');
+      }
+      if(a.terminal_interval!==undefined&&a.terminal_interval!==null){
+        const b=a.terminal_interval,m=nativeCompletionMembership(n,p.window);
+        if(!exact(b,['lower_at','upper_at','basis'])||b.basis!==m.timing_basis||m.lower_us===undefined||
+          timestampMicros(b.lower_at)!==BigInt(m.lower_us)||timestampMicros(b.upper_at)!==BigInt(m.upper_us))fail('FOUR_SOURCE_NATIVE_TERMINAL_INTERVAL_MISMATCH');
+      }else if(a.status==='completed'&&a.completed_at===null)fail('FOUR_SOURCE_NATIVE_TERMINAL_BOUNDS_MISSING');
+      const isAdmission=nativeAdmissionKind(r,n.jobs,e);
+      if(isAdmission!==(a.kind==='admission'))fail('FOUR_SOURCE_NATIVE_KIND_MISMATCH');
+      const file=r.path.split('@')[0],source=p.execution_sources.entries.find(x=>x.workflow_file===file);
+      const registered=source&&registeredWorkflowSource(registry,file,source.workflow_blob);
+      if(!isAdmission&&r.pull_requests.length&&registered?.passed&&registered.profile.primary_ids.length&&a.kind!=='ci')fail('FOUR_SOURCE_NATIVE_KIND_MISMATCH');
+      if(a.kind==='ci'&&a.pr_number!==null&&!r.pull_requests.includes(a.pr_number))fail('FOUR_SOURCE_NATIVE_PR_ASSOCIATION_MISMATCH');
+    }
+    for(const row of p.admissions){
+      const q=parseFourSourceRawData(row.packet_raw),i=q.identity,r=actual[String(i.run_id)+':'+i.run_attempt]?.run;
+      const historicalUnknownStart=q.final_decision_observed===false&&q.outcome===null&&i.native_run.status==='in_progress'&&i.native_run.run_started_at===null;
+      if(!r||String(i.native_run.id)!==r.run_id||i.native_run.run_attempt!==r.run_attempt||i.native_run.head_sha!==r.head_sha||
+        i.native_run.path.split('@')[0]!==r.path.split('@')[0]||
+        !(atEqual(i.native_run.run_started_at,r.run_started_at)||historicalUnknownStart&&r.run_started_at!==null))fail('FOUR_SOURCE_NATIVE_ADMISSION_IDENTITY_MISMATCH');
+      if(i.native_job){const j=actual[key(r)].jobs.find(j=>j.id===String(i.native_job.id));
+        if(!j||i.native_job.name!==j.name||i.native_job.run_attempt!==j.run_attempt||String(i.native_job.run_id)!==j.run_id||
+          i.native_job.status==='completed'&&(i.native_job.status!==j.status||i.native_job.conclusion!==j.conclusion))fail('FOUR_SOURCE_NATIVE_ADMISSION_JOB_MISMATCH');}
+    }
+    for(const round of p.rounds)for(const x of round.execution_packets){
+      const n=actual[x.run_key];
+      if(!n||x.workflow_file!==n.run.path.split('@')[0]||!same(x.jobs.map(jobProjection).sort((a,b)=>BigInt(a.id)<BigInt(b.id)?-1:1),n.jobs.map(jobProjection)))fail('FOUR_SOURCE_NATIVE_EXECUTION_JOBS_MISMATCH');
+      for(const barrier of [x.before_attempt,x.after_attempt])if(String(barrier.run_id)!==n.run.run_id||barrier.attempt!==n.run.run_attempt||
+        barrier.head_sha!==n.run.head_sha||barrier.status!==n.run.status||barrier.conclusion!==n.run.conclusion)fail('FOUR_SOURCE_NATIVE_EXECUTION_BARRIER_MISMATCH');
+      // An observed round close must be after the whole possible terminal
+      // interval. A guessed earlier representative cannot justify wasting it.
+      if(round.completed_at!==undefined&&round.completed_at!==null&&timestampMicros(round.completed_at)<timestampMicros(n.run.updated_at))fail('FOUR_SOURCE_NATIVE_ROUND_CLOSE_UNPROVED');
+    }
+    return {status:'NATIVE_BOUND',complete:true,source_authenticated:false,official_metric:false};
+  }catch(e){return {status:'PARTIAL',reason_code:reason(e),complete:false,source_authenticated:false,official_metric:false};}
+}
+export function bindClockSource(packetClock,selectionRaw,repository,window){
+  try{
+    const c=sourceContract(selectionRaw,repository,window),pins=c.clock;
+    if(!pins||!packetClock?.transport_raw)fail('AUTHENTICATED_SEALED_CLOCK_TRANSPORT_MISSING');
+    const pages=parseFourSourceRawData(packetClock.pages_raw),responses=parseFourSourceRawData(packetClock.transport_raw),options=parseFourSourceRawData(packetClock.options_raw);
+    if(!Array.isArray(pages)||!Array.isArray(responses)||pages.length!==responses.length||pages.length===0||
+      options.queueRef!==c.scope.queue_ref||options.expectedFoundationDigest!==pins.foundation_digest||options.expectedCatalogDigest!==pins.catalog_digest)fail('CLOCK_INDEPENDENT_SUBJECT_MISMATCH');
+    for(let i=0;i<pages.length;i++){
+      const p=pages[i],r=responses[i],a=r?.server_auth;
+      if(r?.status!=='ok'||r.operation!=='clock_page'||!same(r.measurement,p)||!a||
+        a.schema!=='clued.clock-audit-transport-auth/1'||a.status!=='AUTHENTICATED_TARGET_READ'||a.required_scope!=='audit:read'||
+        a.context_key!=='project:'+c.scope.project_id||a.queue_ref!==c.scope.queue_ref||a.transport_definition_digest!==pins.transport_definition_digest||
+        !digest(a.binding_scope_fingerprint)||!Number.isSafeInteger(a.contributor_count)||a.contributor_count<1||
+        i>0&&(a.binding_scope_fingerprint!==responses[0].server_auth.binding_scope_fingerprint||a.contributor_count!==responses[0].server_auth.contributor_count)||
+        timestampMicros(a.observed_at)<BigInt(p.seal.closing_us)||
+        !same(r.pins,{epoch_id:p.epoch.epoch_id,stream_id:p.epoch.stream_id,clock_generation_id:p.epoch.clock_generation_id,
+          foundation_digest:pins.foundation_digest,catalog_digest:pins.catalog_digest})||
+        !same(r.seal_pins,{end_sequence:p.seal.end_sequence,closing_us:p.seal.closing_us,catalog_digest:pins.catalog_digest})||
+        BigInt(p.epoch.opening_us)!==timestampMicros(window.start)||BigInt(p.seal.closing_us)!==timestampMicros(window.end))fail('CLOCK_INDEPENDENT_SUBJECT_MISMATCH');
+    }
+    const result=integrateClockSourceCandidate(packetClock.pages_raw,packetClock.options_raw);
+    if(!result.candidate_ready||result.status!=='UNIQUE_VALUE_CANDIDATE')fail('SEALED_CLOCK_SOURCE_INCOMPLETE');
+    return {status:'TYPED_SOURCE_BOUND',result,source_authenticated:false,official_metric:false};
+  }catch(e){return {status:'PARTIAL',reason_code:reason(e),source_authenticated:false,official_metric:false};}
+}
+
+export async function collectR9Measurement({request,budget,repository,window,sourceContractRaw=null,naturalSelection=null,liveClock=null,runtimeInputs=null,cacheRaw=emptyR9ArtifactCache(repository),onStore=()=>{}}){
+  const slice=r9RequestSlice(request,budget),gaps=[];let contract=null,restored=null,native=null;
+  if(!slice.allowance)return {status:'partial',reason_code:'MEASUREMENT_APP_REQUIRED',metrics:null,t0:null,cache_raw:cacheRaw,sealed_packet:null};
+  try{contract=await loadR9DefaultBranchContract({request:slice.request,repository});restored=await restoreArtifact(slice.request,repository,contract,cacheRaw);
+    if(!restored.packet)gaps.push(restored.reason_code);
+    native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.packet?.native_store_raw??null,onStore});
+    if(native.status!=='COMPLETE')gaps.push(native.reason_code??'NATIVE_POPULATION_INCOMPLETE');
+  }catch(e){gaps.push(reason(e));}
+  const packet=restored?.packet,metrics={};let four=null,clock=null,binding=null,selection=null;
+  try{selection=sourceContract(sourceContractRaw,repository,window);}catch{gaps.push('INDEPENDENT_SOURCE_CONTRACT_MISSING_OR_INVALID');}
+  let naturalSelectionBound=false;
+  if(naturalSelection&&contract)try{const cfg=parseFourSourceRawData((await sourceText(slice.request,repository,R9_RUNTIME_CONFIG,contract.head_sha)).text);
+    naturalSelectionBound=naturalSelection.head_sha===contract.head_sha&&cfg.registration_status==='registered'&&
+      same(cfg.natural_producers,naturalSelection.natural_producers)&&same(cfg.operation_coverage,runtimeInputs?.operation_coverage)&&
+      same(cfg.scope,selection?.scope)&&cfg.forward_epoch?.epoch_id===runtimeInputs?.forward_epoch?.epoch_id;
+    if(!naturalSelectionBound)gaps.push('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED');
+  }catch{gaps.push('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED');}
+  const naturalInputs=naturalSelection&&native?.status==='COMPLETE'?await collectNaturalSourceArtifacts({request:slice.request,repository,native,
+    selection:naturalSelection,readZip:b=>readSealedPacketZip(b,'natural-packet.json'),authenticatedEntries:packet?.natural_inputs?.entries??[],
+    authenticatedSourceBytes:packet?.natural_inputs?.source_bytes??{},authenticatedAppChecks:packet?.natural_inputs?.app_checks??{}}):null;
+  if(naturalInputs){const refs=new Set(naturalInputs.entries.flatMap(x=>JSON.parse(x.packet_raw).events.flatMap(e=>
+    e.kind==='round_ci_observation'?(e.payload.native_runs??[]).map(r=>r.run_id+':'+r.attempt):e.kind==='operation_request'?(e.payload.run_keys??[]):[])));
+    for(const n of native.all_population_packets??[])if(refs.has(key(n.run))&&!native.population_packets.some(p=>key(p.run)===key(n.run)))native.population_packets.push(n);}
+  const mappedAttempts=native?.status==='COMPLETE'&&selection?.four_expected_sources_raw?mapNativeAttemptsForFourSource(native,selection.four_expected_sources_raw,window,
+    {profilesRaw:naturalSelection?.profiles_raw??null,workflowBlobs:naturalSelection?.workflow_blobs??{}}):[];
+  const activity=naturalInputs?await collectNativeActivity({request:slice.request,repository,window,authenticatedActivity:packet?.natural_inputs?.activity??null}):null;
+  if(naturalInputs)naturalInputs.activity=activity;
+  const built=runtimeInputs&&naturalInputs?assembleNaturalFourSourceFrame({native,attemptRows:mappedAttempts,natural:naturalInputs,runtime:runtimeInputs,
+    closedAt:new Date().toISOString(),appChecks:naturalInputs.app_checks,sourceBytes:{...runtimeInputs.admission_source_bytes,...naturalInputs.source_bytes},providerEvents:activity?.events??[],providerActivity:activity}):null;
+  let frame=built?.frame??packet?.four_source;
+  const expectedForFrame=built?.frame?.expected_sources_raw??selection?.four_expected_sources_raw;
+  try{if(frame&&expectedForFrame){
+    frame=excludeQuarantinedMainMoves(frame,activity);
+    if(!built?.frame&&!same(parseFourSourceRawData(frame.expected_sources_raw),parseFourSourceRawData(expectedForFrame)))fail('FOUR_SOURCE_INDEPENDENT_SELECTION_MISMATCH');
+    four=readMergeAdmissionFourSources(frame.packet_raw,expectedForFrame);
+    if(built?.math?.metrics?.wasted_final_rounds&&four.metrics?.wasted_final_rounds){
+      four.metrics.wasted_final_rounds.activity_coverage=built.math.metrics.wasted_final_rounds.activity_coverage;
+      four.metrics.wasted_final_rounds.activity_dependent_unknown_rounds=built.math.metrics.wasted_final_rounds.activity_dependent_unknown_rounds;}
+    const f=parseFourSourceRawData(frame.packet_raw);
+    // Exact attempt identities/head/status must be present in the independently
+    // collected population. Additional reference-closure rows remain permitted.
+    binding=bindFourSourceNativePopulation(frame.packet_raw,native,expectedForFrame);
+    if(!atEqual(f.window.start,window.start)||!atEqual(f.window.end,window.end)||!binding.complete)gaps.push(binding.reason_code??'FOUR_SOURCE_NATIVE_POPULATION_MISMATCH');
+    if(!four.candidate_ready)gaps.push('FOUR_SOURCE_SUPPLIED_POPULATION_INCOMPLETE');
+  }else gaps.push('NATURAL_ADMISSION_OPERATION_ROUND_PRODUCER_PACKETS_MISSING');}catch{gaps.push('NATURAL_FOUR_SOURCE_PACKET_MALFORMED');}
+  const actualClock=liveClock??packet?.clock;
+  if(actualClock){const bound=bindClockSource(actualClock,sourceContractRaw,repository,window);clock=bound.result;if(bound.status!=='TYPED_SOURCE_BOUND')gaps.push(bound.reason_code);}
+  else gaps.push('AUTHENTICATED_SEALED_CLOCK_TRANSPORT_MISSING');
+  // Fresh Source provenance is proved by real immutable original-job
+  // artifacts plus the independent protected-main Source registry.
+  const authenticated=restored?.status==='AUTHENTICATED_SEALED_ARTIFACT'||naturalSelectionBound&&naturalInputs?.status==='NATIVE_ORIGIN_BOUND';
+  const fourQualified=authenticated&&native?.status==='COMPLETE'&&binding?.complete===true&&four?.candidate_ready===true&&
+    !gaps.some(g=>/FOUR_SOURCE|NATURAL_|NATIVE_/.test(g));
+  const clockQualified=authenticated&&clock?.candidate_ready===true&&clock.status==='UNIQUE_VALUE_CANDIDATE';
+  const qualified=fourQualified&&clockQualified;
+  for(const name of ['admission_failures_by_reason','unclaimed_admitted','update_main_rounds','wasted_final_rounds','cancellation_causes']){
+    const m=four?.metrics?.[name];metrics[name]=fourQualified&&m?{...m,status:m.value===null?'partial':'measured',official_metric:true,source_authenticated:true}:unavailable(gaps[0]??'FOUR_SOURCE_NOT_QUALIFIED');
+    if(m&&!fourQualified)metrics[name].supplied_calculation_candidate=m;
+  }
+  metrics.queue_depth_p95=clockQualified?{status:'measured',value:clock.value,official_metric:true,source_authenticated:true}:unavailable(gaps[0]??'CLOCK_VALUE_NOT_PROVED');
+  return {schema:'clued.merge-admission-r9-collection/1',repository,status:qualified?'measured':'partial',metrics,gaps:[...new Set(gaps)],
+    window,native,source_proof:restored?.proof??null,source_authenticated:authenticated,official_metric:fourQualified||clockQualified,
+    requests:{used:slice.used,scheduling_share:slice.allowance,shared_run_cap:budget.cap},t0:null,
+    natural_continuity:'NOT_ESTABLISHED',cache_raw:packet?JSON.stringify({schema:R9_CACHE_SCHEMA,repository,artifact_id:restored.artifact_id,zip_base64:restored.zip_bytes.toString('base64')}):emptyR9ArtifactCache(repository),
+    // The caller seals only independently authenticated prior packets + fresh
+    // Native captures; a future accepted writer publishes this increment once.
+    next_native_store_raw:native?.store_raw??null,natural_inputs:naturalInputs,native_attempt_rows:mappedAttempts,natural_frame_build:built?{status:built.status,gaps:built.gaps}:null,
+    activity_coverage:activity?{status:activity.status,reason_code:activity.reason_code,delivery_through_window_end:activity.delivery_through_window_end,
+      closing_delivery_watermark:activity.closing_delivery_watermark,observed_pagination_status:activity.observed_pagination_status,provider_retention:activity.provider_retention,observed_push_events:activity.events.length,
+      quarantined_ids:activity.quarantined_ids,quarantine:activity.quarantine}:null,
+    authenticated_source_inputs:frame||actualClock?{four_source:frame??null,clock:actualClock??null}:null,sealed_packet:null};
+}
+
+export function sealR9Packet({repository,publisher,sourceBlobs,window,sealedAt,nativeStoreRaw,fourSource=null,clock=null,naturalInputs=null}){
+  const packet={schema:R9_PACKET_SCHEMA,repository,publisher,source_blobs:sourceBlobs,window,sealed_at:sealedAt,
+    native_store_raw:nativeStoreRaw,four_source:fourSource,clock,natural_inputs:naturalInputs};
+  packetShape(JSON.stringify(packet),repository);return JSON.stringify(packet);
+}

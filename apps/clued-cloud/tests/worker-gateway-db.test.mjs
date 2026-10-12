@@ -14,6 +14,8 @@ import { CLOSEOUT_MIGRATION, WORKER_SIGNATURES, assertGatewayCloseoutBoundary, s
 // Preserve the C1 historical assertions, then exercise the actual stage-2 migration.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261009070002_worker_gateway_transition_v1.sql';
+const CLOCK_MIGRATION = '20261011113259_merge_admission_measurement_clock_target_v1.sql';
+const CLOCK_SOURCE_SHA256 = 'a895a6593187dc0dd48e79c9f997929fca5ba8ca5033fd3ed8a869f88dbc9bd3';
 const role = 'clued_worker_gateway';
 const hex = () => crypto.randomBytes(32).toString('hex');
 async function freePort() {
@@ -31,6 +33,83 @@ const priorGrants = `select p.oid::regprocedure::text signature, p.proowner::reg
   has_function_privilege('clued_p5_gateway',p.oid,'EXECUTE') p5
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.proname like 'clued_%' order by signature`;
+
+// Supabase's Supautils supplies postgres with controlled event-trigger DDL.
+// Vanilla embedded PostgreSQL has no hook. Emulate only these two fixed DDL
+// statements through a disposable, zero-argument admin-owned capability; all
+// other migration statements still run as NOSUPERUSER postgres. This is not a
+// real Supautils/production capability test or a generic privileged SQL runner.
+async function applyClockFixtureCapability(admin, migrator, caller, clockSql) {
+  assert.equal(crypto.createHash('sha256').update(clockSql).digest('hex'), CLOCK_SOURCE_SHA256);
+  const statements = [
+    'create event trigger clock_source_ddl_end_candidate on ddl_command_end execute function clued_private.clock_source_ddl_candidate_v1();',
+    'create event trigger clock_source_sql_drop_candidate on sql_drop execute function clued_private.clock_source_ddl_candidate_v1();',
+  ];
+  for (const statement of statements) assert.equal(clockSql.split(statement).length, 2, 'the exact reviewed DDL appears once');
+  const roleState = () => migrator.query(`select current_user,session_user,rolsuper from pg_roles where rolname=current_user`);
+  assert.deepEqual((await roleState()).rows[0], { current_user:'postgres',session_user:'postgres',rolsuper:false });
+  assert.equal((await admin.query(`select count(*)::integer n from pg_event_trigger
+    where evtname in ('clock_source_ddl_end_candidate','clock_source_sql_drop_candidate')`)).rows[0].n,0);
+  await assert.rejects(migrator.query(clockSql), error => error.code === '42501'
+    && error.message.includes('permission denied to create event trigger') && error.message.includes('clock_source_ddl_end_candidate'));
+  assert.equal((await admin.query(`select to_regclass('clued_private.merge_clock_boundary_candidate_v1') is null absent`)).rows[0].absent, true,
+    'the unadapted atomic clock installation rolls back at the vanilla capability gap');
+  await migrator.query('create temporary table fixture_clock_capability_scope_v1(id integer)');
+  const schema = (await migrator.query(`select nspname from pg_namespace where oid=pg_my_temp_schema()`)).rows[0].nspname;
+  assert.match(schema, /^pg_temp_[0-9]+$/);
+  assert.deepEqual((await migrator.query(`select c.relnamespace=pg_my_temp_schema() same_schema,
+    c.relowner::regrole::text owner,c.relpersistence from pg_class c
+    where c.oid='pg_temp.fixture_clock_capability_scope_v1'::regclass`)).rows[0],
+    {same_schema:true,owner:'postgres',relpersistence:'t'});
+  const capability = `"${schema}".fixture_clock_event_capability_v1()`;
+  assert.equal((await admin.query('select to_regprocedure($1) is null absent',[capability])).rows[0].absent,true);
+  await admin.query(`create function ${capability} returns void language plpgsql security definer set search_path='' as $scope$
+    begin
+      if session_user is distinct from 'postgres' or current_setting('role',true) is distinct from 'none'
+        or pg_my_temp_schema() is distinct from '${schema}'::regnamespace::oid then
+        raise exception 'fixture_clock_deployment_role_required' using errcode='42501';
+      end if;
+      ${statements.join('\n')}
+    end $scope$;
+    revoke all on function ${capability} from public,anon,authenticated,service_role,authenticator,clued_p5_gateway,clued_worker_gateway;
+    grant execute on function ${capability} to postgres;`);
+  try {
+    assert.deepEqual((await admin.query(`select p.proowner::regrole::text owner,p.prosecdef,
+      pg_get_function_identity_arguments(p.oid) arguments,has_function_privilege('postgres',p.oid,'EXECUTE') migrator,
+      has_function_privilege('clued_worker_gateway',p.oid,'EXECUTE') gateway,has_function_privilege('anon',p.oid,'EXECUTE') anon,
+      has_function_privilege('authenticated',p.oid,'EXECUTE') authenticated,has_function_privilege('service_role',p.oid,'EXECUTE') service,
+      has_function_privilege('authenticator',p.oid,'EXECUTE') authenticator,has_function_privilege('clued_p5_gateway',p.oid,'EXECUTE') p5,
+      exists(select 1 from aclexplode(p.proacl) a where a.grantee=0 and a.privilege_type='EXECUTE') public
+      from pg_proc p where p.oid=$1::regprocedure`,[capability])).rows[0],
+      {owner:'supabase_admin',prosecdef:true,arguments:'',migrator:true,gateway:false,anon:false,authenticated:false,service:false,authenticator:false,p5:false,public:false});
+    assert.deepEqual((await admin.query(`select a.grantee::regrole::text grantee,a.privilege_type,a.is_grantable
+      from pg_proc p cross join lateral aclexplode(p.proacl) a where p.oid=$1::regprocedure order by grantee`,[capability])).rows,
+      [{grantee:'postgres',privilege_type:'EXECUTE',is_grantable:false},
+        {grantee:'supabase_admin',privilege_type:'EXECUTE',is_grantable:false}], 'no other caller gets the scoped deployment capability');
+    await caller.query('set role clued_worker_gateway');
+    await assert.rejects(caller.query(`select ${capability}`), error => error.code==='42501');
+    const adapted = clockSql.replace(statements[0], `perform ${capability};`).replace(statements[1], '');
+    assert.equal(adapted.replace(`perform ${capability};`,''), clockSql.replace(statements[0],'').replace(statements[1],''),
+      'only the two reviewed event-trigger statements are delegated; every other byte is unchanged');
+    await migrator.query(adapted);
+    assert.deepEqual((await roleState()).rows[0], { current_user:'postgres',session_user:'postgres',rolsuper:false });
+    assert.deepEqual((await admin.query(`select evtname,evtevent,evtenabled,evtowner::regrole::text owner
+      from pg_event_trigger where evtname in ('clock_source_ddl_end_candidate','clock_source_sql_drop_candidate') order by evtname`)).rows,
+      [{evtname:'clock_source_ddl_end_candidate',evtevent:'ddl_command_end',evtenabled:'O',owner:'supabase_admin'},
+        {evtname:'clock_source_sql_drop_candidate',evtevent:'sql_drop',evtenabled:'O',owner:'supabase_admin'}],
+      'vanilla event-trigger ownership remains the trusted deployment administrator, not the runtime caller');
+    assert.equal((await admin.query(`select bool_and(p.proowner='postgres'::regrole) exact_owner from pg_proc p
+      join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_private' and
+      (p.proname like 'clock_source_%' or p.proname like 'merge_clock_%')`)).rows[0].exact_owner, true);
+    assert.equal((await admin.query(`select bool_and(c.relowner='postgres'::regrole) exact_owner from pg_class c
+      join pg_namespace n on n.oid=c.relnamespace where n.nspname='clued_private' and c.relkind in ('r','S') and
+      (c.relname like 'clock_source_%' or c.relname like 'merge_clock_%' or c.relname='merge_measurement_clock_registration_v1')`)).rows[0].exact_owner,true);
+  } finally {
+    await admin.query(`drop function ${capability}`);
+    await migrator.query('drop table fixture_clock_capability_scope_v1');
+  }
+  assert.equal((await admin.query('select to_regprocedure($1) is null absent',[capability])).rows[0].absent,true);
+}
 
 test('Worker gateway is additive, least privileged, and still requires a live Binding', { timeout: 600000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-worker-gateway-'));
@@ -335,7 +414,11 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
     await t.test('the full current migration chain closes anon RPCs and preserves Native/P5 definitions and ACL', async () => {
       await migrator.query('drop function public.test_worker_gateway_role_probe()');
       for (const name of migrations.filter(n => n > MIGRATION && n !== CLOSEOUT_MIGRATION)) {
-        try { await migrator.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8')); }
+        try {
+          const laterSql=await fs.readFile(path.join(root,'supabase/migrations',name),'utf8');
+          if(name===CLOCK_MIGRATION) await applyClockFixtureCapability(admin,migrator,caller,laterSql);
+          else await migrator.query(laterSql);
+        }
         catch (error) { throw new Error(`Later migration ${name}: ${error.message}`,{cause:error}); }
       }
       const catalogBefore=await snapshotCallerCatalog(admin);

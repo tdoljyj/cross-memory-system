@@ -73,3 +73,14 @@ jobs:
           CLUED_CONTEXT_READ_TOKEN: ${{ secrets.CLUED_ADMISSION_CLUED_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/ci/clued-work-admission.mjs --mode dispatch-admit
+      - name: Export the closed local natural R9 packet
+        if: ${{ always() }}
+        run: node scripts/ci/merge-admission-source-producer.mjs --export admission
+      - name: Preserve natural R9 source observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clued-r9-natural-source-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: .clued-r9-source-events/sealed/${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}/natural-packet.json
+          if-no-files-found: warn
+          retention-days: 90

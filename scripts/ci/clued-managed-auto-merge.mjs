@@ -21,7 +21,7 @@ export async function appRequest(fetchImpl, env, method, route, bearer, body) {
   });
   let parsed = null;
   try { parsed = await response.json(); } catch { parsed = null; }
-  return { status: response.status, body: parsed };
+  return { status: response.status, body: parsed,request_id:response.headers.get("x-github-request-id") };
 }
 
 // An installation token with the executor's permissions, or the reason there
