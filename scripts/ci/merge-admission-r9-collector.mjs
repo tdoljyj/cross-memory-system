@@ -98,9 +98,14 @@ export async function loadR9DefaultBranchContract({request,repository}){
   if(branch?.name!==repo.default_branch||!sha(head))fail('NATIVE_DEFAULT_BRANCH_INVALID');
   const profiles=await sourceText(request,repository,'scripts/ci/clued-gated-proof-profiles.json',head);
   const roles=await sourceText(request,repository,'scripts/ci/clued-gated-proof-role-specs.json',head);
+  const tree=await bodyOf(request,`/repos/${repository}/git/trees/${head}?recursive=1`);
+  if(tree.truncated!==false||!Array.isArray(tree.tree)||new Set(tree.tree.map(x=>x.path)).size!==tree.tree.length)fail('NATIVE_SOURCE_TREE_INVALID');
   let r9Registry=null;try{r9Registry=parseFourSourceRawData((await sourceText(request,repository,R9_RUNTIME_CONFIG,head)).text);}catch{}
   return {repository,repository_id:String(repo.id),default_branch:repo.default_branch,head_sha:head,
-    profiles:parseFourSourceRawData(profiles.text),roles:parseFourSourceRawData(roles.text),r9_registry:r9Registry,native_source_refs:[profiles.blob,roles.blob]};
+    profiles:parseFourSourceRawData(profiles.text),roles:parseFourSourceRawData(roles.text),
+    profiles_sha256:hash(profiles.text),role_specs_sha256:hash(roles.text),
+    source_tree:Object.fromEntries(tree.tree.map(x=>[x.path,{sha:x.sha,type:x.type,mode:x.mode}])),
+    r9_registry:r9Registry,native_source_refs:[profiles.blob,roles.blob]};
 }
 // Observation-publisher roles live in the protected R9 registry. Registering a
 // non-PR measurement job must never add it to the gated PR workflow catalogue.
@@ -218,8 +223,16 @@ async function inventory(request,repository,window){
       const mid=Math.floor((range.lo+range.hi)/2);ranges.push({lo:mid,hi:range.hi},{lo:range.lo,hi:mid});continue;
     }
     const total=first.total_count,leafIds=new Set();let count=0;
-    for(let page=1;page<=10;page++){
-      const body=page===1?first:await bodyOf(request,route+'&page='+page);
+    const pageCount=Math.max(1,Math.ceil(total/100)),bodies=[first];
+    // Same existing App/slice/floor/deadline, at most four HTTP reads inside
+    // this process. No extra worker, request pool, retry or clipped directory.
+    for(let page=2;page<=pageCount;page+=4){
+      const batch=await Promise.allSettled(Array.from({length:Math.min(4,pageCount-page+1)},(_,i)=>bodyOf(request,route+'&page='+(page+i))));
+      const failed=batch.find(r=>r.status==='rejected');if(failed)throw failed.reason;
+      bodies.push(...batch.map(r=>r.value));
+    }
+    for(let page=1;page<=pageCount;page++){
+      const body=bodies[page-1];
       if(body.total_count!==total||!Array.isArray(body.workflow_runs)||body.workflow_runs.length!==Math.min(100,total-count))fail('NATIVE_INVENTORY_PAGINATION_INVALID');
       for(const row of body.workflow_runs){const run=inventoryIdentity(row),created=timestampMicros(row.created_at);
         if(created<BigInt(range.lo)*1000n||created>BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_RANGE_INVALID');
@@ -228,7 +241,7 @@ async function inventory(request,repository,window){
           if(created!==BigInt(range.lo)*1000n&&created!==BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_DUPLICATE_ID');
           if(!same(prior,run))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');
         }else{ids.set(run.id,run);items.push(run);}count++;if(items.length>MAX_RUNS)fail('NATIVE_INVENTORY_ITEM_CAP');}
-      if(count===total)break;if(page===10)fail('NATIVE_INVENTORY_PAGE_CAP');
+      if(count===total)break;
     }
   }
   // Ceil-to-millisecond search is inclusive; exact microsecond watermark below
@@ -262,7 +275,10 @@ export async function collectIncrementalNative({request,repository,window,authen
   try{
     if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
     initial=await inventory(request,repository,window);const first=selected(initial.items,window);
-    for(const run of first){
+    for(let offset=0;offset<first.length;offset+=4){
+      const batch=first.slice(offset,offset+4),basis=storeRaw;
+      const outcomes=await Promise.allSettled(batch.map(async run=>{
+        let local=basis,localFresh=0,localSealed=0;const localGaps=[];
       const packets=inspectNativePopulationStore(storeRaw,repository).packets;
       const latest=packets[run.id+':'+run.run_attempt];
       // Normalize the inventory projection to the exact d0fc store grammar.
@@ -272,13 +288,29 @@ export async function collectIncrementalNative({request,repository,window,authen
       for(let attempt=1;attempt<=run.run_attempt;attempt++){
         if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end))continue;
         const existing=packets[run.id+':'+attempt];
-        if(latestMatches&&existing){fromSealed++;continue;}
-        const captured=await captureNativeAttempt({request,repository,runId:run.id,attempt,storeRaw});
-        if(captured.status!=='COMPLETE'){gaps.push({key:run.id+':'+attempt,reason_code:captured.reason_code});
-          if(/request|cap|floor|budget|slice|limit|stop/i.test(captured.reason_code??''))fail('NATIVE_CAPTURE_BUDGET_PARTIAL');continue;}
-        storeRaw=captured.store_raw;fresh++;await onStore(storeRaw);
-        if(captured.barriers?.latest_digest!==hash(normalized))fail('NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH');
+        if(latestMatches&&existing){localSealed++;continue;}
+        const captured=await captureNativeAttempt({request,repository,runId:run.id,attempt,storeRaw:local});
+        if(captured.status!=='COMPLETE'){localGaps.push({key:run.id+':'+attempt,reason_code:captured.reason_code});
+          if(/request|cap|floor|budget|slice|limit|stop/i.test(captured.reason_code??''))break;continue;}
+        local=captured.store_raw;localFresh++;
+        if(captured.barriers?.latest_digest!==hash(normalized))return {local,localFresh,localSealed,localGaps,fatal:'NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH'};
       }
+      return {local,localFresh,localSealed,localGaps};
+      }));
+      // Serialize publication after joining the batch. Never overwrite another
+      // capture's packet; the ordinary store validator checks the full union.
+      const results=outcomes.filter(r=>r.status==='fulfilled').map(r=>r.value),joined=JSON.parse(storeRaw);
+      for(const result of results){
+        for(const [k,p] of Object.entries(JSON.parse(result.local).packets)){
+          if(joined.packets[k]&&!same(joined.packets[k],p))fail('NATIVE_BATCH_PACKET_CONFLICT');joined.packets[k]=p;
+        }
+        fresh+=result.localFresh;fromSealed+=result.localSealed;gaps.push(...result.localGaps);
+      }
+      storeRaw=JSON.stringify(joined);if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
+      await onStore(storeRaw);
+      if(results.some(r=>r.fatal))fail(results.find(r=>r.fatal).fatal);
+      if(outcomes.some(r=>r.status==='rejected'))fail(reason(outcomes.find(r=>r.status==='rejected').reason));
+      if(results.some(r=>r.localGaps.some(g=>/request|cap|floor|budget|slice|limit|stop/i.test(g.reason_code??''))))fail('NATIVE_CAPTURE_BUDGET_PARTIAL');
     }
     const closing=await inventory(request,repository,window);
     if(hash(first)!==hash(selected(closing.items,window)))fail('NATIVE_COHORT_CHANGED_AT_CLOSE');
@@ -319,6 +351,23 @@ const key=a=>String(a.run_id)+':'+(a.attempt??a.run_attempt);
 const atEqual=(a,b)=>a===null&&b===null||a!==null&&b!==null&&timestampMicros(a)===timestampMicros(b);
 const canonical=x=>Array.isArray(x)?x.map(canonical):object(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
+// Only byte-pinned source equivalence. History/current main/actual artifact
+// and credential qualification remain independent checks at the caller.
+export function sameNaturalSourceSnapshot(cfg,naturalSelection,runtimeInputs,contract){
+  try{const pins=[...cfg.natural_producers.flatMap(d=>[...Object.entries(d.source_blobs??{}),[d.workflow_path,d.workflow_blob]]),
+      ...['script','workflow','reverify_workflow','policy'].map(k=>[cfg.admission_source[k+'_path'],cfg.admission_source[k+'_blob']])];
+    return object(cfg.admission_source)&&object(naturalSelection.admission_source)&&
+    same(cfg.admission_source,naturalSelection.admission_source)&&
+    same(parseFourSourceRawData(runtimeInputs.proof_profiles_raw),contract.profiles)&&
+    same(parseFourSourceRawData(runtimeInputs.role_specs_raw),contract.roles)&&
+    hash(runtimeInputs.proof_profiles_raw)===cfg.execution_source?.profiles_sha256&&
+    hash(runtimeInputs.role_specs_raw)===cfg.execution_source?.role_specs_sha256&&
+    contract.profiles_sha256===cfg.execution_source?.profiles_sha256&&
+    contract.role_specs_sha256===cfg.execution_source?.role_specs_sha256&&
+    pins.every(([file,pin])=>typeof file==='string'&&sha(pin)&&contract.source_tree?.[file]?.sha===pin&&contract.source_tree[file].type==='blob'&&contract.source_tree[file].mode==='100644')&&
+    Array.isArray(cfg.natural_producers)&&cfg.natural_producers.every(d=>naturalSelection.workflow_blobs[d.workflow_path]===d.workflow_blob);
+  }catch{return false;}
+}
 // updated_at is used only as an upper bound on the already observed completed
 // state, never as completion time. A common cohort across the entire possible
 // interval is a proof; a crossing interval remains UNKNOWN.
@@ -326,7 +375,7 @@ export function nativeCompletionMembership(packet,window){
   try{
     const r=packet.run;if(r.status!=='completed')fail('NATIVE_COMPLETION_NOT_TERMINAL');
     let lower=timestampMicros(r.created_at),upper=timestampMicros(r.updated_at);
-    for(const j of packet.jobs)for(const at of [j.created_at,j.started_at,j.completed_at])if(at!==null){const t=timestampMicros(at);if(t>lower)lower=t;}
+    for(const j of packet.jobs)for(const at of j.conclusion==='skipped'&&j.steps.length===0?[j.created_at]:[j.created_at,j.started_at,j.completed_at])if(at!==null){const t=timestampMicros(at);if(t>lower)lower=t;}
     const from=timestampMicros(window.start),to=timestampMicros(window.end);
     if(lower>upper||from>=to)fail('NATIVE_COMPLETION_BOUNDS_INVALID');
     const membership=lower>=from&&upper<to?'IN_WINDOW':upper<from||lower>=to?'OUTSIDE_WINDOW':'UNKNOWN';
@@ -456,9 +505,14 @@ export async function collectR9Measurement({request,budget,repository,window,sou
   try{selection=sourceContract(sourceContractRaw,repository,window);}catch{gaps.push('INDEPENDENT_SOURCE_CONTRACT_MISSING_OR_INVALID');}
   let naturalSelectionBound=false;
   if(naturalSelection&&contract)try{const cfg=parseFourSourceRawData((await sourceText(slice.request,repository,R9_RUNTIME_CONFIG,contract.head_sha)).text);
-    naturalSelectionBound=naturalSelection.head_sha===contract.head_sha&&cfg.registration_status==='registered'&&
+    let sameSourceLineage=naturalSelection.head_sha===contract.head_sha;
+    if(!sameSourceLineage){const history=await bodyOf(slice.request,`/repos/${repository}/compare/${naturalSelection.head_sha}...${contract.head_sha}`);
+      sameSourceLineage=['ahead','identical'].includes(history.status)&&history.merge_base_commit?.sha===naturalSelection.head_sha;}
+    naturalSelectionBound=sameSourceLineage&&cfg.registration_status==='registered'&&
       same(cfg.natural_producers,naturalSelection.natural_producers)&&same(cfg.operation_coverage,runtimeInputs?.operation_coverage)&&
-      same(cfg.scope,selection?.scope)&&cfg.forward_epoch?.epoch_id===runtimeInputs?.forward_epoch?.epoch_id;
+      same(cfg.scope,selection?.scope)&&cfg.forward_epoch?.epoch_id===runtimeInputs?.forward_epoch?.epoch_id&&
+      (naturalSelection.head_sha===contract.head_sha||
+        sameNaturalSourceSnapshot(cfg,naturalSelection,runtimeInputs,contract));
     if(!naturalSelectionBound)gaps.push('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED');
   }catch{gaps.push('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED');}
   const naturalInputs=naturalSelection&&native?.status==='COMPLETE'?await collectNaturalSourceArtifacts({request:slice.request,repository,native,

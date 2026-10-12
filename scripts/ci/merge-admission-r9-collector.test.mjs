@@ -61,6 +61,7 @@ function nativeRequest({runs=[run()],jobs=[job()],artifact=zip(packet()),mutatio
     routes.push(route);const changed=mutation(route,opts,routes.length);if(changed)return changed;
     if(route===`/repos/${repository}`)return {ok:true,body:{full_name:repository,id:1,default_branch:'main',created_at:'2026-01-01T00:00:00Z'}};
     if(route===`/repos/${repository}/branches/main`)return {ok:true,body:{name:'main',commit:{sha:head}}};
+    if(route.includes('/git/trees/'))return {ok:true,body:{truncated:false,tree:Object.entries(content).map(([path,text])=>({path,sha:workflowBlob(text),type:'blob',mode:'100644'}))}};
     if(route.includes('/contents/')){
       const file=route.split('/contents/')[1].split('?')[0];let text=content[file];
       if(file.endsWith('clued-gated-proof-profiles.json'))text=JSON.stringify(sourceContract.profiles);
@@ -432,4 +433,95 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
   assert.equal(result.activity_coverage.closing_delivery_watermark,null);assert.equal(result.metrics.queue_depth_p95.official_metric,true);assert.equal(result.metrics.queue_depth_p95.value,0);
   assert.equal(result.metrics.update_main_rounds.official_metric,true);assert.equal(result.metrics.update_main_rounds.value,0);assert.equal(result.metrics.cancellation_causes.denominator,0);
   assert.equal(result.metrics.wasted_final_rounds.activity_coverage.delivery_through_window_end,'UNKNOWN');assert.equal(result.t0,null);
+});
+
+test('same-source main advance needs the complete independent source bytes, not a matching flag',()=>{
+  const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
+    admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),
+    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[{workflow_path:path,workflow_blob:wf,source_blobs:{[path]:wf}}]},
+    selection={admission_source:admission,workflow_blobs:{[path]:wf}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},
+    contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles),profiles_sha256:digest(profiles),role_specs_sha256:digest(roles),
+      source_tree:Object.fromEntries(['source/script','source/workflow','source/reverify_workflow','source/policy',path].map(p=>[p,{sha:p===path?wf:'a'.repeat(40),type:'blob',mode:'100644'}]))};
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,contract),true);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,admission_source:{script_blob:'c'.repeat(40)}},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,{...selection,workflow_blobs:{[path]:'c'.repeat(40)}},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,roles:{roles:['changed']}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot({...cfg,admission_source:null},{...selection,admission_source:null},runtime,contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,profiles_sha256:digest('{"workflows": {}}')}),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,source_tree:{...contract.source_tree,'source/script':{sha:'c'.repeat(40),type:'blob',mode:'100644'}}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,source_tree:{...contract.source_tree,[path]:{sha:wf,type:'blob',mode:'120000'}}}),false);
+  assert.equal(C.sameNaturalSourceSnapshot({...cfg,natural_producers:[...cfg.natural_producers,{workflow_path:path,workflow_blob:wf,source_blobs:{[path]:'c'.repeat(40)}}]},selection,runtime,contract),false);
+});
+
+test('source equivalence cannot replace raw profile/role digest pins with reformatted or malformed bytes',()=>{
+  const profiles='{"workflows":{}}',roles='{"roles":[]}',admission={script_blob:'a'.repeat(40)},
+    cfg={admission_source:admission,execution_source:{profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)},natural_producers:[]},
+    selection={admission_source:admission,workflow_blobs:{}},contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles)};
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'{"workflows": {}}',role_specs_raw:roles},contract),false);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,{proof_profiles_raw:'not-json',role_specs_raw:roles},contract),false);
+});
+
+test('bounded parallel Native captures retain every member under the same request function',async()=>{
+  const runs=Array.from({length:7},(_,i)=>({id:420+i,run_attempt:1,workflow_id:8,head_sha:'a'.repeat(40),path:'.github/workflows/test.yml',event:'pull_request',status:'completed',conclusion:'success',
+    created_at:'2026-10-09T00:00:01Z',run_started_at:'2026-10-09T00:00:02Z',updated_at:'2026-10-09T00:00:05Z',pull_requests:[]}));
+  let active=0,maximum=0,calls=0;
+  const request=async route=>{calls++;active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,2));active--;
+    const u=new URL(route,'https://native.invalid');
+    if(u.pathname.endsWith('/actions/runs'))return {ok:true,body:{total_count:runs.length,workflow_runs:structuredClone(runs)}};
+    const id=Number(u.pathname.match(/\/runs\/(\d+)/)?.[1]),r=runs.find(x=>x.id===id);assert.ok(r);
+    if(u.pathname.endsWith('/jobs'))return {ok:true,body:{total_count:1,jobs:[{id:1000+id,run_id:id,run_attempt:1,name:'test',status:'completed',conclusion:'success',
+      created_at:'2026-10-09T00:00:02Z',started_at:'2026-10-09T00:00:03Z',completed_at:'2026-10-09T00:00:04Z',labels:['ubuntu-slim'],steps:[]}]}};
+    return {ok:true,body:structuredClone(r)};
+  };
+  const result=await C.collectIncrementalNative({request,repository,window:{start:'2026-10-09T00:00:00Z',end:'2026-10-09T00:00:10Z'}});
+  assert.equal(result.status,'COMPLETE');assert.equal(result.population_packets.length,7);assert.equal(Object.keys(JSON.parse(result.store_raw).packets).length,7);
+  assert.ok(maximum>1);assert.ok(maximum<=4);assert.equal(calls,44);assert.equal(result.population.complete,true);
+});
+
+test('a failed directory page drains its existing batch before another stage can spend requests',async()=>{
+  const rows=Array.from({length:500},(_,i)=>run(700+i));let active=0,maximum=0;
+  const request=async route=>{const page=Number(new URL(route,'https://native.invalid').searchParams.get('page'));
+    if(page===1)return {ok:true,body:{total_count:500,workflow_runs:rows.slice(0,100)}};
+    active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,page===2?1:10));active--;
+    if(page===2)throw Error('HTTP_PAGE_FAILED');return {ok:true,body:{total_count:500,workflow_runs:rows.slice((page-1)*100,page*100)}};
+  };
+  const result=await C.collectIncrementalNative({request,repository,window});
+  assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'HTTP_PAGE_FAILED');assert.equal(active,0);assert.equal(maximum,4);
+});
+
+const Native=await import('./merge-admission-native-population.mjs');
+const projectionRoot='/repos/'+repository+'/actions/runs/38280673705';
+function wireProjectionFixture({attemptCreated='2026-10-12T16:54:45Z',jobConclusion='cancelled',jobEnded='2026-10-12T16:55:27Z',skipSteps=[],mutateAfter=false}={}){
+  const run={id:38280673705,run_attempt:1,workflow_id:123,head_sha:'a'.repeat(40),path:'.github/workflows/clued-merge-slot-ci.yml',event:'workflow_run',status:'completed',conclusion:'cancelled',created_at:'2026-10-12T16:54:44Z',run_started_at:'2026-10-12T16:54:44Z',updated_at:'2026-10-12T16:55:28Z',pull_requests:[]};
+  const jobs=[{id:114916915569,run_id:run.id,run_attempt:1,name:'clued-merge-slot-ci',status:'completed',conclusion:jobConclusion,created_at:'2026-10-12T16:54:45Z',started_at:'2026-10-12T16:54:45Z',completed_at:jobEnded,labels:['ubuntu-slim'],steps:skipSteps}];
+  let attempts=0;
+  return {async request(route){if(route===projectionRoot)return {ok:true,body:structuredClone(run)};
+    if(route===projectionRoot+'/attempts/1'){attempts++;return {ok:true,body:{...structuredClone(run),created_at:mutateAfter&&attempts>1?'2026-10-12T16:54:46Z':attemptCreated}};}
+    if(route.startsWith(projectionRoot+'/attempts/1/jobs?'))return {ok:true,body:{total_count:jobs.length,jobs:structuredClone(jobs)}};
+    throw Error('unexpected diagnostic route');}};
+}
+test('actual attempt DTO creation does not replace original Native run identity',async()=>{
+  const f=wireProjectionFixture(),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.packet.run.created_at,'2026-10-12T16:54:44.000Z');
+  assert.equal(r.packet.timing_basis.reported_attempt_created_at,'2026-10-12T16:54:45.000Z');
+  assert.equal(r.packet.run.conclusion,'cancelled');assert.equal(Native.inspectNativePopulationStore(r.store_raw).status,'VALID_DATA_STORE');
+});
+test('no-op skipped scheduler timestamps are retained as metadata, never execution',async()=>{
+  const f=wireProjectionFixture({jobConclusion:'skipped',jobEnded:'2026-10-12T16:54:44Z'}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.packet.jobs[0].conclusion,'skipped');
+  assert.equal(r.packet.jobs[0].completed_at,'2026-10-12T16:54:44.000Z');assert.deepEqual(r.packet.jobs[0].steps,[]);
+});
+test('cancelled or successful execution retains the original contradictory-time rejection',async()=>{
+  for(const conclusion of ['cancelled','success']){
+    const f=wireProjectionFixture({jobConclusion:conclusion,jobEnded:'2026-10-12T16:54:44Z'}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'invalid_native_job_time');
+  }
+});
+test('skipped label with execution steps cannot bypass execution chronology',async()=>{
+  const f=wireProjectionFixture({jobConclusion:'skipped',jobEnded:'2026-10-12T16:54:44Z',skipSteps:[{number:1,name:'untrusted execution',status:'completed',conclusion:'success',started_at:'2026-10-12T16:54:45Z',completed_at:'2026-10-12T16:54:46Z'}]}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'invalid_native_job_time');
+});
+test('attempt creation metadata changing between independent reads is rejected',async()=>{
+  const f=wireProjectionFixture({mutateAfter:true}),r=await Native.captureNativeAttempt({request:f.request,repository,runId:'38280673705',attempt:1});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'native_attempt_reported_creation_changed');
 });
