@@ -317,6 +317,11 @@ def load_tests(loader, tests, pattern):
     decision_module = importlib.util.module_from_spec(decision_spec)
     decision_spec.loader.exec_module(decision_module)
     tests.addTests(loader.loadTestsFromModule(decision_module, pattern=pattern))
+    domain_path = ROOT / "tests/test_model_workflow_domain_contract.py"
+    domain_spec = importlib.util.spec_from_file_location("m2_workflow_domain_specifications", domain_path)
+    domain_module = importlib.util.module_from_spec(domain_spec)
+    domain_spec.loader.exec_module(domain_module)
+    tests.addTests(loader.loadTestsFromModule(domain_module, pattern=pattern))
     return tests
 
 

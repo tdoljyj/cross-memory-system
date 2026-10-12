@@ -1,0 +1,1223 @@
+{
+  "artifact_role": "MODEL_DOMAIN_TASK_SPEC_COMPATIBILITY_CANDIDATE",
+  "attachment": {
+    "actual_prompt_input_digest": "EXISTING_REQUEST_INPUT_DIGEST",
+    "capability": "structured_generate",
+    "context_snapshot_and_watermark": "CALLER_VERIFIED_CONTEXT_SLICE",
+    "input_binding_role": "PRIVATE_SAVED_PROJECTION_ARGUMENT_NOT_MODEL_PROMPT_OR_PORT_OBJECT",
+    "invocation_identity_budget_authorization": "EXISTING_V2_ENVELOPE_ONLY",
+    "new_port_fields": [],
+    "schema_binding": "EXISTING_REQUEST_OUTPUT_SCHEMA_DIGEST",
+    "semantic_correctness": "EXTERNAL_REFERENCE_NOT_SCHEMA_VALIDITY"
+  },
+  "authority_effect": "NONE",
+  "definition_proposal_sha256": "bee9d8146f52880951ca6b9b59903fd1d7073b309603694937e1a5fced4723ba",
+  "owner_direction": {
+    "effect": "SEMANTIC_DIRECTION_ONLY",
+    "receipt_id": "7d646935-e5a1-40a8-af50-11406c3a1af6",
+    "record_id": "d78f94a5-5476-408c-9290-313e84014dfa",
+    "version": 1
+  },
+  "plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+  "specs": [
+    {
+      "actual_domain_bindings": {
+        "capability_id": null,
+        "domain_adoption_ref": null,
+        "gold_ref": null,
+        "input_schema_ref": null,
+        "label_or_scale_ref": null,
+        "output_schema_ref": null,
+        "taskspec_ref": null,
+        "threshold_ref": null,
+        "workflow_policy_ref": null
+      },
+      "definition": {
+        "candidate_tie_break": "Apply the definitions in the listed order only when their conditions are satisfied; otherwise abstain. This is a proposed single-label convention, not official adjudication.",
+        "comparison_direction": "RIGHT_CONTENT_RELATIVE_TO_LEFT_CONTENT",
+        "content_only_relation_candidates": [
+          {
+            "excludes": "Does not establish actual withdrawal, currentness or the actor's authority.",
+            "meaning": "The right content explicitly proposes or describes withdrawing the left item, with the referenced item resolved in the permitted input.",
+            "proposed_label": "WITHDRAWAL_INTENT_CANDIDATE"
+          },
+          {
+            "excludes": "Does not establish approved supersession, activation or a valid version transition.",
+            "meaning": "The right content explicitly proposes or describes replacing the left item, with the referenced predecessor resolved in the input.",
+            "proposed_label": "REPLACEMENT_INTENT_CANDIDATE"
+          },
+          {
+            "excludes": "Unknown or ambiguous dates/conditions require abstention instead of invented applicability.",
+            "meaning": "The contents address the same subject but differ under explicit non-overlapping time, conditions or applicability; direct equivalence/conflict would ignore that distinction.",
+            "proposed_label": "CONDITIONAL_COMPARISON_CANDIDATE"
+          },
+          {
+            "excludes": "Does not choose a true side or resolve the conflict officially.",
+            "meaning": "The visible contents make incompatible propositions about the same entity/property under overlapping applicability, without an earlier intent/condition category applying.",
+            "proposed_label": "CONFLICT_CANDIDATE"
+          },
+          {
+            "excludes": "Semantic equivalence does not imply equal approval, permissions, evidence strength or canonical identity.",
+            "meaning": "Both contents express the same propositions and material qualifiers for this comparison, with no extra independent content.",
+            "proposed_label": "EQUIVALENT_CONTENT"
+          },
+          {
+            "excludes": "A changed or contradictory constraint is not a refinement merely because it is more detailed.",
+            "meaning": "The right content narrows or specifies the left proposition compatibly, without an independent added proposition or prior category applying.",
+            "proposed_label": "REFINEMENT_CANDIDATE"
+          },
+          {
+            "excludes": "Co-occurrence alone is not sufficient support for compatibility or shared subject.",
+            "meaning": "The right content adds related compatible propositions beyond the left, without a prior intent, condition, conflict, equivalence or refinement category applying.",
+            "proposed_label": "SUPPLEMENT_CANDIDATE"
+          },
+          {
+            "excludes": "Insufficient permitted evidence or uncertain interpretation is abstention, not automatically unrelated.",
+            "meaning": "Sufficient permitted evidence positively establishes that the two contents concern unrelated subjects/propositions under the bound task definition.",
+            "proposed_label": "UNRELATED_CONTENT"
+          }
+        ],
+        "formal_authority_state_model_output": "FORBIDDEN",
+        "must_abstain_if": [
+          "Missing permitted evidence",
+          "Unresolved subject/direction",
+          "Ambiguous required time/conditions",
+          "Incompatible interpretations cannot be discriminated",
+          "Actual relationship definition is not adopted or current"
+        ]
+      },
+      "input_binding_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "left_input_ref": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "right_input_ref": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "visible_evidence_refs": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 512,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "left_input_ref",
+          "right_input_ref",
+          "visible_evidence_refs"
+        ],
+        "type": "object"
+      },
+      "input_binding_schema_digest": "sha256:1bc881c318e8ba9d1a0c962f8bd0ad4419ecd769644c5588742292c93d853b32",
+      "input_obligations": [
+        "Exactly two same-scope content references, source/time and actual relation-definition binding.",
+        "Visible contrary, conditional, withdrawal and unresolved evidence retained."
+      ],
+      "logical_task": "decision.semantic_relation",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "ABSTAINED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abstain_reason": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "null"
+                },
+                "score_kind": {
+                  "const": "NONE"
+                },
+                "value": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "PREDICTED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abstain_reason": {
+                  "type": "null"
+                },
+                "value": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "counterevidence_refs": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
+                    },
+                    "left_input_ref": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "relation_id": {
+                      "enum": [
+                        "WITHDRAWAL_INTENT_CANDIDATE",
+                        "REPLACEMENT_INTENT_CANDIDATE",
+                        "CONDITIONAL_COMPARISON_CANDIDATE",
+                        "CONFLICT_CANDIDATE",
+                        "EQUIVALENT_CONTENT",
+                        "REFINEMENT_CANDIDATE",
+                        "SUPPLEMENT_CANDIDATE",
+                        "UNRELATED_CONTENT"
+                      ],
+                      "type": "string"
+                    },
+                    "right_input_ref": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "support_refs": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": [
+                    "relation_id",
+                    "left_input_ref",
+                    "right_input_ref",
+                    "support_refs",
+                    "counterevidence_refs"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "enum": [
+                    "NONE",
+                    "RAW_SCORE"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "const": "MODEL_PROBABILITY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "const": "CALIBRATED_PROBABILITY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "distribution": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "abstain_reason": {
+            "oneOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calibration_ref": {
+            "oneOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "distribution": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "minProperties": 1,
+                "type": "object"
+              }
+            ]
+          },
+          "evidence_refs": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "score_kind": {
+            "enum": [
+              "RAW_SCORE",
+              "MODEL_PROBABILITY",
+              "CALIBRATED_PROBABILITY",
+              "NONE"
+            ]
+          },
+          "status": {
+            "enum": [
+              "PREDICTED",
+              "ABSTAINED"
+            ]
+          },
+          "value": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "counterevidence_refs": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "left_input_ref": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "relation_id": {
+                    "enum": [
+                      "WITHDRAWAL_INTENT_CANDIDATE",
+                      "REPLACEMENT_INTENT_CANDIDATE",
+                      "CONDITIONAL_COMPARISON_CANDIDATE",
+                      "CONFLICT_CANDIDATE",
+                      "EQUIVALENT_CONTENT",
+                      "REFINEMENT_CANDIDATE",
+                      "SUPPLEMENT_CANDIDATE",
+                      "UNRELATED_CONTENT"
+                    ],
+                    "type": "string"
+                  },
+                  "right_input_ref": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "support_refs": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "relation_id",
+                  "left_input_ref",
+                  "right_input_ref",
+                  "support_refs",
+                  "counterevidence_refs"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "value",
+          "score_kind",
+          "distribution",
+          "calibration_ref",
+          "evidence_refs",
+          "abstain_reason"
+        ],
+        "type": "object"
+      },
+      "output_schema_digest": "sha256:9e5ffa56f3c2b9e41c7e53aac8348c95bcad358b2b1c923357b8f17fa584c26e",
+      "quality_obligations": [
+        "Per-label confusion/precision/recall and critical-relation confusion/loss.",
+        "Evidence support, fabricated refs and omitted counterevidence reported separately."
+      ],
+      "runtime_branches": [
+        "valid_prediction",
+        "semantic_abstention",
+        "invalid_structure_or_refs",
+        "timeout",
+        "provider_unavailable",
+        "budget_stop",
+        "needed_calibration_missing_or_drifted",
+        "permission_denial",
+        "permitted_fallback_or_escalation",
+        "manual_or_unresolved",
+        "candidate_only_completion"
+      ],
+      "semantic_checks": [
+        "Strict finite original JSON and no duplicate keys; structural validity is not semantic correctness.",
+        "All input/evidence/context refs resolve in the exact permitted input snapshot and were actually visible.",
+        "No currentness, permission, supersession, Gate or Canonical mutation is inferred from a candidate.",
+        "Provider/model/adapter/spec/context identity and measured usage remain in the existing Invocation Envelope.",
+        "INVALID/TIMEOUT/UNAVAILABLE/BUDGET_EXHAUSTED come from actual validated runtime facts, never model self-report.",
+        "Class distributions use exact bound label keys, declared sum tolerance and verified estimation object/origin.",
+        "Calibrated status is externally qualified and cannot be asserted by a model or a nonempty ref string.",
+        "Missing required calibration blocks that probability path; N/A only when the branch was declared non-probabilistic beforehand.",
+        "All in-scope requests and runtime failures remain in coverage/cost denominators; zero accepted risk is UNDEFINED.",
+        "relation_id must belong to the externally bound relation taxonomy; no labels are registered here.",
+        "left/right must echo the bound pair; relation direction comes from that definition.",
+        "A supersession-like candidate is not evidence of actual accepted supersession.",
+        "Supporting refs and counterevidence refs must be individually resolved and checked for support/conflict."
+      ]
+    },
+    {
+      "actual_domain_bindings": {
+        "capability_id": null,
+        "domain_adoption_ref": null,
+        "gold_ref": null,
+        "input_schema_ref": null,
+        "label_or_scale_ref": null,
+        "output_schema_ref": null,
+        "taskspec_ref": null,
+        "threshold_ref": null,
+        "workflow_policy_ref": null
+      },
+      "definition": {
+        "candidate_set": "Exactly the permission-filtered fixed input set, partitioned into ranked and unranked refs.",
+        "grade_source": "Lawful independent/deterministic/Owner-verified reference adjudication; no grades are assigned here.",
+        "model_rank_score": {
+          "direction": "HIGHER_FIRST",
+          "is_probability": false,
+          "kind": "RAW_SCORE_OR_RANK_ONLY",
+          "numeric_domain": "FINITE_REAL; NEGATIVE_ALLOWED",
+          "primary_comparison_uses_rank_quality_against_same_fixed_reference": true,
+          "ranking_only_score": null,
+          "raw_numbers_not_cross_provider_comparable_without_an_adopted_common_scale": true,
+          "raw_score_definition_fixed_before_use": true
+        },
+        "not_absolute_minimum_sufficiency": true,
+        "reference_grade_scale": [
+          {
+            "meaning": "No demonstrated relevance to the fixed downstream task.",
+            "proposed_grade": 0
+          },
+          {
+            "meaning": "Related background with no demonstrated change to the required task result.",
+            "proposed_grade": 1
+          },
+          {
+            "meaning": "Useful support for the fixed task; omission reduces evidenced quality without a demonstrated hard-constraint failure.",
+            "proposed_grade": 2
+          },
+          {
+            "meaning": "Required constraint, permission boundary or material counterevidence for the fixed task/executor; omission is shown to cause a required-result violation.",
+            "proposed_grade": 3
+          }
+        ],
+        "scorer_gain_cutoff_discount_thresholds": "Explicit actual policy before scored comparison; no numeric values chosen here.",
+        "ties": "Caller-fixed stable Context ID order after equal raw scores; that policy is fixed before comparison."
+      },
+      "input_binding_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "context_ids": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 512,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "visible_evidence_refs": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 512,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "context_ids",
+          "visible_evidence_refs"
+        ],
+        "type": "object"
+      },
+      "input_binding_schema_digest": "sha256:5a57901fc542bdc6a330096afcb9879ad57b4665945e1d2c4f93af53976559e1",
+      "input_obligations": [
+        "Explicit downstream task and a fixed already-permission-filtered context set.",
+        "Frozen relevance definition/scale, equal context budget and identical downstream executor for comparison."
+      ],
+      "logical_task": "decision.context_relevance",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "ABSTAINED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abstain_reason": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "null"
+                },
+                "score_kind": {
+                  "const": "NONE"
+                },
+                "value": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "PREDICTED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abstain_reason": {
+                  "type": "null"
+                },
+                "value": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "ranking": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "context_ref": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "score": {
+                            "oneOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "context_ref",
+                          "score"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "unranked_context_refs": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": [
+                    "ranking",
+                    "unranked_context_refs"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "enum": [
+                    "NONE",
+                    "RAW_SCORE"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "const": "MODEL_PROBABILITY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "const": "CALIBRATED_PROBABILITY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "distribution": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "abstain_reason": {
+            "oneOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calibration_ref": {
+            "oneOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "distribution": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "minProperties": 1,
+                "type": "object"
+              }
+            ]
+          },
+          "evidence_refs": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "score_kind": {
+            "enum": [
+              "RAW_SCORE",
+              "MODEL_PROBABILITY",
+              "CALIBRATED_PROBABILITY",
+              "NONE"
+            ]
+          },
+          "status": {
+            "enum": [
+              "PREDICTED",
+              "ABSTAINED"
+            ]
+          },
+          "value": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "ranking": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "context_ref": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "score": {
+                          "oneOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "context_ref",
+                        "score"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "unranked_context_refs": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "ranking",
+                  "unranked_context_refs"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "value",
+          "score_kind",
+          "distribution",
+          "calibration_ref",
+          "evidence_refs",
+          "abstain_reason"
+        ],
+        "type": "object"
+      },
+      "output_schema_digest": "sha256:4ab172c7ff6bc18a04287a758019c849cafa9b8430ec41c7999d3d029da32ae1",
+      "quality_obligations": [
+        "Rank metrics under frozen relevance truth and task-level omission/conflict loss.",
+        "End-to-end correctness, total latency and fixed-token/bytes comparison; no semantic-index/Canon read-chain write."
+      ],
+      "runtime_branches": [
+        "valid_prediction",
+        "semantic_abstention",
+        "invalid_structure_or_refs",
+        "timeout",
+        "provider_unavailable",
+        "budget_stop",
+        "needed_calibration_missing_or_drifted",
+        "permission_denial",
+        "permitted_fallback_or_escalation",
+        "manual_or_unresolved",
+        "candidate_only_completion"
+      ],
+      "semantic_checks": [
+        "Strict finite original JSON and no duplicate keys; structural validity is not semantic correctness.",
+        "All input/evidence/context refs resolve in the exact permitted input snapshot and were actually visible.",
+        "No currentness, permission, supersession, Gate or Canonical mutation is inferred from a candidate.",
+        "Provider/model/adapter/spec/context identity and measured usage remain in the existing Invocation Envelope.",
+        "INVALID/TIMEOUT/UNAVAILABLE/BUDGET_EXHAUSTED come from actual validated runtime facts, never model self-report.",
+        "Class distributions use exact bound label keys, declared sum tolerance and verified estimation object/origin.",
+        "Calibrated status is externally qualified and cannot be asserted by a model or a nonempty ref string.",
+        "Missing required calibration blocks that probability path; N/A only when the branch was declared non-probabilistic beforehand.",
+        "All in-scope requests and runtime failures remain in coverage/cost denominators; zero accepted risk is UNDEFINED.",
+        "Every context appears exactly once across ranking/unranked_context_refs; no outside ref or duplicate.",
+        "Ranking order, ties, score direction/range and null-score meaning follow the bound scale.",
+        "Ranking-only paths use score_kind NONE; raw finite scores require the actual raw-score scale, not probability semantics.",
+        "The fixed downstream task checks omitted necessary constraints, retained conflicts and end-to-end correctness.",
+        "Ablation is evidence of observed necessity only, never proof of absolute minimum-sufficient context."
+      ]
+    },
+    {
+      "actual_domain_bindings": {
+        "capability_id": null,
+        "domain_adoption_ref": null,
+        "gold_ref": null,
+        "input_schema_ref": null,
+        "label_or_scale_ref": null,
+        "output_schema_ref": null,
+        "taskspec_ref": null,
+        "threshold_ref": null,
+        "workflow_policy_ref": null
+      },
+      "definition": {
+        "absence_of_permitted_option": "Bound unresolved/manual path when actually available, otherwise abstain/stop under actual policy.",
+        "actual_catalogue_entry_requirements": [
+          "Existing code route_ref",
+          "Exact source/version and graph path",
+          "Actual available provider/executor",
+          "Existing effect permission and data boundary",
+          "Derived action IDs",
+          "Shared budgets/deadlines/depth/call/escalation bounds",
+          "Terminal state and failure handling"
+        ],
+        "cloud_fallback": "Unavailable unless already explicitly permitted; no new provider/action is invented.",
+        "execution_permission": "Existing Policy/Kernel only; route category and confidence create no rights.",
+        "model_selects_only": "One route_ref from the caller's actual permitted catalogue, or semantic abstention.",
+        "route_catalogue_or_graph_created_here": false,
+        "route_classes_are_logical_not_action_ids": [
+          "DIRECT_PERMITTED",
+          "COMPLEX_PERMITTED",
+          "HUMAN_PERMITTED",
+          "UNRESOLVED"
+        ]
+      },
+      "input_binding_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "route_catalog": {
+            "additionalProperties": {
+              "items": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 512,
+              "minItems": 1,
+              "type": "array"
+            },
+            "maxProperties": 512,
+            "propertyNames": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "visible_evidence_refs": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 512,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "route_catalog",
+          "visible_evidence_refs"
+        ],
+        "type": "object"
+      },
+      "input_binding_schema_digest": "sha256:1b945a41a637abe8994558d21349f842f78fb926f0c0e587cb7f78f9a7726d49",
+      "input_obligations": [
+        "Explicit task/constraints plus the exact code-supplied available and already-permitted route set.",
+        "Fixed branch graph, shared budget/deadline, maximum depth/calls/escalations and terminal handling."
+      ],
+      "logical_task": "decision.processing_route",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "ABSTAINED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abstain_reason": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "null"
+                },
+                "score_kind": {
+                  "const": "NONE"
+                },
+                "value": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "PREDICTED"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "abstain_reason": {
+                  "type": "null"
+                },
+                "value": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "counterevidence_refs": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
+                    },
+                    "route_ref": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "support_refs": {
+                      "items": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": "array",
+                      "uniqueItems": true
+                    }
+                  },
+                  "required": [
+                    "route_ref",
+                    "support_refs",
+                    "counterevidence_refs"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "enum": [
+                    "NONE",
+                    "RAW_SCORE"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "const": "MODEL_PROBABILITY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "type": "null"
+                },
+                "distribution": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "score_kind": {
+                  "const": "CALIBRATED_PROBABILITY"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "calibration_ref": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "distribution": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "abstain_reason": {
+            "oneOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "calibration_ref": {
+            "oneOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "distribution": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "minProperties": 1,
+                "type": "object"
+              }
+            ]
+          },
+          "evidence_refs": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "score_kind": {
+            "enum": [
+              "RAW_SCORE",
+              "MODEL_PROBABILITY",
+              "CALIBRATED_PROBABILITY",
+              "NONE"
+            ]
+          },
+          "status": {
+            "enum": [
+              "PREDICTED",
+              "ABSTAINED"
+            ]
+          },
+          "value": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "counterevidence_refs": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "route_ref": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "support_refs": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "route_ref",
+                  "support_refs",
+                  "counterevidence_refs"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "value",
+          "score_kind",
+          "distribution",
+          "calibration_ref",
+          "evidence_refs",
+          "abstain_reason"
+        ],
+        "type": "object"
+      },
+      "output_schema_digest": "sha256:99b306f8fa1604f2ae627cbf0e6c1f3f2924a0303c37d2ed8c577946da28ded9",
+      "quality_obligations": [
+        "Risk/loss under frozen permitted paths and acceptance policy.",
+        "Coverage, escalation cost, refusals, termination and end-to-end completion on all requests."
+      ],
+      "runtime_branches": [
+        "valid_prediction",
+        "semantic_abstention",
+        "invalid_structure_or_refs",
+        "timeout",
+        "provider_unavailable",
+        "budget_stop",
+        "needed_calibration_missing_or_drifted",
+        "permission_denial",
+        "permitted_fallback_or_escalation",
+        "manual_or_unresolved",
+        "candidate_only_completion"
+      ],
+      "semantic_checks": [
+        "Strict finite original JSON and no duplicate keys; structural validity is not semantic correctness.",
+        "All input/evidence/context refs resolve in the exact permitted input snapshot and were actually visible.",
+        "No currentness, permission, supersession, Gate or Canonical mutation is inferred from a candidate.",
+        "Provider/model/adapter/spec/context identity and measured usage remain in the existing Invocation Envelope.",
+        "INVALID/TIMEOUT/UNAVAILABLE/BUDGET_EXHAUSTED come from actual validated runtime facts, never model self-report.",
+        "Class distributions use exact bound label keys, declared sum tolerance and verified estimation object/origin.",
+        "Calibrated status is externally qualified and cannot be asserted by a model or a nonempty ref string.",
+        "Missing required calibration blocks that probability path; N/A only when the branch was declared non-probabilistic beforehand.",
+        "All in-scope requests and runtime failures remain in coverage/cost denominators; zero accepted risk is UNDEFINED.",
+        "route_ref must be in the bound permitted code set; suggestions never approve a tool action.",
+        "No automatic cloud fallback without its exact permission; no invented model/tool/manual path.",
+        "Authorized complex/manual/unresolved handling remains available according to the actual Policy.",
+        "All branches share the one request budget; retries/escalations cannot restart the whole budget.",
+        "Hard-boundary errors cannot be traded against speed or coverage."
+      ]
+    }
+  ],
+  "status": "CANDIDATE_PENDING_DOMAIN_ADOPTION",
+  "version": "1"
+}
