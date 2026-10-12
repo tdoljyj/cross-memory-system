@@ -80,7 +80,7 @@ const authorityDenialReasons = new Set([
   "root_version_mismatch", "root_unregistered", "root_path_not_current", "operation_shape_invalid",
   "root_sharing_changed", "root_sharing_unavailable", "parent_sharing_changed", "parent_sharing_unavailable",
   "source_mismatch", "destination_outside_root", "parent_version_mismatch", "parent_unregistered",
-  "parent_path_not_current", "destination_mismatch", "destination_exists", "artifact_decision_not_current",
+  "parent_path_not_current", "destination_mismatch", "destination_version_mismatch", "destination_exists", "artifact_decision_not_current",
   "delete_authority_required", "restore_name_conflict", "directory_not_empty", "track_forbidden",
   "destination_inside_source", "sharing_differs", "subtree_too_large", "already_registered", "governance_forbidden",
   "internal_error",
@@ -299,6 +299,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
           if(result?.status==="denied"){
             logAuthorityFailure(phase,"canonical_result","AUTHORITY_RPC_DENIED",result.reason);
             if(phase==="initial" && result.reason==="parent_unregistered") authorityRefusal="PARENT_UNREGISTERED";
+            if(phase==="initial" && result.reason==="destination_version_mismatch") authorityRefusal="ARTIFACT_VERSION_MISMATCH";
           }
           else logAuthorityFailure(phase,"canonical_result","AUTHORITY_RESPONSE_INVALID");
           fail();
