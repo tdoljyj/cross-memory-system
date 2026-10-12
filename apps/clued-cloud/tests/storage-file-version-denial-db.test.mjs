@@ -4,11 +4,10 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
+import EmbeddedPostgres from "embedded-postgres";
 import test from "node:test";
 import { findGatewayCloseoutMigration, setWorkerGatewayCaller, assertGatewayCloseoutBoundary } from "./worker-gateway-caller-fixture.mjs";
 
-const EmbeddedPostgres = createRequire(import.meta.url)("embedded-postgres").default;
 async function freePort() {
   const server = net.createServer();
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
