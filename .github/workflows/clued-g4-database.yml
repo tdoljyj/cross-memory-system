@@ -339,3 +339,4 @@ jobs:
         run: |
           node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup
           npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
+
