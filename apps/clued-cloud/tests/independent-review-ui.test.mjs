@@ -65,6 +65,13 @@ test('signed out: no calls, a link to sign in', async t => {
   assert.ok(f.text().includes('登录 Clued'));
 });
 
+test('the CI context suite actually imports the native review suite', () => {
+  const source = readFileSync(new URL('./resume-constraint-index-db.test.mjs', import.meta.url), 'utf8');
+  const parsed = ts.createSourceFile('resume-constraint-index-db.test.mjs', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  assert.ok(parsed.statements.some(node => ts.isImportDeclaration(node) && node.moduleSpecifier.text === './independent-review-db.test.mjs'),
+    'an actual import declaration is required; comment text cannot run the suite');
+});
+
 test('a new account shows the default, on; turning it off sends the version shown', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   await open(f);
