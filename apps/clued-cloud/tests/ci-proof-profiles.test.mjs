@@ -11,6 +11,7 @@ import {ciWorkflows} from '../../../scripts/ci/clued-merge-slot-ci.mjs';
 import '../../../scripts/ci/clued-gated-proof.test.mjs';
 import '../../../scripts/ci/clued-workflow-profile.test.mjs';
 import '../../../scripts/ci/clued-gated-proof-runtime.test.mjs';
+import '../../../scripts/ci/clued-reader-budget-cache.test.mjs';
 // Consumer regressions execute on the actual PR's quality unit entry too.
 import '../../../scripts/ci/clued-merge-executor.test.mjs';
 import '../../../scripts/ci/npm-cache-observation.test.mjs';
