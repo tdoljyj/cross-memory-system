@@ -297,6 +297,11 @@ jobs:
       - name: Build the application surfaces used by lifecycle tests
         run: npm run build
 
+      - name: Prepare Docker capacity on the ephemeral hosted runner
+        run: |
+          node --test ../../scripts/ci/public-mcp-hosted-space.test.mjs
+          node ../../scripts/ci/public-mcp-hosted-space.mjs
+
       - name: Verify fresh-start guard regressions
         run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs
 

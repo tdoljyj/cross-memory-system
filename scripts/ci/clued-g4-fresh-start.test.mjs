@@ -180,6 +180,23 @@ test('both G4 routes prove freshness before start, keep every database test, and
   }
 });
 
+test('only the ephemeral hosted G4 route prepares verified Docker capacity before database creation', () => {
+  const text = fs.readFileSync(fixtureFile('.github/workflows/clued-g4-database.yml'), 'utf8');
+  const [trusted, hosted] = text.split(/^  database-gate-(?:trusted-self-hosted|untrusted-hosted):$/m).slice(1);
+  const helper = 'node ../../scripts/ci/public-mcp-hosted-space.mjs';
+  const guard = 'node --test ../../scripts/ci/public-mcp-hosted-space.test.mjs';
+  assert.equal(trusted.includes(helper), false, 'persistent runners must not invoke SDK cleanup');
+  assert.equal((hosted.match(/node \.\.\/\.\.\/scripts\/ci\/public-mcp-hosted-space\.mjs/g) ?? []).length, 1);
+  assert.ok(hosted.indexOf(guard) >= 0 && hosted.indexOf(guard) < hosted.indexOf(helper));
+  assert.ok(hosted.indexOf('npm run build') < hosted.indexOf(helper));
+  assert.ok(hosted.indexOf(helper) < hosted.indexOf('--prepare'));
+  assert.ok(hosted.indexOf('--prepare') < hosted.indexOf('supabase start'));
+  assert.match(hosted, /runs-on: ubuntu-24\.04/);
+  assert.match(hosted, /needs\.admission-gate\.outputs\.admitted == 'true'/);
+  assert.match(hosted, /github\.actor != github\.repository_owner/);
+  assert.doesNotMatch(hosted, /continue-on-error:|rm -rf|docker (?:system|volume|image) prune/);
+});
+
 const listen = async port => {
   const server = createServer(socket => socket.destroy());
   await new Promise((resolve, reject) => {
