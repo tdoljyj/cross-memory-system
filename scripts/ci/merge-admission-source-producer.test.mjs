@@ -309,8 +309,10 @@ test('default runtime entry actually reads immutable main configuration and neve
   const caller=fs.readFileSync(path.join(here,'ci-usage-report.mjs'),'utf8');assert.match(caller,/await loadIndependentR9RuntimeInputs/);assert.match(caller,/window: runtime\.window/);
 });
 test('runtime loader validates the current Source registry against actual bytes and retains the complete old main admission template',async()=>{
-  const cfg=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),f=runtimeFixture(null,cfg),
-    r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
+  const cfg=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),f=runtimeFixture(null,cfg);
+  for(const name of fs.readdirSync(path.join(repo,'.github/workflows')))if(fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
+    f.files.set('.github/workflows/'+name,fs.readFileSync(path.join(repo,'.github/workflows',name),'utf8'));
+  const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
       fetchImpl:()=>{throw Error('SOURCE_ONLY_MOCK_MUST_NOT_ENTER_CLOCK');}});
   for(const k of ['script','workflow','reverify_workflow','policy'])assert.equal(cfg.admission_source[k+'_blob'],gitBlob(fs.readFileSync(path.join(repo,cfg.admission_source[k+'_path']))));
   for(const d of cfg.natural_producers){
@@ -331,6 +333,13 @@ test('runtime loader validates the current Source registry against actual bytes 
   for(const k of ['script','workflow','reverify_workflow','policy']){assert.equal(old[k+'_path'],cfg.admission_source[k+'_path']);assert.match(old[k+'_blob'],/^[a-f0-9]{40}$/);}
   assert.deepEqual(r.natural_selection.execution_source_templates,[expected.execution_source,...cfg.previous_execution_sources]);
   const snapshot=r.natural_selection.current_execution_snapshot;
+  const file='.github/workflows/clued-handover-external-qualification.yml',actualBlob=gitBlob(f.files.get(file)),
+    {registeredWorkflowSource,rolesForSource,roleDefinitionDigest}=await import('./clued-workflow-profile.mjs'),
+    selected=registeredWorkflowSource(JSON.parse(snapshot.proof_profiles_raw),file,actualBlob),actualRoles=rolesForSource(JSON.parse(snapshot.role_specs_raw),file,actualBlob);
+  assert.equal(actualBlob,'b8fee41077d854e906244b9fa2d374f058dbd4a3');assert.equal(snapshot.workflow_directory.find(row=>row.path===file).sha,actualBlob);
+  assert.equal(selected.passed,true);assert.equal(selected.profile.workflow_blob,actualBlob);assert.equal(actualRoles.length,1);assert.equal(actualRoles[0].job_id,'qualify');
+  assert.equal(actualRoles[0].definition_sha256,'fab079be15c3b25abe44ff6bcc2af3ff86161db853b0017ae92cb3f5ececb074');
+  assert.equal(roleDefinitionDigest(actualRoles[0].definition),actualRoles[0].definition_sha256);assert.equal(actualRoles[0].definition.env.QUALIFICATION_IDLE_RUN_ID,'${{ inputs.idle_run_id }}');
   assert.deepEqual(snapshot,{source_checkout_sha:subject,proof_profiles_raw:fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'),
     role_specs_raw:fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'),
     workflow_directory:[...f.files].filter(([p])=>p.startsWith('.github/workflows/')).map(([path,text])=>({path,sha:gitBlob(text),type:'blob',mode:'100644'})),

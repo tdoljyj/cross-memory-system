@@ -336,8 +336,8 @@ function historicalAssemblyRowsRemain(packet,prepared){
     assert.deepEqual(x.jobs,n.jobs.map(j=>({...j,id:Number(j.id)})));}
 }
 
-test('v2 actual 595 old22 replay remains exact under current 034 accepted-source wrappers; unknown and mixed pairs retain the full population',async()=>{
-  const oldTip='59522b4158322e833ef152472a924c5fb40e0b24',currentTip='034c5a0cf8931ddfa110f6516ff6b83bac8d886c',
+test('v2 actual 595 old22 replay preserves ac90 while current a258 selects exact registered b8 FullRole; unknown and mixed pairs retain the full population',async()=>{
+  const oldTip='59522b4158322e833ef152472a924c5fb40e0b24',currentTip='a258436c364304d4a69de4fff64b825f7801d2c3',
     file='.github/workflows/clued-handover-external-qualification.yml',current=fixture(),currentRegistry=JSON.parse(current.runtime.proof_profiles_raw),
     currentRoles=JSON.parse(current.runtime.role_specs_raw),oldRegistry=structuredClone(currentRegistry),oldRoles=structuredClone(currentRoles),
     wrapper=oldRegistry.workflows[file],future=wrapper.accepted_sources;
@@ -346,7 +346,7 @@ test('v2 actual 595 old22 replay remains exact under current 034 accepted-source
   delete oldRoles.workflows[file].sources[future[0].workflow_blob];
   let profilesRaw=JSON.stringify(oldRegistry,null,2)+'\n',rolesRaw=JSON.stringify(oldRoles,null,2)+'\n',
     directory=fs.readdirSync(path.join(repo,'.github/workflows')).filter(name=>fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
-      .map(name=>{const relative='.github/workflows/'+name;return {path:relative,sha:blob(fs.readFileSync(path.join(repo,relative))),type:'blob',mode:'100644'};});
+      .map(name=>{const relative='.github/workflows/'+name;return {path:relative,sha:relative===file?blob(wrapper.source_yaml):blob(fs.readFileSync(path.join(repo,relative))),type:'blob',mode:'100644'};});
   // Default CI derives exact reviewed bytes without depending on Git objects.
   // Only this explicit exact-ref offline observation enables bounded git show.
   if(Object.hasOwn(process.env,'CLUED_NATURAL_FRAME_HISTORY_COMMIT')){
@@ -362,17 +362,26 @@ test('v2 actual 595 old22 replay remains exact under current 034 accepted-source
   assert.equal(h(profilesRaw),reviewed.profiles_sha256);assert.equal(h(rolesRaw),reviewed.role_specs_sha256);
   assert.equal(h(current.runtime.proof_profiles_raw),cfg.execution_source.profiles_sha256);assert.equal(h(current.runtime.role_specs_raw),cfg.execution_source.role_specs_sha256);
   const actualBlob=blob(fs.readFileSync(path.join(repo,file))),selected=registeredHistoryAssemblySource(currentRegistry,file,actualBlob);
-  assert.equal(selected.passed,true);assert.equal(actualBlob,wrapper.workflow_blob);assert.equal(selected.profile.workflow_blob,actualBlob);
-  assert.deepEqual(currentRoles.workflows[file].sources[actualBlob],oldRoles.workflows[file].sources[actualBlob]);
+  assert.equal(selected.passed,true);assert.equal(actualBlob,future[0].workflow_blob);assert.equal(selected.profile.workflow_blob,actualBlob);
+  const {rolesForSource,roleDefinitionDigest}=await import('./clued-workflow-profile.mjs'),roles=rolesForSource(currentRoles,file,actualBlob);
+  assert.equal(roles.length,1);assert.equal(roles[0].job_id,'qualify');assert.equal(roles[0].definition_sha256,'fab079be15c3b25abe44ff6bcc2af3ff86161db853b0017ae92cb3f5ececb074');
+  assert.equal(roleDefinitionDigest(roles[0].definition),roles[0].definition_sha256);
+  assert.equal(roles[0].definition.env.QUALIFICATION_IDLE_RUN_ID,'${{ inputs.idle_run_id }}');
+  assert.deepEqual(currentRoles.workflows[file].sources[wrapper.workflow_blob],oldRoles.workflows[file].sources[wrapper.workflow_blob]);
+  assert.equal(directory.find(row=>row.path===file).sha,wrapper.workflow_blob);
   const make=()=>historicalAssemblyFixture({currentTip,oldSnapshot:{source_checkout_sha:oldTip,proof_profiles_raw:profilesRaw,role_specs_raw:rolesRaw,workflow_directory:directory}}),
     prepared=make(),before=JSON.stringify(prepared.f),built=assembleNaturalFourSourceFrame(prepared.f);
   assert.equal(built.status,'FOUR_SOURCE_FRAME_DATA_CANDIDATE',JSON.stringify(built.gaps));assert.equal(built.math.candidate_ready,true);
   const packet=JSON.parse(built.frame.packet_raw);historicalAssemblyRowsRemain(packet,prepared);assert.equal(Object.keys(packet.populations).length,8);
   assert.equal(packet.execution_sources.source_checkout_sha,currentTip);assert.equal(packet.execution_sources.entries.length,22);
+  assert.equal(packet.execution_sources.entries.find(row=>row.workflow_file===file).workflow_blob,actualBlob);
   const old=packet.previous_execution_snapshots[0];assert.equal(old.source_checkout_sha,oldTip);assert.equal(old.execution_sources.entries.length,22);
+  assert.equal(old.execution_sources.entries.find(row=>row.workflow_file===file).workflow_blob,wrapper.workflow_blob);
   assert.equal(packet.execution_configurations[old.configuration_key].proof_profiles_raw,profilesRaw);assert.equal(packet.execution_configurations[old.configuration_key].role_specs_raw,rolesRaw);
   assert.equal(packet.rounds[0].applicability.profile_sha256,reviewed.profiles_sha256);
   for(const x of packet.rounds[0].execution_packets)assert.equal(x.source_descriptor.role_source_sha256,reviewed.role_specs_sha256);
+  const historicalExternal=packet.rounds[0].execution_packets.find(x=>x.workflow_file===file);
+  assert.equal(historicalExternal.source_descriptor.workflow_blob,wrapper.workflow_blob);assert.equal(historicalExternal.source_descriptor.workflow_source_sha256,h(wrapper.source_yaml));
   for(const workflow of historyAssemblyAddedWorkflows)assert.ok(packet.rounds[0].execution_packets.some(x=>x.workflow_file===workflow));
   assert.equal(JSON.stringify(prepared.f),before);assert.equal(built.source_authenticated,false);assert.equal(built.official_metric,false);assert.equal(built.t0,null);
   for(const [label,change]of [['unknown pair',p=>{p.snapshot.proof_profiles_raw+='\n';}],['mixed roles',p=>{p.snapshot.role_specs_raw=p.f.runtime.role_specs_raw;}]]){
