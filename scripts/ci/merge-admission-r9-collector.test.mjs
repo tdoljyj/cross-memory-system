@@ -154,7 +154,7 @@ test('new Native attempts are captured and sealed once; subsequent batch reuse n
   assert.equal(second.population.cache_reuse_diagnostics.sealed_current_attempt_recapture_count,0);
   assert.deepEqual(second.population.cache_reuse_diagnostics.sealed_current_attempt_recapture_samples,[]);
 });
-test('passive reuse diagnostics describe existing-header recaptures, keep four bounded samples and preserve capture requests',async()=>{
+test('reuse diagnostics retain bounded samples and complete capture when current endpoint headers differ',async()=>{
   const original=Array.from({length:6},(_,i)=>run(42+i)),jobs=original.map(r=>job(r.id)),firstFake=nativeRequest({runs:original,jobs}),
     initial=await C.collectIncrementalNative({request:firstFake.request,repository,window});
   assert.equal(initial.status,'COMPLETE');assert.equal(firstFake.routes.length,38);
@@ -164,7 +164,7 @@ test('passive reuse diagnostics describe existing-header recaptures, keep four b
   const result=await C.collectIncrementalNative({request:fake.request,repository,window,authenticatedStoreRaw:initial.store_raw}),
     diag=result.population.cache_reuse_diagnostics;
   assert.equal(result.status,'PARTIAL');assert.equal(result.population.complete,false);
-  assert.equal(result.fresh,1);assert.equal(result.from_sealed,0);assert.equal(fake.routes.length,44);
+  assert.equal(result.fresh,1);assert.equal(result.from_sealed,0);assert.equal(fake.routes.length,49);
   assert.equal(fake.routes.filter(route=>route.includes('/jobs?')).length,14);
   for(const member of [cold,...current])assert.equal(fake.routes.filter(route=>route===('/repos/'+repository+'/actions/runs/'+member.id)).length,2);
   assert.equal(diag.reason_counts.ATTEMPT_PACKET_ABSENT,1);assert.equal(diag.reason_counts.LATEST_SEALED_HEADER_VALUES_DIFFER,6);
@@ -180,6 +180,89 @@ test('passive reuse diagnostics describe existing-header recaptures, keep four b
   assert.deepEqual(sample.public_values.pull_requests.inventory,{values:Array.from({length:16},(_,i)=>i+1),count:24,truncated:true});
   assert.deepEqual(JSON.parse(result.store_raw).packets['42:1'],JSON.parse(initial.store_raw).packets['42:1']);
   assert.ok(JSON.parse(result.store_raw).packets['41:1']);
+});
+async function endpointWitnessFixture({directoryPatch={},endpointPatch={},closingPatch=null,endpointBody=undefined,refused=false}={}){
+  const original=run(42,{updated_at:'2026-10-10T10:10:16Z'}),endpoint={...original,created_at:'2026-10-10T10:00:01Z'};
+  const old=nativeRequest({runs:[original],mutation:route=>route.endsWith('/attempts/1')?{ok:true,body:endpoint}:null});
+  const sealed=await N.captureNativeAttempt({request:old.request,repository,runId:'42',attempt:1});assert.equal(sealed.status,'COMPLETE');
+  const directory={...original,updated_at:'2026-10-10T10:10:15Z',...directoryPatch};let inventories=0;
+  const current=nativeRequest({runs:[directory],mutation:route=>{
+    if(route.includes('/actions/runs?')&&++inventories===2&&closingPatch)return {ok:true,body:{total_count:1,workflow_runs:[{...directory,...closingPatch}]}};
+    if(/\/attempts\/\d+$/.test(route))return refused?{ok:false,stopped:'request_cap'}:
+      {ok:true,body:endpointBody===undefined?{...endpoint,...endpointPatch}:endpointBody};
+    return null;
+  }});
+  return {sealed,current};
+}
+test('current attempt endpoint witness reuses exact sealed header despite one-second directory metadata lag',async()=>{
+  const {sealed,current}=await endpointWitnessFixture(),result=await C.collectIncrementalNative({request:current.request,repository,window,authenticatedStoreRaw:sealed.store_raw});
+  assert.equal(result.status,'COMPLETE');assert.equal(result.population.complete,true);assert.equal(result.from_sealed,1);assert.equal(result.fresh,0);
+  assert.equal(result.store_raw,sealed.store_raw,'the old packet values and JSON serialization stay unchanged');
+  assert.deepEqual(current.routes,[`/repos/${repository}/actions/runs?per_page=100&page=1`,
+    `/repos/${repository}/actions/runs/42/attempts/1`,`/repos/${repository}/actions/runs?per_page=100&page=1`]);
+  assert.equal(JSON.parse(result.store_raw).packets['42:1'].timing_basis.reported_attempt_created_at,'2026-10-10T10:00:01.000Z');
+  const diag=result.population.cache_reuse_diagnostics;
+  assert.equal(diag.reason_counts.CURRENT_ATTEMPT_ENDPOINT_HEADER_REUSE,1);assert.equal(diag.reason_counts.EXACT_SEALED_HEADER_REUSE,0);
+  assert.equal(diag.sealed_current_attempt_recapture_count,0);
+});
+test('current attempt endpoint witness covers only its latest ordinal and leaves historical capture unchanged',async()=>{
+  const prior=run(42,{updated_at:'2026-10-10T10:10:16Z'}),latest=run(42,{run_attempt:2,run_started_at:'2026-10-10T10:20:00Z',updated_at:'2026-10-10T10:30:16Z'}),
+    second={...latest,created_at:'2026-10-10T10:20:00Z'},jobs=[job(42),job(42,{id:242,run_attempt:2,created_at:'2026-10-10T10:20:00Z',
+      started_at:'2026-10-10T10:20:01Z',completed_at:'2026-10-10T10:29:00Z',steps:[]})];
+  const requestFor=directory=>nativeRequest({runs:[directory],mutation:route=>{
+    if(route.endsWith('/attempts/1'))return {ok:true,body:prior};
+    if(route.endsWith('/attempts/2'))return {ok:true,body:second};
+    if(route.includes('/attempts/')&&route.includes('/jobs?'))return {ok:true,body:{total_count:1,jobs:[jobs[Number(/\/attempts\/(\d+)/.exec(route)[1])-1]]}};
+    return null;
+  }});
+  const initial=requestFor(latest),one=await N.captureNativeAttempt({request:initial.request,repository,runId:'42',attempt:1});
+  const two=await N.captureNativeAttempt({request:initial.request,repository,runId:'42',attempt:2,storeRaw:one.store_raw});
+  assert.equal(one.status,'COMPLETE');assert.equal(two.status,'COMPLETE');
+  const current=requestFor({...latest,updated_at:'2026-10-10T10:30:15Z'}),result=await C.collectIncrementalNative({request:current.request,repository,window,authenticatedStoreRaw:two.store_raw});
+  assert.equal(result.status,'COMPLETE');assert.equal(result.from_sealed,1);assert.equal(result.fresh,1);assert.equal(result.store_raw,two.store_raw);
+  assert.equal(current.routes.filter(route=>route.endsWith('/attempts/2')).length,1);
+  assert.equal(current.routes.filter(route=>route.endsWith('/attempts/1')).length,2);assert.equal(current.routes.length,7);
+  assert.equal(result.population.cache_reuse_diagnostics.reason_counts.CURRENT_ATTEMPT_ENDPOINT_HEADER_REUSE,1);
+});
+test('current attempt endpoint witness refuses other fields, ordinal, unknown DTO and changed reported creation',async()=>{
+  for(const options of [{directoryPatch:{head_sha:'d'.repeat(40)}},{directoryPatch:{run_attempt:2}},
+    {endpointPatch:{run_attempt:2}},{endpointBody:null},{endpointPatch:{updated_at:'2026-10-10T10:10:17Z'}},
+    {endpointPatch:{created_at:'2026-10-10T10:00:02Z'}},{endpointPatch:{updated_at:'2026-10-10T10:10:16.000001Z'}},
+    {endpointPatch:{pull_requests:[{number:727}]}},{endpointPatch:{run_started_at:undefined}}]){
+    const {sealed,current}=await endpointWitnessFixture(options),result=await C.collectIncrementalNative({request:current.request,repository,window,authenticatedStoreRaw:sealed.store_raw});
+    assert.equal(result.from_sealed,0,JSON.stringify(options));assert.equal(result.population.complete,false);
+    assert.equal(result.population.cache_reuse_diagnostics.reason_counts.CURRENT_ATTEMPT_ENDPOINT_HEADER_REUSE,0);
+    assert.deepEqual(JSON.parse(result.store_raw).packets['42:1'],sealed.packet);
+  }
+});
+test('current attempt endpoint witness preserves window boundaries and rejects changed serialization',async()=>{
+  for(const windowOverride of [{start:'2026-10-10T10:10:15.500Z',end:window.end},
+    {start:window.start,end:'2026-10-10T10:10:15.500Z'}]){
+    const {sealed,current}=await endpointWitnessFixture(),result=await C.collectIncrementalNative({request:current.request,repository,window:windowOverride,authenticatedStoreRaw:sealed.store_raw});
+    assert.equal(result.from_sealed,0);assert.equal(result.population.cache_reuse_diagnostics.reason_counts.CURRENT_ATTEMPT_ENDPOINT_HEADER_REUSE,0);
+    assert.deepEqual(JSON.parse(result.store_raw).packets['42:1'],sealed.packet);
+  }
+  const {sealed,current}=await endpointWitnessFixture(),bad=JSON.parse(sealed.store_raw),r=bad.packets['42:1'].run;
+  bad.packets['42:1'].run={pull_requests:r.pull_requests,...r};
+  const refused=await C.collectIncrementalNative({request:current.request,repository,window,authenticatedStoreRaw:JSON.stringify(bad)});
+  assert.equal(refused.status,'PARTIAL');assert.equal(refused.reason_code,'NATIVE_STORE_INVALID');assert.equal(refused.from_sealed,0);assert.equal(current.routes.length,0);
+});
+test('current attempt endpoint witness retains refusal, closing directory and the original budget barriers',async()=>{
+  const failed=await endpointWitnessFixture({refused:true}),partial=await C.collectIncrementalNative({request:failed.current.request,repository,window,authenticatedStoreRaw:failed.sealed.store_raw});
+  assert.equal(partial.status,'PARTIAL');assert.equal(partial.from_sealed,0);assert.equal(partial.population.complete,false);
+  assert.equal(failed.current.routes.filter(route=>route.endsWith('/attempts/1')).length,1,'no retry after the endpoint refusal');
+  assert.ok(!failed.current.routes.some(route=>route.endsWith('/runs/42')||route.includes('/jobs?')));
+  const shifted=await endpointWitnessFixture({closingPatch:{updated_at:'2026-10-10T10:10:14Z'}}),changed=await C.collectIncrementalNative({request:shifted.current.request,repository,window,authenticatedStoreRaw:shifted.sealed.store_raw});
+  assert.equal(changed.status,'PARTIAL');assert.equal(changed.reason_code,'NATIVE_COHORT_CHANGED_AT_CLOSE');assert.equal(changed.population.complete,false);
+  assert.equal(changed.store_raw,shifted.sealed.store_raw);
+  for(const cap of [1,2]){
+    const f=await endpointWitnessFixture(),budget=U.createBudget({cap,source:'app'});let http=0;
+    const request=U.budgetedFetch(async url=>{http++;const reply=await f.current.request(new URL(url).pathname+new URL(url).search);
+      return new Response(JSON.stringify(reply.body),{headers:{'x-ratelimit-remaining':'4000','x-ratelimit-limit':'5000'}});},{},budget,'mock');
+    const result=await C.collectIncrementalNative({request,repository,window,authenticatedStoreRaw:f.sealed.store_raw});
+    assert.equal(result.status,'PARTIAL');assert.equal(result.population.complete,false);assert.equal(http,cap);assert.equal(budget.stopped,'request_cap');
+    assert.equal(result.store_raw,f.sealed.store_raw);assert.equal(result.from_sealed,cap===1?0:1);
+  }
 });
 test('numeric Native conclusion is masked in reuse diagnostics while the original capture remains refused',async()=>{
   const original=nativeRequest(),initial=await C.collectIncrementalNative({request:original.request,repository,window}),

@@ -384,7 +384,7 @@ export async function collectIncrementalNative({request,repository,window,authen
   return collectScopedNative({request,repository,window,authenticatedStoreRaw,onStore,observer});
 }
 const reuseHeaderFields=['run_id','run_attempt','workflow_id','path','event','head_sha','status','conclusion','created_at','run_started_at','updated_at','pull_requests'];
-const reuseReasons=['EXACT_SEALED_HEADER_REUSE','ATTEMPT_PACKET_ABSENT','LATEST_SEALED_HEADER_ABSENT',
+const reuseReasons=['EXACT_SEALED_HEADER_REUSE','CURRENT_ATTEMPT_ENDPOINT_HEADER_REUSE','ATTEMPT_PACKET_ABSENT','LATEST_SEALED_HEADER_ABSENT',
   'LATEST_SEALED_HEADER_VALUES_DIFFER','LATEST_SEALED_HEADER_SERIALIZATION_DIFFERS',
   'CURRENT_OBSERVER_EXCLUDED','LATEST_ATTEMPT_START_AT_OR_AFTER_CLOSE'];
 function publicReuseValue(field,value){
@@ -408,11 +408,43 @@ function reuseHeaderDifference(sealed,current){
       sealed_field_order:Object.keys(sealed).filter(field=>reuseHeaderFields.includes(field)),
       inventory_field_order:Object.keys(current).filter(field=>reuseHeaderFields.includes(field))})};
 }
+const inventoryNativeHeader=r=>({run_id:r.id,run_attempt:r.run_attempt,workflow_id:r.workflow_id,path:r.path,event:r.event,head_sha:r.head_sha,
+  status:r.status,conclusion:r.conclusion,created_at:r.created_at,run_started_at:r.run_started_at,updated_at:r.updated_at,pull_requests:r.pull_requests});
+function currentAttemptWitnessEligible(latest,normalized,window){
+  if(!latest||latest.run.status!=='completed'||normalized.status!=='completed'||latest.run.updated_at===normalized.updated_at||
+    JSON.stringify({...latest.run,updated_at:normalized.updated_at})!==JSON.stringify(normalized)||
+    normalized.run_started_at!==null&&timestampMicros(normalized.run_started_at)>=timestampMicros(window.end))return false;
+  const region=value=>{const us=timestampMicros(value);return us<timestampMicros(window.start)?-1:us>=timestampMicros(window.end)?1:0;};
+  return region(latest.run.updated_at)===region(normalized.updated_at);
+}
+function nativeEndpointTime(value){
+  // Match the Native reader's UTC wire-date grammar before projecting it.
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value))fail('CURRENT_ATTEMPT_ENDPOINT_INVALID');
+  const ms=Date.parse(value);if(!Number.isFinite(ms)||new Date(ms).toISOString().replace('.000Z','Z')!==value.replace('.000Z','Z'))fail('CURRENT_ATTEMPT_ENDPOINT_INVALID');
+  return new Date(ms).toISOString();
+}
+async function currentAttemptEndpointWitness(request,repository,run,latest){
+  let raw;
+  try{raw=await bodyOf(request,`/repos/${repository}/actions/runs/${run.id}/attempts/${run.run_attempt}`);}
+  catch(error){return {status:'REFUSED',reason_code:reason(error)};}
+  try{
+    if(!object(raw))fail('CURRENT_ATTEMPT_ENDPOINT_INVALID');
+    const reportedCreation=nativeEndpointTime(raw.created_at),endpoint=inventoryIdentity({...raw,created_at:run.created_at,
+      run_started_at:raw.run_started_at===null?null:nativeEndpointTime(raw.run_started_at),updated_at:nativeEndpointTime(raw.updated_at)}),header=inventoryNativeHeader(endpoint);
+    if(JSON.stringify(header)!==JSON.stringify(latest.run)||reportedCreation!==(latest.timing_basis.reported_attempt_created_at??latest.run.created_at))
+      return {status:'NOT_MATCHED'};
+    // The full Native normalizer/store validator remains the final grammar
+    // authority; the witness never substitutes DTO bytes into the old packet.
+    const checked=inspectNativePopulationStore(JSON.stringify({schema:'clued.merge-admission-native-population/1',repository,
+      packets:{[run.id+':'+run.run_attempt]:{...latest,run:header,run_digest:hash(header)}}}),repository);
+    return {status:checked.status==='VALID_DATA_STORE'?'MATCHED':'NOT_MATCHED'};
+  }catch{return {status:'NOT_MATCHED'};}
+}
 async function collectScopedNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null},feeOnly=false){
   let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null,first=null,closing=null,closingScope=null;
   let directoryProgress=null;const observed=new Map();
   const gaps=[],excludedAttempts=[];let fresh=0,fromSealed=0,observerExcluded=false;
-  const reuseDiagnostics={schema:'clued.r9-native-cache-reuse-diagnostics/1',basis:'EXISTING_INVENTORY_AND_STORE_ONLY',
+  const reuseDiagnostics={schema:'clued.r9-native-cache-reuse-diagnostics/1',basis:'CURRENT_NATIVE_HEADER_AND_AUTHENTICATED_STORE',
     reason_counts:Object.fromEntries(reuseReasons.map(reason=>[reason,0])),sealed_current_attempt_recapture_count:0,
     sample_limit:4,sealed_current_attempt_recapture_samples:[]};
   const select=items=>selected(items,window).filter(r=>!feeOnly||feeWorkflowPaths.has(r.path.split('@')[0]));
@@ -434,9 +466,9 @@ async function collectScopedNative({request,repository,window,authenticatedStore
       const packets=inspectNativePopulationStore(storeRaw,repository).packets;
       const latest=packets[run.id+':'+run.run_attempt];
       // Normalize the inventory projection to the exact d0fc store grammar.
-      const normalized={run_id:run.id,run_attempt:run.run_attempt,workflow_id:run.workflow_id,path:run.path,event:run.event,head_sha:run.head_sha,
-        status:run.status,conclusion:run.conclusion,created_at:run.created_at,run_started_at:run.run_started_at,updated_at:run.updated_at,pull_requests:run.pull_requests};
-      const latestMatches=latest&&JSON.stringify(latest.run)===JSON.stringify(normalized);
+      const normalized=inventoryNativeHeader(run);
+      let latestMatches=latest&&JSON.stringify(latest.run)===JSON.stringify(normalized),endpointWitness=null;
+      const witnessEligible=!progressOnly&&currentAttemptWitnessEligible(latest,normalized,window);
       const headerDifference=latest&&!latestMatches?reuseHeaderDifference(latest.run,normalized):null;
       for(let attempt=1;attempt<=run.run_attempt;attempt++){
         // Only the independently verified currently executing observer is
@@ -456,7 +488,17 @@ async function collectScopedNative({request,repository,window,authenticatedStore
         // Existing packets survive a refused directory without being promoted
         // to a Current reuse proof or counted as from_sealed.
         if(progressOnly&&existing){directoryProgress.existing_packet_attempts_preserved++;continue;}
-        if(latestMatches&&existing){reuseDiagnostics.reason_counts.EXACT_SEALED_HEADER_REUSE++;localSealed++;continue;}
+        // One current endpoint proof qualifies only its exact latest packet.
+        // The reuse reason counts packets, not HTTP requests or newly added data.
+        if(attempt===run.run_attempt&&existing&&!latestMatches&&witnessEligible&&endpointWitness===null){
+          endpointWitness=await currentAttemptEndpointWitness(request,repository,run,latest);
+          if(endpointWitness.status==='REFUSED'){localGaps.push({key:run.id+':'+attempt,reason_code:endpointWitness.reason_code});break;}
+          if(endpointWitness.status==='MATCHED')latestMatches=true;
+        }
+        if(latestMatches&&existing){
+          reuseDiagnostics.reason_counts[endpointWitness?.status==='MATCHED'?'CURRENT_ATTEMPT_ENDPOINT_HEADER_REUSE':'EXACT_SEALED_HEADER_REUSE']++;
+          localSealed++;continue;
+        }
         const reuseReason=!existing?'ATTEMPT_PACKET_ABSENT':!latest?'LATEST_SEALED_HEADER_ABSENT':headerDifference.reason_code;
         reuseDiagnostics.reason_counts[reuseReason]++;
         if(attempt===run.run_attempt&&existing){
