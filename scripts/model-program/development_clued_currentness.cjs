@@ -48,7 +48,7 @@ function currentRecord(result, id, type) {
   return row;
 }
 
-function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionRef}) {
+function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionRef, readPrerequisiteRefs = []}) {
   // ownerCapture must come directly from the Host's admitted, successful M1
   // capture of the human's exact experiment answer, never from a Profile file.
   const capture = decode(ownerCapture);
@@ -84,6 +84,31 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
   need(Number.isFinite(start) && Number.isFinite(stop) && start < stop
     && stop - start <= 86400000, 'APPROVAL_WINDOW');
   const pins = clone(issued);
+  // The Host has already classified the upstream constraints and completed
+  // applicable full reads. These id/version pins record that prerequisite;
+  // they grant no permission and never substitute for the final live checks.
+  need(Array.isArray(readPrerequisiteRefs), 'UPSTREAM_READ_REFS_REQUIRED');
+  const readConstraints = new Map();
+  for (const ref of readPrerequisiteRefs) {
+    need(ref && typeof ref.id === 'string' && ref.id.length > 0
+      && Number.isInteger(ref.version) && ref.version > 0 && !readConstraints.has(ref.id),
+    'UPSTREAM_READ_REFS_REQUIRED');
+    readConstraints.set(ref.id, ref.version);
+  }
+  const checkReadPrerequisites = (view, requireReadList) => {
+    if (requireReadList || Object.hasOwn(view, 'required_reads')) {
+      need(Array.isArray(view.required_reads) && view.required_reads.length === 0,
+        'UPSTREAM_READS_REQUIRED');
+    }
+    for (const field of ['active_constraints', 'active_constraint_refs', 'active_constraints_delivered']) {
+      if (!Object.hasOwn(view, field)) continue;
+      need(Array.isArray(view[field]), 'UPSTREAM_READS_REQUIRED');
+      for (const ref of view[field]) {
+        need(ref && typeof ref.id === 'string' && Number.isInteger(ref.version)
+          && readConstraints.get(ref.id) === ref.version, 'UPSTREAM_READS_REQUIRED');
+      }
+    }
+  };
   const original = {id: record.id, version: record.version, content: record.content,
     approval_rationale:canonical(record.type_fields.rationale),
     content_hash: record.content_hash, receipt_id: capture.receipt_id};
@@ -109,40 +134,42 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
       client_session_id: sessionRef, event_limit: 1, event_budget_bytes: 4096}));
     need(resumed.status === 'restored' && resumed.context_key === SCOPE
       && typeof resumed.session_token === 'string', 'AUTHORIZED_SESSION_REQUIRED');
+    checkReadPrerequisites(resumed, true);
     const claim = (resumed.active_work_claims || []).find(row => row.claim_id === pins.claim_id);
     need(claim?.status === 'ACTIVE' && claim.task_id === TASK && claim.context_key === SCOPE
       && claim.fence === pins.claim_fence && claim.holder_session_ref === sessionRef
       && claim.execution_handover_pending === false, 'CLAIM_NOT_CURRENT');
-    const observe = async () => Promise.all([
+    const observeRecords = () => [
       calls.clued_search_context({session_token: resumed.session_token, context_key: SCOPE,
         scope: 'context', query: pins.profile_id, limit: 20, max_bytes: 65536}),
       calls.clued_search_context({session_token: resumed.session_token, context_key: SCOPE,
-        scope: 'context', query: pins.task_query, limit: 20, max_bytes: 262144}),
+        scope: 'context', query: pins.task_query, limit: 20, max_bytes: 262144})];
+    const checkRecords = ([approvalRead, taskRead]) => {
+      const live = currentRecord(decode(approvalRead), original.id, 'decision');
+      need(live.version === original.version && live.content === original.content
+        && canonical(live.type_fields?.rationale) === original.approval_rationale,
+        'APPROVAL_CHANGED_OR_REVOKED');
+      const task = currentRecord(decode(taskRead), TASK, 'task');
+      need(task.version === pins.task_version, 'TASK_CHANGED_REVALIDATION_REQUIRED');
+      return task;
+    };
+    const reconciled = decode(await calls.clued_session_reconcile({session_token: resumed.session_token,
+      context_key: SCOPE}));
+    need(reconciled.currentness_state === 'CURRENT' && reconciled.admission_eligible === true,
+      'CURRENTNESS_UNAVAILABLE');
+    checkReadPrerequisites(reconciled, false);
+    // Reconcile may adopt a new vector. Re-read the exact decision/task/claim
+    // afterwards; CURRENT alone cannot bless changed or revoked approval.
+    // This remains a bounded point observation, not an atomic execution grant.
+    const finalRead = await Promise.all([...observeRecords(),
       calls.clued_work_verify({claim_id: pins.claim_id, scope: SCOPE})]);
-    const check = ([approvalRead, taskRead, verified]) => {
-    const live = currentRecord(decode(approvalRead), original.id, 'decision');
-    need(live.version === original.version && live.content === original.content
-      && canonical(live.type_fields?.rationale) === original.approval_rationale,
-      'APPROVAL_CHANGED_OR_REVOKED');
-    const task = currentRecord(decode(taskRead), TASK, 'task');
-    need(task.version === pins.task_version, 'TASK_CHANGED_REVALIDATION_REQUIRED');
-    const gate = decode(verified);
+    const task = checkRecords(finalRead);
+    const gate = decode(finalRead[2]);
     need(gate.status === 'ok' && gate.verdict === 'ADMITTED' && gate.current_fence === pins.claim_fence
       && gate.claim?.claim_id === pins.claim_id && gate.claim.fence === pins.claim_fence
       && gate.claim.task_id === TASK && gate.claim.context_key === SCOPE
       && gate.claim.status === 'ACTIVE' && gate.claim.execution_handover_pending === false
       && gate.claim.holder_session_ref === sessionRef, 'CLAIM_NOT_VERIFIED');
-    return task;
-    };
-    check(await observe());
-    const reconciled = decode(await calls.clued_session_reconcile({session_token: resumed.session_token,
-      context_key: SCOPE}));
-    need(reconciled.currentness_state === 'CURRENT' && reconciled.admission_eligible === true,
-      'CURRENTNESS_UNAVAILABLE');
-    // Reconcile may adopt a new vector. Re-read the exact decision/task/claim
-    // afterwards; CURRENT alone cannot bless changed or revoked approval.
-    // This remains a bounded point observation, not an atomic execution grant.
-    const task = check(await observe());
     need(Date.now() >= start && Date.now() < stop, 'APPROVAL_EXPIRED_DURING_READ');
     return {kind: 'CURRENT_OWNER_DECISION_AND_PROFILE_BINDING_OBSERVATION',
       approval_record_id: original.id, approval_version: original.version,
