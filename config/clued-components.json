@@ -54,6 +54,21 @@
       "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
+      "id": "hook.runner-job-started",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
+      "root": "scripts/runner",
+      "files": [
+        "clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs"
+      ],
+      "content_sha256": "5a6c58d516e3f6ef65b178c5aa72c1b91436af5d6039e4386a46927633a0c7db",
+      "version_marker": {
+        "file": "clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
       "id": "hook.capture-guard",
       "kind": "hook",
       "version": "1.0.1",
