@@ -744,6 +744,95 @@ function uncappedDirectoryFixture({grow=true,remove=false,ascending=false,create
   }};
 }
 
+async function directoryProgressFixture({stop=false,unsafe=null,initialFailure=null}={}){
+  const existing=run(42),seed=N.emptyNativePopulationStore(repository),old=nativeRequest({runs:[existing]}),
+    captured=await N.captureNativeAttempt({request:old.request,repository,runId:'42',attempt:1,storeRaw:seed});
+  assert.equal(captured.status,'COMPLETE');
+  const missing=run(43),before=run(999,{created_at:'2026-10-10T23:00:00Z',run_started_at:'2026-10-10T23:00:01Z',
+    updated_at:'2026-10-10T23:10:00Z',conclusion:'failure'}),after={...before,run_attempt:2,status:'queued',conclusion:null,
+    run_started_at:'2026-10-11T00:01:00Z',updated_at:'2026-10-11T00:01:01Z'},
+    quiet=Array.from({length:99},(_,i)=>run(100+i,{created_at:'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:01Z',updated_at:'2026-10-09T00:01:00Z'})),
+    lateJob=job(999,{created_at:'2026-10-10T23:00:01Z',started_at:'2026-10-10T23:00:02Z',completed_at:'2026-10-10T23:09:00Z',conclusion:'failure',
+      steps:[{number:1,name:'Measure CI usage',status:'completed',conclusion:'failure',started_at:'2026-10-10T23:00:02Z',completed_at:'2026-10-10T23:09:00Z'}]}),
+    actualMissing=unsafe==='identity'?{...missing,head_sha:'b'.repeat(40)}:missing,
+    actualJob=unsafe==='job_owner_conflict'?job(43,{id:142}):job(43);
+  let directoryReads=0;
+  const fake=nativeRequest({runs:[existing,actualMissing,after],jobs:[job(42),actualJob,lateJob],artifact:zip(packet({nativeStoreRaw:captured.store_raw})),mutation:route=>{
+    if(route.includes('/actions/runs?')){
+      directoryReads++;const page=Number(new URL(route,'https://native.invalid').searchParams.get('page'));
+      if(initialFailure==='budget'&&page===2)return {ok:false,stopped:'time_budget'};
+      const current=directoryReads===3?after:before,rows=[current,...quiet.slice().reverse(),missing,existing];
+      if(initialFailure==='order'&&page===1)rows.reverse();
+      return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
+    }
+    if(stop&&route.endsWith('/actions/runs/999'))return {ok:false,stopped:'request_cap'};
+    if(route.endsWith('/actions/runs/999/attempts/1'))return {ok:true,body:before};
+    return null;
+  }});
+  return {...fake,store_raw:captured.store_raw,get directoryReads(){return directoryReads;}};
+}
+
+test('typed initial ordinal conflict salvages only independently complete missing packets and keeps the directory refusal',async()=>{
+  const f=await directoryProgressFixture(),saved=[],result=await C.collectIncrementalNative({request:f.request,repository,window,
+    authenticatedStoreRaw:f.store_raw,onStore:raw=>saved.push(raw)}),progress=result.population.directory_progress;
+  assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  assert.equal(result.inventory_conflict.run_id,'999');assert.equal(result.inventory_conflict.stage,'CLOSING_DIRECTORY_HEAD');
+  assert.ok(result.inventory_conflict.changed_fields.includes('run_attempt'));
+  assert.equal(result.population.initial_total,null);assert.equal(result.population.closing_total,null);assert.equal(result.population.complete,false);
+  assert.equal(result.fresh,2);assert.equal(result.from_sealed,0);assert.equal(f.directoryReads,3);assert.equal(f.routes.length,15);
+  assert.equal(saved.length,1);assert.equal(saved[0],result.store_raw);
+  const store=JSON.parse(result.store_raw);assert.ok(store.packets['43:1']);assert.ok(store.packets['999:1']);
+  assert.deepEqual(store.packets['42:1'],JSON.parse(f.store_raw).packets['42:1']);
+  assert.ok(!f.routes.some(route=>route.endsWith('/actions/runs/42')));
+  assert.deepEqual(f.routes.filter(route=>route.endsWith('/actions/runs/43')||route.endsWith('/actions/runs/999')).slice(0,2),
+    ['/repos/'+repository+'/actions/runs/43','/repos/'+repository+'/actions/runs/999']);
+  assert.equal(progress.inventory_closed,false);assert.equal(progress.before_packet_count,1);assert.equal(progress.after_packet_count,3);
+  assert.equal(progress.new_packet_keys_count,2);assert.deepEqual(progress.new_packet_key_samples,['43:1','999:1']);
+  assert.equal(progress.existing_packet_attempts_preserved,1);assert.equal(progress.missing_attempt_capture_requests,2);
+  assert.equal(result.population.cache_reuse_diagnostics.reason_counts.EXACT_SEALED_HEADER_REUSE,0);
+  assert.equal(N.inspectNativePopulationStore(result.store_raw,repository).status,'VALID_DATA_STORE');
+});
+test('salvage budget refusal retains the completed sibling packet and never replaces the original directory conflict',async()=>{
+  const f=await directoryProgressFixture({stop:true}),saved=[],result=await C.collectIncrementalNative({request:f.request,repository,window,
+    authenticatedStoreRaw:f.store_raw,onStore:raw=>saved.push(raw)});
+  assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  assert.equal(result.inventory_conflict.run_id,'999');assert.equal(result.population.complete,false);
+  assert.ok(JSON.parse(result.store_raw).packets['43:1']);assert.ok(!JSON.parse(result.store_raw).packets['999:1']);
+  assert.equal(saved.at(-1),result.store_raw);assert.equal(result.population.directory_progress.new_packet_keys_count,1);
+  assert.equal(result.population.directory_progress.stop_reason_code,'NATIVE_CAPTURE_BUDGET_PARTIAL');
+  assert.equal(f.routes.filter(route=>route.endsWith('/actions/runs/999')).length,1);assert.equal(f.directoryReads,3);
+});
+test('salvage rejects a changed fixed identity and a packet conflicting with an existing Native job owner',async()=>{
+  for(const unsafe of ['identity','job_owner_conflict']){
+    const f=await directoryProgressFixture({unsafe}),result=await C.collectIncrementalNative({request:f.request,repository,window,authenticatedStoreRaw:f.store_raw}),
+      store=JSON.parse(result.store_raw);
+    assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+    assert.equal(result.population.complete,false);assert.ok(!store.packets['43:1']);assert.ok(store.packets['999:1']);
+    assert.deepEqual(store.packets['42:1'],JSON.parse(f.store_raw).packets['42:1']);
+    assert.ok(result.gaps.some(g=>g.key==='43:1'&&g.reason_code===(unsafe==='identity'?'NATIVE_PROGRESS_OBSERVATION_IDENTITY_CHANGED':'duplicate_native_job_identity')));
+    assert.equal(result.population.directory_progress.new_packet_keys_count,1);
+    assert.equal(N.inspectNativePopulationStore(result.store_raw,repository).status,'VALID_DATA_STORE');
+  }
+});
+test('untyped initial pagination and budget failures start no salvage or extra capture requests',async()=>{
+  for(const initialFailure of ['order','budget']){
+    const f=await directoryProgressFixture({initialFailure}),result=await C.collectIncrementalNative({request:f.request,repository,window,authenticatedStoreRaw:f.store_raw});
+    assert.equal(result.status,'PARTIAL');assert.equal(result.population.complete,false);assert.equal(result.fresh,0);
+    assert.equal(Object.hasOwn(result.population,'directory_progress'),false);
+    assert.ok(f.routes.every(route=>route.includes('/actions/runs?')));
+    assert.equal(f.routes.length,initialFailure==='order'?1:2);assert.deepEqual(JSON.parse(result.store_raw),JSON.parse(f.store_raw));
+  }
+});
+test('existing R9 wrapper seals salvaged Native progress while preserving partial source readiness and null T0',async()=>{
+  const f=await directoryProgressFixture(),result=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),
+    repository,window,sourceContractRaw:selection()});
+  assert.equal(result.source_authenticated,true);assert.equal(result.status,'partial');assert.equal(result.t0,null);
+  assert.equal(result.native.status,'PARTIAL');assert.equal(result.native.population.complete,false);assert.equal(result.source_readiness.complete,false);
+  const next=N.inspectNativePopulationStore(result.next_native_store_raw,repository);
+  assert.equal(next.status,'VALID_DATA_STORE');assert.ok(next.packets['43:1']);assert.ok(next.packets['999:1']);
+  assert.equal(f.directoryReads,3);assert.doesNotThrow(()=>packet({nativeStoreRaw:result.next_native_store_raw}));
+});
+
 test('uncapped directory closes all historical members despite a growing post-window prefix',async()=>{
   const f=uncappedDirectoryFixture(),r=await C.collectIncrementalNative({request:f.request,repository,window});
   assert.equal(r.status,'COMPLETE');assert.equal(r.population.initial_total,250);assert.equal(r.population.closing_total,250);
