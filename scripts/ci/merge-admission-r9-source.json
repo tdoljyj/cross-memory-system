@@ -19,8 +19,8 @@
   },
   "previous_admission_sources": [],
   "execution_source": {
-    "profiles_sha256": "72a5c29eb2c607c1431b9426848a180a163aff4c1cba4320ed2a4f842c6e6782",
-    "role_specs_sha256": "4c84f4ae3f956999c9d372f340e66d0d7ba3b8cded8ef9eb17970d236e008d54"
+    "profiles_sha256": "87cf086b468643e8324f5589f81ef2e3372d34078c180f3cafd5622e88d73559",
+    "role_specs_sha256": "67097caf33e0ef4f63a292cb558a67aff62da294135b6345ef568525d6501284"
   },
   "forward_epoch": {
     "epoch_id": "4197536d-465f-4046-9f11-e573aacc458b",
@@ -181,7 +181,7 @@
     {
       "registration_status": "registered",
       "workflow_path": ".github/workflows/clued-merge-slot-ci.yml",
-      "workflow_blob": "cea1b54a12373e71e985b04bebe00b7b63f95606",
+      "workflow_blob": "9a6b1709c39ce5c4ec2adc89e0e027cdaf4a5b42",
       "job_id": "report",
       "job_name": "clued-merge-slot-ci",
       "source_paths": [
@@ -201,7 +201,7 @@
         "scripts/ci/clued-merge-executor.mjs": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
         "scripts/ci/clued-gated-proof-runtime.mjs": "480280e6af3864ad8b2feb0b46a929bf7facdc46",
-        ".github/workflows/clued-merge-slot-ci.yml": "cea1b54a12373e71e985b04bebe00b7b63f95606",
+        ".github/workflows/clued-merge-slot-ci.yml": "9a6b1709c39ce5c4ec2adc89e0e027cdaf4a5b42",
         ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
         "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
