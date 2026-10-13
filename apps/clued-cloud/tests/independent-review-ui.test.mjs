@@ -82,7 +82,7 @@ test('a new account shows the default, on; turning it off sends the version show
     { p_input: { enabled: false, base_version: 0 } }]);
   f.render();
   assert.ok(f.nodes('button').every(n => n.props.disabled), 'no second change while one is in flight');
-  f.calls[1].resolve({ data: { status: 'committed', changed: true, ...state(false, 1).data }, error: null }); await f.settle();
+  f.calls[1].resolve({ data: { ...state(false, 1).data, status: 'committed', changed: true }, error: null }); await f.settle();
   assert.ok(f.text().includes('已关闭'));
   assert.ok(!f.text().includes('（默认）'));
   assert.ok(f.text().includes('已关闭自动授权，后续审核按任务的明确许可进行。'));
@@ -127,6 +127,31 @@ test('unknown or malformed state never shows an enabled switch', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   await open(f, state('true', 0));
   assert.equal(f.nodes('button').some(n => n.props.role === 'switch'), false);
+  assert.ok(f.text().includes('无法识别'));
+});
+
+for (const status of [undefined, 'pending', 'committed']) test(`a setting read without explicit ok is unknown (${status})`, async t => {
+  const f = fixture(PAGE); t.after(() => f.unmount());
+  await open(f, state(true, 0, { status }));
+  assert.equal(f.nodes('button').some(n => n.props.role === 'switch'), false);
+  assert.ok(f.text().includes('无法识别'));
+});
+
+for (const reply of [
+  { status: 'pending', changed: true },
+  { status: undefined, changed: true },
+  { status: 'committed', changed: undefined },
+]) test(`a write must explicitly commit before showing completion (${reply.status}/${reply.changed})`, async t => {
+  const f = fixture(PAGE); t.after(() => f.unmount());
+  await open(f);
+  f.button('关闭自动授权').props.onClick();
+  f.calls[1].resolve({ data: { ...state(false, 1).data, ...reply }, error: null });
+  await f.settle();
+  assert.equal(f.calls[2].name, 'clued_independent_review_setting_v1');
+  assert.equal(f.nodes('button').some(n => n.props.role === 'switch'), false);
+  assert.ok(!f.text().includes('已关闭自动授权，后续审核按任务的明确许可进行。'));
+  f.calls[2].resolve(state(false, 1)); await f.settle();
+  assert.equal(f.nodes('button').find(n => n.props.role === 'switch').props['aria-checked'], false);
   assert.ok(f.text().includes('无法识别'));
 });
 

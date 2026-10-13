@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { workerGatewayRpc, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Real isolated PostgreSQL with both current migration shapes. No live API,
@@ -46,6 +47,7 @@ for (const profile of ['complete-repository', 'production-installed-shape']) tes
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await allowTestIssuerCredentials(admin);
     const owner = uuid(), other = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at)
       values($1,'review-owner@example.invalid',now()),($2,'review-other@example.invalid',now())`, [owner, other]);
@@ -74,6 +76,54 @@ for (const profile of ['complete-repository', 'production-installed-shape']) tes
     assert.equal(first.independent_review.enabled,true);
     assert.equal((await resume('reader',{response_view:'work_log'})).independent_review.enabled,true);
     assert.ok(!('user_id' in first.independent_review));
+
+    // Use the real Native consent issuance path, selecting only development
+    // context read. This success never restores a Canonical session and must
+    // still deliver the account policy without widening its authorization.
+    const project = uuid(), context = uuid(), issuer = hash(), scopedToken = hash();
+    const resource = 'https://review-context.example.invalid/mcp';
+    await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
+      values($1,$2,'Review context fixture','review context fixture',$3)`, [project,owner,'project:'+project]);
+    await admin.query(`insert into clued_private.development_spaces_v14(id,owner_id,project_id,name,environment)
+      values($1,$2,$3,'Review history fixture','test')`, [context,owner,project]);
+    await admin.query(`insert into clued_private.authorization_issuers_v12(token_hash,resource,name)
+      values($1,$2,'Review context test issuer')`, [issuer,resource]);
+    await page.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+      [owner,JSON.stringify(human(owner))]);
+    const prepared = (await page.query(`select public.clued_authorization_prepare_v12($1,$2) v`, [issuer,{
+      request_digest:hash(),client_id:'review-context-client',client_name:'Review context test client',
+      redirect_uri:'https://review-context.example.invalid/callback',resource,requested_scopes:['context:read'],
+    }])).rows[0].v;
+    const selected = [{resource_kind:'context',resource_id:context,environment:'test',actions:['read']}];
+    const scoped = (await page.query(`select public.clued_authorization_approve_v12($1,$2,$3,$4,$5,$6) v`,
+      [issuer,prepared.request_id,prepared.version,JSON.stringify(selected),scopedToken,
+        new Date(Date.now()+3600000).toISOString()])).rows[0].v;
+    // The raw-binding test trigger also sees issuance before the consent row.
+    // Remove its fixture grant so every assertion exercises actual consent.
+    await admin.query('delete from clued_private.raw_binding_grants_v1 where binding_id=$1',[scoped.binding_id]);
+    assert.deepEqual((await admin.query(`select resource_kind,resource_id,environment,actions
+      from clued_private.authorization_entries_v12 where binding_id=$1`,[scoped.binding_id])).rows,selected);
+    const scopedResume = extra => workerGatewayRpc(worker,'clued_mcp_restore',scopedToken,extra??{});
+    const canonicalFootprint = () => admin.query(`select
+      (select count(*) from public.clued_continuity_sessions)::int sessions,
+      (select count(*) from public.clued_context_streams)::int streams,
+      (select count(*) from public.clued_audit_receipts)::int receipts`).then(r=>r.rows[0]);
+    const beforeScoped = await canonicalFootprint();
+    for (const input of [{},{context_key:'project:'+project},{response_view:'work_log'}]) {
+      const projection = await scopedResume(input);
+      assert.equal(projection.status,'scoped_context_ready');
+      assert.equal(projection.session_resumed,false);
+      assert.equal(projection.session_checkpoint_supported,false);
+      assert.deepEqual(projection.authorized_contexts.map(c=>c.context_id),[context]);
+      assert.deepEqual([projection.independent_review.enabled,projection.independent_review.version,
+        projection.independent_review.default,projection.independent_review.execution_authority],[true,0,true,false]);
+      for (const key of ['session_token','snapshot','work_log']) assert.ok(!(key in projection));
+      assert.ok(!('user_id' in projection.independent_review));
+    }
+    await assert.rejects(()=>scopedResume({context_key:'project:'+uuid()}),/no_authorized|not_authorized/);
+    await assert.rejects(()=>scopedResume({context_key:'profile'}),/not_authorized/);
+    assert.deepEqual(await canonicalFootprint(),beforeScoped,'context-only policy delivery creates no Canonical session, stream or receipt');
+
     for (const client of [anon,page]) {
       await assert.rejects(() => client.query('select * from clued_private.independent_review_settings_v1'), /permission denied/);
       await assert.rejects(() => client.query('select clued_private.independent_review_setting_view_v1($1)',[owner]), /permission denied/);
@@ -98,6 +148,8 @@ for (const profile of ['complete-repository', 'production-installed-shape']) tes
     assert.equal((await receipts()).length,1);
     const off = await resume();
     assert.deepEqual([off.independent_review.enabled,off.independent_review.version,off.independent_review.execution_authority],[false,1,false]);
+    const scopedOff = await scopedResume();
+    assert.deepEqual([scopedOff.independent_review.enabled,scopedOff.independent_review.version],[false,1]);
     assert.equal((await resume('other')).independent_review.enabled,true);
     assert.equal((await read(human(other))).enabled,true);
     assert.equal((await turn(false,1)).changed,false);
@@ -112,9 +164,12 @@ for (const profile of ['complete-repository', 'production-installed-shape']) tes
     const on = await turn(true,1);
     assert.deepEqual([on.status,on.changed,on.enabled,on.version],['committed',true,true,2]);
     assert.equal((await resume()).independent_review.enabled,true);
+    assert.equal((await scopedResume()).independent_review.enabled,true);
     assert.deepEqual((await receipts()).map(r=>[Number(r.version),r.metadata.receipt_kind,r.metadata.execution_authority]),
       [[1,'INDEPENDENT_REVIEW_DISABLED',false],[2,'INDEPENDENT_REVIEW_ENABLED',false]]);
     await assertGatewayCloseoutBoundary(admin);
+    await admin.query('update clued_private.authorizations_v12 set revoked_at=now() where binding_id=$1',[scoped.binding_id]);
+    await assert.rejects(()=>scopedResume(),/revoked|authorized/i);
     await admin.query('update public.clued_agent_bindings set revoked_at=now() where id=$1',[ids.owner]);
     await assert.rejects(()=>resume(), /binding|revoked|authorized|token/i);
   } finally {

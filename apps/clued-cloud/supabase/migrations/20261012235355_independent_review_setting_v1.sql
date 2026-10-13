@@ -87,6 +87,7 @@ grant execute on function public.clued_independent_review_setting_v1(jsonb),
 do $migration$
 declare body text;
   restore_anchor text:=$anchor$  if v_response_view='work_log' then$anchor$;
+  scoped_restore_anchor text:=$anchor$ return jsonb_build_object('status','scoped_context_ready','session_resumed',false,'session_checkpoint_supported',false,$anchor$;
   renewal_anchor text:=$anchor$    'session_token',v_token,'version',p_version,'session_expires_in',3600,$anchor$;
 begin
   body:=pg_get_functiondef('public.clued_mcp_restore_before_project_access_v13(text,jsonb)'::regprocedure);
@@ -97,6 +98,19 @@ begin
     $policy$  v_result:=v_result||jsonb_build_object('independent_review',
     clued_private.independent_review_setting_view_v1(v_binding.user_id));
 $policy$||restore_anchor);
+
+  -- Context-only consent has no Canonical session, but its successful restore
+  -- still verifies the account and exact development-history read grant. Read
+  -- this same account policy only after that existing authorization path; do
+  -- not add Canonical access, a session, or checkpoint support.
+  body:=pg_get_functiondef('public.clued_mcp_restore_before_currentness(text,jsonb)'::regprocedure);
+  if array_length(string_to_array(body,scoped_restore_anchor),1) is distinct from 2
+    or strpos(body,'independent_review_setting_view_v1')>0 then
+    raise exception 'independent_review_scoped_restore_definition_mismatch'; end if;
+  execute replace(body,scoped_restore_anchor,
+    $policy$ perform clued_private.currentness_user_lock(b.user_id);
+$policy$||scoped_restore_anchor||$policy$
+  'independent_review',clued_private.independent_review_setting_view_v1(b.user_id),$policy$);
 
   body:=pg_get_functiondef('clued_private.renew_checkpoint_session(public.clued_agent_bindings,public.clued_continuity_sessions,bigint,uuid)'::regprocedure);
   if array_length(string_to_array(body,renewal_anchor),1) is distinct from 2

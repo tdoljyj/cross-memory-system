@@ -37,8 +37,9 @@ async function rpc(name: string, input: Json): Promise<Json> {
   return value;
 }
 
-function parse(value: Json): Setting {
-  if (typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version) || Number(value.version) < 0) throw new RequestFailure("服务返回了无法识别的结果。");
+function parse(value: Json, status: "ok" | "committed"): Setting {
+  if (value.status !== status || (status === "committed" && typeof value.changed !== "boolean") ||
+    typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version) || Number(value.version) < 0) throw new RequestFailure("服务返回了无法识别的结果。");
   return { enabled: value.enabled, version: Number(value.version), isDefault: value.default === true,
     updatedAt: typeof value.updated_at === "string" ? value.updated_at : null };
 }
@@ -77,7 +78,7 @@ export default function IndependentReviewPage() {
     setSetting(null); setWorking(true);
     if (!keepMessages) { setError(""); setNotice(""); }
     try {
-      const value = parse(await rpc("clued_independent_review_setting_v1", {}));
+      const value = parse(await rpc("clued_independent_review_setting_v1", {}), "ok");
       if (epoch.current === generation) setSetting(value);
     } catch (failure) {
       if (epoch.current === generation) { setSetting(null); setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取开关状态。"); }
@@ -92,7 +93,7 @@ export default function IndependentReviewPage() {
     try {
       const value = await rpc("clued_independent_review_setting_set_v1", { enabled, base_version: setting.version });
       if (epoch.current !== generation) return;
-      setSetting(parse(value));
+      setSetting(parse(value, "committed"));
       setNotice(enabled ? "已开启自动授权，后续审核不再逐次询问。" : "已关闭自动授权，后续审核按任务的明确许可进行。");
     } catch (failure) {
       if (epoch.current !== generation) return;
