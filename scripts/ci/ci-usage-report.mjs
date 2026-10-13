@@ -179,7 +179,9 @@ const statusOf = (complete) => (complete ? "measured" : "partial");
 
 export function createBudget({ cap = REQUEST_CAP, batchSize = BATCH_SIZE, floor = RATE_LIMIT_FLOOR, source = "github_token",
   deadline = null, clock = Date.now } = {}) {
-  return { cap, batchSize, floor, source, deadline, clock, used: 0, remaining: null, limit: null, reset: null, stopped: null };
+  return { cap, batchSize, floor, source, deadline, clock, used: 0, remaining: null, limit: null, reset: null, stopped: null,
+    ...(source === "app" ? { app_quota_preflight: { status: "pending", reason_code: null, request_ordinal: null,
+      route: null, observed_at: null, http_status: null, remaining: null, limit: null, reset: null, floor } } : {}) };
 }
 
 const headerNumber = (headers, name) => {
@@ -200,12 +202,16 @@ export function isRateLimited(response, bodyText = "") {
 // budget or the rate limit stops the run. Any other non-OK answer throws.
 export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
+  let preflightInFlight = null;
   return async function request(route, {responseType = "json"} = {}) {
     if (responseType !== "json" && responseType !== "bytes") throw new Error("Unsupported response type.");
     // Binary artifact downloads still spend this same request budget. The
     // native artifact endpoint handles its redirect; fetch strips Authorization
     // on a cross-origin redirect. Raw caller URLs never enter this API.
     if (responseType === "bytes" && (typeof route !== "string" || !/^\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/artifacts\/[1-9][0-9]*\/zip$/.test(route))) throw new Error("Unsupported binary artifact route.");
+    // The first existing App read proves this run's own quota before another
+    // read can start. No extra request, credential, pool or dispatch preflight.
+    if (preflightInFlight) await preflightInFlight;
     if (budget.stopped) return { ok: false, stopped: budget.stopped };
     if (budget.used >= budget.cap) {
       budget.stopped = "request_cap";
@@ -221,35 +227,60 @@ export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) 
       return { ok: false, stopped: budget.stopped };
     }
     budget.used += 1;
-    const response = await fetchImpl(`${base}${route}`, {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
-        "x-github-api-version": "2022-11-28",
-        "user-agent": "clued-ci-usage-report",
-      },
-    });
-    const remaining = headerNumber(response.headers, "x-ratelimit-remaining");
-    // Responses finish out of order: keep the lowest remaining seen (review NIT).
-    if (remaining !== null) budget.remaining = budget.remaining === null ? remaining : Math.min(budget.remaining, remaining);
-    budget.limit = headerNumber(response.headers, "x-ratelimit-limit") ?? budget.limit;
-    budget.reset = headerNumber(response.headers, "x-ratelimit-reset") ?? budget.reset;
-    const refusedBody = response.status === 403 ? await response.text().catch(() => "") : "";
-    if (isRateLimited(response, refusedBody)) {
-      budget.stopped = "rate_limited";
-      return { ok: false, stopped: budget.stopped };
-    }
-    if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
-    if (responseType === "bytes") {
-      const chunks = []; let size = 0;
-      for await (const chunk of response.body) {
-        size += chunk.byteLength;
-        if (size > 32 * 1024 * 1024) throw new Error("Artifact exceeds the bounded packet limit.");
-        chunks.push(Buffer.from(chunk));
+    const firstAppRead = budget.app_quota_preflight?.status === "pending";
+    let releasePreflight;
+    if (firstAppRead) preflightInFlight = new Promise(resolve => { releasePreflight = resolve; });
+    try {
+      const response = await fetchImpl(`${base}${route}`, {
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${token}`,
+          "x-github-api-version": "2022-11-28",
+          "user-agent": "clued-ci-usage-report",
+        },
+      });
+      const remaining = headerNumber(response.headers, "x-ratelimit-remaining");
+      // Responses finish out of order: keep the lowest remaining seen (review NIT).
+      if (remaining !== null) budget.remaining = budget.remaining === null ? remaining : Math.min(budget.remaining, remaining);
+      budget.limit = headerNumber(response.headers, "x-ratelimit-limit") ?? budget.limit;
+      budget.reset = headerNumber(response.headers, "x-ratelimit-reset") ?? budget.reset;
+      if (firstAppRead) {
+        const limit = headerNumber(response.headers, "x-ratelimit-limit");
+        const unknown = !Number.isSafeInteger(remaining) || remaining < 0 || !Number.isSafeInteger(limit) || limit <= 0 || remaining > limit;
+        const stopped = unknown ? "app_quota_unavailable" : remaining < budget.floor ? "app_quota_below_floor" : null;
+        Object.assign(budget.app_quota_preflight, { status: stopped ? "refused" : "passed", reason_code: stopped,
+          request_ordinal: budget.used, route, observed_at: new Date(budget.clock()).toISOString(), http_status: response.status,
+          remaining, limit, reset: headerNumber(response.headers, "x-ratelimit-reset") });
+        if (stopped) budget.stopped = stopped;
       }
-      return { ok: true, body: Buffer.concat(chunks) };
+      const refusedBody = response.status === 403 ? await response.text().catch(() => "") : "";
+      if (isRateLimited(response, refusedBody)) {
+        budget.stopped = "rate_limited";
+        return { ok: false, stopped: budget.stopped };
+      }
+      if (firstAppRead && budget.app_quota_preflight.status === "refused") return { ok: false, stopped: budget.stopped };
+      if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
+      if (responseType === "bytes") {
+        const chunks = []; let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.byteLength;
+          if (size > 32 * 1024 * 1024) throw new Error("Artifact exceeds the bounded packet limit.");
+          chunks.push(Buffer.from(chunk));
+        }
+        return { ok: true, body: Buffer.concat(chunks) };
+      }
+      return { ok: true, body: await response.json() };
+    } catch (error) {
+      if (firstAppRead && budget.app_quota_preflight.status === "pending") {
+        budget.stopped = "app_quota_unavailable";
+        Object.assign(budget.app_quota_preflight, { status: "refused", reason_code: budget.stopped,
+          request_ordinal: budget.used, route, observed_at: new Date(budget.clock()).toISOString() });
+        return { ok: false, stopped: budget.stopped };
+      }
+      throw error;
+    } finally {
+      if (releasePreflight) { releasePreflight(); preflightInFlight = null; }
     }
-    return { ok: true, body: await response.json() };
   };
 }
 
@@ -574,6 +605,7 @@ export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budge
   metrics.api_requests = {
     status: "measured", token_source: budget.source, used: budget.used, cap: budget.cap, remaining_seen: budget.remaining,
     limit_seen: budget.limit, stopped: budget.stopped, by_pool: null,
+    ...(budget.source === "app" ? { app_quota_preflight: { ...budget.app_quota_preflight } } : {}),
     not_measured: { by_pool: budget.source === "app"
       ? "the measurement App's quota is its own; the GITHUB_TOKEN pool was not used"
       : "the other users of the GITHUB_TOKEN pool (gate polling, admission, re-verification) are not counted here" },
@@ -816,7 +848,10 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
         onStore: (nativeRaw) => { mkdir(cacheDir, {recursive: true});
           writeFile(path.join(cacheDir, "r9-native-pending.json"), nativeRaw); }});
       mkdir(cacheDir, {recursive: true});
-      writeFile(path.join(cacheDir, R9_CACHE_FILE), r9.cache_raw ?? raw);
+      // No source restore was allowed before a successful App quota preflight.
+      // In particular a refused injected-source path cannot replace earlier
+      // artifact-cache bytes with the collector's unobserved empty cache.
+      if (budget.app_quota_preflight?.status === "passed") writeFile(path.join(cacheDir, R9_CACHE_FILE), r9.cache_raw ?? raw);
       r9Clock = runtime.clock ?? r9.authenticated_source_inputs?.clock ?? null;
     }
     const collected = await collectUsage({ request, repository, window, cache });

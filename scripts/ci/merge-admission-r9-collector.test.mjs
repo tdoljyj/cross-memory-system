@@ -617,6 +617,68 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
   assert.equal(result.metrics.wasted_final_rounds.activity_coverage.delivery_through_window_end,'UNKNOWN');assert.equal(result.t0,null);
 });
 
+async function authenticatedConfigurationCollectorFixture(){
+  const seeded=await C.collectIncrementalNative({request:nativeRequest().request,repository,window});assert.equal(seeded.status,'COMPLETE');
+  const n=seeded.population_packets[0],c=contract(),script='scripts/ci/ci-usage-report.mjs',registryPath='scripts/ci/merge-admission-r9-source.json',tip='b'.repeat(40),
+    profiles=JSON.stringify(c.profiles),roles=JSON.stringify(c.roles),key=digest(profiles)+':'+digest(roles),
+    configuration={proof_profiles_raw:profiles,role_specs_raw:roles},snapshot={source_checkout_sha:tip,configuration_key:key,
+      workflow_directory:[{path:C.R9_PUBLISHER_PATH,sha:blobs[C.R9_PUBLISHER_PATH],type:'blob',mode:'100644'}],
+      main_history:{base_commit:tip,head_commit:head,merge_base_commit:tip,status:'ahead'}},
+    descriptor={registration_status:'registered',workflow_path:C.R9_PUBLISHER_PATH,workflow_blob:blobs[C.R9_PUBLISHER_PATH],job_id:'report',
+      job_name:'clued-ci-usage-report',source_paths:[script],source_blobs:{[script]:blobs[script]},required_steps:['Measure CI usage']},
+    cfg={schema:'clued.r9-runtime-source-selection/1',registration_status:'registered',repository,scope,natural_producers:[descriptor]},rawCfg=JSON.stringify(cfg);
+  const {createNaturalRecorder}=await import('./merge-admission-source-producer.mjs'),events=[],recorder=createNaturalRecorder({
+    env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:'42',GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'report',GITHUB_SHA:head},
+    sourcePath:script,write:e=>events.push(e),now:()=>window.end});
+  recorder.record('round_ci_observation',{scope,pr:{number:727,head:{sha:head}},seen:{state:'green',execution:{tip,native_runs:[n.run],
+    observation_context:{changed_files:['README.md'],commits:1,default_branch:'main',workflow_files:[C.R9_PUBLISHER_PATH]}}}});recorder.finish();
+  assert.equal(events.length,1);events[0].source.executed_checkout_sha=head;events[0].source.sha256=digest(content[script]);
+  const entry={run_key:'42:1',job_id:'report',checkout_sha:head,artifact_digest:'sha256:'+'d'.repeat(64),packet_raw:JSON.stringify({events}),
+    descriptor_digest:digest(JSON.stringify(descriptor)),native_run_digest:digest(JSON.stringify(n.run)),native_jobs_digest:digest(JSON.stringify(n.jobs)),execution_snapshot_tips:[tip]},
+    naturalInputs={schema:'clued.r9-natural-origin-cache/1',status:'NATIVE_ORIGIN_BOUND',entries:[entry],gaps:[],source_bytes:{[head]:{texts:{}}},app_checks:{},
+      execution_snapshots:{[tip]:snapshot},execution_configurations:{[key]:configuration},source_authenticated:true,official_metric:true},
+    raw=packet({nativeStoreRaw:seeded.store_raw,sourceBlobs:{...blobs,[registryPath]:workflowBlob(rawCfg)},naturalInputs}),artifact=zip(raw),
+    sourceSelection={repository,head_sha:head,default_branch:'main',natural_producers:[descriptor],execution_source_templates:[{
+      source_checkout_sha:head,profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)}],
+      // Unauthenticated caller flags/tables cannot substitute for restored proof.
+      source_authenticated:true,execution_snapshots:naturalInputs.execution_snapshots,execution_configurations:naturalInputs.execution_configurations};
+  const fakeFor=refusal=>nativeRequest({artifact,jobs:[refusal==='publisher_job'?job(42,{steps:[]}):job()],mutation:route=>{
+    if(route.includes('/contents/'+registryPath))return {ok:true,body:{type:'file',path:registryPath,encoding:'base64',
+      sha:workflowBlob(rawCfg),content:Buffer.from(rawCfg).toString('base64')}};
+    if(route.includes('/actions/runs/42/artifacts?'))return {ok:true,body:{total_count:0,artifacts:[]}};
+    if(route.includes('/events?'))return {ok:true,body:[]};
+    if(refusal==='platform_digest'&&route.endsWith('/actions/artifacts/9'))return {ok:true,body:{id:9,name:C.R9_ARTIFACT_NAME,expired:false,
+      digest:'sha256:'+digest(Buffer.concat([artifact,Buffer.from('changed platform bytes')])),workflow_run:{id:42,head_sha:head,head_branch:'main'}}};
+    return null;
+  }}),collect=fake=>C.collectR9Measurement({request:fake.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+    sourceContractRaw:selection(),naturalSelection:sourceSelection});
+  return {seeded,n,tip,key,configuration,snapshot,entry,naturalInputs,fakeFor,collect};
+}
+
+test('collector supplies shared execution snapshot/configuration tables only after the restored writer passes real sealed-artifact authentication',async()=>{
+  const f=await authenticatedConfigurationCollectorFixture(),fake=f.fakeFor(),r=await f.collect(fake);
+  assert.equal(r.source_proof?.kind,'NATIVE_ARTIFACT_DIGEST_DEFAULTBRANCH_REGISTERED_SOURCE_ROLE');assert.equal(r.native.status,'COMPLETE');assert.equal(r.native.from_sealed,1);
+  assert.equal(r.natural_inputs.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.natural_inputs.gaps));assert.deepEqual(r.natural_inputs.execution_snapshots,{[f.tip]:f.snapshot});
+  assert.deepEqual(r.natural_inputs.execution_configurations,{[f.key]:f.configuration});assert.equal(r.natural_inputs.entries.length,1);
+  assert.deepEqual(r.natural_inputs.entries[0].execution_snapshot_tips,[f.tip]);assert.equal(Object.hasOwn(r.natural_inputs.entries[0],'execution_snapshots'),false);
+  assert.equal(fake.routes.filter(route=>route.includes('/jobs?')).length,2,'the writer still needs the complete Native job barrier');
+  assert.equal(fake.routes.some(route=>route.includes('/actions/runs/42/artifacts?')),false,'authenticated exact entry reuse does not reread a producer artifact');
+  assert.equal(fake.routes.some(route=>route.includes(f.tip)),false,'shared authenticated history does not trigger tree/source/ancestry reads');
+  assert.deepEqual(r.native.population_packets,[f.n]);assert.equal(r.natural_inputs.source_authenticated,false);assert.equal(r.natural_inputs.official_metric,false);
+  assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('collector rejects caller-authority shared tables when platform digest or the actual publisher job cannot authenticate the restored writer',async()=>{
+  const f=await authenticatedConfigurationCollectorFixture();
+  for(const [refusal,reason]of [['platform_digest','ARTIFACT_DIGEST_MISMATCH'],['publisher_job','USAGE_PUBLISHER_EXECUTION_INCOMPLETE']]){
+    const fake=f.fakeFor(refusal),r=await f.collect(fake);assert.ok(r.gaps.includes(reason),refusal);assert.equal(r.source_proof,null,refusal);
+    assert.equal(r.native.status,'COMPLETE',refusal);assert.equal(r.native.population_packets.length,1,refusal);
+    assert.equal(r.natural_inputs.status,'PARTIAL',refusal);assert.equal(r.natural_inputs.entries.length,0,refusal);
+    assert.deepEqual(r.natural_inputs.execution_snapshots,{},refusal);assert.deepEqual(r.natural_inputs.execution_configurations,{},refusal);
+    assert.equal(r.source_authenticated,false,refusal);assert.equal(r.official_metric,false,refusal);assert.equal(r.t0,null,refusal);
+  }
+});
+
 test('same-source main advance needs the complete independent source bytes, not a matching flag',()=>{
   const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
     admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),
@@ -743,6 +805,95 @@ function uncappedDirectoryFixture({grow=true,remove=false,ascending=false,create
     return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
   }};
 }
+
+async function directoryProgressFixture({stop=false,unsafe=null,initialFailure=null}={}){
+  const existing=run(42),seed=N.emptyNativePopulationStore(repository),old=nativeRequest({runs:[existing]}),
+    captured=await N.captureNativeAttempt({request:old.request,repository,runId:'42',attempt:1,storeRaw:seed});
+  assert.equal(captured.status,'COMPLETE');
+  const missing=run(43),before=run(999,{created_at:'2026-10-10T23:00:00Z',run_started_at:'2026-10-10T23:00:01Z',
+    updated_at:'2026-10-10T23:10:00Z',conclusion:'failure'}),after={...before,run_attempt:2,status:'queued',conclusion:null,
+    run_started_at:'2026-10-11T00:01:00Z',updated_at:'2026-10-11T00:01:01Z'},
+    quiet=Array.from({length:99},(_,i)=>run(100+i,{created_at:'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:01Z',updated_at:'2026-10-09T00:01:00Z'})),
+    lateJob=job(999,{created_at:'2026-10-10T23:00:01Z',started_at:'2026-10-10T23:00:02Z',completed_at:'2026-10-10T23:09:00Z',conclusion:'failure',
+      steps:[{number:1,name:'Measure CI usage',status:'completed',conclusion:'failure',started_at:'2026-10-10T23:00:02Z',completed_at:'2026-10-10T23:09:00Z'}]}),
+    actualMissing=unsafe==='identity'?{...missing,head_sha:'b'.repeat(40)}:missing,
+    actualJob=unsafe==='job_owner_conflict'?job(43,{id:142}):job(43);
+  let directoryReads=0;
+  const fake=nativeRequest({runs:[existing,actualMissing,after],jobs:[job(42),actualJob,lateJob],artifact:zip(packet({nativeStoreRaw:captured.store_raw})),mutation:route=>{
+    if(route.includes('/actions/runs?')){
+      directoryReads++;const page=Number(new URL(route,'https://native.invalid').searchParams.get('page'));
+      if(initialFailure==='budget'&&page===2)return {ok:false,stopped:'time_budget'};
+      const current=directoryReads===3?after:before,rows=[current,...quiet.slice().reverse(),missing,existing];
+      if(initialFailure==='order'&&page===1)rows.reverse();
+      return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
+    }
+    if(stop&&route.endsWith('/actions/runs/999'))return {ok:false,stopped:'request_cap'};
+    if(route.endsWith('/actions/runs/999/attempts/1'))return {ok:true,body:before};
+    return null;
+  }});
+  return {...fake,store_raw:captured.store_raw,get directoryReads(){return directoryReads;}};
+}
+
+test('typed initial ordinal conflict salvages only independently complete missing packets and keeps the directory refusal',async()=>{
+  const f=await directoryProgressFixture(),saved=[],result=await C.collectIncrementalNative({request:f.request,repository,window,
+    authenticatedStoreRaw:f.store_raw,onStore:raw=>saved.push(raw)}),progress=result.population.directory_progress;
+  assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  assert.equal(result.inventory_conflict.run_id,'999');assert.equal(result.inventory_conflict.stage,'CLOSING_DIRECTORY_HEAD');
+  assert.ok(result.inventory_conflict.changed_fields.includes('run_attempt'));
+  assert.equal(result.population.initial_total,null);assert.equal(result.population.closing_total,null);assert.equal(result.population.complete,false);
+  assert.equal(result.fresh,2);assert.equal(result.from_sealed,0);assert.equal(f.directoryReads,3);assert.equal(f.routes.length,15);
+  assert.equal(saved.length,1);assert.equal(saved[0],result.store_raw);
+  const store=JSON.parse(result.store_raw);assert.ok(store.packets['43:1']);assert.ok(store.packets['999:1']);
+  assert.deepEqual(store.packets['42:1'],JSON.parse(f.store_raw).packets['42:1']);
+  assert.ok(!f.routes.some(route=>route.endsWith('/actions/runs/42')));
+  assert.deepEqual(f.routes.filter(route=>route.endsWith('/actions/runs/43')||route.endsWith('/actions/runs/999')).slice(0,2),
+    ['/repos/'+repository+'/actions/runs/43','/repos/'+repository+'/actions/runs/999']);
+  assert.equal(progress.inventory_closed,false);assert.equal(progress.before_packet_count,1);assert.equal(progress.after_packet_count,3);
+  assert.equal(progress.new_packet_keys_count,2);assert.deepEqual(progress.new_packet_key_samples,['43:1','999:1']);
+  assert.equal(progress.existing_packet_attempts_preserved,1);assert.equal(progress.missing_attempt_capture_requests,2);
+  assert.equal(result.population.cache_reuse_diagnostics.reason_counts.EXACT_SEALED_HEADER_REUSE,0);
+  assert.equal(N.inspectNativePopulationStore(result.store_raw,repository).status,'VALID_DATA_STORE');
+});
+test('salvage budget refusal retains the completed sibling packet and never replaces the original directory conflict',async()=>{
+  const f=await directoryProgressFixture({stop:true}),saved=[],result=await C.collectIncrementalNative({request:f.request,repository,window,
+    authenticatedStoreRaw:f.store_raw,onStore:raw=>saved.push(raw)});
+  assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  assert.equal(result.inventory_conflict.run_id,'999');assert.equal(result.population.complete,false);
+  assert.ok(JSON.parse(result.store_raw).packets['43:1']);assert.ok(!JSON.parse(result.store_raw).packets['999:1']);
+  assert.equal(saved.at(-1),result.store_raw);assert.equal(result.population.directory_progress.new_packet_keys_count,1);
+  assert.equal(result.population.directory_progress.stop_reason_code,'NATIVE_CAPTURE_BUDGET_PARTIAL');
+  assert.equal(f.routes.filter(route=>route.endsWith('/actions/runs/999')).length,1);assert.equal(f.directoryReads,3);
+});
+test('salvage rejects a changed fixed identity and a packet conflicting with an existing Native job owner',async()=>{
+  for(const unsafe of ['identity','job_owner_conflict']){
+    const f=await directoryProgressFixture({unsafe}),result=await C.collectIncrementalNative({request:f.request,repository,window,authenticatedStoreRaw:f.store_raw}),
+      store=JSON.parse(result.store_raw);
+    assert.equal(result.status,'PARTIAL');assert.equal(result.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+    assert.equal(result.population.complete,false);assert.ok(!store.packets['43:1']);assert.ok(store.packets['999:1']);
+    assert.deepEqual(store.packets['42:1'],JSON.parse(f.store_raw).packets['42:1']);
+    assert.ok(result.gaps.some(g=>g.key==='43:1'&&g.reason_code===(unsafe==='identity'?'NATIVE_PROGRESS_OBSERVATION_IDENTITY_CHANGED':'duplicate_native_job_identity')));
+    assert.equal(result.population.directory_progress.new_packet_keys_count,1);
+    assert.equal(N.inspectNativePopulationStore(result.store_raw,repository).status,'VALID_DATA_STORE');
+  }
+});
+test('untyped initial pagination and budget failures start no salvage or extra capture requests',async()=>{
+  for(const initialFailure of ['order','budget']){
+    const f=await directoryProgressFixture({initialFailure}),result=await C.collectIncrementalNative({request:f.request,repository,window,authenticatedStoreRaw:f.store_raw});
+    assert.equal(result.status,'PARTIAL');assert.equal(result.population.complete,false);assert.equal(result.fresh,0);
+    assert.equal(Object.hasOwn(result.population,'directory_progress'),false);
+    assert.ok(f.routes.every(route=>route.includes('/actions/runs?')));
+    assert.equal(f.routes.length,initialFailure==='order'?1:2);assert.deepEqual(JSON.parse(result.store_raw),JSON.parse(f.store_raw));
+  }
+});
+test('existing R9 wrapper seals salvaged Native progress while preserving partial source readiness and null T0',async()=>{
+  const f=await directoryProgressFixture(),result=await C.collectR9Measurement({request:f.request,budget:U.createBudget({source:'app',cap:2000}),
+    repository,window,sourceContractRaw:selection()});
+  assert.equal(result.source_authenticated,true);assert.equal(result.status,'partial');assert.equal(result.t0,null);
+  assert.equal(result.native.status,'PARTIAL');assert.equal(result.native.population.complete,false);assert.equal(result.source_readiness.complete,false);
+  const next=N.inspectNativePopulationStore(result.next_native_store_raw,repository);
+  assert.equal(next.status,'VALID_DATA_STORE');assert.ok(next.packets['43:1']);assert.ok(next.packets['999:1']);
+  assert.equal(f.directoryReads,3);assert.doesNotThrow(()=>packet({nativeStoreRaw:result.next_native_store_raw}));
+});
 
 test('uncapped directory closes all historical members despite a growing post-window prefix',async()=>{
   const f=uncappedDirectoryFixture(),r=await C.collectIncrementalNative({request:f.request,repository,window});

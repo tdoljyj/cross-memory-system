@@ -18,6 +18,12 @@ export const MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL=Object.freeze({
   admission_packet_schema:'clued.final-admission-observation/1',
   admission_grammar:'clued.work-admission.evaluate-observation/1',
 });
+// Candidate data-contract successor. /1 remains a strict singleton Source;
+// /2 adds reviewed historical execution snapshots without splitting any
+// population, changing metric mathematics, or granting execution authority.
+export const MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2=Object.freeze({...MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL,
+  schema:'clued.merge-admission-four-source-observations/2',expectations_schema:'clued.merge-admission-four-source-expectations/2',
+  reader_source:'clued.merge-admission-four-sources.reader/2'});
 export const FOUR_SOURCE_TRANSPORT_INTERFACES=Object.freeze({
   admission:'Actual final evaluate/claim/App observation plus authenticated initial/change/closing/ever-target journal',
   operation:'Real automatic/manual/Owner/holder pre-read/request/response/post receipts and current claim fence',
@@ -55,7 +61,9 @@ export function parseFourSourceRawData(raw){
 }
 function parseExpectations(raw){
   const e=parseFourSourceRawData(raw);
-  if(!hasExact(e,['schema','repository','scope','admission_sources','execution_source'])||e.schema!==MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL.expectations_schema||
+  const v2=e.schema===MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2.expectations_schema;
+  if(!hasExact(e,['schema','repository','scope','admission_sources','execution_source',...(v2?['previous_execution_sources']:[])])||
+    ![MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL.expectations_schema,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2.expectations_schema].includes(e.schema)||
     typeof e.repository!=='string'||!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(e.repository)||
     !hasExact(e.scope,['project_id','queue_ref'])||!validUuid(e.scope.project_id)||
     typeof e.scope.queue_ref!=='string'||!e.scope.queue_ref.startsWith('merge:'+e.repository.toLowerCase()+':')||
@@ -63,6 +71,15 @@ function parseExpectations(raw){
     !Array.isArray(e.admission_sources)||e.admission_sources.length===0||e.admission_sources.length>20||
     !hasExact(e.execution_source,['source_checkout_sha','profiles_sha256','role_specs_sha256'])||!validSha(e.execution_source.source_checkout_sha)||
     !validDigest(e.execution_source.profiles_sha256)||!validDigest(e.execution_source.role_specs_sha256))throw Error('expectations');
+  if(v2){
+    if(!Array.isArray(e.previous_execution_sources)||e.previous_execution_sources.length>4)throw Error('expectations');
+    const checkouts=new Set([e.execution_source.source_checkout_sha]),versions=new Set([e.execution_source.profiles_sha256+':'+e.execution_source.role_specs_sha256]);
+    for(const s of e.previous_execution_sources){
+      if(!hasExact(s,['source_checkout_sha','profiles_sha256','role_specs_sha256'])||!validSha(s.source_checkout_sha)||
+        !validDigest(s.profiles_sha256)||!validDigest(s.role_specs_sha256)||checkouts.has(s.source_checkout_sha)||versions.has(s.profiles_sha256+':'+s.role_specs_sha256))throw Error('expectations');
+      checkouts.add(s.source_checkout_sha);versions.add(s.profiles_sha256+':'+s.role_specs_sha256);
+    }
+  }
   const seen=new Set(),fields=['grammar','source_checkout_sha','default_branch','script_path','script_blob','workflow_path','workflow_blob','reverify_workflow_path','reverify_workflow_blob','policy_path','policy_blob','app_id'];
   for(const s of e.admission_sources){
     if(!hasExact(s,fields)||s.grammar!==MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL.admission_grammar||!validSha(s.source_checkout_sha)||seen.has(s.source_checkout_sha)||
@@ -334,7 +351,8 @@ const SOURCE={repository:expectations.repository};
 const PROFILE_SOURCE_SHA256=expectations.execution_source.profiles_sha256;
 const ROLE_SOURCE_SHA256=expectations.execution_source.role_specs_sha256;
 const EXECUTION_SOURCE_COMMIT=expectations.execution_source.source_checkout_sha;
-const FOUR_SOURCE_CONTRACT={...MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL,repository:expectations.repository,...expectations.scope};
+const isV2=expectations.schema===MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2.expectations_schema;
+const FOUR_SOURCE_CONTRACT={...(isV2?MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2:MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL),repository:expectations.repository,...expectations.scope};
 const names=['attempts','targets','admission_batches','admissions','operations','head_moves','rounds','cancellations'];
 const sourceIds=Object.freeze({attempts:'native_attempts',targets:'admission_targets',admission_batches:'admission_selection_journal',
   admissions:'final_admission_journal',operations:'operation_journal_all_origins',head_moves:'native_head_move_journal',
@@ -415,8 +433,8 @@ function applicability(profiles,changedFiles){
   }
   return applicable.sort();
 }
-function executionSourceSelection(s,profiles,roles,c){
-  if(!exact(s,['source_checkout_sha','entries','manifest'])||s.source_checkout_sha!==EXECUTION_SOURCE_COMMIT)bad();
+function executionSourceSelection(s,profiles,roles,c,descriptor=expectations.execution_source){
+  if(!exact(s,['source_checkout_sha','entries','manifest'])||s.source_checkout_sha!==descriptor.source_checkout_sha)bad();
   const sources=new Map(),members=[];
   for(const x of array(s.entries)){
     if(!exact(x,['workflow_file','workflow_blob'])||!Object.hasOwn(profiles.workflows,x.workflow_file)||!sha(x.workflow_blob)||sources.has(x.workflow_file))bad();
@@ -442,7 +460,8 @@ function readFourSourcesCandidate(packetRaw){
     supplied_data_consistency:false,source_permission_qualification:'NOT_ESTABLISHED',...flags};}
 }
 function parsed(p){
-  if(!exact(p,['schema','repository','scope','window','collection','populations','sources_raw','proof_profiles_raw','role_specs_raw','execution_sources',...names])||
+  const compact=isV2&&Object.hasOwn(p,'execution_configurations');
+  if(!exact(p,['schema','repository','scope','window','collection','populations','sources_raw','proof_profiles_raw','role_specs_raw','execution_sources',...(isV2?['previous_execution_snapshots']:[]),...(compact?['execution_configurations']:[]),...names])||
     p.schema!==FOUR_SOURCE_CONTRACT.schema||p.repository!==FOUR_SOURCE_CONTRACT.repository||!scope(p.scope)||
     !exact(p.window,['start','end'])||!exact(p.collection,['watermark','closed_at','window_status','retention_start'])||
     !opaque(p.collection.watermark)||!['open','closed'].includes(p.collection.window_status)||typeof p.sources_raw!=='string'||
@@ -456,6 +475,38 @@ function parsed(p){
   const c={from,to,closed,window:p.window,collection:p.collection},registry=parseRawFourSourceDataCandidate(p.proof_profiles_raw);
   if(!object(registry.workflows)||!object(p.populations)||Object.keys(p.populations).some(x=>!names.includes(x)))bad();
   const profiles=executionSourceSelection(p.execution_sources,registry,roles,c);
+  const executionVersions=new Map([[EXECUTION_SOURCE_COMMIT,{descriptor:expectations.execution_source,profiles}]]);
+  if(isV2){
+    const configurations=new Map([[PROFILE_SOURCE_SHA256+':'+ROLE_SOURCE_SHA256,{proof_profiles_raw:p.proof_profiles_raw,role_specs_raw:p.role_specs_raw}]]);
+    if(compact){
+      if(!object(p.execution_configurations)||Object.keys(p.execution_configurations).length>4)bad();
+      for(const [key,cfg]of Object.entries(p.execution_configurations)){
+        if(!exact(cfg,['proof_profiles_raw','role_specs_raw'])||typeof cfg.proof_profiles_raw!=='string'||typeof cfg.role_specs_raw!=='string'||
+          key!==hash(cfg.proof_profiles_raw)+':'+hash(cfg.role_specs_raw)||configurations.has(key)||
+          !expectations.previous_execution_sources.some(s=>key===s.profiles_sha256+':'+s.role_specs_sha256))bad();
+        configurations.set(key,cfg);
+      }
+    }
+    if(!Array.isArray(p.previous_execution_snapshots)||p.previous_execution_snapshots.length>1000)bad();
+    for(const snapshot of p.previous_execution_snapshots){
+      if(!exact(snapshot,['source_checkout_sha',...(compact?['configuration_key']:['proof_profiles_raw','role_specs_raw']),'execution_sources','main_history'])||!sha(snapshot.source_checkout_sha)||executionVersions.has(snapshot.source_checkout_sha))bad();
+      const cfg=compact?configurations.get(snapshot.configuration_key):snapshot;
+      if(!cfg||typeof cfg.proof_profiles_raw!=='string'||typeof cfg.role_specs_raw!=='string')bad();
+      const template=[expectations.execution_source,...expectations.previous_execution_sources].find(s=>s.profiles_sha256===hash(cfg.proof_profiles_raw)&&s.role_specs_sha256===hash(cfg.role_specs_raw)),history=snapshot.main_history;
+      const anchored=[expectations.execution_source,...expectations.previous_execution_sources].find(s=>s.source_checkout_sha===snapshot.source_checkout_sha);
+      if(!template||!exact(history,['base_commit','head_commit','merge_base_commit','status'])||history.base_commit!==snapshot.source_checkout_sha||
+        history.merge_base_commit!==snapshot.source_checkout_sha||history.head_commit!==EXECUTION_SOURCE_COMMIT||
+        history.status!==(snapshot.source_checkout_sha===EXECUTION_SOURCE_COMMIT?'identical':'ahead')||anchored&&
+        (anchored.profiles_sha256!==template.profiles_sha256||anchored.role_specs_sha256!==template.role_specs_sha256))bad();
+      // A reviewed configuration may appear at many immutable main tips. The
+      // actual tip, full directory and ancestry bind each round; only exact
+      // complete raw hash pairs select a reviewed version.
+      const descriptor={...template,source_checkout_sha:snapshot.source_checkout_sha};
+      const historicalRegistry=parseRawFourSourceDataCandidate(cfg.proof_profiles_raw),historicalRoles=parseRawFourSourceDataCandidate(cfg.role_specs_raw);
+      const selected=executionSourceSelection(snapshot.execution_sources,historicalRegistry,historicalRoles,c,descriptor);
+      executionVersions.set(snapshot.source_checkout_sha,{descriptor,profiles:selected});
+    }
+  }
   const inWindow=at=>at>=from&&at<to;
   const populationGaps=[];
   if(admissionSources.size===0)populationGaps.push('missing_admission_source_packets');
@@ -630,19 +681,21 @@ function parsed(p){
       !exact(r.applicability,['changed_files','diff_complete','commit_count','workflow_files','profile_sha256','source_checkout_sha']))bad();
     integer(r.pr_number);const start=timestampMicros(r.started_at);if(start<timestampMicros(p.collection.retention_start)||start>closed)bad();
     if(r.completed_at!==null&&(timestampMicros(r.completed_at)<start||timestampMicros(r.completed_at)>closed))bad();
-    if(r.applicability.diff_complete!==true||r.applicability.source_checkout_sha!==EXECUTION_SOURCE_COMMIT||r.applicability.profile_sha256!==PROFILE_SOURCE_SHA256||
+    const executionVersion=executionVersions.get(r.applicability.source_checkout_sha);
+    if(r.applicability.diff_complete!==true||!executionVersion||isV2&&r.applicability.source_checkout_sha!==r.main_sha||r.applicability.profile_sha256!==executionVersion.descriptor.profiles_sha256||
       !Number.isSafeInteger(r.applicability.commit_count)||r.applicability.commit_count<1||r.applicability.commit_count>1000)bad();
-    const applicable=applicability(profiles,r.applicability.changed_files);
+    const roundProfiles=executionVersion.profiles,roundDescriptor=executionVersion.descriptor;
+    const applicable=applicability(roundProfiles,r.applicability.changed_files);
     if(!same(sortedUnique(r.applicability.workflow_files),applicable)||!applicable.length)bad();
     const executionSeen=new Set(),fileSeen=new Set();let primaryReady=true,jobsComplete=true;
     for(const x of r.execution_packets){
       if(!exact(x,['run_key','workflow_file','jobs','jobs_manifest','before_attempt','after_attempt','source_descriptor'])||!r.run_keys.includes(x.run_key)||
-        executionSeen.has(x.run_key)||fileSeen.has(x.workflow_file)||!profiles.workflows[x.workflow_file]||!Array.isArray(x.jobs)||
+        executionSeen.has(x.run_key)||fileSeen.has(x.workflow_file)||!roundProfiles.workflows[x.workflow_file]||!Array.isArray(x.jobs)||
         !exact(x.source_descriptor,['workflow_blob','workflow_source_sha256','source_checkout_sha','role','role_source_sha256']))bad();
-      const a=attempts.get(x.run_key),profile=profiles.workflows[x.workflow_file];
+      const a=attempts.get(x.run_key),profile=roundProfiles.workflows[x.workflow_file];
       if(a.pr_number!==r.pr_number||a.head_sha!==r.head_sha||runOwners.has(x.run_key)||x.source_descriptor.workflow_blob!==profile.workflow_blob||
         x.source_descriptor.workflow_source_sha256!==hash(profile.source_yaml)||x.source_descriptor.source_checkout_sha!==r.applicability.source_checkout_sha||
-        x.source_descriptor.role!=='primary_execution'||x.source_descriptor.role_source_sha256!==ROLE_SOURCE_SHA256)bad();
+        x.source_descriptor.role!=='primary_execution'||x.source_descriptor.role_source_sha256!==roundDescriptor.role_specs_sha256)bad();
       for(const barrier of [x.before_attempt,x.after_attempt])if(!exact(barrier,['run_id','attempt','head_sha','status','conclusion'])||
         barrier.run_id!==a.run_id||barrier.attempt!==a.attempt||barrier.head_sha!==a.head_sha||barrier.status!==a.status||barrier.conclusion!==a.conclusion)bad();
       const members=[];
