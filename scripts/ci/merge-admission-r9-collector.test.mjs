@@ -220,7 +220,7 @@ test('main actually runs the R9 segment, seals progress, keeps old workload valu
 });
 
 function selection(clock=null,four=null,w=window){return JSON.stringify({schema:'clued.merge-admission-r9-source-contract/1',repository,scope,window:w,four_expected_sources_raw:four,clock});}
-function clockFrame({queue=scope.queue_ref,w=window,transport=true}={}){
+function clockFrame({queue=scope.queue_ref,w=window,transport=true,ambiguous=false}={}){
   const foundation='a'.repeat(64),catalog='b'.repeat(64),definition='c'.repeat(64),uid=n=>'10000000-0000-4000-8000-'+String(n).padStart(12,'0');
   const us=t=>String(BigInt(Date.parse(t))*1000n);
   const p={status:'ok',stream_id:uid(1),source_digest:foundation,after_sequence:0,next_sequence:0,end_sequence:0,has_more:false,candidate_ready:true,events:[],clock_samples:[],
@@ -228,8 +228,19 @@ function clockFrame({queue=scope.queue_ref,w=window,transport=true}={}){
       initial_events:[{kind:'policy',object_key:'fifo-v1',context_key:'global',payload:{profile:{merge_slot_seconds:1,merge_slot_running_seconds:1,merge_slot_green_seconds:1}}}]},
     seal:{seal_id:uid(4),epoch_id:uid(2),end_sequence:0,closing_us:us(w.end),catalog_digest:catalog,raw_regression:false,sample_gap:false,ddl_tainted:false},
     observation_seals:[{end_sequence:0,closing_us:us(w.end)}],coverage_manifest:{queue_ref:queue,event_count:0}};
+  if(ambiguous){
+    const start=BigInt(us(w.start)),duration=BigInt(us(w.end))-start,
+      lower=start+duration*94n/100n,upper=start+duration*96n/100n,at=x=>new Date(Number(x/1000n)).toISOString();
+    p.epoch.initial_events[0].payload.profile={merge_slot_seconds:86400,merge_slot_running_seconds:86400,merge_slot_green_seconds:86400};
+    p.next_sequence=p.end_sequence=p.seal.end_sequence=p.coverage_manifest.event_count=1;
+    p.events=[{sequence:1,transaction_id:'1',kind:'claim',context_key:'project:'+scope.project_id,object_key:uid(5),recorded_at:at(lower),source_digest:foundation,
+      payload:{claim_id:uid(5),status:'ACTIVE',fence:1,merge_refs:[queue],merge_queued_at:at(lower),expires_at:at(BigInt(us(w.end))+86400000000n),
+        merge_slot_at:at(lower),merge_slot_ci_at:null,merge_slot_ci_state:null,merge_slot_hard_cap_seconds:null}}];
+    p.clock_samples=[{sequence:1,transaction_id:'1',raw_us:String(lower)}];
+    p.observation_seals=[{end_sequence:1,closing_us:String(upper)},{end_sequence:1,closing_us:us(w.end)}];
+  }
   const response={status:'ok',operation:'clock_page',measurement:p,pins:{epoch_id:uid(2),stream_id:uid(1),clock_generation_id:uid(3),foundation_digest:foundation,catalog_digest:catalog},
-    seal_pins:{end_sequence:0,closing_us:us(w.end),catalog_digest:catalog},server_auth:{schema:'clued.clock-audit-transport-auth/1',status:'AUTHENTICATED_TARGET_READ',required_scope:'audit:read',
+    seal_pins:{end_sequence:p.end_sequence,closing_us:us(w.end),catalog_digest:catalog},server_auth:{schema:'clued.clock-audit-transport-auth/1',status:'AUTHENTICATED_TARGET_READ',required_scope:'audit:read',
       context_key:'project:'+scope.project_id,queue_ref:queue,contributor_count:1,binding_scope_fingerprint:'d'.repeat(64),observed_at:w.end,transport_definition_digest:definition},source_auth:false,official_metric:false,t0:null};
   return {clock:{pages_raw:JSON.stringify([p]),options_raw:JSON.stringify({queueRef:queue,expectedFoundationDigest:foundation,expectedCatalogDigest:catalog}),
     ...(transport?{transport_raw:JSON.stringify([response])}:{})},pins:{foundation_digest:foundation,catalog_digest:catalog,transport_definition_digest:definition}};
@@ -670,4 +681,26 @@ test('actual cancelled no-step scheduler rows retain cancellation without claimi
     const bad=nativeRequest({runs:[r],jobs:[{...j,...change}]}),q=await Native.captureNativeAttempt({request:bad.request,repository,runId:String(r.id),attempt:1});
     assert.equal(q.status,'PARTIAL');assert.equal(q.reason_code,'invalid_native_job_time');
   }
+});
+
+
+test('complete authenticated clock source with an ambiguous percentile keeps integrity separate from an unproved value',async()=>{
+  const c=clockFrame({ambiguous:true}),bound=C.bindClockSource(c.clock,selection(c.pins),repository,window);
+  assert.equal(bound.status,'TYPED_SOURCE_BOUND');assert.equal(bound.result.candidate_ready,true);
+  assert.equal(bound.result.status,'NOT_QUALIFIED');assert.equal(bound.result.reason,'conservative_bounds_do_not_prove_unique_percentile');
+  assert.equal(bound.result.value,null);assert.equal(bound.official_metric,false);
+  const f=fourFrame([attemptRow()]),fake=nativeRequest({artifact:zip(packet({fourSource:f.frame,clock:c.clock}))}),
+    result=await C.collectR9Measurement({request:fake.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,sourceContractRaw:selection(c.pins,f.expected)});
+  assert.equal(result.source_readiness.complete,true);assert.equal(result.source_readiness.clock_source,true);assert.equal(result.source_readiness.four_source,true);
+  assert.equal(result.status,'partial');assert.equal(result.metrics.queue_depth_p95.status,'partial');assert.equal(result.metrics.queue_depth_p95.value,null);
+  assert.equal(result.metrics.queue_depth_p95.official_metric,false);assert.equal(result.metrics.queue_depth_p95.source_authenticated,true);
+  assert.equal(result.metrics.queue_depth_p95.reason,'conservative_bounds_do_not_prove_unique_percentile');
+  assert.ok(!result.gaps.includes('SEALED_CLOCK_SOURCE_INCOMPLETE'));assert.equal(result.t0,null);assert.equal(result.natural_continuity,'NOT_ESTABLISHED');
+  for(const change of [p=>p.seal.sample_gap=true,p=>p.events=[],p=>p.clock_samples=[],p=>p.observation_seals=[]]){
+    const broken=structuredClone(c.clock),page=JSON.parse(broken.pages_raw)[0],response=JSON.parse(broken.transport_raw)[0];change(page);
+    response.measurement=page;broken.pages_raw=JSON.stringify([page]);broken.transport_raw=JSON.stringify([response]);
+    assert.equal(C.bindClockSource(broken,selection(c.pins),repository,window).status,'PARTIAL');
+  }
+  const badAuth=structuredClone(c.clock),responses=JSON.parse(badAuth.transport_raw);responses[0].server_auth.required_scope='context:read';
+  badAuth.transport_raw=JSON.stringify(responses);assert.equal(C.bindClockSource(badAuth,selection(c.pins),repository,window).status,'PARTIAL');
 });
