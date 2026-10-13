@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {verifyWindowsProtection,verifyPosixProtection,classifyWindowsProtection,decodeWindowsInspectionFailure,windowsInspectionFailureMessage} from './qualify-work-handover.mjs';
+import {COMPONENT_VERSION as QUALIFIER_COMPONENT_VERSION,ACCEPTED_HOOK_SOURCES,acceptedHookSource,verifyAcceptedHookSource,verifyWindowsProtection,verifyPosixProtection,classifyWindowsProtection,decodeWindowsInspectionFailure,windowsInspectionFailureMessage} from './qualify-work-handover.mjs';
 
 const directory=path.dirname(fileURLToPath(import.meta.url));
 const repository=path.resolve(directory,'../..');
@@ -199,4 +199,114 @@ test('native diagnostic rejects missing, extra, wrong-type, forged status and ou
     assert.equal(windowsInspectionFailureMessage(result),'Windows protection inspection failed');
   }
   assert.throws(()=>classifyWindowsProtection(fixture),'even a status-zero forged failure cannot certify protection');
+});
+
+test('PowerShell native flag expression handles every legal ACE flag without reading resources',
+  {skip:process.platform!=='win32'},()=>{
+  const source=fs.readFileSync(probe,'utf8');
+  const inherit=/inherit_only=(.+);rights=\[int\]\$ace.AccessMask/.exec(source)?.[1];
+  const dacl=/dacl_present=(.+);/.exec(source)?.[1];
+  assert.ok(inherit&&dacl,'Native flag expressions are unavailable');
+  const script=String.raw`
+$ErrorActionPreference='Stop'
+$rows=@()
+for($value=0;$value -le 223;$value++) {
+  # Bit 0x20 is not a defined AceFlags flag.
+  if(($value -band 32) -ne 0){continue}
+  $ace=[pscustomobject]@{AceFlags=[Security.AccessControl.AceFlags]$value}
+  $old=$null;$oldException=$null
+  try {$old=[bool]($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly)}
+  catch {$oldException=$_.Exception.GetType().FullName}
+  $observed=INHERIT_EXPRESSION
+  $rows+=[ordered]@{kind='AceFlags';value=$value;old=$old;old_exception=$oldException;
+    observed=$observed;observed_is_boolean=($observed -is [bool]);expected=(($value -band 8) -ne 0)}
+}
+foreach($value in @(0,4,32768,32772,1,5,16,20)) {
+  $rawDescriptor=[pscustomobject]@{ControlFlags=[Security.AccessControl.ControlFlags]$value}
+  $observed=DACL_EXPRESSION
+  $rows+=[ordered]@{kind='ControlFlags';value=$value;observed=$observed;
+    observed_is_boolean=($observed -is [bool]);expected=(($value -band 4) -ne 0)}
+}
+[ordered]@{ps_major=$PSVersionTable.PSVersion.Major;resource_reads=0;rows=$rows} |
+  ConvertTo-Json -Depth 4 -Compress
+`.replace('INHERIT_EXPRESSION',inherit).replace('DACL_EXPRESSION',dacl);
+  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script],
+    {encoding:'utf8',timeout:10000,windowsHide:true});
+  assert.equal(result.error,undefined);
+  assert.equal(result.status,0,result.stderr);
+  const report=JSON.parse(result.stdout);
+  assert.equal(report.ps_major,5,'The native collector uses Windows PowerShell 5');
+  assert.equal(report.resource_reads,0);
+  assert.equal(report.rows.filter(row=>row.kind==='AceFlags').length,128);
+  assert.equal(report.rows.filter(row=>row.kind==='ControlFlags').length,8);
+  for(const row of report.rows){
+    assert.equal(row.observed_is_boolean,true);
+    assert.equal(row.observed,row.expected,row.kind+':'+row.value);
+    if(row.kind==='AceFlags'){
+      assert.equal(row.old,null);
+      assert.equal(row.old_exception,'System.InvalidCastException',String(row.value));
+    }
+  }
+});
+
+test('accepted Source identities and returned records are immutable and cannot come from a caller map',()=>{
+  assert.equal(QUALIFIER_COMPONENT_VERSION,'1.0.0');
+  assert.equal(ACCEPTED_HOOK_SOURCES.length,3);
+  assert.ok(Object.isFrozen(ACCEPTED_HOOK_SOURCES));
+  for(const source of ACCEPTED_HOOK_SOURCES){
+    assert.ok(Object.isFrozen(source));
+    assert.equal(acceptedHookSource(source.sha256),source);
+  }
+  assert.throws(()=>ACCEPTED_HOOK_SOURCES.push({}));
+  assert.throws(()=>acceptedHookSource('0'.repeat(64)),/accepted exact source/);
+});
+test('actual accepted Git commit:path objects prove all old and new Source bytes and declared versions',()=>{
+  for(const source of ACCEPTED_HOOK_SOURCES){
+    const primaryBytes=source.component_version===null?null:fs.readFileSync(path.join(directory,'clued-runner-job-started.mjs'));
+    const proof=verifyAcceptedHookSource(source.sha256,{primaryBytes});
+    assert.equal(proof.source_git_object_verified,true);
+    assert.equal(proof.source_commit,source.source_commit);
+    assert.equal(proof.source_path,source.source_path);
+    assert.ok(Object.isFrozen(proof));
+  }
+});
+test('Source selector mismatches refuse without accepting a caller-declared map or reading substituted paths',()=>{
+  const current=ACCEPTED_HOOK_SOURCES.find(source=>source.component_version==='1.0.0');
+  for(const expectedIdentity of [{source_commit:ACCEPTED_HOOK_SOURCES[0].source_commit},
+    {source_path:'scripts/runner/clued-runner-job-started.mjs'},
+    {hook_version:'work-handover-current-epoch-proxy-v1'},{component_version:'9.0.0'}]){
+    let reads=0;
+    assert.throws(()=>verifyAcceptedHookSource(current.sha256,{expectedIdentity,readSource:()=>{reads++;throw new Error('SHOULD_NOT_READ');}}),/Accepted Source .* differs/);
+    assert.equal(reads,0);
+  }
+  assert.throws(()=>verifyAcceptedHookSource(current.sha256,{expectedIdentity:{source_map:{}}}),/Unknown Source selector/);
+});
+test('missing Source objects stay unavailable; changed source bytes, descriptor and CRLF primary copies refuse',()=>{
+  const current=ACCEPTED_HOOK_SOURCES.find(source=>source.component_version==='1.0.0');
+  assert.throws(()=>verifyAcceptedHookSource(current.sha256,{readSource:()=>{throw new Error('SOURCE_OBJECT_UNAVAILABLE');}}),/SOURCE_OBJECT_UNAVAILABLE/);
+  const raw=fs.readFileSync(path.join(repository,current.source_path));
+  assert.throws(()=>verifyAcceptedHookSource(current.sha256,{readSource:()=>Buffer.concat([raw,Buffer.from('\n')])}),/raw digest differs/);
+  assert.throws(()=>verifyAcceptedHookSource(current.sha256,{readSource:()=>raw,primaryBytes:Buffer.from(raw.toString().replaceAll('\n','\r\n'))}),/Primary distribution differs/);
+  const fixture=verifyAcceptedHookSource(current.sha256,{readSource:()=>raw});
+  assert.equal(fixture.source_git_object_verified,false,'Injected bytes cannot establish actual Git provenance');
+});
+test('both historical accepted hooks still execute the unchanged six candidate verdicts',()=>{
+  const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'clued-handover-legacy-source-'));
+  try{
+    for(const source of ACCEPTED_HOOK_SOURCES.filter(source=>source.component_version===null)){
+      const proof=verifyAcceptedHookSource(source.sha256);
+      assert.equal(proof.source_git_object_verified,true);
+      const raw=spawnSync('git',['show',`${source.source_commit}:${source.source_path}`],{cwd:repository,env:{...process.env,GIT_NO_LAZY_FETCH:'1'},encoding:null,timeout:10000,maxBuffer:524288});
+      assert.equal(raw.status,0,'SOURCE_OBJECT_UNAVAILABLE');
+      const filename=path.join(temporary,source.sha256+'.mjs');fs.writeFileSync(filename,raw.stdout);
+      const result=execute(['--candidate','--hook',filename]);
+      assert.equal(result.status,0,result.stderr);
+      const report=JSON.parse(result.stdout);
+      assert.equal(report.source_commit,source.source_commit);assert.equal(report.source_path,source.source_path);
+      assert.equal(report.hook_version,source.hook_version);assert.equal(report.cases.length,6);
+      assert.equal(report.protection_verified,false);assert.equal(report.live_pr_qualified,false);assert.equal(report.live_dispatch_qualified,false);
+    }
+  }finally{
+    assert.ok(path.resolve(temporary).startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(temporary,{recursive:true});
+  }
 });

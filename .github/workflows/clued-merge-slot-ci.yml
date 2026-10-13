@@ -51,6 +51,8 @@ on:
       - Clued handover hook qualification / home-linux-01
       - Clued handover hook qualification / company-win-01
       - Clued handover hook qualification / home-win-01
+      - Clued disposable external handover qualification
+      - Clued disposable cancellation fixture
     types: [completed]
   workflow_dispatch:
 
