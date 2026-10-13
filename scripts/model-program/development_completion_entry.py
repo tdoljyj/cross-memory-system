@@ -8,6 +8,10 @@ This entry issues no permission and does not reopen a terminal M1 experiment.
 import copy
 import math
 import threading
+import base64
+import json
+import time
+import os
 from datetime import datetime, timezone
 
 import development_attempt_ledger as ledger
@@ -18,6 +22,89 @@ IDENTITY_FIELDS = ledger.FIELDS - {"plan_sha256", "reserved_at"}
 IDENTITY_FIELDS |= {"ledger_directory"}
 PHASES = {"preflight", "before_observation_open", "observation_opened", "consume", "before_start",
           "before_resume", "running", "before_result"}
+
+BOOTSTRAP_SCHEMA = "clued.fixed-development-child-bootstrap/1"
+
+
+def _capture_child_job():
+    """Bind this controller and every descendant before accepting bootstrap.
+
+    Keep the non-inherited Job handle alive until OS process teardown. Closing
+    it here would terminate this process itself. Parent termination closes it
+    through the OS, including when a currentness callback is still blocked.
+    """
+    if os.name != "nt":
+        raise ValueError("FIXED_HOST_WINDOWS_REQUIRED")
+    job = observed.legacy.WindowsJob()
+    job.kernel.GetCurrentProcess.argtypes = []
+    job.kernel.GetCurrentProcess.restype = job.ctypes.c_void_p
+    if not job.kernel.AssignProcessToJobObject(job.handle, job.kernel.GetCurrentProcess()):
+        job.close()
+        raise OSError("FIXED_HOST_SELF_JOB_ASSIGN")
+    return job
+
+
+def _result_json(value):
+    """Encode every nested raw byte capture without interpreting model text."""
+    if type(value) is bytes:
+        return {"encoding": "base64", "data": base64.b64encode(value).decode("ascii")}
+    if type(value) is dict:
+        return {key: _result_json(item) for key, item in value.items()}
+    if type(value) is list:
+        return [_result_json(item) for item in value]
+    if type(value) is float and value.is_integer():
+        return int(value)
+    return value
+
+
+def run_captured_stdio_bootstrap(reader, writer):
+    """Private child API called only by the admitted, source-bound fixed Host.
+
+    No public CLI, issuer or permission flag exists. The Host retains its real
+    approval capture and credentials; the child receives only frozen bindings.
+    The Host must also own/terminate this process if its bootstrap pipe stalls.
+    """
+    # No child code that creates a process runs before this Job assignment.
+    # The parent sends bindings only after reading this typed readiness frame.
+    global _captured_child_job
+    _captured_child_job = _capture_child_job()
+    ready = (json.dumps({"schema": BOOTSTRAP_SCHEMA, "kind": "host_ready",
+                        "job_bounded": True}, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if writer.write(ready) != len(ready):
+        raise OSError("FIXED_HOST_READY_SHORT_WRITE")
+    writer.flush()
+    from development_currentness_channel import decode, MAX_FRAME_BYTES
+    bootstrap = decode(reader.readline(MAX_FRAME_BYTES + 1))
+    if (type(bootstrap) is not dict or set(bootstrap) != {"schema", "identity", "plan", "live_pins",
+            "output_directory", "output_name", "remaining_seconds"}
+            or bootstrap["schema"] != BOOTSTRAP_SCHEMA):
+        raise ValueError("FIXED_HOST_BOOTSTRAP_FIELDS")
+    remaining = bootstrap["remaining_seconds"]
+    if type(remaining) not in (int, float) or not math.isfinite(remaining) or not 0 < remaining <= 120:
+        raise ValueError("FIXED_HOST_BOOTSTRAP_DEADLINE")
+    identity, plan = bootstrap["identity"], bootstrap["plan"]
+    if (type(identity) is not dict or set(identity) != IDENTITY_FIELDS
+            or type(plan) is not dict or "deadline_monotonic" in plan):
+        raise ValueError("FIXED_HOST_BOOTSTRAP_BINDING")
+    plan = copy.deepcopy(plan)
+    plan["deadline_monotonic"] = time.monotonic() + remaining
+    with FixedDevelopmentEntry.for_clued_stdio(reader=reader, writer=writer,
+            live_pins=bootstrap["live_pins"], ledger_directory=identity["ledger_directory"],
+            output_directory=bootstrap["output_directory"], output_name=bootstrap["output_name"],
+            timeout_seconds=min(15, remaining)) as host:
+        result = host.execute(identity, plan)
+    # Raw model stdout/stderr are data, never currentness/control messages.
+    # Encode them inside one typed terminal frame only after owned cleanup.
+    if result.get("owned_cleanup_verified") is not True:
+        raise ValueError("FIXED_HOST_MODEL_CLEANUP_UNVERIFIED")
+    safe = _result_json(result)
+    raw = (json.dumps({"schema": BOOTSTRAP_SCHEMA, "kind": "terminal_result", "result": safe},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+    if len(raw) > 1048576:
+        raise ValueError("FIXED_HOST_TERMINAL_FRAME_LIMIT")
+    if writer.write(raw) != len(raw):
+        raise OSError("FIXED_HOST_TERMINAL_SHORT_WRITE")
+    writer.flush()
 
 
 class FixedDevelopmentEntry:

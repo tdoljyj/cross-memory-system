@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'), assert=require('node:assert/strict');
-const {makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA}=require('../scripts/model-program/development_host_bridge.cjs');
+const {runFixedDevelopmentChild,makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA}=require('../scripts/model-program/development_host_bridge.cjs');
 const bound={identity:{task_id:'SOURCE ONLY TASK',profile_sha256:'1'.repeat(64),request_sha256:'2'.repeat(64),
   approval_record_id:'SOURCE ONLY APPROVAL',approval_version:1,approval_receipt_id:'SOURCE ONLY RECEIPT'},
   execution_plan_sha256:'3'.repeat(64)};
@@ -75,4 +75,77 @@ test('real non-model Python child exchanges observation over parent-owned privat
   });
   try {const code=await exit;await chain;if(failure)throw failure;assert.equal(code,0,errors);assert.equal(passed,true,errors);}
   finally {clearTimeout(timer);child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();}
+});
+
+// Entire fixed controller integration uses Source-only captures and a pinned
+// non-model child fixture. Neither test data nor a fixture Profile is authority.
+async function controllerFixture(action) {
+  const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
+  const root=await fs.mkdtemp(path.join(process.env.CLUED_MODEL_SOURCE_TEST_TEMP_ROOT,'fixed-source-'));
+  const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
+  const stable=value=>Array.isArray(value)?'['+value.map(stable).join(',')+']':
+    value && typeof value==='object'?'{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+stable(value[k])).join(',')+'}':JSON.stringify(value);
+  const pin=async file=>{const data=await fs.readFile(file);return {path:file,bytes:data.length,sha256:digest(data)};};
+  const names=['development_completion_entry.py','development_attempt_ledger.py',
+    'development_currentness_channel.py','development_windows_namespace.py',
+    'observed_completion_execution.py','local_completion_execution.py'];
+  const original=path.resolve(__dirname,'../scripts/model-program');
+  for(const name of names) await fs.copyFile(path.join(original,name),path.join(root,name));
+  // Modify only a temporary child fixture, never the admitted Source or model.
+  await fs.appendFile(path.join(root,names[0]),'\n'+action+'\n');
+  const task='1502fd80-8ff8-4adc-b4f5-da6d462f4f8a',scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+  const record={id:'SOURCE-ONLY-APPROVAL',record_type:'decision',authority:'user_explicit',
+    lifecycle_status:'active',canonical_scope:scope,receipt_id:'SOURCE-ONLY-RECEIPT',content_hash:'1'.repeat(64),
+    content:'SOURCE FIXTURE NO MODEL OR PERMISSION',version:1,type_fields:{model_development_experiment_approval:{
+      kind:'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT',task_id:task,purpose_id:'development',profile_id:'DEV-SOURCE-ONLY',
+      request_sha256:'2'.repeat(64),max_attempts:1,training_allowed:false,production_allowed:false,qualification_allowed:false,
+      window:{not_before:new Date(Date.now()-10000).toISOString(),stop_at:new Date(Date.now()+60000).toISOString()}}}};
+  const plan={budget:{wall_seconds:12}},issued={status:'ISSUED',task_id:task,profile_id:'DEV-SOURCE-ONLY',
+    request_sha256:'2'.repeat(64),profile_sha256:'3'.repeat(64),execution_plan_sha256:digest(stable(plan)),
+    claim_id:'SOURCE-ONLY-CLAIM',claim_fence:1,task_version:2,task_query:'SOURCE ONLY TASK'};
+  const identity={task_id:task,profile_id:issued.profile_id,profile_sha256:issued.profile_sha256,
+    request_sha256:issued.request_sha256,approval_record_id:record.id,approval_version:1,
+    approval_receipt_id:record.receipt_id,ledger_directory:root};
+  const python=await pin(process.env.CLUED_MODEL_SOURCE_TEST_PYTHON);
+  const sourceFiles=await Promise.all(names.map(name=>pin(path.join(root,name))));
+  const environment={};
+  for(const name of ['SystemRoot','WINDIR','TEMP','TMP']) {
+    const key=Object.keys(process.env).find(k=>k.toLowerCase()===name.toLowerCase());
+    if(key)environment[name]=process.env[key];
+  }
+  environment.PATH=path.join(environment.SystemRoot,'System32');
+  issued.startup_sha256=digest(stable({schema:'clued.fixed-development-startup/1',python,
+    sourceDirectory:root,sourceFiles,workingDirectory:root,environment}));
+  return {root,fs,args:{tools:{mcp__codex_apps__clued_clued_session_resume:async()=>new Promise(()=>{}),
+    mcp__codex_apps__clued_clued_search_context:async()=>{},mcp__codex_apps__clued_clued_session_reconcile:async()=>{},
+    mcp__codex_apps__clued_clued_work_verify:async()=>{}},ownerCapture:{structuredContent:{status:'committed',
+    receipt_id:record.receipt_id,event_ids:[999999999],supplemental:{record}}},issued,sessionRef:'SOURCE-ONLY-SESSION',
+    bound:{identity,execution_plan_sha256:issued.execution_plan_sha256},python,sourceDirectory:root,sourceFiles,
+    workingDirectory:root,bootstrap:{schema:'clued.fixed-development-child-bootstrap/1',identity,plan,
+      live_pins:{task_version:2,claim_id:issued.claim_id,claim_fence:1},output_directory:root,
+      output_name:'SOURCE_ONLY.jsonl',remaining_seconds:12}}};
+}
+
+test('fixed controller captures private bootstrap and nested bytes without a model',async()=>{
+  const f=await controllerFixture('class SourceOnlyHost:\n def __enter__(self): return self\n def __exit__(self,*a): pass\n def execute(self,identity,plan): return {"owned_cleanup_verified":True,"authority_effect":"NONE","budget_reservation":{"status":"SPENT_BEFORE_MODEL_LOAD"},"observation_capture":{"raw":b"SOURCE ONLY"}}\nFixedDevelopmentEntry.for_clued_stdio=classmethod(lambda cls,**kwargs:SourceOnlyHost())');
+  try {const result=await runFixedDevelopmentChild(f.args);
+    assert.equal(result.observation_capture.raw.encoding,'base64');
+    assert.equal(Buffer.from(result.observation_capture.raw.data,'base64').toString(),'SOURCE ONLY');}
+  finally {await f.fs.rm(f.root,{recursive:true});}
+});
+
+test('fixed controller bounds an unresolved protected reader and reaps non-model child',async()=>{
+  const f=await controllerFixture('class SourceOnlyHost:\n def __enter__(self): return self\n def __exit__(self,*a): pass\n def execute(self,identity,plan):\n  from development_currentness_channel import PrivateCurrentnessChannel\n  c=PrivateCurrentnessChannel(sys.stdin.buffer,sys.stdout.buffer,live_pins={"task_version":2,"claim_id":"SOURCE-ONLY-CLAIM","claim_fence":1});c("preflight",{"identity":identity,"execution_plan_sha256":observed.legacy.digest({"budget":{"wall_seconds":12}})})\nimport sys\nFixedDevelopmentEntry.for_clued_stdio=classmethod(lambda cls,**kwargs:SourceOnlyHost())');
+  const start=performance.now();
+  try {await assert.rejects(runFixedDevelopmentChild(f.args),/DEADLINE/);
+    assert.ok(performance.now()-start<12500,'hung tool cannot extend total deadline');}
+  finally {await f.fs.rm(f.root,{recursive:true});}
+});
+
+test('fixed controller rejects startup drift and incomplete import closure before launching',async()=>{
+  const f=await controllerFixture('raise Exception("MUST NOT LAUNCH")');
+  try {const wrong={...f.args,workingDirectory:__dirname};
+    await assert.rejects(runFixedDevelopmentChild(wrong),/STARTUP_PINS/);
+    await assert.rejects(runFixedDevelopmentChild({...f.args,sourceFiles:f.args.sourceFiles.slice(1)}),/SOURCE_CLOSURE/);}
+  finally {await f.fs.rm(f.root,{recursive:true});}
 });

@@ -9,6 +9,8 @@ import sys
 import tempfile
 import threading
 import time
+import io
+import subprocess
 import unittest
 from unittest import mock
 
@@ -50,6 +52,83 @@ class DevelopmentEntryTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def bootstrap(self, **changes):
+        value = {"schema": entry.BOOTSTRAP_SCHEMA, "identity": identity(self.root),
+                 "plan": {"budget": {"wall_seconds": 60}},
+                 "live_pins": {"task_version": 1, "claim_id": "SOURCE ONLY", "claim_fence": 1},
+                 "output_directory": str(self.root), "output_name": "SOURCE-ONLY.jsonl",
+                 "remaining_seconds": 60}
+        value.update(changes)
+        return io.BytesIO((json.dumps(value) + "\n").encode())
+
+    def test_fixed_bootstrap_encodes_nested_bytes_after_cleanup(self):
+        result = {"owned_cleanup_verified": True, "stdout": b"\xff\x00",
+                  "observation_capture": {"raw": b"\xe4\xb8\xad"},
+                  "elapsed_seconds": 1.0, "authority_effect": "NONE"}
+        writer = io.BytesIO()
+        with mock.patch.object(entry, "_capture_child_job", return_value=object()), \
+                mock.patch.object(entry.FixedDevelopmentEntry, "for_clued_stdio") as factory:
+            host = factory.return_value.__enter__.return_value
+            host.execute.return_value = result
+            entry.run_captured_stdio_bootstrap(self.bootstrap(), writer)
+            self.assertGreater(host.execute.call_args.args[1]["deadline_monotonic"], time.monotonic())
+        ready, terminal = [json.loads(line) for line in writer.getvalue().splitlines()]
+        self.assertEqual(ready["kind"], "host_ready")
+        self.assertEqual(terminal["result"]["stdout"], {"encoding": "base64", "data": "/wA="})
+        self.assertEqual(terminal["result"]["observation_capture"]["raw"]["data"], "5Lit")
+
+    def test_fixed_bootstrap_rejects_bad_window_and_unverified_cleanup(self):
+        for remaining in (True, 0, 121, float("nan")):
+            with mock.patch.object(entry, "_capture_child_job", return_value=object()), \
+                    mock.patch.object(entry.FixedDevelopmentEntry, "for_clued_stdio") as factory:
+                with self.assertRaises(ValueError):
+                    entry.run_captured_stdio_bootstrap(self.bootstrap(remaining_seconds=remaining), io.BytesIO())
+                factory.assert_not_called()
+        with mock.patch.object(entry, "_capture_child_job", return_value=object()), \
+                mock.patch.object(entry.FixedDevelopmentEntry, "for_clued_stdio") as factory:
+            factory.return_value.__enter__.return_value.execute.return_value = {"owned_cleanup_verified": False}
+            writer = io.BytesIO()
+            with self.assertRaisesRegex(ValueError, "CLEANUP_UNVERIFIED"):
+                entry.run_captured_stdio_bootstrap(self.bootstrap(), writer)
+            self.assertEqual(len(writer.getvalue().splitlines()), 1)
+
+    def test_actual_windows_parent_kill_closes_job_and_descendant(self):
+        self.assertEqual(os.name, "nt", "native Windows proof required; no skip")
+        script = ('import sys,subprocess,time;sys.path.insert(0,sys.argv[1]);'
+                  'import development_completion_entry as e;j=e._capture_child_job();'
+                  'p=subprocess.Popen([sys.executable,"-I","-c","import time;time.sleep(30)"],'
+                  'stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);'
+                  'print(p.pid,flush=True);time.sleep(30)')
+        parent = subprocess.Popen([sys.executable, "-I", "-u", "-c", script, str(SCRIPTS)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        handle = None
+        try:
+            pid = int(parent.stdout.readline())
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel.CloseHandle.restype = wintypes.BOOL
+            handle = kernel.OpenProcess(0x100000, False, pid)
+            self.assertTrue(handle)
+            self.assertEqual(kernel.WaitForSingleObject(handle, 0), 258)
+            parent.kill()
+            parent.wait(5)
+            self.assertEqual(kernel.WaitForSingleObject(handle, 5000), 0,
+                             "kill-on-close Job must stop the actual non-model descendant")
+        finally:
+            if parent.poll() is None:
+                parent.kill()
+            parent.wait(5)
+            parent.stdout.close()
+            parent.stderr.close()
+            if handle:
+                kernel.CloseHandle(handle)
 
     def test_stdio_factory_captures_channel_and_exact_windows_namespace(self):
         import io
