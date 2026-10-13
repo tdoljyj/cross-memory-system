@@ -164,7 +164,7 @@ export async function verifyR9SealedArtifact({request,repository,contract,artifa
     const jobs=native.packet.jobs.filter(j=>j.name===route.name);
     if(jobs.length!==1||jobs[0].conclusion!=='success'||jobs[0].labels.some(l=>l.toLowerCase()==='self-hosted')||
       Object.entries(route.required_steps).some(([name,count])=>jobs[0].steps.filter(s=>s.name===name&&s.status==='completed'&&s.conclusion==='success').length!==count))fail('USAGE_PUBLISHER_EXECUTION_INCOMPLETE');
-    for(const file of R9_SOURCE_PATHS){const source=await sourceText(request,repository,file,p.head_sha);if(source.blob!==packet.source_blobs[file])fail('PUBLISHER_SOURCE_BYTES_MISMATCH');}
+    for(const file of R9_SOURCE_PATHS){const source=file===R9_PUBLISHER_PATH?wf:await sourceText(request,repository,file,p.head_sha);if(source.blob!==packet.source_blobs[file])fail('PUBLISHER_SOURCE_BYTES_MISMATCH');}
     return {status:'AUTHENTICATED_SEALED_ARTIFACT',packet,zip_bytes:bytes,artifact_id:String(artifactId),
       proof:{kind:'NATIVE_ARTIFACT_DIGEST_DEFAULTBRANCH_REGISTERED_SOURCE_ROLE',repository_id:contract.repository_id,
         run_id:String(p.run_id),run_attempt:p.run_attempt,head_sha:p.head_sha,artifact_digest:metadata.digest,contract_head:contract.head_sha}};
@@ -627,7 +627,10 @@ export async function collectR9Measurement({request,budget,repository,window,sou
   const packet=restored?.packet,metrics={};let four=null,clock=null,binding=null,selection=null,clockSourceBound=false;
   try{selection=sourceContract(sourceContractRaw,repository,window);}catch{gaps.push('INDEPENDENT_SOURCE_CONTRACT_MISSING_OR_INVALID');}
   let naturalSelectionBound=false;
-  if(naturalSelection&&contract)try{const cfg=parseFourSourceRawData((await sourceText(slice.request,repository,R9_RUNTIME_CONFIG,contract.head_sha)).text);
+  // The contract already independently captured this immutable config from
+  // its exact default-branch head before Native collection. Reuse those bytes;
+  // a redundant late read must not turn slice exhaustion into a registry gap.
+  if(naturalSelection&&contract)try{const cfg=contract.r9_registry;
     let sameSourceLineage=naturalSelection.head_sha===contract.head_sha;
     if(!sameSourceLineage){const history=await bodyOf(slice.request,`/repos/${repository}/compare/${naturalSelection.head_sha}...${contract.head_sha}`);
       sameSourceLineage=['ahead','identical'].includes(history.status)&&history.merge_base_commit?.sha===naturalSelection.head_sha;}
