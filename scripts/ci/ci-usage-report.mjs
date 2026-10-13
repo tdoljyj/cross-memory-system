@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {loadIndependentR9RuntimeInputs} from './merge-admission-r9-runtime-inputs.mjs';
-import {emptyNativePopulationStore} from './merge-admission-native-population.mjs';
+import {emptyNativePopulationStore,inspectNativePopulationStore,nativeJobIsNonExecution} from './merge-admission-native-population.mjs';
 // Merge Admission v0.1 §12.1 (Task f70546e5): CI usage measurement, version 1.
 // The clued-ci-usage-report workflow runs this daily and by hand on a hosted
 // runner, from the default branch. It reads GitHub with an installation token
@@ -63,11 +63,17 @@ import { fileURLToPath } from "node:url";
 import { appJwt } from "./clued-work-admission.mjs";
 import { collectAttribution, attributionMetrics } from "./ci-usage-attribution.mjs";
 import {collectR9Measurement,emptyR9ArtifactCache,R9_CACHE_FILE,R9_PACKET_FILE,R9_SOURCE_PATHS,
-  R9_PUBLISHER_PATH,sealR9Packet} from './merge-admission-r9-collector.mjs';
+  R9_PUBLISHER_PATH,sealR9Packet,collectFeeNativePopulation,FEE_NATIVE_WORKFLOW_PATHS} from './merge-admission-r9-collector.mjs';
 import {workflowBlob} from './clued-workflow-profile.mjs';
+import {createHash} from 'node:crypto';
 
 export const REQUEST_CAP = 200;
 export const APP_REQUEST_CAP = 2000;
+// Task 4d614afb: the two explicitly scoped historical billing snapshots.
+// These are workload observations, never a billing-price or causal model.
+export const FEE_WORKLOAD_DAYS = Object.freeze(['2026-10-10','2026-10-12']);
+export const FEE_WORKLOAD_MARKER = 'fee-target-day-scan.json';
+export const FEE_WORKLOAD_WINDOW = Object.freeze({start:'2026-10-10T00:00:00.000Z',end:'2026-10-13T00:00:00.000Z'});
 // Inside the job's 20-minute timeout, with room for setup, the self-test and
 // saving the cache (review MINOR-3).
 export const TIME_BUDGET_MS = 15 * 60 * 1000;
@@ -631,6 +637,126 @@ export function renderSummary(report) {
 
 // --- Entry point. 0 also for partial coverage; 1 only for an unexpected error.
 
+const feeHash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
+const feePaths = new Set(FEE_NATIVE_WORKFLOW_PATHS);
+const sameFeePaths = paths => Array.isArray(paths) && paths.length === feePaths.size &&
+  new Set(paths).size === feePaths.size && paths.every(p => feePaths.has(p));
+
+export function projectFeeWorkload(native, repository, observedAt) {
+  const inspected = inspectNativePopulationStore(native?.store_raw ?? '', repository);
+  const packets = inspected.status === 'VALID_DATA_STORE' ? inspected.packets : {};
+  const population = native?.population ?? {};
+  const scoped = population.scope === 'fee_native_terminal_packets_run_envelope_intersection' &&
+    sameFeePaths(population.workflow_paths) && population.window?.start === FEE_WORKLOAD_WINDOW.start &&
+    population.window?.end === FEE_WORKLOAD_WINDOW.end && Array.isArray(population.cohort);
+  const missing = [], seen = new Set(), excluded = new Set((population.excluded_attempts ?? [])
+    .filter(x => x.reason_code === 'ATTEMPT_START_AT_OR_AFTER_WINDOW_CLOSE').map(x => x.key));
+  let cohortValid = scoped;
+  for (const run of scoped ? population.cohort : []) {
+    if (!/^[1-9][0-9]*$/.test(run.run_id) || seen.has(run.run_id) || !feePaths.has(run.workflow_path) ||
+      !Number.isSafeInteger(run.latest_attempt) || run.latest_attempt < 1 || run.latest_attempt > 100) { cohortValid = false; continue; }
+    seen.add(run.run_id);
+    for (let attempt = 1; attempt <= run.latest_attempt; attempt++) {
+      const key = `${run.run_id}:${attempt}`, packet = packets[key];
+      if (excluded.has(key) && attempt === run.latest_attempt) continue;
+      if (!packet || packet.run.path.split('@')[0] !== run.workflow_path) missing.push(key);
+    }
+  }
+  const complete = inspected.status === 'VALID_DATA_STORE' && cohortValid && native?.status === 'COMPLETE' &&
+    population.complete === true && !native.gaps?.length && !missing.length &&
+    population.initial_scope_runs === seen.size && population.closing_scope_runs === seen.size;
+  const eligible = Object.values(packets).filter(p => feePaths.has(p.run.path.split('@')[0]) &&
+    Date.parse(p.run.created_at) < Date.parse(FEE_WORKLOAD_WINDOW.end) && Date.parse(p.run.updated_at) >= Date.parse(FEE_WORKLOAD_WINDOW.start));
+  const rows = [];
+  for (const day of FEE_WORKLOAD_DAYS) for (const workflow_path of FEE_NATIVE_WORKFLOW_PATHS) {
+    const start = Date.parse(`${day}T00:00:00.000Z`), end = start + 86400000;
+    const jobs = [], unknown = [], runs = new Set(), attempts = new Set();
+    let minutes = 0, hosted = 0, selfHosted = 0, poolUnknown = 0, startedDayMinutes = 0, nonExecution = 0;
+    for (const packet of eligible.filter(p => p.run.path.split('@')[0] === workflow_path)) {
+      for (const job of packet.jobs) {
+        const key = `${job.run_id}:${job.run_attempt}:${job.id}`;
+        if (nativeJobIsNonExecution(job)) {
+          if (Date.parse(job.created_at) >= start && Date.parse(job.created_at) < end) nonExecution++;
+          continue;
+        }
+        const a = job.started_at === null ? null : Date.parse(job.started_at), b = job.completed_at === null ? null : Date.parse(job.completed_at);
+        if (a === null || b === null) {
+          if (Date.parse(job.created_at) < end && Date.parse(packet.run.updated_at) >= start) unknown.push(key);
+          continue;
+        }
+        const overlap = Math.max(0, Math.min(b, end) - Math.max(a, start)) / 60000;
+        if (!overlap && !(a === b && a >= start && a < end)) continue;
+        const pool = job.labels.includes('self-hosted') ? 'self_hosted' : job.labels.length ? 'hosted' : 'unknown';
+        minutes += overlap;
+        if (pool === 'hosted') hosted += overlap; else if (pool === 'self_hosted') selfHosted += overlap; else poolUnknown += overlap;
+        if (a >= start && a < end) startedDayMinutes += (b - a) / 60000;
+        runs.add(job.run_id); attempts.add(`${job.run_id}:${job.run_attempt}`);
+        jobs.push({key, run_id:job.run_id, run_attempt:job.run_attempt, job_id:job.id, pool,
+          started_at:job.started_at, completed_at:job.completed_at, full_execution_minutes:(b-a)/60000, utc_overlap_minutes:overlap});
+      }
+    }
+    rows.push({day, workflow_path, runs_with_execution_observed:runs.size, attempts_with_execution_observed:attempts.size,
+      executed_jobs_observed:jobs.length, non_execution_jobs_observed:nonExecution, timing_unknown_job_keys:unknown,
+      execution_minutes_observed:minutes, hosted_execution_minutes_observed:hosted,
+      self_hosted_execution_minutes_observed:selfHosted, pool_unknown_execution_minutes_observed:poolUnknown,
+      execution_minutes:complete && !unknown.length ? minutes : null, started_day_full_minutes_observed:startedDayMinutes,
+      billing_minutes:null, billed_amount:null, jobs});
+  }
+  return {schema:'clued.ci-fee-target-day-workload/1', repository, observed_at:observedAt,
+    status:complete ? 'provider_visible_population_closed' : 'partial', days:[...FEE_WORKLOAD_DAYS], workflow_paths:[...FEE_NATIVE_WORKFLOW_PATHS],
+    official_metric:false, provider_visible_population_complete:complete, billing_population_complete:null,
+    billing_attribution:'NOT_ESTABLISHED_UTC_OVERLAP_IS_NOT_BILLING_ALLOCATION',
+    retention:'DELETED_OR_RETIRED_PROVIDER_HISTORY_NOT_PROVEN_RECOVERABLE', population,
+    gaps:[...(native?.gaps ?? []), ...(native?.reason_code ? [native.reason_code] : []),
+      ...(!scoped ? ['FEE_SCOPE_NOT_PROVEN'] : []), ...(!cohortValid ? ['FEE_COHORT_INVALID'] : []),
+      ...(inspected.status !== 'VALID_DATA_STORE' ? ['FEE_NATIVE_STORE_INVALID'] : [])],
+    missing_attempt_keys:missing, native_store_sha256:inspected.status === 'VALID_DATA_STORE' ? feeHash(native.store_raw) : null, rows};
+}
+
+// The marker only suppresses a repeated closed-day scan. It supplies no
+// population authority or completion metric; authentic evidence stays in the
+// uploaded report and Native packets. A malformed/mismatched marker is ignored.
+export async function collectFeeWorkload({request,budget,repository,r9,now,eventName,cacheDir,readFile,writeFile,mkdir,writerSignature,reportRunId,
+  collectNative=collectFeeNativePopulation}) {
+  if (eventName !== 'workflow_dispatch' || now.getTime() < Date.parse(FEE_WORKLOAD_WINDOW.end)) return null;
+  let marker = null;
+  try { const raw = readFile(path.join(cacheDir,FEE_WORKLOAD_MARKER),'utf8'); if (raw.length <= 8*1024*1024) marker = JSON.parse(raw); } catch {}
+  const restored = inspectNativePopulationStore(r9?.next_native_store_raw ?? '',repository);
+  if (r9?.source_authenticated === true && /^[a-f0-9]{64}$/.test(writerSignature ?? '') &&
+    marker?.schema === 'clued.ci-fee-scan-marker/1' && marker.repository === repository && marker.writer_signature === writerSignature &&
+    JSON.stringify(marker.days) === JSON.stringify(FEE_WORKLOAD_DAYS) && sameFeePaths(marker.workflow_paths) &&
+    Array.isArray(marker.packets) && marker.packets.length <= 100000 &&
+    marker.packets.every(x=>x && /^[1-9][0-9]*:[1-9][0-9]*$/.test(x.key ?? '') && /^[a-f0-9]{64}$/.test(x.digest ?? '')) &&
+    new Set(marker.packets.map(x=>x.key)).size === marker.packets.length &&
+    restored.status === 'VALID_DATA_STORE' &&
+    marker.packets.every(x => restored.packets[x.key] && feeHash(restored.packets[x.key]) === x.digest)) {
+    return {schema:'clued.ci-fee-target-day-workload/1',repository,status:'prior_scan_not_repeated',
+      reason_code:'LOCAL_MARKER_IS_NOT_POPULATION_AUTHORITY',days:[...FEE_WORKLOAD_DAYS],
+      provider_visible_population_complete:null,billing_population_complete:null,official_metric:false,
+      prior_report_run_id:marker.report_run_id ?? null,prior_observed_at:marker.observed_at ?? null};
+  }
+  const blocked = budget.source !== 'app' ? 'FEE_MEASUREMENT_APP_REQUIRED' : !r9?.source_authenticated ? 'FEE_AUTHENTICATED_NATIVE_BASIS_REQUIRED' :
+    !/^[a-f0-9]{64}$/.test(writerSignature ?? '') ? 'FEE_CURRENT_WRITER_SOURCE_UNAVAILABLE' :
+    budget.stopped || budget.used >= budget.cap || budget.clock() >= budget.deadline ||
+    budget.remaining !== null && budget.remaining < budget.floor ? 'FEE_REMAINING_BUDGET_UNAVAILABLE' : null;
+  if (blocked) return {schema:'clued.ci-fee-target-day-workload/1',repository,status:'partial',reason_code:blocked,
+    days:[...FEE_WORKLOAD_DAYS],provider_visible_population_complete:false,billing_population_complete:null,official_metric:false};
+  const native = await collectNative({request,repository,window:{...FEE_WORKLOAD_WINDOW},authenticatedStoreRaw:r9.next_native_store_raw,
+    onStore:raw => { mkdir(cacheDir,{recursive:true}); writeFile(path.join(cacheDir,'r9-native-pending.json'),raw); }});
+  if (inspectNativePopulationStore(native.store_raw,repository).status === 'VALID_DATA_STORE') r9.next_native_store_raw = native.store_raw;
+  const result = projectFeeWorkload(native,repository,new Date().toISOString());
+  if (result.provider_visible_population_complete) {
+    const store = inspectNativePopulationStore(native.store_raw,repository).packets;
+    const keys = new Set(result.population.cohort.flatMap(r => Array.from({length:r.latest_attempt},(_,i)=>`${r.run_id}:${i+1}`)));
+    mkdir(cacheDir,{recursive:true});
+    writeFile(path.join(cacheDir,FEE_WORKLOAD_MARKER),JSON.stringify({schema:'clued.ci-fee-scan-marker/1',repository,writer_signature:writerSignature,
+      report_run_id:reportRunId ?? null,
+      days:[...FEE_WORKLOAD_DAYS],workflow_paths:[...FEE_NATIVE_WORKFLOW_PATHS],observed_at:result.observed_at,
+      packets:[...keys].filter(k=>store[k]).map(key=>({key,digest:feeHash(store[key])}))}));
+  }
+  return result;
+}
+
 export async function main(env = process.env, fetchImpl = globalThis.fetch, {
   now = new Date(), readFile = fs.readFileSync, writeFile = fs.writeFileSync, mkdir = fs.mkdirSync,
   appendFile = fs.appendFileSync, log = console.log, logError = console.error, clock = Date.now,
@@ -641,6 +767,20 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
   const cacheDir = env.CI_USAGE_CACHE_DIR || path.join(workspace, CACHE_DIR);
   let cache = null;
   let r9 = null;
+  let r9Clock = null;
+  let r9SealAttempted = false;
+  const preserveR9 = () => {
+    if (r9SealAttempted || !r9?.next_native_store_raw || !env.GITHUB_RUN_ID || !env.GITHUB_RUN_ATTEMPT || !env.GITHUB_SHA) return;
+    r9SealAttempted = true;
+    try {
+      const sourceBlobs = Object.fromEntries(R9_SOURCE_PATHS.map(file => [file,workflowBlob(readFile(path.join(workspace,file),'utf8'))]));
+      const sealed = sealR9Packet({repository,publisher:{run_id:env.GITHUB_RUN_ID,
+        run_attempt:Number(env.GITHUB_RUN_ATTEMPT),head_sha:env.GITHUB_SHA,workflow_path:R9_PUBLISHER_PATH,job_id:'report'},
+        sourceBlobs,window:r9.window,sealedAt:new Date().toISOString(),nativeStoreRaw:r9.next_native_store_raw,
+        fourSource:r9.authenticated_source_inputs?.four_source??null,clock:r9Clock,naturalInputs:r9.natural_inputs??null});
+      writeFile(path.join(workspace,R9_PACKET_FILE),sealed);
+    } catch { r9.gaps ??= []; r9.gaps.push('CURRENT_WRITER_SOURCE_PACKET_NOT_AVAILABLE'); }
+  };
   try {
     if (!repository) throw new Error("GITHUB_REPOSITORY is not set.");
     const window = windowOf(now, parseDays(env.CI_USAGE_DAYS));
@@ -676,21 +816,7 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
           writeFile(path.join(cacheDir, "r9-native-pending.json"), nativeRaw); }});
       mkdir(cacheDir, {recursive: true});
       writeFile(path.join(cacheDir, R9_CACHE_FILE), r9.cache_raw ?? raw);
-      // Pending bytes are durable preparation, never an authenticated restore.
-      // The immutable artifact supplies their real origin on the next run.
-      if (r9.next_native_store_raw && env.GITHUB_RUN_ID && env.GITHUB_RUN_ATTEMPT && env.GITHUB_SHA) {
-        try {
-          const sourceBlobs = Object.fromEntries(R9_SOURCE_PATHS.map(file =>
-            [file, workflowBlob(readFile(path.join(workspace, file), "utf8"))]));
-          const sealed = sealR9Packet({repository, publisher: {run_id: env.GITHUB_RUN_ID,
-            run_attempt: Number(env.GITHUB_RUN_ATTEMPT), head_sha: env.GITHUB_SHA,
-            workflow_path: R9_PUBLISHER_PATH, job_id: "report"}, sourceBlobs,
-            window: r9.window, sealedAt: new Date().toISOString(),
-            nativeStoreRaw: r9.next_native_store_raw,fourSource:r9.authenticated_source_inputs?.four_source??null,
-            clock:runtime.clock??r9.authenticated_source_inputs?.clock??null,naturalInputs:r9.natural_inputs??null});
-          writeFile(path.join(workspace, R9_PACKET_FILE), sealed);
-        } catch { r9.gaps ??= []; r9.gaps.push("CURRENT_WRITER_SOURCE_PACKET_NOT_AVAILABLE"); }
-      }
+      r9Clock = runtime.clock ?? r9.authenticated_source_inputs?.clock ?? null;
     }
     const collected = await collectUsage({ request, repository, window, cache });
     // Extra attribution uses only the independent measurement App pool, after
@@ -702,6 +828,25 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
         pulls_requested: collected.pulls.length, pulls_complete: 0, errors: 1 } }; }
     }
     const report = buildReport({ repository, window, collected, budget, now });
+    // The historical fee supplement comes last in the same App budget. It
+    // neither changes the legacy window/metrics nor steals R9's scheduling share.
+    let sourceBlobs = null;
+    if (access.source === 'app' && r9) {
+      try { sourceBlobs = Object.fromEntries(R9_SOURCE_PATHS.map(file =>
+        [file,workflowBlob(readFile(path.join(workspace,file),'utf8'))])); } catch {}
+      try {
+        const fee = await collectFeeWorkload({request,budget,repository,r9,now,eventName:env.GITHUB_EVENT_NAME,
+          cacheDir,readFile,writeFile,mkdir,reportRunId:env.GITHUB_RUN_ID,
+          writerSignature:sourceBlobs ? feeHash({report:sourceBlobs['scripts/ci/ci-usage-report.mjs'],
+            native:sourceBlobs['scripts/ci/merge-admission-r9-collector.mjs']}) : null});
+        if (fee) report.fee_workload = fee;
+      } catch { report.fee_workload = {schema:'clued.ci-fee-target-day-workload/1',repository,status:'partial',
+        reason_code:'FEE_COLLECTION_FAILED',provider_visible_population_complete:false,billing_population_complete:null,official_metric:false}; }
+      Object.assign(report.metrics.api_requests,{used:budget.used,remaining_seen:budget.remaining,limit_seen:budget.limit,stopped:budget.stopped});
+    }
+    // Seal the complete retained union, including bounded fee preparation.
+    // A local pending cache/marker never becomes an authenticated restore.
+    preserveR9();
     // Keep the original workload metrics/UTC window unchanged. New official
     // values enter only through the independent source/role/population proof.
     if (r9) {
@@ -725,6 +870,8 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
     logError(`::error title=clued-ci-usage-report::${error instanceof Error ? error.message : String(error)}`);
     return 1;
   } finally {
+    // A legacy/supplement exception must not lose valid Native preparation.
+    preserveR9();
     // What was fetched is kept, also when the run stopped early or failed.
     if (cache) saveCache(cacheDir, cache, writeFile, mkdir);
   }
