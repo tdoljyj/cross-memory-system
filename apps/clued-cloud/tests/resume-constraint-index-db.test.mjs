@@ -162,4 +162,6 @@ test("resume returns resident constraints as an index unless asked for full text
     await server.stop().catch(() => {});
   }
 });
-// The current account review policy is part of the same resume/renewal surface.\nimport './independent-review-db.test.mjs';\n
+
+// The current account review policy is part of the same resume/renewal surface.
+import './independent-review-db.test.mjs';
