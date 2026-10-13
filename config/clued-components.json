@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "48",
+      "version": "49",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "88c44efc7e057c98825c00fd4b9ccb38712215c4f556610395d4fce984bddebd",
+      "content_sha256": "49a387a32f8b52eb362c57ef8a9df1c339fc7fc6708dbd58dbd2dbd51f557cad",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,7 +50,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.6.3",
+      "version": "0.6.4",
       "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
