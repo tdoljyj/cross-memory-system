@@ -361,7 +361,7 @@ export default function OAuthConnectionsPage() {
     const who = currentSession.current, epoch = accountEpoch.current;
     const prior = storageAccess[binding.binding_id];
     if (!who || !storageLoaded || !prior || prior.denied || writeController.current || needsReload) return;
-    if (!window.confirm(`仅撤销 ${binding.client_name} 的网盘访问？此客户端的 Clued 记忆权限、其他客户端和整个网盘连接不变。已开始的文件操作仍需核对原回执。`)) return;
+    if (!window.confirm(`仅撤销 ${binding.client_name} 的网盘访问？此客户端的 Kooyumi 记忆权限、其他客户端和整个网盘连接不变。已开始的文件操作仍需核对原回执。`)) return;
     const controller = new AbortController();
     writeController.current = controller; setPending(binding.binding_id); setError(""); setNotice("");
     try {
@@ -393,8 +393,8 @@ export default function OAuthConnectionsPage() {
   return (
     <main className="oauth-shell">
       <section className="oauth-card" aria-busy={busy}>
-        <Link className="oauth-brand" href="/" aria-label="返回 Clued 首页">
-          <span className="brand-mark" aria-hidden="true">◆</span><span>CLUED</span>
+        <Link className="oauth-brand" href="/" aria-label="返回 Kooyumi 首页">
+          <span className="brand-mark" aria-hidden="true">◆</span><span>Kooyumi</span>
         </Link>
         <p className="oauth-kicker">账户授权</p>
         <h1>已连接的客户端</h1>
@@ -407,7 +407,7 @@ export default function OAuthConnectionsPage() {
         </div>}
         {notice && <p className="oauth-note" role="status">{notice}</p>}
         {authReady && !session && <>
-          <h2 style={{ fontSize: 20 }}>登录你的 Clued 账户</h2>
+          <h2 style={{ fontSize: 20 }}>登录你的 Kooyumi 账户</h2>
           <p className="oauth-copy">使用授权连接时的同一个账户。</p>
           <form className="oauth-form" onSubmit={signIn}>
             <label>邮箱<input type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} disabled={authBusy} /></label>
