@@ -200,3 +200,51 @@ test('native diagnostic rejects missing, extra, wrong-type, forged status and ou
   }
   assert.throws(()=>classifyWindowsProtection(fixture),'even a status-zero forged failure cannot certify protection');
 });
+
+test('PowerShell native flag expression handles every legal ACE flag without reading resources',
+  {skip:process.platform!=='win32'},()=>{
+  const source=fs.readFileSync(probe,'utf8');
+  const inherit=/inherit_only=(.+);rights=\[int\]\$ace.AccessMask/.exec(source)?.[1];
+  const dacl=/dacl_present=(.+);/.exec(source)?.[1];
+  assert.ok(inherit&&dacl,'Native flag expressions are unavailable');
+  const script=String.raw`
+$ErrorActionPreference='Stop'
+$rows=@()
+for($value=0;$value -le 223;$value++) {
+  # Bit 0x20 is not a defined AceFlags flag.
+  if(($value -band 32) -ne 0){continue}
+  $ace=[pscustomobject]@{AceFlags=[Security.AccessControl.AceFlags]$value}
+  $old=$null;$oldException=$null
+  try {$old=[bool]($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly)}
+  catch {$oldException=$_.Exception.GetType().FullName}
+  $observed=INHERIT_EXPRESSION
+  $rows+=[ordered]@{kind='AceFlags';value=$value;old=$old;old_exception=$oldException;
+    observed=$observed;observed_is_boolean=($observed -is [bool]);expected=(($value -band 8) -ne 0)}
+}
+foreach($value in @(0,4,32768,32772,1,5,16,20)) {
+  $rawDescriptor=[pscustomobject]@{ControlFlags=[Security.AccessControl.ControlFlags]$value}
+  $observed=DACL_EXPRESSION
+  $rows+=[ordered]@{kind='ControlFlags';value=$value;observed=$observed;
+    observed_is_boolean=($observed -is [bool]);expected=(($value -band 4) -ne 0)}
+}
+[ordered]@{ps_major=$PSVersionTable.PSVersion.Major;resource_reads=0;rows=$rows} |
+  ConvertTo-Json -Depth 4 -Compress
+`.replace('INHERIT_EXPRESSION',inherit).replace('DACL_EXPRESSION',dacl);
+  const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script],
+    {encoding:'utf8',timeout:10000,windowsHide:true});
+  assert.equal(result.error,undefined);
+  assert.equal(result.status,0,result.stderr);
+  const report=JSON.parse(result.stdout);
+  assert.equal(report.ps_major,5,'The native collector uses Windows PowerShell 5');
+  assert.equal(report.resource_reads,0);
+  assert.equal(report.rows.filter(row=>row.kind==='AceFlags').length,128);
+  assert.equal(report.rows.filter(row=>row.kind==='ControlFlags').length,8);
+  for(const row of report.rows){
+    assert.equal(row.observed_is_boolean,true);
+    assert.equal(row.observed,row.expected,row.kind+':'+row.value);
+    if(row.kind==='AceFlags'){
+      assert.equal(row.old,null);
+      assert.equal(row.old_exception,'System.InvalidCastException',String(row.value));
+    }
+  }
+});

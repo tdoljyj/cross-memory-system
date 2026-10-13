@@ -1,0 +1,24 @@
+{
+  "schema": "clued.disposable-cluster-operator-catalog/1",
+  "operator_authority_receipt": null,
+  "before_registration": {
+    "schema": "clued.disposable-cluster-catalog/1",
+    "server_version_num": null,
+    "shared": {"roles": [], "databases": [], "tablespaces": []},
+    "databases": {},
+    "table_counts_by_database": {},
+    "auxiliary_by_database": {},
+    "nonconnectable_databases": []
+  },
+  "before_bootstrap": {
+    "schema": "clued.disposable-cluster-catalog/1",
+    "server_version_num": null,
+    "shared": {"roles": [], "databases": [], "tablespaces": []},
+    "databases": {},
+    "table_counts_by_database": {},
+    "auxiliary_by_database": {},
+    "nonconnectable_databases": []
+  },
+  "authority": "none",
+  "instruction": "Independently capture/approve complete metadata of every connectable database including template1; all roles/databases/tablespaces; per-database user objects, languages, transforms, text search, statistics, event triggers, foreign objects, publications/subscriptions. Use actual Source normalized catalog projection: real JOIN maps replace physical OIDs with stable qualified relation/type/function signature/operator/opclass/collation/role/tablespace identities; native PG deparse replaces pg_node_tree physical OIDs/locations. All known semantic/state columns remain bound; unknown columns/references fail. Prepare registration marker projection from exact Source DDL and accepted baseline identities, never guess future OIDs, precreate/rollback a marker, replace subject A after registration, or skip deep equality. Every local user ordinary/partitioned table requires exact row count and classification empty / accepted-platform-static / registration-marker; static platform tables are individually declared exceptions, never business/auth data. No table contents/passwords/secret views are read. Auth users must be zero before bootstrap and all Clued objects absent. Nonconnectable database omissions require explicit independent baseline exceptions. Before-bootstrap additionally binds the exact registration marker DDL/owner/count1. No wildcard, inaccessible connectable database omission, or caller-declared empty boolean."
+}

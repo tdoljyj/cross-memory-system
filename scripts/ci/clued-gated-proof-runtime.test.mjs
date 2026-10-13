@@ -356,12 +356,18 @@ test('future enrollment never qualifies skipped execution, an old attempt or a c
     {staleAttempt:true},{moveMain:true}])assert.equal((await qualifyPrExecution(futureExecutionWorld(settings))).passed,false);
 });
 
-function sevenConsumerExecutionWorld({moveMain=false}={}) {
-  const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
-  const roleSpecs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) {
+  const profiles=sourceRegistries?structuredClone(sourceRegistries.profiles):JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const roleSpecs=sourceRegistries?structuredClone(sourceRegistries.roleSpecs):JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
   // This fixture reconstructs the predecessor seven-only installation.
   // Current default External2 futures do not belong to its old 13+future7 Source.
   delete profiles.external2_future_workflows;delete roleSpecs.external2_future_workflows;
+  // A current active22 catalogue must not leak its later External2 Sources
+  // into the independently reconstructed predecessor13 + readonly future7.
+  for(const file of ['.github/workflows/clued-handover-external-qualification.yml',
+    '.github/workflows/clued-handover-disposable-idle.yml']){
+    delete profiles.workflows[file];delete roleSpecs.workflows[file];
+  }
   const tip='c'.repeat(40),base='d'.repeat(40),merge='e'.repeat(40);
   const promoted=!(profiles.future_workflows?.length);
   if(promoted) {
@@ -481,6 +487,37 @@ test('inactive External2 arrays preserve predecessor-only worlds; malformed or m
   const rejected=external2FutureWorkflowCatalogue(mixed,mixedRoles);
   assert.equal(rejected.passed,false,'genuine nonempty External2 cannot coexist with predecessor13/future7');
   assert.equal(rejected.reason,'External2 requires the accepted seven already promoted to active twenty');
+});
+
+
+test('active22 is preserved while the predecessor fixture reconstructs exactly thirteen plus readonly seven',()=>{
+  const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
+  const roleSpecs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  const exactFiles=['.github/workflows/clued-handover-external-qualification.yml','.github/workflows/clued-handover-disposable-idle.yml'];
+  if(Object.keys(profiles.workflows).length===20){
+    assert.deepEqual(profiles.external2_future_workflows.map(entry=>entry.file).sort(),[...exactFiles].sort());
+    for(const entry of profiles.external2_future_workflows){
+      profiles.workflows[entry.file]=structuredClone(entry.source_profile);
+      const fullRoles=roleSpecs.external2_future_workflows.find(role=>role.file===entry.file&&role.workflow_blob===entry.source_profile.workflow_blob).roles;
+      roleSpecs.workflows[entry.file]={sources:{[entry.source_profile.workflow_blob]:structuredClone(fullRoles)}};
+    }
+    profiles.external2_future_workflows=[];roleSpecs.external2_future_workflows=[];
+  }
+  assert.equal(Object.keys(profiles.workflows).length,22);assert.equal(Object.keys(roleSpecs.workflows).length,22);
+  const original=structuredClone({profiles,roleSpecs});
+  const world=sevenConsumerExecutionWorld({sourceRegistries:{profiles,roleSpecs}});
+  assert.deepEqual({profiles,roleSpecs},original,'fixture reconstruction never mutates the actual22 catalogue');
+  assert.equal(world.snapshot.workflows.size,13);
+  assert.equal(Object.keys(world.snapshot.profiles.workflows).length,13);assert.equal(Object.keys(world.snapshot.roleSpecs.workflows).length,13);
+  assert.equal(world.snapshot.profiles.future_workflows.length,7);assert.equal(world.snapshot.roleSpecs.future_workflows.length,7);
+  for(const file of exactFiles){assert.equal(Object.hasOwn(world.snapshot.profiles.workflows,file),false);assert.equal(Object.hasOwn(world.snapshot.roleSpecs.workflows,file),false);}
+  assert.equal(external2FutureWorkflowCatalogue(profiles,roleSpecs).passed,true,'actual22 inactive-future catalogue remains valid');
+  for(const wrong of [null,undefined,false,0,{},'[]']){
+    const bad=structuredClone(profiles);bad.external2_future_workflows=wrong;
+    assert.equal(external2FutureWorkflowCatalogue(bad,roleSpecs).passed,false,'actual22 wrong profile array type still refuses');
+    const badRoles=structuredClone(roleSpecs);badRoles.external2_future_workflows=wrong;
+    assert.equal(external2FutureWorkflowCatalogue(profiles,badRoles).passed,false,'actual22 wrong role array type still refuses');
+  }
 });
 
 test('all seven future consumers and five existing workflows fit the unchanged request budget with empty native membership',async t=>{

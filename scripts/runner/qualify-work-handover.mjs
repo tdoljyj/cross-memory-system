@@ -134,7 +134,7 @@ foreach ($target in @('C:\','C:\ProgramData','C:\ProgramData\CluedRunnerHook','C
       $ace -isnot [Security.AccessControl.CommonAce]) { throw 'Unsupported Windows ACE type.' }
     $aces += [ordered]@{sid=$ace.SecurityIdentifier.Value;ace_type=[int]$ace.AceType;
       allow=($ace.AceType -eq [Security.AccessControl.AceType]::AccessAllowed);
-      inherit_only=[bool]($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly);rights=[int]$ace.AccessMask}
+      inherit_only=(([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -ne 0);rights=[int]$ace.AccessMask}
   }
   # An owner has implicit WRITE_DAC even without a writable Allow ACE.
   # Include disabled token groups here conservatively, so a filtered admin
