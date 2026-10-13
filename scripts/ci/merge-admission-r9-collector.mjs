@@ -223,6 +223,21 @@ function inventoryIdentity(r){
     conclusion:r.conclusion??null,created_at:new Date(r.created_at).toISOString(),updated_at:new Date(r.updated_at).toISOString(),
     run_started_at:r.run_started_at===null?null:new Date(r.run_started_at).toISOString(),pull_requests:r.pull_requests.map(p=>p.number).sort((a,b)=>a-b)};
 }
+// The fixed-window denominator excludes runs created at/after its close.
+// Their queue/start/completion metadata can advance while older pages are
+// read. Keep their identity and ordinal fixed, and preserve the latest wire
+// projection; never use this allowance for a pre-close run or an old rerun.
+function inventoryDuplicate(prior,current,cutoff){
+  if(same(prior,current))return current;
+  const identity=r=>({id:r.id,run_attempt:r.run_attempt,workflow_id:r.workflow_id,path:r.path,event:r.event,
+    head_sha:r.head_sha,created_at:r.created_at,pull_requests:r.pull_requests});
+  const phase=s=>s==='completed'?2:s==='in_progress'?1:0;
+  if(timestampMicros(prior.created_at)>=cutoff&&timestampMicros(current.created_at)>=cutoff&&
+    same(identity(prior),identity(current))&&prior.status!=='completed'&&phase(current.status)>=phase(prior.status)&&
+    current.updated_at>=prior.updated_at&&
+    (prior.run_started_at===null||current.run_started_at===prior.run_started_at))return current;
+  fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');
+}
 // Fixed created upper watermark includes all historical runs, so an old run's
 // new attempt is never lost by a created>=opening filter. GitHub caps filtered
 // searches at 1000; split complete inclusive overlapping ranges rather than paging a
@@ -287,7 +302,7 @@ async function inventory(request,repository,window){
   if(prefix.length===100)return rangeInventory(request,repository,window);
   const expected=first.total-prefix.length,ids=new Map(),all=new Map(),initialMax=first.rows.length?BigInt(first.rows[0].id):0n;let total=first.total,lastId=null;
   const append=rows=>{for(const r of rows){
-    const old=all.get(r.id);if(old){if(!same(old,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
+    const old=all.get(r.id);if(old){all.set(r.id,inventoryDuplicate(old,r,cutoff));continue;}
     if(lastId!==null&&BigInt(r.id)>lastId)fail('NATIVE_INVENTORY_ORDER_UNPROVED');lastId=BigInt(r.id);all.set(r.id,r);
     if(timestampMicros(r.created_at)>=cutoff){if(!prefix.some(p=>p.id===r.id))fail('NATIVE_INVENTORY_PREFIX_NOT_CLOSED');continue;}
     const prior=ids.get(r.id);if(prior){if(!same(prior,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
@@ -303,7 +318,7 @@ async function inventory(request,repository,window){
     if(afterPrefix.length===100||closing.total-afterPrefix.length!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_CHANGED');
     const added=closing.rows.filter(r=>!all.has(r.id));
     if(added.some(r=>BigInt(r.id)<=initialMax||timestampMicros(r.created_at)<cutoff)||closing.total-first.total!==added.length)fail('NATIVE_INVENTORY_HEAD_ADDITIONS_UNPROVED');
-    for(const r of closing.rows){if(all.has(r.id)&&!same(all.get(r.id),r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');all.set(r.id,r);}
+    for(const r of closing.rows){all.set(r.id,all.has(r.id)?inventoryDuplicate(all.get(r.id),r,cutoff):r);}
     if(all.size!==closing.total)fail('NATIVE_INVENTORY_WHOLE_DENOMINATOR_UNPROVED');}
   if(ids.size!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_UNPROVED');
   return {items:sorted([...ids.values()]),total:ids.size,created_cutoff:window.end,ranges_read:0,directory_mode:'UNCAPPED_FIXED_PREFIX_BARRIER'};
