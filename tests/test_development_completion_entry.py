@@ -34,7 +34,7 @@ def reservation(root):
 def process_reserve(root, started):
     started.wait(10)
     try:
-        ledger.reserve_once(root, reservation(Path(root)), before_create=lambda: None)
+        ledger.reserve_once(root, reservation(Path(root)), before_create=lambda: None, verify_created=lambda *args: None)
         return (os.getpid(), "reserved")
     except ledger.AttemptLedgerError:
         return (os.getpid(), "spent")
@@ -72,34 +72,34 @@ class DevelopmentEntryTests(unittest.TestCase):
             folder.mkdir()
             with mock.patch.object(ledger.os, failure, side_effect=OSError("source failure")):
                 with self.assertRaises(OSError):
-                    ledger.reserve_once(folder, reservation(folder), before_create=lambda: None)
+                    ledger.reserve_once(folder, reservation(folder), before_create=lambda: None, verify_created=lambda *args: None)
             with self.assertRaisesRegex(ValueError, "ALREADY_SPENT_OR_UNCERTAIN"):
-                ledger.reserve_once(folder, reservation(folder), before_create=lambda: None)
+                ledger.reserve_once(folder, reservation(folder), before_create=lambda: None, verify_created=lambda *args: None)
             self.assertEqual(len(list(folder.glob("*.spent.json"))), 1)
 
     def test_changed_request_and_empty_existing_file_cannot_reset_profile(self):
-        ledger.reserve_once(self.root, reservation(self.root), before_create=lambda: None)
+        ledger.reserve_once(self.root, reservation(self.root), before_create=lambda: None, verify_created=lambda *args: None)
         changed = reservation(self.root)
         changed["request_sha256"] = "9" * 64
         with self.assertRaisesRegex(ValueError, "ALREADY_SPENT"):
-            ledger.reserve_once(self.root, changed, before_create=lambda: None)
+            ledger.reserve_once(self.root, changed, before_create=lambda: None, verify_created=lambda *args: None)
         # A partial/crashed prior reservation is also permanently unavailable.
         next(self.root.glob("*.spent.json")).write_bytes(b"")
         with self.assertRaisesRegex(ValueError, "ALREADY_SPENT"):
-            ledger.reserve_once(self.root, changed, before_create=lambda: None)
+            ledger.reserve_once(self.root, changed, before_create=lambda: None, verify_created=lambda *args: None)
 
     def test_old_m1_and_unbound_boolean_version_reject_before_write(self):
         for field, value in (("profile_id", "M1-REF-OLD"), ("approval_version", True)):
             bad = reservation(self.root)
             bad[field] = value
             with self.assertRaises(ValueError):
-                ledger.reserve_once(self.root, bad, before_create=lambda: None)
+                ledger.reserve_once(self.root, bad, before_create=lambda: None, verify_created=lambda *args: None)
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_live_denial_never_spends_or_invokes_process(self):
         def deny(*args):
             raise ValueError("REVOKED")
-        host = entry.FixedDevelopmentEntry(live_check=deny, namespace_check=lambda *args: None)
+        host = entry.FixedDevelopmentEntry(live_check=deny, namespace_check=lambda *args: None, reservation_check=lambda *args: None)
         def process(plan, *, boundary):
             boundary("preflight", copy.deepcopy(plan), entry.observed.legacy.digest(plan), None)
             self.fail("denied preflight returned")
@@ -112,7 +112,7 @@ class DevelopmentEntryTests(unittest.TestCase):
         events = []
         def live(phase, bound):
             events.append(phase)
-        host = entry.FixedDevelopmentEntry(live_check=live, namespace_check=lambda *args: None)
+        host = entry.FixedDevelopmentEntry(live_check=live, namespace_check=lambda *args: None, reservation_check=lambda *args: None)
         def process(plan, *, boundary):
             seal = entry.observed.legacy.digest(plan)
             for phase in ("preflight", "observation_opened", "consume", "before_start", "before_resume", "running"):
@@ -131,7 +131,7 @@ class DevelopmentEntryTests(unittest.TestCase):
         def live(phase, bound):
             if phase == "before_resume":
                 raise ValueError("REVOKED")
-        host = entry.FixedDevelopmentEntry(live_check=live, namespace_check=lambda *args: None)
+        host = entry.FixedDevelopmentEntry(live_check=live, namespace_check=lambda *args: None, reservation_check=lambda *args: None)
         def process(plan, *, boundary):
             for phase in ("consume", "before_resume"):
                 boundary(phase, copy.deepcopy(plan), entry.observed.legacy.digest(plan), None)
@@ -146,7 +146,7 @@ class DevelopmentEntryTests(unittest.TestCase):
             bound["identity"]["request_sha256"] = "9" * 64
         for reader, phase, code in ((mutate, "consume", "MUTATED_BINDING"),
                                     (lambda *args: None, "before_resume", "NOT_CONSUMED")):
-            host = entry.FixedDevelopmentEntry(live_check=reader, namespace_check=lambda *args: None)
+            host = entry.FixedDevelopmentEntry(live_check=reader, namespace_check=lambda *args: None, reservation_check=lambda *args: None)
             def process(plan, *, boundary):
                 boundary(phase, copy.deepcopy(plan), entry.observed.legacy.digest(plan), None)
             with mock.patch.object(entry.observed, "execute_observed_completion", side_effect=process):
@@ -160,7 +160,7 @@ class DevelopmentEntryTests(unittest.TestCase):
         def live(phase, bound):
             waiting.set()
             finish.wait(5)
-        host = entry.FixedDevelopmentEntry(live_check=live, namespace_check=lambda *args: None)
+        host = entry.FixedDevelopmentEntry(live_check=live, namespace_check=lambda *args: None, reservation_check=lambda *args: None)
         def process(plan, *, boundary):
             def callback():
                 try:
@@ -183,7 +183,7 @@ class DevelopmentEntryTests(unittest.TestCase):
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_namespace_check_cannot_spend_after_deadline(self):
-        host = entry.FixedDevelopmentEntry(live_check=lambda *args: None, namespace_check=lambda *args: None)
+        host = entry.FixedDevelopmentEntry(live_check=lambda *args: None, namespace_check=lambda *args: None, reservation_check=lambda *args: None)
         # Advance the actual monotonic clock after the namespace verifier.
         def process(plan, *, boundary):
             clock = entry.observed.legacy.time.monotonic()
@@ -206,14 +206,15 @@ class DevelopmentEntryTests(unittest.TestCase):
         original = ledger._root
         with mock.patch.object(ledger, "_root", side_effect=metadata), mock.patch.object(ledger.os, "open") as opening:
             with self.assertRaises(TimeoutError):
-                ledger.reserve_once(self.root, reservation(self.root), before_create=stop)
+                ledger.reserve_once(self.root, reservation(self.root), before_create=stop, verify_created=lambda *args: None)
             opening.assert_not_called()
         self.assertEqual(events, ["metadata", "stop"])
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_malformed_budget_does_not_permanently_lock_host(self):
         host = entry.FixedDevelopmentEntry(live_check=lambda *args: None,
-                                           namespace_check=lambda *args: None)
+                                           namespace_check=lambda *args: None,
+                                           reservation_check=lambda *args: None)
         for bad in (None, [], True):
             plan = copy.deepcopy(self.plan)
             plan["budget"] = bad

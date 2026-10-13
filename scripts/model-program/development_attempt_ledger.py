@@ -60,7 +60,7 @@ def _validate(reservation):
                 "RESERVATION_REFERENCE")
 
 
-def reserve_once(directory, reservation, *, before_create):
+def reserve_once(directory, reservation, *, before_create, verify_created):
     """Return a fsynced reservation; an existing file always refuses launch.
 
     File name depends on Profile ID alone, so changing a request/plan/digest
@@ -68,6 +68,7 @@ def reserve_once(directory, reservation, *, before_create):
     The caller must still prove namespace ACL and serialize runtime launches.
     """
     require(callable(before_create), "HOST_STOP_GUARD_REQUIRED")
+    require(callable(verify_created), "HOST_CREATED_OBJECT_CHECK_REQUIRED")
     _validate(reservation)
     root, identity = _root(directory)
     name = hashlib.sha256(reservation["profile_id"].encode("utf-8")).hexdigest()
@@ -86,6 +87,8 @@ def reserve_once(directory, reservation, *, before_create):
         require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1,
                 "RESERVATION_OBJECT_INVALID")
         require(_root(root)[1] == identity, "LEDGER_IDENTITY_CHANGED")
+        require(verify_created(fd, str(target)) is None, "CREATED_OBJECT_CHECK_RESULT")
+        require(before_create() is None, "HOST_STOP_GUARD_RESULT")
         raw = (json.dumps({**reservation, "schema": "clued.model-attempt-reservation/1",
                           "status": "SPENT_BEFORE_MODEL_LOAD", "max_attempts": 1,
                           "retries_allowed": False}, ensure_ascii=False, sort_keys=True,

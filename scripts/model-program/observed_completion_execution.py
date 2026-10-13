@@ -208,6 +208,8 @@ def execute_observed_completion(plan, *, boundary):
     validate_plan(frozen, legacy.time.monotonic())
     for row in frozen["runtime_files"] + [frozen[k] for k in ("model", "prompt", "output_schema")]:
         legacy.verify_file(row, deadline)
+    check("before_observation_open")
+    require(legacy.time.monotonic() < deadline, "DEADLINE_BEFORE_OBSERVATION_OPEN")
     # The caller verifies the new-only private output namespace before this open.
     # x+b rejects overwrite; it does not itself prove ACL, links or file ownership.
     path = Path(frozen["observation_path"])

@@ -16,7 +16,7 @@ import observed_completion_execution as observed
 
 IDENTITY_FIELDS = ledger.FIELDS - {"plan_sha256", "reserved_at"}
 IDENTITY_FIELDS |= {"ledger_directory"}
-PHASES = {"preflight", "observation_opened", "consume", "before_start",
+PHASES = {"preflight", "before_observation_open", "observation_opened", "consume", "before_start",
           "before_resume", "running", "before_result"}
 
 
@@ -29,12 +29,45 @@ class FixedDevelopmentEntry:
     observation identity. Both must fail when their evidence is unavailable.
     Actual Host installation/qualification is separate from these Source tests.
     """
-    def __init__(self, *, live_check, namespace_check):
-        if not callable(live_check) or not callable(namespace_check):
+    def __init__(self, *, live_check, namespace_check, reservation_check):
+        if not all(callable(value) for value in (live_check, namespace_check, reservation_check)):
             raise ValueError("ACTUAL_HOST_READERS_REQUIRED")
         self._live_check = live_check
         self._namespace_check = namespace_check
+        self._reservation_check = reservation_check
         self._launch_lock = threading.Lock()
+        self._owned_namespace = None
+
+    @classmethod
+    def for_windows_namespace(cls, *, live_check, ledger_directory,
+                              output_directory, output_name):
+        """Bind the actual native checker to Host-captured existing directories.
+
+        This opens metadata handles only. The live reader must still be real,
+        admitted and source-bound; a supplied callback cannot qualify itself.
+        """
+        if not callable(live_check):
+            raise ValueError("ACTUAL_HOST_READERS_REQUIRED")
+        from development_windows_namespace import WindowsPrivateNamespace
+        namespace = WindowsPrivateNamespace(ledger_directory, output_directory, output_name)
+        try:
+            instance = cls(live_check=live_check, namespace_check=namespace.check,
+                           reservation_check=namespace.check_reservation)
+            instance._owned_namespace = namespace
+            return instance
+        except BaseException:
+            namespace.close()
+            raise
+
+    def close(self):
+        if self._owned_namespace is not None:
+            self._owned_namespace.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def execute(self, admitted_identity, plan):
         # This is an admitted identity, not an author-supplied issuance flag.
@@ -107,8 +140,17 @@ class FixedDevelopmentEntry:
                         raise ValueError("ATTEMPT_ALREADY_CONSUMED")
                     record = copy.deepcopy(reservation)
                     record["reserved_at"] = datetime.now(timezone.utc).isoformat()
+                    def before_create():
+                        active()
+                        before = observed.legacy.digest(opened)
+                        if self._namespace_check("before_ledger_create", identity["ledger_directory"],
+                                                 view["observation_path"], opened) is not None:
+                            raise ValueError("NAMESPACE_CHECK_MUST_ADMIT_OR_RAISE")
+                        if observed.legacy.digest(opened) != before:
+                            raise ValueError("NAMESPACE_READER_MUTATED_OBJECT")
+                        active()
                     spend = ledger.reserve_once(identity["ledger_directory"], record,
-                                                before_create=active)
+                        before_create=before_create, verify_created=self._reservation_check)
                 elif phase in ("before_start", "before_resume", "running", "before_result") and spend is None:
                     raise ValueError("ATTEMPT_NOT_CONSUMED")
 
