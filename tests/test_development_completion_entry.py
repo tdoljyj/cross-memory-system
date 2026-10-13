@@ -51,6 +51,19 @@ class DevelopmentEntryTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_stdio_factory_captures_channel_and_exact_windows_namespace(self):
+        import io
+        from development_currentness_channel import PrivateCurrentnessChannel
+        with mock.patch.object(entry.FixedDevelopmentEntry, "for_windows_namespace") as native:
+            entry.FixedDevelopmentEntry.for_clued_stdio(reader=io.BytesIO(), writer=io.BytesIO(),
+                live_pins={"task_version": 2, "claim_id": "SOURCE ONLY CLAIM", "claim_fence": 3},
+                ledger_directory=str(self.root), output_directory=str(self.root / "outputs"),
+                output_name="observations.jsonl")
+            captured = native.call_args.kwargs
+            self.assertIsInstance(captured["live_check"], PrivateCurrentnessChannel)
+            self.assertEqual(captured["ledger_directory"], str(self.root))
+            self.assertEqual(captured["output_name"], "observations.jsonl")
+
     def test_concurrent_processes_get_one_durable_attempt(self):
         # Separate processes exercise the actual OS exclusive-create boundary.
         context = multiprocessing.get_context("spawn")

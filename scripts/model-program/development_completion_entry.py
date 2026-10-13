@@ -39,6 +39,21 @@ class FixedDevelopmentEntry:
         self._owned_namespace = None
 
     @classmethod
+    def for_clued_stdio(cls, *, reader, writer, live_pins, ledger_directory,
+                        output_directory, output_name, timeout_seconds=15):
+        """Compose the private Host channel with actual Windows namespace checks.
+
+        The fixed Host owns both pipe endpoints and its authenticated Clued
+        reader. This factory cannot turn serialized observations into permission.
+        """
+        from development_currentness_channel import PrivateCurrentnessChannel
+        channel = PrivateCurrentnessChannel(reader, writer, live_pins=live_pins,
+                                           timeout_seconds=timeout_seconds)
+        return cls.for_windows_namespace(live_check=channel,
+            ledger_directory=ledger_directory, output_directory=output_directory,
+            output_name=output_name)
+
+    @classmethod
     def for_windows_namespace(cls, *, live_check, ledger_directory,
                               output_directory, output_name):
         """Bind the actual native checker to Host-captured existing directories.
