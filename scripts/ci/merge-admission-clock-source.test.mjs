@@ -61,3 +61,83 @@ const invoke=p=>read(JSON.stringify([p]),JSON.stringify({expectedCatalogDigest:p
 test('closed complete target state permits calculation without source/transport authority',()=>{const r=invoke(sealedEmpty());assert.equal(r.status,'UNIQUE_VALUE_CANDIDATE');assert.equal(r.value,0);assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);});
 test('a missing clock witness or mismatched target manifest cannot become a zero metric',()=>{for(const change of [p=>p.seal.sample_gap=true,p=>p.coverage_manifest.event_count=1,p=>p.observation_seals=[]]){const p=sealedEmpty();change(p);const r=invoke(p);assert.equal(r.status,'NOT_QUALIFIED');assert.equal(r.value,null);}});
 test('raw-only boundary rejects active objects and reports a fixed malformed reason',()=>{const r=read(new Proxy({}, {get(){throw 'do_not_echo';}}),'{}');assert.equal(r.status,'NOT_QUALIFIED');assert.equal(JSON.stringify(r).includes('do_not_echo'),false);assert.equal(read('{','{}').status,'NOT_QUALIFIED');});
+
+// Complete synthetic source packets exercise the existing raw-reader boundary;
+// they never assert authenticated provenance or an official observation.
+const wireTime=value=>{
+  const us=BigInt(value),seconds=us/1000000n;
+  return new Date(Number(seconds)*1000).toISOString().slice(0,19)+'.'+String(us%1000000n).padStart(6,'0')+'Z';
+};
+const queueClaim=(index,changes={})=>({
+  claim_id:'20000000-0000-4000-8000-'+String(index).padStart(12,'0'),fence:1,status:'ACTIVE',
+  merge_refs:['merge:owner/repo:main'],merge_queued_at:wireTime(0),merge_slot_at:wireTime(0),
+  merge_slot_ci_at:null,merge_slot_ci_state:null,merge_slot_hard_cap_seconds:null,
+  expires_at:wireTime(2000000),...changes
+});
+function statePacket(initial,transactions,{from=1000,to=1100,upper=null}={}){
+  const p=sealedEmpty();p.epoch.opening_us=String(from);p.seal.closing_us=String(to);
+  const claimEvent=c=>({kind:'claim',object_key:c.claim_id,context_key:'global',payload:c});
+  p.epoch.initial_events.push(...initial.map(claimEvent));
+  let sequence=0;
+  for(let tx=0;tx<transactions.length;tx++)for(const {claim,raw} of transactions[tx]){
+    sequence++;const transaction_id=String(tx+1);
+    p.events.push({...claimEvent(claim),sequence,transaction_id,recorded_at:wireTime(raw),source_digest:p.source_digest});
+    p.clock_samples.push({sequence,transaction_id,raw_us:String(raw)});
+  }
+  p.next_sequence=p.end_sequence=p.seal.end_sequence=p.coverage_manifest.event_count=sequence;
+  p.observation_seals=[...(upper===null?[]:[{end_sequence:sequence,closing_us:String(upper)}]),{end_sequence:sequence,closing_us:String(to)}];
+  return p;
+}
+
+test('state-only renewal leaves one depth proved despite a wide commit interval',()=>{
+  const c=queueClaim(1),p=statePacket([c],[[{claim:{...c,expires_at:wireTime(3000000)},raw:1020}]],{upper:1080});
+  const r=invoke(p);assert.equal(r.status,'UNIQUE_VALUE_CANDIDATE');assert.equal(r.value,1);
+  assert.equal(r.uncertainty_union_us,'60');assert.equal(r.requires_complete_sealed_clock_qualified_source,true);assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('a one-to-two change remains on the same side of the p95 candidate threshold',()=>{
+  const r=invoke(statePacket([queueClaim(1)],[[{claim:queueClaim(2),raw:1020}]],{upper:1080}));
+  assert.equal(r.status,'UNIQUE_VALUE_CANDIDATE');assert.equal(r.value,2);
+  const k=r.cdf.find(x=>x.depth===2);assert.equal(k.lower_le_duration_us,'100');assert.equal(k.previous_upper_le_duration_us,'80');
+});
+
+test('a genuine threshold-crossing commit interval remains unknown',()=>{
+  const r=invoke(statePacket([],[[{claim:queueClaim(1),raw:1094}]],{upper:1096}));
+  assert.equal(r.status,'NOT_QUALIFIED');assert.equal(r.reason,'conservative_bounds_do_not_prove_unique_percentile');assert.equal(r.value,null);
+});
+
+test('the state envelope cuts both pre- and post-transaction deterministic expiry boundaries',()=>{
+  const c=queueClaim(1,{expires_at:wireTime(1050)});
+  const r=invoke(statePacket([c],[[{claim:{...c,expires_at:wireTime(1060)},raw:1020}]],{upper:1080}));
+  assert.equal(r.status,'UNIQUE_VALUE_CANDIDATE');assert.equal(r.value,1);
+  assert.equal(r.cdf.find(x=>x.depth===0).lower_le_duration_us,'40');
+  assert.equal(r.cdf.find(x=>x.depth===1).previous_upper_le_duration_us,'50');
+});
+
+test('whole transaction source members never expose an intermediate queue state',()=>{
+  const c=queueClaim(1),p=statePacket([],[[{claim:c,raw:1030},{claim:{...c,status:'RELEASED'},raw:1040}]],{upper:1090});
+  const r=invoke(p);assert.equal(r.status,'UNIQUE_VALUE_CANDIDATE');assert.equal(r.value,0);assert.equal(r.transaction_count,1);
+  assert.equal(r.commit_intervals[0].first_sequence,1);assert.equal(r.commit_intervals[0].last_sequence,2);assert.equal(r.commit_intervals[0].affects_queue,false);
+});
+
+test('a state proof cannot salvage missing members, interleaved transactions, clock overlap or impossible seals',()=>{
+  const p=statePacket([],[[{claim:queueClaim(1),raw:1020}],[{claim:queueClaim(2),raw:1040}],[{claim:queueClaim(3),raw:1060}]]);
+  for(const mutate of [x=>x.clock_samples.pop(),x=>x.events[2].transaction_id=x.events[0].transaction_id,
+    x=>x.clock_samples[1].raw_us='1010',x=>x.events[1].sequence++,
+    x=>x.observation_seals.unshift({end_sequence:1,closing_us:'1010'})]){
+    const bad=structuredClone(p);mutate(bad);const r=invoke(bad);assert.equal(r.status,'NOT_QUALIFIED');assert.equal(r.value,null);
+  }
+});
+
+test('state-envelope claims agree with exhaustive legal microsecond commit placements',()=>{
+  for(const mode of ['enter','leave'])for(let lo=0;lo<=20;lo++)for(let hi=lo;hi<=20;hi++){
+    const c=queueClaim(1),initial=mode==='enter'?[]:[c],after=mode==='enter'?c:{...c,status:'RELEASED'};
+    const p=statePacket(initial,[[{claim:after,raw:1000+lo}]],{to:1020,upper:1000+hi});
+    const allowed=new Set();for(let commit=lo;commit<=hi;commit++){
+      const zeroDuration=mode==='enter'?commit:20-commit;allowed.add(zeroDuration*100>=20*95?0:1);
+    }
+    const r=invoke(p);
+    if(allowed.size===1){assert.equal(r.status,'UNIQUE_VALUE_CANDIDATE',`${mode}/${lo}/${hi}`);assert.equal(r.value,[...allowed][0]);}
+    else {assert.equal(r.status,'NOT_QUALIFIED',`${mode}/${lo}/${hi}`);assert.equal(r.value,null);}
+  }
+});
