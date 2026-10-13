@@ -79,6 +79,11 @@ function makeCapturedToolMailbox({sessionRef,wallSeconds}) {
       const captured=JSON.parse(stable(args));
       need((method==='clued_work_verify'?captured.scope:captured.context_key)===scope,
         'MAILBOX_CONTEXT');
+      const allowed={clued_session_resume:['context_key','client_session_id','event_limit','event_budget_bytes'],
+        clued_search_context:['context_key','session_token','scope','query','limit','max_bytes'],
+        clued_session_reconcile:['context_key','session_token'],clued_work_verify:['scope','claim_id']};
+      need(Object.keys(captured).every(key=>allowed[method].includes(key)),'MAILBOX_ARGUMENTS');
+      if(method==='clued_search_context')need(captured.scope==='context','MAILBOX_CONTEXT_SEARCH_ONLY');
       if(method==='clued_session_resume')need(captured.client_session_id===sessionRef,'MAILBOX_SESSION');
       if(method==='clued_work_verify')need(!('pr_ref' in captured),'MAILBOX_NO_PR_ADMISSION');
       const id=require('node:crypto').randomBytes(24).toString('hex');

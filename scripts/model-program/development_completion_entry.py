@@ -52,8 +52,11 @@ def _result_json(value):
         return {key: _result_json(item) for key, item in value.items()}
     if type(value) is list:
         return [_result_json(item) for item in value]
-    if type(value) is float and value.is_integer():
-        return int(value)
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("FIXED_HOST_NONFINITE_RESULT")
+        # Lossless float text avoids Python/JS exponent serialization drift.
+        return {"encoding": "float64_hex", "data": value.hex()}
     return value
 
 

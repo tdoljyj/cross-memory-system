@@ -13,7 +13,9 @@ test('Host-only mailbox preserves four protected reads, context and one-use repl
   const mailbox=makeCapturedToolMailbox({sessionRef:'SOURCE ONLY SESSION',wallSeconds:2});
   const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
   assert.equal(Object.keys(mailbox.tools).length,4);
-  assert.throws(()=>mailbox.tools.mcp__codex_apps__clued_clued_work_verify({scope,pr_ref:'repo:pr:1'}),/NO_PR/);
+  assert.throws(()=>mailbox.tools.mcp__codex_apps__clued_clued_work_verify({scope,pr_ref:'repo:pr:1'}),/ARGUMENTS|NO_PR/);
+  assert.throws(()=>mailbox.tools.mcp__codex_apps__clued_clued_search_context({context_key:scope,scope:'all'}),/CONTEXT_SEARCH_ONLY/);
+  assert.deepEqual(mailbox.take(),[],'refused cross-project search never dispatched');
   const pending=mailbox.tools.mcp__codex_apps__clued_clued_session_resume({context_key:scope,client_session_id:'SOURCE ONLY SESSION'});
   const [request]=mailbox.take();assert.equal(request.method,'clued_session_resume');
   assert.deepEqual(mailbox.take(),[]);
@@ -152,9 +154,10 @@ async function controllerFixture(action) {
 }
 
 test('fixed controller captures private bootstrap and nested bytes without a model',async()=>{
-  const f=await controllerFixture('class SourceOnlyHost:\n def __enter__(self): return self\n def __exit__(self,*a): pass\n def execute(self,identity,plan): return {"owned_cleanup_verified":True,"authority_effect":"NONE","budget_reservation":{"status":"SPENT_BEFORE_MODEL_LOAD"},"observation_capture":{"raw":b"SOURCE ONLY"}}\nFixedDevelopmentEntry.for_clued_stdio=classmethod(lambda cls,**kwargs:SourceOnlyHost())');
+  const f=await controllerFixture('class SourceOnlyHost:\n def __enter__(self): return self\n def __exit__(self,*a): pass\n def execute(self,identity,plan): return {"owned_cleanup_verified":True,"authority_effect":"NONE","elapsed_seconds":1e-7,"budget_reservation":{"status":"SPENT_BEFORE_MODEL_LOAD"},"observation_capture":{"raw":b"SOURCE ONLY"}}\nFixedDevelopmentEntry.for_clued_stdio=classmethod(lambda cls,**kwargs:SourceOnlyHost())');
   try {const result=await runFixedDevelopmentChild(f.args);
     assert.equal(result.observation_capture.raw.encoding,'base64');
+    assert.equal(result.elapsed_seconds.encoding,'float64_hex');
     assert.equal(Buffer.from(result.observation_capture.raw.data,'base64').toString(),'SOURCE ONLY');}
   finally {await f.fs.rm(f.root,{recursive:true});}
 });

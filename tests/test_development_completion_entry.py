@@ -77,6 +77,7 @@ class DevelopmentEntryTests(unittest.TestCase):
         self.assertEqual(ready["kind"], "host_ready")
         self.assertEqual(terminal["result"]["stdout"], {"encoding": "base64", "data": "/wA="})
         self.assertEqual(terminal["result"]["observation_capture"]["raw"]["data"], "5Lit")
+        self.assertEqual(float.fromhex(terminal["result"]["elapsed_seconds"]["data"]), 1.0)
 
     def test_fixed_bootstrap_rejects_bad_window_and_unverified_cleanup(self):
         for remaining in (True, 0, 121, float("nan")):
