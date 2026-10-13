@@ -57,6 +57,14 @@ function executionSnapshotValid(snapshot,templates){
     return true;
   }catch{return false;}
 }
+function materializeExecutionSnapshot(snapshot,configurations){
+  if(!object(snapshot)||!Object.hasOwn(snapshot,'configuration_key'))return snapshot;
+  if(Object.keys(snapshot).sort().join('|')!==['source_checkout_sha','configuration_key','workflow_directory','main_history'].sort().join('|'))return null;
+  const cfg=object(configurations)?configurations[snapshot.configuration_key]:null;
+  if(!object(cfg)||Object.keys(cfg).sort().join('|')!==['proof_profiles_raw','role_specs_raw'].sort().join('|')||
+    typeof cfg.proof_profiles_raw!=='string'||typeof cfg.role_specs_raw!=='string'||snapshot.configuration_key!==digest(cfg.proof_profiles_raw)+':'+digest(cfg.role_specs_raw))return null;
+  const {configuration_key,...rest}=snapshot;return {...rest,...cfg};
+}
 async function body(request,route,options){const r=await request(route,options);if(r?.ok!==true)refuse('NATURAL_SHARED_REQUEST_STOPPED');return r.body;}
 async function artifacts(request,repository,run){
   const rows=[];let total=null;
@@ -115,8 +123,8 @@ async function unassignedSlotProducer(request,repository,n,d,selection,sourceMem
 // The accepted report writer can later seal these data + Native-origin proofs
 // together. A restored batch is reused only after that writer is independently
 // authenticated; an actions/cache hit or a JSON authority flag is insufficient.
-export async function collectNaturalSourceArtifacts({request,repository,native,selection,readZip,authenticatedEntries=[],authenticatedSourceBytes={},authenticatedAppChecks={}}){
-  const entries=[],gaps=[],before=[],after=[],nonExecutionProofs=[],sourceBytes={...authenticatedSourceBytes},checks={...authenticatedAppChecks},sourceMemo=new Map(),executionSnapshots={};
+export async function collectNaturalSourceArtifacts({request,repository,native,selection,readZip,authenticatedEntries=[],authenticatedSourceBytes={},authenticatedAppChecks={},authenticatedExecutionSnapshots={},authenticatedExecutionConfigurations={}}){
+  const entries=[],gaps=[],before=[],after=[],nonExecutionProofs=[],sourceBytes={...authenticatedSourceBytes},checks={...authenticatedAppChecks},sourceMemo=new Map(),executionSnapshots={},executionConfigurations={},legacySnapshots=new Map();
   try{
     if(native?.status!=='COMPLETE'||selection?.repository!==repository||!sha(selection.head_sha)||typeof readZip!=='function')refuse('NATURAL_INDEPENDENT_INPUTS_MISSING');
     const descriptors=selection.natural_producers;
@@ -144,7 +152,15 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       const artifactName=`clued-r9-natural-source-${r.run_id}-${r.run_attempt}-${d.job_id}`,key=runKey+':'+d.job_id;
       const restored=cache.get(key);
       if(restored&&restored.native_run_digest===digest(JSON.stringify(r))&&restored.native_jobs_digest===digest(JSON.stringify(n.jobs))&&
-        variants.some(variant=>restored.descriptor_digest===digest(JSON.stringify(variant)))&&sourceBytes[restored.checkout_sha]){entries.push(restored);continue;}
+        variants.some(variant=>restored.descriptor_digest===digest(JSON.stringify(variant)))&&sourceBytes[restored.checkout_sha]){
+        if(selection.execution_source_templates!==undefined&&Object.hasOwn(restored,'execution_snapshots')){
+          for(const [tip,snapshot]of Object.entries(object(restored.execution_snapshots)?restored.execution_snapshots:{})){
+            const rows=legacySnapshots.get(tip)??[];rows.push(snapshot);legacySnapshots.set(tip,rows);
+          }
+          const {execution_snapshots,...entry}=restored;entries.push(entry);
+        }else entries.push(restored);
+        continue;
+      }
       const members=await artifacts(request,repository,r.run_id),total=members.length;
       before.push({run_key:runKey,total,ids:members.map(a=>String(a.id))});
       const matches=members.filter(a=>a.name===artifactName&&a.expired===false);
@@ -198,13 +214,20 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
         Object.keys(t).sort().join('|')!==['source_checkout_sha','profiles_sha256','role_specs_sha256'].sort().join('|')||
         !sha(t.source_checkout_sha)||!/^([a-f0-9]{64})$/.test(t.profiles_sha256??'')||!/^([a-f0-9]{64})$/.test(t.role_specs_sha256??'')))refuse('NATURAL_EXECUTION_SOURCE_SELECTION_INVALID');
       if(new Set(templates.map(t=>t.profiles_sha256+':'+t.role_specs_sha256)).size!==templates.length)refuse('NATURAL_EXECUTION_SOURCE_SELECTION_INVALID');
-      const needed=new Set(entries.flatMap(e=>JSON.parse(e.packet_raw).events.filter(q=>q.kind==='round_ci_observation'&&q.payload.applicability&&q.payload.native_runs?.length).map(q=>q.payload.tip)));
+      const needed=new Set();
+      for(let i=0;i<entries.length;i++){
+        const tips=[...new Set(JSON.parse(entries[i].packet_raw).events.filter(q=>q.kind==='round_ci_observation'&&q.payload.applicability&&q.payload.native_runs?.length).map(q=>q.payload.tip))];
+        for(const tip of tips)needed.add(tip);
+        if(tips.length)entries[i]={...entries[i],execution_snapshot_tips:tips};
+      }
       for(const tip of needed){
         try{
           if(!sha(tip))refuse('NATURAL_EXECUTION_SOURCE_TIP_UNKNOWN');
           if(Object.keys(executionSnapshots).length>=1000)refuse('NATURAL_EXECUTION_SOURCE_SNAPSHOT_BOUND');
           let snapshot=tip===selection.head_sha?selection.current_execution_snapshot:null;
-          if(!snapshot)for(const entry of entries){const saved=entry.execution_snapshots?.[tip];if(executionSnapshotValid(saved,templates)){snapshot=saved;break;}}
+          if(!snapshot){const saved=materializeExecutionSnapshot(object(authenticatedExecutionSnapshots)?authenticatedExecutionSnapshots[tip]:null,authenticatedExecutionConfigurations);
+            if(saved?.source_checkout_sha===tip&&executionSnapshotValid(saved,templates))snapshot=saved;}
+          if(!snapshot)for(const saved of legacySnapshots.get(tip)??[]){if(saved?.source_checkout_sha===tip&&executionSnapshotValid(saved,templates)){snapshot=saved;break;}}
           if(snapshot){
             if(snapshot.source_checkout_sha!==tip||!executionSnapshotValid(snapshot,templates))refuse('NATURAL_EXECUTION_SOURCE_SNAPSHOT_INVALID');
             if(snapshot.main_history.head_commit!==selection.head_sha){
@@ -228,9 +251,9 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
               main_history:{base_commit:tip,head_commit:selection.head_sha,merge_base_commit:history.merge_base_commit.sha,status:history.status}};
             if(!executionSnapshotValid(snapshot,templates))refuse('NATURAL_EXECUTION_SOURCE_SNAPSHOT_INVALID');
           }
-          executionSnapshots[tip]=snapshot;
-          for(let i=0;i<entries.length;i++)if(JSON.parse(entries[i].packet_raw).events.some(q=>q.kind==='round_ci_observation'&&q.payload.tip===tip))
-            entries[i]={...entries[i],execution_snapshots:{...entries[i].execution_snapshots,[tip]:snapshot}};
+          const configuration_key=digest(snapshot.proof_profiles_raw)+':'+digest(snapshot.role_specs_raw);
+          if(!Object.hasOwn(executionConfigurations,configuration_key))executionConfigurations[configuration_key]={proof_profiles_raw:snapshot.proof_profiles_raw,role_specs_raw:snapshot.role_specs_raw};
+          executionSnapshots[tip]={source_checkout_sha:tip,configuration_key,workflow_directory:snapshot.workflow_directory,main_history:snapshot.main_history};
         }catch(error){const reason=code(error);gaps.push({code:reason,source_checkout_sha:tip});if(reason==='NATURAL_SHARED_REQUEST_STOPPED')break;}
       }
     }
@@ -240,7 +263,7 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
   }catch(e){gaps.push({code:code(e)});}
   return {schema:NATURAL_CACHE_SCHEMA,status:gaps.length?'PARTIAL':'NATIVE_ORIGIN_BOUND',entries,gaps,
     source_bytes:sourceBytes,app_checks:checks,artifact_population:{before,after},non_execution_proofs:nonExecutionProofs,
-    ...(selection?.execution_source_templates!==undefined?{execution_snapshots:executionSnapshots}:{}),source_authenticated:false,official_metric:false,t0:null,
+    ...(selection?.execution_source_templates!==undefined?{execution_snapshots:executionSnapshots,execution_configurations:executionConfigurations}:{}),source_authenticated:false,official_metric:false,t0:null,
     whole_population:'MANUAL_OWNER_HOLDER_OPERATION_AND_FINAL_ROUND_JOURNALS_NOT_ESTABLISHED'};
 }
 // Export concrete bridges instead of asking the collector to infer business

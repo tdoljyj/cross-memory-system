@@ -414,6 +414,49 @@ test('v2 five actual historical tips share one reviewed configuration pair and p
   assert.equal(JSON.stringify(f.p),before);
 });
 
+function compactCurrentConfigurationFixture(count){
+  const p=packet(),key=PROFILE_SOURCE_SHA256+':'+ROLE_SOURCE_SHA256,
+    expected={...expectations,schema:FOUR_SOURCE_CONTRACT_V2.expectations_schema,previous_execution_sources:[]};
+  p.schema=FOUR_SOURCE_CONTRACT_V2.schema;p.execution_configurations={};p.previous_execution_snapshots=[];
+  for(let index=0;index<count;index++){
+    const tip=createHash('sha1').update('synthetic-current-configuration-tip:'+index).digest('hex');
+    p.previous_execution_snapshots.push({source_checkout_sha:tip,configuration_key:key,
+      execution_sources:{source_checkout_sha:tip,entries:copy(executionEntries),manifest:null},
+      main_history:{base_commit:tip,head_commit:EXECUTION_SOURCE_COMMIT,merge_base_commit:tip,status:'ahead'}});
+    addRound(p,{rid:6000+index,workflowFiles:fullFiles,commit:tip,m:tip,profileDigest:PROFILE_SOURCE_SHA256,roleDigest:ROLE_SOURCE_SHA256});
+  }
+  return {p,key,expected,read:q=>read(JSON.stringify(q),JSON.stringify(expected))};
+}
+
+test('v2 compact 67-tip replay shares the actual current raw configuration below 32 MiB without splitting or dropping Native populations',()=>{
+  const f=compactCurrentConfigurationFixture(67),raw=JSON.stringify(f.p),r=f.read(f.p);
+  assert.equal(f.p.proof_profiles_raw,profiles);assert.equal(f.p.role_specs_raw,roles);assert.deepEqual(f.p.execution_configurations,{});
+  assert.equal(f.p.previous_execution_snapshots.length,67);assert.equal(f.p.rounds.length,67);assert.equal(f.p.attempts.length,67*fullFiles.length);
+  assert.ok(f.p.attempts.length<=1000,'the global Native attempt population remains within the existing bound');
+  assert.ok(Buffer.byteLength(raw)<32*1024*1024,'one actual configuration is serialized once instead of inside 67 snapshots');
+  assert.equal(r.candidate_ready,true);boundaries(r);assert.equal(Object.keys(f.p.populations).length,8);
+  assert.equal(new Set(f.p.previous_execution_snapshots.map(s=>s.source_checkout_sha)).size,67);
+  assert.equal(new Set(f.p.attempts.map(a=>a.run_id+':'+a.attempt)).size,f.p.attempts.length);
+  const jobs=f.p.rounds.flatMap(round=>round.execution_packets.flatMap(x=>x.jobs));assert.equal(new Set(jobs.map(j=>j.id)).size,jobs.length);
+  for(const round of f.p.rounds){assert.deepEqual(round.applicability.workflow_files,fullFiles);assert.equal(round.run_keys.length,fullFiles.length);
+    assert.equal(round.execution_packets.length,fullFiles.length);assert.equal(round.main_sha,round.applicability.source_checkout_sha);}
+  for(const snapshot of f.p.previous_execution_snapshots){assert.equal(snapshot.configuration_key,f.key);assert.equal(snapshot.execution_sources.entries.length,executionEntries.length);
+    assert.equal(Object.hasOwn(snapshot,'proof_profiles_raw'),false);assert.equal(Object.hasOwn(snapshot,'role_specs_raw'),false);}
+  assert.equal(JSON.stringify(f.p),raw);
+});
+
+test('v2 compact configuration references reject unknown keys, repeated current raw configuration and incomplete workflow directories',()=>{
+  const f=compactCurrentConfigurationFixture(2);assert.equal(f.read(f.p).candidate_ready,true);
+  for(const [label,change]of [
+    ['unknown configuration key',p=>{p.previous_execution_snapshots[0].configuration_key='d'.repeat(64)+':'+'e'.repeat(64);}],
+    ['duplicate implicit current configuration',p=>{p.execution_configurations[f.key]={proof_profiles_raw:profiles,role_specs_raw:roles};}],
+    ['incomplete workflow directory',p=>{p.previous_execution_snapshots[0].execution_sources.entries.pop();seal(p);}]
+  ]){
+    const p=copy(f.p);change(p);const r=f.read(p);assert.equal(r.status,'NOT_QUALIFIED',label);assert.equal(r.candidate_ready,false,label);boundaries(r);
+    assert.deepEqual(p.attempts,f.p.attempts,label);assert.deepEqual(p.rounds,f.p.rounds,label);assert.equal(Object.keys(p.populations).length,8,label);
+  }
+});
+
 test('v2 history rejects unknown or mixed Source bytes, incomplete historical manifests, authority flags and current relabeling; v1 rejects history fields',()=>{
   const f=historicalRoundFixture({v2:true});assert.equal(f.read(f.p).candidate_ready,true);
   for(const [label,change]of [
@@ -438,7 +481,7 @@ test('v2 history rejects unknown or mixed Source bytes, incomplete historical ma
 });
 
 test('v2 global run and job ownership rejects reuse across current and historical execution versions',()=>{
-  const f=historicalRoundFixture({v2:true}),current=addRound(f.p,{rid:302,start:30,end:40,workflowFiles:f.currentFiles,changedFiles:f.changedFiles});
+  const f=historicalRoundFixture({v2:true}),current=addRound(f.p,{rid:302,start:30,end:40,m:EXECUTION_SOURCE_COMMIT,workflowFiles:f.currentFiles,changedFiles:f.changedFiles});
   assert.equal(f.read(f.p).candidate_ready,true,'two distinct exact Native populations are internally consistent');
   for(const kind of ['run','job']){
     const q=copy(f.p),old=q.rounds[0].execution_packets[0],r=q.rounds[1],x=r.execution_packets.find(x=>x.workflow_file===old.workflow_file);

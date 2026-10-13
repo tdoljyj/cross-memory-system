@@ -83,10 +83,29 @@ test('37a-compatible final input bridge refuses missing Native identity/checkout
   const f={schema:NATURAL_EVENT_SCHEMA,kind:'admission_final',payload:{entry:'dispatch_admit'}};
   assert.ok(admissionEnvelopeInput({finalEvent:f}).missing.includes('ENTRY_NOT_IN_PER_PR_GRAMMAR'));
 });
-test('unchanged five original workflow trigger/job/permission blocks precede added same-job artifacts',()=>{
+test('five original workflow blocks preserve exact accepted successors and added same-job artifacts',()=>{
+  // Exact accepted trigger additions verified from the immutable 59522b source.
+  // Keep the original baseline for every other byte; CI needs no newer Git
+  // history object, and no arbitrary future choice or hook is normalized away.
+  const acceptedAdditions={
+    'clued-work-admission-dispatch.yml':{anchor:'          - information-flow-e2e.yml\n',lines:[
+      '          - clued-handover-external-qualification.yml','          - clued-handover-disposable-idle.yml']},
+    'clued-merge-slot-ci.yml':{anchor:'      - public-mcp-protocol\n',lines:[
+      '      - Clued handover hook qualification / company-linux-01','      - Clued handover hook qualification / company-linux-02',
+      '      - Clued handover hook qualification / company-linux-03','      - Clued handover hook qualification / company-linux-04',
+      '      - Clued handover hook qualification / home-linux-01','      - Clued handover hook qualification / company-win-01',
+      '      - Clued handover hook qualification / home-win-01','      - Clued disposable external handover qualification',
+      '      - Clued disposable cancellation fixture']},
+  };
   for(const name of ['clued-work-admission.yml','clued-work-admission-reverify.yml','clued-work-admission-dispatch.yml','clued-merge-executor.yml','clued-merge-slot-ci.yml']){
     const old=execFileSync('git',['show',ORIGINAL_WORKFLOW_BASE+':.github/workflows/'+name],{cwd:repo,encoding:'utf8'}),next=fs.readFileSync(path.join(stage,'.github/workflows',name),'utf8').replace(/\r\n/g,'\n');
-    const ordinary=name==='clued-merge-executor.yml'?next.replace(/  workflow_dispatch:\n    inputs:[\s\S]*?\npermissions:/,'  workflow_dispatch:\n\npermissions:').replace(/        if: \$\{\{ !inputs.measurement_opt_in \}\}\n/,''):next;
+    let ordinary=name==='clued-merge-executor.yml'?next.replace(/  workflow_dispatch:\n    inputs:[\s\S]*?\npermissions:/,'  workflow_dispatch:\n\npermissions:').replace(/        if: \$\{\{ !inputs.measurement_opt_in \}\}\n/,''):next;
+    const additions=acceptedAdditions[name];
+    if(additions){
+      const exact=additions.anchor+additions.lines.join('\n')+'\n';
+      assert.equal(ordinary.split(exact).length-1,1,name+': exact accepted trigger additions appear once');
+      ordinary=ordinary.replace(exact,additions.anchor);
+    }
     const removed=ordinary.replace(/      - name: Export the closed local natural R9 packet\n[\s\S]*?        run: node scripts\/ci\/merge-admission-source-producer.mjs --export[^\n]*\n/,'').replace(/      - name: Preserve natural R9 source observations\n[\s\S]*?          retention-days: 90\n/,'').replace(/\n\n\n/g,'\n\n');
     assert.equal(removed.trim(),old.replace(/\n\n\n/g,'\n\n').trim(),name);
     assert.equal((next.match(/name: Preserve natural R9/g)||[]).length,1);assert.equal((next.match(/if: \$\{\{ always\(\) \}\}/g)||[]).length,2);

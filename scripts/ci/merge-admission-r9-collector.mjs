@@ -758,7 +758,9 @@ export async function collectR9Measurement({request,budget,repository,window,sou
   }catch{gaps.push('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED');}
   const naturalInputs=naturalSelection&&native?.status==='COMPLETE'?await collectNaturalSourceArtifacts({request:slice.request,repository,native,
     selection:naturalSelection,readZip:b=>readSealedPacketZip(b,'natural-packet.json'),authenticatedEntries:packet?.natural_inputs?.entries??[],
-    authenticatedSourceBytes:packet?.natural_inputs?.source_bytes??{},authenticatedAppChecks:packet?.natural_inputs?.app_checks??{}}):null;
+    authenticatedSourceBytes:packet?.natural_inputs?.source_bytes??{},authenticatedAppChecks:packet?.natural_inputs?.app_checks??{},
+    authenticatedExecutionSnapshots:packet?.natural_inputs?.execution_snapshots??{},
+    authenticatedExecutionConfigurations:packet?.natural_inputs?.execution_configurations??{}}):null;
   if(naturalInputs){const refs=new Set(naturalInputs.entries.flatMap(x=>JSON.parse(x.packet_raw).events.flatMap(e=>
     e.kind==='round_ci_observation'?(e.payload.native_runs??[]).map(r=>r.run_id+':'+r.attempt):e.kind==='operation_request'?(e.payload.run_keys??[]):[])));
     for(const n of native.all_population_packets??[])if(refs.has(key(n.run))&&!native.population_packets.some(p=>key(p.run)===key(n.run)))native.population_packets.push(n);}

@@ -341,7 +341,8 @@ test('v2 assembly binds old round witnesses and Native jobs to the historical 20
   const packet=JSON.parse(built.frame.packet_raw);historicalAssemblyRowsRemain(packet,prepared);assert.equal(Object.keys(packet.populations).length,8);
   assert.equal(packet.execution_sources.source_checkout_sha,subject);assert.equal(packet.execution_sources.entries.length,22);assert.equal(packet.previous_execution_snapshots.length,1);
   const historical=packet.previous_execution_snapshots[0];assert.equal(historical.source_checkout_sha,prepared.oldTip);assert.equal(historical.execution_sources.entries.length,20);
-  assert.equal(historical.proof_profiles_raw,prepared.snapshot.proof_profiles_raw);assert.equal(historical.role_specs_raw,prepared.snapshot.role_specs_raw);
+  const historicalConfig=packet.execution_configurations[historical.configuration_key];
+  assert.equal(historicalConfig.proof_profiles_raw,prepared.snapshot.proof_profiles_raw);assert.equal(historicalConfig.role_specs_raw,prepared.snapshot.role_specs_raw);
   const round=packet.rounds[0];assert.equal(round.applicability.source_checkout_sha,prepared.oldTip);assert.equal(round.applicability.profile_sha256,prepared.descriptor.profiles_sha256);
   for(const x of round.execution_packets){assert.equal(x.source_descriptor.source_checkout_sha,prepared.oldTip);assert.equal(x.source_descriptor.role_source_sha256,prepared.descriptor.role_specs_sha256);
     assert.equal(x.source_descriptor.workflow_blob,prepared.snapshot.workflow_directory.find(row=>row.path===x.workflow_file).sha);}
@@ -359,6 +360,10 @@ test('v2 assembly retains full round and Native populations when historical snap
     ['duplicate directory',p=>{p.snapshot.workflow_directory.push({...p.snapshot.workflow_directory[0]});}],
     ['malformed directory',p=>{p.snapshot.workflow_directory[0]=null;}],
     ['shared budget gap',p=>{p.f.natural.status='PARTIAL';p.f.natural.gaps=[{code:'NATURAL_SHARED_REQUEST_STOPPED'}];}],
+    ['unknown configuration reference',p=>{p.f.natural.execution_snapshots[p.oldTip]={source_checkout_sha:p.oldTip,configuration_key:'unknown',workflow_directory:p.snapshot.workflow_directory,main_history:p.snapshot.main_history};p.f.natural.execution_configurations={};}],
+    ['mixed shared configuration',p=>{const key=p.descriptor.profiles_sha256+':'+p.descriptor.role_specs_sha256;
+      p.f.natural.execution_snapshots[p.oldTip]={source_checkout_sha:p.oldTip,configuration_key:key,workflow_directory:p.snapshot.workflow_directory,main_history:p.snapshot.main_history};
+      p.f.natural.execution_configurations={[key]:{proof_profiles_raw:p.snapshot.proof_profiles_raw,role_specs_raw:p.f.runtime.role_specs_raw}};}],
     ['mismatched reviewed hash',p=>{const contract=JSON.parse(p.f.runtime.source_contract_raw),expected=JSON.parse(contract.four_expected_sources_raw);
       expected.previous_execution_sources[0].profiles_sha256=h(p.snapshot.proof_profiles_raw+'\n');contract.four_expected_sources_raw=JSON.stringify(expected);p.f.runtime.source_contract_raw=JSON.stringify(contract);}],
     ['future workflows absent on old head',p=>{const entry=p.f.natural.entries[0],packet=JSON.parse(entry.packet_raw);
@@ -405,12 +410,14 @@ test('v2 intake proves every actual tip and reuses the current Source tree, allo
   const tips=['f','c','d','e','9'].map(c=>c.repeat(40)),f=executionIntakeFixture({tips}),before=JSON.stringify(f.selection),r=await f.collect();
   assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,2);assert.equal(Object.keys(r.execution_snapshots).length,6);
   assert.equal(f.selection.execution_source_templates.length,2);assert.equal(JSON.stringify(f.selection),before);
-  for(const tip of tips){const snapshot=r.execution_snapshots[tip];assert.deepEqual(snapshot,f.snapshots.get(tip));
+  for(const tip of tips){const snapshot=r.execution_snapshots[tip],{configuration_key,...rest}=snapshot;assert.deepEqual({...rest,...r.execution_configurations[configuration_key]},f.snapshots.get(tip));
     const routes=f.routes.filter(route=>route.includes(tip));assert.equal(routes.length,4);assert.ok(routes.some(route=>route.includes('/git/trees/')));
     assert.equal(routes.filter(route=>route.includes('/contents/')).length,2);assert.equal(routes.filter(route=>route.includes('/compare/')).length,1);}
-  assert.equal(r.execution_snapshots[head],f.currentSnapshot);assert.equal(f.routes.some(route=>route===`/repos/${repository}/git/trees/${head}?recursive=1`),false);
+  const {configuration_key:currentKey,...currentRest}=r.execution_snapshots[head];assert.deepEqual({...currentRest,...r.execution_configurations[currentKey]},f.currentSnapshot);
+  assert.equal(f.routes.some(route=>route===`/repos/${repository}/git/trees/${head}?recursive=1`),false);
   assert.deepEqual(JSON.parse(r.entries[0].packet_raw).events,JSON.parse(f.records[0].bytes).events);
   let reads=0;const saved=JSON.stringify(r.entries),cached=await f.collect({authenticatedEntries:r.entries,authenticatedSourceBytes:r.source_bytes,
+    authenticatedExecutionSnapshots:r.execution_snapshots,authenticatedExecutionConfigurations:r.execution_configurations,
     request:async()=>{reads++;throw Error('QUALIFIED_SNAPSHOT_CACHE_MUST_NOT_REREAD');}});
   assert.equal(cached.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(cached.gaps));assert.equal(reads,0);assert.equal(JSON.stringify(r.entries),saved);
   assert.deepEqual(cached.execution_snapshots,r.execution_snapshots);assert.equal(cached.source_authenticated,false);assert.equal(cached.official_metric,false);assert.equal(cached.t0,null);
@@ -419,10 +426,12 @@ test('v2 intake rechecks cached snapshot ancestry when main moves without reread
   const f=executionIntakeFixture({includeCurrent:false}),first=await f.collect();assert.equal(first.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(first.gaps));
   const next='8'.repeat(40),routes=[],input=JSON.stringify(first.entries),selection={...f.selection,head_sha:next},request=async route=>{
     routes.push(route);assert.equal(route,`/repos/${repository}/compare/${head}...${next}`);return {ok:true,body:{status:'ahead',merge_base_commit:{sha:head}}};};
-  const r=await f.collect({selection,authenticatedEntries:first.entries,authenticatedSourceBytes:first.source_bytes,request});
+  const r=await f.collect({selection,authenticatedEntries:first.entries,authenticatedSourceBytes:first.source_bytes,
+    authenticatedExecutionSnapshots:first.execution_snapshots,authenticatedExecutionConfigurations:first.execution_configurations,request});
   assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(routes.length,1);assert.equal(JSON.stringify(first.entries),input);
   assert.deepEqual(r.execution_snapshots[f.tips[0]].main_history,{base_commit:f.tips[0],head_commit:next,merge_base_commit:f.tips[0],status:'ahead'});
   const stopped=await f.collect({selection,authenticatedEntries:first.entries,authenticatedSourceBytes:first.source_bytes,
+    authenticatedExecutionSnapshots:first.execution_snapshots,authenticatedExecutionConfigurations:first.execution_configurations,
     request:async()=>({ok:true,body:{status:'diverged',merge_base_commit:{sha:base}}})});
   assert.equal(stopped.status,'PARTIAL');assert.equal(stopped.entries.length,2);assert.deepEqual(stopped.execution_snapshots,{});
   assert.ok(stopped.gaps.some(g=>g.code==='NATURAL_EXECUTION_SOURCE_MAIN_HISTORY_UNPROVEN'));assert.equal(stopped.t0,null);
@@ -443,7 +452,9 @@ test('v2 intake rejects unknown mixed or unbound historical bytes and unsafe cac
     assert.ok(r.gaps.some(g=>g.code===reason),label);assert.equal(r.source_authenticated,false,label);assert.equal(r.official_metric,false,label);assert.equal(r.t0,null,label);}
   for(const bad of [snapshot=>{snapshot.approved=true;},snapshot=>{snapshot.main_history.status='identical';},snapshot=>{snapshot.workflow_directory.push({...snapshot.workflow_directory[0]});}]){
     const f=executionIntakeFixture({includeCurrent:false}),first=await f.collect();assert.equal(first.status,'NATIVE_ORIGIN_BOUND');
-    const entries=structuredClone(first.entries);bad(entries[0].execution_snapshots[f.tips[0]]);let reads=0;
+    const entries=structuredClone(first.entries),{configuration_key,...rest}=first.execution_snapshots[f.tips[0]];
+    entries[0].execution_snapshots={[f.tips[0]]:{...structuredClone(rest),...structuredClone(first.execution_configurations[configuration_key])}};
+    bad(entries[0].execution_snapshots[f.tips[0]]);let reads=0;
     const r=await f.collect({authenticatedEntries:entries,authenticatedSourceBytes:first.source_bytes,request:async()=>{reads++;return {ok:false};}});
     assert.equal(r.status,'PARTIAL');assert.equal(reads,1);assert.equal(r.entries.length,2);assert.deepEqual(r.execution_snapshots,{});
     assert.ok(r.gaps.some(g=>g.code==='NATURAL_SHARED_REQUEST_STOPPED'));assert.equal(r.t0,null);
@@ -458,4 +469,69 @@ test('v2 intake stops snapshot reads at the existing shared budget and retains e
   assert.equal(routes.at(-1),stop);assert.ok(r.gaps.some(g=>g.code==='NATURAL_SHARED_REQUEST_STOPPED'&&g.source_checkout_sha===tips[1]));
   assert.equal(r.entries[0].packet_raw,first.entries[0].packet_raw);assert.equal(r.entries[1].packet_raw,first.entries[1].packet_raw);
   assert.deepEqual(r.artifact_population,{before:[],after:[]});assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('67 authenticated entries or actual tips share actual profile and role bytes once and seal below the unchanged limit with zero restore reads',async()=>{
+  for(const differentTips of [false,true]){
+    const f=executionIntakeFixture({tips:[],includeCurrent:true}),key=h(f.currentSnapshot.proof_profiles_raw)+':'+h(f.currentSnapshot.role_specs_raw),
+      cfg={proof_profiles_raw:f.currentSnapshot.proof_profiles_raw,role_specs_raw:f.currentSnapshot.role_specs_raw},entries=[],packets=[],snapshots={};
+    assert.equal(Buffer.byteLength(cfg.proof_profiles_raw),fs.statSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json')).size);
+    assert.equal(Buffer.byteLength(cfg.role_specs_raw),fs.statSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json')).size);
+    for(let i=0;i<67;i++){
+      const run=String(100000+i),tip=differentTips?'c'+i.toString(16).padStart(39,'0'):head,n=structuredClone(f.records[0].native);
+      n.run.run_id=run;n.jobs[0].id=String(200000+i);const packet=JSON.parse(f.records[0].bytes);
+      packet.identity.run_id=run;for(const event of packet.events){event.run_id=run;event.record_id='10000000-0000-4000-8000-'+String(i+1).padStart(12,'0');
+        event.producer_session_id='20000000-0000-4000-8000-'+String(i+1).padStart(12,'0');event.payload.tip=tip;event.payload.base_sha=tip;
+        if(differentTips)for(const [j,ref]of event.payload.native_runs.entries())ref.run_id=String(400000+i*10+j);}
+      for(const session of packet.sessions){session.run_id=run;session.producer_session_id=packet.events[0].producer_session_id;}const raw=JSON.stringify(packet);
+      entries.push({run_key:run+':1',job_id:f.descriptor.job_id,checkout_sha:base,descriptor_digest:h(JSON.stringify(f.oldDescriptor)),
+        native_run_digest:h(JSON.stringify(n.run)),native_jobs_digest:h(JSON.stringify(n.jobs)),artifact_id:String(300000+i),artifact_digest:'sha256:'+h(raw),packet_raw:raw,
+        execution_snapshot_tips:[tip],origin_basis:'NATIVE_ARTIFACT_DIGEST_JOB_MAIN_HISTORY_EXACT_REVIEWED_SOURCE'});
+      packets.push(n);snapshots[tip]={source_checkout_sha:tip,configuration_key:key,workflow_directory:f.currentSnapshot.workflow_directory,
+        main_history:{base_commit:tip,head_commit:head,merge_base_commit:tip,status:tip===head?'identical':'ahead'}};
+    }
+    const sources={[base]:{texts:Object.fromEntries(Object.entries(f.paths).map(([k,p])=>[k,f.oldTexts[p]])),
+      ...Object.fromEntries(Object.entries(f.paths).map(([k,p])=>[k+'_blob',f.oldMap[p]]))}},native={status:'COMPLETE',population_packets:packets};let reads=0;
+    const collect=overrides=>f.collect({native,authenticatedEntries:entries,authenticatedSourceBytes:sources,authenticatedExecutionSnapshots:snapshots,
+      authenticatedExecutionConfigurations:{[key]:cfg},request:async()=>{reads++;throw Error('AUTHENTICATED_SNAPSHOT_RESTORE_MUST_NOT_READ');},...overrides});
+    const result=await collect();assert.equal(result.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(result.gaps));assert.equal(reads,0);assert.equal(result.entries.length,67);
+    assert.equal(Object.keys(result.execution_snapshots).length,differentTips?67:1);assert.deepEqual(Object.keys(result.execution_configurations),[key]);
+    for(const entry of result.entries){assert.equal(Object.hasOwn(entry,'execution_snapshots'),false);assert.equal(entry.execution_snapshot_tips.length,1);}
+    const seal=naturalInputs=>C.sealR9Packet({repository,publisher:{run_id:'42',run_attempt:1,head_sha:head,workflow_path:C.R9_PUBLISHER_PATH,job_id:'report'},
+      sourceBlobs:Object.fromEntries(C.R9_SOURCE_PATHS.map(p=>[p,'b'.repeat(40)])),window,sealedAt:closed,nativeStoreRaw:emptyNativePopulationStore(repository),naturalInputs});
+    const sealed=seal(result);assert.ok(Buffer.byteLength(sealed)<32*1024*1024);const restored=JSON.parse(sealed).natural_inputs;
+    const again=await collect({authenticatedEntries:restored.entries,authenticatedSourceBytes:restored.source_bytes,
+      authenticatedExecutionSnapshots:restored.execution_snapshots,authenticatedExecutionConfigurations:restored.execution_configurations});
+    assert.equal(again.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(again.gaps));assert.equal(reads,0);assert.equal(again.entries.length,67);
+    assert.deepEqual(again.execution_snapshots,result.execution_snapshots);assert.deepEqual(again.execution_configurations,result.execution_configurations);
+    const inline=Object.fromEntries(Object.entries(snapshots).map(([tip,{configuration_key,...rest}])=>[tip,{...rest,...cfg}]));
+    const old={...result,entries:entries.map(entry=>({...entry,execution_snapshots:{[entry.execution_snapshot_tips[0]]:inline[entry.execution_snapshot_tips[0]]}})),execution_snapshots:inline};
+    delete old.execution_configurations;assert.throws(()=>seal(old),/raw data limit/,'the real 67-copy defect is still rejected by the original limit');
+    assert.equal(result.source_authenticated,false);assert.equal(result.official_metric,false);assert.equal(result.t0,null);
+    console.log(JSON.stringify({size_regression:differentTips?'67_actual_tips':'67_same_tip_entries',entries:67,snapshots:Object.keys(result.execution_snapshots).length,
+      actual_configuration_raw_bytes:Buffer.byteLength(cfg.proof_profiles_raw)+Buffer.byteLength(cfg.role_specs_raw),sealed_bytes:Buffer.byteLength(sealed),restore_http_reads:reads,limit_bytes:32*1024*1024}));
+  }
+});
+test('authenticated legacy inline snapshots are read once and normalized to configuration and tip references without changing entries or issuing HTTP',async()=>{
+  const f=executionIntakeFixture({tips:['c'.repeat(40)],includeCurrent:false}),first=await f.collect();assert.equal(first.status,'NATIVE_ORIGIN_BOUND');
+  const entries=structuredClone(first.entries),{configuration_key,...rest}=first.execution_snapshots[f.tips[0]],inline={...rest,...first.execution_configurations[configuration_key]};
+  entries[0].execution_snapshots={[f.tips[0]]:inline};const before=JSON.stringify(entries);let reads=0;
+  const normalized=await f.collect({authenticatedEntries:entries,authenticatedSourceBytes:first.source_bytes,
+    request:async()=>{reads++;throw Error('LEGACY_INLINE_CACHE_MUST_NOT_READ');}});
+  assert.equal(normalized.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(normalized.gaps));assert.equal(reads,0);assert.equal(JSON.stringify(entries),before);
+  assert.equal(Object.hasOwn(normalized.entries[0],'execution_snapshots'),false);assert.deepEqual(normalized.entries[0].execution_snapshot_tips,[f.tips[0]]);
+  assert.equal(normalized.entries.length,first.entries.length);assert.deepEqual(normalized.execution_snapshots,first.execution_snapshots);
+  assert.deepEqual(normalized.execution_configurations,first.execution_configurations);assert.equal(normalized.entries[0].packet_raw,entries[0].packet_raw);
+});
+test('unknown shared references mixed raw pairs and changed historical directory bytes cannot reuse authenticated snapshots or erase original entries',async()=>{
+  for(const change of [(snapshots,configs,tip)=>{snapshots[tip].configuration_key='unknown';},
+    (snapshots,configs,tip,f)=>{configs[snapshots[tip].configuration_key].role_specs_raw=f.currentSnapshot.role_specs_raw;},
+    (snapshots,configs,tip,f)=>{snapshots[tip].workflow_directory.find(row=>row.path===f.history.workflowFiles[0]).sha='e'.repeat(40);}]){
+    const f=executionIntakeFixture({tips:['c'.repeat(40)],includeCurrent:false}),first=await f.collect();assert.equal(first.status,'NATIVE_ORIGIN_BOUND');
+    const snapshots=structuredClone(first.execution_snapshots),configs=structuredClone(first.execution_configurations);change(snapshots,configs,f.tips[0],f);let reads=0;
+    const r=await f.collect({authenticatedEntries:first.entries,authenticatedSourceBytes:first.source_bytes,authenticatedExecutionSnapshots:snapshots,authenticatedExecutionConfigurations:configs,
+      request:async()=>{reads++;return {ok:false};}});
+    assert.equal(r.status,'PARTIAL');assert.equal(reads,1);assert.equal(r.entries.length,first.entries.length);assert.deepEqual(r.execution_snapshots,{});
+    assert.ok(r.gaps.some(g=>g.code==='NATURAL_SHARED_REQUEST_STOPPED'));assert.equal(r.entries[0].packet_raw,first.entries[0].packet_raw);assert.equal(r.t0,null);
+  }
 });

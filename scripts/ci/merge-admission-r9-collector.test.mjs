@@ -617,6 +617,68 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
   assert.equal(result.metrics.wasted_final_rounds.activity_coverage.delivery_through_window_end,'UNKNOWN');assert.equal(result.t0,null);
 });
 
+async function authenticatedConfigurationCollectorFixture(){
+  const seeded=await C.collectIncrementalNative({request:nativeRequest().request,repository,window});assert.equal(seeded.status,'COMPLETE');
+  const n=seeded.population_packets[0],c=contract(),script='scripts/ci/ci-usage-report.mjs',registryPath='scripts/ci/merge-admission-r9-source.json',tip='b'.repeat(40),
+    profiles=JSON.stringify(c.profiles),roles=JSON.stringify(c.roles),key=digest(profiles)+':'+digest(roles),
+    configuration={proof_profiles_raw:profiles,role_specs_raw:roles},snapshot={source_checkout_sha:tip,configuration_key:key,
+      workflow_directory:[{path:C.R9_PUBLISHER_PATH,sha:blobs[C.R9_PUBLISHER_PATH],type:'blob',mode:'100644'}],
+      main_history:{base_commit:tip,head_commit:head,merge_base_commit:tip,status:'ahead'}},
+    descriptor={registration_status:'registered',workflow_path:C.R9_PUBLISHER_PATH,workflow_blob:blobs[C.R9_PUBLISHER_PATH],job_id:'report',
+      job_name:'clued-ci-usage-report',source_paths:[script],source_blobs:{[script]:blobs[script]},required_steps:['Measure CI usage']},
+    cfg={schema:'clued.r9-runtime-source-selection/1',registration_status:'registered',repository,scope,natural_producers:[descriptor]},rawCfg=JSON.stringify(cfg);
+  const {createNaturalRecorder}=await import('./merge-admission-source-producer.mjs'),events=[],recorder=createNaturalRecorder({
+    env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:'42',GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'report',GITHUB_SHA:head},
+    sourcePath:script,write:e=>events.push(e),now:()=>window.end});
+  recorder.record('round_ci_observation',{scope,pr:{number:727,head:{sha:head}},seen:{state:'green',execution:{tip,native_runs:[n.run],
+    observation_context:{changed_files:['README.md'],commits:1,default_branch:'main',workflow_files:[C.R9_PUBLISHER_PATH]}}}});recorder.finish();
+  assert.equal(events.length,1);events[0].source.executed_checkout_sha=head;events[0].source.sha256=digest(content[script]);
+  const entry={run_key:'42:1',job_id:'report',checkout_sha:head,artifact_digest:'sha256:'+'d'.repeat(64),packet_raw:JSON.stringify({events}),
+    descriptor_digest:digest(JSON.stringify(descriptor)),native_run_digest:digest(JSON.stringify(n.run)),native_jobs_digest:digest(JSON.stringify(n.jobs)),execution_snapshot_tips:[tip]},
+    naturalInputs={schema:'clued.r9-natural-origin-cache/1',status:'NATIVE_ORIGIN_BOUND',entries:[entry],gaps:[],source_bytes:{[head]:{texts:{}}},app_checks:{},
+      execution_snapshots:{[tip]:snapshot},execution_configurations:{[key]:configuration},source_authenticated:true,official_metric:true},
+    raw=packet({nativeStoreRaw:seeded.store_raw,sourceBlobs:{...blobs,[registryPath]:workflowBlob(rawCfg)},naturalInputs}),artifact=zip(raw),
+    sourceSelection={repository,head_sha:head,default_branch:'main',natural_producers:[descriptor],execution_source_templates:[{
+      source_checkout_sha:head,profiles_sha256:digest(profiles),role_specs_sha256:digest(roles)}],
+      // Unauthenticated caller flags/tables cannot substitute for restored proof.
+      source_authenticated:true,execution_snapshots:naturalInputs.execution_snapshots,execution_configurations:naturalInputs.execution_configurations};
+  const fakeFor=refusal=>nativeRequest({artifact,jobs:[refusal==='publisher_job'?job(42,{steps:[]}):job()],mutation:route=>{
+    if(route.includes('/contents/'+registryPath))return {ok:true,body:{type:'file',path:registryPath,encoding:'base64',
+      sha:workflowBlob(rawCfg),content:Buffer.from(rawCfg).toString('base64')}};
+    if(route.includes('/actions/runs/42/artifacts?'))return {ok:true,body:{total_count:0,artifacts:[]}};
+    if(route.includes('/events?'))return {ok:true,body:[]};
+    if(refusal==='platform_digest'&&route.endsWith('/actions/artifacts/9'))return {ok:true,body:{id:9,name:C.R9_ARTIFACT_NAME,expired:false,
+      digest:'sha256:'+digest(Buffer.concat([artifact,Buffer.from('changed platform bytes')])),workflow_run:{id:42,head_sha:head,head_branch:'main'}}};
+    return null;
+  }}),collect=fake=>C.collectR9Measurement({request:fake.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
+    sourceContractRaw:selection(),naturalSelection:sourceSelection});
+  return {seeded,n,tip,key,configuration,snapshot,entry,naturalInputs,fakeFor,collect};
+}
+
+test('collector supplies shared execution snapshot/configuration tables only after the restored writer passes real sealed-artifact authentication',async()=>{
+  const f=await authenticatedConfigurationCollectorFixture(),fake=f.fakeFor(),r=await f.collect(fake);
+  assert.equal(r.source_proof?.kind,'NATIVE_ARTIFACT_DIGEST_DEFAULTBRANCH_REGISTERED_SOURCE_ROLE');assert.equal(r.native.status,'COMPLETE');assert.equal(r.native.from_sealed,1);
+  assert.equal(r.natural_inputs.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.natural_inputs.gaps));assert.deepEqual(r.natural_inputs.execution_snapshots,{[f.tip]:f.snapshot});
+  assert.deepEqual(r.natural_inputs.execution_configurations,{[f.key]:f.configuration});assert.equal(r.natural_inputs.entries.length,1);
+  assert.deepEqual(r.natural_inputs.entries[0].execution_snapshot_tips,[f.tip]);assert.equal(Object.hasOwn(r.natural_inputs.entries[0],'execution_snapshots'),false);
+  assert.equal(fake.routes.filter(route=>route.includes('/jobs?')).length,2,'the writer still needs the complete Native job barrier');
+  assert.equal(fake.routes.some(route=>route.includes('/actions/runs/42/artifacts?')),false,'authenticated exact entry reuse does not reread a producer artifact');
+  assert.equal(fake.routes.some(route=>route.includes(f.tip)),false,'shared authenticated history does not trigger tree/source/ancestry reads');
+  assert.deepEqual(r.native.population_packets,[f.n]);assert.equal(r.natural_inputs.source_authenticated,false);assert.equal(r.natural_inputs.official_metric,false);
+  assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('collector rejects caller-authority shared tables when platform digest or the actual publisher job cannot authenticate the restored writer',async()=>{
+  const f=await authenticatedConfigurationCollectorFixture();
+  for(const [refusal,reason]of [['platform_digest','ARTIFACT_DIGEST_MISMATCH'],['publisher_job','USAGE_PUBLISHER_EXECUTION_INCOMPLETE']]){
+    const fake=f.fakeFor(refusal),r=await f.collect(fake);assert.ok(r.gaps.includes(reason),refusal);assert.equal(r.source_proof,null,refusal);
+    assert.equal(r.native.status,'COMPLETE',refusal);assert.equal(r.native.population_packets.length,1,refusal);
+    assert.equal(r.natural_inputs.status,'PARTIAL',refusal);assert.equal(r.natural_inputs.entries.length,0,refusal);
+    assert.deepEqual(r.natural_inputs.execution_snapshots,{},refusal);assert.deepEqual(r.natural_inputs.execution_configurations,{},refusal);
+    assert.equal(r.source_authenticated,false,refusal);assert.equal(r.official_metric,false,refusal);assert.equal(r.t0,null,refusal);
+  }
+});
+
 test('same-source main advance needs the complete independent source bytes, not a matching flag',()=>{
   const profiles=JSON.stringify({workflows:{}}),roles=JSON.stringify({roles:[]}),path='.github/workflows/clued-work-admission.yml',wf='b'.repeat(40),
     admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),

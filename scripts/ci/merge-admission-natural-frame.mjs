@@ -76,7 +76,7 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
       collection:{watermark:hash(JSON.stringify({native:native.population.cohort_digest,origins:natural.entries.map(x=>x.artifact_digest)})),closed_at:closedAt,window_status:'closed',retention_start:min},
       populations:{},sources_raw:null,proof_profiles_raw:runtime.proof_profiles_raw,role_specs_raw:runtime.role_specs_raw,
       execution_sources:{source_checkout_sha:expected.execution_source.source_checkout_sha,entries:[],manifest:null},
-      ...(v2?{previous_execution_snapshots:[]}:{} )};
+      ...(v2?{previous_execution_snapshots:[],execution_configurations:{}}:{} )};
     for(const n of names)packet[n]=[];packet.attempts=attemptRows.map(r=>({...r}));
     const registry=JSON.parse(runtime.proof_profiles_raw),roles=JSON.parse(runtime.role_specs_raw);
     for(const path of Object.keys(registry.workflows)){
@@ -86,7 +86,14 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
     const executionVersions=new Map([[expected.execution_source.source_checkout_sha,{descriptor:expected.execution_source,registry,roles,blobs:runtime.execution_workflow_blobs}]]);
     const historicalSource=tip=>{
       if(executionVersions.has(tip))return executionVersions.get(tip);
-      const snapshot=natural.execution_snapshots?.[tip];
+      let snapshot=natural.execution_snapshots?.[tip];
+      if(snapshot&&Object.hasOwn(snapshot,'configuration_key')){
+        if(Object.keys(snapshot).sort().join('|')!==['source_checkout_sha','configuration_key','workflow_directory','main_history'].sort().join('|'))return null;
+        const cfg=natural.execution_configurations?.[snapshot.configuration_key];
+        if(!cfg||Object.keys(cfg).sort().join('|')!==['proof_profiles_raw','role_specs_raw'].sort().join('|')||typeof cfg.proof_profiles_raw!=='string'||typeof cfg.role_specs_raw!=='string'||
+          snapshot.configuration_key!==hash(cfg.proof_profiles_raw)+':'+hash(cfg.role_specs_raw))return null;
+        const {configuration_key,...rest}=snapshot;snapshot={...rest,...cfg};
+      }
       if(!snapshot||Object.keys(snapshot).sort().join('|')!==['source_checkout_sha','proof_profiles_raw','role_specs_raw','workflow_directory','main_history'].sort().join('|')||
         snapshot.source_checkout_sha!==tip||Object.keys(snapshot.main_history??{}).sort().join('|')!==['base_commit','head_commit','merge_base_commit','status'].sort().join('|')||
         snapshot.main_history?.base_commit!==tip||snapshot.main_history?.merge_base_commit!==tip||
@@ -105,7 +112,9 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
       for(const path of Object.keys(historicalRegistry.workflows)){
         const wf=blobs[path];if(!registeredWorkflowSource(historicalRegistry,path,wf).passed)return null;entries.push({workflow_file:path,workflow_blob:wf});
       }
-      packet.previous_execution_snapshots.push({source_checkout_sha:tip,proof_profiles_raw:snapshot.proof_profiles_raw,role_specs_raw:snapshot.role_specs_raw,main_history:snapshot.main_history,
+      const configuration_key=template.profiles_sha256+':'+template.role_specs_sha256,currentKey=expected.execution_source.profiles_sha256+':'+expected.execution_source.role_specs_sha256;
+      if(configuration_key!==currentKey&&!Object.hasOwn(packet.execution_configurations,configuration_key))packet.execution_configurations[configuration_key]={proof_profiles_raw:snapshot.proof_profiles_raw,role_specs_raw:snapshot.role_specs_raw};
+      packet.previous_execution_snapshots.push({source_checkout_sha:tip,configuration_key,main_history:snapshot.main_history,
         execution_sources:{source_checkout_sha:tip,entries,manifest:manifest(packet,'native_execution_workflow_sources:'+tip,entries.map(x=>x.workflow_file+':'+x.workflow_blob))}});
       const version={descriptor,registry:historicalRegistry,roles:historicalRoles,blobs};executionVersions.set(tip,version);return version;
     };

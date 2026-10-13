@@ -460,7 +460,8 @@ function readFourSourcesCandidate(packetRaw){
     supplied_data_consistency:false,source_permission_qualification:'NOT_ESTABLISHED',...flags};}
 }
 function parsed(p){
-  if(!exact(p,['schema','repository','scope','window','collection','populations','sources_raw','proof_profiles_raw','role_specs_raw','execution_sources',...(isV2?['previous_execution_snapshots']:[]),...names])||
+  const compact=isV2&&Object.hasOwn(p,'execution_configurations');
+  if(!exact(p,['schema','repository','scope','window','collection','populations','sources_raw','proof_profiles_raw','role_specs_raw','execution_sources',...(isV2?['previous_execution_snapshots']:[]),...(compact?['execution_configurations']:[]),...names])||
     p.schema!==FOUR_SOURCE_CONTRACT.schema||p.repository!==FOUR_SOURCE_CONTRACT.repository||!scope(p.scope)||
     !exact(p.window,['start','end'])||!exact(p.collection,['watermark','closed_at','window_status','retention_start'])||
     !opaque(p.collection.watermark)||!['open','closed'].includes(p.collection.window_status)||typeof p.sources_raw!=='string'||
@@ -476,11 +477,22 @@ function parsed(p){
   const profiles=executionSourceSelection(p.execution_sources,registry,roles,c);
   const executionVersions=new Map([[EXECUTION_SOURCE_COMMIT,{descriptor:expectations.execution_source,profiles}]]);
   if(isV2){
+    const configurations=new Map([[PROFILE_SOURCE_SHA256+':'+ROLE_SOURCE_SHA256,{proof_profiles_raw:p.proof_profiles_raw,role_specs_raw:p.role_specs_raw}]]);
+    if(compact){
+      if(!object(p.execution_configurations)||Object.keys(p.execution_configurations).length>4)bad();
+      for(const [key,cfg]of Object.entries(p.execution_configurations)){
+        if(!exact(cfg,['proof_profiles_raw','role_specs_raw'])||typeof cfg.proof_profiles_raw!=='string'||typeof cfg.role_specs_raw!=='string'||
+          key!==hash(cfg.proof_profiles_raw)+':'+hash(cfg.role_specs_raw)||configurations.has(key)||
+          !expectations.previous_execution_sources.some(s=>key===s.profiles_sha256+':'+s.role_specs_sha256))bad();
+        configurations.set(key,cfg);
+      }
+    }
     if(!Array.isArray(p.previous_execution_snapshots)||p.previous_execution_snapshots.length>1000)bad();
     for(const snapshot of p.previous_execution_snapshots){
-      if(!exact(snapshot,['source_checkout_sha','proof_profiles_raw','role_specs_raw','execution_sources','main_history'])||!sha(snapshot.source_checkout_sha)||executionVersions.has(snapshot.source_checkout_sha)||
-        typeof snapshot.proof_profiles_raw!=='string'||typeof snapshot.role_specs_raw!=='string')bad();
-      const template=[expectations.execution_source,...expectations.previous_execution_sources].find(s=>s.profiles_sha256===hash(snapshot.proof_profiles_raw)&&s.role_specs_sha256===hash(snapshot.role_specs_raw)),history=snapshot.main_history;
+      if(!exact(snapshot,['source_checkout_sha',...(compact?['configuration_key']:['proof_profiles_raw','role_specs_raw']),'execution_sources','main_history'])||!sha(snapshot.source_checkout_sha)||executionVersions.has(snapshot.source_checkout_sha))bad();
+      const cfg=compact?configurations.get(snapshot.configuration_key):snapshot;
+      if(!cfg||typeof cfg.proof_profiles_raw!=='string'||typeof cfg.role_specs_raw!=='string')bad();
+      const template=[expectations.execution_source,...expectations.previous_execution_sources].find(s=>s.profiles_sha256===hash(cfg.proof_profiles_raw)&&s.role_specs_sha256===hash(cfg.role_specs_raw)),history=snapshot.main_history;
       const anchored=[expectations.execution_source,...expectations.previous_execution_sources].find(s=>s.source_checkout_sha===snapshot.source_checkout_sha);
       if(!template||!exact(history,['base_commit','head_commit','merge_base_commit','status'])||history.base_commit!==snapshot.source_checkout_sha||
         history.merge_base_commit!==snapshot.source_checkout_sha||history.head_commit!==EXECUTION_SOURCE_COMMIT||
@@ -490,7 +502,7 @@ function parsed(p){
       // actual tip, full directory and ancestry bind each round; only exact
       // complete raw hash pairs select a reviewed version.
       const descriptor={...template,source_checkout_sha:snapshot.source_checkout_sha};
-      const historicalRegistry=parseRawFourSourceDataCandidate(snapshot.proof_profiles_raw),historicalRoles=parseRawFourSourceDataCandidate(snapshot.role_specs_raw);
+      const historicalRegistry=parseRawFourSourceDataCandidate(cfg.proof_profiles_raw),historicalRoles=parseRawFourSourceDataCandidate(cfg.role_specs_raw);
       const selected=executionSourceSelection(snapshot.execution_sources,historicalRegistry,historicalRoles,c,descriptor);
       executionVersions.set(snapshot.source_checkout_sha,{descriptor,profiles:selected});
     }
