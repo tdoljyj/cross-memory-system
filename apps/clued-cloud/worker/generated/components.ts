@@ -6,6 +6,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "skill.clued": "1.0.20",
   "agent-contract": "49",
   "mcp.server": "0.6.4",
+  "hook.runner-job-started": "1.0.0",
   "hook.capture-guard": "1.0.1",
   "hook.work-claim-guard": "1.1.4",
   "hook.version-check": "1.0.1",
