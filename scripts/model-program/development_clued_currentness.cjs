@@ -11,6 +11,9 @@ const PHASES = new Set(['preflight', 'before_observation_open', 'observation_ope
   'consume', 'before_start', 'before_resume', 'running', 'before_result']);
 const SHA = /^[0-9a-f]{64}$/;
 const clone = value => JSON.parse(JSON.stringify(value));
+const canonical = value => Array.isArray(value) ? '[' + value.map(canonical).join(',') + ']' :
+  value && typeof value === 'object' ? '{' + Object.keys(value).sort().map(key =>
+    JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}' : JSON.stringify(value);
 const need = (condition, code) => { if (!condition) throw new Error('DEVELOPMENT_CLUED_' + code); };
 
 function utcInstant(value) {
@@ -82,6 +85,7 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
     && stop - start <= 86400000, 'APPROVAL_WINDOW');
   const pins = clone(issued);
   const original = {id: record.id, version: record.version, content: record.content,
+    approval_rationale:canonical(record.type_fields.rationale),
     content_hash: record.content_hash, receipt_id: capture.receipt_id};
   const methods = ['clued_session_resume', 'clued_search_context',
     'clued_session_reconcile', 'clued_work_verify'];
@@ -117,7 +121,8 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
       calls.clued_work_verify({claim_id: pins.claim_id, scope: SCOPE})]);
     const check = ([approvalRead, taskRead, verified]) => {
     const live = currentRecord(decode(approvalRead), original.id, 'decision');
-    need(live.version === original.version && live.content === original.content,
+    need(live.version === original.version && live.content === original.content
+      && canonical(live.type_fields?.rationale) === original.approval_rationale,
       'APPROVAL_CHANGED_OR_REVOKED');
     const task = currentRecord(decode(taskRead), TASK, 'task');
     need(task.version === pins.task_version, 'TASK_CHANGED_REVALIDATION_REQUIRED');

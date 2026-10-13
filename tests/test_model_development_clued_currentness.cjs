@@ -30,6 +30,7 @@ function fixture() {
     task:{status:'ok',results:[row(TASK,'task',2,'SOURCE ONLY TASK')]},
     verify:{status:'ok',verdict:'ADMITTED',current_fence:1,claim},
     reconcile:{currentness_state:'CURRENT',admission_eligible:true}};
+  responses.approval.results[0].type_fields=clone(record.type_fields);
   const calls=[];
   const tools = {};
   tools.mcp__codex_apps__clued_clued_session_resume = async args => {calls.push(['resume',args]);return {structuredContent:responses.resume};};
@@ -103,6 +104,11 @@ test('revoked/changed/non-authoritative owner record remains unavailable',async(
     const f=fixture();change(f.responses.approval);
     await assert.rejects(makeDevelopmentCurrentnessReader(f).read('consume',f.bound));
   }
+});
+test('only changing captured rationale cannot impersonate unchanged canonical approval',async()=>{
+  const f=fixture();
+  f.ownerCapture.structuredContent.supplemental.record.type_fields.rationale.extraSelfReportedAuthority=true;
+  await assert.rejects(makeDevelopmentCurrentnessReader(f).read('consume',f.bound),/APPROVAL_CHANGED_OR_REVOKED/);
 });
 
 test('handover/fence/session changes never borrow another holder',async()=>{
