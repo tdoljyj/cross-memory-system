@@ -381,9 +381,37 @@ export async function collectFeeNativePopulation({request,repository,window,auth
 export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null}){
   return collectScopedNative({request,repository,window,authenticatedStoreRaw,onStore,observer});
 }
+const reuseHeaderFields=['run_id','run_attempt','workflow_id','path','event','head_sha','status','conclusion','created_at','run_started_at','updated_at','pull_requests'];
+const reuseReasons=['EXACT_SEALED_HEADER_REUSE','ATTEMPT_PACKET_ABSENT','LATEST_SEALED_HEADER_ABSENT',
+  'LATEST_SEALED_HEADER_VALUES_DIFFER','LATEST_SEALED_HEADER_SERIALIZATION_DIFFERS',
+  'CURRENT_OBSERVER_EXCLUDED','LATEST_ATTEMPT_START_AT_OR_AFTER_CLOSE'];
+function publicReuseValue(field,value){
+  if(value===undefined)return {not_published:'ABSENT_HEADER_FIELD'};
+  if(value===null||typeof value==='number')return value;
+  if(field==='pull_requests'&&Array.isArray(value))return {values:value.slice(0,16).map(x=>Number.isSafeInteger(x)&&x>0?x:'UNVALIDATED_PUBLIC_ITEM'),
+    count:value.length,truncated:value.length>16};
+  if(field==='conclusion'&&!['success','failure','neutral','cancelled','skipped','timed_out','action_required','stale','startup_failure'].includes(value))
+    return {not_published:'UNVALIDATED_NATIVE_HEADER_VALUE'};
+  if(typeof value==='string')return {value:value.slice(0,256),count:value.length,truncated:value.length>256};
+  return {not_published:'UNVALIDATED_NATIVE_HEADER_VALUE'};
+}
+function reuseHeaderDifference(sealed,current){
+  // Compare complete values before bounding output. Serialization differences
+  // with equal field values stay visible; they are not a successful cache hit.
+  const changed=reuseHeaderFields.filter(field=>Object.hasOwn(sealed,field)!==Object.hasOwn(current,field)||!same(sealed[field],current[field]));
+  return {reason_code:changed.length?'LATEST_SEALED_HEADER_VALUES_DIFFER':'LATEST_SEALED_HEADER_SERIALIZATION_DIFFERS',
+    changed_fields:changed,public_values:Object.fromEntries(changed.map(field=>[field,
+      {sealed:publicReuseValue(field,sealed[field]),inventory:publicReuseValue(field,current[field])}])),
+    ...(changed.length?{}:{serialization_difference:true,
+      sealed_field_order:Object.keys(sealed).filter(field=>reuseHeaderFields.includes(field)),
+      inventory_field_order:Object.keys(current).filter(field=>reuseHeaderFields.includes(field))})};
+}
 async function collectScopedNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null},feeOnly=false){
   let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null,first=null,closing=null,closingScope=null;
   const gaps=[],excludedAttempts=[];let fresh=0,fromSealed=0,observerExcluded=false;
+  const reuseDiagnostics={schema:'clued.r9-native-cache-reuse-diagnostics/1',basis:'EXISTING_INVENTORY_AND_STORE_ONLY',
+    reason_counts:Object.fromEntries(reuseReasons.map(reason=>[reason,0])),sealed_current_attempt_recapture_count:0,
+    sample_limit:4,sealed_current_attempt_recapture_samples:[]};
   const select=items=>selected(items,window).filter(r=>!feeOnly||feeWorkflowPaths.has(r.path.split('@')[0]));
   const retained=()=>Object.values(inspectNativePopulationStore(storeRaw,repository).packets??{}).filter(p=>first?.some(r=>r.id===p.run.run_id));
   const feeCoverage=()=>feeOnly?{scope:'fee_native_terminal_packets_run_envelope_intersection',
@@ -406,17 +434,28 @@ async function collectScopedNative({request,repository,window,authenticatedStore
       const normalized={run_id:run.id,run_attempt:run.run_attempt,workflow_id:run.workflow_id,path:run.path,event:run.event,head_sha:run.head_sha,
         status:run.status,conclusion:run.conclusion,created_at:run.created_at,run_started_at:run.run_started_at,updated_at:run.updated_at,pull_requests:run.pull_requests};
       const latestMatches=latest&&JSON.stringify(latest.run)===JSON.stringify(normalized);
+      const headerDifference=latest&&!latestMatches?reuseHeaderDifference(latest.run,normalized):null;
       for(let attempt=1;attempt<=run.run_attempt;attempt++){
         // Only the independently verified currently executing observer is
         // outside its own execution denominator. Older ordinal packets remain.
         if(observer?.run_id===run.id&&run.run_attempt===observer.run_attempt&&observer.run_attempt===attempt&&run.path.split('@')[0]===R9_PUBLISHER_PATH&&
-          run.head_sha===observer.head_sha&&run.status==='in_progress'){observerExcluded=true;continue;}
+          run.head_sha===observer.head_sha&&run.status==='in_progress'){
+          reuseDiagnostics.reason_counts.CURRENT_OBSERVER_EXCLUDED++;observerExcluded=true;continue;
+        }
         if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end)){
+          reuseDiagnostics.reason_counts.LATEST_ATTEMPT_START_AT_OR_AFTER_CLOSE++;
           if(feeOnly)excludedAttempts.push({key:run.id+':'+attempt,reason_code:'ATTEMPT_START_AT_OR_AFTER_WINDOW_CLOSE'});
           continue;
         }
         const existing=packets[run.id+':'+attempt];
-        if(latestMatches&&existing){localSealed++;continue;}
+        if(latestMatches&&existing){reuseDiagnostics.reason_counts.EXACT_SEALED_HEADER_REUSE++;localSealed++;continue;}
+        const reuseReason=!existing?'ATTEMPT_PACKET_ABSENT':!latest?'LATEST_SEALED_HEADER_ABSENT':headerDifference.reason_code;
+        reuseDiagnostics.reason_counts[reuseReason]++;
+        if(attempt===run.run_attempt&&existing){
+          reuseDiagnostics.sealed_current_attempt_recapture_count++;
+          if(reuseDiagnostics.sealed_current_attempt_recapture_samples.length<reuseDiagnostics.sample_limit)
+            reuseDiagnostics.sealed_current_attempt_recapture_samples.push({key:run.id+':'+attempt,...headerDifference});
+        }
         const captured=await captureNativeAttempt({request,repository,runId:run.id,attempt,storeRaw:local});
         if(captured.status!=='COMPLETE'){localGaps.push({key:run.id+':'+attempt,reason_code:captured.reason_code});
           if(/request|cap|floor|budget|slice|limit|stop/i.test(captured.reason_code??''))break;continue;}
@@ -468,11 +507,12 @@ async function collectScopedNative({request,repository,window,authenticatedStore
       population:{initial_total:initial.total,closing_total:closing.total,cohort_digest:hash(first),complete:gaps.length===0,
         scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts,
         ...feeCoverage(),
+        cache_reuse_diagnostics:reuseDiagnostics,
         ...(observerExcluded?{current_observer_exclusion:{...observer,reason_code:'CURRENT_IN_PROGRESS_OBSERVER_IS_NOT_ITS_OWN_TERMINAL_EXECUTION'}}:{})}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),store_raw:storeRaw,attempts:[],gaps,fresh,from_sealed:fromSealed,
     ...(feeOnly?{all_population_packets:retained(),population_packets:retained().filter(p=>p.run.status!=='completed'||timestampMicros(p.run.updated_at)>=timestampMicros(window.start))}:{}),
     ...(e instanceof NativeInventoryConflict?{inventory_conflict:e.detail}:{}),
-    population:{initial_total:initial?.total??null,closing_total:feeOnly?closing?.total??null:null,complete:false,...feeCoverage()}};}
+    population:{initial_total:initial?.total??null,closing_total:feeOnly?closing?.total??null:null,complete:false,...feeCoverage(),cache_reuse_diagnostics:reuseDiagnostics}};}
 }
 const unavailable=reason_code=>({status:'partial',value:null,reason_code,official_metric:false,source_authenticated:false});
 

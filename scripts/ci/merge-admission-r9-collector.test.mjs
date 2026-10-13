@@ -149,6 +149,37 @@ test('new Native attempts are captured and sealed once; subsequent batch reuse n
   const secondFake=nativeRequest();const second=await C.collectIncrementalNative({request:secondFake.request,repository,window,authenticatedStoreRaw:first.store_raw});
   assert.equal(second.status,'COMPLETE');assert.equal(second.from_sealed,1);assert.equal(second.fresh,0);
   assert.equal(secondFake.routes.length,2);assert.ok(secondFake.routes.every(r=>r.includes('/actions/runs?')));
+  assert.equal(first.population.cache_reuse_diagnostics.reason_counts.ATTEMPT_PACKET_ABSENT,1);
+  assert.equal(second.population.cache_reuse_diagnostics.reason_counts.EXACT_SEALED_HEADER_REUSE,1);
+  assert.equal(second.population.cache_reuse_diagnostics.sealed_current_attempt_recapture_count,0);
+  assert.deepEqual(second.population.cache_reuse_diagnostics.sealed_current_attempt_recapture_samples,[]);
+});
+test('passive reuse diagnostics describe existing-header recaptures, keep four bounded samples and preserve capture requests',async()=>{
+  const original=Array.from({length:6},(_,i)=>run(42+i)),jobs=original.map(r=>job(r.id)),firstFake=nativeRequest({runs:original,jobs}),
+    initial=await C.collectIncrementalNative({request:firstFake.request,repository,window});
+  assert.equal(initial.status,'COMPLETE');assert.equal(firstFake.routes.length,38);
+  const longPath='.github/workflows/'+('x'.repeat(300))+'.yml',pulls=Array.from({length:24},(_,i)=>({number:i+1})),
+    current=original.map((r,i)=>({...r,updated_at:'2026-10-10T10:11:00Z',...(i===0?{path:longPath,pull_requests:pulls}:{})})),cold=run(41),
+    fake=nativeRequest({runs:[cold,...current],jobs:[job(41),...jobs]});
+  const result=await C.collectIncrementalNative({request:fake.request,repository,window,authenticatedStoreRaw:initial.store_raw}),
+    diag=result.population.cache_reuse_diagnostics;
+  assert.equal(result.status,'PARTIAL');assert.equal(result.population.complete,false);
+  assert.equal(result.fresh,1);assert.equal(result.from_sealed,0);assert.equal(fake.routes.length,44);
+  assert.equal(fake.routes.filter(route=>route.includes('/jobs?')).length,14);
+  for(const member of [cold,...current])assert.equal(fake.routes.filter(route=>route===('/repos/'+repository+'/actions/runs/'+member.id)).length,2);
+  assert.equal(diag.reason_counts.ATTEMPT_PACKET_ABSENT,1);assert.equal(diag.reason_counts.LATEST_SEALED_HEADER_VALUES_DIFFER,6);
+  assert.equal(diag.sealed_current_attempt_recapture_count,6);assert.equal(diag.sample_limit,4);
+  assert.deepEqual(diag.sealed_current_attempt_recapture_samples.map(s=>s.key),['42:1','43:1','44:1','45:1']);
+  const sample=diag.sealed_current_attempt_recapture_samples[0];
+  assert.equal(sample.reason_code,'LATEST_SEALED_HEADER_VALUES_DIFFER');
+  assert.deepEqual(sample.changed_fields,['path','updated_at','pull_requests']);
+  assert.equal(sample.public_values.updated_at.sealed.value,'2026-10-10T10:10:00.000Z');
+  assert.equal(sample.public_values.updated_at.inventory.value,'2026-10-10T10:11:00.000Z');
+  assert.equal(sample.public_values.path.inventory.value.length,256);assert.equal(sample.public_values.path.inventory.count,longPath.length);
+  assert.equal(sample.public_values.path.inventory.truncated,true);
+  assert.deepEqual(sample.public_values.pull_requests.inventory,{values:Array.from({length:16},(_,i)=>i+1),count:24,truncated:true});
+  assert.deepEqual(JSON.parse(result.store_raw).packets['42:1'],JSON.parse(initial.store_raw).packets['42:1']);
+  assert.ok(JSON.parse(result.store_raw).packets['41:1']);
 });
 test('never-started cancelled rows survive with unknown membership; updated_at is not invented completion',async()=>{
   const fake=nativeRequest({runs:[run(42,{run_started_at:null,conclusion:'cancelled'})],jobs:[job(42,{started_at:null,completed_at:null,terminal_interval:{lower_at:'2026-10-10T10:00:01.000Z',upper_at:'2026-10-10T10:10:00.000Z',basis:'native_job_completion_lower_and_terminal_update_upper_bounds'},conclusion:'cancelled',steps:[]})]});
@@ -313,6 +344,8 @@ test('main actually runs the R9 segment, seals progress, keeps old workload valu
   assert.equal(report.metrics.hosted_minutes.total,9);assert.equal(report.metrics.self_hosted_minutes.total,0);
   assert.equal(report.metrics.update_main_rounds.status,'not_measured');assert.equal(report.metrics.update_main_rounds.value,null);
   assert.equal(report.r9.source_authenticated,false);assert.equal(report.r9.t0,null);assert.ok(report.r9.requests.used<=1500);
+  assert.equal(report.r9.native_coverage.population.cache_reuse_diagnostics.schema,'clued.r9-native-cache-reuse-diagnostics/1');
+  assert.equal(report.r9.native_coverage.population.cache_reuse_diagnostics.reason_counts.ATTEMPT_PACKET_ABSENT,1);
   assert.equal(report.metrics.api_requests.cap,2000);assert.equal(report.metrics.api_requests.used,calls.length-2);
   assert.equal(JSON.parse(files.get(C.R9_PACKET_FILE)).publisher.run_id,'42');
   assert.ok(files.has('r9-native-pending.json'));assert.ok(files.has('runs.json'));
@@ -769,6 +802,8 @@ test('the actual report writer retains a conflict diagnosis without promoting me
   assert.equal(result,0);const report=JSON.parse(files.get('ci-usage-report.json'));
   assert.equal(report.r9.native_coverage.inventory_conflict.run_id,'500');
   assert.equal(report.r9.native_coverage.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  assert.equal(report.r9.native_coverage.population.cache_reuse_diagnostics.schema,'clued.r9-native-cache-reuse-diagnostics/1');
+  assert.equal(report.r9.native_coverage.population.cache_reuse_diagnostics.sealed_current_attempt_recapture_count,0);
   assert.equal(report.r9.source_readiness.complete,false);assert.equal(report.r9.t0,null);
   assert.equal(report.r9.metrics.update_main_rounds.value,null);assert.equal(report.metrics.hosted_minutes.total,9);
 });
