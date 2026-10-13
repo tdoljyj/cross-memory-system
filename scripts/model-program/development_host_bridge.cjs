@@ -61,6 +61,46 @@ function makeCluedDevelopmentHostBridge({tools,ownerCapture,issued,sessionRef,bo
   return makeDevelopmentHostBridge({reader,bound});
 }
 
+function makeCapturedToolMailbox({sessionRef,wallSeconds}) {
+  // Host-internal adapter for a Node session whose authenticated protected
+  // tools live in its calling Host, rather than in the Python child. The Host
+  // drains private requests and invokes its ORIGINAL four read-only tools;
+  // child stdio never carries this mailbox, tokens or reply identifiers.
+  need(typeof sessionRef==='string' && sessionRef.length>0
+    && Number.isFinite(wallSeconds) && wallSeconds>0 && wallSeconds<=120,'MAILBOX_CAPTURE');
+  const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+  const methods=['clued_session_resume','clued_search_context','clued_session_reconcile','clued_work_verify'];
+  const end=performance.now()+wallSeconds*1000;
+  const waiting=new Map();let count=0,sealed=false;
+  const tools={};
+  for(const method of methods) {
+    tools['mcp__codex_apps__clued_'+method]=args=>{
+      need(!sealed && performance.now()<end && ++count<=256,'MAILBOX_SEALED_OR_LIMIT');
+      const captured=JSON.parse(stable(args));
+      need((method==='clued_work_verify'?captured.scope:captured.context_key)===scope,
+        'MAILBOX_CONTEXT');
+      if(method==='clued_session_resume')need(captured.client_session_id===sessionRef,'MAILBOX_SESSION');
+      if(method==='clued_work_verify')need(!('pr_ref' in captured),'MAILBOX_NO_PR_ADMISSION');
+      const id=require('node:crypto').randomBytes(24).toString('hex');
+      return new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>{waiting.delete(id);reject(new Error('FIXED_HOST_MAILBOX_DEADLINE'));},
+          Math.max(1,end-performance.now()));
+        waiting.set(id,{method,args:captured,resolve,reject,timer,delivered:false});
+      });
+    };
+  }
+  return Object.freeze({tools:Object.freeze(tools),
+    take(){need(!sealed && performance.now()<end,'MAILBOX_SEALED_OR_EXPIRED');
+      return [...waiting].filter(([,row])=>!row.delivered).map(([id,row])=>{
+        row.delivered=true;return {id,method:row.method,args:JSON.parse(stable(row.args))};});},
+    settle(id,result){need(!sealed && performance.now()<end && waiting.has(id),'MAILBOX_LATE_OR_REPLAY');
+      const row=waiting.get(id);need(row.delivered,'MAILBOX_UNDELIVERED');
+      waiting.delete(id);clearTimeout(row.timer);row.resolve(result);},
+    close(){sealed=true;for(const row of waiting.values()){
+      clearTimeout(row.timer);row.reject(new Error('FIXED_HOST_MAILBOX_CLOSED'));}waiting.clear();}
+  });
+}
+
 async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bound,
     bootstrap,python,sourceDirectory,sourceFiles,workingDirectory}) {
   // This is a candidate fixed Host controller. Its installation/qualification
@@ -77,7 +117,10 @@ async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bo
   const frozen=JSON.parse(stable(bootstrap));
   need(Object.keys(frozen).sort().join(',')===
     'identity,live_pins,output_directory,output_name,plan,remaining_seconds,schema','BOOTSTRAP_FIELDS');
-  const deadline=start+frozen.remaining_seconds*1000;
+  need(typeof frozen.plan?.budget?.wall_seconds==='number'
+    && Number.isFinite(frozen.plan.budget.wall_seconds)
+    && frozen.plan.budget.wall_seconds>0 && frozen.plan.budget.wall_seconds<=120,'PLAN_WALL');
+  const deadline=start+Math.min(frozen.remaining_seconds,frozen.plan.budget.wall_seconds)*1000;
   // Reserve five seconds inside the declared total for parent close/reaping.
   const executionEnd=deadline-5000;
   const active=()=>need(performance.now()<executionEnd,'DEADLINE');
@@ -110,13 +153,13 @@ async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bo
   }
   need(typeof environment.SystemRoot==='string' && path.isAbsolute(environment.SystemRoot),'SYSTEM_ROOT');
   environment.PATH=path.join(environment.SystemRoot,'System32');
-  const startup={schema:'clued.fixed-development-startup/1',python,sourceDirectory,
-    sourceFiles,workingDirectory,environment};
+  const startup=JSON.parse(stable({schema:'clued.fixed-development-startup/1',python,sourceDirectory,
+    sourceFiles,workingDirectory,environment}));
   need(createHash('sha256').update(stable(startup)).digest('hex')===issued.startup_sha256,
     'CAPTURED_STARTUP_PINS');
   // Verify the exact interpreter and imported local Source closure, never model
   // weights or runtime. These pins must be captured from the accepted request.
-  const rows=[python,...sourceFiles];
+  const rows=[startup.python,...startup.sourceFiles];
   for(const row of rows) {
     active();
     need(typeof row.path==='string' && path.isAbsolute(row.path)
@@ -130,13 +173,30 @@ async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bo
   }
   // The child has no CLI switches, shell, credentials, tool names or override
   // code. Only the exact imported function owns model execution boundaries.
-  const code='import sys;sys.path.insert(0,sys.argv[1]);from development_completion_entry import run_captured_stdio_bootstrap;run_captured_stdio_bootstrap(sys.stdin.buffer,sys.stdout.buffer)';
+  // -B alone still reads old pyc. Load each local dependency from its pinned
+  // source bytes, recheck inside the child, and never add this directory to
+  // sys.path. -S also disables global site/.pth startup hooks.
+  const code=`import sys,json,hashlib,importlib.abc,importlib.util
+rows={r['path'].replace('\\\\','/').rsplit('/',1)[-1][:-3]:r for r in json.loads(sys.argv[1])}
+class FixedSource(importlib.abc.MetaPathFinder,importlib.abc.Loader):
+ def find_spec(self,name,path=None,target=None):
+  if name in rows:return importlib.util.spec_from_loader(name,self,origin=rows[name]['path'])
+ def create_module(self,spec):return None
+ def exec_module(self,module):
+  row=rows[module.__name__]
+  with open(row['path'],'rb') as stream:raw=stream.read(row['bytes']+1)
+  if len(raw)!=row['bytes'] or hashlib.sha256(raw).hexdigest()!=row['sha256']:raise ValueError('FIXED_HOST_CHILD_SOURCE_DRIFT')
+  module.__file__=row['path']
+  exec(compile(raw,row['path'],'exec'),module.__dict__)
+sys.meta_path.insert(0,FixedSource())
+from development_completion_entry import run_captured_stdio_bootstrap
+run_captured_stdio_bootstrap(sys.stdin.buffer,sys.stdout.buffer)`;
   active();
-  const child=spawn(python.path,['-I','-u','-c',code,sourceDirectory],
-    {cwd:workingDirectory,env:environment,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  const child=spawn(startup.python.path,['-I','-S','-B','-u','-c',code,JSON.stringify(startup.sourceFiles)],
+    {cwd:startup.workingDirectory,env:startup.environment,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});
   let buffer=Buffer.alloc(0), total=0, stderrBytes=0, terminal, failure, closed=false, ready=false, sequence=0;
   let chain=Promise.resolve();
-  const end=new Promise(resolve=>{child.on('error',error=>{failure=error;resolve(null);});
+  const end=new Promise(resolve=>{child.on('error',error=>{failure ||= error;});
     child.on('close',code=>{closed=true;resolve(code);});});
   const stop=()=>{if(!closed)child.kill();};
   const fail=error=>{failure ||= error;stop();};
@@ -203,8 +263,9 @@ async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bo
     clearTimeout(timer);stop();child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();
     // On kill, OS closes the child's non-inherited kill-on-close Job handle.
     // A process that never reached readiness could not receive model bindings.
-    try {await within(end,deadline);} catch {throw new Error('FIXED_HOST_PARENT_CLEANUP_UNVERIFIED');}
+    try {await within(end,deadline);need(closed,'PARENT_NOT_CLOSED');}
+    catch {throw new Error('FIXED_HOST_PARENT_CLEANUP_UNVERIFIED');}
   }
 }
 
-module.exports=Object.freeze({runFixedDevelopmentChild,makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA,MAX_FRAME_BYTES});
+module.exports=Object.freeze({makeCapturedToolMailbox,runFixedDevelopmentChild,makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA,MAX_FRAME_BYTES});

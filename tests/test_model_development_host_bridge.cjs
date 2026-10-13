@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'), assert=require('node:assert/strict');
-const {runFixedDevelopmentChild,makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA}=require('../scripts/model-program/development_host_bridge.cjs');
+const {makeCapturedToolMailbox,runFixedDevelopmentChild,makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA}=require('../scripts/model-program/development_host_bridge.cjs');
 const bound={identity:{task_id:'SOURCE ONLY TASK',profile_sha256:'1'.repeat(64),request_sha256:'2'.repeat(64),
   approval_record_id:'SOURCE ONLY APPROVAL',approval_version:1,approval_receipt_id:'SOURCE ONLY RECEIPT'},
   execution_plan_sha256:'3'.repeat(64)};
@@ -8,6 +8,31 @@ const obs={...bound.identity,kind:'CURRENT_OWNER_DECISION_AND_PROFILE_BINDING_OB
   approval_content_hash:'4'.repeat(64),task_version:2,claim_id:'SOURCE ONLY CLAIM',claim_fence:3,
   authority_effect:'NONE',permission_issued:false,attempt_consumed:false};
 const frame=(sequence=1)=>({schema:SCHEMA,id:'1'.repeat(32),sequence,phase:'consume',binding:structuredClone(bound)});
+
+test('Host-only mailbox preserves four protected reads, context and one-use replies',async()=>{
+  const mailbox=makeCapturedToolMailbox({sessionRef:'SOURCE ONLY SESSION',wallSeconds:2});
+  const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+  assert.equal(Object.keys(mailbox.tools).length,4);
+  assert.throws(()=>mailbox.tools.mcp__codex_apps__clued_clued_work_verify({scope,pr_ref:'repo:pr:1'}),/NO_PR/);
+  const pending=mailbox.tools.mcp__codex_apps__clued_clued_session_resume({context_key:scope,client_session_id:'SOURCE ONLY SESSION'});
+  const [request]=mailbox.take();assert.equal(request.method,'clued_session_resume');
+  assert.deepEqual(mailbox.take(),[]);
+  mailbox.settle(request.id,{structuredContent:{status:'SOURCE_ONLY_NOT_PERMISSION'}});
+  assert.equal((await pending).structuredContent.status,'SOURCE_ONLY_NOT_PERMISSION');
+  assert.throws(()=>mailbox.settle(request.id,{}),/REPLAY/);
+  mailbox.close();assert.throws(()=>mailbox.take(),/SEALED/);
+});
+
+test('Host-only mailbox deadline and cancellation never accept late tool results',async()=>{
+  const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+  const mailbox=makeCapturedToolMailbox({sessionRef:'SOURCE ONLY',wallSeconds:0.02});
+  const pending=mailbox.tools.mcp__codex_apps__clued_clued_work_verify({scope,claim_id:'SOURCE ONLY'});
+  const [request]=mailbox.take();await assert.rejects(pending,/DEADLINE/);
+  assert.throws(()=>mailbox.settle(request.id,{}),/LATE/);mailbox.close();
+  const cancelled=makeCapturedToolMailbox({sessionRef:'SOURCE ONLY',wallSeconds:1});
+  const next=cancelled.tools.mcp__codex_apps__clued_clued_work_verify({scope,claim_id:'SOURCE ONLY'});
+  cancelled.close();await assert.rejects(next,/CLOSED/);
+});
 
 test('production composition rejects serialized observation before Host tool calls',()=>{
   assert.throws(()=>makeCluedDevelopmentHostBridge({tools:{},ownerCapture:{structuredContent:obs},
@@ -148,4 +173,19 @@ test('fixed controller rejects startup drift and incomplete import closure befor
     await assert.rejects(runFixedDevelopmentChild(wrong),/STARTUP_PINS/);
     await assert.rejects(runFixedDevelopmentChild({...f.args,sourceFiles:f.args.sourceFiles.slice(1)}),/SOURCE_CLOSURE/);}
   finally {await f.fs.rm(f.root,{recursive:true});}
+});
+
+test('fixed child ignores a valid conflicting local bytecode cache',async()=>{
+  const f=await controllerFixture('class SourceOnlyHost:\n def __enter__(self): return self\n def __exit__(self,*a): pass\n def execute(self,*a): return {"owned_cleanup_verified":True,"authority_effect":"NONE","budget_reservation":{"status":"SPENT_BEFORE_MODEL_LOAD"}}\nFixedDevelopmentEntry.for_clued_stdio=classmethod(lambda cls,**kwargs:SourceOnlyHost())');
+  try {
+    const {spawnSync}=require('node:child_process');
+    const file=f.args.sourceFiles.find(row=>row.path.endsWith('development_completion_entry.py')).path;
+    // Same timestamp and size makes this malicious pyc acceptable to ordinary
+    // CPython source importing. The fixed source-only loader must ignore it.
+    const script='import sys,os,py_compile;p=sys.argv[1];raw=open(p,"rb").read();st=os.stat(p);bad=b"raise RuntimeError(\\"CONFLICTING_PYC_EXECUTED\\")\\n".ljust(len(raw),b" ");open(p,"wb").write(bad);os.utime(p,ns=(st.st_atime_ns,st.st_mtime_ns));py_compile.compile(p,doraise=True);open(p,"wb").write(raw);os.utime(p,ns=(st.st_atime_ns,st.st_mtime_ns))';
+    const compiled=spawnSync(f.args.python.path,['-I','-c',script,file],{shell:false,windowsHide:true,timeout:5000});
+    assert.equal(compiled.status,0,compiled.stderr?.toString());
+    const result=await runFixedDevelopmentChild(f.args);
+    assert.equal(result.owned_cleanup_verified,true);
+  } finally {await f.fs.rm(f.root,{recursive:true});}
 });
