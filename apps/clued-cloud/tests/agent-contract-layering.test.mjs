@@ -6,12 +6,29 @@ import test from 'node:test';
 const source = (await readFile(new URL('../../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const map = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v46-v47-map.json', import.meta.url), 'utf8'));
 const successor = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v47-v48-map.json', import.meta.url), 'utf8'));
+const review = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v48-v49-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
 // three scoped replacements separately; undo only those exact replacements
 // before checking all 24 original normative blocks against the frozen proof.
+function v48Source() {
+  assert.equal(review.schema, 'clued.agent-contract-independent-review-successor/1');
+  assert.equal(review.source_version, 48);
+  assert.equal(review.target_version, 49);
+  assert.deepEqual(review.edits.map(row => row.id), ['version', 'independent-review']);
+  assert.equal(sha256(source), review.target_document_normalized_sha256);
+  let restored = source;
+  for (const { id, before, after } of [...review.edits].reverse()) {
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact review successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), review.source_document_normalized_sha256);
+  return restored;
+}
+
 function v47Source() {
+  const source = v48Source();
   assert.equal(successor.schema, 'clued.agent-contract-handover-successor/1');
   assert.equal(successor.source_version, 47);
   assert.equal(successor.target_version, 48);
