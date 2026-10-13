@@ -669,6 +669,55 @@ test('the actual report writer retains a conflict diagnosis without promoting me
   assert.equal(report.r9.metrics.update_main_rounds.value,null);assert.equal(report.metrics.hosted_minutes.total,9);
 });
 
+function advancingFixedMember(change={},duringCapture=false){
+  const old=Array.from({length:250},(_,i)=>run(250-i,{created_at:'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:01Z',updated_at:'2026-10-09T00:01:00Z'}));
+  const before=run(500,{created_at:'2026-10-10T23:59:58Z',run_started_at:'2026-10-10T23:59:58Z',updated_at:'2026-10-11T00:00:01Z',status:'in_progress',conclusion:null});
+  const after={...before,status:'completed',conclusion:'success',updated_at:'2026-10-11T00:00:02Z',...change};
+  const f=nativeRequest({runs:[after],jobs:[job(500,{created_at:before.created_at,started_at:before.run_started_at,completed_at:after.updated_at,
+    steps:[{number:1,name:'Measure CI usage',status:'completed',conclusion:'success',started_at:before.run_started_at,completed_at:after.updated_at}]})]});
+  let directory=0,captured=false;
+  return {before,after,async request(route,opts){
+    const u=new URL(route,'https://native.invalid');
+    if(u.pathname==='/repos/'+repository+'/actions/runs'){
+      const page=Number(u.searchParams.get('page')),latest=duringCapture?(captured?after:before):++directory===1?before:after,rows=[latest,...old];
+      return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
+    }
+    if(u.pathname==='/repos/'+repository+'/actions/runs/500')captured=true;
+    return f.request(route,opts);
+  }};
+}
+
+test('a fixed member already observed after close can finish without changing its denominator or inventing window completion',async()=>{
+  const f=advancingFixedMember(),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'COMPLETE',JSON.stringify({reason_code:r.reason_code,gaps:r.gaps,inventory_conflict:r.inventory_conflict}));assert.equal(r.population.initial_total,251);assert.equal(r.population.closing_total,251);
+  assert.equal(r.population.complete,true);assert.equal(r.fresh,1);assert.equal(r.population_packets.length,1);
+  assert.equal(r.population_packets[0].run.status,'completed');assert.equal(r.population_packets[0].run.updated_at,new Date(f.after.updated_at).toISOString());
+  assert.equal(C.nativeCompletionMembership(r.population_packets[0],window).membership,'OUTSIDE_WINDOW');
+});
+
+test('actual Native current-attempt capture can prove the same post-close progression before the final exact cohort barrier',async()=>{
+  const f=advancingFixedMember({},true),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'COMPLETE',JSON.stringify({reason_code:r.reason_code,gaps:r.gaps}));assert.equal(r.population.complete,true);
+  assert.equal(r.fresh,1);assert.equal(r.population.initial_total,251);assert.equal(r.population.closing_total,251);
+  assert.equal(r.population_packets[0].run.updated_at,new Date(f.after.updated_at).toISOString());
+  assert.equal(C.nativeCompletionMembership(r.population_packets[0],window).membership,'OUTSIDE_WINDOW');
+  for(const change of [{head_sha:'d'.repeat(40)},{run_attempt:2},{run_started_at:'2026-10-10T23:59:59Z'},
+    {updated_at:'2026-10-11T00:00:00Z'},{status:'queued',conclusion:null}]){
+    const bad=advancingFixedMember(change,true),q=await C.collectIncrementalNative({request:bad.request,repository,window});
+    assert.equal(q.status,'PARTIAL');assert.equal(q.population.complete,false);
+  }
+});
+
+test('fixed member post-close progress retains identity ordinal creation start and monotonic state guards',async()=>{
+  for(const change of [{head_sha:'d'.repeat(40)},{run_attempt:2},{workflow_id:8},{event:'workflow_dispatch'},
+    {path:'.github/workflows/other.yml'},{pull_requests:[{number:727}]},{created_at:'2026-10-10T23:59:57Z'},
+    {run_started_at:'2026-10-10T23:59:59Z'},{updated_at:'2026-10-11T00:00:00Z'},
+    {status:'queued',conclusion:null}]){
+    const f=advancingFixedMember(change),r=await C.collectIncrementalNative({request:f.request,repository,window});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
+  }
+});
+
 test('pre-close progress remains a boundary change even when it finishes after close',async()=>{
   const before=run(42,{status:'in_progress',conclusion:null});let inventories=0;
   const f=nativeRequest({runs:[before],mutation:route=>route.includes('/actions/runs?')?
