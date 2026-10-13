@@ -11,6 +11,9 @@ const PHASES = new Set(['preflight', 'before_observation_open', 'observation_ope
   'consume', 'before_start', 'before_resume', 'running', 'before_result']);
 const SHA = /^[0-9a-f]{64}$/;
 const clone = value => JSON.parse(JSON.stringify(value));
+const canonical = value => Array.isArray(value) ? '[' + value.map(canonical).join(',') + ']' :
+  value && typeof value === 'object' ? '{' + Object.keys(value).sort().map(key =>
+    JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}' : JSON.stringify(value);
 const need = (condition, code) => { if (!condition) throw new Error('DEVELOPMENT_CLUED_' + code); };
 
 function utcInstant(value) {
@@ -55,8 +58,13 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
   need(record?.record_type === 'decision' && record.authority === 'user_explicit'
     && record.lifecycle_status === 'active' && record.canonical_scope === SCOPE
     && record.receipt_id === capture.receipt_id && SHA.test(record.content_hash), 'EXACT_OWNER_DECISION_REQUIRED');
-  const approval = record.type_fields?.model_development_experiment_approval;
-  need(approval?.kind === 'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT'
+  const rationale = record.type_fields?.rationale;
+  need(rationale && typeof rationale === 'object' && !Array.isArray(rationale),
+    'EXACT_DEVELOPMENT_APPROVAL_REQUIRED');
+  // The public M1 schema carries this payload only inside rationale.
+  const approval = rationale.model_development_experiment_approval;
+  need(approval && typeof approval === 'object' && !Array.isArray(approval)
+    && approval.kind === 'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT'
     && approval.task_id === TASK && approval.purpose_id === 'development'
     && approval.max_attempts === 1 && approval.training_allowed === false
     && approval.production_allowed === false && approval.qualification_allowed === false,
@@ -77,6 +85,7 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
     && stop - start <= 86400000, 'APPROVAL_WINDOW');
   const pins = clone(issued);
   const original = {id: record.id, version: record.version, content: record.content,
+    approval_rationale:canonical(record.type_fields.rationale),
     content_hash: record.content_hash, receipt_id: capture.receipt_id};
   const methods = ['clued_session_resume', 'clued_search_context',
     'clued_session_reconcile', 'clued_work_verify'];
@@ -112,7 +121,8 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
       calls.clued_work_verify({claim_id: pins.claim_id, scope: SCOPE})]);
     const check = ([approvalRead, taskRead, verified]) => {
     const live = currentRecord(decode(approvalRead), original.id, 'decision');
-    need(live.version === original.version && live.content === original.content,
+    need(live.version === original.version && live.content === original.content
+      && canonical(live.type_fields?.rationale) === original.approval_rationale,
       'APPROVAL_CHANGED_OR_REVOKED');
     const task = currentRecord(decode(taskRead), TASK, 'task');
     need(task.version === pins.task_version, 'TASK_CHANGED_REVALIDATION_REQUIRED');
