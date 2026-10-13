@@ -199,6 +199,23 @@
         "scripts/verification_context.py"
       ],
       "content_sha256": "554b5be11cd146343bca3d7df68ca3622e5b0ee70994af4a53d71df757ea7e03"
+    },
+    {
+      "id": "script.gated-proof-runtime",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
+      "root": ".",
+      "files": [
+        "apps/clued-cloud/tests/ci-proof-profiles.test.mjs",
+        "scripts/ci/clued-gated-proof-runtime.mjs",
+        "scripts/ci/clued-reader-budget-cache.test.mjs"
+      ],
+      "content_sha256": "7b84491a02edccc1e8de0a257a8f6b51428c8308410977423f210a8737b33d72",
+      "version_marker": {
+        "file": "scripts/ci/clued-gated-proof-runtime.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
     }
   ]
 }

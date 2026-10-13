@@ -1,6 +1,7 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES} from './clued-workflow-profile.mjs';
+export const COMPONENT_VERSION = "1.0.0";
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
@@ -74,6 +75,23 @@ export async function qualifyPrExecution(options={}) {
   } finally {closed=true;clearTimeout(timer);controller.abort();}
 }
 
+// One observation's raw Source facts, never Source/Role or execution authority.
+// The complete identity is repository + immutable commit + safe file path.
+// Mutable PR/main/directory/run/attempt and platform identities remain fresh.
+export function createImmutableWorkflowSourceReader({read,repository,enabled=false}) {
+  const immutableSources=new Map();
+  return async route=>{
+    const match=/^\/repos\/([^/]+\/[^/]+)\/contents\/([^?]+)\?ref=([a-f0-9]{40})$/.exec(route);
+    const active=typeof enabled==='function'?enabled():enabled===true;
+    const cacheable=active && match?.[1]===repository && safePath(match[2]);
+    if(cacheable && immutableSources.has(route))return structuredClone(immutableSources.get(route));
+    const content=await read(route);
+    if(cacheable && immutableSources.size<64 && decodedWorkflow(content,match[2],content?.sha)!==null)
+      immutableSources.set(route,structuredClone(content));
+    return content;
+  };
+}
+
 async function executionWithinBudget({read,graphRead,readLog,repository,prNumber,head,snapshot,serverURL}) {
   try {
     if(!REPO.test(repository??'') || !SHA.test(head??'') || !SHA.test(snapshot?.tip??'') || snapshot.checkout!==snapshot.tip ||
@@ -94,23 +112,16 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
       return true;
     };
     if(!await snapshotCurrent())return unknown('trusted snapshot/default tip differs');
-    const catalog=await boundWorkflowCatalog({read,repository,tip:snapshot.tip,head,
+    // These are trusted default registration data, already verified above.
+    // The cache binds immutable bytes only; catalogue validation still decides
+    // whether any pending Source can be installed or used for qualification.
+    let cacheEnabled=[snapshot.profiles.future_workflows,snapshot.profiles.external2_future_workflows]
+      .some(entries=>Array.isArray(entries) && entries.length>0);
+    const sourceRead=createImmutableWorkflowSourceReader({read,repository,enabled:()=>cacheEnabled});
+    const catalog=await boundWorkflowCatalog({read:sourceRead,repository,tip:snapshot.tip,head,
       defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,diff});
     if(!catalog.passed)return catalog;
-    const immutableSources=new Map();
-    const sourceRead=async route=>{
-      // This cache lives only inside this observation and only on the future
-      // installation path. Its values have complete UTF-8/blob proof at an
-      // immutable commit. Mutable PR/main/run/attempt and platform Source
-      // identity reads always retain the authenticated fresh read below.
-      const match=/^\/repos\/([^/]+\/[^/]+)\/contents\/([^?]+)\?ref=([a-f0-9]{40})$/.exec(route);
-      const cacheable=(catalog.future_installations.length>0 || catalog.external2_applicable===true) && match?.[1]===repository && safePath(match[2]);
-      if(cacheable && immutableSources.has(route))return structuredClone(immutableSources.get(route));
-      const content=await read(route);
-      if(cacheable && immutableSources.size<64 && decodedWorkflow(content,match[2],content?.sha)!==null)
-        immutableSources.set(route,structuredClone(content));
-      return content;
-    };
+    cacheEnabled=catalog.future_installations.length>0 || catalog.external2_applicable===true;
     const sources=new Map();
     const sourceFor=async(file,run)=>workflowSourceOf({read:sourceRead,graphRead,repository,
       headRepository:diff.descriptor.head_repository,file,run,registry:catalog.source_registry,
@@ -129,7 +140,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         if(!await snapshotCurrent())return false;
         const finalDiff=await boundPullDiff({read,repository,prNumber,head});
         if(!finalDiff.passed || JSON.stringify(finalDiff)!==JSON.stringify(diff))return false;
-        const finalCatalog=await boundWorkflowCatalog({read,repository,tip:snapshot.tip,head,
+        const finalCatalog=await boundWorkflowCatalog({read:sourceRead,repository,tip:snapshot.tip,head,
           defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,diff:finalDiff});
         if(!finalCatalog.passed || JSON.stringify(finalCatalog.default_directory)!==JSON.stringify(catalog.default_directory) ||
           JSON.stringify(finalCatalog.head_directory)!==JSON.stringify(catalog.head_directory))return false;
