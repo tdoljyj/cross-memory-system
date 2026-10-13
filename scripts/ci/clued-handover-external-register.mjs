@@ -1,6 +1,7 @@
 // Operator-only candidate. Registers only an exact independently accepted
 // empty disposable cluster. No production target or generic SQL entry.
 import assert from 'node:assert/strict';
+export const COMPONENT_VERSION = "1.0.0";
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -21,6 +22,8 @@ async function evidence(value){
 async function main(){
   const verified=acceptedSourceCheck(root,process.env),p=verified.profile;
   assert.equal(process.env.QUALIFICATION_OPERATOR_MODE,'register-empty-disposable');
+  assert.equal(process.env.QUALIFICATION_IDLE_RUN_ID??'','');
+  assert.match(process.env.GITHUB_RUN_ID,/^[1-9][0-9]{0,19}$/);
   assert.equal(p.fixture_mode,'continuous');
   platformDescriptor(p);
   const catalogue=JSON.parse(await fs.readFile(path.join(root,'config/clued-handover-external-catalog.json'),'utf8'));
@@ -46,11 +49,11 @@ async function main(){
     failureCategory='EXACT_OPERATOR_REGISTRATION';
     await db.query('begin');registrationState='TRANSACTION_OPEN';
     await db.query(await fs.readFile(path.join(root,'scripts/ci/fixtures/clued-handover-operator-registration.sql'),'utf8'));
-    await db.query("insert into qualification_guard.registration_v1(realm,synthetic_only,registration,database_name,registered_host,"+
+    await db.query("insert into qualification_guard.registration_v1(realm,synthetic_only,registration,registered_run_id,database_name,registered_host,"+
       "profile_sha256,operator_authority_receipt,source_baseline,source_pins_sha256,engineering_task_id) "+
-      "values('clued-handover-disposable',true,$1,current_database(),$2,$3,$4,$5,$6,$7)",
+      "values('clued-handover-disposable',true,$1,$8,current_database(),$2,$3,$4,$5,$6,$7)",
       [p.disposable_pg_registration,p.database_host,verified.profile_sha256,p.operator_authority_receipt,
-        p.source_baseline,p.source_pins_sha256,p.engineering_task_id]);
+        p.source_baseline,p.source_pins_sha256,p.engineering_task_id,process.env.GITHUB_RUN_ID]);
     await verifyEmptyCluster({admin:db,connectDatabase:connect,expected:catalogue.before_bootstrap,targetDatabase:p.database_name});
     registrationState='COMMIT_RESPONSE_UNCERTAIN';
     await db.query('commit');registrationState='COMMITTED';
