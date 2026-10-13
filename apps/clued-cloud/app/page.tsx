@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { supabase, restoreBrowserSession } from "./supabase-browser";
 import Link from "next/link";
+import ImprintPanel from "./imprints/ImprintPanel";
 import {
   formatRecordTime,
   presentCluedLogCard,
@@ -355,10 +356,34 @@ export default function Home() {
   const [error, setError] = useState<NoticeKey | "">("");
   const [minimumPasswordError, setMinimumPasswordError] = useState<number>();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsOwner, setProjectsOwner] = useState<object | null>(null);
+  const projectSelectionKey = JSON.stringify([session?.user.id, session?.access_token]);
+  const projectSelectionToken = useMemo(() => ({ key: projectSelectionKey }), [projectSelectionKey]);
+  const visibleProjects = session && projectsOwner === projectSelectionToken ? projects : [];
+  const projectActor = useRef({ subject: "", token: "", epoch: 0 });
+  const projectReadGeneration = useRef(0);
+  const [projectReload, setProjectReload] = useState(0);
   const [projectName, setProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectError, setProjectError] = useState(false);
   const pendingProjectCreate = useRef<{ subject: string; name: string; body: string } | null>(null);
+
+  function observeProjectSession(next: Session | null) {
+    const subject = next?.user.id ?? "", token = next?.access_token ?? "";
+    if (projectActor.current.subject !== subject || projectActor.current.token !== token) {
+      if (projectActor.current.subject !== subject) {
+        setProjectName("");
+        setRecordTitle("");
+        setRecordContent("");
+      }
+      projectActor.current = { subject, token, epoch: projectActor.current.epoch + 1 };
+      setProjectsOwner(null);
+      setProjects([]);
+      setProjectBusy(false);
+      setProjectError(false);
+      if (pendingProjectCreate.current?.subject !== subject) pendingProjectCreate.current = null;
+    }
+  }
 
   useEffect(function clearChangedProjectCreate() {
     const pending = pendingProjectCreate.current;
@@ -411,6 +436,7 @@ export default function Home() {
         return;
       }
 
+      observeProjectSession(nextSession);
       setSession(nextSession);
       if (nextSession && (authType === "invite" || authType === "recovery")) {
         setEmail(nextSession.user.email ?? "");
@@ -424,6 +450,7 @@ export default function Home() {
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!mounted) return;
+      observeProjectSession(nextSession);
       setSession(nextSession);
     });
 
@@ -436,27 +463,40 @@ export default function Home() {
   useEffect(() => {
     if (!session || view !== "account") return;
     let cancelled = false;
+    const readGeneration = ++projectReadGeneration.current;
+    const epoch = projectActor.current.epoch;
+    const subject = session.user.id, token = session.access_token;
+    const selection = projectSelectionToken;
+    const current = () => !cancelled && projectReadGeneration.current === readGeneration && projectActor.current.epoch === epoch
+      && projectActor.current.subject === subject && projectActor.current.token === token;
     Promise.allSettled([
       fetch("/v1/projects", {
         headers: { authorization: `Bearer ${session.access_token}` },
       }).then(async (response) => {
         if (!response.ok) throw new Error("project-list-failed");
-        return response.json() as Promise<{ projects: Project[] }>;
+        const result = await response.json() as { projects?: Project[] };
+        if (!Array.isArray(result.projects) || !result.projects.every(project => project && typeof project.id === "string" && typeof project.name === "string")) {
+          throw new Error("invalid-project-list");
+        }
+        return { projects: result.projects };
       }),
     ])
       .then(([projectResult]) => {
-        if (cancelled) return;
+        if (!current()) return;
         if (projectResult.status === "fulfilled") {
           setProjects(projectResult.value.projects);
+          setProjectsOwner(selection);
           setProjectError(false);
         } else {
+          setProjects([]);
+          setProjectsOwner(null);
           setProjectError(true);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [session, view]);
+  }, [session, view, projectSelectionToken, projectReload]);
 
   useEffect(() => {
     if (!session || view !== "account") return;
@@ -541,6 +581,7 @@ export default function Home() {
       setError("invalidCredentials");
       return;
     }
+    observeProjectSession(result.data.session);
     setSession(result.data.session);
     setPassword("");
     setView("account");
@@ -603,6 +644,7 @@ export default function Home() {
     setBusy(true);
     await supabase.auth.signOut();
     setBusy(false);
+    observeProjectSession(null);
     setSession(null);
     setEmail("");
     setView("login");
@@ -613,6 +655,10 @@ export default function Home() {
     event.preventDefault();
     if (!session || !projectName.trim()) return;
     const name = projectName.trim();
+    const subject = session.user.id, token = session.access_token;
+    const epoch = projectActor.current.epoch, selection = projectSelectionToken;
+    const current = () => projectActor.current.subject === subject && projectActor.current.token === token
+      && projectActor.current.epoch === epoch;
     if (pendingProjectCreate.current?.subject !== session.user.id || pendingProjectCreate.current?.name !== name) {
       pendingProjectCreate.current = {
         subject: session.user.id,
@@ -651,7 +697,7 @@ export default function Home() {
         target_refs?: { role: string; kind: string; id: string }[];
         supplemental?: { project?: Project };
       };
-      if (pendingProjectCreate.current !== pending) return;
+      if (!current() || pendingProjectCreate.current !== pending) return;
       if (result.status !== "committed") throw new Error("project-create-not-committed");
       let project = result.supplemental?.project;
       if (!project && result.replayed) {
@@ -662,23 +708,29 @@ export default function Home() {
         });
         if (!listed.ok) throw new Error("project-create-reload-failed");
         const data = (await listed.json()) as { projects?: Project[] };
-        if (pendingProjectCreate.current !== pending) return;
+        if (!current() || pendingProjectCreate.current !== pending) return;
         project = data.projects?.find((item) => item.id === projectId);
       }
       if (!project?.id) throw new Error("project-create-not-confirmed");
       const created = project;
-      setProjects((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      ++projectReadGeneration.current;
+      setProjects((rows) => [created, ...rows.filter((item) => item.id !== created.id)]);
+      setProjectsOwner(selection);
+      setProjectReload(value => value + 1);
       pendingProjectCreate.current = null;
       setProjectName("");
     } catch {
-      if (pendingProjectCreate.current === pending) setProjectError(true);
+      if (current() && pendingProjectCreate.current === pending) setProjectError(true);
     } finally {
-      if (!pendingProjectCreate.current || pendingProjectCreate.current === pending) setProjectBusy(false);
+      if (current() && (!pendingProjectCreate.current || pendingProjectCreate.current === pending)) setProjectBusy(false);
     }
   }
 
   async function updateProject(project: Project, action: "set_progress" | "archive", extra: Record<string, unknown> = {}) {
     if (!session) return;
+    const subject = session.user.id, token = session.access_token, epoch = projectActor.current.epoch;
+    const current = () => projectActor.current.subject === subject && projectActor.current.token === token
+      && projectActor.current.epoch === epoch;
     setProjectBusy(true);
     setProjectError(false);
     try {
@@ -724,11 +776,14 @@ export default function Home() {
       if (result.status !== "committed" || updated?.id !== project.id || updated.version <= project.version) {
         throw new Error("project-update-not-committed");
       }
-      setProjects((current) => current.map((item) => item.id === project.id ? updated : item));
+      if (!current()) return;
+      ++projectReadGeneration.current;
+      setProjects((rows) => rows.map((item) => item.id === project.id ? updated : item));
+      setProjectReload(value => value + 1);
     } catch {
-      setProjectError(true);
+      if (current()) setProjectError(true);
     } finally {
-      setProjectBusy(false);
+      if (current()) setProjectBusy(false);
     }
   }
 
@@ -1023,8 +1078,8 @@ export default function Home() {
                 {projectError && <p className="notice error">{t.projectError}</p>}
                 <div className="project-columns">
                   <section className="project-group">
-                      <h4>{t.projectList}<span>{projects.length}</span></h4>
-                      {projects.length === 0 ? <p className="empty-bindings">{t.noProjects}</p> : projects.map((project) => (
+                      <h4>{t.projectList}<span>{visibleProjects.length}</span></h4>
+                      {visibleProjects.length === 0 ? <p className="empty-bindings">{t.noProjects}</p> : visibleProjects.map((project) => (
                         <article className="project-item" key={project.id}>
                           <div>
                             <strong>{project.name}</strong>
@@ -1050,7 +1105,10 @@ export default function Home() {
                     </section>
                 </div>
               </div>
+              {recordsEnabled && session && <ImprintPanel key={session.user.id} session={session} projects={visibleProjects} locale={locale} />}
               {recordsEnabled && (
+                <details className="legacy-work-views">
+                  <summary>{locale === "zh-CN" ? "查看原有工作视图" : "Original work views"}</summary>
                 <div className="records-panel">
                   <div className="continuity-heading">
                     <div>
@@ -1078,7 +1136,7 @@ export default function Home() {
                       onChange={(event) => setRecordProjectId(event.target.value)}
                     >
                       <option value="">{t.chooseProject}</option>
-                      {projects.map((project) => (
+                      {visibleProjects.map((project) => (
                         <option value={project.id} key={project.id}>{project.name}</option>
                       ))}
                     </select>
@@ -1213,6 +1271,7 @@ export default function Home() {
                     })}
                   </div>
                 </div>
+                </details>
               )}
               <div className="continuity-panel">
                 <div className="continuity-heading">
