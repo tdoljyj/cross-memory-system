@@ -18,6 +18,20 @@ policy and original invocation identity through existing v2 fields.
 These logical TaskSpecs remain candidates pending the existing model/Schema
 domain's versioned compatibility adoption. No formal Schema/Capability/label
 registration, frozen M0-A/B/C replacement, new Gate or issuer is made here.
+
+`project_task_snapshot` connects this candidate definition package to the
+existing saved projection. For Context raw scores it enforces HIGHER_FIRST
+and an explicit caller-frozen complete Context ID order for ties. Rank-only
+output does not acquire invented scores or ties. External reference grades
+must be discrete levels 0–3; malformed reference configuration refuses the
+batch before judging model replies, while missing reference truth stays unknown.
+The generic scorer and generic projection without this optional contract retain
+their existing behaviour. Whole accepted definition-object digests reject
+semantic drift even if a caller supplies a newly computed package hash.
+
+The report retains the exact local Context contract/digest and definition-package
+digest for replay; these identities do not prove actual freeze or authority.
+
 Structural validity does not establish content truth, Gold, calibration,
 permission, runtime availability or qualified Provider support. Definitions of
 route classes do not create routes; actual catalogues and actions remain code
