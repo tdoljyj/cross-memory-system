@@ -37,5 +37,16 @@
   "valid_until": null,
   "provisioning_state": "PROJECT_CREATED_NOT_REGISTERED_OR_HOSTED_QUALIFIED",
   "runtime_authority": "none",
-  "qualification_result": "NOT_EXECUTED"
+  "qualification_result": "NOT_EXECUTED",
+  "idle_selection_policy": {
+    "mode": "late-bound-single-original-journal",
+    "workflow": "clued-handover-disposable-idle.yml",
+    "workflow_blob": "3c94569a38f27ba34ac53ff3bb207d9ccd674f35",
+    "source_sha256": "f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e",
+    "primary_definition_sha256": "c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647",
+    "qualifier_actor_id": null,
+    "qualifier_triggering_actor_id": null,
+    "idle_actor_id": null,
+    "idle_triggering_actor_id": null
+  }
 }

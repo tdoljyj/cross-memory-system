@@ -20,6 +20,10 @@ on:
         required: true
         type: choice
         options: [register, publish, revoke]
+      idle_run_id:
+        description: Exact real idle run; publish only, permanently bound in original journal
+        required: false
+        type: string
       publisher_run_id:
         description: Exact completed successful original publisher, required for revoke
         required: false
@@ -71,6 +75,7 @@ jobs:
     environment: ${{ github.event_name == 'workflow_dispatch' && 'clued-admission' || 'clued-handover-source-only' }}
     env:
       QUALIFICATION_PHASE: ${{ inputs.phase }}
+      QUALIFICATION_IDLE_RUN_ID: ${{ inputs.idle_run_id }}
       QUALIFICATION_OPERATOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'register' && 'register-empty-disposable' || '' }}
       QUALIFICATION_PUBLISHER_RUN_ID: ${{ inputs.publisher_run_id }}
       CLUED_HANDOVER_ACCEPTANCE_SHA256: ${{ vars.CLUED_HANDOVER_ACCEPTANCE_SHA256 }}
