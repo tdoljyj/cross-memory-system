@@ -59,7 +59,7 @@ def category_key(category, selected, policy):
     return key
 
 
-def candidate_value(task, body, supplied, policy):
+def candidate_value(task, body, supplied, policy, context_contract=None):
     """Local membership/type checks only, then existing scorer validates policy."""
     value = body["value"]
     visible = set(scorers.ids(supplied["visible_evidence_refs"]))
@@ -91,6 +91,9 @@ def candidate_value(task, body, supplied, policy):
         scorers.ids(order)
         unranked = scorers.ids(value["unranked_context_refs"])
         require(not set(order) & set(unranked) and set(order + unranked) == set(all_ids), "CONTEXT_PARTITION_DRIFT")
+        if context_contract is not None and body["score_kind"] == "RAW_SCORE":
+            stable = {key: index for index, key in enumerate(context_contract["stable_context_order"])}
+            require(order == sorted(order, key=lambda key: (-scores[key], stable[key])), "CONTEXT_SCORE_ORDER")
         return {"ordered_ids": order, "raw_scores": scores if body["score_kind"] == "RAW_SCORE" else None}
     scorers.fields(supplied, {"visible_evidence_refs", "route_catalog"})
     scorers.fields(value, {"route_ref", "support_refs", "counterevidence_refs"})
@@ -139,7 +142,7 @@ def score_claims(body, contract):
 
 def project_decision_snapshot(snapshot, bindings, policy, *, task_key, payload_schema_raw,
                               payload_schema_sha256, runtime_status_categories, scoring_category_keys,
-                              probability_contract=None):
+                              probability_contract=None, context_contract=None):
     """All inputs are local projections, not a registered schema or proof API.
 
     snapshot is the complete carrier from existing project_saved_snapshot.
@@ -150,7 +153,7 @@ def project_decision_snapshot(snapshot, bindings, policy, *, task_key, payload_s
     require(task_key in TASKS, "TASK")
     require(type(snapshot) is list and len(snapshot) <= scorers.MAX_REQUESTS, "SNAPSHOT_BOUND")
     require(type(bindings) is list and len(bindings) <= scorers.MAX_REQUESTS, "BINDING_BOUND")
-    for metadata in (bindings, policy, runtime_status_categories, scoring_category_keys, probability_contract):
+    for metadata in (bindings, policy, runtime_status_categories, scoring_category_keys, probability_contract, context_contract):
         scorers.finite_json(metadata)
     require(type(runtime_status_categories) is dict and type(scoring_category_keys) is dict, "STATUS_MAPS")
     for key, category in runtime_status_categories.items():
@@ -176,6 +179,26 @@ def project_decision_snapshot(snapshot, bindings, policy, *, task_key, payload_s
         require(key not in binding_by_id and hex_digest(binding["input_sha256"]), "BINDING_ID_OR_HASH")
         binding_by_id[key] = binding
     require(set(by_id) == set(expected) == set(binding_by_id), "EXPECTED_SET")
+    if context_contract is not None:
+        require(task_key == "decision.context_relevance", "CONTEXT_CONTRACT_TASK")
+        scorers.fields(context_contract, {"score_direction", "stable_context_order", "reference_grades"})
+        require(context_contract["score_direction"] == "HIGHER_FIRST", "CONTEXT_SCORE_DIRECTION")
+        grades = context_contract["reference_grades"]
+        require(type(grades) is list and grades == [0, 1, 2, 3]
+                and all(type(grade) is int for grade in grades), "CONTEXT_REFERENCE_SCALE")
+        stable_order = scorers.ids(context_contract["stable_context_order"])
+        require(set(stable_order) == {item["id"] for item in policy["contexts"]}, "CONTEXT_STABLE_ORDER_SET")
+        # External reference configuration errors refuse before classifying any
+        # model candidate; missing external truth still stays unknown.
+        for binding in bindings:
+            reference = binding["scoring_reference"]
+            if reference is not None:
+                scorers.fields(reference, {"relevance", "downstream_effect", "source_ref"})
+                relevance = reference["relevance"]
+                if relevance is not None:
+                    require(type(relevance) is dict and set(relevance) == set(stable_order), "CONTEXT_REFERENCE_SET")
+                    require(all(type(value) in (int, float) and value in grades for value in relevance.values()),
+                            "CONTEXT_REFERENCE_GRADE")
     # Caller configuration errors are not model mistakes. Refuse before
     # classifying any candidate; the untouched caller retains every raw slot.
     for key in expected:
@@ -223,7 +246,7 @@ def project_decision_snapshot(snapshot, bindings, policy, *, task_key, payload_s
                     category = "ABSTAINED"
                 else:
                     require(body["status"] == "PREDICTED" and body["abstain_reason"] is None, "MODEL_STATUS")
-                    row["candidate"] = candidate_value(task_key, body, binding["task_input"], policy)
+                    row["candidate"] = candidate_value(task_key, body, binding["task_input"], policy, context_contract)
             row["status"] = category_key(category, scoring_category_keys, policy)
         except Exception as error:
             # Only fixed local diagnostics, never arbitrary validator/error text.
@@ -237,6 +260,8 @@ def project_decision_snapshot(snapshot, bindings, policy, *, task_key, payload_s
     # Reuse all existing label/reference/ranking/graph/budget/scoring checks.
     scored = TASKS[task_key](rows, copy.deepcopy(policy))
     return {"slots": slots, "scorer_records": rows, "scorer_report": scored,
+            "context_contract": copy.deepcopy(context_contract),
+            "context_contract_sha256": None if context_contract is None else scorers.digest(context_contract),
             "authority_effect": "NONE", "qualification": "NOT_ISSUED",
             "domain_adoption_verified": False, "saved_carrier_authentication_verified": False,
             "reference_provenance_verified": False, "probability_auto_path_admitted": False}
