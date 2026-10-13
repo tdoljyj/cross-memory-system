@@ -234,3 +234,136 @@ export function selectRegisteredProfiles(registry,sources,{sourceApproved,direct
   }
   return {passed:true,state:'qualified',profiles:selected};
 }
+
+// Fixed External2 successor only. This never widens readonly-seven purpose.
+export const EXTERNAL2_PURPOSE='work_handover_external2_disposable_qualification';
+export const EXTERNAL2_FILES=Object.freeze({
+  '.github/workflows/clued-handover-external-qualification.yml':{
+    role:'external2_qualify',primary_id:'qualify',
+    workflow_blob:'ac90bc2f7e34a94be3c50c4581ba49cc139b3980',
+    source_sha256:'73de5152cf31f66cf2086994aac8343dc1b81664774966d0bb8c00430fa3f947',
+    definition_sha256:'d95fe3e0a197a5bf7b9448733eafaa32a80be20f47b47b9cf734e60cb8f6e24e',
+  },
+  '.github/workflows/clued-handover-disposable-idle.yml':{
+    role:'external2_disposable_idle',primary_id:'disposable-idle',
+    workflow_blob:'3c94569a38f27ba34ac53ff3bb207d9ccd674f35',
+    source_sha256:'f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e',
+    definition_sha256:'c26bfb67a0637206f3a26ad72bc9d9e45c039005e53602416df57871735d3647',
+  },
+});
+const EXTERNAL2_MODULES=Object.freeze({
+  'scripts/ci/clued-handover-external-driver.mjs':'fee8f18605f47f68ae53a8be8b290c98c901fbda073316a47f4ccc891a143055',
+  'scripts/ci/clued-handover-external-provider.mjs':'47b65ad3f05a702d28481e74aaf5751eedf560bf54c49f7a35afc612ba433ae8',
+  'scripts/ci/clued-handover-external-source-check.mjs':'5fc6bef118a2f468214597c5296ce03c6de0277da6f4de379b0493467b44daf1',
+  'scripts/ci/clued-handover-external-catalog.mjs':'236474e4aacb20791501f5496f4f0322699a2c34f3a0b81d968c9aa72a0b50bc',
+  'scripts/ci/clued-handover-external-catalog-identities.mjs':'09c54c0c7081687bbf0f254919385e76aa7781c208732403ce410a2caa585c78',
+  'scripts/ci/clued-handover-external-journal.mjs':'2626698dc4ba857732ab5777306deea09357fefdb601990315533d7616f81bb7',
+  'scripts/ci/clued-handover-external-bootstrap.mjs':'8af514b6a8a21e62cf4464672aa785d83bb17816edd5b72bcd885de243038d41',
+  'scripts/ci/clued-handover-external-register.mjs':'b91f3d81d20a3126024ab89dc92943e5384942e02e5fa2cc041066a7bd096e09',
+});
+const EXTERNAL2_BOUNDARY=Object.freeze({
+  readonly7_inheritance:false,source_only_is_actual_qualification:false,production_qualified:false,
+  app_id:5164952,isolated_supabase_project_ref:'qhddedibkuqoiiwlonwe',
+  pr_environment:'clued-handover-source-only',pr_app_pg_clued_secrets:false,
+  actual_qualifier_environment:'clued-admission',idle_environment:'clued-handover-source-only',
+  qualifier_dispatch_ref:'refs/heads/main',idle_dispatch_ref_prefix:'refs/heads/clued-handover-disposable-',
+  qualifier_phases:['register','publish','revoke'],idle_dispatch_process_seconds:2400,
+  actual_operator_acceptance:'separate_exact_independent_operator_catalog_and_execution_universe',
+  actual_host_object_pin_required:true,actual_dispatch_admission_required:true,
+  actual_effect_scope:'exact_disposable_repo_pr_head_run_check_and_continuous_isolated_pg_only',
+  actual_auth_write:'one_dedicated_synthetic_isolated_auth_users_row_only_after_explicit_acceptance',
+  production_auth_or_canonical_access:false,vendor_auth_function_or_role_replacement:false,
+});
+const EXTERNAL2_READONLY7_FLOOR=Object.freeze({
+  'company-linux-01':'f1e02e5ebbfe582daf43e7b22a527914a4ab1218',
+  'company-linux-02':'c4aee6b6a1dd789072906dd39ffba2d6a99a3988',
+  'company-linux-03':'411f13aab6f5b1688ed4878a9a0802176e6b52de',
+  'company-linux-04':'30f95c881e816cdbbe27aec150d30eae616744cc',
+  'home-linux-01':'2ac1aba2a9fd236bcdedac39ac9a435248c8b02e',
+  'company-win-01':'6e9cf8df20614d82d878ad95c3787659ed3cfb4b',
+  'home-win-01':'0a6d9ec09e4d6a7e02aba6c40a96b3502a7b894c',
+});
+export function external2ExactAcceptanceScope(entry,roles) {
+  return {repository:'tdoljyj/cross-memory-system',default_branch:'main',
+    operation:'install_exact_external2_workflow_pair',file:entry.file,workflow_role:entry.workflow_role,
+    purpose:EXTERNAL2_PURPOSE,workflow_blob:entry.source_profile.workflow_blob,
+    source_sha256:entry.source_profile.source_sha256,primary_ids:entry.source_profile.primary_ids,
+    roles:roles.map(({job_id,definition_sha256})=>({job_id,definition_sha256})),
+    command_digests:entry.source_profile.routes.map(({job_id,command_digests})=>({job_id,command_digests})),
+    workflow_definition_sha256:roleDefinitionDigest(entry.workflow_definition),
+    frozen_gate_sha256:'d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9',
+    source_manifest_sha256:'8f1838f8924942ef8277a8adf909dcd509c89d43cc24204d66c879cb55834fa2',
+    source_role_request_sha256:'0721501855ee326027d9ab240334967bb9a43bfd9bd41d5bc1b414c695f8fa4f',
+    source_modules:{...EXTERNAL2_MODULES},receiver_boundary:{...EXTERNAL2_BOUNDARY}};
+}
+export function external2WorkflowSubject(entry,roles) {
+  return digest(JSON.stringify(canonical({file:entry.file,workflow_role:entry.workflow_role,purpose:entry.purpose,
+    source_profile:entry.source_profile,workflow_definition:entry.workflow_definition,
+    exact_source_acceptance_scope:entry.exact_source_acceptance_scope,roles})));
+}
+export function external2FutureWorkflowCatalogue(registry,specs) {
+  const bad=reason=>({passed:false,state:'unknown',reason});
+  try {
+    if(registry?.schema!=='clued.gated-proof-profiles/2'||specs?.schema!=='clued.gated-proof-role-specs/2')
+      return bad('External2 default registry schema missing');
+    const entries=Object.hasOwn(registry,'external2_future_workflows')?registry.external2_future_workflows:[],
+      independent=Object.hasOwn(specs,'external2_future_workflows')?specs.external2_future_workflows:[];
+    if(!Array.isArray(entries)||!Array.isArray(independent)||entries.length!==independent.length)
+      return bad('External2 pair catalogue invalid');
+    if(!entries.length)return {passed:true,state:'qualified',entries};
+    if(entries.length!==2||Object.keys(registry.workflows??{}).length!==20||Object.keys(specs.workflows??{}).length!==20||
+      (registry.future_workflows??[]).length!==0||(specs.future_workflows??[]).length!==0)
+      return bad('External2 requires the accepted seven already promoted to active twenty');
+    for(const [consumer,sourceBlob] of Object.entries(EXTERNAL2_READONLY7_FLOOR)) {
+      const file=`.github/workflows/clued-work-handover-qualification-${consumer}.yml`;
+      if(registry.workflows[file]?.workflow_blob!==sourceBlob||
+        !registeredWorkflowSource(registry,file,sourceBlob).passed||!rolesForSource(specs,file,sourceBlob))
+        return bad('External2 readonly seven Source floor is absent or drifted');
+    }
+    const files=new Set(),blobs=new Set();
+    for(const entry of entries) {
+      const fixed=EXTERNAL2_FILES[entry?.file],blob=entry?.source_profile?.workflow_blob;
+      if(!exactKeys(entry,['file','workflow_role','registration_status','purpose','source_profile','workflow_definition',
+        'exact_source_acceptance_scope','source_acceptance'])||!fixed||entry.workflow_role!==fixed.role||
+        entry.registration_status!=='accepted_not_installed'||entry.purpose!==EXTERNAL2_PURPOSE||
+        blob!==fixed.workflow_blob||files.has(entry.file)||blobs.has(blob)||
+        Object.hasOwn(registry.workflows,entry.file)||Object.hasOwn(specs.workflows,entry.file))
+        return bad('External2 exact path/purpose/blob missing, duplicate or active');
+      const match=independent.filter(role=>role?.file===entry.file&&role.workflow_blob===blob);
+      if(match.length!==1||!exactKeys(match[0],['file','workflow_blob','roles']))return bad('External2 independent pair roles missing');
+      files.add(entry.file);blobs.add(blob);
+    }
+    if(files.size!==2||new Set(independent.map(role=>role.file)).size!==2)return bad('External2 pair incomplete');
+    return {passed:true,state:'qualified',entries};
+  } catch {return bad('External2 pair catalogue invalid');}
+}
+export function acceptedExternal2WorkflowSource(registry,specs,file,blob,{repository}={}) {
+  const bad=reason=>({passed:false,state:'unknown',reason});
+  try {
+    const catalogue=external2FutureWorkflowCatalogue(registry,specs);if(!catalogue.passed)return catalogue;
+    const entry=catalogue.entries.find(entry=>entry.file===file&&entry.source_profile.workflow_blob===blob),fixed=EXTERNAL2_FILES[file];
+    if(!entry||!fixed||repository!=='tdoljyj/cross-memory-system')return bad('External2 exact default Source missing or wrong repository');
+    const profile=entry.source_profile,roles=specs.external2_future_workflows.find(role=>role.file===file&&role.workflow_blob===blob)?.roles;
+    const picked=registeredWorkflowSource({schema:registry.schema,workflows:{[file]:profile}},file,blob);
+    if(!picked.passed||profile.gated!==true||Object.hasOwn(profile,'accepted_sources')||
+      profile.source_sha256!==fixed.source_sha256||!same(profile.primary_ids,[fixed.primary_id])||
+      !Array.isArray(roles)||roles.length!==1||!exactKeys(roles[0],['job_id','definition_sha256','definition'])||
+      roles[0].job_id!==fixed.primary_id||roles[0].definition_sha256!==fixed.definition_sha256||
+      roleDefinitionDigest(roles[0].definition)!==fixed.definition_sha256||
+      !same(roles[0].definition,entry.workflow_definition?.jobs?.[fixed.primary_id]))return bad('External2 full accepted Source/Role differs');
+    const compiled=compileRegisteredWorkflow(profile.source_yaml,{primary_ids:profile.primary_ids,
+      parseYaml:()=>entry.workflow_definition,accepted_roles:roles});
+    if(!same(compiled,profile)||!same(entry.exact_source_acceptance_scope,external2ExactAcceptanceScope(entry,roles)))
+      return bad('External2 exact compiled definition/command/purpose/scope differs');
+    const acceptance=entry.source_acceptance;
+    if(!exactKeys(acceptance,['status','authority','decision_ref','receipt_id','subject_sha256'])||
+      acceptance.status!=='accepted'||acceptance.authority!=='owner'||
+      !/^clued:decision:[a-f0-9-]{36}@v[1-9][0-9]*$/.test(acceptance.decision_ref??'')||
+      !UUID.test(acceptance.decision_ref.slice(15).split('@')[0])||!UUID.test(acceptance.receipt_id??'')||
+      acceptance.decision_ref.slice(15).split('@')[0]==='83c6ee59-bb30-465b-a826-871021216bc4'||
+      acceptance.receipt_id==='14b7829a-9496-41ff-aa51-2c6fdfc46a9a'||
+      acceptance.subject_sha256!==external2WorkflowSubject(entry,roles))return bad('External2 specific Owner Source/Role acceptance missing or revoked');
+    return {passed:true,state:'qualified',scope:'accepted_external2_source_role_only',entry,profile,roles,
+      actual_effect_qualified:false,operator_accepted:false,production_qualified:false};
+  } catch {return bad('External2 Source/Role acceptance invalid');}
+}

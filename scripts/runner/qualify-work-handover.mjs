@@ -73,24 +73,62 @@ export function classifyWindowsProtection(native){
     runner_is_administrator:native.runner_is_administrator,targets});
 }
 
+const WINDOWS_INSPECTION_STAGES=Object.freeze(["identity","administrator-members","target-item","target-acl","descriptor-construction","owner-sid","raw-ace","serialize"]);
+const WINDOWS_INSPECTION_TYPES=Object.freeze(["UNKNOWN","System.Management.Automation.RuntimeException","System.Management.Automation.MethodInvocationException","System.Management.Automation.CmdletInvocationException","System.Management.Automation.ActionPreferenceStopException","System.Management.Automation.ItemNotFoundException","System.Management.Automation.PSInvalidOperationException","System.Management.Automation.ParseException","System.UnauthorizedAccessException","System.Security.SecurityException","System.ArgumentException","System.ArgumentOutOfRangeException","System.InvalidOperationException","System.NotSupportedException","System.PlatformNotSupportedException","System.IO.IOException","System.IO.FileNotFoundException","System.IO.DirectoryNotFoundException"]);
+const WINDOWS_INSPECTION_CATEGORIES=Object.freeze(["UNKNOWN","NotSpecified","PermissionDenied","SecurityError","ObjectNotFound","InvalidArgument","InvalidOperation","InvalidData","InvalidType","ParserError","ReadError","OpenError","MetadataError","ResourceUnavailable","OperationStopped","NotImplemented","LimitsExceeded"]);
+const WINDOWS_INSPECTION_LANGUAGES=Object.freeze(["UNKNOWN","FullLanguage","ConstrainedLanguage","RestrictedLanguage","NoLanguage"]);
+const WINDOWS_INSPECTION_FIELDS=Object.freeze(["schema","status","stage","target_index","ace_index","ace_type","exception_type","error_category","language_mode","ps_major"]);
+export function decodeWindowsInspectionFailure(result){
+  // Never reflect native stderr, messages, environment, ACL or identities.
+  if(!Number.isInteger(result?.status)||result.status<1||result.status>255||
+    typeof result.stdout!=='string'||Buffer.byteLength(result.stdout,'utf8')>4096)return null;
+  let value;try{value=JSON.parse(result.stdout);}catch{return null;}
+  if(!value||typeof value!=='object'||Array.isArray(value)||
+    JSON.stringify(Object.keys(value).sort())!==JSON.stringify([...WINDOWS_INSPECTION_FIELDS].sort())||
+    value.schema!=='clued.windows-hook-inspection-failure/1'||value.status!=='inspection_failed'||
+    !WINDOWS_INSPECTION_STAGES.includes(value.stage)||
+    !Number.isInteger(value.target_index)||value.target_index< -1||value.target_index>3||
+    !Number.isInteger(value.ace_index)||value.ace_index< -1||value.ace_index>4095||
+    !Number.isInteger(value.ace_type)||value.ace_type< -1||value.ace_type>255||
+    !WINDOWS_INSPECTION_TYPES.includes(value.exception_type)||
+    !WINDOWS_INSPECTION_CATEGORIES.includes(value.error_category)||
+    !WINDOWS_INSPECTION_LANGUAGES.includes(value.language_mode)||
+    !Number.isInteger(value.ps_major)||value.ps_major<0||value.ps_major>99)return null;
+  return Object.fromEntries(WINDOWS_INSPECTION_FIELDS.map(key=>[key,value[key]]));
+}
+export function windowsInspectionFailureMessage(result){
+  const diagnostic=decodeWindowsInspectionFailure(result);
+  return 'Windows protection inspection failed'+(diagnostic?' '+JSON.stringify(diagnostic):'');
+}
+
 function readWindowsProtection(){
   const script=String.raw`
 $ErrorActionPreference = 'Stop'
+$inspectionStage='identity';$inspectionTargetIndex=-1;$inspectionAceIndex=-1;$inspectionAceType=-1
+try {
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$inspectionStage='administrator-members'
 $adminMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value })
 $targets = @()
 foreach ($target in @('C:\','C:\ProgramData','C:\ProgramData\CluedRunnerHook','C:\ProgramData\CluedRunnerHook\clued-runner-job-started.mjs')) {
   # Ancestors must not let the runner rename/delete the protected subtree,
   # delete its child, or grant those rights. Creating unrelated siblings alone
   # does not permit replacement of an existing protected child.
+  $inspectionTargetIndex++;$inspectionAceIndex=-1;$inspectionAceType=-1
+  $inspectionStage='target-item'
   $item = Get-Item -LiteralPath $target -Force -ErrorAction Stop
   if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Redirected hook protection target.' }
+  $inspectionStage='target-acl'
   $acl = Get-Acl -LiteralPath $target -ErrorAction Stop
+  $inspectionStage='descriptor-construction'
   $rawDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(),0)
+  $inspectionStage='owner-sid'
   $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
   $aces = @()
+  $inspectionStage='raw-ace'
   foreach ($ace in $rawDescriptor.DiscretionaryAcl) {
+    $inspectionAceIndex++;$inspectionAceType=[int]$ace.AceType
     if (($ace.AceType -ne [Security.AccessControl.AceType]::AccessAllowed -and
       $ace.AceType -ne [Security.AccessControl.AceType]::AccessDenied) -or
       $ace -isnot [Security.AccessControl.CommonAce]) { throw 'Unsupported Windows ACE type.' }
@@ -105,13 +143,29 @@ foreach ($target in @('C:\','C:\ProgramData','C:\ProgramData\CluedRunnerHook','C
     dacl_present=[bool]($rawDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent);
     dacl_non_null=($null -ne $rawDescriptor.DiscretionaryAcl)}
 }
+$inspectionStage='serialize'
 [ordered]@{schema='clued.windows-hook-native-protection/1';runner_is_administrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
   runner_sid=$identity.User.Value;runner_group_sids=@($identity.Groups | ForEach-Object { $_.Value });administrator_member_sids=$adminMembers;targets=$targets} | ConvertTo-Json -Depth 6 -Compress
+} catch {
+  $inspectionType=$_.Exception.GetType().FullName
+  if(@('UNKNOWN','System.Management.Automation.RuntimeException','System.Management.Automation.MethodInvocationException','System.Management.Automation.CmdletInvocationException','System.Management.Automation.ActionPreferenceStopException','System.Management.Automation.ItemNotFoundException','System.Management.Automation.PSInvalidOperationException','System.Management.Automation.ParseException','System.UnauthorizedAccessException','System.Security.SecurityException','System.ArgumentException','System.ArgumentOutOfRangeException','System.InvalidOperationException','System.NotSupportedException','System.PlatformNotSupportedException','System.IO.IOException','System.IO.FileNotFoundException','System.IO.DirectoryNotFoundException') -notcontains $inspectionType){$inspectionType='UNKNOWN'}
+  $inspectionCategory=[string]$_.CategoryInfo.Category
+  if(@('UNKNOWN','NotSpecified','PermissionDenied','SecurityError','ObjectNotFound','InvalidArgument','InvalidOperation','InvalidData','InvalidType','ParserError','ReadError','OpenError','MetadataError','ResourceUnavailable','OperationStopped','NotImplemented','LimitsExceeded') -notcontains $inspectionCategory){$inspectionCategory='UNKNOWN'}
+  $inspectionLanguage=[string]$ExecutionContext.SessionState.LanguageMode
+  if(@('UNKNOWN','FullLanguage','ConstrainedLanguage','RestrictedLanguage','NoLanguage') -notcontains $inspectionLanguage){$inspectionLanguage='UNKNOWN'}
+  $inspectionMajor=$PSVersionTable.PSVersion.Major
+  if($inspectionMajor -isnot [int] -or $inspectionMajor -lt 1 -or $inspectionMajor -gt 99){$inspectionMajor=0}
+  [ordered]@{schema='clued.windows-hook-inspection-failure/1';status='inspection_failed';stage=$inspectionStage;
+    target_index=$inspectionTargetIndex;ace_index=$inspectionAceIndex;ace_type=$inspectionAceType;
+    exception_type=$inspectionType;error_category=$inspectionCategory;language_mode=$inspectionLanguage;ps_major=$inspectionMajor} |
+    ConvertTo-Json -Depth 3 -Compress
+  exit 1
+}
 `;
   const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
     {encoding:'utf8',timeout:10000,windowsHide:true});
   assert.equal(result.error,undefined,'Windows protection inspection is unavailable');
-  assert.equal(result.status,0,'Windows protection inspection failed');
+  if(result.status!==0)throw new Error(windowsInspectionFailureMessage(result));
   let report;try{report=JSON.parse(result.stdout);}catch{throw new Error('Windows protection report is unavailable');}
   return classifyWindowsProtection(report);
 }
