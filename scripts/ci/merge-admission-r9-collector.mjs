@@ -237,17 +237,17 @@ class NativeInventoryConflict extends Error{
   }
 }
 // Creation fixes membership; it does not freeze later lifecycle observations.
-// Once a row is created or already observed as updated at/after the close,
-// later normal progress cannot change that fixed membership. Keep identity,
-// ordinal and start fixed, retain the latest wire projection, and still refuse
-// pre-close progress, terminal rewrites and old reruns.
+// A run's updated_at can be older than this post-seal Native observation.
+// Normal progress ending after the fixed close preserves membership even
+// when the run began before close. Keep identity, ordinal and known start
+// fixed, and refuse pre-close changes, terminal rewrites and old reruns.
+// Neither timestamp here is promoted to an execution/completion time.
 function inventoryDuplicate(prior,current,cutoff,stage){
   if(same(prior,current))return current;
   const identity=r=>({id:r.id,run_attempt:r.run_attempt,workflow_id:r.workflow_id,path:r.path,event:r.event,
     head_sha:r.head_sha,created_at:r.created_at,pull_requests:r.pull_requests});
   const phase=s=>s==='completed'?2:s==='in_progress'?1:0;
-  if((timestampMicros(prior.created_at)>=cutoff||timestampMicros(prior.updated_at)>=cutoff)&&
-    timestampMicros(current.updated_at)>=cutoff&&same(identity(prior),identity(current))&&
+  if(timestampMicros(current.updated_at)>=cutoff&&same(identity(prior),identity(current))&&
     prior.status!=='completed'&&phase(current.status)>=phase(prior.status)&&
     current.updated_at>=prior.updated_at&&
     (prior.run_started_at===null||current.run_started_at===prior.run_started_at))return current;
@@ -393,7 +393,7 @@ export async function collectIncrementalNative({request,repository,window,authen
         local=captured.store_raw;localFresh++;
         if(captured.barriers?.latest_digest!==hash(normalized)){
           // A terminal current attempt double-captured from Native may have
-          // finished after an already post-close inventory observation. Its
+          // finished after the fixed close since its earlier Native observation. Its
           // independently captured latest digest must prove the same exact
           // projection; historical ordinals and unproved changes still fail.
           const p=captured.packet.run,latest={id:p.run_id,run_attempt:p.run_attempt,workflow_id:p.workflow_id,path:p.path,event:p.event,
