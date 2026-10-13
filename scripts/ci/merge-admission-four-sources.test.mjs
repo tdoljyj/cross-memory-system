@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {registerHooks} from 'node:module';
 
 // In-repository execution needs no override. The private author copy resolves
@@ -15,7 +16,7 @@ const helperNames=new Set(['./merge-admission-measurement-history.mjs','./clued-
 registerHooks({resolve(specifier,context,next){if(context.parentURL===moduleURL&&helperNames.has(specifier))
   return next(pathToFileURL(path.join(repo,'scripts/ci',specifier.slice(2))).href,context);
   return next(specifier,context);}});
-const {readMergeAdmissionFourSources:read,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL:FOUR_SOURCE_CONTRACT,
+const {readMergeAdmissionFourSources:read,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL:FOUR_SOURCE_CONTRACT,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2:FOUR_SOURCE_CONTRACT_V2,
   parseFourSourceRawData:parseRawFourSourceDataCandidate,updateOperationObservation:produceOperation,finalAdmissionObservation:produceAdmission}=await import(moduleURL);
 const {registeredWorkflowSource}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-workflow-profile.mjs')).href);
 const {applicableCI}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-gated-proof.mjs')).href);
@@ -77,13 +78,14 @@ function members(n,rows){return rows.map(x=>['attempts','admission_batches','can
   n==='targets'?`${x.run_id}:${x.attempt}:${x.pr_number}:${x.head_sha}`:n==='admissions'?x.target_key:n==='operations'?x.operation_id:n==='head_moves'?x.move_id:x.round_id);}
 function manifest(p,sourceId,list){
   const barrier={snapshot_id:'fixed.20',total:list.length,member_digest:hash(JSON.stringify(list)),first_member:list[0]??null,last_member:list.at(-1)??null};
-  return {reader_source:FOUR_SOURCE_CONTRACT.reader_source,source_id:sourceId,scope:copy(scope),cohort:FOUR_SOURCE_CONTRACT.population_cohort,
+  return {reader_source:p.schema===FOUR_SOURCE_CONTRACT_V2?.schema?FOUR_SOURCE_CONTRACT_V2.reader_source:FOUR_SOURCE_CONTRACT.reader_source,source_id:sourceId,scope:copy(scope),cohort:FOUR_SOURCE_CONTRACT.population_cohort,
     window:copy(p.window),retention_start:time(0),watermark:p.collection.watermark,collected_at:p.collection.closed_at,
     before:{...barrier,read_id:'before.'+sourceId},after:{...barrier,read_id:'after.'+sourceId},pages:[{page:1,cursor:null,next_cursor:null,members:list}]};
 }
 function seal(p){
   for(const n of names)p.populations[n]=manifest(p,sourceIds[n],members(n,p[n]));
-  p.execution_sources.manifest=manifest(p,'native_execution_workflow_sources:'+EXECUTION_SOURCE_COMMIT,p.execution_sources.entries.map(x=>x.workflow_file+':'+x.workflow_blob));
+  p.execution_sources.manifest=manifest(p,'native_execution_workflow_sources:'+p.execution_sources.source_checkout_sha,p.execution_sources.entries.map(x=>x.workflow_file+':'+x.workflow_blob));
+  for(const s of p.previous_execution_snapshots??[])s.execution_sources.manifest=manifest(p,'native_execution_workflow_sources:'+s.source_checkout_sha,s.execution_sources.entries.map(x=>x.workflow_file+':'+x.workflow_blob));
   for(const r of p.rounds)for(const x of r.execution_packets)x.jobs_manifest=manifest(p,'native_jobs:'+x.run_key,x.jobs.map(j=>String(j.id)));
   return p;
 }
@@ -320,14 +322,15 @@ test('raw duplicate decoded keys and deep/oversized malformed structures refuse'
 
 const profileObject=JSON.parse(profiles),fullFiles=Object.entries(selectedProfileObject.workflows).filter(([,p])=>p.pull_request===null).map(([f])=>f).sort();
 let nextRun=1000,nextJob=5000;
-function addRound(p,{rid=301,h=head,m=base,start=20,end=27,mergedAt=null}={}){
+function addRound(p,{rid=301,h=head,m=base,start=20,end=27,mergedAt=null,workflowFiles=fullFiles,profiles=selectedProfileObject,
+  commit=EXECUTION_SOURCE_COMMIT,profileDigest=PROFILE_SOURCE_SHA256,roleDigest=ROLE_SOURCE_SHA256,changedFiles=['README.md']}={}){
   const r={round_id:uuid(rid),scope:copy(scope),pr_number:727,head_sha:h,main_sha:m,started_at:time(start),completed_at:time(end),run_keys:[],execution_packets:[],
-    applicability:{changed_files:['README.md'],diff_complete:true,commit_count:1,workflow_files:[...fullFiles],profile_sha256:PROFILE_SOURCE_SHA256,source_checkout_sha:EXECUTION_SOURCE_COMMIT},
+    applicability:{changed_files:[...changedFiles],diff_complete:true,commit_count:1,workflow_files:[...workflowFiles],profile_sha256:profileDigest,source_checkout_sha:commit},
     termination:null,main_move:null,merge_proof:mergedAt===null?null:{receipt_id:'merge.'+rid,event_at:time(mergedAt),collected_at:time(mergedAt+1),
       round_id:uuid(rid),used_run_keys:[],operation_id:uuid(rid+500),expected_head_sha:h,response_merged_commit_sha:'e'.repeat(40),
       native_pr:{number:727,head_sha:h,state:'closed',merged:true,merged_at:time(mergedAt),merge_commit_sha:'e'.repeat(40)}}};
-  for(const file of fullFiles){
-    const profile=selectedProfileObject.workflows[file],route=profile.routes.find(x=>x.self_hosted)??profile.routes[0],run=++nextRun,runKey=`${run}:1`;
+  for(const file of workflowFiles){
+    const profile=profiles.workflows[file],route=profile.routes.find(x=>x.self_hosted)??profile.routes[0],run=++nextRun,runKey=`${run}:1`;
     const a={run_id:String(run),attempt:1,pr_number:727,head_sha:h,kind:'ci',status:'completed',conclusion:'success',started_at:time(start+1),completed_at:time(end-1)};
     p.attempts.push(a);r.run_keys.push(runKey);const jobs=[];
     if(profile.gated)jobs.push({id:++nextJob,run_id:run,run_attempt:1,name:'admission-gate',status:'completed',conclusion:'success',labels:['self-hosted'],steps:[]});
@@ -335,10 +338,120 @@ function addRound(p,{rid=301,h=head,m=base,start=20,end=27,mergedAt=null}={}){
     jobs.push({id:++nextJob,run_id:run,run_attempt:1,name:route.name,status:'completed',conclusion:'success',labels:route.self_hosted?['self-hosted']:['ubuntu-slim'],steps});
     const barrier={run_id:a.run_id,attempt:a.attempt,head_sha:a.head_sha,status:a.status,conclusion:a.conclusion};
     r.execution_packets.push({run_key:runKey,workflow_file:file,jobs,jobs_manifest:manifest(p,'native_jobs:'+runKey,jobs.map(x=>String(x.id))),before_attempt:copy(barrier),after_attempt:copy(barrier),
-      source_descriptor:{workflow_blob:profile.workflow_blob,workflow_source_sha256:hash(profile.source_yaml),source_checkout_sha:EXECUTION_SOURCE_COMMIT,role:'primary_execution',role_source_sha256:ROLE_SOURCE_SHA256}});
+      source_descriptor:{workflow_blob:profile.workflow_blob,workflow_source_sha256:hash(profile.source_yaml),source_checkout_sha:commit,role:'primary_execution',role_source_sha256:roleDigest}});
   }
   if(r.merge_proof)r.merge_proof.used_run_keys=[...r.run_keys];p.rounds.push(r);seal(p);return r;
 }
+const addedHistoryWorkflowFiles=['.github/workflows/clued-handover-external-qualification.yml','.github/workflows/clued-handover-disposable-idle.yml'];
+function historicalRoundFixture({optionalGit=false,v2=false}={}){
+  // Default CI uses a reviewed synthetic 20-path catalog. Historical objects
+  // are read only for this explicitly selected, bounded offline observation.
+  let commit='f'.repeat(40),oldProfilesRaw,oldRolesRaw;
+  if(optionalGit&&Object.hasOwn(process.env,'CLUED_FOUR_SOURCE_HISTORY_COMMIT')){
+    commit=process.env.CLUED_FOUR_SOURCE_HISTORY_COMMIT;assert.match(commit,/^[a-f0-9]{40}$/,'explicit history checkout must be exact SHA40');
+    oldProfilesRaw=execFileSync('git',['show',commit+':scripts/ci/clued-gated-proof-profiles.json'],{cwd:repo,encoding:'utf8'});
+    oldRolesRaw=execFileSync('git',['show',commit+':scripts/ci/clued-gated-proof-role-specs.json'],{cwd:repo,encoding:'utf8'});
+  }else{
+    const oldRegistry=copy(registryObject),oldRoles=JSON.parse(roles);
+    for(const file of addedHistoryWorkflowFiles){delete oldRegistry.workflows[file];delete oldRoles.workflows[file];}
+    oldProfilesRaw=JSON.stringify(oldRegistry);oldRolesRaw=JSON.stringify(oldRoles);
+  }
+  const oldRegistry=JSON.parse(oldProfilesRaw),oldRoles=JSON.parse(oldRolesRaw);
+  assert.equal(Object.keys(registryObject.workflows).length,22);assert.equal(Object.keys(oldRegistry.workflows).length,20);assert.equal(Object.keys(oldRoles.workflows).length,20);
+  for(const file of addedHistoryWorkflowFiles){assert.equal(Object.hasOwn(oldRegistry.workflows,file),false);assert.equal(Object.hasOwn(oldRoles.workflows,file),false);}
+  const entries=Object.entries(oldRegistry.workflows).map(([workflow_file,p])=>({workflow_file,workflow_blob:p.workflow_blob})),
+    selected={workflows:Object.fromEntries(entries.map(e=>{const q=registeredWorkflowSource(oldRegistry,e.workflow_file,e.workflow_blob);assert.equal(q.passed,true);return [e.workflow_file,q.profile];}))},
+    changedFiles=['scripts/ci/clued-handover-external-driver.mjs'],select=(entries,profiles)=>applicableCI({workflows:new Map(entries.map(e=>[e.workflow_file,e.workflow_blob])),profiles,changedFiles,commits:1,diffComplete:true,sourceQualified:true}),
+    oldSelection=select(entries,selected),currentSelection=select(executionEntries,selectedProfileObject);
+  assert.equal(oldSelection.passed,true);assert.equal(currentSelection.passed,true);
+  const workflowFiles=[...oldSelection.workflows.keys()].sort(),currentFiles=[...currentSelection.workflows.keys()].sort();
+  assert.deepEqual(currentFiles.filter(file=>!workflowFiles.includes(file)),[...addedHistoryWorkflowFiles].sort());
+  const descriptor={source_checkout_sha:commit,profiles_sha256:hash(oldProfilesRaw),role_specs_sha256:hash(oldRolesRaw)},
+    snapshot={source_checkout_sha:commit,proof_profiles_raw:oldProfilesRaw,role_specs_raw:oldRolesRaw,execution_sources:{source_checkout_sha:commit,entries,manifest:null},
+      main_history:{base_commit:commit,head_commit:EXECUTION_SOURCE_COMMIT,merge_base_commit:commit,status:commit===EXECUTION_SOURCE_COMMIT?'identical':'ahead'}},p=packet();
+  let expected;
+  if(v2){p.schema=FOUR_SOURCE_CONTRACT_V2.schema;p.previous_execution_snapshots=[snapshot];
+    expected={...expectations,schema:FOUR_SOURCE_CONTRACT_V2.expectations_schema,previous_execution_sources:[descriptor]};}
+  else{p.proof_profiles_raw=oldProfilesRaw;p.role_specs_raw=oldRolesRaw;p.execution_sources=snapshot.execution_sources;expected={...expectations,execution_source:descriptor};}
+  const round=addRound(p,{workflowFiles,profiles:selected,commit,m:commit,profileDigest:descriptor.profiles_sha256,roleDigest:descriptor.role_specs_sha256,changedFiles});
+  return {p,round,descriptor,snapshot,expected,selected,currentFiles,workflowFiles,changedFiles,read:q=>read(JSON.stringify(q),JSON.stringify(expected))};
+}
+
+test('historical replay preserves old workflow witnesses and Native populations; current catalog relabeling cannot invent the two later workflows',()=>{
+  const f=historicalRoundFixture({optionalGit:true}),before=JSON.stringify(f.p),old=f.read(f.p);assert.equal(old.candidate_ready,true);boundaries(old);
+  const q=copy(f.p);q.proof_profiles_raw=profiles;q.role_specs_raw=roles;
+  q.execution_sources={source_checkout_sha:EXECUTION_SOURCE_COMMIT,entries:copy(executionEntries),manifest:null};
+  const r=q.rounds[0];r.applicability.profile_sha256=PROFILE_SOURCE_SHA256;r.applicability.source_checkout_sha=EXECUTION_SOURCE_COMMIT;
+  for(const x of r.execution_packets){x.source_descriptor.source_checkout_sha=EXECUTION_SOURCE_COMMIT;x.source_descriptor.role_source_sha256=ROLE_SOURCE_SHA256;}
+  const rejected=call(seal(q));assert.equal(rejected.status,'NOT_QUALIFIED');assert.equal(rejected.candidate_ready,false);boundaries(rejected);
+  assert.deepEqual(r.applicability.workflow_files,f.workflowFiles);assert.deepEqual(q.attempts,f.p.attempts);assert.deepEqual(r.run_keys,f.round.run_keys);
+  assert.deepEqual(r.execution_packets.map(x=>x.jobs),f.round.execution_packets.map(x=>x.jobs));assert.equal(JSON.stringify(f.p),before);
+});
+
+test('v2 historical execution snapshots qualify the old 20-path round inside one current 22-path population without changing its witness',()=>{
+  const f=historicalRoundFixture({v2:true}),before=JSON.stringify(f.p),r=f.read(f.p);
+  assert.equal(r.candidate_ready,true);boundaries(r);assert.equal(Object.keys(f.p.populations).length,8);
+  assert.equal(f.p.execution_sources.entries.length,22);assert.equal(f.p.previous_execution_snapshots[0].execution_sources.entries.length,20);
+  assert.deepEqual(f.round.applicability.workflow_files,f.workflowFiles);assert.equal(JSON.stringify(f.p),before);
+  for(const file of addedHistoryWorkflowFiles)assert.equal(f.round.execution_packets.some(x=>x.workflow_file===file),false);
+});
+
+test('v2 five actual historical tips share one reviewed configuration pair and preserve every old witness and global Native population',()=>{
+  const f=historicalRoundFixture({v2:true});
+  for(const [index,c]of ['1','2','3','4'].entries()){
+    const tip=c.repeat(40),snapshot=copy(f.snapshot);snapshot.source_checkout_sha=tip;snapshot.execution_sources.source_checkout_sha=tip;
+    snapshot.main_history={base_commit:tip,head_commit:EXECUTION_SOURCE_COMMIT,merge_base_commit:tip,status:'ahead'};f.p.previous_execution_snapshots.push(snapshot);
+    addRound(f.p,{rid:302+index,start:31+index,end:40+index,workflowFiles:f.workflowFiles,profiles:f.selected,commit:tip,m:tip,
+      profileDigest:f.descriptor.profiles_sha256,roleDigest:f.descriptor.role_specs_sha256,changedFiles:f.changedFiles});
+  }
+  const before=JSON.stringify(f.p),r=f.read(f.p);assert.equal(r.candidate_ready,true);boundaries(r);
+  assert.equal(f.expected.previous_execution_sources.length,1);assert.equal(f.p.previous_execution_snapshots.length,5);assert.equal(f.p.rounds.length,5);
+  assert.equal(Object.keys(f.p.populations).length,8);assert.equal(f.p.attempts.length,5*f.workflowFiles.length);
+  for(const round of f.p.rounds){assert.equal(round.main_sha,round.applicability.source_checkout_sha);assert.deepEqual(round.applicability.workflow_files,f.workflowFiles);
+    assert.equal(round.run_keys.length,f.workflowFiles.length);assert.equal(round.execution_packets.length,f.workflowFiles.length);
+    assert.equal(round.applicability.profile_sha256,f.descriptor.profiles_sha256);
+    for(const file of addedHistoryWorkflowFiles)assert.equal(round.execution_packets.some(x=>x.workflow_file===file),false);}
+  assert.equal(JSON.stringify(f.p),before);
+});
+
+test('v2 history rejects unknown or mixed Source bytes, incomplete historical manifests, authority flags and current relabeling; v1 rejects history fields',()=>{
+  const f=historicalRoundFixture({v2:true});assert.equal(f.read(f.p).candidate_ready,true);
+  for(const [label,change]of [
+    ['unknown checkout',p=>{p.previous_execution_snapshots[0].source_checkout_sha='e'.repeat(40);}],
+    ['mixed profile bytes',p=>{p.previous_execution_snapshots[0].proof_profiles_raw=profiles;}],
+    ['mixed role bytes',p=>{p.previous_execution_snapshots[0].role_specs_raw=roles;}],
+    ['unknown configuration pair',p=>{const s=p.previous_execution_snapshots[0],registry=JSON.parse(s.proof_profiles_raw);registry.audit_source='e'.repeat(40);s.proof_profiles_raw=JSON.stringify(registry);}],
+    ['incomplete manifest',p=>{p.previous_execution_snapshots[0].execution_sources.manifest.after.total++;}],
+    ['wrong main history head',p=>{p.previous_execution_snapshots[0].main_history.head_commit='e'.repeat(40);}],
+    ['contradictory identical history',p=>{p.previous_execution_snapshots[0].main_history.status='identical';}],
+    ['round tip borrows another immutable snapshot',p=>{p.rounds[0].main_sha='e'.repeat(40);}],
+    ['authority flag',p=>{p.previous_execution_snapshots[0].source_authenticated=true;}],
+    ['approved flag',p=>{p.previous_execution_snapshots[0].approved=true;}],
+    ['current relabeling',p=>{const r=p.rounds[0];r.applicability.source_checkout_sha=EXECUTION_SOURCE_COMMIT;r.applicability.profile_sha256=PROFILE_SOURCE_SHA256;
+      for(const x of r.execution_packets){x.source_descriptor.source_checkout_sha=EXECUTION_SOURCE_COMMIT;x.source_descriptor.role_source_sha256=ROLE_SOURCE_SHA256;}}]
+  ]){
+    const q=copy(f.p);change(q);const r=f.read(q);assert.equal(r.status,'NOT_QUALIFIED',label);assert.equal(r.candidate_ready,false,label);boundaries(r);
+    assert.deepEqual(q.attempts,f.p.attempts,label);assert.deepEqual(q.rounds[0].run_keys,f.round.run_keys,label);assert.deepEqual(q.rounds[0].applicability.workflow_files,f.workflowFiles,label);
+  }
+  const legacy=historicalRoundFixture();assert.equal(legacy.read(legacy.p).candidate_ready,true);
+  const q=copy(legacy.p);q.previous_execution_snapshots=[copy(f.snapshot)];assert.equal(legacy.read(q).status,'NOT_QUALIFIED');
+});
+
+test('v2 global run and job ownership rejects reuse across current and historical execution versions',()=>{
+  const f=historicalRoundFixture({v2:true}),current=addRound(f.p,{rid:302,start:30,end:40,workflowFiles:f.currentFiles,changedFiles:f.changedFiles});
+  assert.equal(f.read(f.p).candidate_ready,true,'two distinct exact Native populations are internally consistent');
+  for(const kind of ['run','job']){
+    const q=copy(f.p),old=q.rounds[0].execution_packets[0],r=q.rounds[1],x=r.execution_packets.find(x=>x.workflow_file===old.workflow_file);
+    assert.ok(x);
+    if(kind==='run'){const original=x.run_key;x.run_key=old.run_key;r.run_keys=r.run_keys.map(k=>k===original?old.run_key:k);
+      x.before_attempt=copy(old.before_attempt);x.after_attempt=copy(old.after_attempt);x.jobs=copy(old.jobs);}
+    else x.jobs[0].id=old.jobs[0].id;
+    const rejected=f.read(seal(q));assert.equal(rejected.status,'NOT_QUALIFIED',kind);assert.equal(rejected.candidate_ready,false,kind);boundaries(rejected);
+    assert.deepEqual(q.attempts,f.p.attempts,kind);assert.equal(q.rounds.length,2);assert.deepEqual(q.rounds[0].applicability.workflow_files,f.workflowFiles,kind);
+  }
+  assert.equal(current.applicability.source_checkout_sha,EXECUTION_SOURCE_COMMIT);
+});
+
 function wastedFixture(){
   const p=packet(),original=addRound(p);const {x}=addOperation(p,{start:30,main:nextMain});
   const next=addRound(p,{rid:302,h:nextHead,m:nextMain,start:36,end:45,mergedAt:50});

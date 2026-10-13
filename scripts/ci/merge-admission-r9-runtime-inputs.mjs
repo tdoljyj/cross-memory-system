@@ -41,14 +41,34 @@ export async function loadIndependentR9RuntimeInputs({request,budget,repository,
     const admissionBytes={texts:admissionTexts,...Object.fromEntries(['script','workflow','reverify_workflow','policy'].map(k=>[k+'_blob',s[k+'_blob']]))};
     const profiles=await read('scripts/ci/clued-gated-proof-profiles.json'),roles=await read('scripts/ci/clued-gated-proof-role-specs.json');
     if(hash(profiles)!==cfg.execution_source?.profiles_sha256||hash(roles)!==cfg.execution_source?.role_specs_sha256)throw Error();
-    const expected={schema:'clued.merge-admission-four-source-expectations/1',repository,scope:cfg.scope,
-      admission_sources:[source,...(cfg.previous_admission_sources??[])],execution_source:{source_checkout_sha:subject,...cfg.execution_source}};
+    const hasExecutionHistory=Object.hasOwn(cfg,'previous_execution_sources'),previousExecutionSources=cfg.previous_execution_sources;
+    if(hasExecutionHistory){
+      if(!Array.isArray(previousExecutionSources)||previousExecutionSources.length>4)throw Error();
+      const checkouts=new Set([subject]),pairs=new Set([cfg.execution_source.profiles_sha256+':'+cfg.execution_source.role_specs_sha256]);
+      for(const s of previousExecutionSources){
+        if(s===null||typeof s!=='object'||Array.isArray(s)||Object.keys(s).length!==3||
+          !['source_checkout_sha','profiles_sha256','role_specs_sha256'].every(k=>Object.hasOwn(s,k))||
+          !sha(s.source_checkout_sha)||!digest(s.profiles_sha256)||!digest(s.role_specs_sha256)||checkouts.has(s.source_checkout_sha)||pairs.has(s.profiles_sha256+':'+s.role_specs_sha256))throw Error();
+        checkouts.add(s.source_checkout_sha);pairs.add(s.profiles_sha256+':'+s.role_specs_sha256);
+      }
+    }
+    const currentExecutionSource=hasExecutionHistory?{source_checkout_sha:subject,profiles_sha256:cfg.execution_source.profiles_sha256,role_specs_sha256:cfg.execution_source.role_specs_sha256}:
+      {source_checkout_sha:subject,...cfg.execution_source};
+    const expected={schema:'clued.merge-admission-four-source-expectations/'+(hasExecutionHistory?'2':'1'),repository,scope:cfg.scope,
+      admission_sources:[source,...(cfg.previous_admission_sources??[])],execution_source:currentExecutionSource,
+      ...(hasExecutionHistory?{previous_execution_sources:previousExecutionSources}:{})};
     const naturalProducers=cfg.natural_producers??[];
     if(!Array.isArray(naturalProducers))throw Error();
     for(const d of naturalProducers)if(!safe(d.workflow_path)||files.get(d.workflow_path)?.sha!==d.workflow_blob||
       !Array.isArray(d.source_paths)||d.source_paths.some(p=>!safe(p)||files.get(p)?.type!=='blob'))throw Error();
     const naturalSelection={repository,head_sha:subject,default_branch:meta.default_branch,natural_producers:naturalProducers,profiles_raw:profiles,admission_source:s,
       workflow_blobs:Object.fromEntries([...files].filter(([p,v])=>p.startsWith('.github/workflows/')&&v.type==='blob').map(([p,v])=>[p,v.sha]))};
+    if(hasExecutionHistory){
+      naturalSelection.execution_source_templates=[currentExecutionSource,...previousExecutionSources];
+      naturalSelection.current_execution_snapshot={source_checkout_sha:subject,proof_profiles_raw:profiles,role_specs_raw:roles,
+        workflow_directory:[...files].filter(([p,v])=>p.startsWith('.github/workflows/')&&v.type==='blob').map(([path,v])=>({path,sha:v.sha,type:v.type,mode:v.mode})),
+        main_history:{base_commit:subject,head_commit:subject,merge_base_commit:subject,status:'identical'}};
+    }
     // Activation is a separately qualified real open, then a reviewed durable
     // pointer. The scheduled collector never creates/restarts it implicitly.
     const epoch=cfg.forward_epoch;

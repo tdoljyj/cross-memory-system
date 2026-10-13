@@ -45,7 +45,7 @@ import {
   windowOf,
   FEE_WORKLOAD_DAYS,FEE_WORKLOAD_WINDOW,FEE_WORKLOAD_MARKER,projectFeeWorkload,collectFeeWorkload,
 } from "./ci-usage-report.mjs";
-import {FEE_NATIVE_WORKFLOW_PATHS} from './merge-admission-r9-collector.mjs';
+import {FEE_NATIVE_WORKFLOW_PATHS,R9_CACHE_FILE} from './merge-admission-r9-collector.mjs';
 import {NATIVE_POPULATION_SCHEMA,inspectNativePopulationStore} from './merge-admission-native-population.mjs';
 import { gateFindings, workflowFormFindings } from "./clued-work-admission.mjs";
 
@@ -207,7 +207,7 @@ function fakeGitHub({ runs = [], pulls = [], jobs = {}, remaining = () => 4000, 
     const route = String(url).replace(/^https:\/\/api\.github\.com/, "");
     calls.push({ route, headers: init.headers, body: init.body });
     const n = calls.length;
-    const headers = { "content-type": "application/json", "x-ratelimit-remaining": String(remaining(n)), "x-ratelimit-limit": "1000" };
+    const headers = { "content-type": "application/json", "x-ratelimit-remaining": String(remaining(n)), "x-ratelimit-limit": "5000" };
     const special = answer(route, n, headers);
     if (special) return special;
     const page = Number(new URL(`https://x${route}`).searchParams.get("page") ?? 1);
@@ -406,8 +406,68 @@ test("measurement App: its read-only installation token reads everything, with t
   assert.deepEqual([report.coverage.runs_with_jobs, report.coverage.partial], [250, false]);
   assert.deepEqual([report.metrics.api_requests.token_source, report.metrics.api_requests.cap, report.metrics.api_requests.used],
     ["app", APP_REQUEST_CAP, 255]);
+  const preflight = report.metrics.api_requests.app_quota_preflight;
+  assert.deepEqual([preflight.status, preflight.reason_code, preflight.request_ordinal, preflight.route,
+    preflight.remaining, preflight.limit, preflight.floor], ["passed", null, 1, `/repos/${REPO}`, 4000, 5000, 600]);
+  assert.match(preflight.observed_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(report.metrics.api_requests.not_measured.by_pool, /App's quota is its own/);
   assert.match(memory.files.get(ENV.GITHUB_STEP_SUMMARY), /255 of 2000 \(measurement App\)/);
+});
+
+test("measurement App preflight: missing or low first quota stops all collection and preserves the refusal report", async () => {
+  const app = withApp();
+  for (const [name, headers, stopped] of [
+    ["missing remaining", { "x-ratelimit-limit": "5000" }, "app_quota_unavailable"],
+    ["missing limit", { "x-ratelimit-remaining": "4000" }, "app_quota_unavailable"],
+    ["below floor", { "x-ratelimit-remaining": "599", "x-ratelimit-limit": "5000" }, "app_quota_below_floor"],
+    ["no first response", null, "app_quota_unavailable"],
+  ]) for (const injected of [false, true]) {
+    const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, pulls: [pr(1)], answer: (route, n, defaults) => {
+      const minted = app(route, n, defaults); if (minted) return minted;
+      assert.equal(route, `/repos/${REPO}`, `${name}: only the existing first metadata read may start`);
+      if (headers === null) throw new TypeError("first response unavailable");
+      return new Response(JSON.stringify({ full_name: REPO, default_branch: "main" }), { status: 200, headers });
+    } });
+    // Quota refusal must preserve opaque earlier artifact-cache bytes and a
+    // validator-approved Native progress store, without re-authenticating them
+    // or pretending this run's empty bootstrap seal contains the old union.
+    const r9CachePath = path.join("/w", ".ci-usage-cache", R9_CACHE_FILE), pendingPath = path.join("/w", ".ci-usage-cache", "r9-native-pending.json");
+    const retainedCache = JSON.stringify({ schema: "clued.merge-admission-r9-artifact-cache/1", repository: REPO,
+      artifact_id: "999", zip_base64: Buffer.from("previously retained artifact bytes").toString("base64") });
+    const retainedProgress = feeNative([feePacket(899)]).store_raw;
+    const memory = { ...memoryFs(new Map([[r9CachePath, retainedCache], [pendingPath, retainedProgress]])), now: new Date("2026-10-13T00:01:00Z"),
+      ...(injected ? { r9SourceContractRaw: JSON.stringify({ window: { start: "2026-10-12T00:00:00Z", end: "2026-10-13T00:00:00Z" } }) } : {}) };
+    const { code, report } = await runMain(github, memory, { ...APP_ENV, GITHUB_EVENT_NAME: "workflow_dispatch" });
+    assert.equal(code, 0, `${name}: a bounded refusal still writes the report`);
+    assert.deepEqual(github.calls.map(c => c.route), [`/repos/${REPO}/installation`, "/app/installations/77/access_tokens", `/repos/${REPO}`]);
+    assert.deepEqual([report.metrics.api_requests.token_source, report.metrics.api_requests.used, report.metrics.api_requests.cap,
+      report.metrics.api_requests.stopped], ["app", 1, 2000, stopped]);
+    assert.deepEqual([report.metrics.api_requests.app_quota_preflight.status, report.metrics.api_requests.app_quota_preflight.reason_code,
+      report.metrics.api_requests.app_quota_preflight.request_ordinal], ["refused", stopped, 1]);
+    assert.equal(report.coverage.partial, true); assert.equal(report.r9.official_metric, false); assert.equal(report.r9.t0, null);
+    assert.notEqual(report.fee_workload?.provider_visible_population_complete, true);
+    assert.equal(memory.files.get(r9CachePath), retainedCache, "refusal retains earlier artifact-cache bytes");
+    assert.equal(memory.files.get(pendingPath), retainedProgress, "refusal never overwrites earlier Native progress");
+  }
+});
+
+test("measurement App preflight: simultaneous reads wait for the first quota; the original floor is inclusive", async () => {
+  for (const remaining of [599, 600]) {
+    const budget = createBudget({ cap: APP_REQUEST_CAP, source: "app" });
+    let finishFirst; const calls = [];
+    const request = budgetedFetch(async url => {
+      calls.push(url);
+      if (calls.length === 1) await new Promise(resolve => { finishFirst = resolve; });
+      return new Response("{}", { status: 200, headers: { "x-ratelimit-remaining": String(remaining), "x-ratelimit-limit": "5000" } });
+    }, ENV, budget, "app-token");
+    const first = request(`/repos/${REPO}`), second = request(`/repos/${REPO}/actions/runs?per_page=100`);
+    assert.equal(calls.length, 1, "a concurrent collection read cannot precede the first quota evidence");
+    finishFirst(); const results = await Promise.all([first, second]);
+    assert.equal(calls.length, remaining === 599 ? 1 : 2);
+    assert.ok(results.every(r => r.ok === (remaining === 600)));
+    assert.equal(budget.app_quota_preflight.remaining, remaining);
+    assert.equal(budget.app_quota_preflight.request_ordinal, 1);
+  }
 });
 
 test("measurement App: not configured, not installed or refused falls back to the GITHUB_TOKEN with its cap and says why", async () => {
@@ -430,6 +490,7 @@ test("measurement App: not configured, not installed or refused falls back to th
     assert.equal(code, 0, name);
     assert.ok(github.calls.filter((call) => !call.route.includes("installation")).every((call) => call.headers.authorization === "Bearer t"), name);
     assert.deepEqual([report.metrics.api_requests.token_source, report.metrics.api_requests.cap], ["github_token", REQUEST_CAP], name);
+    assert.equal(Object.hasOwn(report.metrics.api_requests, "app_quota_preflight"), false, `${name}: fallback keeps its existing report contract`);
     assert.ok(notices.some((line) => /^::notice title=clued-ci-usage-report::reading with the GITHUB_TOKEN \(cap 200\)/.test(line) && reason.test(line)), name);
     assert.ok(notices.every((line) => !line.includes("PRIVATE KEY") && !line.includes(APP_KEY.slice(40, 80))), `${name}: no key material`);
   }

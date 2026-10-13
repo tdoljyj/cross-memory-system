@@ -2,7 +2,7 @@
 // verified original-job natural artifacts. No JSON authentication flag and no
 // inference of cancellation causes or completed updates from an accepted 202.
 import {createHash} from 'node:crypto';
-import {MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL as P,readMergeAdmissionFourSources,updateOperationObservation} from './merge-admission-four-sources.mjs';
+import {MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL as P,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2 as P2,readMergeAdmissionFourSources,updateOperationObservation} from './merge-admission-four-sources.mjs';
 import {admissionEnvelopeInput,naturalRoundId} from './merge-admission-source-producer.mjs';
 import {mapNaturalSourceEvents} from './merge-admission-natural-intake.mjs';
 import {timestampMicros} from './merge-admission-measurement-history.mjs';
@@ -11,6 +11,7 @@ const hash=x=>createHash('sha256').update(x).digest('hex');
 const key=r=>r.run_id+':'+(r.attempt??r.run_attempt);
 const target=r=>key(r)+':'+r.pr_number+':'+r.head_sha;
 const uuid=x=>typeof x==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(x);
+const sha=x=>typeof x==='string'&&/^[a-f0-9]{40}$/.test(x);
 export {naturalRoundId};
 const names=['attempts','targets','admission_batches','admissions','operations','head_moves','rounds','cancellations'];
 const sourceIds={attempts:'native_attempts',targets:'admission_targets',admission_batches:'admission_selection_journal',admissions:'final_admission_journal',
@@ -29,7 +30,7 @@ function manifest(p,source_id,members){
   const snapshot=hash(JSON.stringify(members)),b={snapshot_id:snapshot,total:members.length,member_digest:snapshot,first_member:members[0]??null,last_member:members.at(-1)??null};
   const pages=[];for(let i=0;i<Math.max(1,members.length);i+=1000)pages.push({page:pages.length+1,cursor:i===0?null:'page.'+i,
     next_cursor:i+1000<members.length?'page.'+(i+1000):null,members:members.slice(i,i+1000)});
-  return {reader_source:P.reader_source,source_id,scope:p.scope,cohort:P.population_cohort,window:p.window,retention_start:p.collection.retention_start,
+  return {reader_source:p.schema===P2.schema?P2.reader_source:P.reader_source,source_id,scope:p.scope,cohort:P.population_cohort,window:p.window,retention_start:p.collection.retention_start,
     watermark:p.collection.watermark,collected_at:p.collection.closed_at,before:{...b,read_id:'opening.'+source_id.slice(0,70)},
     after:{...b,read_id:'closing.'+source_id.slice(0,70)},pages};
 }
@@ -60,7 +61,10 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
   try{
     const c=JSON.parse(runtime.source_contract_raw);expected=JSON.parse(c.four_expected_sources_raw);
     const policy=runtime.operation_coverage;
-    if(native.status!=='COMPLETE'||natural?.status!=='NATIVE_ORIGIN_BOUND')throw Error('ORIGINAL_NATIVE_OR_NATURAL_POPULATION_INCOMPLETE');
+    const v2=expected.schema===P2.expectations_schema;
+    if(native.status!=='COMPLETE'||!natural||(!v2&&natural.status!=='NATIVE_ORIGIN_BOUND'))throw Error('ORIGINAL_NATIVE_OR_NATURAL_POPULATION_INCOMPLETE');
+    if(v2&&natural.status!=='NATIVE_ORIGIN_BOUND')gaps.push('ORIGINAL_NATURAL_POPULATION_INCOMPLETE');
+    for(const gap of v2?natural.gaps??[]:[])gaps.push(gap.code??'NATURAL_SOURCE_GAP');
     if(!policy||policy.schema!=='clued.r9-finite-recorded-operation-coverage/1'||!uuid(policy.owner_receipt_id)||
       policy.epoch_id!==runtime.forward_epoch?.epoch_id||policy.repository!==c.repository||
       policy.scope?.project_id!==c.scope.project_id||policy.scope?.queue_ref!==c.scope.queue_ref||
@@ -68,16 +72,43 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
     const originRows=natural.entries.flatMap(entry=>JSON.parse(entry.packet_raw).events.map(event=>({entry,event}))),nativeMap=new Map(native.population_packets.map(n=>[key(n.run),n]));
     if(originRows.some(x=>x.event.kind==='operation_request'&&!policy.original_source_paths.includes(x.event.source.path)))throw Error('RECORDED_OPERATION_ORIGIN_OUTSIDE_FINITE_POLICY');
     const min=[c.window.start,...native.population_packets.map(n=>n.run.created_at)].sort((a,b)=>timestampMicros(a)<timestampMicros(b)?-1:1)[0];
-    packet={schema:P.schema,repository:c.repository,scope:c.scope,window:c.window,
+    packet={schema:v2?P2.schema:P.schema,repository:c.repository,scope:c.scope,window:c.window,
       collection:{watermark:hash(JSON.stringify({native:native.population.cohort_digest,origins:natural.entries.map(x=>x.artifact_digest)})),closed_at:closedAt,window_status:'closed',retention_start:min},
       populations:{},sources_raw:null,proof_profiles_raw:runtime.proof_profiles_raw,role_specs_raw:runtime.role_specs_raw,
-      execution_sources:{source_checkout_sha:expected.execution_source.source_checkout_sha,entries:[],manifest:null}};
+      execution_sources:{source_checkout_sha:expected.execution_source.source_checkout_sha,entries:[],manifest:null},
+      ...(v2?{previous_execution_snapshots:[]}:{} )};
     for(const n of names)packet[n]=[];packet.attempts=attemptRows.map(r=>({...r}));
     const registry=JSON.parse(runtime.proof_profiles_raw),roles=JSON.parse(runtime.role_specs_raw);
     for(const path of Object.keys(registry.workflows)){
       const wf=runtime.execution_workflow_blobs[path];if(!registeredWorkflowSource(registry,path,wf).passed)throw Error('CURRENT_EXECUTION_SOURCE_NOT_REGISTERED');
       packet.execution_sources.entries.push({workflow_file:path,workflow_blob:wf});
     }
+    const executionVersions=new Map([[expected.execution_source.source_checkout_sha,{descriptor:expected.execution_source,registry,roles,blobs:runtime.execution_workflow_blobs}]]);
+    const historicalSource=tip=>{
+      if(executionVersions.has(tip))return executionVersions.get(tip);
+      const snapshot=natural.execution_snapshots?.[tip];
+      if(!snapshot||Object.keys(snapshot).sort().join('|')!==['source_checkout_sha','proof_profiles_raw','role_specs_raw','workflow_directory','main_history'].sort().join('|')||
+        snapshot.source_checkout_sha!==tip||Object.keys(snapshot.main_history??{}).sort().join('|')!==['base_commit','head_commit','merge_base_commit','status'].sort().join('|')||
+        snapshot.main_history?.base_commit!==tip||snapshot.main_history?.merge_base_commit!==tip||
+        snapshot.main_history?.head_commit!==expected.execution_source.source_checkout_sha||snapshot.main_history?.status!==(tip===expected.execution_source.source_checkout_sha?'identical':'ahead')||
+        typeof snapshot.proof_profiles_raw!=='string'||typeof snapshot.role_specs_raw!=='string'||!Array.isArray(snapshot.workflow_directory)||snapshot.workflow_directory.length>1000||
+        snapshot.workflow_directory.some(row=>!row||
+          Object.keys(row).sort().join('|')!==['path','sha','type','mode'].sort().join('|')||typeof row.path!=='string'||!row.path.startsWith('.github/workflows/')||
+          row.type!=='blob'||row.mode!=='100644'||!sha(row.sha))||new Set(snapshot.workflow_directory.map(row=>row.path)).size!==snapshot.workflow_directory.length)return null;
+      const template=[expected.execution_source,...expected.previous_execution_sources].find(s=>s.profiles_sha256===hash(snapshot.proof_profiles_raw)&&s.role_specs_sha256===hash(snapshot.role_specs_raw));
+      if(!template)return null;
+      const declared=expected.previous_execution_sources.find(s=>s.source_checkout_sha===tip);
+      if(declared&&(declared.profiles_sha256!==template.profiles_sha256||declared.role_specs_sha256!==template.role_specs_sha256))return null;
+      if(packet.previous_execution_snapshots.length>=1000)return null;
+      const descriptor={...template,source_checkout_sha:tip},historicalRegistry=JSON.parse(snapshot.proof_profiles_raw),historicalRoles=JSON.parse(snapshot.role_specs_raw),
+        blobs=Object.fromEntries((snapshot.workflow_directory??[]).map(r=>[r.path,r.sha])),entries=[];
+      for(const path of Object.keys(historicalRegistry.workflows)){
+        const wf=blobs[path];if(!registeredWorkflowSource(historicalRegistry,path,wf).passed)return null;entries.push({workflow_file:path,workflow_blob:wf});
+      }
+      packet.previous_execution_snapshots.push({source_checkout_sha:tip,proof_profiles_raw:snapshot.proof_profiles_raw,role_specs_raw:snapshot.role_specs_raw,main_history:snapshot.main_history,
+        execution_sources:{source_checkout_sha:tip,entries,manifest:manifest(packet,'native_execution_workflow_sources:'+tip,entries.map(x=>x.workflow_file+':'+x.workflow_blob))}});
+      const version={descriptor,registry:historicalRegistry,roles:historicalRoles,blobs};executionVersions.set(tip,version);return version;
+    };
     const sourceDescriptors=new Map(expected.admission_sources.map(s=>[s.source_checkout_sha,s])),sourcePackets=Object.entries(sourceBytes).filter(([sha])=>sourceDescriptors.has(sha)).map(([sha,s])=>({source_checkout_sha:sha,sources_raw:JSON.stringify(s.texts)}));
     for(const entry of natural.entries){
       const n=nativeMap.get(entry.run_key),a=packet.attempts.find(a=>key(a)===entry.run_key);if(!n||!a)throw Error('ORIGIN_NATIVE_ATTEMPT_MISSING');
@@ -135,19 +166,25 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
     }
     const observedRounds=originRows.filter(x=>x.event.kind==='round_ci_observation'&&x.event.payload.applicability&&x.event.payload.native_runs.length),roundSets=new Set();
     for(const {event}of observedRounds){const q=event.payload,runKeys=q.native_runs.map(r=>r.run_id+':'+r.attempt).sort(),rid=naturalRoundId(runKeys);if(roundSets.has(rid))continue;roundSets.add(rid);
+      // Source comes from the actual protected tip's immutable snapshot, never
+      // from a workflow list chosen to make applicability pass. /1 is unchanged.
+      const executionVersion=v2?historicalSource(q.tip):executionVersions.get(expected.execution_source.source_checkout_sha);
+      if(!executionVersion)gaps.push('ROUND_EXECUTION_SOURCE_SNAPSHOT_MISSING:'+rid);
       const packets=runKeys.map(k=>nativeMap.get(k));if(packets.some(n=>!n))throw Error('ROUND_REFERENCE_NATIVE_ATTEMPT_MISSING');
       const starts=packets.map(n=>n.run.run_started_at).filter(Boolean),bounds=runKeys.map(k=>packet.attempts.find(a=>key(a)===k)?.terminal_interval);
-      if(!starts.length||bounds.some(b=>!b)){gaps.push('ROUND_NATIVE_TIME_OR_INTERVAL_MISSING:'+rid);continue;}
-      const round={round_id:rid,scope:c.scope,pr_number:q.pr_number,head_sha:q.head_sha,main_sha:q.tip,started_at:starts.sort((a,b)=>timestampMicros(a)<timestampMicros(b)?-1:1)[0],completed_at:null,
-        terminal_interval:{lower_at:bounds.map(b=>b.lower_at).sort().at(-1),upper_at:bounds.map(b=>b.upper_at).sort().at(-1),basis:'native_job_completion_lower_and_terminal_update_upper_bounds'},run_keys:runKeys,execution_packets:[],
+      const timesComplete=starts.length&&bounds.every(Boolean);
+      if(!timesComplete){gaps.push('ROUND_NATIVE_TIME_OR_INTERVAL_MISSING:'+rid);if(!v2)continue;}
+      const round={round_id:rid,scope:c.scope,pr_number:q.pr_number,head_sha:q.head_sha,main_sha:q.tip,started_at:starts.length?starts.sort((a,b)=>timestampMicros(a)<timestampMicros(b)?-1:1)[0]:null,completed_at:null,
+        terminal_interval:timesComplete?{lower_at:bounds.map(b=>b.lower_at).sort().at(-1),upper_at:bounds.map(b=>b.upper_at).sort().at(-1),basis:'native_job_completion_lower_and_terminal_update_upper_bounds'}:null,run_keys:runKeys,execution_packets:[],
         applicability:{changed_files:q.applicability.changed_files,diff_complete:true,commit_count:q.applicability.commits,workflow_files:q.applicability.workflow_files,
-          profile_sha256:expected.execution_source.profiles_sha256,source_checkout_sha:expected.execution_source.source_checkout_sha},termination:null,main_move:null,merge_proof:null};
-      for(const n of packets){const file=n.run.path.split('@')[0],selected=registeredWorkflowSource(registry,file,runtime.execution_workflow_blobs[file]);if(!selected.passed)throw Error('ROUND_SOURCE_NOT_REGISTERED');
+          profile_sha256:executionVersion?.descriptor.profiles_sha256??null,source_checkout_sha:v2?q.tip:expected.execution_source.source_checkout_sha},termination:null,main_move:null,merge_proof:null};
+      for(const n of packets){const file=n.run.path.split('@')[0],wf=executionVersion?.blobs[file],selected=executionVersion?registeredWorkflowSource(executionVersion.registry,file,wf):{passed:false};
+        if(!selected.passed){if(!v2)throw Error('ROUND_SOURCE_NOT_REGISTERED');gaps.push('ROUND_SOURCE_OR_FUTURE_INSTALLATION_NOT_PROVEN:'+rid+':'+file);}
         const barrier={run_id:n.run.run_id,attempt:n.run.run_attempt,head_sha:n.run.head_sha,status:n.run.status,conclusion:n.run.conclusion};
         const jobs=n.jobs.map(projectNativeJobForFull);
         round.execution_packets.push({run_key:key(n.run),workflow_file:file,jobs,jobs_manifest:manifest(packet,'native_jobs:'+key(n.run),jobs.map(j=>String(j.id))),before_attempt:barrier,after_attempt:{...barrier},
-          source_descriptor:{workflow_blob:runtime.execution_workflow_blobs[file],workflow_source_sha256:selected.profile.source_sha256,
-            source_checkout_sha:expected.execution_source.source_checkout_sha,role:'primary_execution',role_source_sha256:expected.execution_source.role_specs_sha256}});
+          source_descriptor:{workflow_blob:wf??null,workflow_source_sha256:selected.profile?.source_sha256??null,
+            source_checkout_sha:v2?q.tip:expected.execution_source.source_checkout_sha,role:'primary_execution',role_source_sha256:executionVersion?.descriptor.role_specs_sha256??null}});
       }packet.rounds.push(round);
     }
     const represented=new Set(packet.rounds.flatMap(r=>r.run_keys));for(const a of packet.attempts)if(a.kind==='ci'&&a.pr_number!==null&&!represented.has(key(a)))gaps.push('UNOBSERVED_CI_ROUND_POPULATION:'+key(a));

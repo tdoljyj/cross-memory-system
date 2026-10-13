@@ -268,27 +268,110 @@ test('real request/response mapping leaves 202 pending and requires an independe
   const bad=structuredClone(events[2]);bad.attempt=2;assert.equal(operationEnvelopeInput({preEvent:events[0],requestEvent:events[1],responseEvent:bad,
     scope:targetScope,sourceRef:'a'.repeat(64),collectedAt:at}).status,'PARTIAL');
 });
-function runtimeFixture(epoch=null){const x=sourceFixture(),files=new Map(Object.entries(x.paths).map(([k,v])=>[v,x.bytes[k]]));
+function runtimeFixture(epoch=null,configured=null){const x=sourceFixture(),files=new Map(Object.entries(x.paths).map(([k,v])=>[v,x.bytes[k]]));
   for(const n of ['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json'])files.set(n,fs.readFileSync(path.join(repo,n),'utf8'));
   const cfg={schema:'clued.r9-runtime-source-selection/1',repository:env.GITHUB_REPOSITORY,scope:targetScope,admission_source:x.s,execution_source:x.execution,
-    previous_admission_sources:[],forward_epoch:epoch,minimum_clock_binding:{credential_fingerprint:r9CredentialFingerprint('mock-only'),binding_scope_fingerprint:'d'.repeat(64),contributor_count:1},clock:{foundation_digest:'a'.repeat(64),catalog_digest:'b'.repeat(64),transport_definition_digest:'c'.repeat(64)}};
-  files.set(R9_RUNTIME_CONFIG,JSON.stringify(cfg));let calls=0;
-  const request=async route=>{calls++;if(route===`/repos/${env.GITHUB_REPOSITORY}`)return {ok:true,body:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}};
+    previous_admission_sources:[],...structuredClone(configured??{}),forward_epoch:epoch,
+    minimum_clock_binding:{credential_fingerprint:r9CredentialFingerprint('mock-only'),binding_scope_fingerprint:'d'.repeat(64),contributor_count:1},clock:{foundation_digest:'a'.repeat(64),catalog_digest:'b'.repeat(64),transport_definition_digest:'c'.repeat(64)}};
+  for(const d of cfg.natural_producers??[])for(const n of [d.workflow_path,...d.source_paths])if(!files.has(n))files.set(n,fs.readFileSync(path.join(repo,n),'utf8'));
+  files.set(R9_RUNTIME_CONFIG,JSON.stringify(cfg));let calls=0;const routes=[];
+  const request=async route=>{calls++;routes.push(route);if(route===`/repos/${env.GITHUB_REPOSITORY}`)return {ok:true,body:{full_name:env.GITHUB_REPOSITORY,default_branch:'main'}};
     if(route.includes('/git/ref/'))return {ok:true,body:{object:{type:'commit',sha:subject}}};
     if(route.includes('/git/trees/'))return {ok:true,body:{truncated:false,tree:[...files].map(([path,text])=>({path,type:'blob',mode:'100644',sha:gitBlob(text)}))}};
     const text=[...files.values()].find(v=>route.endsWith('/'+gitBlob(v)));if(!text)throw Error('unexpected request');return {ok:true,body:{sha:gitBlob(text),encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')}};};
-  return {request,get calls(){return calls;}};
+  return {request,files,routes,get calls(){return calls;}};
 }
 test('default runtime entry actually reads immutable main configuration and never substitutes old workload or packet window for a missing epoch',async()=>{
   const f=runtimeFixture(),r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY});
   assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);assert.ok(f.calls>=8);assert.equal(r.source_checkout_sha,subject);
   assert.ok(JSON.parse(r.reviewed_expected_sources_raw).admission_sources[0].script_blob);
+  assert.equal(JSON.parse(r.reviewed_expected_sources_raw).schema,'clued.merge-admission-four-source-expectations/1');
+  assert.equal(Object.hasOwn(r.natural_selection,'execution_source_templates'),false);assert.equal(Object.hasOwn(r.natural_selection,'current_execution_snapshot'),false);
   const caller=fs.readFileSync(path.join(here,'ci-usage-report.mjs'),'utf8');assert.match(caller,/await loadIndependentR9RuntimeInputs/);assert.match(caller,/window: runtime\.window/);
 });
+test('runtime loader validates the current Source registry against actual bytes and retains the complete old main admission template',async()=>{
+  const cfg=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),f=runtimeFixture(null,cfg),
+    r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
+      fetchImpl:()=>{throw Error('SOURCE_ONLY_MOCK_MUST_NOT_ENTER_CLOCK');}});
+  for(const k of ['script','workflow','reverify_workflow','policy'])assert.equal(cfg.admission_source[k+'_blob'],gitBlob(fs.readFileSync(path.join(repo,cfg.admission_source[k+'_path']))));
+  for(const d of cfg.natural_producers){
+    assert.equal(d.workflow_blob,gitBlob(fs.readFileSync(path.join(repo,d.workflow_path))));
+    assert.deepEqual(Object.keys(d.source_blobs).sort(),[...d.source_paths].sort());
+    for(const p of d.source_paths)assert.equal(d.source_blobs[p],gitBlob(fs.readFileSync(path.join(repo,p))));
+  }
+  assert.equal(cfg.execution_source.profiles_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))));
+  assert.equal(cfg.execution_source.role_specs_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'))));
+  assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);
+  const expected=JSON.parse(r.reviewed_expected_sources_raw);
+  assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,cfg.previous_execution_sources);
+  assert.equal(cfg.previous_admission_sources.length,1);assert.equal(expected.admission_sources.length,2);
+  assert.deepEqual(expected.admission_sources[0],{...cfg.admission_source,source_checkout_sha:subject,default_branch:'main'});
+  assert.deepEqual(expected.admission_sources.slice(1),cfg.previous_admission_sources);
+  const old=expected.admission_sources[1];assert.match(old.source_checkout_sha,/^ea7d[a-f0-9]{36}$/);assert.equal(old.default_branch,'main');
+  assert.equal(old.grammar,'clued.work-admission.evaluate-observation/1');
+  for(const k of ['script','workflow','reverify_workflow','policy']){assert.equal(old[k+'_path'],cfg.admission_source[k+'_path']);assert.match(old[k+'_blob'],/^[a-f0-9]{40}$/);}
+  assert.deepEqual(r.natural_selection.execution_source_templates,[expected.execution_source,...cfg.previous_execution_sources]);
+  const snapshot=r.natural_selection.current_execution_snapshot;
+  assert.deepEqual(snapshot,{source_checkout_sha:subject,proof_profiles_raw:fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'),'utf8'),
+    role_specs_raw:fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'),'utf8'),
+    workflow_directory:[...f.files].filter(([p])=>p.startsWith('.github/workflows/')).map(([path,text])=>({path,sha:gitBlob(text),type:'blob',mode:'100644'})),
+    main_history:{base_commit:subject,head_commit:subject,merge_base_commit:subject,status:'identical'}});
+  const legacy=structuredClone(cfg);delete legacy.previous_execution_sources;const oldFixture=runtimeFixture(null,legacy);
+  await loadIndependentR9RuntimeInputs({request:oldFixture.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY});
+  assert.equal(f.calls,oldFixture.calls,'history templates and current snapshot add no HTTP reads');
+  for(const s of cfg.previous_execution_sources)assert.equal(f.routes.some(route=>route.includes(s.source_checkout_sha)),false,'history bytes are delegated to intake');
+  assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('runtime execution history requires a bounded unique list of exact checkout and profile/role hash selectors before clock use',async()=>{
+  const original=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),old=original.previous_execution_sources[0],
+    selectors=[
+      ['non-array',{}],['more than four',['0','1','2','3','4'].map(c=>({...old,source_checkout_sha:c.repeat(40)}))],
+      ['missing role hash',[{source_checkout_sha:old.source_checkout_sha,profiles_sha256:old.profiles_sha256}]],
+      ['extra boolean',[{...old,source_authenticated:true}]],['invalid checkout',[{...old,source_checkout_sha:'g'.repeat(40)}]],
+      ['invalid profile hash',[{...old,profiles_sha256:'a'.repeat(63)}]],['invalid role hash',[{...old,role_specs_sha256:'A'.repeat(64)}]],
+      ['duplicate history',[old,{...old}]],['duplicate current',[{...old,source_checkout_sha:subject}]],
+      ['same historical pair at another checkout',[old,{...old,source_checkout_sha:'c'.repeat(40)}]],
+      ['same current pair at another checkout',[{source_checkout_sha:'c'.repeat(40),...original.execution_source}]]
+    ];
+  for(const [label,previous_execution_sources]of selectors){
+    const f=runtimeFixture(null,{...original,previous_execution_sources});let clockCalls=0;
+    const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
+      fetchImpl:()=>{clockCalls++;throw Error('INVALID_EXECUTION_HISTORY_MUST_NOT_ENTER_CLOCK');}});
+    assert.equal(r.status,'PARTIAL',label);assert.equal(r.reason_code,'INDEPENDENT_R9_SOURCE_CONFIG_INVALID',label);assert.equal(clockCalls,0,label);
+    assert.equal(r.source_contract_raw,null,label);assert.equal(r.window,null,label);assert.equal(r.clock,null,label);
+    assert.equal(r.source_authenticated,false,label);assert.equal(r.official_metric,false,label);assert.equal(r.t0,null,label);
+  }
+  const f=runtimeFixture(null,{...original,previous_execution_sources:[]}),r=await loadIndependentR9RuntimeInputs({request:f.request,
+    budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY});
+  const expected=JSON.parse(r.reviewed_expected_sources_raw);
+  assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,[]);
+  assert.deepEqual(r.natural_selection.execution_source_templates,[expected.execution_source]);
+});
+
+test('current admission, dispatch and slot workflow, profile or role hash mismatches fail before any clock request despite retained old templates',async()=>{
+  const original=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),changes=[
+    ['admission script',cfg=>{const p=cfg.admission_source.script_path;cfg.admission_source.script_blob=gitBlob(Buffer.concat([fs.readFileSync(path.join(repo,p)),Buffer.from('\n// mismatched mock pin\n')]));}],
+    ...['.github/workflows/clued-work-admission-dispatch.yml','.github/workflows/clued-merge-slot-ci.yml'].map(p=>[p,cfg=>{
+      const d=cfg.natural_producers.find(d=>d.workflow_path===p);assert.ok(d,'current registered workflow is required');
+      d.workflow_blob=gitBlob(Buffer.concat([fs.readFileSync(path.join(repo,p)),Buffer.from('\n# mismatched mock pin\n')]));}]),
+    ['profiles',cfg=>{cfg.execution_source.profiles_sha256=sha256(Buffer.concat([fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json')),Buffer.from('\n ')]));}],
+    ['roles',cfg=>{cfg.execution_source.role_specs_sha256=sha256(Buffer.concat([fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json')),Buffer.from('\n ')]));}]
+  ];
+  for(const [label,change]of changes){
+    const cfg=structuredClone(original);change(cfg);const f=runtimeFixture(null,cfg);let clockCalls=0;
+    const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
+      fetchImpl:()=>{clockCalls++;throw Error('MISMATCH_MUST_NOT_ENTER_CLOCK');}});
+    assert.equal(r.status,'PARTIAL',label);assert.equal(r.reason_code,'INDEPENDENT_R9_SOURCE_CONFIG_INVALID',label);assert.equal(clockCalls,0,label);
+    assert.equal(r.source_contract_raw,null,label);assert.equal(r.window,null,label);assert.equal(r.clock,null,label);
+    assert.equal(r.source_authenticated,false,label);assert.equal(r.official_metric,false,label);assert.equal(r.t0,null,label);
+  }
+});
+
 test('real loader wire obtains a separately pinned forward epoch through the actual C1 operations under mock HTTP, never a seven-day packet selection',async()=>{
   const uid=n=>'10000000-0000-4000-8000-'+String(n).padStart(12,'0'),opening=String(BigInt(Date.parse('2026-10-08T06:00:00Z'))*1000n),closing=String(BigInt(Date.parse(at))*1000n);
   const pins={epoch_id:uid(1),stream_id:uid(2),clock_generation_id:uid(3),foundation_digest:'a'.repeat(64),catalog_digest:'b'.repeat(64)},
-    epoch={epoch_id:uid(1),activation_receipt_id:uid(9),opening_us:opening,pins},f=runtimeFixture(epoch),calls=[];
+    epoch={epoch_id:uid(1),activation_receipt_id:uid(9),opening_us:opening,pins},cfg=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),f=runtimeFixture(epoch,cfg),calls=[];
   const auth={schema:'clued.clock-audit-transport-auth/1',status:'AUTHENTICATED_TARGET_READ',context_key:'project:'+targetScope.project_id,
     queue_ref:targetScope.queue_ref,transport_definition_digest:'c'.repeat(64),binding_scope_fingerprint:'d'.repeat(64),contributor_count:1};
   const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
@@ -302,7 +385,10 @@ test('real loader wire obtains a separately pinned forward epoch through the act
           epoch:{epoch_id:uid(1),queue_ref:targetScope.queue_ref,opening_us:opening},seal:{closing_us:closing}}});}});
   assert.deepEqual(calls,['clock_seal','clock_page']);assert.equal(r.status,'R9_RUNTIME_INPUT_CANDIDATE');
   assert.equal(r.window.start,'2026-10-08T06:00:00.000000Z');assert.equal(r.window.end,'2026-10-11T06:00:03.000000Z');
-  assert.equal(r.forward_epoch.required_continuous_hours,72);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+  const expected=JSON.parse(JSON.parse(r.source_contract_raw).four_expected_sources_raw);
+  assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,cfg.previous_execution_sources);
+  assert.deepEqual(expected.admission_sources,[{...cfg.admission_source,source_checkout_sha:subject,default_branch:'main'},...cfg.previous_admission_sources]);
+  assert.equal(r.forward_epoch.required_continuous_hours,24);assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
 });
 test('clock intake never substitutes public database credentials for a denied or wrong audit Binding',async()=>{
   const uid=n=>'10000000-0000-4000-8000-'+String(n).padStart(12,'0'),epoch={epoch_id:uid(1),activation_receipt_id:uid(9),
