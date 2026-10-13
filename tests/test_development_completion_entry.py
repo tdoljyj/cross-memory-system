@@ -73,6 +73,9 @@ class DevelopmentEntryTests(unittest.TestCase):
             host.execute.return_value = result
             entry.run_captured_stdio_bootstrap(self.bootstrap(), writer)
             self.assertGreater(host.execute.call_args.args[1]["deadline_monotonic"], time.monotonic())
+            self.assertEqual(factory.call_args.kwargs["timeout_seconds"], 30)
+            self.assertEqual(factory.call_args.kwargs["deadline_monotonic"],
+                host.execute.call_args.args[1]["deadline_monotonic"] - entry.observed.legacy.CLEANUP_RESERVE_SECONDS)
         ready, terminal = [json.loads(line) for line in writer.getvalue().splitlines()]
         self.assertEqual(ready["kind"], "host_ready")
         self.assertEqual(terminal["result"]["stdout"], {"encoding": "base64", "data": "/wA="})
@@ -93,6 +96,24 @@ class DevelopmentEntryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "CLEANUP_UNVERIFIED"):
                 entry.run_captured_stdio_bootstrap(self.bootstrap(), writer)
             self.assertEqual(len(writer.getvalue().splitlines()), 1)
+
+    def test_extended_control_bootstrap_requires_explicit_bound_budget(self):
+        for control in (None, True, 0, 226):
+            plan = {"budget": {"wall_seconds": 120}}
+            if control is not None: plan["budget"]["control_wall_seconds"] = control
+            with mock.patch.object(entry, "_capture_child_job", return_value=object()), \
+                    mock.patch.object(entry.FixedDevelopmentEntry, "for_clued_stdio") as factory:
+                with self.assertRaises(ValueError):
+                    entry.run_captured_stdio_bootstrap(self.bootstrap(plan=plan, remaining_seconds=210), io.BytesIO())
+                factory.assert_not_called()
+        with mock.patch.object(entry, "_capture_child_job", return_value=object()), \
+                mock.patch.object(entry.FixedDevelopmentEntry, "for_clued_stdio") as factory:
+            factory.return_value.__enter__.return_value.execute.return_value = {
+                "owned_cleanup_verified": True, "authority_effect": "NONE"}
+            entry.run_captured_stdio_bootstrap(self.bootstrap(
+                plan={"budget": {"wall_seconds": 120, "control_wall_seconds": 225}},
+                remaining_seconds=210), io.BytesIO())
+            self.assertEqual(factory.call_args.kwargs["timeout_seconds"], 30)
 
     def test_actual_windows_parent_kill_closes_job_and_descendant(self):
         self.assertEqual(os.name, "nt", "native Windows proof required; no skip")

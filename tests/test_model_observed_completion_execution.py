@@ -57,6 +57,57 @@ class ObservedCallerSourceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_control_budget_cannot_silently_expand_model_runtime(self):
+        clock = [time.monotonic()]
+        self.plan["budget"].update(control_wall_seconds=225, wall_seconds=20)
+        self.plan["deadline_monotonic"] = clock[0] + 210
+        def boundary(phase, view, seal, opened):
+            if phase in ("preflight", "before_observation_open", "observation_opened", "consume"):
+                clock[0] += 16  # Replay slow control reads without sleeping or a model.
+        def transport(argv, cwd, env, deadline, limits, check, stream):
+            self.assertEqual(deadline, clock[0] + 20,
+                "Actual spawn/Job/pipe primitive must receive the model cutoff")
+            check("before_start")
+            clock[0] += 19
+            check("before_resume")
+            clock[0] += 2
+            with self.assertRaisesRegex(ValueError, "BOUNDARY_DEADLINE"):
+                check("running")
+            return {"outcome": "TIMEOUT", "returncode": None, "owned_cleanup_verified": True,
+                    "stdout_raw": b"", "stderr_raw": b"", "elapsed_seconds": 21}
+        with mock.patch.object(S, "RUNTIME_FILES", self.fixture_pins), \
+                mock.patch.object(L.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(S, "_transport", side_effect=transport):
+            got = S.execute_observed_completion(self.plan, boundary=boundary)
+        self.assertEqual(got["outcome"], "TIMEOUT")
+        self.assertFalse(got["model_output_validated"])
+
+    def test_control_deadline_remains_shorter_than_model_budget_when_needed(self):
+        clock = [time.monotonic()]
+        self.plan["budget"].update(control_wall_seconds=60, wall_seconds=120)
+        self.plan["deadline_monotonic"] = clock[0] + 60
+        def transport(argv, cwd, env, deadline, limits, check, stream):
+            check("before_start")
+            clock[0] += 61
+            with self.assertRaisesRegex(ValueError, "BOUNDARY_DEADLINE"):
+                check("before_resume")
+            return {"outcome": "TIMEOUT", "returncode": None, "owned_cleanup_verified": True,
+                    "stdout_raw": b"", "stderr_raw": b"", "elapsed_seconds": 61}
+        with mock.patch.object(S, "RUNTIME_FILES", self.fixture_pins), \
+                mock.patch.object(L.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(S, "_transport", side_effect=transport):
+            got = S.execute_observed_completion(self.plan, boundary=lambda *args: None)
+        self.assertEqual(got["outcome"], "OBSERVATION_UNVERIFIED")
+
+    def test_control_budget_invalid_values_reject_before_file_effects(self):
+        for value in (True, 0, 226, float("nan")):
+            self.plan["budget"]["control_wall_seconds"] = value
+            with mock.patch.object(Path, "open") as opening, mock.patch.object(S, "_transport") as run:
+                with self.assertRaises(ValueError):
+                    S.execute_observed_completion(self.plan, boundary=lambda *args: None)
+                opening.assert_not_called()
+                run.assert_not_called()
+
     def test_fixed_successor_command_and_runtime_pins_fail_closed(self):
         argv = S.command(self.plan, 123)
         self.assertEqual(argv[argv.index("--clued-observation-handle")+1],"123")
