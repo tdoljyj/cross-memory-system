@@ -8,12 +8,10 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
-// Owner auto-approval switch (migration 20261008170000_owner_auto_approve_v1;
-// OwnerCredential.v0.1.md §12, Owner Decision 5ce219c6, Task 8eb340c7). The
-// Owner turns it on from the signed-in page (two steps); while it is on, a
-// request for any registered action but connection.permission is approved in
-// the call that opens it, and each door uses the new grant at once.
+// Persistent successor: default On, one Native CAS call, exact grants and the
+// existing allowlist/door rules. Historical tokens and grants keep provenance.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -90,77 +88,95 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     clients.push(anon);
     await anon.connect();
     await anon.query('set role anon');
+    const worker = server.getPgClient();
+    clients.push(worker);
+    await worker.connect();
+    await setWorkerGatewayCaller(worker);
     const human = server.getPgClient();
     clients.push(human);
     await human.connect();
     await human.query('set role authenticated');
-    const agent = async (who, name, input) =>
-      (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v;
+    const agent = async (who, name, input) => CI_SIGNATURES.includes(name + '(text,jsonb)')
+      ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who], input])).rows[0].v
+      : workerGatewayRpc(worker, name, tokens[who], input);
     const native = async (name, input, claims = session(userId)) => {
       await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
         [claims.sub ?? '', JSON.stringify(claims)]);
       return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
     };
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
-    const turnOn = async (input = {}, claims) => {
-      const issued = await native('clued_owner_auto_approve_confirmation_issue_v1', input, claims);
-      assert.equal(issued.status, 'issued', JSON.stringify(issued));
-      return committed(await native('clued_owner_auto_approve_on_v1',
-        { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }, claims));
-    };
+    const setSwitch = async (enabled) => committed(await native('clued_owner_auto_approve_set_v1',
+      { enabled, base_version: (await native('clued_owner_grants_list_v1', {})).auto_approve.version }));
     const ask = (input) => agent('claude', 'clued_owner_request_v1', { idempotency_key: uuid(), ...input });
     const listed = () => native('clued_owner_grants_list_v1', {});
     const sha = (c) => `repo:tdoljyj/cross-memory-system/${c.repeat(40)}`;
 
-    // --- Off by default: requests wait for the Owner as before. ---
+    // --- On by default, including users created after the migration. ---
     let list = await listed();
-    assert.equal(list.auto_approve.on, false);
-    const excluded = ['connection.permission', 'model.dataset_split.producer', 'model.dataset_split.recognize',
+    assert.equal(list.auto_approve.on, true);
+    assert.equal(list.auto_approve.version, 0);
+    assert.equal(list.auto_approve.persistent, true);
+    assert.equal(list.auto_approve.expires_at, null);
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_auto_approve_settings_v1
+      where user_id=$1`, [userId])).rows[0].n, 0, 'reading a default does not create a setting or receipt');
+    const excluded = ['connection.permission', 'model.dataset_split.bootstrap', 'model.dataset_split.producer', 'model.dataset_split.recognize',
       'model.dataset_split.verify'];
     assert.deepEqual(list.auto_approve.excluded.map((x) => x.action), excluded);
     assert.deepEqual(list.auto_approve.covers,
       ['migration.production', 'release.production', 'repo.protected_change', 'work_claim.extra_claims']);
+    const defaultGrant = committed(await ask({ action: 'release.production', resources: [sha('0')] }));
+    assert.equal(defaultGrant.request.status, 'approved_once');
+    const policy = (await admin.query(`select s.policy_source,s.token_id,s.expires_at,r.metadata
+      from clued_private.owner_grants_v1 g join clued_private.owner_auto_approve_v1 s on s.id=g.auto_approve_id
+      join public.clued_audit_receipts r on r.id=s.receipt_id where g.id=$1`,
+      [defaultGrant.request.grant.grant_id])).rows[0];
+    assert.equal(policy.policy_source, 'default_on');
+    assert.equal(policy.token_id, null);
+    assert.equal(policy.expires_at, null);
+    assert.equal(policy.metadata.principal, 'system_default_policy');
+    assert.equal(policy.metadata.policy, 'owner_auto_approve_persistent_v1');
+    assert.equal((await listed()).auto_approve.version, 0, 'materializing default does not change effective CAS version');
+    const firstOff = await setSwitch(false);
+    assert.deepEqual([firstOff.auto_approve.on, firstOff.auto_approve.version], [false, 1]);
     const before = committed(await ask({ action: 'release.production', resources: [sha('a')] }));
     assert.equal(before.request.status, 'pending');
 
-    // --- Turning it on: Native two steps only, at most 7 days. ---
-    const offered = await native('clued_owner_auto_approve_confirmation_issue_v1', {});
-    assert.equal(offered.confirmation_view.expires_seconds, 86400, 'default 24 hours');
-    assert.deepEqual(offered.confirmation_view.covers.map((x) => [x.action, x.approval]), [
-      ['migration.production', 'once'], ['release.production', 'once'],
-      ['repo.protected_change', 'once'], ['work_claim.extra_claims', 'grant']]);
-    assert.deepEqual(offered.confirmation_view.excluded.map((x) => x.action), excluded);
+    // --- One Native step, strict boolean/version, no duration or old token path. ---
     await assert.rejects(() => admin.query(`update clued_private.owner_grant_actions set auto_approvable=true
       where action='connection.permission'`), /owner_grant_actions_auto_approvable_check/);
-    assert.equal((await native('clued_owner_auto_approve_confirmation_issue_v1', { expires_seconds: 604801 })).error_code,
-      'owner_auto_approve_duration_invalid');
-    assert.equal((await native('clued_owner_auto_approve_confirmation_issue_v1', { reason: 'x' })).error_code,
+    assert.equal((await native('clued_owner_auto_approve_set_v1', { enabled: 'true', base_version: 1 })).error_code,
+      'owner_auto_approve_enabled_invalid');
+    assert.equal((await native('clued_owner_auto_approve_set_v1', { enabled: true, base_version: 1.5 })).error_code,
+      'owner_auto_approve_base_version_invalid');
+    assert.equal((await native('clued_owner_auto_approve_set_v1', { enabled: true, base_version: 1, expires_seconds: 3600 })).error_code,
       'owner_auto_approve_unknown_field');
-    assert.equal((await native('clued_owner_auto_approve_on_v1',
-      { confirmation_token: offered.confirmation_token, view_digest: '0'.repeat(64) })).error_code,
-      'confirmation_token_binding_mismatch', 'a wrong digest burns the token');
-    assert.equal((await native('clued_owner_auto_approve_on_v1',
-      { confirmation_token: offered.confirmation_token, view_digest: offered.view_digest })).error_code,
-      'confirmation_token_reused');
-    const otherSession = await native('clued_owner_auto_approve_confirmation_issue_v1', {});
-    assert.equal((await native('clued_owner_auto_approve_on_v1',
-      { confirmation_token: otherSession.confirmation_token, view_digest: otherSession.view_digest },
-      session(userId, 'sess-other'))).error_code, 'confirmation_token_binding_mismatch');
-    await assert.rejects(() => anon.query('select public.clued_owner_auto_approve_confirmation_issue_v1($1)', [{}]),
-      /permission denied/);
-    await assert.rejects(() => anon.query('select public.clued_owner_auto_approve_on_v1($1)', [{}]), /permission denied/);
+    assert.equal((await native('clued_owner_auto_approve_set_v1', { enabled: true, base_version: 1 },
+      session(userId, null))).error_code, 'owner_auto_approve_session_id_required');
+    await assert.rejects(() => native('clued_owner_auto_approve_set_v1', { enabled: true, base_version: 1 },
+      session(userId, 'oauth', { client_id: 'delegated-client' })), /direct_human_session_required/);
+    await assert.rejects(() => anon.query('select public.clued_owner_auto_approve_set_v1($1)',
+      [{ enabled: true, base_version: 1 }]), /permission denied/);
     await assert.rejects(() => anon.query('select clued_private.owner_auto_approve_request_v1(null)'), /permission denied/);
+    await assert.rejects(() => human.query('select * from clued_private.owner_auto_approve_settings_v1'), /permission denied/);
+    for (const name of ['clued_owner_auto_approve_confirmation_issue_v1', 'clued_owner_auto_approve_on_v1',
+      'clued_owner_auto_approve_off_v1']) {
+      assert.equal((await native(name, {})).error_code, 'owner_auto_approve_successor_required');
+    }
+    const stale = await native('clued_owner_auto_approve_set_v1', { enabled: true, base_version: 0 });
+    assert.equal(stale.error_code, 'owner_auto_approve_version_conflict');
+    assert.equal(stale.auto_approve.version, 1);
     assert.equal((await listed()).auto_approve.on, false);
 
-    const on = await turnOn();
+    const on = await setSwitch(true);
     assert.equal(on.auto_approve.on, true);
-    const switchEnd = Date.parse(on.auto_approve.expires_at);
-    assert.ok(Math.abs(switchEnd - Date.now() - 86400_000) < 60_000);
+    assert.equal(on.auto_approve.version, 2);
+    assert.equal(on.auto_approve.expires_at, null);
     assert.equal((await admin.query(`select metadata->>'receipt_kind' k from public.clued_audit_receipts where id=$1`,
-      [on.receipt_id])).rows[0].k, 'OWNER_AUTO_APPROVE_ON');
+      [on.receipt_id])).rows[0].k, 'OWNER_AUTO_APPROVE_SET');
     // Another user's switch is their own.
     assert.equal(committed(await agent('stranger', 'clued_owner_request_v1',
-      { idempotency_key: uuid(), action: 'release.production', resources: [sha('a')] })).request.status, 'pending');
+      { idempotency_key: uuid(), action: 'release.production', resources: [sha('a')] })).request.status, 'approved_once');
+    assert.equal((await listed()).auto_approve.switch_id, on.auto_approve.switch_id);
 
     // --- An Agent's request is approved in the same call: the result is the receipt. ---
     const high = committed(await ask({ action: 'release.production', resources: [sha('b')],
@@ -178,13 +194,22 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     assert.equal(given.metadata.receipt_kind, 'OWNER_GRANT_GIVEN');
     assert.equal(given.metadata.principal, 'owner_auto_approve');
     assert.equal(given.metadata.switch_receipt_id, on.receipt_id);
+    assert.ok(Math.abs(Date.parse(high.request.grant.expires_at) - Date.now() - 86400_000) < 60_000,
+      'persistent setting leaves a high-risk grant bounded to 24 hours');
+    const consumeExact = async (binding, resources) => (await admin.query(
+      'select clued_private.owner_grant_consume_v1($1,$2,$3,$4,$5) v',
+      [userId, binding, 'release.production', resources, null])).rows[0].v;
+    assert.equal(await consumeExact(bindingIds.release, [sha('b')]), null, 'automatic approval remains Binding-specific');
+    assert.equal(await consumeExact(bindingIds.claude, [sha('7')]), null, 'automatic approval remains resource-specific');
+    assert.equal((await consumeExact(bindingIds.claude, [sha('b')])).use, 1);
+    assert.equal(await consumeExact(bindingIds.claude, [sha('b')]), null, 'one-use approval cannot be consumed twice');
     // Status reads and the earlier pending request.
     assert.equal((await agent('claude', 'clued_owner_request_status_v1', { request_id: high.request.request_id }))
       .request.status, 'approved_once');
     assert.equal((await agent('claude', 'clued_owner_request_status_v1', { request_id: before.request.request_id }))
       .request.status, 'pending', 'a request opened before the switch waits for the Owner');
 
-    // A routine action gets the Agent's suggestion, never past the switch's end.
+    // A routine action gets its bounded duration independently of the switch.
     const routine = committed(await ask({ action: 'work_claim.extra_claims', resources: ['record:' + uuid()],
       suggested_grant: { expires_seconds: 3600, max_uses: 5 } }));
     assert.equal(routine.request.status, 'granted');
@@ -192,7 +217,7 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     assert.ok(Math.abs(Date.parse(routine.request.grant.expires_at) - Date.now() - 3600_000) < 60_000);
     const long = committed(await ask({ action: 'work_claim.extra_claims', resources: ['record:' + uuid()],
       suggested_grant: { expires_seconds: 604800 } }));
-    assert.ok(Date.parse(long.request.grant.expires_at) <= switchEnd, 'capped at the switch end');
+    assert.ok(Math.abs(Date.parse(long.request.grant.expires_at) - Date.now() - 604800_000) < 60_000);
 
     // connection.permission and the model actions are never automatic: a
     // pending request for one comes back unchanged.
@@ -247,33 +272,43 @@ test('owner auto-approval: the switch approves requests at once, never connectio
     assert.deepEqual(claimRequest.map((r) => r.status), ['granted']);
     assert.equal((await admin.query('select uses from clued_private.owner_grants_v1 where id=$1',
       [claimRequest[0].grant_id])).rows[0].uses, 1);
+    assert.equal((await admin.query('select task_id from clued_private.owner_grants_v1 where id=$1',
+      [claimRequest[0].grant_id])).rows[0].task_id, taskId, 'automatic work-claim grant retains its exact Task');
+    assert.equal((await admin.query('select clued_private.owner_grant_consume_v1($1,$2,$3,$4,$5) v',
+      [userId, bindingIds.claude, 'work_claim.extra_claims', [`record:${taskId}`], uuid()])).rows[0].v, null,
+      'an automatic Task grant cannot cover another Task');
 
     // --- /grants marks what the switch gave. ---
     list = await listed();
     assert.equal(list.auto_approve.on, true);
-    assert.ok(list.grants.some((g) => g.grant_id === high.request.grant.grant_id && g.auto_approved === true));
+    assert.ok(list.grants.some((g) => g.grant_id === routine.request.grant.grant_id && g.auto_approved === true));
     assert.ok(list.pending_requests.some((r) => r.request_id === permission.request.request_id));
 
     // --- Off: one step, new requests wait again, grants already given stay. ---
-    const off = committed(await native('clued_owner_auto_approve_off_v1', {}));
+    const off = await setSwitch(false);
     assert.equal(off.auto_approve.on, false);
-    assert.equal(committed(await native('clued_owner_auto_approve_off_v1', {})).replayed, true);
+    assert.equal((await setSwitch(false)).replayed, true);
     assert.equal(committed(await ask({ action: 'release.production', resources: [sha('f')] })).request.status, 'pending');
     result = await agent('release', 'clued_owner_grant_door_consume_v1', { action: 'release.production', resources: [sha('9')] });
     assert.deepEqual([result.consumed, result.owner_request.status], [false, 'pending']);
-    assert.ok((await listed()).grants.some((g) => g.grant_id === high.request.grant.grant_id));
+    assert.ok((await listed()).grants.some((g) => g.grant_id === routine.request.grant.grant_id));
 
-    // --- A switch period ends on its own; turning on again replaces the live one. ---
-    const short = await turnOn({ expires_seconds: 600 });
-    const again = await turnOn({ expires_seconds: 1200 });
-    assert.equal((await admin.query(`select count(*)::int n from clued_private.owner_auto_approve_v1
-      where user_id=$1 and turned_off_at is null`, [userId])).rows[0].n, 1);
-    assert.notEqual(short.auto_approve.switch_id, again.auto_approve.switch_id);
+    // --- Persistent On survives elapsed time; old provenance and grant expiry stay. ---
+    const again = await setSwitch(true);
     await admin.query(`update clued_private.owner_auto_approve_v1
-      set turned_on_at=turned_on_at-interval '1 hour',expires_at=clock_timestamp()-interval '1 second' where id=$1`,
+      set turned_on_at=turned_on_at-interval '30 days' where id=$1`,
       [again.auto_approve.switch_id]);
-    assert.equal((await listed()).auto_approve.on, false);
-    assert.equal(committed(await ask({ action: 'release.production', resources: [sha('8')] })).request.status, 'pending');
+    assert.equal((await listed()).auto_approve.on, true);
+    assert.equal(committed(await ask({ action: 'release.production', resources: [sha('8')] })).request.status, 'approved_once');
+    await assert.rejects(() => admin.query(`update clued_private.owner_auto_approve_v1
+      set expires_at=clock_timestamp()+interval '1 hour' where id=$1`, [again.auto_approve.switch_id]),
+      /owner_auto_approve_v1_policy_source_check|owner_auto_approve_v1_check/);
+    const legacyCarrier = (await admin.query(`select * from clued_private.owner_auto_approve_v1 where id=$1`,
+      [on.auto_approve.switch_id])).rows[0];
+    assert.equal(legacyCarrier.turned_off_at, null, 'old receipt carriers are retained untouched');
+    await admin.query('update public.clued_agent_bindings set revoked_at=clock_timestamp() where id=$1', [bindingIds.claude]);
+    await assert.rejects(() => ask({ action: 'release.production', resources: [sha('6')] }), /binding_not_authorized/,
+      'persistent On never bypasses current Binding revocation');
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
