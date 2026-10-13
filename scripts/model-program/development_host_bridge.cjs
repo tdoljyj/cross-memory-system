@@ -1,7 +1,8 @@
 'use strict';
 // Called only by the fixed Host that owns the local child's private stdio pipes.
 // Captures the already issued Profile binding and real protected Clued reader.
-// No process launch, Profile issuance, permission or generic command is exposed.
+// A fixed child composition is available only with separately admitted pins.
+// No Profile issuance, permission or generic command is exposed.
 const SCHEMA = 'clued.development-currentness-channel/1';
 const MAX_FRAME_BYTES = 32768;
 const PHASES = new Set(['preflight','before_observation_open','observation_opened','consume',
@@ -60,4 +61,216 @@ function makeCluedDevelopmentHostBridge({tools,ownerCapture,issued,sessionRef,bo
   return makeDevelopmentHostBridge({reader,bound});
 }
 
-module.exports=Object.freeze({makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA,MAX_FRAME_BYTES});
+function makeCapturedToolMailbox({sessionRef,wallSeconds}) {
+  // Host-internal adapter for a Node session whose authenticated protected
+  // tools live in its calling Host, rather than in the Python child. The Host
+  // drains private requests and invokes its ORIGINAL four read-only tools;
+  // child stdio never carries this mailbox, tokens or reply identifiers.
+  need(typeof sessionRef==='string' && sessionRef.length>0
+    && Number.isFinite(wallSeconds) && wallSeconds>0 && wallSeconds<=120,'MAILBOX_CAPTURE');
+  const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+  const methods=['clued_session_resume','clued_search_context','clued_session_reconcile','clued_work_verify'];
+  const end=performance.now()+wallSeconds*1000;
+  const waiting=new Map();let count=0,sealed=false;
+  const tools={};
+  for(const method of methods) {
+    tools['mcp__codex_apps__clued_'+method]=args=>{
+      need(!sealed && performance.now()<end && ++count<=256,'MAILBOX_SEALED_OR_LIMIT');
+      const captured=JSON.parse(stable(args));
+      need((method==='clued_work_verify'?captured.scope:captured.context_key)===scope,
+        'MAILBOX_CONTEXT');
+      const allowed={clued_session_resume:['context_key','client_session_id','event_limit','event_budget_bytes'],
+        clued_search_context:['context_key','session_token','scope','query','limit','max_bytes'],
+        clued_session_reconcile:['context_key','session_token'],clued_work_verify:['scope','claim_id']};
+      need(Object.keys(captured).every(key=>allowed[method].includes(key)),'MAILBOX_ARGUMENTS');
+      if(method==='clued_search_context')need(captured.scope==='context','MAILBOX_CONTEXT_SEARCH_ONLY');
+      if(method==='clued_session_resume')need(captured.client_session_id===sessionRef,'MAILBOX_SESSION');
+      if(method==='clued_work_verify')need(!('pr_ref' in captured),'MAILBOX_NO_PR_ADMISSION');
+      const id=require('node:crypto').randomBytes(24).toString('hex');
+      return new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>{waiting.delete(id);reject(new Error('FIXED_HOST_MAILBOX_DEADLINE'));},
+          Math.max(1,end-performance.now()));
+        waiting.set(id,{method,args:captured,resolve,reject,timer,delivered:false});
+      });
+    };
+  }
+  return Object.freeze({tools:Object.freeze(tools),
+    take(){need(!sealed && performance.now()<end,'MAILBOX_SEALED_OR_EXPIRED');
+      return [...waiting].filter(([,row])=>!row.delivered).map(([id,row])=>{
+        row.delivered=true;return {id,method:row.method,args:JSON.parse(stable(row.args))};});},
+    settle(id,result){need(!sealed && performance.now()<end && waiting.has(id),'MAILBOX_LATE_OR_REPLAY');
+      const row=waiting.get(id);need(row.delivered,'MAILBOX_UNDELIVERED');
+      waiting.delete(id);clearTimeout(row.timer);row.resolve(result);},
+    close(){sealed=true;for(const row of waiting.values()){
+      clearTimeout(row.timer);row.reject(new Error('FIXED_HOST_MAILBOX_CLOSED'));}waiting.clear();}
+  });
+}
+
+async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bound,
+    bootstrap,python,sourceDirectory,sourceFiles,workingDirectory}) {
+  // This is a candidate fixed Host controller. Its installation/qualification
+  // and fresh exact experiment admission are required separately.
+  const start=performance.now();
+  const bridge=makeCluedDevelopmentHostBridge({tools,ownerCapture,issued,sessionRef,bound});
+  const {createHash}=require('node:crypto');
+  const fs=require('node:fs/promises');
+  const path=require('node:path');
+  const {spawn}=require('node:child_process');
+  need(bootstrap?.schema==='clued.fixed-development-child-bootstrap/1'
+    && typeof bootstrap.remaining_seconds==='number' && Number.isFinite(bootstrap.remaining_seconds)
+    && bootstrap.remaining_seconds>0 && bootstrap.remaining_seconds<=120, 'BOOTSTRAP');
+  const frozen=JSON.parse(stable(bootstrap));
+  need(Object.keys(frozen).sort().join(',')===
+    'identity,live_pins,output_directory,output_name,plan,remaining_seconds,schema','BOOTSTRAP_FIELDS');
+  need(typeof frozen.plan?.budget?.wall_seconds==='number'
+    && Number.isFinite(frozen.plan.budget.wall_seconds)
+    && frozen.plan.budget.wall_seconds>0 && frozen.plan.budget.wall_seconds<=120,'PLAN_WALL');
+  const deadline=start+Math.min(frozen.remaining_seconds,frozen.plan.budget.wall_seconds)*1000;
+  // Reserve five seconds inside the declared total for parent close/reaping.
+  const executionEnd=deadline-5000;
+  const active=()=>need(performance.now()<executionEnd,'DEADLINE');
+  const within=async(promise,end=executionEnd)=>{
+    let timer;
+    try {return await Promise.race([promise,new Promise((_,reject)=>{
+      timer=setTimeout(()=>reject(new Error('FIXED_HOST_DEADLINE')),Math.max(1,end-performance.now()));
+    })]);} finally {clearTimeout(timer);}
+  };
+  need(stable(frozen.identity)===stable(bound.identity), 'BOOTSTRAP_IDENTITY');
+  need(createHash('sha256').update(stable(frozen.plan)).digest('hex')===bound.execution_plan_sha256,
+    'BOOTSTRAP_PLAN');
+  need(frozen.live_pins?.claim_id===issued.claim_id && frozen.live_pins.claim_fence===issued.claim_fence
+    && frozen.live_pins.task_version===issued.task_version, 'BOOTSTRAP_LIVE_PINS');
+  need(process.platform==='win32' && path.isAbsolute(sourceDirectory) && path.isAbsolute(workingDirectory)
+    && typeof python?.path==='string' && path.isAbsolute(python.path)
+    && /^[0-9a-f]{64}$/.test(python.sha256) && Array.isArray(sourceFiles) && sourceFiles.length>0,
+    'FIXED_HOST_SOURCE_PINS');
+  const names=['development_completion_entry.py','development_attempt_ledger.py',
+    'development_currentness_channel.py','development_windows_namespace.py',
+    'observed_completion_execution.py','local_completion_execution.py'];
+  need(sourceFiles.length===names.length
+    && new Set(sourceFiles.map(row=>row.path)).size===names.length
+    && names.every(name=>sourceFiles.some(row=>row.path===path.join(sourceDirectory,name))),
+    'COMPLETE_FIXED_SOURCE_CLOSURE');
+  const environment={};
+  for(const name of ['SystemRoot','WINDIR','TEMP','TMP']) {
+    const key=Object.keys(process.env).find(key=>key.toLowerCase()===name.toLowerCase());
+    if(key) environment[name]=process.env[key];
+  }
+  need(typeof environment.SystemRoot==='string' && path.isAbsolute(environment.SystemRoot),'SYSTEM_ROOT');
+  environment.PATH=path.join(environment.SystemRoot,'System32');
+  const startup=JSON.parse(stable({schema:'clued.fixed-development-startup/1',python,sourceDirectory,
+    sourceFiles,workingDirectory,environment}));
+  need(createHash('sha256').update(stable(startup)).digest('hex')===issued.startup_sha256,
+    'CAPTURED_STARTUP_PINS');
+  // Verify the exact interpreter and imported local Source closure, never model
+  // weights or runtime. These pins must be captured from the accepted request.
+  const rows=[startup.python,...startup.sourceFiles];
+  for(const row of rows) {
+    active();
+    need(typeof row.path==='string' && path.isAbsolute(row.path)
+      && Number.isSafeInteger(row.bytes) && row.bytes>0 && row.bytes<=33554432
+      && typeof row.sha256==='string' && /^[0-9a-f]{64}$/.test(row.sha256), 'SOURCE_ROW');
+    const st=await within(fs.lstat(row.path));
+    need(st.isFile() && !st.isSymbolicLink() && st.size===row.bytes, 'SOURCE_FILE_IDENTITY');
+    const bytes=await within(fs.readFile(row.path));
+    need(bytes.length===row.bytes && createHash('sha256').update(bytes).digest('hex')===row.sha256,
+      'SOURCE_DIGEST');
+  }
+  // The child has no CLI switches, shell, credentials, tool names or override
+  // code. Only the exact imported function owns model execution boundaries.
+  // -B alone still reads old pyc. Load each local dependency from its pinned
+  // source bytes, recheck inside the child, and never add this directory to
+  // sys.path. -S also disables global site/.pth startup hooks.
+  const code=`import sys,json,hashlib,importlib.abc,importlib.util
+rows={r['path'].replace('\\\\','/').rsplit('/',1)[-1][:-3]:r for r in json.loads(sys.argv[1])}
+class FixedSource(importlib.abc.MetaPathFinder,importlib.abc.Loader):
+ def find_spec(self,name,path=None,target=None):
+  if name in rows:return importlib.util.spec_from_loader(name,self,origin=rows[name]['path'])
+ def create_module(self,spec):return None
+ def exec_module(self,module):
+  row=rows[module.__name__]
+  with open(row['path'],'rb') as stream:raw=stream.read(row['bytes']+1)
+  if len(raw)!=row['bytes'] or hashlib.sha256(raw).hexdigest()!=row['sha256']:raise ValueError('FIXED_HOST_CHILD_SOURCE_DRIFT')
+  module.__file__=row['path']
+  exec(compile(raw,row['path'],'exec'),module.__dict__)
+sys.meta_path.insert(0,FixedSource())
+from development_completion_entry import run_captured_stdio_bootstrap
+run_captured_stdio_bootstrap(sys.stdin.buffer,sys.stdout.buffer)`;
+  active();
+  const child=spawn(startup.python.path,['-I','-S','-B','-u','-c',code,JSON.stringify(startup.sourceFiles)],
+    {cwd:startup.workingDirectory,env:startup.environment,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let buffer=Buffer.alloc(0), total=0, stderrBytes=0, terminal, failure, closed=false, ready=false, sequence=0;
+  let chain=Promise.resolve();
+  const end=new Promise(resolve=>{child.on('error',error=>{failure ||= error;});
+    child.on('close',code=>{closed=true;resolve(code);});});
+  const stop=()=>{if(!closed)child.kill();};
+  const fail=error=>{failure ||= error;stop();};
+  const timer=setTimeout(()=>fail(new Error('FIXED_HOST_DEADLINE')), Math.max(1,executionEnd-performance.now()));
+  const write=async value=>{
+    active();need(!failure && !closed,'CLOSED_CHANNEL');
+    const raw=JSON.stringify(value)+'\n';
+    need(Buffer.byteLength(raw)<=MAX_FRAME_BYTES,'WRITE_FRAME_LIMIT');
+    await within(new Promise((resolve,reject)=>child.stdin.write(raw,error=>error?reject(error):resolve())));
+    active();
+  };
+  for(const stream of [child.stdin,child.stdout,child.stderr]) stream.on('error',fail);
+  child.stderr.on('data',bytes=>{stderrBytes+=bytes.length;if(stderrBytes>65536)fail(new Error('FIXED_HOST_STDERR_LIMIT'));});
+  child.stdout.on('data',bytes=>{
+    if(failure)return;
+    total+=bytes.length;
+    if(total>2097152){fail(new Error('FIXED_HOST_CONTROL_STREAM_LIMIT'));return;}
+    buffer=Buffer.concat([buffer,bytes]);
+    if(buffer.length>1048576 && buffer.indexOf(10)<0){fail(new Error('FIXED_HOST_FRAME_LIMIT'));return;}
+    while(buffer.indexOf(10)>=0) {
+      const index=buffer.indexOf(10),line=buffer.subarray(0,index);buffer=buffer.subarray(index+1);
+      chain=chain.then(async()=>{
+        active();need(!failure && !terminal, 'LATE_OR_EXTRA_FRAME');
+        need(line.length<=1048576,'FRAME_LIMIT');
+        const text=new TextDecoder('utf-8',{fatal:true}).decode(line);
+        const frame=JSON.parse(text);
+        // The fixed child emits canonical JSON. Reject duplicates, whitespace
+        // tricks, non-finite values and any parser-normalized different frame.
+        need(stable(frame)===text,'NONCANONICAL_FRAME');
+        if(frame.schema===frozen.schema && frame.kind==='host_ready') {
+          need(!ready && Object.keys(frame).sort().join(',')==='job_bounded,kind,schema'
+            && frame.job_bounded===true,'JOB_READINESS');
+          ready=true;
+          await write({...frozen,remaining_seconds:(executionEnd-performance.now())/1000});
+          return;
+        }
+        need(ready,'BOOTSTRAP_NOT_READY');
+        if(frame.schema===frozen.schema && frame.kind==='terminal_result') {
+          need(line.length<=1048576 && Object.keys(frame).sort().join(',')==='kind,result,schema', 'TERMINAL_FRAME');
+          need(frame.result && frame.result.owned_cleanup_verified===true
+            && frame.result.authority_effect==='NONE'
+            && frame.result.budget_reservation?.status==='SPENT_BEFORE_MODEL_LOAD',
+            'TERMINAL_CLEANUP_OR_SPEND');
+          terminal=frame;return;
+        }
+        need(line.length<=MAX_FRAME_BYTES, 'CURRENTNESS_FRAME_LIMIT');
+        sequence++;
+        need(frame.sequence===sequence, 'CURRENTNESS_SEQUENCE');
+        const reply=await within(bridge.handle(frame));
+        active();need(!failure && !closed, 'LATE_CURRENTNESS_REPLY');
+        await write(reply);
+        need(reply.admitted===true,'CURRENTNESS_REFUSED');
+      }).catch(fail);
+    }
+  });
+  try {
+    need(Buffer.byteLength(JSON.stringify(frozen)+'\n')<=MAX_FRAME_BYTES,'BOOTSTRAP_FRAME_LIMIT');
+    const exit=await within(end);
+    await within(chain);
+    if(failure)throw failure;
+    need(exit===0 && terminal && buffer.length===0,'CHILD_EOF_OR_FAILURE');
+    return terminal.result;
+  } finally {
+    clearTimeout(timer);stop();child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();
+    // On kill, OS closes the child's non-inherited kill-on-close Job handle.
+    // A process that never reached readiness could not receive model bindings.
+    try {await within(end,deadline);need(closed,'PARENT_NOT_CLOSED');}
+    catch {throw new Error('FIXED_HOST_PARENT_CLEANUP_UNVERIFIED');}
+  }
+}
+
+module.exports=Object.freeze({makeCapturedToolMailbox,runFixedDevelopmentChild,makeCluedDevelopmentHostBridge,makeDevelopmentHostBridge,SCHEMA,MAX_FRAME_BYTES});
