@@ -123,10 +123,10 @@ async function controllerFixture(action) {
   const task='1502fd80-8ff8-4adc-b4f5-da6d462f4f8a',scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
   const record={id:'SOURCE-ONLY-APPROVAL',record_type:'decision',authority:'user_explicit',
     lifecycle_status:'active',canonical_scope:scope,receipt_id:'SOURCE-ONLY-RECEIPT',content_hash:'1'.repeat(64),
-    content:'SOURCE FIXTURE NO MODEL OR PERMISSION',version:1,type_fields:{model_development_experiment_approval:{
+    content:'SOURCE FIXTURE NO MODEL OR PERMISSION',version:1,type_fields:{rationale:{model_development_experiment_approval:{
       kind:'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT',task_id:task,purpose_id:'development',profile_id:'DEV-SOURCE-ONLY',
       request_sha256:'2'.repeat(64),max_attempts:1,training_allowed:false,production_allowed:false,qualification_allowed:false,
-      window:{not_before:new Date(Date.now()-10000).toISOString(),stop_at:new Date(Date.now()+60000).toISOString()}}}};
+      window:{not_before:new Date(Date.now()-10000).toISOString(),stop_at:new Date(Date.now()+60000).toISOString()}}}}};
   const plan={budget:{wall_seconds:12}},issued={status:'ISSUED',task_id:task,profile_id:'DEV-SOURCE-ONLY',
     request_sha256:'2'.repeat(64),profile_sha256:'3'.repeat(64),execution_plan_sha256:digest(stable(plan)),
     claim_id:'SOURCE-ONLY-CLAIM',claim_fence:1,task_version:2,task_query:'SOURCE ONLY TASK'};

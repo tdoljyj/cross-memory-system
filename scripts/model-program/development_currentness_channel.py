@@ -7,9 +7,11 @@ the exact experiment before constructing the fixed development entry.
 """
 import copy
 import json
+import math
 import queue
 import secrets
 import threading
+import time
 
 
 SCHEMA = "clued.development-currentness-channel/1"
@@ -55,12 +57,15 @@ class PrivateCurrentnessChannel:
     entry cancellation/deadline checks still govern all filesystem/model effects.
     Possession of a stdio endpoint does not qualify an unrelated generic Host.
     """
-    def __init__(self, reader, writer, *, live_pins, timeout_seconds=15):
+    def __init__(self, reader, writer, *, live_pins, timeout_seconds=15,
+                 deadline_monotonic=None):
         require(callable(getattr(reader, "readline", None))
                 and callable(getattr(writer, "write", None))
                 and callable(getattr(writer, "flush", None)), "HOST_BINARY_PIPES_REQUIRED")
         require(type(timeout_seconds) in (int, float) and 0 < timeout_seconds <= 30,
                 "HOST_CHANNEL_TIMEOUT")
+        require(deadline_monotonic is None or (type(deadline_monotonic) in (int, float)
+                and math.isfinite(deadline_monotonic)), "HOST_CHANNEL_DEADLINE")
         require(type(live_pins) is dict and set(live_pins) == {"task_version", "claim_id", "claim_fence"}
                 and type(live_pins["task_version"]) is int and live_pins["task_version"] > 0
                 and type(live_pins["claim_fence"]) is int and live_pins["claim_fence"] > 0
@@ -69,6 +74,7 @@ class PrivateCurrentnessChannel:
         self._reader, self._writer = reader, writer
         self._live_pins = copy.deepcopy(live_pins)
         self._timeout = timeout_seconds
+        self._deadline = deadline_monotonic
         self._lock = threading.Lock()
         self._sequence = 0
         self._failed = False
@@ -78,6 +84,13 @@ class PrivateCurrentnessChannel:
         require(self._lock.acquire(blocking=False), "HOST_CHANNEL_CONCURRENT_REQUEST")
         try:
             require(not self._failed, "HOST_CHANNEL_SEALED")
+            # One captured deadline spans all rounds; neither a successful reply
+            # nor the per-round cap creates a fresh execution budget.
+            wait = self._timeout if self._deadline is None else min(
+                self._timeout, self._deadline - time.monotonic())
+            if wait <= 0:
+                self._failed = True
+                raise TimeoutError("HOST_CURRENTNESS_SHARED_DEADLINE")
             self._sequence += 1
             require(self._sequence <= 4096, "HOST_CHANNEL_ROUND_LIMIT")
             request = {"schema": SCHEMA, "id": secrets.token_hex(16),
@@ -97,11 +110,13 @@ class PrivateCurrentnessChannel:
                     answer.put((None, exc))
             threading.Thread(target=receive, daemon=True).start()
             try:
-                result, error = answer.get(timeout=self._timeout)
+                result, error = answer.get(timeout=wait)
             except queue.Empty as exc:
                 raise TimeoutError("HOST_CURRENTNESS_REPLY_TIMEOUT") from exc
             if error is not None:
                 raise CurrentnessChannelError("HOST_REPLY_READ_FAILED") from error
+            if self._deadline is not None and time.monotonic() >= self._deadline:
+                raise TimeoutError("HOST_CURRENTNESS_SHARED_DEADLINE")
             reply = decode(result)
             require(type(reply) is dict and set(reply) == {"schema", "id", "sequence",
                     "phase", "admitted", "observation"}, "HOST_REPLY_FIELDS")

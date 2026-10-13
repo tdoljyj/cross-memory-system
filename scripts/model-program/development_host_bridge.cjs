@@ -53,11 +53,11 @@ function makeDevelopmentHostBridge({reader,bound}) {
   return Object.freeze({handle});
 }
 
-function makeCluedDevelopmentHostBridge({tools,ownerCapture,issued,sessionRef,bound}) {
+function makeCluedDevelopmentHostBridge({tools,ownerCapture,issued,sessionRef,bound,readPrerequisiteRefs=[]}) {
   // Production composition uses the real protected-tool reader, not a child-
   // supplied callback or a serialized observation. Issuance stays external.
   const {makeDevelopmentCurrentnessReader}=require('./development_clued_currentness.cjs');
-  const reader=makeDevelopmentCurrentnessReader({tools,ownerCapture,issued,sessionRef});
+  const reader=makeDevelopmentCurrentnessReader({tools,ownerCapture,issued,sessionRef,readPrerequisiteRefs});
   return makeDevelopmentHostBridge({reader,bound});
 }
 
@@ -67,7 +67,7 @@ function makeCapturedToolMailbox({sessionRef,wallSeconds}) {
   // drains private requests and invokes its ORIGINAL four read-only tools;
   // child stdio never carries this mailbox, tokens or reply identifiers.
   need(typeof sessionRef==='string' && sessionRef.length>0
-    && Number.isFinite(wallSeconds) && wallSeconds>0 && wallSeconds<=120,'MAILBOX_CAPTURE');
+    && Number.isFinite(wallSeconds) && wallSeconds>0 && wallSeconds<=225,'MAILBOX_CAPTURE');
   const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
   const methods=['clued_session_resume','clued_search_context','clued_session_reconcile','clued_work_verify'];
   const end=performance.now()+wallSeconds*1000;
@@ -106,26 +106,30 @@ function makeCapturedToolMailbox({sessionRef,wallSeconds}) {
   });
 }
 
-async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bound,
+async function runFixedDevelopmentChild({tools,ownerCapture,issued,sessionRef,bound,readPrerequisiteRefs=[],
     bootstrap,python,sourceDirectory,sourceFiles,workingDirectory}) {
   // This is a candidate fixed Host controller. Its installation/qualification
   // and fresh exact experiment admission are required separately.
   const start=performance.now();
-  const bridge=makeCluedDevelopmentHostBridge({tools,ownerCapture,issued,sessionRef,bound});
+  const bridge=makeCluedDevelopmentHostBridge({tools,ownerCapture,issued,sessionRef,bound,readPrerequisiteRefs});
   const {createHash}=require('node:crypto');
   const fs=require('node:fs/promises');
   const path=require('node:path');
   const {spawn}=require('node:child_process');
   need(bootstrap?.schema==='clued.fixed-development-child-bootstrap/1'
     && typeof bootstrap.remaining_seconds==='number' && Number.isFinite(bootstrap.remaining_seconds)
-    && bootstrap.remaining_seconds>0 && bootstrap.remaining_seconds<=120, 'BOOTSTRAP');
+    && bootstrap.remaining_seconds>0 && bootstrap.remaining_seconds<=225, 'BOOTSTRAP');
   const frozen=JSON.parse(stable(bootstrap));
   need(Object.keys(frozen).sort().join(',')===
     'identity,live_pins,output_directory,output_name,plan,remaining_seconds,schema','BOOTSTRAP_FIELDS');
   need(typeof frozen.plan?.budget?.wall_seconds==='number'
     && Number.isFinite(frozen.plan.budget.wall_seconds)
     && frozen.plan.budget.wall_seconds>0 && frozen.plan.budget.wall_seconds<=120,'PLAN_WALL');
-  const deadline=start+Math.min(frozen.remaining_seconds,frozen.plan.budget.wall_seconds)*1000;
+  const controlWall=frozen.plan.budget.control_wall_seconds??frozen.plan.budget.wall_seconds;
+  need(typeof controlWall==='number'&&Number.isFinite(controlWall)&&controlWall>0&&controlWall<=225,
+    'PLAN_CONTROL_WALL');
+  need(frozen.remaining_seconds<=controlWall,'BOOTSTRAP_CONTROL_BUDGET');
+  const deadline=start+Math.min(frozen.remaining_seconds,controlWall)*1000;
   // Reserve five seconds inside the declared total for parent close/reaping.
   const executionEnd=deadline-5000;
   const active=()=>need(performance.now()<executionEnd,'DEADLINE');

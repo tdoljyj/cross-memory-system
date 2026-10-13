@@ -83,7 +83,9 @@ def run_captured_stdio_bootstrap(reader, writer):
             or bootstrap["schema"] != BOOTSTRAP_SCHEMA):
         raise ValueError("FIXED_HOST_BOOTSTRAP_FIELDS")
     remaining = bootstrap["remaining_seconds"]
-    if type(remaining) not in (int, float) or not math.isfinite(remaining) or not 0 < remaining <= 120:
+    control = bootstrap.get("plan", {}).get("budget", {}).get("control_wall_seconds", 120)
+    if (type(control) not in (int, float) or not math.isfinite(control) or not 0 < control <= 225
+            or type(remaining) not in (int, float) or not math.isfinite(remaining) or not 0 < remaining <= control):
         raise ValueError("FIXED_HOST_BOOTSTRAP_DEADLINE")
     identity, plan = bootstrap["identity"], bootstrap["plan"]
     if (type(identity) is not dict or set(identity) != IDENTITY_FIELDS
@@ -94,7 +96,8 @@ def run_captured_stdio_bootstrap(reader, writer):
     with FixedDevelopmentEntry.for_clued_stdio(reader=reader, writer=writer,
             live_pins=bootstrap["live_pins"], ledger_directory=identity["ledger_directory"],
             output_directory=bootstrap["output_directory"], output_name=bootstrap["output_name"],
-            timeout_seconds=min(15, remaining)) as host:
+            timeout_seconds=min(30, remaining),
+            deadline_monotonic=plan["deadline_monotonic"] - observed.legacy.CLEANUP_RESERVE_SECONDS) as host:
         result = host.execute(identity, plan)
     # Raw model stdout/stderr are data, never currentness/control messages.
     # Encode them inside one typed terminal frame only after owned cleanup.
@@ -130,7 +133,8 @@ class FixedDevelopmentEntry:
 
     @classmethod
     def for_clued_stdio(cls, *, reader, writer, live_pins, ledger_directory,
-                        output_directory, output_name, timeout_seconds=15):
+                        output_directory, output_name, timeout_seconds=15,
+                        deadline_monotonic=None):
         """Compose the private Host channel with actual Windows namespace checks.
 
         The fixed Host owns both pipe endpoints and its authenticated Clued
@@ -138,7 +142,8 @@ class FixedDevelopmentEntry:
         """
         from development_currentness_channel import PrivateCurrentnessChannel
         channel = PrivateCurrentnessChannel(reader, writer, live_pins=live_pins,
-                                           timeout_seconds=timeout_seconds)
+                                           timeout_seconds=timeout_seconds,
+                                           deadline_monotonic=deadline_monotonic)
         return cls.for_windows_namespace(live_check=channel,
             ledger_directory=ledger_directory, output_directory=output_directory,
             output_name=output_name)
@@ -195,11 +200,14 @@ class FixedDevelopmentEntry:
         if type(budget) is not dict:
             raise ValueError("ADMITTED_BUDGET_REQUIRED")
         wall = budget.get("wall_seconds")
+        control = budget.get("control_wall_seconds", wall)
         if (type(deadline) not in (int, float) or not math.isfinite(deadline)
                 or type(wall) not in (int, float) or not math.isfinite(wall)
-                or not 0 < wall <= 120):
+                or not 0 < wall <= 120
+                or type(control) not in (int, float) or not math.isfinite(control)
+                or not 0 < control <= 225):
             raise ValueError("ADMITTED_DEADLINE_REQUIRED")
-        deadline = min(deadline, observed.legacy.time.monotonic() + wall)
+        deadline = min(deadline, observed.legacy.time.monotonic() + control)
         deadline -= observed.legacy.CLEANUP_RESERVE_SECONDS
         if not self._launch_lock.acquire(blocking=False):
             raise ValueError("HOST_LAUNCH_ALREADY_RUNNING")

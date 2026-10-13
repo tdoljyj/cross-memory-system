@@ -36,6 +36,7 @@ PLAN_FIELDS = {"executable", "working_directory", "runtime_files", "model", "pro
                "output_schema", "observation_path", "patch_sha256", "budget",
                "deadline_monotonic"}
 BUDGET_FIELDS = legacy.BUDGET_FIELDS | {"observation_bytes"}
+CONTROL_BUDGET_FIELDS = BUDGET_FIELDS | {"control_wall_seconds"}
 MAX_OBSERVATION_BYTES = 131072
 
 
@@ -48,7 +49,7 @@ def validate_plan(plan, now):
     require(type(plan) is dict and set(plan) == PLAN_FIELDS, "PLAN_FIELDS")
     require(plan["patch_sha256"] == PATCH_SHA256, "PATCH_PIN")
     budget = plan["budget"]
-    require(type(budget) is dict and set(budget) == BUDGET_FIELDS, "BUDGET_FIELDS")
+    require(type(budget) is dict and set(budget) in (BUDGET_FIELDS, CONTROL_BUDGET_FIELDS), "BUDGET_FIELDS")
     for key, ceiling in (("input_tokens", 4096), ("output_tokens", 512),
                          ("total_tokens", 4608), ("stdout_bytes", 1048576),
                          ("stderr_bytes", 1048576), ("observation_bytes", MAX_OBSERVATION_BYTES)):
@@ -56,7 +57,9 @@ def validate_plan(plan, now):
     require(budget["output_tokens"] < budget["total_tokens"], "TOTAL_BUDGET")
     wall, end = budget["wall_seconds"], plan["deadline_monotonic"]
     require(type(wall) in (int, float) and math.isfinite(wall) and 0 < wall <= 120, "WALL")
-    require(type(end) in (int, float) and math.isfinite(end) and now < end <= now + 120, "DEADLINE")
+    control = budget.get("control_wall_seconds", 120)
+    require(type(control) in (int, float) and math.isfinite(control) and 0 < control <= 225, "CONTROL_WALL")
+    require(type(end) in (int, float) and math.isfinite(end) and now < end <= now + control, "DEADLINE")
     directory = Path(plan["working_directory"])
     require(directory.is_absolute() and not str(directory).startswith(("\\\\", "//"))
             and directory.is_dir() and not directory.is_symlink()
@@ -84,7 +87,7 @@ def validate_plan(plan, now):
     require(output.name not in ("", ".", "..") and ":" not in output.name, "OBSERVATION_NAME")
     require(str(output).casefold() not in {row["path"].casefold() for row in rows}
             | {plan[key]["path"].casefold() for key in ("model", "prompt", "output_schema")}, "OBSERVATION_ALIAS")
-    return min(end, now + wall)
+    return min(end, now + (control if "control_wall_seconds" in budget else wall))
 
 
 def command(plan, handle):
@@ -178,11 +181,25 @@ def execute_observed_completion(plan, *, boundary):
     seal = legacy.digest(frozen)
     end = frozen.get("deadline_monotonic") if type(frozen) is dict else None
     wall = frozen.get("budget", {}).get("wall_seconds") if type(frozen) is dict else None
-    require(type(end) in (int, float) and math.isfinite(end) and start < end <= start + 120, "DEADLINE")
+    control = frozen.get("budget", {}).get("control_wall_seconds", 120) if type(frozen) is dict else None
+    require(type(control) in (int, float) and math.isfinite(control) and 0 < control <= 225, "CONTROL_WALL")
+    require(type(end) in (int, float) and math.isfinite(end) and start < end <= start + control, "DEADLINE")
     require(type(wall) in (int, float) and math.isfinite(wall) and 0 < wall <= 120, "WALL")
-    end = min(end, start + wall)
+    end = min(end, start + (control if "control_wall_seconds" in frozen["budget"] else wall))
     opened = None
+    before_start_completed = False
     def check(phase):
+        nonlocal end, before_start_completed
+        if phase == "before_start" and before_start_completed:
+            # The primitive repeats this same boundary immediately before
+            # Popen. No intervening I/O, no second read or renewed deadline.
+            require(legacy.time.monotonic() < end, "BOUNDARY_DEADLINE")
+            return
+        if phase == "before_start":
+            # Counting begins before process creation and the final suspended-
+            # process check. Slow control reads cannot extend model runtime.
+            end = min(end, legacy.time.monotonic() + wall)
+        require(legacy.time.monotonic() < end, "BOUNDARY_DEADLINE")
         view, reply = copy.deepcopy(frozen), queue.Queue(maxsize=1)
         object_view = copy.deepcopy(opened)
         object_seal = legacy.digest(object_view)
@@ -201,6 +218,9 @@ def execute_observed_completion(plan, *, boundary):
             raise TimeoutError("Boundary status unresolved; no launch or retry") from exc
         if error is not None:
             raise error
+        require(legacy.time.monotonic() < end, "BOUNDARY_DEADLINE")
+        if phase == "before_start":
+            before_start_completed = True
     check("preflight")
     require(os.name == "nt", "WINDOWS_ONLY")
     deadline = end - legacy.CLEANUP_RESERVE_SECONDS
@@ -228,8 +248,9 @@ def execute_observed_completion(plan, *, boundary):
         end = deadline
         import msvcrt
         handle = msvcrt.get_osfhandle(stream.fileno())
+        check("before_start")
         result = _transport(command(frozen, handle), frozen["working_directory"],
-            legacy.clean_environment(), deadline,
+            legacy.clean_environment(), end,
             {k: frozen["budget"][k + "_bytes"] for k in ("stdout", "stderr")}, check, stream)
         try:
             observed = _capture_observation(stream, frozen["budget"]["observation_bytes"], end + legacy.CLEANUP_RESERVE_SECONDS)

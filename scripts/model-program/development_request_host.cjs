@@ -58,6 +58,9 @@ function validatePayload(p) {
   need(b?.attempts === 1 && b.model_calls === 1 && b.concurrency === 1 && b.training_steps === 0
     && b.paid_cost === 0 && b.downloads === 0 && b.model_external_network_bytes === 0, 'SINGLE_NONLEARNING_BUDGET');
   need(b.control_total_seconds === 240, 'CONTROL_TOTAL_BUDGET');
+  const control = b.control_wall_seconds ?? b.wall_seconds;
+  need(Number.isSafeInteger(control) && control > 0 && control <= 225,
+    'CONTROL_CHILD_BUDGET');
   for (const [name, ceiling] of Object.entries({input_tokens:4096,output_tokens:512,total_tokens:4608,
     context_tokens:8192,stdout_bytes:131072,stderr_bytes:131072,observation_bytes:65536,
     wall_seconds:120,max_output_storage_bytes:MAX_SAVED,other_result_profile_ledger_and_receipts_max_bytes:262144}))
@@ -81,6 +84,8 @@ function validatePayload(p) {
     'FIXED_PLAN_OR_STARTUP_DIGEST');
   for (const name of ['input_tokens','output_tokens','total_tokens','stdout_bytes','stderr_bytes','observation_bytes','wall_seconds'])
     need(plan.budget?.[name] === b[name], 'PLAN_BUDGET');
+  need((plan.budget?.control_wall_seconds ?? plan.budget?.wall_seconds) === control,
+    'PLAN_CONTROL_BUDGET');
   need(plan.model?.path === p.model.absolute_path && plan.model.sha256 === p.model.sha256
     && plan.model.bytes === p.model.bytes && stable(plan.prompt) === stable(p.input.prompt)
     && stable(plan.output_schema) === stable(p.input.schema), 'PLAN_ASSETS');
@@ -168,7 +173,7 @@ function prepareFixedDevelopmentOwnerBinding({requestBytes,expectedRequestSha256
       plan:clone(p.fixed_startup.execution_plan_without_runtime_monotonic_deadline),
       live_pins:{task_version:livePins.task_version,claim_id:livePins.claim_id,claim_fence:livePins.claim_fence},
       output_directory:p.fixed_startup.output_directory,output_name:p.fixed_startup.output_name,
-      remaining_seconds:p.budget.wall_seconds}});
+      remaining_seconds:p.budget.control_wall_seconds ?? p.budget.wall_seconds}});
 }
 
 function base64Capture(value, cap) {
