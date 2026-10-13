@@ -147,7 +147,7 @@ print('ok')
         phases=[]
         def boundary(phase,view,seal,opened):
             phases.append(phase)
-            if phase=="preflight":self.assertIsNone(opened)
+            if phase in ("preflight","before_observation_open"):self.assertIsNone(opened)
             else:self.assertEqual(opened["size"],0);self.assertEqual(opened["links"],1)
         def transport(argv,cwd,env,deadline,limits,check,stream):
             self.assertIn("consume",phases)
@@ -156,7 +156,7 @@ print('ok')
                     "stdout_raw":b"{}", "stderr_raw":b"", "usage":None, "elapsed_seconds":0.01}
         with mock.patch.object(S,"RUNTIME_FILES",self.fixture_pins),mock.patch.object(S,"_transport",transport):
             got=S.execute_observed_completion(self.plan,boundary=boundary)
-        self.assertEqual(phases[:3],["preflight","observation_opened","consume"])
+        self.assertEqual(phases[:4],["preflight","before_observation_open","observation_opened","consume"])
         self.assertEqual(got["observation_capture"]["raw"],b'{"fixture":true}\n')
         self.assertIsNone(got["usage"]);self.assertFalse(got["model_output_validated"])
 
@@ -227,5 +227,24 @@ print('ok')
             with self.assertRaisesRegex(ValueError,"DEADLINE_BEFORE_CONSUME"):
                 S.execute_observed_completion(self.plan,boundary=boundary)
             run.assert_not_called()
-        self.assertEqual(phases,["preflight","observation_opened"])
+        self.assertEqual(phases,["preflight","before_observation_open","observation_opened"])
+
+    @unittest.skipUnless(os.name=="nt","Windows pre-open namespace Source fixture only")
+    def test_last_namespace_check_is_after_file_hashes_and_before_open(self):
+        order=[]
+        original=L.verify_file
+        def verify(*args,**kwargs):
+            order.append("hash")
+            return original(*args,**kwargs)
+        def boundary(phase,view,seal,opened):
+            order.append(phase)
+            if phase=="before_observation_open":
+                self.assertEqual(order.count("hash"),len(self.plan["runtime_files"])+3)
+                self.assertFalse(Path(self.plan["observation_path"]).exists())
+                raise ValueError("NAMESPACE_DRIFT")
+        with mock.patch.object(S,"RUNTIME_FILES",self.fixture_pins),mock.patch.object(L,"verify_file",side_effect=verify),mock.patch.object(S,"_transport") as run:
+            with self.assertRaisesRegex(ValueError,"NAMESPACE_DRIFT"):
+                S.execute_observed_completion(self.plan,boundary=boundary)
+            run.assert_not_called()
+        self.assertFalse(Path(self.plan["observation_path"]).exists())
 
