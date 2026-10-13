@@ -709,7 +709,8 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
       summary.natural_source_coverage=natural_inputs?{status:natural_inputs.status,count:natural_inputs.entries.length,gaps:natural_inputs.gaps,whole_population:natural_inputs.whole_population}:null;
       report.r9 = {...summary, native_coverage: native ? {status: native.status,
         fresh: native.fresh, from_sealed: native.from_sealed, population: native.population,
-        gaps: native.gaps, reason_code: native.reason_code ?? null} : null};
+        gaps: native.gaps, reason_code: native.reason_code ?? null,
+        inventory_conflict: native.inventory_conflict ?? null} : null};
       applyR9Metrics(report, r9);
     }
     writeFile(env.CI_USAGE_REPORT_PATH || path.join(workspace, REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`);
