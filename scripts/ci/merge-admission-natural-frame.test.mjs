@@ -277,15 +277,15 @@ test('same Natural Source snapshot still requires current runtime bytes even whe
 const {registeredWorkflowSource:registeredHistoryAssemblySource}=await import('./clued-workflow-profile.mjs');
 const {applicableCI:historyAssemblyApplicability}=await import('./clued-gated-proof.mjs');
 const historyAssemblyAddedWorkflows=['.github/workflows/clued-handover-external-qualification.yml','.github/workflows/clued-handover-disposable-idle.yml'];
-function historicalAssemblyFixture(){
-  const f=fixture(),oldTip='f'.repeat(40),oldRegistry=JSON.parse(f.runtime.proof_profiles_raw),oldRoles=JSON.parse(f.runtime.role_specs_raw);
+function historicalAssemblyFixture({oldSnapshot=null,currentTip=subject}={}){
+  const f=fixture(),oldTip=oldSnapshot?.source_checkout_sha??'f'.repeat(40),oldRegistry=JSON.parse(oldSnapshot?.proof_profiles_raw??f.runtime.proof_profiles_raw),oldRoles=JSON.parse(oldSnapshot?.role_specs_raw??f.runtime.role_specs_raw);
   assert.equal(Object.keys(oldRegistry.workflows).length,22);
-  for(const file of historyAssemblyAddedWorkflows){delete oldRegistry.workflows[file];delete oldRoles.workflows[file];}
+  if(!oldSnapshot)for(const file of historyAssemblyAddedWorkflows){delete oldRegistry.workflows[file];delete oldRoles.workflows[file];}
   const currentDirectory=fs.readdirSync(path.join(repo,'.github/workflows')).filter(name=>fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
       .map(name=>{const file='.github/workflows/'+name;return {path:file,sha:blob(fs.readFileSync(path.join(repo,file))),type:'blob',mode:'100644'};}),
-    oldDirectory=currentDirectory.filter(row=>!historyAssemblyAddedWorkflows.includes(row.path)),
-    snapshot={source_checkout_sha:oldTip,proof_profiles_raw:JSON.stringify(oldRegistry),role_specs_raw:JSON.stringify(oldRoles),workflow_directory:oldDirectory,
-      main_history:{base_commit:oldTip,head_commit:subject,merge_base_commit:oldTip,status:'ahead'}},
+    oldDirectory=oldSnapshot?.workflow_directory??currentDirectory.filter(row=>!historyAssemblyAddedWorkflows.includes(row.path)),
+    snapshot={source_checkout_sha:oldTip,proof_profiles_raw:oldSnapshot?.proof_profiles_raw??JSON.stringify(oldRegistry),role_specs_raw:oldSnapshot?.role_specs_raw??JSON.stringify(oldRoles),workflow_directory:oldDirectory,
+      main_history:{base_commit:oldTip,head_commit:currentTip,merge_base_commit:oldTip,status:'ahead'}},
     descriptor={source_checkout_sha:oldTip,profiles_sha256:h(snapshot.proof_profiles_raw),role_specs_sha256:h(snapshot.role_specs_raw)},
     blobs=new Map(oldDirectory.map(row=>[row.path,row.sha])),selected={workflows:Object.fromEntries(Object.keys(oldRegistry.workflows).map(file=>{
       const q=registeredHistoryAssemblySource(oldRegistry,file,blobs.get(file));assert.equal(q.passed,true);return [file,q.profile];}))},
@@ -293,11 +293,12 @@ function historicalAssemblyFixture(){
       changedFiles,commits:1,diffComplete:true,sourceQualified:true});
   assert.equal(selection.passed,true);const workflowFiles=[...selection.workflows.keys()].sort();assert.ok(workflowFiles.length);
   const contract=JSON.parse(f.runtime.source_contract_raw),expected=JSON.parse(contract.four_expected_sources_raw);
+  expected.execution_source.source_checkout_sha=currentTip;
   expected.schema='clued.merge-admission-four-source-expectations/2';expected.previous_execution_sources=[descriptor];
   contract.four_expected_sources_raw=JSON.stringify(expected);f.runtime.source_contract_raw=JSON.stringify(contract);
   f.runtime.natural_selection={...f.runtime.natural_selection,execution_source_templates:[expected.execution_source,descriptor],
-    current_execution_snapshot:{source_checkout_sha:subject,proof_profiles_raw:f.runtime.proof_profiles_raw,role_specs_raw:f.runtime.role_specs_raw,workflow_directory:currentDirectory,
-      main_history:{base_commit:subject,head_commit:subject,merge_base_commit:subject,status:'identical'}}};
+    current_execution_snapshot:{source_checkout_sha:currentTip,proof_profiles_raw:f.runtime.proof_profiles_raw,role_specs_raw:f.runtime.role_specs_raw,workflow_directory:currentDirectory,
+      main_history:{base_commit:currentTip,head_commit:currentTip,merge_base_commit:currentTip,status:'identical'}}};
   const ciPackets=[];let jobId=10000;
   for(const [index,file]of workflowFiles.entries()){
     const run=String(1000+index),profile=selected.workflows[file],route=profile.routes.find(r=>r.self_hosted)??profile.routes[0],
@@ -334,6 +335,52 @@ function historicalAssemblyRowsRemain(packet,prepared){
   for(const n of prepared.ciPackets){const x=round.execution_packets.find(x=>x.run_key===n.run.run_id+':1');assert.ok(x);
     assert.deepEqual(x.jobs,n.jobs.map(j=>({...j,id:Number(j.id)})));}
 }
+
+test('v2 actual 595 old22 replay remains exact under current 034 accepted-source wrappers; unknown and mixed pairs retain the full population',async()=>{
+  const oldTip='59522b4158322e833ef152472a924c5fb40e0b24',currentTip='034c5a0cf8931ddfa110f6516ff6b83bac8d886c',
+    file='.github/workflows/clued-handover-external-qualification.yml',current=fixture(),currentRegistry=JSON.parse(current.runtime.proof_profiles_raw),
+    currentRoles=JSON.parse(current.runtime.role_specs_raw),oldRegistry=structuredClone(currentRegistry),oldRoles=structuredClone(currentRoles),
+    wrapper=oldRegistry.workflows[file],future=wrapper.accepted_sources;
+  assert.equal(wrapper.workflow_blob,'ac90bc2f7e34a94be3c50c4581ba49cc139b3980');assert.equal(future.length,1);
+  assert.equal(future[0].workflow_blob,'b8fee41077d854e906244b9fa2d374f058dbd4a3');delete wrapper.accepted_sources;
+  delete oldRoles.workflows[file].sources[future[0].workflow_blob];
+  let profilesRaw=JSON.stringify(oldRegistry,null,2)+'\n',rolesRaw=JSON.stringify(oldRoles,null,2)+'\n',
+    directory=fs.readdirSync(path.join(repo,'.github/workflows')).filter(name=>fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
+      .map(name=>{const relative='.github/workflows/'+name;return {path:relative,sha:blob(fs.readFileSync(path.join(repo,relative))),type:'blob',mode:'100644'};});
+  // Default CI derives exact reviewed bytes without depending on Git objects.
+  // Only this explicit exact-ref offline observation enables bounded git show.
+  if(Object.hasOwn(process.env,'CLUED_NATURAL_FRAME_HISTORY_COMMIT')){
+    assert.match(process.env.CLUED_NATURAL_FRAME_HISTORY_COMMIT,/^[a-f0-9]{40}$/);assert.equal(process.env.CLUED_NATURAL_FRAME_HISTORY_COMMIT,oldTip);
+    const {execFileSync}=await import('node:child_process'),show=relative=>execFileSync('git',['show',oldTip+':'+relative],{cwd:repo,encoding:'utf8'}),
+      actualProfiles=show('scripts/ci/clued-gated-proof-profiles.json'),actualRoles=show('scripts/ci/clued-gated-proof-role-specs.json');
+    assert.equal(profilesRaw,actualProfiles);assert.equal(rolesRaw,actualRoles);profilesRaw=actualProfiles;rolesRaw=actualRoles;
+    directory=execFileSync('git',['ls-tree','-r',oldTip,'--','.github/workflows'],{cwd:repo,encoding:'utf8'}).trim().split('\n').map(line=>{
+      const m=/^(\d{6}) (blob) ([a-f0-9]{40})\t(.+)$/.exec(line);assert.ok(m);return {path:m[4],sha:m[3],type:m[2],mode:m[1]};});
+  }
+  const cfg=JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/merge-admission-r9-source.json'),'utf8')),
+    reviewed=cfg.previous_execution_sources.find(s=>s.source_checkout_sha===oldTip);assert.ok(reviewed);
+  assert.equal(h(profilesRaw),reviewed.profiles_sha256);assert.equal(h(rolesRaw),reviewed.role_specs_sha256);
+  assert.equal(h(current.runtime.proof_profiles_raw),cfg.execution_source.profiles_sha256);assert.equal(h(current.runtime.role_specs_raw),cfg.execution_source.role_specs_sha256);
+  const actualBlob=blob(fs.readFileSync(path.join(repo,file))),selected=registeredHistoryAssemblySource(currentRegistry,file,actualBlob);
+  assert.equal(selected.passed,true);assert.equal(actualBlob,wrapper.workflow_blob);assert.equal(selected.profile.workflow_blob,actualBlob);
+  assert.deepEqual(currentRoles.workflows[file].sources[actualBlob],oldRoles.workflows[file].sources[actualBlob]);
+  const make=()=>historicalAssemblyFixture({currentTip,oldSnapshot:{source_checkout_sha:oldTip,proof_profiles_raw:profilesRaw,role_specs_raw:rolesRaw,workflow_directory:directory}}),
+    prepared=make(),before=JSON.stringify(prepared.f),built=assembleNaturalFourSourceFrame(prepared.f);
+  assert.equal(built.status,'FOUR_SOURCE_FRAME_DATA_CANDIDATE',JSON.stringify(built.gaps));assert.equal(built.math.candidate_ready,true);
+  const packet=JSON.parse(built.frame.packet_raw);historicalAssemblyRowsRemain(packet,prepared);assert.equal(Object.keys(packet.populations).length,8);
+  assert.equal(packet.execution_sources.source_checkout_sha,currentTip);assert.equal(packet.execution_sources.entries.length,22);
+  const old=packet.previous_execution_snapshots[0];assert.equal(old.source_checkout_sha,oldTip);assert.equal(old.execution_sources.entries.length,22);
+  assert.equal(packet.execution_configurations[old.configuration_key].proof_profiles_raw,profilesRaw);assert.equal(packet.execution_configurations[old.configuration_key].role_specs_raw,rolesRaw);
+  assert.equal(packet.rounds[0].applicability.profile_sha256,reviewed.profiles_sha256);
+  for(const x of packet.rounds[0].execution_packets)assert.equal(x.source_descriptor.role_source_sha256,reviewed.role_specs_sha256);
+  for(const workflow of historyAssemblyAddedWorkflows)assert.ok(packet.rounds[0].execution_packets.some(x=>x.workflow_file===workflow));
+  assert.equal(JSON.stringify(prepared.f),before);assert.equal(built.source_authenticated,false);assert.equal(built.official_metric,false);assert.equal(built.t0,null);
+  for(const [label,change]of [['unknown pair',p=>{p.snapshot.proof_profiles_raw+='\n';}],['mixed roles',p=>{p.snapshot.role_specs_raw=p.f.runtime.role_specs_raw;}]]){
+    const p=make();change(p);const original=JSON.stringify(p.f),r=assembleNaturalFourSourceFrame(p.f);assert.equal(r.status,'PARTIAL',label);assert.ok(r.gaps.length,label);
+    historicalAssemblyRowsRemain(JSON.parse(r.partial_packet_raw),p);assert.equal(JSON.stringify(p.f),original,label);
+    assert.equal(r.source_authenticated,false,label);assert.equal(r.official_metric,false,label);assert.equal(r.t0,null,label);
+  }
+});
 
 test('v2 assembly binds old round witnesses and Native jobs to the historical 20-path snapshot while current remains 22',()=>{
   const prepared=historicalAssemblyFixture(),before=JSON.stringify(prepared.f),built=assembleNaturalFourSourceFrame(prepared.f);
