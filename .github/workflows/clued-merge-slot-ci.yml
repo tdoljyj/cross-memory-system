@@ -44,6 +44,13 @@ on:
       - model-program-m2-scoped-consumer
       - public-mcp-behavior
       - public-mcp-protocol
+      - Clued handover hook qualification / company-linux-01
+      - Clued handover hook qualification / company-linux-02
+      - Clued handover hook qualification / company-linux-03
+      - Clued handover hook qualification / company-linux-04
+      - Clued handover hook qualification / home-linux-01
+      - Clued handover hook qualification / company-win-01
+      - Clued handover hook qualification / home-win-01
     types: [completed]
   workflow_dispatch:
 
