@@ -3334,6 +3334,54 @@
             ]
           }
         }
+      ],
+      "accepted_sources": [
+        {
+          "registration_status": "registered",
+          "workflow_blob": "b8fee41077d854e906244b9fa2d374f058dbd4a3",
+          "source_sha256": "4f59187f16e4d2808a7816ac9f0c72efcbc7b9ebf2524902c8f08ace65063d19",
+          "source_yaml": "# Candidate External2 Source: separate exact Source/Role acceptance required.\n# PR source-only success never qualifies actual publication/revocation.\nname: Clued disposable external handover qualification\non:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-handover-external-qualification.yml'\n      - '.github/workflows/clued-handover-disposable-idle.yml'\n      - 'scripts/ci/clued-handover-external-*'\n      - 'scripts/ci/fixtures/clued-handover-*'\n      - 'config/clued-handover-external-*'\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Existing exact workflow/ref dispatch admission\n        required: true\n        type: string\n      phase:\n        description: Registered External2 phase\n        required: true\n        type: choice\n        options: [register, publish, revoke]\n      idle_run_id:\n        description: Exact real idle run; publish only, permanently bound in original journal\n        required: false\n        type: string\n      publisher_run_id:\n        description: Exact completed successful original publisher, required for revoke\n        required: false\n        type: string\npermissions:\n  contents: read\nconcurrency:\n  group: clued-handover-disposable-external-qualification\n  cancel-in-progress: false\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: clued-handover-external2\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'pull_request') ||\n       (github.event_name == 'workflow_dispatch' &&\n        github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25\n    environment: ${{ github.event_name == 'workflow_dispatch' && 'clued-admission' || 'clued-handover-source-only' }}\n    env:\n      QUALIFICATION_PHASE: ${{ inputs.phase }}\n      QUALIFICATION_IDLE_RUN_ID: ${{ inputs.idle_run_id }}\n      QUALIFICATION_OPERATOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.phase == 'register' && 'register-empty-disposable' || '' }}\n      QUALIFICATION_PUBLISHER_RUN_ID: ${{ inputs.publisher_run_id }}\n      CLUED_HANDOVER_ACCEPTANCE_SHA256: ${{ vars.CLUED_HANDOVER_ACCEPTANCE_SHA256 }}\n    permissions:\n      contents: read\n      actions: write\n      checks: read\n      pull-requests: read\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          ref: ${{ github.event.pull_request.head.sha || github.event.repository.default_branch }}\n          fetch-depth: 0\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify declared Source path before dependencies\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          elif [ \"$GITHUB_EVENT_NAME\" = workflow_dispatch ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\n          else\n            exit 1\n          fi\n      - name: Prepare declared Source runtime\n        env:\n          ONNXRUNTIME_NODE_INSTALL: skip\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          else\n            npm ci --prefix apps/clued-cloud\n          fi\n      - name: Revalidate exact Source after runtime preparation\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          else\n            node scripts/ci/clued-handover-external-source-check.mjs --accepted-check\n          fi\n      - name: Execute declared source-only or actual External2 path\n        env:\n          GITHUB_TOKEN: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && github.token || '' }}\n          CLUED_ADMISSION_APP_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_ID || '' }}\n          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_ADMISSION_APP_KEY || '' }}\n          QUALIFICATION_DISPOSABLE_PG_URL: ${{ github.event_name == 'workflow_dispatch' && secrets.CLUED_HANDOVER_DISPOSABLE_PG_URL || '' }}\n          QUALIFICATION_TEST_CI_PROOF: ${{ github.event_name == 'workflow_dispatch' && inputs.phase != 'register' && secrets.CLUED_HANDOVER_TEST_CI_PROOF || '' }}\n        run: |\n          if [ \"$GITHUB_EVENT_NAME\" = pull_request ]; then\n            node scripts/ci/clued-handover-external-source-check.mjs --candidate-check\n          elif [ \"$QUALIFICATION_PHASE\" = register ]; then\n            node scripts/ci/clued-handover-external-register.mjs\n          else\n            node scripts/ci/clued-handover-external-driver.mjs --execute\n          fi\n      - name: Preserve secret-free actual qualification evidence\n        if: ${{ always() && github.event_name == 'workflow_dispatch' }}\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-disposable-handover-${{ github.run_id }}-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/clued-handover-evidence/*.json\n          if-no-files-found: error\n          retention-days: 30\n",
+          "primary_ids": [
+            "qualify"
+          ],
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-handover-external-qualification.yml",
+              ".github/workflows/clued-handover-disposable-idle.yml",
+              "scripts/ci/clued-handover-external-*",
+              "scripts/ci/fixtures/clued-handover-*",
+              "config/clued-handover-external-*"
+            ]
+          },
+          "gated": true,
+          "routes": [
+            {
+              "job_id": "qualify",
+              "name": "clued-handover-external2",
+              "self_hosted": false,
+              "required_steps": {
+                "Verify declared Source path before dependencies": 1,
+                "Prepare declared Source runtime": 1,
+                "Revalidate exact Source after runtime preparation": 1,
+                "Execute declared source-only or actual External2 path": 1
+              },
+              "command_digests": {
+                "Verify declared Source path before dependencies": [
+                  "94e55b4b73dba6df12a29e81b3f41bee8cbf13d2c19c83d29dd670ff0dd85e63"
+                ],
+                "Prepare declared Source runtime": [
+                  "3c2492617981f3d1d8afa96fc62a10ceee1d2d831d6d85850ec498c582b550b3"
+                ],
+                "Revalidate exact Source after runtime preparation": [
+                  "490ae485fb9a7da265af5573c8acddcd1fd1f0db48c5f7cfa72fd05c9e67ec46"
+                ],
+                "Execute declared source-only or actual External2 path": [
+                  "dbc706f16f508ac9537a3bea4cfee65b079fd75ff5db65a64d8dae34f0aa539d"
+                ]
+              }
+            }
+          ]
+        }
       ]
     },
     ".github/workflows/clued-handover-disposable-idle.yml": {
