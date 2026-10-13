@@ -181,6 +181,23 @@ test('passive reuse diagnostics describe existing-header recaptures, keep four b
   assert.deepEqual(JSON.parse(result.store_raw).packets['42:1'],JSON.parse(initial.store_raw).packets['42:1']);
   assert.ok(JSON.parse(result.store_raw).packets['41:1']);
 });
+test('numeric Native conclusion is masked in reuse diagnostics while the original capture remains refused',async()=>{
+  const original=nativeRequest(),initial=await C.collectIncrementalNative({request:original.request,repository,window}),
+    invalid=nativeRequest({runs:[run(42,{conclusion:17})]});
+  assert.equal(initial.status,'COMPLETE');
+  const result=await C.collectIncrementalNative({request:invalid.request,repository,window,authenticatedStoreRaw:initial.store_raw}),
+    diag=result.population.cache_reuse_diagnostics,sample=diag.sealed_current_attempt_recapture_samples[0];
+  assert.equal(result.status,'PARTIAL');assert.equal(result.population.complete,false);
+  assert.equal(result.fresh,0);assert.equal(result.from_sealed,0);
+  assert.deepEqual(result.gaps,[{key:'42:1',reason_code:'invalid_native_run_conclusion'}]);
+  assert.equal(diag.reason_counts.LATEST_SEALED_HEADER_VALUES_DIFFER,1);assert.equal(diag.sealed_current_attempt_recapture_count,1);
+  assert.equal(sample.key,'42:1');assert.deepEqual(sample.changed_fields,['conclusion']);
+  assert.deepEqual(sample.public_values.conclusion.inventory,{not_published:'UNVALIDATED_NATIVE_HEADER_VALUE'});
+  assert.deepEqual(sample.public_values.conclusion.sealed,{value:'success',count:7,truncated:false});
+  assert.equal(invalid.routes.length,3);assert.equal(invalid.routes.filter(route=>route.endsWith('/actions/runs/42')).length,1);
+  assert.ok(!invalid.routes.some(route=>route.includes('/jobs?')));
+  assert.deepEqual(JSON.parse(result.store_raw),JSON.parse(initial.store_raw));
+});
 test('never-started cancelled rows survive with unknown membership; updated_at is not invented completion',async()=>{
   const fake=nativeRequest({runs:[run(42,{run_started_at:null,conclusion:'cancelled'})],jobs:[job(42,{started_at:null,completed_at:null,terminal_interval:{lower_at:'2026-10-10T10:00:01.000Z',upper_at:'2026-10-10T10:10:00.000Z',basis:'native_job_completion_lower_and_terminal_update_upper_bounds'},conclusion:'cancelled',steps:[]})]});
   const result=await C.collectIncrementalNative({request:fake.request,repository,window});

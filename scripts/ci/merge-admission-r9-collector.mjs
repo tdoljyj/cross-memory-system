@@ -386,12 +386,12 @@ const reuseReasons=['EXACT_SEALED_HEADER_REUSE','ATTEMPT_PACKET_ABSENT','LATEST_
   'LATEST_SEALED_HEADER_VALUES_DIFFER','LATEST_SEALED_HEADER_SERIALIZATION_DIFFERS',
   'CURRENT_OBSERVER_EXCLUDED','LATEST_ATTEMPT_START_AT_OR_AFTER_CLOSE'];
 function publicReuseValue(field,value){
+  if(field==='conclusion'&&value!==null&&!['success','failure','neutral','cancelled','skipped','timed_out','action_required','stale','startup_failure'].includes(value))
+    return {not_published:'UNVALIDATED_NATIVE_HEADER_VALUE'};
   if(value===undefined)return {not_published:'ABSENT_HEADER_FIELD'};
   if(value===null||typeof value==='number')return value;
   if(field==='pull_requests'&&Array.isArray(value))return {values:value.slice(0,16).map(x=>Number.isSafeInteger(x)&&x>0?x:'UNVALIDATED_PUBLIC_ITEM'),
     count:value.length,truncated:value.length>16};
-  if(field==='conclusion'&&!['success','failure','neutral','cancelled','skipped','timed_out','action_required','stale','startup_failure'].includes(value))
-    return {not_published:'UNVALIDATED_NATIVE_HEADER_VALUE'};
   if(typeof value==='string')return {value:value.slice(0,256),count:value.length,truncated:value.length>256};
   return {not_published:'UNVALIDATED_NATIVE_HEADER_VALUE'};
 }
