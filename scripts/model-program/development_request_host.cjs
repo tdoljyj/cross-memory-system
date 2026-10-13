@@ -144,6 +144,7 @@ function prepareFixedDevelopmentOwnerBinding({requestBytes,expectedRequestSha256
     && a.startup_sha256 === p.fixed_startup.startup_sha256, 'OWNER_REQUEST_PINS');
   windowCheck(p.window,true);
   need(typeof sessionRef === 'string' && sessionRef.length > 0 && typeof livePins?.claim_id === 'string'
+    && Object.keys(livePins).sort().join(',') === 'claim_fence,claim_id,holder_session_ref,task_query,task_version'
     && livePins.claim_id.length > 0 && Number.isSafeInteger(livePins.claim_fence) && livePins.claim_fence > 0
     && Number.isSafeInteger(livePins.task_version) && livePins.task_version > 0
     && typeof livePins.task_query === 'string' && livePins.task_query.length > 0

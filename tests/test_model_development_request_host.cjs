@@ -112,6 +112,12 @@ test('only the actual M1 type_fields.rationale object can carry experiment appro
     assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding(f.bindingArgs));
   }
 });
+test('Host live pins cannot carry private claim keys, tokens or arbitrary metadata',()=>{
+  for(const key of ['lease_key','session_token','token','budget','execution_epoch']) {
+    const f=fixture();f.bindingArgs.livePins[key]='SOURCE-ONLY-NOT-A-SECRET';
+    assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding(f.bindingArgs),/ROOT_LIVE_PINS/);
+  }
+});
 test('request bytes cannot drift, hide duplicate keys or self-referential hash fields',()=>{
   const f=fixture(); f.bindingArgs.requestBytes=Buffer.concat([f.request.requestBytes,Buffer.from(' ')]);
   assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding(f.bindingArgs),/REQUEST_DIGEST/);
