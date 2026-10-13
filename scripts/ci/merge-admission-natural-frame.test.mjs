@@ -12,6 +12,7 @@ registerHooks({resolve(s,c,next){if(s.startsWith('./')&&c.parentURL?.startsWith(
   const own=path.join(here,s),real=path.join(repo,'scripts/ci',s);if(!fs.existsSync(own)&&fs.existsSync(real))return {url:pathToFileURL(real).href,shortCircuit:true};}return next(s,c);}});
 const {assembleNaturalFourSourceFrame}=await import('./merge-admission-natural-frame.mjs');
 const {createNaturalRecorder}=await import('./merge-admission-source-producer.mjs');
+const {collectNaturalSourceArtifacts}=await import('./merge-admission-natural-intake.mjs');
 const {collectNativeActivity}=await import('./merge-admission-native-activity.mjs');
 const C=await import('./merge-admission-r9-collector.mjs');
 const {emptyNativePopulationStore}=await import('./merge-admission-native-population.mjs');
@@ -74,4 +75,142 @@ test('actual provider event time, stable pagination and interval scope are retai
   let calls=0;const changed=await collectNativeActivity({request:async()=>({ok:true,body:++calls===1?[e]:[{...e,payload:{...e.payload,head:base}}]}),repository,window});
   assert.equal(changed.status,'PARTIAL');assert.equal(changed.reason_code,'NATIVE_ACTIVITY_IMMUTABLE_EVENT_CHANGED');assert.equal(changed.events.length,0);
   assert.deepEqual(changed.quarantined_ids,['91']);assert.equal(changed.quarantine[0].observations.length,2);
+});
+
+function intakeVersionFixture(){
+  const paths={script:'scripts/ci/clued-work-admission.mjs',workflow:'.github/workflows/clued-work-admission.yml',
+    reverify_workflow:'.github/workflows/clued-work-admission-reverify.yml',policy:'config/merge-admission-policy.json'},sourcePaths=Object.values(paths),
+    oldTexts={[paths.script]:'// reviewed old script\n',[paths.workflow]:'name: reviewed producer\n',[paths.reverify_workflow]:'name: reviewed reverify\n',[paths.policy]:'{"version":"old"}\n'},
+    currentTexts={...oldTexts,[paths.script]:'// reviewed current script\n',[paths.policy]:'{"version":"current"}\n'},
+    pins=texts=>Object.fromEntries(sourcePaths.map(p=>[p,blob(texts[p])])),oldMap=pins(oldTexts),currentMap=pins(currentTexts),
+    currentDescriptor={registration_status:'registered',workflow_path:paths.workflow,workflow_blob:currentMap[paths.workflow],job_id:'admission',
+      job_name:'source-job',source_paths:sourcePaths,source_blobs:currentMap,required_steps:['Export','Upload']},
+    oldDescriptor={...currentDescriptor,source_blobs:oldMap},descriptor={...currentDescriptor,previous_source_blobs:[oldMap]},
+    textsByCommit={[base]:oldTexts,[head]:currentTexts},records=[];
+  for(const [run,artifactId,commit]of [['42','9',base],['44','11',head]]){
+    const r=createNaturalRecorder({env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:run,GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'admission'},
+      sourcePath:paths.script,write:()=>{},now:()=>at(1)}),session={...r.finish(),executed_checkout_sha:commit},
+      bytes=Buffer.from(JSON.stringify({schema:'clued.merge-admission-natural-artifact/1',identity:{repository,run_id:run,attempt:1,logical_job_key:'admission'},
+        events:[],sessions:[session],files:[],local_stream:{status:'CLOSED_LOCAL_STREAM',known_gaps:[]}})),
+      artifact={id:artifactId,name:`clued-r9-natural-source-${run}-1-admission`,expired:false,digest:'sha256:'+h(bytes),workflow_run:{id:run,head_sha:commit}},
+      native={run:{run_id:run,run_attempt:1,status:'completed',conclusion:'success',head_sha:commit,path:paths.workflow,event:'push'},
+        jobs:[{id:String(Number(run)+1),name:'source-job',status:'completed',conclusion:'success',steps:['Export','Upload'].map(name=>({name,status:'completed',conclusion:'success'}))}]};
+    records.push({native,bytes,artifact,commit});
+  }
+  const routes=[],request=async route=>{
+    routes.push(route);let m=route.match(/\/actions\/runs\/(\d+)\/artifacts\?/);
+    if(m)return {ok:true,body:{total_count:1,artifacts:[records.find(r=>r.native.run.run_id===m[1]).artifact]}};
+    m=route.match(/\/actions\/artifacts\/(\d+)(\/zip)?$/);
+    if(m){const r=records.find(r=>r.artifact.id===m[1]);return {ok:true,body:m[2]?r.bytes:r.artifact};}
+    m=route.match(/\/actions\/runs\/(\d+)\/attempts\/1$/);
+    if(m){const r=records.find(r=>r.native.run.run_id===m[1]);return {ok:true,body:{id:m[1],run_attempt:1,head_sha:r.commit,event:'push',head_branch:'main',head_repository:{full_name:repository}}};}
+    m=route.match(/\/compare\/([a-f0-9]{40})\.\.\.([a-f0-9]{40})$/);
+    if(m)return {ok:true,body:{status:m[1]===m[2]?'identical':'ahead',merge_base_commit:{sha:m[1]}}};
+    m=route.match(/\/contents\/(.+)\?ref=(.+)$/);
+    if(m){const text=textsByCommit[decodeURIComponent(m[2])]?.[m[1]];assert.equal(typeof text,'string','every requested source has mocked bytes');
+      return {ok:true,body:{type:'file',path:m[1],encoding:'base64',sha:blob(text),content:Buffer.from(text).toString('base64')}};}
+    throw Error('UNMOCKED_NATURAL_INTAKE_ROUTE');
+  },native={status:'COMPLETE',population_packets:records.map(r=>r.native)},
+    selection={repository,head_sha:head,default_branch:'main',admission_source:Object.fromEntries(Object.entries(paths).map(([k,p])=>[k+'_path',p])),natural_producers:[descriptor]},
+    collect=overrides=>collectNaturalSourceArtifacts({request,repository,native,selection,readZip:b=>b.toString(),...overrides});
+  return {paths,sourcePaths,oldMap,currentMap,oldDescriptor,currentDescriptor,descriptor,oldTexts,currentTexts,textsByCommit,records,native,selection,routes,collect};
+}
+
+test('intake accepts coexisting complete old and current Source versions and seals the exact legacy-compatible descriptor digest',async()=>{
+  const f=intakeVersionFixture(),input=JSON.stringify({native:f.native,selection:f.selection}),r=await f.collect();
+  assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.deepEqual(r.entries.map(e=>e.run_key),['42:1','44:1']);
+  for(const [i,d]of [f.oldDescriptor,f.currentDescriptor].entries()){
+    const e=r.entries[i],n=f.records[i].native;
+    assert.equal(e.descriptor_digest,h(JSON.stringify(d)));assert.notEqual(e.descriptor_digest,h(JSON.stringify(f.descriptor)));
+    assert.equal(e.native_run_digest,h(JSON.stringify(n.run)));assert.equal(e.native_jobs_digest,h(JSON.stringify(n.jobs)));
+    assert.equal(e.artifact_digest,f.records[i].artifact.digest);assert.equal(e.checkout_sha,f.records[i].commit);
+    assert.deepEqual(r.source_bytes[e.checkout_sha].texts,Object.fromEntries(Object.entries(f.paths).map(([k,p])=>[k,f.textsByCommit[e.checkout_sha][p]])));
+    for(const [k,p]of Object.entries(f.paths))assert.equal(r.source_bytes[e.checkout_sha][k+'_blob'],d.source_blobs[p]);
+  }
+  assert.equal(JSON.stringify({native:f.native,selection:f.selection}),input);
+  assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('an authenticated old descriptor cache survives Source inheritance with zero HTTP reads and unchanged Native and Source proofs',async()=>{
+  const f=intakeVersionFixture(),oldNative={status:'COMPLETE',population_packets:[f.records[0].native]},
+    old=await f.collect({native:oldNative,selection:{...f.selection,natural_producers:[f.oldDescriptor]}});
+  assert.equal(old.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(old.gaps));let calls=0;
+  const r=await f.collect({native:oldNative,authenticatedEntries:old.entries,authenticatedSourceBytes:old.source_bytes,
+    request:async()=>{calls++;throw Error('AUTHENTICATED_OLD_CACHE_MUST_NOT_REREAD');}});
+  assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(calls,0);assert.equal(r.entries[0],old.entries[0]);
+  assert.equal(r.entries[0].descriptor_digest,h(JSON.stringify(f.oldDescriptor)));assert.equal(r.source_bytes[base],old.source_bytes[base]);
+  assert.deepEqual(r.artifact_population,{before:[],after:[]});assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('Source inheritance cannot bypass Native run/jobs, exact variant digest or authenticated Source bytes in a restored cache',async()=>{
+  const f=intakeVersionFixture(),oldNative={status:'COMPLETE',population_packets:[f.records[0].native]},
+    old=await f.collect({native:oldNative,selection:{...f.selection,natural_producers:[f.oldDescriptor]}});
+  assert.equal(old.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(old.gaps));
+  for(const change of [
+    {authenticatedEntries:[{...old.entries[0],native_run_digest:'f'.repeat(64)}]},
+    {authenticatedEntries:[{...old.entries[0],native_jobs_digest:'f'.repeat(64)}]},
+    {authenticatedEntries:[{...old.entries[0],descriptor_digest:h(JSON.stringify(f.descriptor))}]},
+    {authenticatedSourceBytes:{}}
+  ]){
+    let calls=0;const r=await f.collect({native:oldNative,authenticatedEntries:old.entries,authenticatedSourceBytes:old.source_bytes,...change,
+      request:async()=>{calls++;return {ok:true,body:{total_count:0,artifacts:[]}};}});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.entries.length,0);assert.equal(calls,1);
+    assert.ok(r.gaps.some(g=>g.code==='NATURAL_EXPECTED_ARTIFACT_MISSING_OR_DUPLICATE'));
+  }
+});
+
+test('intake refuses unknown bytes and mixed old/current checkout maps rather than matching each path independently',async()=>{
+  for(const change of [f=>{f.textsByCommit[base]={...f.oldTexts,[f.paths.script]:'// unreviewed script\n'};},
+    f=>{f.textsByCommit[base]={...f.oldTexts,[f.paths.policy]:f.currentTexts[f.paths.policy]};}]){
+    const f=intakeVersionFixture();change(f);const r=await f.collect({native:{status:'COMPLETE',population_packets:[f.records[0].native]}});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.entries.length,0);assert.ok(r.gaps.some(g=>g.code==='NATURAL_SOURCE_SELECTION_BYTES_MISMATCH'));
+    assert.equal(r.source_bytes[base],undefined);assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+  }
+});
+
+test('invalid Source histories are rejected before HTTP: bounded complete SHA maps and canonical uniqueness are required',async()=>{
+  const f=intakeVersionFixture(),reverse=m=>Object.fromEntries(Object.entries(m).reverse()),without=(m,p)=>Object.fromEntries(Object.entries(m).filter(([k])=>k!==p)),
+    variants=[
+      ['non-array history',{...f.descriptor,previous_source_blobs:{}}],
+      ['more than four versions',{...f.descriptor,previous_source_blobs:['0','1','2','3','4'].map(c=>({...f.oldMap,[f.paths.script]:c.repeat(40)}))}],
+      ['missing current map',without(f.descriptor,'source_blobs')],
+      ['empty history still needs current map',{...without(f.descriptor,'source_blobs'),previous_source_blobs:[]}],
+      ['incomplete current map',{...f.descriptor,source_blobs:without(f.currentMap,f.paths.policy)}],
+      ['incomplete previous map',{...f.descriptor,previous_source_blobs:[without(f.oldMap,f.paths.policy)]}],
+      ['extra previous path',{...f.descriptor,previous_source_blobs:[{...f.oldMap,'scripts/ci/unreviewed.mjs':'a'.repeat(40)}]}],
+      ['invalid current SHA',{...f.descriptor,source_blobs:{...f.currentMap,[f.paths.script]:'g'.repeat(40)}}],
+      ['invalid previous SHA',{...f.descriptor,previous_source_blobs:[{...f.oldMap,[f.paths.script]:'A'.repeat(40)}]}],
+      ['duplicate current despite key order',{...f.descriptor,previous_source_blobs:[reverse(f.currentMap)]}],
+      ['duplicate history despite key order',{...f.descriptor,previous_source_blobs:[f.oldMap,reverse(f.oldMap)]}]
+    ];
+  for(const [label,d]of variants){
+    let calls=0;const r=await f.collect({native:{status:'COMPLETE',population_packets:[]},selection:{...f.selection,natural_producers:[d]},
+      request:async()=>{calls++;throw Error('INVALID_HISTORY_MUST_NOT_READ');}});
+    assert.equal(r.status,'PARTIAL',label);assert.equal(r.entries.length,0,label);assert.equal(calls,0,label);
+    assert.ok(r.gaps.some(g=>g.code==='NATURAL_PRODUCER_SELECTION_INVALID'),label);
+  }
+});
+
+test('zero to four previous versions preserve exact descriptors and no-map legacy intake remains compatible',async()=>{
+  const f=intakeVersionFixture(),oldNative={status:'COMPLETE',population_packets:[f.records[0].native]},currentNative={status:'COMPLETE',population_packets:[f.records[1].native]},
+    history=[f.oldMap,...['0','1','2'].map(c=>({...f.oldMap,[f.paths.script]:c.repeat(40)}))],legacy={...f.oldDescriptor};delete legacy.source_blobs;
+  for(const [d,native,expected]of [[{...f.currentDescriptor,previous_source_blobs:[]},currentNative,f.currentDescriptor],
+    [{...f.currentDescriptor,previous_source_blobs:history},oldNative,f.oldDescriptor],[legacy,oldNative,legacy]]){
+    const r=await f.collect({native,selection:{...f.selection,natural_producers:[d]}});
+    assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,1);assert.equal(r.entries[0].descriptor_digest,h(JSON.stringify(expected)));
+    assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+  }
+});
+
+test('same Natural Source snapshot still requires current runtime bytes even when a complete previous map is accepted for artifacts',()=>{
+  const profiles='{"workflows":{}}',roles='{"roles":[]}',workflow='.github/workflows/clued-work-admission.yml',runtimePath='scripts/ci/clued-gated-proof-runtime.mjs',wf='b'.repeat(40),
+    admission=Object.fromEntries(['script','workflow','reverify_workflow','policy'].flatMap(k=>[[k+'_path','source/'+k],[k+'_blob','a'.repeat(40)]])),
+    currentMap={[workflow]:wf,[runtimePath]:'c'.repeat(40)},oldMap={[workflow]:wf,[runtimePath]:'d'.repeat(40)},
+    cfg={admission_source:admission,execution_source:{profiles_sha256:h(profiles),role_specs_sha256:h(roles)},natural_producers:[{
+      workflow_path:workflow,workflow_blob:wf,source_paths:[workflow,runtimePath],source_blobs:currentMap,previous_source_blobs:[oldMap]}]},
+    selection={admission_source:admission,workflow_blobs:{[workflow]:wf}},runtime={proof_profiles_raw:profiles,role_specs_raw:roles},
+    contract={profiles:JSON.parse(profiles),roles:JSON.parse(roles),profiles_sha256:h(profiles),role_specs_sha256:h(roles),
+      source_tree:Object.fromEntries([...Object.entries(currentMap),...['script','workflow','reverify_workflow','policy'].map(k=>['source/'+k,'a'.repeat(40)])].map(([p,sha])=>[p,{sha,type:'blob',mode:'100644'}]))};
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,contract),true);
+  assert.equal(C.sameNaturalSourceSnapshot(cfg,selection,runtime,{...contract,source_tree:{...contract.source_tree,[runtimePath]:{sha:oldMap[runtimePath],type:'blob',mode:'100644'}}}),false);
 });

@@ -12,6 +12,27 @@ const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const canonical=x=>Array.isArray(x)?x.map(canonical):object(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const code=e=>/^[A-Z0-9_]{1,100}$/.test(e?.message??'')?e.message:'NATURAL_INTAKE_FAILED';
 const refuse=x=>{throw Error(x);};
+function descriptorVariants(d){
+  const hasHistory=Object.hasOwn(d,'previous_source_blobs');
+  if(d.source_blobs===undefined){
+    if(hasHistory)refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+    return [d];
+  }
+  const history=hasHistory?d.previous_source_blobs:[];
+  if(!Array.isArray(history)||history.length>4||new Set(d.source_paths).size!==d.source_paths.length||
+    d.source_paths.some(path=>typeof path!=='string'))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+  const paths=[...d.source_paths].sort(),maps=[d.source_blobs,...history],seen=new Set();
+  for(const map of maps){
+    if(!object(map)||Object.keys(map).sort().join('|')!==paths.join('|')||Object.values(map).some(pin=>!sha(pin))||
+      Object.hasOwn(map,d.workflow_path)&&map[d.workflow_path]!==d.workflow_blob)refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+    const identity=JSON.stringify(canonical(map));if(seen.has(identity))refuse('NATURAL_PRODUCER_SELECTION_INVALID');seen.add(identity);
+  }
+  // History authorizes exact historical bytes only. Exclude that declaration
+  // from each version's digest so a previously authenticated descriptor keeps
+  // its original identity, field order and complete source-map identity.
+  const {previous_source_blobs,...base}=d;
+  return maps.map(source_blobs=>({...base,source_blobs}));
+}
 async function body(request,route,options){const r=await request(route,options);if(r?.ok!==true)refuse('NATURAL_SHARED_REQUEST_STOPPED');return r.body;}
 async function artifacts(request,repository,run){
   const rows=[];let total=null;
@@ -79,11 +100,12 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       if(!object(d)||d.registration_status!=='registered'||typeof d.workflow_path!=='string'||!d.workflow_path.startsWith('.github/workflows/')||!sha(d.workflow_blob)||
         !/^[A-Za-z0-9_-]{1,100}$/.test(d.job_id)||typeof d.job_name!=='string'||!Array.isArray(d.source_paths)||!d.source_paths.length||
         !Array.isArray(d.required_steps)||!d.required_steps.length||index.has(d.workflow_path))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
-      index.set(d.workflow_path,d);
+      index.set(d.workflow_path,{descriptor:d,variants:descriptorVariants(d)});
     }
     const cache=new Map(authenticatedEntries.map(e=>[e.run_key+':'+e.job_id,e]));
     for(const n of native.population_packets??[]){
-      const r=n.run,d=index.get(r.path.split('@')[0]);if(!d)continue;
+      const r=n.run,selected=index.get(r.path.split('@')[0]);if(!selected)continue;
+      const {descriptor:d,variants}=selected;
       if(r.status!=='completed'){gaps.push({run_key:r.run_id+':'+r.run_attempt,code:'NATURAL_PRODUCER_RUN_NOT_TERMINAL'});continue;}
       const runKey=r.run_id+':'+r.run_attempt,jobs=n.jobs.filter(j=>j.name===d.job_name);
       if(jobs.length!==1){gaps.push({run_key:runKey,code:'NATURAL_PRODUCER_NATIVE_JOB_MISSING_OR_DUPLICATE'});continue;}
@@ -97,7 +119,7 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       const artifactName=`clued-r9-natural-source-${r.run_id}-${r.run_attempt}-${d.job_id}`,key=runKey+':'+d.job_id;
       const restored=cache.get(key);
       if(restored&&restored.native_run_digest===digest(JSON.stringify(r))&&restored.native_jobs_digest===digest(JSON.stringify(n.jobs))&&
-        restored.descriptor_digest===digest(JSON.stringify(d))&&sourceBytes[restored.checkout_sha]){entries.push(restored);continue;}
+        variants.some(variant=>restored.descriptor_digest===digest(JSON.stringify(variant)))&&sourceBytes[restored.checkout_sha]){entries.push(restored);continue;}
       const members=await artifacts(request,repository,r.run_id),total=members.length;
       before.push({run_key:runKey,total,ids:members.map(a=>String(a.id))});
       const matches=members.filter(a=>a.name===artifactName&&a.expired===false);
@@ -123,20 +145,25 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       if(workflow.blob!==d.workflow_blob)refuse('NATURAL_PRODUCER_WORKFLOW_SOURCE_MISMATCH');
       if(d.required_steps.some(name=>j.steps.filter(s=>s.name===name&&s.status==='completed'&&s.conclusion==='success').length!==1))refuse('NATURAL_PRODUCER_EXECUTION_INCOMPLETE');
       const admissionPaths=selection.admission_source;
-      const texts={},actualBlobs={};
+      const texts={},actualBlobs={};let matchingVariants=variants;
       for(const path of d.source_paths){const cacheKey=commit+':'+path;
         if(!sourceMemo.has(cacheKey))sourceMemo.set(cacheKey,await source(request,repository,path,commit));const s=sourceMemo.get(cacheKey);
-        if(d.source_blobs&&s.blob!==d.source_blobs[path])refuse('NATURAL_SOURCE_SELECTION_BYTES_MISMATCH');
+        // Intersect complete-map candidates as bytes arrive. A path cannot
+        // independently choose a different historical version, and an unknown
+        // prefix stops at the same source read rather than spending more HTTP.
+        matchingVariants=matchingVariants.filter(variant=>!variant.source_blobs||s.blob===variant.source_blobs[path]);
+        if(!matchingVariants.length)refuse('NATURAL_SOURCE_SELECTION_BYTES_MISMATCH');
         const events=packet.events.filter(e=>e.source.path===path);
         if(events.some(e=>e.source.sha256!==s.sha256||e.source.executed_checkout_sha!==commit))refuse('NATURAL_PRODUCER_SOURCE_BYTES_MISMATCH');
         for(const k of ['script','workflow','reverify_workflow','policy'])if(admissionPaths?.[k+'_path']===path){texts[k]=s.text;actualBlobs[k+'_blob']=s.blob;}}
+      const matched=matchingVariants[0];
       if(Object.keys(texts).length===4)sourceBytes[commit]={texts,...actualBlobs};
       if(packet.events.some(e=>!d.source_paths.includes(e.source.path)))refuse('NATURAL_UNREVIEWED_EVENT_SOURCE');
       const closing=await artifacts(request,repository,r.run_id);
       if(closing.length!==total||closing.map(x=>String(x.id)).join('|')!==members.map(x=>String(x.id)).join('|'))refuse('NATURAL_ARTIFACT_CLOSING_POPULATION_UNPROVED');
       after.push({run_key:runKey,total,ids:members.map(a=>String(a.id))});
       entries.push({run_key:runKey,job_id:d.job_id,artifact_id:String(a.id),artifact_digest:m.digest,selection_head:selection.head_sha,native_origin:{head_branch:origin.head_branch,event:origin.event},
-        descriptor_digest:digest(JSON.stringify(d)),native_run_digest:digest(JSON.stringify(r)),native_jobs_digest:digest(JSON.stringify(n.jobs)),
+        descriptor_digest:digest(JSON.stringify(matched)),native_run_digest:digest(JSON.stringify(r)),native_jobs_digest:digest(JSON.stringify(n.jobs)),
         checkout_sha:commit,packet_raw:raw,origin_basis:'NATIVE_ARTIFACT_DIGEST_JOB_MAIN_HISTORY_EXACT_REVIEWED_SOURCE'});
     }
     for(const entry of entries)for(const event of JSON.parse(entry.packet_raw).events){const check=event.kind==='app_check'?event.payload.check_run_id:null;

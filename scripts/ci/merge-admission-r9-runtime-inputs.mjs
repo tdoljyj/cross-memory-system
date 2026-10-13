@@ -85,7 +85,9 @@ export async function loadIndependentR9RuntimeInputs({request,budget,repository,
     if(Date.parse(window.end)<=Date.parse(window.start))throw Error();
     const contract={schema:'clued.merge-admission-r9-source-contract/1',repository,scope:cfg.scope,window,four_expected_sources_raw:JSON.stringify(expected),clock:cfg.clock};
     return {status:'R9_RUNTIME_INPUT_CANDIDATE',source_contract_raw:JSON.stringify(contract),window,
-      forward_epoch:{epoch_id:epoch.epoch_id,activation_receipt_id:epoch.activation_receipt_id,required_continuous_hours:72,
+      // Owner Decision e18b9f8f sets the successor observation to 24 hours.
+      // Epoch coverage remains diagnostic; this return never starts formal T0.
+      forward_epoch:{epoch_id:epoch.epoch_id,activation_receipt_id:epoch.activation_receipt_id,required_continuous_hours:24,
         observed_hours:(Date.parse(window.end)-Date.parse(window.start))/3600000},
       clock:{pages_raw:JSON.stringify(pages),transport_raw:JSON.stringify(transport),options_raw:JSON.stringify({queueRef:cfg.scope.queue_ref,
         expectedFoundationDigest:cfg.clock.foundation_digest,expectedCatalogDigest:cfg.clock.catalog_digest})},

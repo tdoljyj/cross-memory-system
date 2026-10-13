@@ -75,7 +75,7 @@
       "source_blobs": {
         "scripts/ci/clued-work-admission.mjs": "fbe0a6c8febac2d3bef5358f26920f60ea91f725",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
         ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
         "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
@@ -83,6 +83,16 @@
       "required_steps": [
         "Export the closed local natural R9 packet",
         "Preserve natural R9 source observations"
+      ],
+      "previous_source_blobs": [
+        {
+          "scripts/ci/clued-work-admission.mjs": "fbe0a6c8febac2d3bef5358f26920f60ea91f725",
+          "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+          "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+          ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
+          ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+          "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+        }
       ]
     },
     {
@@ -106,7 +116,7 @@
         "scripts/ci/clued-merge-slot-ci.mjs": "4f44087ea8457b89e10ece99a326c5b37b3eab55",
         "scripts/ci/clued-merge-executor.mjs": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
         ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
         "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
@@ -114,6 +124,18 @@
       "required_steps": [
         "Export the closed local natural R9 packet",
         "Preserve natural R9 source observations"
+      ],
+      "previous_source_blobs": [
+        {
+          "scripts/ci/clued-work-admission.mjs": "fbe0a6c8febac2d3bef5358f26920f60ea91f725",
+          "scripts/ci/clued-merge-slot-ci.mjs": "4f44087ea8457b89e10ece99a326c5b37b3eab55",
+          "scripts/ci/clued-merge-executor.mjs": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c",
+          "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+          "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+          ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+          ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
+          "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+        }
       ]
     },
     {
@@ -134,7 +156,7 @@
       "source_blobs": {
         "scripts/ci/clued-work-admission.mjs": "fbe0a6c8febac2d3bef5358f26920f60ea91f725",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
         ".github/workflows/clued-work-admission-dispatch.yml": "03974542ffb1df63c195a1ca13a0b14355d81c1a",
         ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
@@ -143,6 +165,17 @@
       "required_steps": [
         "Export the closed local natural R9 packet",
         "Preserve natural R9 source observations"
+      ],
+      "previous_source_blobs": [
+        {
+          "scripts/ci/clued-work-admission.mjs": "fbe0a6c8febac2d3bef5358f26920f60ea91f725",
+          "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+          "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+          ".github/workflows/clued-work-admission-dispatch.yml": "03974542ffb1df63c195a1ca13a0b14355d81c1a",
+          ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
+          ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+          "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+        }
       ]
     },
     {
@@ -167,7 +200,7 @@
         "scripts/ci/clued-merge-slot-ci.mjs": "4f44087ea8457b89e10ece99a326c5b37b3eab55",
         "scripts/ci/clued-merge-executor.mjs": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
         ".github/workflows/clued-merge-executor.yml": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
         ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
@@ -176,6 +209,19 @@
       "required_steps": [
         "Export the closed local natural R9 packet",
         "Preserve natural R9 source observations"
+      ],
+      "previous_source_blobs": [
+        {
+          "scripts/ci/clued-work-admission.mjs": "fbe0a6c8febac2d3bef5358f26920f60ea91f725",
+          "scripts/ci/clued-merge-slot-ci.mjs": "4f44087ea8457b89e10ece99a326c5b37b3eab55",
+          "scripts/ci/clued-merge-executor.mjs": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c",
+          "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+          "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+          ".github/workflows/clued-merge-executor.yml": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
+          ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
+          ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+          "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+        }
       ]
     },
     {
@@ -200,7 +246,7 @@
         "scripts/ci/clued-merge-slot-ci.mjs": "4f44087ea8457b89e10ece99a326c5b37b3eab55",
         "scripts/ci/clued-merge-executor.mjs": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
         ".github/workflows/clued-merge-slot-ci.yml": "9a6b1709c39ce5c4ec2adc89e0e027cdaf4a5b42",
         ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
@@ -209,6 +255,19 @@
       "required_steps": [
         "Export the closed local natural R9 packet",
         "Preserve natural R9 source observations"
+      ],
+      "previous_source_blobs": [
+        {
+          "scripts/ci/clued-work-admission.mjs": "fbe0a6c8febac2d3bef5358f26920f60ea91f725",
+          "scripts/ci/clued-merge-slot-ci.mjs": "4f44087ea8457b89e10ece99a326c5b37b3eab55",
+          "scripts/ci/clued-merge-executor.mjs": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c",
+          "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+          "scripts/ci/clued-gated-proof-runtime.mjs": "454fd5c00b52daed965c38075ceee7a1fd13082a",
+          ".github/workflows/clued-merge-slot-ci.yml": "9a6b1709c39ce5c4ec2adc89e0e027cdaf4a5b42",
+          ".github/workflows/clued-work-admission.yml": "32873cf10ad49f7343b8dfa991be4effe6dc43e8",
+          ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+          "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+        }
       ]
     }
   ],
