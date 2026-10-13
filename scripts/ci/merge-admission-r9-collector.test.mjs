@@ -596,6 +596,41 @@ test('uncapped directory closes all historical members despite a growing post-wi
   assert.equal(r.population.complete,true);assert.equal(r.fresh,0);assert.equal(f.calls,8);assert.ok(f.max<=4);
 });
 
+function advancingPostWindowPrefix(change={}){
+  const old=Array.from({length:250},(_,i)=>run(250-i,{created_at:'2026-10-09T00:00:00Z',run_started_at:'2026-10-09T00:00:01Z',updated_at:'2026-10-09T00:01:00Z'}));
+  const outside=run(500,{created_at:window.end,run_started_at:null,updated_at:'2026-10-11T00:00:00.001Z',status:'queued',conclusion:null});
+  let calls=0;
+  return {get calls(){return calls;},async request(route){
+    const url=new URL(route,'https://native.invalid'),page=Number(url.searchParams.get('page'));
+    assert.equal(url.pathname,'/repos/'+repository+'/actions/runs');assert.equal(url.searchParams.has('created'),false);
+    const latest=++calls===1?outside:{...outside,status:'completed',conclusion:'success',run_started_at:'2026-10-11T00:00:01Z',updated_at:'2026-10-11T00:00:02Z',...change};
+    const rows=[latest,...old];return {ok:true,body:{total_count:rows.length,workflow_runs:rows.slice((page-1)*100,page*100)}};
+  }};
+}
+
+test('post-close queued work may start and finish without changing the fixed window denominator',async()=>{
+  const f=advancingPostWindowPrefix(),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'COMPLETE');assert.equal(r.population.complete,true);
+  assert.equal(r.population.initial_total,250);assert.equal(r.population.closing_total,250);
+  assert.equal(r.fresh,0);assert.equal(f.calls,8);
+});
+
+test('post-close progress allowance cannot hide changed identity, ordinal, creation or regressed time',async()=>{
+  for(const change of [{head_sha:'d'.repeat(40)},{run_attempt:2},{workflow_id:8},{event:'workflow_dispatch'},
+    {pull_requests:[{number:727}]},{created_at:'2026-10-10T23:59:59Z'},{updated_at:'2026-10-11T00:00:00Z',run_started_at:null}]){
+    const f=advancingPostWindowPrefix(change),r=await C.collectIncrementalNative({request:f.request,repository,window});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
+  }
+});
+
+test('pre-close progress remains a boundary change even when it finishes after close',async()=>{
+  const before=run(42,{status:'in_progress',conclusion:null});let inventories=0;
+  const f=nativeRequest({runs:[before],mutation:route=>route.includes('/actions/runs?')?
+    {ok:true,body:{total_count:1,workflow_runs:[++inventories===1?before:run(42,{updated_at:'2026-10-11T00:00:02Z'})]}}:null});
+  const r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.population.complete,false);
+});
+
 test('uncapped directory refuses changed retention or an unproved provider order',async()=>{
   for(const options of [{remove:true},{ascending:true}]){
     const f=uncappedDirectoryFixture(options),r=await C.collectIncrementalNative({request:f.request,repository,window});
