@@ -37,6 +37,8 @@ function fixture(compiled, { search = '' } = {}) {
     if (name.endsWith('/supabase-browser')) return { supabase };
     if (name.endsWith('.css')) return {};
     if (name === 'next/link') return { __esModule: true, default: 'a' };
+    // Grants navigation only; automatic approval behavior has its own tests.
+    if (name === './AutoApprovalSwitch') return { __esModule: true, default: 'auto-approval-switch', isAutoApprovalState: () => false };
     throw Error(name);
   }, Error, URLSearchParams, Date, Number, String, Array,
   window: { location: { search } },
