@@ -681,6 +681,7 @@ export function projectFeeWorkload(native, repository, observedAt) {
         }
         const a = job.started_at === null ? null : Date.parse(job.started_at), b = job.completed_at === null ? null : Date.parse(job.completed_at);
         if (a === null || b === null) {
+          if (a !== null && a >= end || b !== null && b <= start) continue;
           if (Date.parse(job.created_at) < end && Date.parse(packet.run.updated_at) >= start) unknown.push(key);
           continue;
         }

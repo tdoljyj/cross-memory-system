@@ -143,6 +143,21 @@ test('fee native union contains each job once and separates hosted and self-host
   assert.equal(projectFeeWorkload(bad,REPO,NOW.toISOString()).provider_visible_population_complete,false);
 });
 
+test('fee unknown endpoints use known start and end bounds to exclude impossible UTC days',()=>{
+  const late=feePacket(820,{started:'2026-10-12T12:00:00.000Z',completed:null,conclusion:'cancelled',
+    jobCreated:'2026-10-09T12:00:00.000Z',updated:'2026-10-13T00:00:00.000Z'});
+  late.jobs[0].steps=[{number:1,name:'executed',status:'completed',conclusion:'cancelled',
+    started_at:'2026-10-12T12:00:00.000Z',completed_at:null}];late.jobs_digest=feeDigest(late.jobs);
+  const early=feePacket(821,{started:null,completed:'2026-10-10T12:01:00.000Z',conclusion:'cancelled',updated:'2026-10-13T00:00:00.000Z'});
+  early.jobs[0].steps=[{number:1,name:'executed',status:'completed',conclusion:'cancelled',started_at:null,completed_at:null}];
+  early.jobs_digest=feeDigest(early.jobs);
+  const out=projectFeeWorkload(feeNative([late,early]),REPO,NOW.toISOString());
+  assert.deepEqual(feeRow(out,'2026-10-10').timing_unknown_job_keys,['821:1:82101']);
+  assert.deepEqual(feeRow(out,'2026-10-12').timing_unknown_job_keys,['820:1:82001']);
+  assert.equal(feeRow(projectFeeWorkload(feeNative([late]),REPO,NOW.toISOString()),'2026-10-10').execution_minutes,0);
+  assert.equal(feeRow(projectFeeWorkload(feeNative([early]),REPO,NOW.toISOString()),'2026-10-12').execution_minutes,0);
+});
+
 test('fee supplement uses only the existing App remainder, with no retry or fallback pool',async()=>{
   for(const patch of [{source:'github_token'},{used:2000},{remaining:599},{stopped:'request_cap'},{deadline:0}]){
     let calls=0;const mem=memoryFs(), budget={source:'app',used:100,cap:2000,remaining:4000,floor:600,stopped:null,deadline:100,clock:()=>1,...patch};
