@@ -3,21 +3,21 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://clued.pixelgrav.com"),
-  title: "Clued — One you. Every AI.",
+  title: "Kooyumi — Let the good continue.",
   description:
-    "A private, user-controlled context layer for every AI you authorize.",
+    "Find what's good. Keep it going.",
   openGraph: {
-    title: "Clued — One you. Every AI.",
+    title: "Kooyumi — Let the good continue.",
     description:
-      "A private, user-controlled context layer for every AI you authorize.",
+      "Find what's good. Keep it going.",
     type: "website",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "Clued" }],
+    images: [{ url: "/og.png", width: 1731, height: 909, alt: "Kooyumi" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Clued — One you. Every AI.",
+    title: "Kooyumi — Let the good continue.",
     description:
-      "A private, user-controlled context layer for every AI you authorize.",
+      "Find what's good. Keep it going.",
     images: ["/og.png"],
   },
   icons: {

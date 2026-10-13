@@ -225,10 +225,10 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     { name: '项目开发', rows: details?.eligible.filter(row => row.resource_kind === 'context') || [] },
   ].filter(group => group.rows.length);
   return <main className="oauth-shell"><section className="oauth-card oauth-consent" aria-busy={busy}>
-    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>CLUED</span></Link>
+    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>Kooyumi</span></Link>
     {busy && <p role="status">正在核验授权…</p>}
     {error && <div className="oauth-error" role="alert"><strong>尚未完成</strong><p>{error}</p><button type="button" disabled={busy} onClick={() => void reload()}>重新读取请求</button></div>}
-    {!busy && !session && <><h1>登录 Clued 以继续</h1><p className="oauth-copy">开发和个人使用共用同一个账户。登录后选择允许此客户端使用的资源。</p>
+    {!busy && !session && <><h1>登录 Kooyumi 以继续</h1><p className="oauth-copy">开发和个人使用共用同一个账户。登录后选择允许此客户端使用的资源。</p>
       <form className="oauth-form" onSubmit={signIn}>
         <label>邮箱<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
         <label>密码<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
@@ -236,7 +236,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
       </form><p><Link href="/oauth/account" target="_blank" rel="noopener noreferrer">忘记密码</Link></p><p>没有账户的开发者，请在<Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">开发项目页面</Link>注册，并打开项目所有者提供的邀请链接。</p></>}
     {session && !details && <div className="oauth-details"><p>登录账户：{session.user.email || session.user.id}</p><button className="oauth-secondary" type="button" disabled={authBusy} onClick={() => void switchAccount()}>切换账户</button></div>}
     {details && <>
-      <h1>允许 {details.client_name} 使用 Clued</h1>
+      <h1>允许 {details.client_name} 使用 Kooyumi</h1>
       <dl className="oauth-details"><div><dt>当前账户</dt><dd className="oauth-account-inline">{details.user.email || details.user.id}<button className="oauth-account-switch" type="button" disabled={busy} onClick={() => void switchAccount()}>切换账户</button></dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
       <p className="oauth-copy">先选一个角色和范围；需要逐项调整时打开下方的“高级”。仍需点击最下方按钮确认授权。</p>
       {details.eligible.length > 0 && <section className="oauth-roles" aria-label="角色">
