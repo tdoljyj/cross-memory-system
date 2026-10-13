@@ -226,7 +226,8 @@ function inventoryIdentity(r){
 class NativeInventoryConflict extends Error{
   constructor(prior,current,stage){
     super('NATIVE_INVENTORY_BOUNDARY_CHANGED');
-    const progress=r=>({run_attempt:r.run_attempt,status:r.status,conclusion:r.conclusion,
+    const conclusions=['success','failure','neutral','cancelled','skipped','timed_out','action_required','stale','startup_failure'];
+    const progress=r=>({run_attempt:r.run_attempt,status:r.status,conclusion:conclusions.includes(r.conclusion)?r.conclusion:null,
       created_at:r.created_at,updated_at:r.updated_at,run_started_at:r.run_started_at});
     // Only normalized public Native fields, not response bodies, URLs,
     // credentials, logs or clock/claim payloads. This is diagnostic data;

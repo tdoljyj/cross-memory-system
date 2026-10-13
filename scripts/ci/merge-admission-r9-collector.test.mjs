@@ -634,6 +634,16 @@ test('a refused directory head identity change reports bounded public conflict f
   assert.equal(r.population.complete,false);
 });
 
+test('conflict diagnostics never echo an unvalidated Native conclusion',async()=>{
+  for(const conclusion of [{private:'untrusted-body'},'https://untrusted.invalid/'+('x'.repeat(4000)),17]){
+    const f=advancingPostWindowPrefix({head_sha:'d'.repeat(40),conclusion}),r=await C.collectIncrementalNative({request:f.request,repository,window});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+    assert.equal(r.inventory_conflict.after.conclusion,null);assert.equal(r.population.complete,false);
+    assert.ok(r.inventory_conflict.changed_fields.includes('conclusion'));
+    assert.ok(!JSON.stringify(r.inventory_conflict).includes('untrusted'));
+  }
+});
+
 test('the actual report writer retains a conflict diagnosis without promoting metrics or T0',async()=>{
   const conflict=advancingPostWindowPrefix({head_sha:'d'.repeat(40)}),fake=nativeRequest({sourceContract:contract(false),mutation:route=>
     route.includes('/actions/runs?')&&!new URL(route,'https://native.invalid').searchParams.has('created')?conflict.request(route):null});
