@@ -30,7 +30,10 @@ function fixture() {
     approval:{status:'ok',results:[row(record.id,'decision',1,record.content)]},
     task:{status:'ok',results:[row(TASK,'task',2,'SOURCE ONLY TASK')]},
     verify:{status:'ok',verdict:'ADMITTED',current_fence:1,claim},
-    reconcile:{currentness_state:'CURRENT',admission_eligible:true}};
+    reconcile:{status:'current',receipt_kind:'CURRENTNESS_ADMISSION',
+      currentness_state:'CURRENT',admission_eligible:true,
+      currentness_receipt_id:'123e4567-e89b-12d3-a456-426614174000',
+      evaluation_digest:'5'.repeat(64),currentness_vector_digest:'6'.repeat(64)}};
   responses.approval.results[0].type_fields=clone(record.type_fields);
   const calls=[];
   const tools = {};
@@ -46,6 +49,13 @@ function fixture() {
     readPrerequisiteRefs:[{id:'SOURCE-CONSTRAINT',version:1}]};
 }
 
+function reconciliationHints(f, overall='STALE') {
+  f.responses.resume.required_reads=['project.task','project.state','global.authority'];
+  f.responses.resume.currentness_evaluation={overall,authoritative:false,reconciliation_required:true,
+    currentness_vector_digest:'7'.repeat(64),checkpoint_id:'223e4567-e89b-12d3-a456-426614174000'};
+  return f;
+}
+
 test('fixed read-only calls preserve observation-only authority and no secrets returned',async()=>{
   const f=fixture(), reader=makeDevelopmentCurrentnessReader(f);
   const result=await reader.read('before_resume',f.bound);
@@ -56,6 +66,100 @@ test('fixed read-only calls preserve observation-only authority and no secrets r
   assert.deepEqual(f.calls.map(([name])=>name),
     ['resume','reconcile','search','search','verify']);
   assert.ok(!('pr_ref' in f.calls.find(([name])=>name==='verify')[1]));
+});
+
+test('exact stale or unknown checkpoint hints enter formal admission without rewriting restore',async()=>{
+  for(const overall of ['STALE','UNKNOWN']) {
+    const f=reconciliationHints(fixture(),overall),restored=clone(f.responses.resume);
+    assert.notEqual(f.responses.resume.currentness_evaluation.currentness_vector_digest,
+      f.responses.reconcile.currentness_vector_digest);
+    const result=await makeDevelopmentCurrentnessReader(f).read('preflight',f.bound);
+    assert.deepEqual(f.responses.resume,restored);
+    assert.deepEqual(f.calls.map(([name])=>name),['resume','reconcile','search','search','verify']);
+    assert.equal(result.authority_effect,'NONE');
+    assert.equal(result.permission_issued,false);
+    assert.equal(result.attempt_consumed,false);
+  }
+});
+
+test('partial duplicate reordered or unknown restore hints never enter reconcile',async()=>{
+  for(const reads of [null,{},'project.task',
+    ['project.task'],['project.task','project.state'],
+    ['project.task','global.authority','project.state'],
+    ['project.task','project.state','project.state'],
+    ['project.task','project.state','unknown.authority'],
+    ['project.task','project.state','global.authority','project.task'],
+    Object.assign(new Array(3),{0:'project.task',2:'global.authority'})]) {
+    const f=reconciliationHints(fixture());f.responses.resume.required_reads=reads;
+    await assert.rejects(makeDevelopmentCurrentnessReader(f).read('preflight',f.bound),/UPSTREAM_READS_REQUIRED/);
+    assert.deepEqual(f.calls.map(([name])=>name),['resume']);
+  }
+});
+
+test('restore hints require the exact nested stale or unknown evaluation metadata',async()=>{
+  for(const change of [f=>delete f.responses.resume.currentness_evaluation,
+    f=>f.responses.resume.currentness_evaluation=null,
+    f=>f.responses.resume.currentness_evaluation=[],
+    f=>f.responses.resume.currentness_evaluation={},
+    f=>f.responses.resume.currentness_evaluation.overall='CURRENT',
+    f=>f.responses.resume.currentness_evaluation.overall='UNRECOGNIZED',
+    f=>delete f.responses.resume.currentness_evaluation.overall,
+    f=>f.responses.resume.currentness_evaluation.authoritative=true,
+    f=>f.responses.resume.currentness_evaluation.authoritative='false',
+    f=>delete f.responses.resume.currentness_evaluation.authoritative,
+    f=>f.responses.resume.currentness_evaluation.reconciliation_required=false,
+    f=>f.responses.resume.currentness_evaluation.reconciliation_required='true',
+    f=>delete f.responses.resume.currentness_evaluation.reconciliation_required,
+    f=>{delete f.responses.resume.currentness_evaluation;
+      f.responses.resume.authoritative=false;f.responses.resume.reconciliation_required=true;}]) {
+    const f=reconciliationHints(fixture());change(f);
+    await assert.rejects(makeDevelopmentCurrentnessReader(f).read('preflight',f.bound),/UPSTREAM_READS_REQUIRED/);
+    assert.deepEqual(f.calls.map(([name])=>name),['resume']);
+  }
+  const f=reconciliationHints(fixture());f.responses.resume.status='current';
+  await assert.rejects(makeDevelopmentCurrentnessReader(f).read('preflight',f.bound),/AUTHORIZED_SESSION_REQUIRED/);
+  assert.deepEqual(f.calls.map(([name])=>name),['resume']);
+});
+
+test('valid reconciliation hints cannot bypass a new or changed upstream constraint',async()=>{
+  for(const constraint of [{id:'NEW-CONSTRAINT',version:1},{id:'SOURCE-CONSTRAINT',version:2}]) {
+    const f=reconciliationHints(fixture());f.responses.resume.active_constraints=[constraint];
+    await assert.rejects(makeDevelopmentCurrentnessReader(f).read('preflight',f.bound),/UPSTREAM_READS_REQUIRED/);
+    assert.deepEqual(f.calls.map(([name])=>name),['resume']);
+  }
+});
+
+test('a typed formal current admission receipt is mandatory before final reads',async()=>{
+  const fields=['status','receipt_kind','currentness_state','admission_eligible',
+    'currentness_receipt_id','evaluation_digest','currentness_vector_digest'];
+  const changes=fields.map(field=>f=>delete f.responses.reconcile[field]);
+  changes.push(f=>f.responses.reconcile.status='observation',
+    f=>f.responses.reconcile.receipt_kind='OBSERVATION',
+    f=>f.responses.reconcile.currentness_receipt_id='',
+    f=>f.responses.reconcile.currentness_receipt_id='not-a-uuid',
+    f=>f.responses.reconcile.currentness_receipt_id='123e4567e89b12d3a456426614174000',
+    f=>f.responses.reconcile.currentness_receipt_id=null,
+    f=>f.responses.reconcile.evaluation_digest='a'.repeat(63),
+    f=>f.responses.reconcile.evaluation_digest='a'.repeat(65),
+    f=>f.responses.reconcile.evaluation_digest='g'.repeat(64),
+    f=>f.responses.reconcile.evaluation_digest=null,
+    f=>f.responses.reconcile.currentness_vector_digest='a'.repeat(63),
+    f=>f.responses.reconcile.currentness_vector_digest='g'.repeat(64),
+    f=>f.responses.reconcile.currentness_vector_digest=null);
+  for(const change of changes) {
+    const f=reconciliationHints(fixture());change(f);
+    await assert.rejects(makeDevelopmentCurrentnessReader(f).read('consume',f.bound),/CURRENTNESS_UNAVAILABLE/);
+    assert.deepEqual(f.calls.map(([name])=>name),['resume','reconcile']);
+  }
+});
+
+test('typed receipt validation accepts UUID versions and hex casing without old digest equality',async()=>{
+  const f=reconciliationHints(fixture());
+  f.responses.reconcile.currentness_receipt_id='01890B2C-88BD-7CC3-98C1-CC1227552479';
+  f.responses.reconcile.evaluation_digest='A'.repeat(64);
+  f.responses.reconcile.currentness_vector_digest='B'.repeat(64);
+  const result=await makeDevelopmentCurrentnessReader(f).read('consume',f.bound);
+  assert.equal(result.authority_effect,'NONE');assert.equal(f.calls.length,5);
 });
 
 test('authoring/adoption/observed capture cannot become experiment approval',()=>{
@@ -152,7 +256,7 @@ test('changes adopted during reconcile still fail the final exact observation',a
     f=>f.responses.verify.claim={...f.responses.verify.claim,execution_handover_pending:true},
     f=>f.responses.verify.claim={...f.responses.verify.claim,status:'RELEASED'},
     f=>f.responses.verify.claim={...f.responses.verify.claim,holder_session_ref:'OTHER'}]) {
-    const f=fixture();
+    const f=reconciliationHints(fixture());
     f.tools.mcp__codex_apps__clued_clued_session_reconcile=async args=>{
       f.calls.push(['reconcile',args]); change(f);
       return {structuredContent:f.responses.reconcile};
@@ -220,6 +324,8 @@ test('invalid prerequisite refs reject before protected reads and later edits ca
 
 test('a newly surfaced reconcile read requirement or constraint blocks the final calls',async()=>{
   for(const change of [f=>f.responses.reconcile.required_reads=[{record_id:'NEW-REQUIRED-READ'}],
+    f=>{f.responses.reconcile.required_reads=['project.task','project.state','global.authority'];
+      f.responses.reconcile.currentness_evaluation={overall:'STALE',authoritative:false,reconciliation_required:true};},
     f=>f.responses.reconcile.active_constraints_delivered=[{id:'NEW-CONSTRAINT',version:1}]]) {
     const f=fixture();change(f);
     await assert.rejects(makeDevelopmentCurrentnessReader(f).read('consume',f.bound),/UPSTREAM_READS_REQUIRED/);
