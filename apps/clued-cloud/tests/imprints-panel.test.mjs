@@ -23,7 +23,7 @@ const record = extra => ({ id: ID, title: 'Saved imprint', content: 'Complete so
 const page = (records = [], next = null, semantics = 'qualified_saved_latest') => ({ status: 'ok', records,
   read_semantics: semantics, selection_complete: true, page: { next_cursor: next, complete: next === null } });
 
-function modules(React = {}, supabase = {}) {
+function modules(React = {}, supabase = {}, crypto = webcrypto) {
   const cache = new Map();
   function load(file) {
     if (cache.has(file)) return cache.get(file);
@@ -31,7 +31,7 @@ function modules(React = {}, supabase = {}) {
     const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
       module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
     } }).outputText;
-    vm.runInNewContext(compiled, { exports, crypto: webcrypto, TextEncoder, Date, Intl, Map, Set, Array, JSON, Error,
+    vm.runInNewContext(compiled, { exports, crypto, TextEncoder, Date, Intl, Map, Set, Array, JSON, Error,
       queueMicrotask: callback => React.queueMicrotask ? React.queueMicrotask(callback) : queueMicrotask(callback),
       require(name) {
         if (name === 'react') return React;
@@ -49,9 +49,10 @@ function modules(React = {}, supabase = {}) {
   return { load: name => load(path.join(ROOT, name)) };
 }
 
-function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmentContext) {
-  const hooks = new Map(), effects = [], microtasks = [], calls = [];
-  let active, cursor, dirty = false, root, who = initial, developmentContextId = initialDevelopmentContext;
+function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmentContext, { crypto = webcrypto } = {}) {
+  const hooks = new Map(), effects = [], microtasks = [], calls = [], rpcWaiters = new Set();
+  let active, cursor, dirty = false, root, unmounted = false, who = initial, developmentContextId = initialDevelopmentContext;
+  const notifyRpc = () => { for (const waiter of rpcWaiters) if (calls.length >= waiter.count) waiter.finish(); };
   const equal = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
   const React = {
     queueMicrotask(callback) { microtasks.push(callback); },
@@ -72,11 +73,12 @@ function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmen
   const supabase = { rpc(name, args) {
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-    const call = { name, args, resolve, reject, headers: {} }; calls.push(call);
+    const call = { name, args, resolve, reject, headers: {} }; calls.push(call); notifyRpc();
     return { then: (...args) => promise.then(...args), setHeader(name, value) { call.headers[name] = value; return this; } };
   } };
-  const m = modules(React, supabase), Panel = m.load('ImprintPanel.tsx').default;
+  const m = modules(React, supabase, crypto), Panel = m.load('ImprintPanel.tsx').default;
   function render() {
+    if (unmounted) return root;
     let turns = 0;
     do {
       dirty = false;
@@ -110,7 +112,25 @@ function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmen
   const button = label => { const node = nodes('button').find(node => text(node) === label); assert.ok(node, label); return node; };
   const field = label => { const node = [...nodes('input'), ...nodes('textarea'), ...nodes('select')].find(node => node.props['aria-label'] === label); assert.ok(node, label); return node; };
   async function settle() { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)); render(); }
-  async function untilCalls(count) { for (let i = 0; i < 30 && calls.length < count; i++) await settle(); assert.ok(calls.length >= count, 'RPC not dispatched'); }
+  // A real WebCrypto digest can finish after many immediate turns under worker
+  // contention. Synchronize on the actual RPC registration, not render count.
+  async function untilCalls(count, { timeoutMs = 5000 } = {}) {
+    assert.ok(Number.isSafeInteger(count) && count > 0);
+    assert.ok(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 5000);
+    if (unmounted) throw Error('fixture unmounted before RPC dispatch');
+    if (calls.length < count) await new Promise((resolve, reject) => {
+      let timer, finished = false;
+      const waiter = { count, finish(error) {
+        if (finished) return;
+        finished = true; clearTimeout(timer); rpcWaiters.delete(waiter);
+        if (error) reject(error); else resolve();
+      } };
+      rpcWaiters.add(waiter);
+      timer = setTimeout(() => waiter.finish(Error(`RPC not dispatched within ${timeoutMs}ms: expected ${count}, received ${calls.length}`)), timeoutMs);
+      notifyRpc(); // Recheck after registration; no dispatch can be missed.
+    });
+    await settle();
+  }
   function fire(node, event, payload = {}) { const result = node.props[event]({ preventDefault() {}, target: payload, ...payload }); render(); return result; }
   render();
   return { calls, render, nodes, text, button, field, fire, settle, untilCalls,
@@ -122,9 +142,63 @@ function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmen
     async fail(index) { calls[index].reject(new Error('lost response')); await settle(); },
     setSession(next) { who = next; render(); },
     setDevelopmentContext(next) { developmentContextId = next; render(); },
-    unmount() { hooks.forEach(list => list.forEach(hook => hook?.cleanup?.())); hooks.clear(); },
+    unmount() {
+      if (unmounted) return;
+      unmounted = true;
+      hooks.forEach(list => list.forEach(hook => hook?.cleanup?.())); hooks.clear(); root = null;
+      for (const waiter of rpcWaiters) waiter.finish(Error('fixture unmounted before RPC dispatch'));
+    },
   };
 }
+
+test('RPC wait observes dispatch after an asynchronous digest exceeds the former immediate budget', async t => {
+  let resumeDigest;
+  const digestGate = new Promise(resolve => { resumeDigest = resolve; });
+  const crypto = { randomUUID: () => webcrypto.randomUUID(), subtle: { async digest(...args) {
+    await digestGate;
+    return webcrypto.subtle.digest(...args);
+  } } };
+  const f = fixture(session('owner'), 'zh-CN', undefined, { crypto });
+  t.after(() => { f.unmount(); resumeDigest(); });
+  await f.respond(0, page([record()]));
+  f.check('工作', true); const saving = f.submit('保存领域');
+  let outcome = 'pending';
+  const waiting = f.untilCalls(2).then(() => { outcome = 'dispatched'; }, () => { outcome = 'failed'; });
+  for (let i = 0; i < 31; i++) await f.settle();
+  assert.equal(outcome, 'pending'); assert.equal(f.calls.length, 1);
+  resumeDigest(); await waiting;
+  assert.equal(outcome, 'dispatched'); assert.equal(f.calls[1].name, 'clued_imprint_organization_set_v1');
+  assert.equal(f.calls[1].headers.Authorization, 'Bearer fixture-owner');
+  await f.respond(1, { status: 'rejected', error_code: 'organization_version_conflict' });
+  await saving; assert.ok(f.text().includes('对象已有更新'));
+});
+
+test('RPC waits resolve for recorded calls and concurrent listeners without inventing responses', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await f.untilCalls(1);
+  const first = f.untilCalls(2), second = f.untilCalls(2);
+  f.click('工作'); await Promise.all([first, second]);
+  assert.equal(f.calls.length, 2); assert.equal(f.calls[1].name, 'clued_imprint_read_v1');
+  assert.equal(f.calls[1].args.p_input.view, 'work');
+  assert.ok(f.text().includes('正在读取印记'));
+  await f.respond(1, page()); assert.ok(f.text().includes('没有匹配'));
+});
+
+test('an absent RPC fails at its bounded deadline and a later real dispatch still works', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await assert.rejects(f.untilCalls(2, { timeoutMs: 25 }), /RPC not dispatched within 25ms: expected 2, received 1/);
+  assert.equal(f.calls.length, 1);
+  f.click('学习'); await f.untilCalls(2);
+  assert.equal(f.calls[1].args.p_input.view, 'learning');
+});
+
+test('unmount cancels RPC waits and settling cannot remount the fixture', async () => {
+  const f = fixture();
+  const waiting = f.untilCalls(2);
+  f.unmount(); await assert.rejects(waiting, /fixture unmounted before RPC dispatch/);
+  await f.settle(); assert.equal(f.calls.length, 1); assert.equal(f.nodes('article').length, 0);
+  await assert.rejects(f.untilCalls(2), /fixture unmounted before RPC dispatch/);
+});
 
 test('eight views default to All; unclassified saved content and full inert text are readable', async t => {
   const f = fixture(); t.after(() => f.unmount());
