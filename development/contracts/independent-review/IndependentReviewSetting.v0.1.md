@@ -2,7 +2,7 @@
 
 Task `ed3755b4` · Owner Decision `d4663fa2` · implementation contract
 
-One account setting, **允许独立审核**, defaults On when no setting row exists. Its Native page is `/independent-review`, linked from `/grants`. It records standing permission to arrange independent read-only review within existing authorized work. The normative Agent behavior is in Agent Contract §8, rather than copied into a Skill.
+One account setting, **独立审核自动授权** (the independent-review permission in Agent Contract §8), defaults On when no setting row exists. Its Native page is `/independent-review`, linked from `/grants`. It records standing permission to arrange independent read-only review within existing authorized work. The normative Agent behavior is in Agent Contract §8, rather than copied into a Skill.
 
 | Interface | Input | Result |
 |---|---|---|

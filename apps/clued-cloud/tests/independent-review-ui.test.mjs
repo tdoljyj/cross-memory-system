@@ -77,7 +77,7 @@ test('a new account shows the default, on; turning it off sends the version show
   await open(f);
   assert.ok(f.text().includes('已打开（默认）'));
   assert.ok(f.text().includes('Agent 改不了'));
-  f.button('关闭独立审核').props.onClick();
+  f.button('关闭自动授权').props.onClick();
   assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_independent_review_setting_set_v1',
     { p_input: { enabled: false, base_version: 0 } }]);
   f.render();
@@ -85,9 +85,9 @@ test('a new account shows the default, on; turning it off sends the version show
   f.calls[1].resolve({ data: { status: 'committed', changed: true, ...state(false, 1).data }, error: null }); await f.settle();
   assert.ok(f.text().includes('已关闭'));
   assert.ok(!f.text().includes('（默认）'));
-  assert.ok(f.text().includes('已关闭，后续审核按任务的明确许可进行。'));
+  assert.ok(f.text().includes('已关闭自动授权，后续审核按任务的明确许可进行。'));
   assert.equal(f.calls.length, 2);
-  f.button('打开独立审核').props.onClick();
+  f.button('开启自动授权').props.onClick();
   assert.deepEqual(plain(f.calls[2].args.p_input), { enabled: true, base_version: 1 });
   assert.equal(f.fetches.length, 0, 'the page never goes through a Worker route');
 });
@@ -95,7 +95,7 @@ test('a new account shows the default, on; turning it off sends the version show
 test('a stale page is told so and shows the current setting', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   await open(f);
-  f.button('关闭独立审核').props.onClick();
+  f.button('关闭自动授权').props.onClick();
   f.calls[1].resolve({ data: { status: 'rejected', error_code: 'independent_review_setting_version_conflict',
     current: { enabled: false, version: 1 } }, error: null });
   await f.settle();
@@ -103,7 +103,7 @@ test('a stale page is told so and shows the current setting', async t => {
   f.calls[2].resolve(state(false, 1)); await f.settle();
   assert.ok(f.text().includes('被改过'), 'the conflict message stays after the reload');
   assert.ok(f.text().includes('已关闭'));
-  assert.ok(f.nodes('button').some(n => f.text(n) === '打开独立审核'));
+  assert.ok(f.nodes('button').some(n => f.text(n) === '开启自动授权'));
 });
 
 test('a delegated login is refused in plain words', async t => {
@@ -111,7 +111,7 @@ test('a delegated login is refused in plain words', async t => {
   f.emit('INITIAL_SESSION', session('owner'));
   f.calls[0].resolve({ data: null, error: { message: 'direct_human_session_required', code: '42501' } }); await f.settle();
   assert.ok(f.text().includes('需要你本人直接登录 Clued'));
-  assert.equal(f.nodes('button').some(n => f.text(n).includes('独立审核')), false, 'no switch without a read setting');
+  assert.equal(f.nodes('button').some(n => n.props.role === 'switch'), false, 'no switch without a read setting');
 });
 
 test('switching accounts drops the previous account’s setting', async t => {
@@ -134,7 +134,7 @@ test('switch has an accessible checked state and no execution approval', async t
   const f = fixture(PAGE); t.after(() => f.unmount());
   await open(f);
   const toggle = f.nodes('button').find(n => n.props.role === 'switch');
-  assert.equal(toggle.props['aria-label'], '允许独立审核');
+  assert.equal(toggle.props['aria-label'], '独立审核自动授权');
   assert.equal(toggle.props['aria-checked'], true);
   assert.ok(f.text().includes('不批准修改、合并、部署或发布'));
   assert.ok(f.text().includes('已完成的结论会保留'));
@@ -153,7 +153,7 @@ test('refresh failure clears the last observed policy', async t => {
 test('late setting writes from another account cannot change the current view', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   await open(f);
-  f.button('关闭独立审核').props.onClick(); f.render();
+  f.button('关闭自动授权').props.onClick(); f.render();
   f.emit('SIGNED_IN', session('another'));
   f.calls[2].resolve(state(false, 5)); await f.settle();
   f.calls[1].resolve({ data: { ...state(true, 99).data, status: 'committed' }, error: null }); await f.settle();
@@ -164,12 +164,12 @@ test('late setting writes from another account cannot change the current view', 
 test('failed or uncertain writes read the real setting rather than guess completion', async t => {
   const f = fixture(PAGE); t.after(() => f.unmount());
   await open(f);
-  f.button('关闭独立审核').props.onClick(); f.render();
+  f.button('关闭自动授权').props.onClick(); f.render();
   f.calls[1].reject(Error('lost response')); await f.settle();
   assert.equal(f.calls[2].name, 'clued_independent_review_setting_v1');
   assert.equal(f.nodes('button').some(n => n.props.role === 'switch'), false);
   f.calls[2].resolve(state(false, 1)); await f.settle();
   assert.ok(f.text().includes('已关闭'));
-  assert.ok(!f.text().includes('已关闭，后续审核按任务的明确许可进行。'));
+  assert.ok(!f.text().includes('已关闭自动授权，后续审核按任务的明确许可进行。'));
 });
 
