@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {verifyWindowsProtection,verifyPosixProtection,classifyWindowsProtection} from './qualify-work-handover.mjs';
+import {verifyWindowsProtection,verifyPosixProtection,classifyWindowsProtection,decodeWindowsInspectionFailure,windowsInspectionFailureMessage} from './qualify-work-handover.mjs';
 
 const directory=path.dirname(fileURLToPath(import.meta.url));
 const repository=path.resolve(directory,'../..');
@@ -156,4 +156,47 @@ test('unaccepted code is rejected before import and cannot run a supplied progra
     assert.ok(path.resolve(temporary).startsWith(path.resolve(os.tmpdir())+path.sep));
     fs.rmSync(temporary,{recursive:true});
   }
+});
+
+const diagnosticFixture=()=>({schema:'clued.windows-hook-inspection-failure/1',status:'inspection_failed',
+  stage:'raw-ace',target_index:0,ace_index:2,ace_type:9,
+  exception_type:'System.Management.Automation.RuntimeException',error_category:'OperationStopped',
+  language_mode:'FullLanguage',ps_major:5});
+const diagnosticResult=value=>({status:1,stdout:JSON.stringify(value),stderr:'PRIVATE_RAW_STDERR_CANARY'});
+test('native inspection failure preserves only exact typed public diagnostic fields',()=>{
+  const fixture=diagnosticFixture(),result=diagnosticResult(fixture);
+  assert.deepEqual(decodeWindowsInspectionFailure(result),fixture);
+  assert.match(windowsInspectionFailureMessage(result),/Windows protection inspection failed/);
+  assert.ok(!windowsInspectionFailureMessage(result).includes(result.stderr));
+  for(const stage of ["identity","administrator-members","target-item","target-acl","descriptor-construction","owner-sid","raw-ace","serialize"])
+    assert.equal(decodeWindowsInspectionFailure(diagnosticResult({...fixture,stage})).stage,stage);
+  for(const index of [-1,0,1,2,3])
+    assert.equal(decodeWindowsInspectionFailure(diagnosticResult({...fixture,target_index:index})).target_index,index);
+  for(const exception_type of ["UNKNOWN","System.Management.Automation.RuntimeException","System.Management.Automation.MethodInvocationException","System.Management.Automation.CmdletInvocationException","System.Management.Automation.ActionPreferenceStopException","System.Management.Automation.ItemNotFoundException","System.Management.Automation.PSInvalidOperationException","System.Management.Automation.ParseException","System.UnauthorizedAccessException","System.Security.SecurityException","System.ArgumentException","System.ArgumentOutOfRangeException","System.InvalidOperationException","System.NotSupportedException","System.PlatformNotSupportedException","System.IO.IOException","System.IO.FileNotFoundException","System.IO.DirectoryNotFoundException"])
+    assert.equal(decodeWindowsInspectionFailure(diagnosticResult({...fixture,exception_type})).exception_type,exception_type);
+});
+test('native diagnostic rejects missing, extra, wrong-type, forged status and out-of-range observations',()=>{
+  const fixture=diagnosticFixture();
+  for(const key of Object.keys(fixture)){
+    const missing={...fixture};delete missing[key];assert.equal(decodeWindowsInspectionFailure(diagnosticResult(missing)),null);
+  }
+  for(const [key,value] of [['schema','other'],['status','pass'],['stage','PRIVATE_STAGE_CANARY'],
+    ['target_index',4],['target_index',-2],['target_index','0'],['ace_index',4096],['ace_index',-2],
+    ['ace_type',256],['ace_type',-2],['exception_type','PrivateCredentialException'],
+    ['error_category','PRIVATE_CATEGORY_CANARY'],['language_mode','OTHER'],['ps_major',100],['ps_major','5']]){
+    assert.equal(decodeWindowsInspectionFailure(diagnosticResult({...fixture,[key]:value})),null);
+  }
+  for(const extra of ['message','stack','stderr','owner_sid','environment','file_content','__proto__']){
+    const bad=JSON.parse(JSON.stringify(fixture));Object.defineProperty(bad,extra,{value:'PRIVATE_FIELD_CANARY',enumerable:true});
+    const result=diagnosticResult(bad);assert.equal(decodeWindowsInspectionFailure(result),null);
+    assert.equal(windowsInspectionFailureMessage(result),'Windows protection inspection failed');
+  }
+  for(const status of [0,null,-1,256,'1'])
+    assert.equal(decodeWindowsInspectionFailure({...diagnosticResult(fixture),status}),null);
+  for(const stdout of ['PRIVATE_OUTPUT_CANARY',JSON.stringify(fixture)+' junk',JSON.stringify([fixture]),'null','x'.repeat(4097)]){
+    const result={status:1,stdout,stderr:'PRIVATE_RAW_STDERR_CANARY'};
+    assert.equal(decodeWindowsInspectionFailure(result),null);
+    assert.equal(windowsInspectionFailureMessage(result),'Windows protection inspection failed');
+  }
+  assert.throws(()=>classifyWindowsProtection(fixture),'even a status-zero forged failure cannot certify protection');
 });

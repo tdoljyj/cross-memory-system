@@ -1,6 +1,6 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
-import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource} from './clued-workflow-profile.mjs';
+import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES} from './clued-workflow-profile.mjs';
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
@@ -104,7 +104,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
       // immutable commit. Mutable PR/main/run/attempt and platform Source
       // identity reads always retain the authenticated fresh read below.
       const match=/^\/repos\/([^/]+\/[^/]+)\/contents\/([^?]+)\?ref=([a-f0-9]{40})$/.exec(route);
-      const cacheable=catalog.future_installations.length>0 && match?.[1]===repository && safePath(match[2]);
+      const cacheable=(catalog.future_installations.length>0 || catalog.external2_applicable===true) && match?.[1]===repository && safePath(match[2]);
       if(cacheable && immutableSources.has(route))return structuredClone(immutableSources.get(route));
       const content=await read(route);
       if(cacheable && immutableSources.size<64 && decodedWorkflow(content,match[2],content?.sha)!==null)
@@ -362,9 +362,14 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     if(!atDefault || !atHead)return unknown('workflow directory incomplete');
     const future=futureWorkflowCatalogue(registry,roleSpecs);
     if(!future.passed)return future;
-    if(future.entries.some(entry=>atDefault.has(entry.file)))return unknown('future Source is already installed without active promotion');
-    const futureInstalls=future.entries.filter(entry=>atHead.has(entry.file));
-    const futureChanged=future.entries.some(entry=>diff.changedFiles?.includes(entry.file));
+    const external2=external2FutureWorkflowCatalogue(registry,roleSpecs);
+    if(!external2.passed)return external2;
+    const enrolled=[...future.entries,...external2.entries];
+    const externalPair=external2.entries.filter(entry=>atHead.has(entry.file));
+    if(externalPair.length && externalPair.length!==2)return unknown('External2 pair must install atomically');
+    if(enrolled.some(entry=>atDefault.has(entry.file)))return unknown('future Source is already installed without active promotion');
+    const futureInstalls=enrolled.filter(entry=>atHead.has(entry.file));
+    const futureChanged=enrolled.some(entry=>diff.changedFiles?.includes(entry.file));
     if((futureInstalls.length || futureChanged) && (!sameDirectory(atDefault,await completeWorkflowDirectory({read,repository,commit:tip})) ||
       !sameDirectory(atHead,await completeWorkflowDirectory({read,repository,commit:head}))))
       return unknown('future workflow Git tree/directory incomplete or differs');
@@ -382,8 +387,10 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     for(const [file,blob] of atHead) {
       if(!/\.ya?ml$/.test(file) || defaultWorkflows.has(file) || atDefault.get(file)===blob)continue;
       const text=decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${head}`),file,blob);
-      if(!atDefault.has(file) && future.entries.some(entry=>entry.file===file)) {
-        const enrollment=acceptedFutureWorkflowSource(registry,roleSpecs,file,blob,{repository});
+      if(!atDefault.has(file) && enrolled.some(entry=>entry.file===file)) {
+        const enrollment=Object.hasOwn(EXTERNAL2_FILES,file)?
+          acceptedExternal2WorkflowSource(registry,roleSpecs,file,blob,{repository}):
+          acceptedFutureWorkflowSource(registry,roleSpecs,file,blob,{repository});
         if(!enrollment.passed)return enrollment;
         if(diff.descriptor.default_branch!==enrollment.entry.exact_source_acceptance_scope.default_branch)
           return unknown('future installation default branch is outside accepted scope');
@@ -413,7 +420,9 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     if(!targets.passed)return targets;
     return {passed:true,state:'qualified',scope:'applicable_workflow_catalogue',workflows:targets.workflows,
       profiles:selected,source_registry:sourceRegistry,source_roles:sourceRoles,
-      future_installations:futureInstalls.map(entry=>entry.file),default_directory:[...atDefault],head_directory:[...atHead]};
+      future_installations:futureInstalls.map(entry=>entry.file),
+      external2_applicable:[...targets.workflows.keys()].some(file=>Object.hasOwn(EXTERNAL2_FILES,file)),
+      default_directory:[...atDefault],head_directory:[...atHead]};
   } catch {return unknown('workflow catalogue read failed');}
 }
 
