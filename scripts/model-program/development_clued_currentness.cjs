@@ -10,6 +10,9 @@ const TASK = '1502fd80-8ff8-4adc-b4f5-da6d462f4f8a';
 const PHASES = new Set(['preflight', 'before_observation_open', 'observation_opened',
   'consume', 'before_start', 'before_resume', 'running', 'before_result']);
 const SHA = /^[0-9a-f]{64}$/;
+const HEX_DIGEST = /^[0-9a-f]{64}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RECONCILIATION_READ_HINTS = Object.freeze(['project.task', 'project.state', 'global.authority']);
 const clone = value => JSON.parse(JSON.stringify(value));
 const canonical = value => Array.isArray(value) ? '[' + value.map(canonical).join(',') + ']' :
   value && typeof value === 'object' ? '{' + Object.keys(value).sort().map(key =>
@@ -97,7 +100,18 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
   }
   const checkReadPrerequisites = (view, requireReadList) => {
     if (requireReadList || Object.hasOwn(view, 'required_reads')) {
-      need(Array.isArray(view.required_reads) && view.required_reads.length === 0,
+      const reads = view.required_reads;
+      const evaluation = view.currentness_evaluation;
+      // The Host has completed the real Canonical prerequisite reads. A
+      // restored stale/unknown checkpoint may still request these exact
+      // reconciliation hints. Preserve them and enter the formal reconcile;
+      // no other read gap, or hint returned by reconcile, can use this branch.
+      const reconcileHints = requireReadList && Array.isArray(reads) && reads.length === 3
+        && RECONCILIATION_READ_HINTS.every((hint, index) => reads[index] === hint)
+        && evaluation && typeof evaluation === 'object' && !Array.isArray(evaluation)
+        && ['STALE', 'UNKNOWN'].includes(evaluation.overall)
+        && evaluation.authoritative === false && evaluation.reconciliation_required === true;
+      need(Array.isArray(reads) && (reads.length === 0 || reconcileHints),
         'UPSTREAM_READS_REQUIRED');
     }
     for (const field of ['active_constraints', 'active_constraint_refs', 'active_constraints_delivered']) {
@@ -155,7 +169,11 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
     };
     const reconciled = decode(await calls.clued_session_reconcile({session_token: resumed.session_token,
       context_key: SCOPE}));
-    need(reconciled.currentness_state === 'CURRENT' && reconciled.admission_eligible === true,
+    need(reconciled.status === 'current' && reconciled.receipt_kind === 'CURRENTNESS_ADMISSION'
+      && reconciled.currentness_state === 'CURRENT' && reconciled.admission_eligible === true
+      && typeof reconciled.currentness_receipt_id === 'string' && UUID.test(reconciled.currentness_receipt_id)
+      && typeof reconciled.evaluation_digest === 'string' && HEX_DIGEST.test(reconciled.evaluation_digest)
+      && typeof reconciled.currentness_vector_digest === 'string' && HEX_DIGEST.test(reconciled.currentness_vector_digest),
       'CURRENTNESS_UNAVAILABLE');
     checkReadPrerequisites(reconciled, false);
     // Reconcile may adopt a new vector. Re-read the exact decision/task/claim
