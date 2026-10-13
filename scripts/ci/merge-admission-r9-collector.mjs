@@ -223,11 +223,24 @@ function inventoryIdentity(r){
     conclusion:r.conclusion??null,created_at:new Date(r.created_at).toISOString(),updated_at:new Date(r.updated_at).toISOString(),
     run_started_at:r.run_started_at===null?null:new Date(r.run_started_at).toISOString(),pull_requests:r.pull_requests.map(p=>p.number).sort((a,b)=>a-b)};
 }
+class NativeInventoryConflict extends Error{
+  constructor(prior,current,stage){
+    super('NATIVE_INVENTORY_BOUNDARY_CHANGED');
+    const conclusions=['success','failure','neutral','cancelled','skipped','timed_out','action_required','stale','startup_failure'];
+    const progress=r=>({run_attempt:r.run_attempt,status:r.status,conclusion:conclusions.includes(r.conclusion)?r.conclusion:null,
+      created_at:r.created_at,updated_at:r.updated_at,run_started_at:r.run_started_at});
+    // Only normalized public Native fields, not response bodies, URLs,
+    // credentials, logs or clock/claim payloads. This is diagnostic data;
+    // it cannot qualify a source or relax the existing refusal.
+    this.detail={run_id:prior.id,stage,changed_fields:Object.keys(prior).filter(k=>!same(prior[k],current[k])),
+      before:progress(prior),after:progress(current)};
+  }
+}
 // The fixed-window denominator excludes runs created at/after its close.
 // Their queue/start/completion metadata can advance while older pages are
 // read. Keep their identity and ordinal fixed, and preserve the latest wire
 // projection; never use this allowance for a pre-close run or an old rerun.
-function inventoryDuplicate(prior,current,cutoff){
+function inventoryDuplicate(prior,current,cutoff,stage){
   if(same(prior,current))return current;
   const identity=r=>({id:r.id,run_attempt:r.run_attempt,workflow_id:r.workflow_id,path:r.path,event:r.event,
     head_sha:r.head_sha,created_at:r.created_at,pull_requests:r.pull_requests});
@@ -236,7 +249,7 @@ function inventoryDuplicate(prior,current,cutoff){
     same(identity(prior),identity(current))&&prior.status!=='completed'&&phase(current.status)>=phase(prior.status)&&
     current.updated_at>=prior.updated_at&&
     (prior.run_started_at===null||current.run_started_at===prior.run_started_at))return current;
-  fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  throw new NativeInventoryConflict(prior,current,stage);
 }
 // Fixed created upper watermark includes all historical runs, so an old run's
 // new attempt is never lost by a created>=opening filter. GitHub caps filtered
@@ -275,7 +288,7 @@ async function rangeInventory(request,repository,window){
         if(leafIds.has(run.id))fail('NATIVE_INVENTORY_DUPLICATE_ID');leafIds.add(run.id);
         const prior=ids.get(run.id);if(prior){
           if(created!==BigInt(range.lo)*1000n&&created!==BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_DUPLICATE_ID');
-          if(!same(prior,run))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');
+          if(!same(prior,run))throw new NativeInventoryConflict(prior,run,'SPLIT_RANGE_OVERLAP');
         }else{ids.set(run.id,run);items.push(run);}count++;if(items.length>MAX_RUNS)fail('NATIVE_INVENTORY_ITEM_CAP');}
       if(count===total)break;
     }
@@ -302,10 +315,10 @@ async function inventory(request,repository,window){
   if(prefix.length===100)return rangeInventory(request,repository,window);
   const expected=first.total-prefix.length,ids=new Map(),all=new Map(),initialMax=first.rows.length?BigInt(first.rows[0].id):0n;let total=first.total,lastId=null;
   const append=rows=>{for(const r of rows){
-    const old=all.get(r.id);if(old){all.set(r.id,inventoryDuplicate(old,r,cutoff));continue;}
+    const old=all.get(r.id);if(old){all.set(r.id,inventoryDuplicate(old,r,cutoff,'SHIFTED_PAGE_DUPLICATE'));continue;}
     if(lastId!==null&&BigInt(r.id)>lastId)fail('NATIVE_INVENTORY_ORDER_UNPROVED');lastId=BigInt(r.id);all.set(r.id,r);
     if(timestampMicros(r.created_at)>=cutoff){if(!prefix.some(p=>p.id===r.id))fail('NATIVE_INVENTORY_PREFIX_NOT_CLOSED');continue;}
-    const prior=ids.get(r.id);if(prior){if(!same(prior,r))fail('NATIVE_INVENTORY_BOUNDARY_CHANGED');continue;}
+    const prior=ids.get(r.id);if(prior){if(!same(prior,r))throw new NativeInventoryConflict(prior,r,'FIXED_MEMBER_DUPLICATE');continue;}
     ids.set(r.id,r);}};
   append(first.rows);
   for(let page=2;page<=Math.ceil(total/100);){
@@ -318,7 +331,7 @@ async function inventory(request,repository,window){
     if(afterPrefix.length===100||closing.total-afterPrefix.length!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_CHANGED');
     const added=closing.rows.filter(r=>!all.has(r.id));
     if(added.some(r=>BigInt(r.id)<=initialMax||timestampMicros(r.created_at)<cutoff)||closing.total-first.total!==added.length)fail('NATIVE_INVENTORY_HEAD_ADDITIONS_UNPROVED');
-    for(const r of closing.rows){all.set(r.id,all.has(r.id)?inventoryDuplicate(all.get(r.id),r,cutoff):r);}
+    for(const r of closing.rows){all.set(r.id,all.has(r.id)?inventoryDuplicate(all.get(r.id),r,cutoff,'CLOSING_DIRECTORY_HEAD'):r);}
     if(all.size!==closing.total)fail('NATIVE_INVENTORY_WHOLE_DENOMINATOR_UNPROVED');}
   if(ids.size!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_UNPROVED');
   return {items:sorted([...ids.values()]),total:ids.size,created_cutoff:window.end,ranges_read:0,directory_mode:'UNCAPPED_FIXED_PREFIX_BARRIER'};
@@ -408,6 +421,7 @@ export async function collectIncrementalNative({request,repository,window,authen
         scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts,
         ...(observerExcluded?{current_observer_exclusion:{...observer,reason_code:'CURRENT_IN_PROGRESS_OBSERVER_IS_NOT_ITS_OWN_TERMINAL_EXECUTION'}}:{})}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),store_raw:storeRaw,attempts:[],gaps,fresh,from_sealed:fromSealed,
+    ...(e instanceof NativeInventoryConflict?{inventory_conflict:e.detail}:{}),
     population:{initial_total:initial?.total??null,closing_total:null,complete:false}};}
 }
 const unavailable=reason_code=>({status:'partial',value:null,reason_code,official_metric:false,source_authenticated:false});
