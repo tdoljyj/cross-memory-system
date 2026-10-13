@@ -31,7 +31,7 @@ const lifecycleNames: Record<string, string> = { active: "有效", closed: "已�
   archived: "已归档", superseded: "已取代", cancelled: "已取消" };
 const bucketNames: Record<string, string> = { now: "现在", next: "接下来", later: "以后", blocked: "受阻", done: "已完成" };
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 Clued，授权给应用的登录不能查看任务详情。",
+  direct_human_session_required: "需要你本人直接登录 Kooyumi，授权给应用的登录不能查看任务详情。",
   record_not_found: "找不到这条记录，或当前账户无权查看。",
 };
 const BEIJING = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit",
@@ -139,10 +139,10 @@ export default function TaskOwnerDetailPage() {
   const visibleError = error && error.target === id && error.owner?.user.id === session?.user.id
     && error.owner?.access_token === session?.access_token ? error.message : "";
   return <main className="context-page owner-confirm">
-    <header><Link href="/">Clued</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/grants">我的授权</Link></header>
+    <header><Link href="/">Kooyumi</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/grants">我的授权</Link></header>
     <h1>{visible ? kinds[visible.record.record_type] + "详情" : "任务详情"}</h1>
     <p className="context-muted">这里只读显示你名下的任务，以及关联的决定和笔记。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Clued</Link> 后查看详情。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Kooyumi</Link> 后查看详情。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {!id ? <p role="alert">请使用完整的记录 ID，从认领页的任务链接打开详情。</p> : <>
         {loading && <p role="status">正在读取详情…</p>}
