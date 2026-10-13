@@ -554,7 +554,9 @@ export function bindClockSource(packetClock,selectionRaw,repository,window){
         BigInt(p.epoch.opening_us)!==timestampMicros(window.start)||BigInt(p.seal.closing_us)!==timestampMicros(window.end))fail('CLOCK_INDEPENDENT_SUBJECT_MISMATCH');
     }
     const result=integrateClockSourceCandidate(packetClock.pages_raw,packetClock.options_raw);
-    if(!result.candidate_ready||result.status!=='UNIQUE_VALUE_CANDIDATE')fail('SEALED_CLOCK_SOURCE_INCOMPLETE');
+    // Source integrity and a uniquely proved percentile are separate results.
+    // The pure reader sets candidate_ready only after complete journal/clock replay.
+    if(result.candidate_ready!==true)fail('SEALED_CLOCK_SOURCE_INCOMPLETE');
     return {status:'TYPED_SOURCE_BOUND',result,source_authenticated:false,official_metric:false};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),source_authenticated:false,official_metric:false};}
 }
@@ -575,7 +577,7 @@ export async function collectR9Measurement({request,budget,repository,window,sou
     native=await collectIncrementalNative({request:slice.request,repository,window,authenticatedStoreRaw:restored.authenticated_native_store_raw??restored.packet?.native_store_raw??null,onStore,observer:verifiedObserver});
     if(native.status!=='COMPLETE')gaps.push(native.reason_code??'NATIVE_POPULATION_INCOMPLETE');
   }catch(e){gaps.push(reason(e));}
-  const packet=restored?.packet,metrics={};let four=null,clock=null,binding=null,selection=null;
+  const packet=restored?.packet,metrics={};let four=null,clock=null,binding=null,selection=null,clockSourceBound=false;
   try{selection=sourceContract(sourceContractRaw,repository,window);}catch{gaps.push('INDEPENDENT_SOURCE_CONTRACT_MISSING_OR_INVALID');}
   let naturalSelectionBound=false;
   if(naturalSelection&&contract)try{const cfg=parseFourSourceRawData((await sourceText(slice.request,repository,R9_RUNTIME_CONFIG,contract.head_sha)).text);
@@ -618,22 +620,26 @@ export async function collectR9Measurement({request,budget,repository,window,sou
     if(!four.candidate_ready)gaps.push('FOUR_SOURCE_SUPPLIED_POPULATION_INCOMPLETE');
   }else gaps.push('NATURAL_ADMISSION_OPERATION_ROUND_PRODUCER_PACKETS_MISSING');}catch{gaps.push('NATURAL_FOUR_SOURCE_PACKET_MALFORMED');}
   const actualClock=liveClock??packet?.clock;
-  if(actualClock){const bound=bindClockSource(actualClock,sourceContractRaw,repository,window);clock=bound.result;if(bound.status!=='TYPED_SOURCE_BOUND')gaps.push(bound.reason_code);}
+  if(actualClock){const bound=bindClockSource(actualClock,sourceContractRaw,repository,window);clock=bound.result;clockSourceBound=bound.status==='TYPED_SOURCE_BOUND';if(!clockSourceBound)gaps.push(bound.reason_code);}
   else gaps.push('AUTHENTICATED_SEALED_CLOCK_TRANSPORT_MISSING');
   // Fresh Source provenance is proved by real immutable original-job
   // artifacts plus the independent protected-main Source registry.
   const authenticated=restored?.status==='AUTHENTICATED_SEALED_ARTIFACT'||naturalSelectionBound&&naturalInputs?.status==='NATIVE_ORIGIN_BOUND';
   const fourQualified=authenticated&&observerProved&&native?.status==='COMPLETE'&&binding?.complete===true&&four?.candidate_ready===true&&
     !gaps.some(g=>/FOUR_SOURCE|NATURAL_|NATIVE_/.test(g));
-  const clockQualified=authenticated&&clock?.candidate_ready===true&&clock.status==='UNIQUE_VALUE_CANDIDATE';
+  const clockSourceQualified=authenticated&&clockSourceBound&&clock?.candidate_ready===true;
+  const clockQualified=clockSourceQualified&&clock.status==='UNIQUE_VALUE_CANDIDATE';
   const qualified=fourQualified&&clockQualified;
   for(const name of ['admission_failures_by_reason','unclaimed_admitted','update_main_rounds','wasted_final_rounds','cancellation_causes']){
     const m=four?.metrics?.[name];metrics[name]=fourQualified&&m?{...m,status:m.value===null?'partial':'measured',official_metric:true,source_authenticated:true}:unavailable(gaps[0]??'FOUR_SOURCE_NOT_QUALIFIED');
     if(m&&!fourQualified)metrics[name].supplied_calculation_candidate=m;
   }
-  metrics.queue_depth_p95=clockQualified?{status:'measured',value:clock.value,official_metric:true,source_authenticated:true}:unavailable(gaps[0]??'CLOCK_VALUE_NOT_PROVED');
+  metrics.queue_depth_p95=clockQualified?{status:'measured',value:clock.value,official_metric:true,source_authenticated:true}:
+    clockSourceQualified?{status:'partial',value:null,reason:clock.reason??'CLOCK_VALUE_NOT_PROVED',official_metric:false,source_authenticated:true,
+      duration_us:clock.duration_us,uncertainty_union_us:clock.uncertainty_union_us}:unavailable(gaps[0]??'CLOCK_VALUE_NOT_PROVED');
   return {schema:'clued.merge-admission-r9-collection/1',repository,status:qualified?'measured':'partial',metrics,gaps:[...new Set(gaps)],
     window,native,source_proof:restored?.proof??null,source_authenticated:authenticated,official_metric:fourQualified||clockQualified,
+    source_readiness:{four_source:fourQualified,clock_source:clockSourceQualified,complete:fourQualified&&clockSourceQualified},
     requests:{used:slice.used,scheduling_share:slice.allowance,shared_run_cap:budget.cap},t0:null,
     natural_continuity:'NOT_ESTABLISHED',cache_raw:packet?JSON.stringify({schema:R9_CACHE_SCHEMA,repository,artifact_id:restored.artifact_id,zip_base64:restored.zip_bytes.toString('base64')}):emptyR9ArtifactCache(repository),
     // The caller seals only independently authenticated prior packets + fresh
