@@ -25,7 +25,8 @@ function fixture() {
     fence:1,holder_session_ref:'SOURCE-ONLY-SESSION',execution_handover_pending:false};
   const row = (id,record_type,version,content) => ({id,record_type,version,content,kind:'record',scope:SCOPE,
     authoritative:true,record_currentness:'CURRENT',projection_currentness:'CURRENT',lifecycle_status:'active'});
-  const responses = {resume:{status:'restored',context_key:SCOPE,session_token:'SOURCE-NOT-A-TOKEN',active_work_claims:[claim]},
+  const responses = {resume:{status:'restored',context_key:SCOPE,session_token:'SOURCE-NOT-A-TOKEN',
+      required_reads:[],active_constraints:[{id:'SOURCE-CONSTRAINT',version:1}],active_work_claims:[claim]},
     approval:{status:'ok',results:[row(record.id,'decision',1,record.content)]},
     task:{status:'ok',results:[row(TASK,'task',2,'SOURCE ONLY TASK')]},
     verify:{status:'ok',verdict:'ADMITTED',current_fence:1,claim},
@@ -41,7 +42,8 @@ function fixture() {
   const bound = {identity:{task_id:TASK,profile_id:issued.profile_id,profile_sha256:issued.profile_sha256,
     request_sha256:issued.request_sha256,approval_record_id:record.id,approval_version:record.version,
     approval_receipt_id:record.receipt_id},execution_plan_sha256:issued.execution_plan_sha256};
-  return {tools,ownerCapture,issued,sessionRef:'SOURCE-ONLY-SESSION',responses,calls,bound};
+  return {tools,ownerCapture,issued,sessionRef:'SOURCE-ONLY-SESSION',responses,calls,bound,
+    readPrerequisiteRefs:[{id:'SOURCE-CONSTRAINT',version:1}]};
 }
 
 test('fixed read-only calls preserve observation-only authority and no secrets returned',async()=>{
@@ -50,8 +52,9 @@ test('fixed read-only calls preserve observation-only authority and no secrets r
   assert.equal(result.authority_effect,'NONE');assert.equal(result.permission_issued,false);
   assert.equal(result.attempt_consumed,false);assert.equal(result.approval_version,1);
   assert.ok(!JSON.stringify(result).includes('SOURCE-NOT-A-TOKEN'));
-  assert.equal(f.calls.filter(([name])=>name==='search').length,4);
-  assert.ok(f.calls.every(([name])=>['resume','search','verify','reconcile'].includes(name)));
+  assert.equal(f.calls.filter(([name])=>name==='search').length,2);
+  assert.deepEqual(f.calls.map(([name])=>name),
+    ['resume','reconcile','search','search','verify']);
   assert.ok(!('pr_ref' in f.calls.find(([name])=>name==='verify')[1]));
 });
 
@@ -142,6 +145,8 @@ test('invalid UTC calendar dates and normalized midnight reject before protected
 
 test('changes adopted during reconcile still fail the final exact observation',async()=>{
   for(const change of [f=>f.responses.approval.results[0].version++,
+    f=>f.responses.approval.results[0].content='CHANGED DURING RECONCILE',
+    f=>f.responses.approval.results[0].type_fields.rationale.changed=true,
     f=>f.responses.approval.results[0].lifecycle_status='revoked',
     f=>f.responses.task.results[0].version++,
     f=>f.responses.verify.claim={...f.responses.verify.claim,execution_handover_pending:true},
@@ -153,6 +158,111 @@ test('changes adopted during reconcile still fail the final exact observation',a
       return {structuredContent:f.responses.reconcile};
     };
     await assert.rejects(makeDevelopmentCurrentnessReader(f).read('consume',f.bound));
-    assert.equal(f.calls.filter(([name])=>name==='verify').length,2);
+    assert.equal(f.calls.filter(([name])=>name==='verify').length,1);
   }
+});
+
+test('unmet upstream reads or invalid resume claim never initiate later calls',async()=>{
+  for(const change of [f=>f.responses.resume.required_reads=[{record_id:'NEW-REQUIRED-READ'}],
+    f=>f.responses.resume.required_reads=null,
+    f=>delete f.responses.resume.required_reads,
+    f=>f.responses.resume.active_work_claims[0].execution_handover_pending=true]) {
+    const f=fixture();change(f);
+    await assert.rejects(makeDevelopmentCurrentnessReader(f).read('preflight',f.bound));
+    assert.equal(f.calls.filter(([name])=>name==='search').length,0);
+    assert.equal(f.calls.filter(([name])=>name==='verify').length,0);
+    assert.equal(f.calls.filter(([name])=>name==='reconcile').length,0);
+  }
+});
+
+test('new or changed delivered constraints require upstream reads before reconcile',async()=>{
+  for(const field of ['active_constraints','active_constraint_refs','active_constraints_delivered']) {
+    for(const value of [null,{},[{id:'UNKNOWN-CONSTRAINT',version:1}],
+      [{id:'SOURCE-CONSTRAINT',version:2}],[{id:'SOURCE-CONSTRAINT'}]]) {
+      const f=fixture();f.responses.resume[field]=value;
+      await assert.rejects(makeDevelopmentCurrentnessReader(f).read('preflight',f.bound),/UPSTREAM_READS_REQUIRED/);
+      assert.deepEqual(f.calls.map(([name])=>name),['resume']);
+    }
+  }
+});
+
+test('known delivered constraint refs are prerequisite evidence without new authority',async()=>{
+  const f=fixture();
+  f.responses.resume.active_constraint_refs=clone(f.readPrerequisiteRefs);
+  f.responses.resume.active_constraints_delivered=clone(f.readPrerequisiteRefs);
+  const result=await makeDevelopmentCurrentnessReader(f).read('preflight',f.bound);
+  assert.equal(result.authority_effect,'NONE');
+  assert.equal(result.permission_issued,false);
+  assert.equal(result.attempt_consumed,false);
+  assert.equal(f.calls.length,5);
+});
+
+test('empty prerequisite refs permit only a view without active constraints',async()=>{
+  const f=fixture();delete f.readPrerequisiteRefs;f.responses.resume.active_constraints=[];
+  await makeDevelopmentCurrentnessReader(f).read('preflight',f.bound);
+  const missing=fixture();delete missing.readPrerequisiteRefs;
+  await assert.rejects(makeDevelopmentCurrentnessReader(missing).read('preflight',missing.bound),/UPSTREAM_READS_REQUIRED/);
+  assert.deepEqual(missing.calls.map(([name])=>name),['resume']);
+});
+
+test('invalid prerequisite refs reject before protected reads and later edits cannot repin them',async()=>{
+  for(const refs of [null,{},[{id:'SOURCE-CONSTRAINT',version:0}],
+    [{id:'SOURCE-CONSTRAINT',version:1},{id:'SOURCE-CONSTRAINT',version:2}]]) {
+    const f=fixture();f.readPrerequisiteRefs=refs;
+    assert.throws(()=>makeDevelopmentCurrentnessReader(f),/UPSTREAM_READ_REFS_REQUIRED/);
+    assert.equal(f.calls.length,0);
+  }
+  const f=fixture(),reader=makeDevelopmentCurrentnessReader(f);
+  f.readPrerequisiteRefs[0].version=2;f.responses.resume.active_constraints[0].version=2;
+  await assert.rejects(reader.read('preflight',f.bound),/UPSTREAM_READS_REQUIRED/);
+  assert.deepEqual(f.calls.map(([name])=>name),['resume']);
+});
+
+test('a newly surfaced reconcile read requirement or constraint blocks the final calls',async()=>{
+  for(const change of [f=>f.responses.reconcile.required_reads=[{record_id:'NEW-REQUIRED-READ'}],
+    f=>f.responses.reconcile.active_constraints_delivered=[{id:'NEW-CONSTRAINT',version:1}]]) {
+    const f=fixture();change(f);
+    await assert.rejects(makeDevelopmentCurrentnessReader(f).read('consume',f.bound),/UPSTREAM_READS_REQUIRED/);
+    assert.deepEqual(f.calls.map(([name])=>name),['resume','reconcile']);
+  }
+});
+
+test('unknown reconcile cannot initiate the final admission verification',async()=>{
+  const f=fixture();f.responses.reconcile.currentness_state='UNKNOWN';
+  await assert.rejects(makeDevelopmentCurrentnessReader(f).read('consume',f.bound),/CURRENTNESS_UNAVAILABLE/);
+  assert.equal(f.calls.filter(([name])=>name==='verify').length,0);
+});
+
+test('each phase makes a fresh final admission check and rejects a later denial',async()=>{
+  const f=fixture(),reader=makeDevelopmentCurrentnessReader(f);
+  await reader.read('preflight',f.bound);
+  f.responses.verify.verdict='DENIED';
+  await assert.rejects(reader.read('before_resume',f.bound),/CLAIM_NOT_VERIFIED/);
+  assert.equal(f.calls.filter(([name])=>name==='resume').length,2);
+  assert.equal(f.calls.filter(([name])=>name==='reconcile').length,2);
+  assert.equal(f.calls.filter(([name])=>name==='search').length,4);
+  assert.equal(f.calls.filter(([name])=>name==='verify').length,2);
+  assert.deepEqual(f.calls.map(([name])=>name),[
+    'resume','reconcile','search','search','verify',
+    'resume','reconcile','search','search','verify']);
+});
+
+test('a pending final verifier blocks return and its refusal rejects the phase',async()=>{
+  const f=fixture();let reply,started;
+  const verifierStarted=new Promise(resolve=>{started=resolve;});
+  f.tools.mcp__codex_apps__clued_clued_work_verify=args=>{
+    f.calls.push(['verify',args]);
+    assert.equal(f.calls.filter(([name])=>name==='reconcile').length,1);
+    started();return new Promise(resolve=>{reply=resolve;});
+  };
+  let returned=false;
+  const observed=makeDevelopmentCurrentnessReader(f).read('consume',f.bound);
+  const checked=assert.rejects(observed,/TOOL_REFUSED/);
+  observed.then(()=>{returned=true;},()=>{returned=true;});
+  await verifierStarted;
+  await Promise.resolve();
+  assert.equal(returned,false);
+  reply({isError:true});
+  await checked;
+  assert.equal(f.calls.filter(([name])=>name==='verify').length,1);
 });

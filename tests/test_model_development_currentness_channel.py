@@ -2,7 +2,9 @@ import io
 import json
 import sys
 import threading
+import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/model-program"))
@@ -47,6 +49,43 @@ class RoundTrip:
 
 
 class CurrentnessChannelTests(unittest.TestCase):
+    def test_shared_deadline_is_not_reset_by_successful_round(self):
+        pipes = RoundTrip()
+        live = channel(pipes, pipes, timeout_seconds=30, deadline_monotonic=101)
+        with mock.patch("development_currentness_channel.time.monotonic", return_value=100):
+            self.assertIsNone(live("preflight", binding()))
+        with mock.patch("development_currentness_channel.time.monotonic", return_value=102):
+            with self.assertRaisesRegex(TimeoutError, "SHARED_DEADLINE"):
+                live("consume", binding())
+        self.assertEqual(pipes.writes, 1)
+        with self.assertRaisesRegex(CurrentnessChannelError, "SEALED"):
+            live("consume", binding())
+
+    def test_remaining_shared_time_caps_round_and_late_reply_stays_sealed(self):
+        release = threading.Event()
+        pipes = RoundTrip()
+        class Reader:
+            def readline(self, maximum):
+                release.wait(1)
+                return pipes.readline(maximum)
+        live = channel(Reader(), pipes, timeout_seconds=30,
+                       deadline_monotonic=time.monotonic() + 0.03)
+        started = time.monotonic()
+        try:
+            with self.assertRaises(TimeoutError): live("consume", binding())
+            self.assertLess(time.monotonic() - started, 0.5)
+            release.set()
+            with self.assertRaisesRegex(CurrentnessChannelError, "SEALED"):
+                live("consume", binding())
+            self.assertEqual(pipes.writes, 1)
+        finally: release.set()
+
+    def test_invalid_shared_deadline_cannot_construct_channel(self):
+        for value in (True, float("nan"), float("inf"), "later"):
+            pipes = RoundTrip()
+            with self.assertRaisesRegex(CurrentnessChannelError, "DEADLINE"):
+                channel(pipes, pipes, deadline_monotonic=value)
+
     def test_exact_source_roundtrip_returns_none_not_an_observation(self):
         pipes = RoundTrip()
         live = channel(pipes, pipes)

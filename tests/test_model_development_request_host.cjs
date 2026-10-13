@@ -65,6 +65,25 @@ test('explicit hash domain excludes later capture/profile/results and emits prep
   assert.equal(Object.keys(result.candidate_identity).length,8);
   assert.ok(!Object.hasOwn(result,'issued')); assert.ok(!Object.hasOwn(host,'runFixedDevelopmentChild'));
 });
+test('separate control budget is frozen in plan and Owner request, never a model extension',()=>{
+  const f=fixture();
+  f.draft.budget.control_wall_seconds=225;
+  const plan=f.draft.fixed_startup_preparation.execution_plan_without_runtime_monotonic_deadline;
+  plan.budget.control_wall_seconds=225;
+  f.draft.fixed_startup_preparation.execution_plan_sha256=objectSha(plan);
+  const next=host.makeDevelopmentRequestPayload(f.draft,f.window);
+  assert.equal(next.payload.budget.wall_seconds,120);
+  assert.equal(next.payload.budget.control_total_seconds,240);
+  assert.notEqual(next.requestSha256,f.request.requestSha256);
+  assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding({...f.bindingArgs,
+    requestBytes:next.requestBytes,expectedRequestSha256:next.requestSha256}),/EXACT_OWNER_EXPERIMENT/);
+  for(const value of [true,0,226]) {
+    f.draft.budget.control_wall_seconds=value;
+    assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window),/CONTROL_CHILD_BUDGET/);
+  }
+  f.draft.budget.control_wall_seconds=210;
+  assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window),/PLAN_CONTROL_BUDGET/);
+});
 test('fixed ledger/output children and approved temporary environment cannot escape',()=>{
   for(const alter of [f=>f.draft.planned_namespace.ledger_child='..',
     f=>f.draft.planned_namespace.output_child='..',
