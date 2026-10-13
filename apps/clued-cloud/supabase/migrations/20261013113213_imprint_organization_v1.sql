@@ -61,7 +61,7 @@ begin
 end $$;
 
 create function public.clued_imprint_read_v1(p_input jsonb default '{}'::jsonb)
-returns jsonb language plpgsql stable security definer set search_path='' as $$
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_owner uuid:=clued_private.authorization_owner_v12();
   v_view text; v_scope text; v_query text; v_type text; v_history boolean;
   v_limit integer; v_cursor integer; v_id uuid; v_scopes text[]; v_domains text[]; v_browse boolean;
@@ -239,7 +239,7 @@ begin
 end $$;
 
 create function public.clued_imprint_source_v1(p_input jsonb)
-returns jsonb language plpgsql stable security definer set search_path='' as $$
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare v_owner uuid:=clued_private.authorization_owner_v12();
   v_record public.clued_memories%rowtype; v_evidence public.clued_evidence%rowtype;
   v_submission clued_private.information_intake_submissions%rowtype; v_meta jsonb; v_content text; v_fence text;

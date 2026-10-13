@@ -242,6 +242,10 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
         assert.equal((await admin.query("select has_table_privilege($1,'clued_private.imprint_organization_v1','select,insert,update,delete') v", [role])).rows[0].v, false);
       }
       assert.equal((await admin.query("select relrowsecurity from pg_class where oid='clued_private.imprint_organization_v1'::regclass")).rows[0].relrowsecurity, true);
+      for (const signature of ['public.clued_imprint_read_v1(jsonb)', 'public.clued_imprint_source_v1(jsonb)']) {
+        assert.equal((await admin.query('select provolatile from pg_proc where oid=$1::regprocedure', [signature])).rows[0].provolatile,
+          'v', `${signature} locks the account through authorization_owner_v12 and must remain VOLATILE for PostgREST`);
+      }
     });
 
     await t.test('shared active-carrier reasons are preserved without treating a withheld view as empty', async () => {
