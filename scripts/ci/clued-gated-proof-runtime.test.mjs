@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource,futureWorkflowSubject} from './clued-workflow-profile.mjs';
+import {compileRegisteredWorkflow,roleDefinitionDigest,workflowBlob,rolesForSource,futureWorkflowSubject,external2FutureWorkflowCatalogue} from './clued-workflow-profile.mjs';
 import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 import {createHash} from 'node:crypto';
 import {workflowJobs} from './clued-work-admission.mjs';
@@ -359,6 +359,9 @@ test('future enrollment never qualifies skipped execution, an old attempt or a c
 function sevenConsumerExecutionWorld({moveMain=false}={}) {
   const profiles=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url)));
   const roleSpecs=JSON.parse(fs.readFileSync(new URL('./clued-gated-proof-role-specs.json',import.meta.url)));
+  // This fixture reconstructs the predecessor seven-only installation.
+  // Current default External2 futures do not belong to its old 13+future7 Source.
+  delete profiles.external2_future_workflows;delete roleSpecs.external2_future_workflows;
   const tip='c'.repeat(40),base='d'.repeat(40),merge='e'.repeat(40);
   const promoted=!(profiles.future_workflows?.length);
   if(promoted) {
@@ -456,6 +459,30 @@ function sevenConsumerExecutionWorld({moveMain=false}={}) {
   };
   return {repository,head,prNumber:5,snapshot,read,graphRead,readLog,sourceContentReads,counts:()=>({reads,graphs,logs,total:reads+graphs+logs})};
 }
+
+test('inactive External2 arrays preserve predecessor-only worlds; malformed or mixed enrollment still refuses',()=>{
+  const root=()=>({schema:'clued.gated-proof-profiles/2',workflows:{},future_workflows:Array(7).fill({})});
+  const roles=()=>({schema:'clued.gated-proof-role-specs/2',workflows:{},future_workflows:Array(7).fill({})});
+  assert.equal(external2FutureWorkflowCatalogue(root(),roles()).passed,true,'absent External2 is inactive');
+  const emptyRoot=root(),emptyRoles=roles();emptyRoot.external2_future_workflows=[];emptyRoles.external2_future_workflows=[];
+  assert.equal(external2FutureWorkflowCatalogue(emptyRoot,emptyRoles).passed,true,'explicit empty External2 is inactive');
+  for(const wrong of [null,undefined,false,0,{},'[]']){
+    const badRoot=root();badRoot.external2_future_workflows=wrong;
+    assert.equal(external2FutureWorkflowCatalogue(badRoot,roles()).passed,false,'wrong profile array type must refuse');
+    const badRoles=roles();badRoles.external2_future_workflows=wrong;
+    assert.equal(external2FutureWorkflowCatalogue(root(),badRoles).passed,false,'wrong role array type must refuse');
+  }
+  const mismatched=root();mismatched.external2_future_workflows=[{}];
+  assert.equal(external2FutureWorkflowCatalogue(mismatched,roles()).passed,false,'one-sided nonempty pair refuses');
+  const mixed=root(),mixedRoles=roles();
+  mixed.workflows=Object.fromEntries(Array.from({length:13},(_,i)=>['old-'+i,{}]));
+  mixedRoles.workflows=structuredClone(mixed.workflows);
+  mixed.external2_future_workflows=[{},{}];mixedRoles.external2_future_workflows=[{},{}];
+  const rejected=external2FutureWorkflowCatalogue(mixed,mixedRoles);
+  assert.equal(rejected.passed,false,'genuine nonempty External2 cannot coexist with predecessor13/future7');
+  assert.equal(rejected.reason,'External2 requires the accepted seven already promoted to active twenty');
+});
+
 test('all seven future consumers and five existing workflows fit the unchanged request budget with empty native membership',async t=>{
   const w=sevenConsumerExecutionWorld(),proof=await qualifyPrExecution(w);
   assert.equal(proof.passed,true,JSON.stringify({proof,counts:w.counts()}));
