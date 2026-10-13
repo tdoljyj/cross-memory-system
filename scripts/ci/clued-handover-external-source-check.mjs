@@ -1,11 +1,13 @@
 // Planned scripts/ci/ source entry. Pure local validation: no secret, PG or network.
 import assert from 'node:assert/strict';
+export const COMPONENT_VERSION = "1.0.0";
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {platformDescriptor} from './clued-handover-external-bootstrap.mjs';
+import {assertIdleSelectionPolicy} from './clued-handover-external-journal.mjs';
 
 export const SOURCE_FLOOR='2ed3bf2a2985858153e472481f41cef5e4fcd818';
 export const REQUIRED_FILES=Object.freeze([
@@ -29,10 +31,56 @@ export const REQUIRED_FILES=Object.freeze([
   'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs',
   'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs',
 ]);
+// Frozen minimum from the accepted 22-path carrier and observed inherited fee/model
+// files. This supplements the real immutable-tree enumeration, never substitutes
+// the review diff for the complete executable subject or authorizes execution.
+export const EXECUTION_FLOOR=Object.freeze([
+  ".gitattributes",
+  ".github/actions/ci-temporary-storage/coverage.json",
+  ".github/workflows/clued-handover-disposable-idle.yml",
+  ".github/workflows/clued-handover-external-qualification.yml",
+  ".github/workflows/clued-merge-slot-ci.yml",
+  ".github/workflows/clued-work-admission-dispatch.yml",
+  "apps/clued-cloud/tests/ci-proof-profiles.test.mjs",
+  "apps/clued-cloud/worker/generated/components.ts",
+  "config/clued-components.json",
+  "config/clued-handover-external-catalog.json",
+  "config/clued-handover-external-profile.json",
+  "scripts/ci/ci-usage-report.mjs",
+  "scripts/ci/ci-usage-report.test.mjs",
+  "scripts/ci/clued-gated-proof-profiles.json",
+  "scripts/ci/clued-gated-proof-role-specs.json",
+  "scripts/ci/clued-gated-proof-runtime.mjs",
+  "scripts/ci/clued-gated-proof-runtime.test.mjs",
+  "scripts/ci/clued-handover-external-source-pins.json",
+  "scripts/ci/clued-reader-budget-cache.test.mjs",
+  "scripts/ci/clued-work-admission.mjs",
+  "scripts/ci/clued-work-admission.test.mjs",
+  "scripts/ci/fixtures/clued-handover-operator-registration.sql",
+  "scripts/ci/merge-admission-r9-collector.mjs",
+  "scripts/ci/merge-admission-r9-collector.test.mjs",
+  "scripts/model-program/development_clued_currentness.cjs",
+  "scripts/model-program/development_completion_entry.py",
+  "scripts/model-program/development_currentness_channel.py",
+  "scripts/model-program/development_host_bridge.cjs",
+  "scripts/model-program/development_request_host.cjs",
+  "scripts/model-program/observed_completion_execution.py",
+  "scripts/runner/README.md",
+  "scripts/runner/clued-runner-job-started.mjs",
+  "scripts/runner/clued-runner-job-started.test.mjs",
+  "scripts/runner/qualify-work-handover.mjs",
+  "scripts/runner/qualify-work-handover.test.mjs",
+  "tests/test_development_completion_entry.py",
+  "tests/test_model_development_clued_currentness.cjs",
+  "tests/test_model_development_currentness_channel.py",
+  "tests/test_model_development_host_bridge.cjs",
+  "tests/test_model_development_request_host.cjs",
+  "tests/test_model_observed_completion_execution.py"
+]);
 export const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const git=(root,args)=>execFileSync('git',args,{cwd:root,maxBuffer:32*1024*1024});
 function include(file){
-  return REQUIRED_FILES.includes(file)||file.startsWith('scripts/')||
+  return EXECUTION_FLOOR.includes(file)||REQUIRED_FILES.includes(file)||file.startsWith('scripts/')||
     file.startsWith('apps/clued-cloud/supabase/migrations/')||
     file.startsWith('.github/actions/ci-temporary-storage/')||
     file.endsWith('/.npmrc')||file==='.npmrc'||file==='.gitattributes'||file==='.gitmodules'||
@@ -41,7 +89,7 @@ function include(file){
 }
 export function executionPaths(root,commit){
   const files=git(root,['ls-tree','-r','--name-only',commit]).toString('utf8').trim().split('\n').filter(include).sort();
-  for(const required of REQUIRED_FILES)assert.ok(files.includes(required),'EXECUTABLE_MISSING:'+required);
+  for(const required of new Set([...REQUIRED_FILES,...EXECUTION_FLOOR]))assert.ok(files.includes(required),'EXECUTABLE_MISSING:'+required);
   return files;
 }
 export function candidateCheck(root){
@@ -100,6 +148,8 @@ export function acceptedSourceCheck(root,env=process.env){
   assert.equal(profile.qualified,true);
   assert.equal(profile.runtime_authority,'exact-owner-source-approval');
   platformDescriptor(profile);
+  assert.equal(profile.idle_run_id,null,'EARLY_IDLE_ID_PROHIBITED');
+  assertIdleSelectionPolicy(profile);
   if(profile.accepted_profile_source_commit!==undefined){
     assert.match(profile.accepted_profile_source_commit,/^[0-9a-f]{40}$/);
     assert.equal(profile.accepted_profile_source_commit,accepted.source_commit);

@@ -1,6 +1,7 @@
 // Candidate integration destination: scripts/ci/clued-handover-external-driver.mjs.
 // No production Binding/Supabase/Worker transport exists in this driver.
 import assert from 'node:assert/strict';
+export const COMPONENT_VERSION = "1.0.0";
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -13,7 +14,8 @@ import {postAppCheckCore} from './clued-work-admission.mjs';
 import {acceptedSourceCheck} from './clued-handover-external-source-check.mjs';
 import {verifyEmptyCluster} from './clued-handover-external-catalog.mjs';
 import {platformDescriptor,verifySupabasePlatform} from './clued-handover-external-bootstrap.mjs';
-import {cancellationJournal,validateCompleted} from './clued-handover-external-journal.mjs';
+import {cancellationJournal,validateCompleted,assertIdleSelectionPolicy,assertQualifierRun,registrationCompletion,makeIdleBinding,assertBoundIdleObservation,providerGetBudget}
+  from './clued-handover-external-journal.mjs';
 
 const sha = value=>crypto.createHash('sha256').update(value).digest('hex');
 const uuid = ()=>crypto.randomUUID();
@@ -23,6 +25,11 @@ const workspace=process.env.GITHUB_WORKSPACE;
 const actualFile=fileURLToPath(import.meta.url);
 const outputRoot=path.join(process.env.RUNNER_TEMP??os.tmpdir(),'clued-handover-evidence');
 const numeric=value=>/^[0-9]{1,20}$/.test(String(value));
+const getBudget=providerGetBudget();
+const boundedRealFetch=(url,init={})=>{
+  if((init.method??'GET')==='GET')getBudget.take();
+  return fetch(url,init);
+};
 function safeSummary(phase,body) {
   return {schema:'clued.disposable-external-qualification-evidence.candidate/1',
     fixture_only:true,canonical_authority:'none',production_qualified:false,
@@ -43,11 +50,15 @@ async function loadProfile() {
   assert.equal(p.engineering_task_id,'6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8');
   assert.ok(numeric(p.pr_number)&&String(p.pr_number)!=='771');
   assert.match(p.head_sha,/^[0-9a-f]{40}$/);
-  assert.ok(numeric(p.idle_run_id));
-  assert.notEqual(String(p.idle_run_id),process.env.GITHUB_RUN_ID);
+  assert.equal(p.idle_run_id,null,'EARLY_IDLE_ID_PROHIBITED');
+  assertIdleSelectionPolicy(p);
+  const selected=process.env.QUALIFICATION_IDLE_RUN_ID??'';
+  if(process.env.QUALIFICATION_PHASE==='publish'){
+    assert.match(selected,/^[1-9][0-9]{0,19}$/);assert.notEqual(selected,process.env.GITHUB_RUN_ID);
+  }else assert.equal(selected,'','REVOKE_IDLE_RESELECTION_PROHIBITED');
   assert.equal(Number(process.env.GITHUB_RUN_ATTEMPT),1);
   assert.ok(Date.parse(p.valid_until)>Date.now());
-  return {...p,profile_hash:verified.profile_sha256,runtime_source_commit:verified.source_commit,
+  return {...p,idle_run_id:selected||null,profile_hash:verified.profile_sha256,runtime_source_commit:verified.source_commit,
     accepted_source_commit:verified.accepted_source_commit,acceptance_sha256:verified.acceptance_sha256};
 }
 function testCiProof() {
@@ -57,7 +68,7 @@ function testCiProof() {
 }
 async function api(route,{method='GET',body}={}) {
   assert.ok(route.startsWith('/repos/tdoljyj/cross-memory-system/'));
-  const r=await fetch('https://api.github.com'+route,{method,redirect:'error',signal:AbortSignal.timeout(20000),
+  const r=await boundedRealFetch('https://api.github.com'+route,{method,redirect:'error',signal:AbortSignal.timeout(20000),
     headers:{accept:'application/vnd.github+json',authorization:'Bearer '+process.env.GITHUB_TOKEN,
       'x-github-api-version':'2022-11-28','user-agent':'clued-disposable-qualification'},
     ...(body?{body:JSON.stringify(body)}:{})});
@@ -74,6 +85,7 @@ async function observeHostRun(p,id,{completed=false,successful=true}={}) {
   assert.equal(run.head_sha,p.runtime_source_commit);
   if(completed){assert.equal(run.status,'completed');if(successful)assert.equal(run.conclusion,'success');}
   else assert.equal(String(run.id),process.env.GITHUB_RUN_ID);
+  assertQualifierRun(p,run,{id,completed});
   return {id:String(run.id),status:run.status,conclusion:run.conclusion,path:run.path,
     head_sha:run.head_sha,run_attempt:run.run_attempt,created_at:run.created_at,updated_at:run.updated_at};
 }
@@ -110,7 +122,12 @@ async function openFixture(p,phase) {
   const empty=(await admin.query("select to_regclass('public.clued_memories') is null as empty")).rows[0].empty;
   if(phase==='publish')assert.equal(empty,true,'fixture is not fresh');
   else assert.equal(empty,false,'continuous state lost; reconstruction unsupported');
-  if(empty){
+  const rawFixtures=await import(pathToFileURL(path.join(workspace,'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs')).href);
+  const sourceFixtures=await import(pathToFileURL(path.join(workspace,'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs')).href);
+  let prepared=false;
+  async function prepare(){
+    assert.equal(prepared,false,'DUPLICATE_FIXTURE_PREPARATION');
+    if(empty){
     // The selected Supabase project already owns its Auth/roles/extensions.
     // Their exact preexisting definitions/counts were independently accepted;
     // never create, replace or synthesize that platform inside this path.
@@ -118,12 +135,12 @@ async function openFixture(p,phase) {
     const dir=path.join(workspace,'apps/clued-cloud/supabase/migrations');
     for(const file of (await fs.readdir(dir)).filter(n=>n.endsWith('.sql')).sort())await admin.query(await fs.readFile(path.join(dir,file),'utf8'));
   }
-  const rawFixtures=await import(pathToFileURL(path.join(workspace,'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs')).href);
-  const sourceFixtures=await import(pathToFileURL(path.join(workspace,'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs')).href);
-  if(empty)await rawFixtures.allowRawTestBindings(admin);
-  await sourceFixtures.assertGatewayCloseoutBoundary(admin);
+    if(empty)await rawFixtures.allowRawTestBindings(admin);
+    await sourceFixtures.assertGatewayCloseoutBoundary(admin);prepared=true;
+  }
   async function close(){for(const c of clients)await c.end().catch(()=>{});}
-  return {admin,client,close,sourceFixtures};
+  assert.match(row.registered_run_id,/^[1-9][0-9]{0,19}$/);
+  return {admin,client,close,sourceFixtures,prepare,registration_run_id:row.registered_run_id};
   }catch(error){
     for(const c of clients)await c.end().catch(()=>{});
     throw error;
@@ -254,6 +271,7 @@ async function observeIdle(p,{cancelled=false,prior=null}={}) {
     gate_job_id:String(gate[0].id),gate_conclusion:gate[0].conclusion,idle_job_id:String(idle[0].id),
     idle_started_at:idle[0].started_at,idle_completed_at:idle[0].completed_at,idle_conclusion:idle[0].conclusion};
   if(prior?.attempted_at&&run.status==='completed')validateCompleted(fact,prior.started_fact,p.idle_run_id);
+  if(prior)assert.deepEqual(fact,assertBoundIdleObservation(p,{run,jobs:response},prior.binding_fact));
   return fact;
 }
 async function main(){
@@ -278,15 +296,27 @@ async function main(){
       assert.ok(numeric(publisherId(p)));assert.notEqual(String(publisherId(p)),process.env.GITHUB_RUN_ID);
       producer=await observeHostRun(p,String(publisherId(p)),{completed:true});
     }
-    category='IDLE_GATE_AND_STARTED_JOB';
-    let idleBefore;
-    if(phase==='publish')idleBefore=await observeIdle(p);
     category='EMPTY_REGISTERED_CLUSTER';h=await openFixture(p,phase);
-    const journal=await cancellationJournal(h.admin,p);
-    if(phase==='publish')await journal.rememberStarted(idleBefore);
-    else{
+    p.registration_run_id=h.registration_run_id;
+    category='COMPLETED_OPERATOR_REGISTRATION';
+    const registrationRun=await api('/repos/'+p.repository+'/actions/runs/'+p.registration_run_id);
+    const registrationJobs=await api('/repos/'+p.repository+'/actions/runs/'+p.registration_run_id+'/jobs?per_page=100&page=1');
+    registrationCompletion(p,{run:registrationRun,jobs:registrationJobs});
+    let idleBefore,journal;
+    if(phase==='publish'){
+      category='LATE_REAL_IDLE_SELECTION';
+      const run=await api('/repos/'+p.repository+'/actions/runs/'+p.idle_run_id);
+      const jobs=await api('/repos/'+p.repository+'/actions/runs/'+p.idle_run_id+'/jobs?per_page=100&page=1');
+      const content=await api('/repos/'+p.repository+'/contents/.github/workflows/'+p.fixture_idle_workflow+'?ref='+p.head_sha);
+      const binding=makeIdleBinding(p,{run,jobs,content,registrationRun,registrationJobs});
+      idleBefore=binding.started_fact;
+      await h.prepare();journal=await cancellationJournal(h.admin,p);
+      category='ORIGINAL_IDLE_BINDING_CAS';await journal.bindIdle(binding);
+    }else{
+      await h.prepare();journal=await cancellationJournal(h.admin,p);
       const prior=await journal.read();assert.ok(prior?.started_fact,'original idle journal missing');
-      category='IDLE_GATE_AND_STARTED_JOB';idleBefore=await observeIdle(p,{prior});
+      p.idle_run_id=prior.run_id;
+      category='ORIGINAL_IDLE_READ_ONLY_RECOVERY';idleBefore=await observeIdle(p,{prior});
       if(idleBefore.run_status==='completed')await journal.rememberCompleted(idleBefore);
     }
     const proof=testCiProof();let state;
@@ -307,12 +337,12 @@ async function main(){
       assert.equal(missing.posted,false);assert.equal(mutations,0);
       trace.push({kind:'missing_app_negative',network_calls:0,posted:false});
       category='ACTUAL_PUBLICATION_BEGIN_FINISH';
-      const happy=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal});
+      const happy=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal,realFetch:boundedRealFetch});
       const successful=await publishWithSource({env,profile:p,boundary:happy,title:'QUALIFICATION: actual successful publication'});
       assert.equal(successful.posted,true);assert.equal(successful.conclusion,'success');
       assert.ok(successful.publication_observation?.begin_receipt_id&&successful.publication_observation?.finish_receipt_id);
       category='ACTUAL_UNCERTAIN_PUBLICATION';
-      const uncertain=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,loseNextCheckPostResponse:true,trace,journal});
+      const uncertain=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,loseNextCheckPostResponse:true,trace,journal,realFetch:boundedRealFetch});
       const lost=await publishWithSource({env,profile:p,boundary:uncertain,title:'QUALIFICATION: actual reply loss'});
       assert.equal(lost.posted,false);
       assert.ok(trace.some(t=>t.kind==='controlled_response_loss'&&t.provider_accepted));
@@ -329,13 +359,13 @@ async function main(){
       // Construct success only after ALL assertions. Database stays live.
       const result=safeSummary(phase,{status:'PUBLISHER_PHASE_OBSERVED_REQUIRES_SEPARATE_COMPLETED_RUN',
         source_commit:p.runtime_source_commit,acceptance_sha256:p.acceptance_sha256,
-        publisher_run_id:state.publisher_run_id,idle_before:idleBefore,
+        publisher_run_id:state.publisher_run_id,idle_before:idleBefore,idle_binding:(await journal.read()).binding_fact,
         successful_publication:successful.publication_observation,uncertain_open_publication_id:open[0].publication_id,
         pending,pending_outbox_count:outboxes.length,state_scope:'continuous',trace,external_facts:uncertain.publicFacts()});
       await saveSafe('publish.json',result);
     }else{
       category='EXTERNAL_REVOKER';
-      const boundary=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal});
+      const boundary=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal,realFetch:boundedRealFetch});
       let swept;
       for(let attempt=1;attempt<=12;attempt++){
         try{swept=await revokeWithSource({env,boundary});if(swept.pending===0)break;}
@@ -347,7 +377,7 @@ async function main(){
       partial={sweep:swept,remaining};
       category='FINAL_EXTERNAL_ASSERTIONS';
       assert.equal(remaining.publications,0);assert.equal(remaining.outboxes,0);
-      const idleAfter=await observeIdle(p,{cancelled:true});
+      const idleAfter=await observeIdle(p,{cancelled:true,prior:await journal.read()});
       assert.equal(idleAfter.idle_job_id,idleBefore.idle_job_id);
       assert.equal(idleAfter.gate_job_id,idleBefore.gate_job_id);
       assert.equal(idleAfter.idle_started_at,idleBefore.idle_started_at);
@@ -366,6 +396,7 @@ async function main(){
       const result=safeSummary(phase,{status:'EXTERNAL_BOUNDARY_OBSERVED_REQUIRES_INDEPENDENT_ACCEPTANCE',
         source_commit:p.runtime_source_commit,acceptance_sha256:p.acceptance_sha256,producer,idle_before:idleBefore,idle_after:idleAfter,
         state_scope:'continuous',sweep:swept,remaining,trace,external_facts:boundary.publicFacts(),
+        idle_binding:(await journal.read()).binding_fact,
         original_cancellation:{attempted_at:originalCancellation.attempted_at,response_status:originalCancellation.response_status,
           started_fact:originalCancellation.started_fact,completed_fact:originalCancellation.completed_fact},
         durable_evidence:durableEvidence,

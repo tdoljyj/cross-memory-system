@@ -6,6 +6,7 @@ create table qualification_guard.registration_v1(
   realm text not null check(realm='clued-handover-disposable'),
   synthetic_only boolean not null check(synthetic_only),
   registration text not null,
+  registered_run_id text not null check(registered_run_id ~ '^[1-9][0-9]{0,19}$'),
   database_name text not null,
   registered_host text not null,
   profile_sha256 text not null check(profile_sha256 ~ '^[0-9a-f]{64}$'),
