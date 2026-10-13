@@ -31,48 +31,89 @@ export function verifyPosixProtection(report) {
   return {verified:true,method:'current_posix_owner_mode_and_runner_uid'};
 }
 
+const WINDOWS_TARGETS=Object.freeze(['C:\\','C:\\ProgramData','C:\\ProgramData\\CluedRunnerHook',
+  'C:\\ProgramData\\CluedRunnerHook\\clued-runner-job-started.mjs']);
+const TRUSTED_INSTALLER_SID='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
+const sid=value=>typeof value==='string'&&/^S-[0-9]+(?:-[0-9]+)+$/.test(value);
+export function classifyWindowsProtection(native){
+  assert.equal(native?.schema,'clued.windows-hook-native-protection/1','Windows native protection is unavailable');
+  assert.equal(typeof native.runner_is_administrator,'boolean');
+  assert.ok(sid(native.runner_sid));
+  for(const values of [native.runner_group_sids,native.administrator_member_sids])
+    assert.ok(Array.isArray(values)&&values.every(sid),'Windows token/member identities unavailable');
+  assert.ok(Array.isArray(native.targets)&&native.targets.length===4);
+  const runnerSids=new Set([native.runner_sid,...native.runner_group_sids]);
+  const administrators=new Set(['S-1-5-18','S-1-5-32-544',...native.administrator_member_sids]);
+  const targets=native.targets.map((target,index)=>{
+    assert.equal(target?.path,WINDOWS_TARGETS[index],'Windows target path/order differs');
+    assert.equal(target.reparse,false,'Redirected hook protection target');
+    assert.equal(target.dacl_present,true,'Windows DACL presence is unavailable');
+    assert.equal(target.dacl_non_null,true,'A null DACL does not protect the hook');
+    assert.ok(sid(target.owner_sid)&&Array.isArray(target.aces));
+    // The exact OS service is trusted only on the fixed system ancestors.
+    // The hook directory/file still require administrator owners.
+    const trusted=new Set(administrators);
+    if(index<2)trusted.add(TRUSTED_INSTALLER_SID);
+    const mask=index<2?0xD0040:0xD0156;
+    let untrustedWrites=0,runnerWrites=0;
+    for(const ace of target.aces){
+      assert.ok(sid(ace?.sid)&&typeof ace.allow==='boolean'&&typeof ace.inherit_only==='boolean'&&
+        Number.isInteger(ace.rights)&&ace.rights>=-2147483648&&ace.rights<=2147483647,'Windows ACE data unavailable');
+      assert.ok((ace.ace_type===0||ace.ace_type===1)&&ace.allow===(ace.ace_type===0),'Unsupported Windows ACE type');
+      const dangerous=(ace.rights&mask)!==0||(ace.rights&0x50000000)!==0;
+      if(!ace.allow||ace.inherit_only||!dangerous)continue;
+      if(!trusted.has(ace.sid))untrustedWrites++;
+      // Every token group is included conservatively, even if disabled.
+      if(runnerSids.has(ace.sid))runnerWrites++;
+    }
+    return {owner_is_administrator:trusted.has(target.owner_sid),runner_owns_target:runnerSids.has(target.owner_sid),
+      untrusted_write_aces:untrustedWrites,runner_write_aces:runnerWrites};
+  });
+  return verifyWindowsProtection({schema:'clued.windows-hook-protection/1',
+    runner_is_administrator:native.runner_is_administrator,targets});
+}
+
 function readWindowsProtection(){
   const script=String.raw`
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-$runnerOwnerSids = @($identity.User.Value) + @($identity.Groups | ForEach-Object { $_.Value })
-$trusted = @('S-1-5-18','S-1-5-32-544')
-# Include actual local Administrator members, never caller-supplied owners.
-$trusted += @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value })
+$adminMembers = @(Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop | ForEach-Object { $_.SID.Value })
 $targets = @()
 foreach ($target in @('C:\','C:\ProgramData','C:\ProgramData\CluedRunnerHook','C:\ProgramData\CluedRunnerHook\clued-runner-job-started.mjs')) {
   # Ancestors must not let the runner rename/delete the protected subtree,
   # delete its child, or grant those rights. Creating unrelated siblings alone
   # does not permit replacement of an existing protected child.
-  $writeMask = if ($target -eq 'C:\' -or $target -eq 'C:\ProgramData') { 0xD0040 } else { 0xD0156 }
   $item = Get-Item -LiteralPath $target -Force -ErrorAction Stop
   if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Redirected hook protection target.' }
   $acl = Get-Acl -LiteralPath $target -ErrorAction Stop
+  $rawDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(),0)
   $ownerSid = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-  $untrustedWrites = 0
-  $runnerWrites = 0
-  foreach ($ace in $acl.Access) {
-    if ($ace.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
-    if ($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
-    if (([int]$ace.FileSystemRights -band $writeMask) -eq 0) { continue }
-    $sid = $ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier])
-    if ($trusted -notcontains $sid.Value) { $untrustedWrites++ }
-    if ($identity.User.Value -eq $sid.Value -or $principal.IsInRole($sid)) { $runnerWrites++ }
+  $aces = @()
+  foreach ($ace in $rawDescriptor.DiscretionaryAcl) {
+    if (($ace.AceType -ne [Security.AccessControl.AceType]::AccessAllowed -and
+      $ace.AceType -ne [Security.AccessControl.AceType]::AccessDenied) -or
+      $ace -isnot [Security.AccessControl.CommonAce]) { throw 'Unsupported Windows ACE type.' }
+    $aces += [ordered]@{sid=$ace.SecurityIdentifier.Value;ace_type=[int]$ace.AceType;
+      allow=($ace.AceType -eq [Security.AccessControl.AceType]::AccessAllowed);
+      inherit_only=[bool]($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly);rights=[int]$ace.AccessMask}
   }
   # An owner has implicit WRITE_DAC even without a writable Allow ACE.
   # Include disabled token groups here conservatively, so a filtered admin
   # token cannot certify its own administrator-owned protection.
-  $targets += [ordered]@{ owner_is_administrator=($trusted -contains $ownerSid);runner_owns_target=($runnerOwnerSids -contains $ownerSid);untrusted_write_aces=$untrustedWrites;runner_write_aces=$runnerWrites }
+  $targets += [ordered]@{path=$target;owner_sid=$ownerSid;reparse=$false;aces=$aces;
+    dacl_present=[bool]($rawDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent);
+    dacl_non_null=($null -ne $rawDescriptor.DiscretionaryAcl)}
 }
-[ordered]@{schema='clued.windows-hook-protection/1';runner_is_administrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);targets=$targets} | ConvertTo-Json -Depth 4 -Compress
+[ordered]@{schema='clued.windows-hook-native-protection/1';runner_is_administrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
+  runner_sid=$identity.User.Value;runner_group_sids=@($identity.Groups | ForEach-Object { $_.Value });administrator_member_sids=$adminMembers;targets=$targets} | ConvertTo-Json -Depth 6 -Compress
 `;
   const result=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],
     {encoding:'utf8',timeout:10000,windowsHide:true});
   assert.equal(result.error,undefined,'Windows protection inspection is unavailable');
   assert.equal(result.status,0,'Windows protection inspection failed');
   let report;try{report=JSON.parse(result.stdout);}catch{throw new Error('Windows protection report is unavailable');}
-  return verifyWindowsProtection(report);
+  return classifyWindowsProtection(report);
 }
 
 // Isolated observations exercise the exact protected installed code. They

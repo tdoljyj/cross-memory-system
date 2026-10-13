@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {verifyWindowsProtection,verifyPosixProtection} from './qualify-work-handover.mjs';
+import {verifyWindowsProtection,verifyPosixProtection,classifyWindowsProtection} from './qualify-work-handover.mjs';
 
 const directory=path.dirname(fileURLToPath(import.meta.url));
 const repository=path.resolve(directory,'../..');
@@ -39,6 +39,92 @@ test('Windows current protection refuses writable principals, writable runner, n
   for(const unavailable of [null,{}, {...safe,targets:[]}, {...safe,targets:[{} ,{}]}])
     assert.throws(()=>verifyWindowsProtection(unavailable));
 });
+const TI='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
+const OTHER_SERVICE='S-1-5-80-1-2-3-4-5',RUNNER='S-1-5-21-1-2-3-1001',ADMIN='S-1-5-21-1-2-3-1000';
+const nativeWindows=()=>({
+  schema:'clued.windows-hook-native-protection/1',runner_is_administrator:false,runner_sid:RUNNER,
+  runner_group_sids:['S-1-5-32-545','S-1-5-11'],administrator_member_sids:[ADMIN],
+  targets:['C:\\','C:\\ProgramData','C:\\ProgramData\\CluedRunnerHook',
+    'C:\\ProgramData\\CluedRunnerHook\\clued-runner-job-started.mjs'].map((path,index)=>({
+      path,reparse:false,dacl_present:true,dacl_non_null:true,owner_sid:index<2?TI:ADMIN,aces:[
+        {sid:index<2?TI:'S-1-5-32-544',ace_type:0,allow:true,inherit_only:false,rights:0x1f01ff},
+        {sid:RUNNER,ace_type:0,allow:true,inherit_only:false,rights:0x1200a9},
+      ]})),
+});
+test('raw Windows SID classification trusts exact OS service only on fixed system ancestors',()=>{
+  const original=nativeWindows();assert.equal(classifyWindowsProtection(original).verified,true);
+  for(const index of [0,1]){
+    const safe=structuredClone(original);safe.targets[index].owner_sid='S-1-5-18';
+    assert.equal(classifyWindowsProtection(safe).verified,true);
+  }
+  for(const index of [0,1,2,3]){
+    const bad=structuredClone(original);bad.targets[index].owner_sid=OTHER_SERVICE;
+    assert.throws(()=>classifyWindowsProtection(bad));
+  }
+  for(const index of [2,3]){
+    for(const field of ['owner','ace']){
+      const bad=structuredClone(original);
+      if(field==='owner')bad.targets[index].owner_sid=TI;
+      else bad.targets[index].aces.push({sid:TI,ace_type:0,allow:true,inherit_only:false,rights:0x1f01ff});
+      assert.throws(()=>classifyWindowsProtection(bad));
+    }
+  }
+});
+test('raw Windows classification preserves token ownership and dangerous ACE refusal',()=>{
+  const original=nativeWindows();
+  for(const group of [TI,ADMIN,'S-1-5-32-544']){
+    const bad=structuredClone(original);bad.runner_group_sids.push(group);
+    assert.throws(()=>classifyWindowsProtection(bad),'even disabled owner/ACE groups remain denied');
+  }
+  assert.throws(()=>classifyWindowsProtection({...original,runner_is_administrator:true}));
+  for(const index of [0,1,2,3]){
+    for(const principal of [RUNNER,OTHER_SERVICE,'S-1-1-0']){
+      for(const right of [0x1f01ff,0x10000000,0x40000000]){
+        const bad=structuredClone(original);
+        bad.targets[index].aces.push({sid:principal,ace_type:0,allow:true,inherit_only:false,rights:right});
+        assert.throws(()=>classifyWindowsProtection(bad));
+      }
+    }
+    const own=structuredClone(original);own.targets[index].owner_sid=RUNNER;
+    assert.throws(()=>classifyWindowsProtection(own));
+  }
+  // Creating unrelated siblings cannot replace an already protected child.
+  for(const index of [0,1]){
+    const safe=structuredClone(original);
+    safe.targets[index].aces.push({sid:RUNNER,ace_type:0,allow:true,inherit_only:false,rights:0x116});
+    safe.targets[index].aces.push({sid:RUNNER,ace_type:0,allow:true,inherit_only:true,rights:0x1f01ff});
+    safe.targets[index].aces.push({sid:RUNNER,ace_type:1,allow:false,inherit_only:false,rights:0x1f01ff});
+    assert.equal(classifyWindowsProtection(safe).verified,true);
+    for(const right of [0x40,0x10000,0x40000,0x80000]){
+      const bad=structuredClone(safe);
+      bad.targets[index].aces.push({sid:RUNNER,ace_type:0,allow:true,inherit_only:false,rights:right});
+      assert.throws(()=>classifyWindowsProtection(bad));
+    }
+  }
+});
+test('raw Windows report refuses redirected, missing, duplicate or malformed observations',()=>{
+  const original=nativeWindows();
+  for(const index of [0,1,2,3]){
+    for(const [key,value] of [['reparse',true],['reparse',undefined],['dacl_present',false],['dacl_present',undefined],
+      ['dacl_non_null',false],['dacl_non_null',undefined],['owner_sid',undefined],['owner_sid','bad'],
+      ['aces',undefined],['path','C:\\Other']]){
+      const bad=structuredClone(original);bad.targets[index][key]=value;
+      assert.throws(()=>classifyWindowsProtection(bad));
+    }
+    for(const [key,value] of [['ace_type',undefined],['ace_type',9],['sid',undefined],['rights',NaN],['rights',undefined],['rights',2**32],
+      ['allow',undefined],['inherit_only',undefined]]){
+      const bad=structuredClone(original);bad.targets[index].aces[0][key]=value;
+      assert.throws(()=>classifyWindowsProtection(bad));
+    }
+  }
+  const duplicate=structuredClone(original);duplicate.targets[1]=duplicate.targets[0];
+  assert.throws(()=>classifyWindowsProtection(duplicate));
+  for(const key of ['runner_sid','runner_group_sids','administrator_member_sids','runner_is_administrator']){
+    const bad=structuredClone(original);delete bad[key];assert.throws(()=>classifyWindowsProtection(bad));
+  }
+  assert.throws(()=>classifyWindowsProtection({...original,targets:original.targets.slice(1)}));
+});
+
 test('POSIX protection refuses real or effective root and writable code or ancestors',()=>{
   const safe={runner_uid:1001,runner_euid:1001,targets:[{uid:0,mode:0o644},{uid:0,mode:0o755},{uid:0,mode:0o755},{uid:0,mode:0o755}]};
   assert.equal(verifyPosixProtection(safe).verified,true);
