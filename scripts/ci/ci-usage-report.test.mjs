@@ -45,7 +45,7 @@ import {
   windowOf,
   FEE_WORKLOAD_DAYS,FEE_WORKLOAD_WINDOW,FEE_WORKLOAD_MARKER,projectFeeWorkload,collectFeeWorkload,
 } from "./ci-usage-report.mjs";
-import {FEE_NATIVE_WORKFLOW_PATHS,R9_CACHE_FILE} from './merge-admission-r9-collector.mjs';
+import {FEE_NATIVE_WORKFLOW_PATHS,R9_CACHE_FILE,R9_SOURCE_PATHS,R9_PUBLISHER_PATH,R9_PACKET_FILE} from './merge-admission-r9-collector.mjs';
 import {NATIVE_POPULATION_SCHEMA,inspectNativePopulationStore} from './merge-admission-native-population.mjs';
 import { gateFindings, workflowFormFindings } from "./clued-work-admission.mjs";
 
@@ -330,7 +330,7 @@ test("budget: below 600 remaining the run stops before the next batch of 20, not
   assert.equal(budget.used, 3);
 });
 
-test("budget: a rate-limited answer stops without retry; any other failure is an error", async () => {
+test("budget: a rate-limited answer stops without retry; other client errors remain fatal", async () => {
   const runs = [run(1), run(2), run(3)];
   const jobs = { 1: [job(1)], 2: [job(2)], 3: [job(3)] };
   for (const limited of [
@@ -346,8 +346,8 @@ test("budget: a rate-limited answer stops without retry; any other failure is an
     assert.equal(report.metrics.api_requests.stopped, "rate_limited");
     assert.deepEqual([report.coverage.runs_with_jobs, report.coverage.runs_completed], [2, 3]);
   }
-  // A plain 403 (no rate-limit headers) or a 500 is unexpected: exit 1, no report.
-  for (const status of [403, 500]) {
+  // Non-rate-limited client errors remain unexpected: exit 1, no report.
+  for (const status of [401, 403, 404]) {
     const github = fakeGitHub({ runs, jobs, answer: (route, n, headers) => (n === 2 ? new Response("{}", { status, headers }) : null) });
     const errors = [];
     const memory = { ...memoryFs(), logError: (line) => errors.push(line) };
@@ -412,6 +412,73 @@ test("measurement App: its read-only installation token reads everything, with t
   assert.match(preflight.observed_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.match(report.metrics.api_requests.not_measured.by_pool, /App's quota is its own/);
   assert.match(memory.files.get(ENV.GITHUB_STEP_SUMMARY), /255 of 2000 \(measurement App\)/);
+});
+
+test("budget: provider HTTP 5xx stops without retry, preserves the partial report and exposes only safe diagnosis", async () => {
+  for (const status of [500, 502, 503]) for (const appEnv of [{}, APP_ENV]) {
+    const app = withApp();
+    const github = fakeGitHub({ runs: [run(1)], jobs: { 1: [job(1)] }, answer: (route, n, headers) => {
+      if (appEnv === APP_ENV) { const minted = app(route, n, headers); if (minted) return minted; }
+      if (route === `/repos/${REPO}/actions/runs/1/jobs?filter=all&per_page=100&page=1`)
+        return new Response('{"message":"private provider body SECRET"}', { status, headers });
+      return null;
+    } });
+    const { code, report, memory } = await runMain(github, memoryFs(), appEnv);
+    assert.equal(code, 0); assert.equal(report.coverage.partial, true); assert.equal(report.coverage.stopped, "provider_error");
+    assert.equal(report.metrics.self_hosted_minutes.status, "partial");
+    assert.deepEqual(report.metrics.api_requests.provider_error, { http_status: status,
+      route: `/repos/${REPO}/actions/runs/1/jobs`, request_ordinal: github.calls.length - (appEnv === APP_ENV ? 2 : 0) });
+    assert.equal(github.calls.at(-1).route, `/repos/${REPO}/actions/runs/1/jobs?filter=all&per_page=100&page=1`);
+    assert.equal(github.calls.filter(c => c.route.includes("/runs/1/jobs")).length, 1);
+    assert.ok(memory.files.has(CACHE)); assert.equal(Object.hasOwn(JSON.parse(memory.files.get(CACHE)).runs, "1"), false);
+    assert.ok(!JSON.stringify(report).includes("SECRET"));
+  }
+});
+
+test("measurement App provider stop: legacy HTTP 502 publishes freshly captured R9 progress with its incomplete report", async () => {
+  const writerHead = sha(9999), observedNow = new Date("2026-10-13T00:01:00.000Z");
+  const sourceFiles = [...new Set([...R9_SOURCE_PATHS, 'scripts/ci/clued-gated-proof-profiles.json', 'scripts/ci/clued-gated-proof-role-specs.json'])];
+  const texts = new Map(sourceFiles.map(file => [file, fs.readFileSync(path.join(ROOT, file), 'utf8')]));
+  const blob = raw => createHash('sha1').update('blob '+Buffer.byteLength(raw)+'\0').update(raw).digest('hex');
+  const progress = feePacket(900, { started: '2026-10-12T01:00:00.000Z', completed: '2026-10-12T01:02:00.000Z' });
+  const candidate = { ...progress.run, id: '900', head_branch: 'main', head_repository: { full_name: REPO } }; delete candidate.run_id;
+  const observer = { id: '9999', run_attempt: 1, workflow_id: '701', path: R9_PUBLISHER_PATH, event: 'workflow_dispatch',
+    head_sha: writerHead, head_branch: 'main', head_repository: { full_name: REPO }, status: 'in_progress', conclusion: null,
+    created_at: observedNow.toISOString(), run_started_at: observedNow.toISOString(), updated_at: observedNow.toISOString(), pull_requests: [] };
+  const app = withApp(), legacyJobs = `/repos/${REPO}/actions/runs/900/jobs?filter=all&per_page=100&page=1`;
+  const github = fakeGitHub({ runs: [candidate, observer], answer: (route, n, headers) => {
+    const minted = app(route, n, headers); if (minted) return minted;
+    let body;
+    if (route === `/repos/${REPO}`) body = { id: '1', full_name: REPO, default_branch: 'main' };
+    else if (route === `/repos/${REPO}/branches/main`) body = { name: 'main', commit: { sha: writerHead } };
+    else if (route === `/repos/${REPO}/git/trees/${writerHead}?recursive=1`) body = { truncated: false,
+      tree: sourceFiles.map(file => ({ path: file, sha: blob(texts.get(file)), type: 'blob', mode: '100644' })) };
+    else if (route.startsWith(`/repos/${REPO}/contents/`)) {
+      const file = route.slice(`/repos/${REPO}/contents/`.length).split('?')[0], raw = texts.get(file);
+      if (raw !== undefined) body = { type: 'file', path: file, sha: blob(raw), encoding: 'base64', content: Buffer.from(raw).toString('base64') };
+    } else if (route.startsWith(`/repos/${REPO}/actions/artifacts?name=`)) body = { total_count: 0, artifacts: [] };
+    else if (route === `/repos/${REPO}/actions/runs?per_page=100&page=1`) body = { total_count: 2, workflow_runs: [observer, candidate] };
+    else if (route === `/repos/${REPO}/actions/runs/9999`) body = observer;
+    else if (route === `/repos/${REPO}/actions/runs/900` || route === `/repos/${REPO}/actions/runs/900/attempts/1`) body = candidate;
+    else if (route.startsWith(`/repos/${REPO}/actions/runs/900/attempts/1/jobs?`)) body = { total_count: 1, jobs: progress.jobs };
+    else if (route === legacyJobs) return new Response('{"message":"actual mocked HTTP 502"}', { status: 502, headers });
+    return body === undefined ? null : new Response(JSON.stringify(body), { status: 200, headers });
+  } });
+  const memory = { ...memoryFs(new Map([...texts].map(([file, raw]) => [path.join('/w', file), raw]))), now: observedNow,
+    r9SourceContractRaw: JSON.stringify({ window: { start: '2026-10-10T00:00:00.000Z', end: '2026-10-13T00:00:00.000Z' } }) };
+  const { code, report } = await runMain(github, memory, { ...APP_ENV, GITHUB_RUN_ID: '9999', GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: writerHead,
+    GITHUB_EVENT_NAME: 'workflow_dispatch' });
+  assert.equal(code, 0); assert.equal(github.calls.at(-1).route, legacyJobs); assert.equal(github.calls.filter(c => c.route === legacyJobs).length, 1);
+  assert.equal(report.coverage.partial, true); assert.equal(report.coverage.stopped, 'provider_error');
+  assert.equal(report.metrics.api_requests.provider_error.http_status, 502);
+  assert.equal(report.metrics.api_requests.app_quota_preflight.status, 'passed');
+  const pending = memory.files.get(path.join('/w', '.ci-usage-cache', 'r9-native-pending.json'));
+  assert.equal(inspectNativePopulationStore(pending, REPO).status, 'VALID_DATA_STORE');
+  assert.deepEqual(Object.keys(JSON.parse(pending).packets), ['900:1'], 'real Native capture persisted before the legacy error');
+  const sealed = JSON.parse(memory.files.get(path.join('/w', R9_PACKET_FILE)));
+  assert.equal(sealed.native_store_raw, pending); assert.ok(memory.files.has(path.join('/w', '.ci-usage-cache', R9_CACHE_FILE)));
+  assert.ok(memory.files.has(CACHE)); assert.equal(report.r9.t0, null); assert.equal(report.r9.official_metric, false);
+  assert.equal(report.r9.source_readiness.complete, false); assert.ok(Object.values(report.r9.metrics).every(m => m.value === null));
 });
 
 test("measurement App preflight: missing or low first quota stops all collection and preserves the refusal report", async () => {
@@ -582,17 +649,17 @@ test("review: secondary rate limit, a job-phase error, a budget stop while halvi
     : null) });
   let { code, report } = await runMain(github);
   assert.deepEqual([code, report.metrics.api_requests.stopped], [0, "rate_limited"]);
-  // A 500 in the job phase fails the run; the other workers stop taking runs and end first.
+  // A client error in the job phase fails the run; the other workers end first.
   const many = Array.from({ length: 40 }, (_, i) => run(i + 1));
   github = fakeGitHub({ runs: many, jobs: Object.fromEntries(many.map((r) => [r.id, [job(r.id)]])),
-    answer: (route, n, headers) => (n === 5 ? new Response("{}", { status: 500, headers }) : null) });
+    answer: (route, n, headers) => (n === 5 ? new Response("{}", { status: 404, headers }) : null) });
   const errors = [];
   ({ code } = await runMain(github, { ...memoryFs(), logError: (line) => errors.push(line) }));
   const callsAtReturn = github.calls.length;
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.deepEqual([code, github.calls.length], [1, callsAtReturn], "no request after main returned");
   assert.ok(callsAtReturn <= 5 + 3, `at most the in-flight requests finish (${callsAtReturn})`);
-  assert.match(errors.join("\n"), /returned 500/);
+  assert.match(errors.join("\n"), /returned 404/);
   // A stop while a dense day is halved keeps the runs already listed (the first pages of the capped ranges).
   const dense = Array.from({ length: 1100 }, (_, i) => run(i + 1, { created_at: "2026-10-05T10:00:00Z" }));
   github = fakeGitHub({ runs: dense, jobs: {}, pulls: [pr(1)],
