@@ -163,6 +163,103 @@ test('interrupted batches retain every completed immutable packet and report par
   assert.equal(result.status,'PARTIAL');assert.equal(snapshots,1);assert.ok(JSON.parse(result.store_raw).packets['42:1']);
   assert.equal(result.population.complete,false);
 });
+test('fee Native scope is the fixed six Source workflows and default R9 scope remains unchanged',async()=>{
+  assert.deepEqual(C.FEE_NATIVE_WORKFLOW_PATHS,[
+    '.github/workflows/clued-merge-slot-ci.yml','.github/workflows/clued-merge-executor.yml',
+    '.github/workflows/clued-work-admission-reverify.yml','.github/workflows/clued-work-admission.yml',
+    '.github/workflows/clued-ci-health.yml','.github/workflows/clued-work-admission-dispatch.yml']);
+  assert.equal(Object.isFrozen(C.FEE_NATIVE_WORKFLOW_PATHS),true);
+  const members=C.FEE_NATIVE_WORKFLOW_PATHS.map((workflow,i)=>run(42+i,{path:workflow})),outside=run(70),
+    jobs=[...members,outside].map(r=>job(r.id)),fake=nativeRequest({runs:[...members,outside],jobs});
+  const fee=await C.collectFeeNativePopulation({request:fake.request,repository,window,workflowPaths:[C.R9_PUBLISHER_PATH]});
+  assert.equal(fee.status,'COMPLETE');assert.equal(fee.population.complete,true);
+  assert.equal(fee.population.initial_total,7);assert.equal(fee.population.initial_scope_runs,6);assert.equal(fee.population.closing_scope_runs,6);
+  assert.deepEqual(fee.population.workflow_paths,C.FEE_NATIVE_WORKFLOW_PATHS);
+  assert.deepEqual(fee.population.window,window);assert.equal(fee.all_population_packets.length,6);
+  assert.equal(fee.population.cohort.length,6);assert.ok(!fake.routes.some(route=>route.includes('/runs/70')));
+  const original=nativeRequest({runs:[...members,outside],jobs}),r9=await C.collectIncrementalNative({request:original.request,repository,window});
+  assert.equal(r9.status,'COMPLETE');assert.equal(r9.all_population_packets.length,7);
+  assert.equal(Object.hasOwn(r9.population,'workflow_paths'),false);assert.equal(r9.population.scope,'native_terminal_packets_run_envelope_intersection');
+});
+test('fee Native keeps old-created rerun ordinals and cross-midnight jobs outside the attempt-start subset',async()=>{
+  const path=C.FEE_NATIVE_WORKFLOW_PATHS[0],created_at='2026-10-09T23:55:00Z',
+    first=run(42,{path,created_at,run_started_at:'2026-10-09T23:56:00Z',updated_at:'2026-10-10T00:05:00Z'}),
+    latest=run(42,{path,created_at,run_attempt:2,run_started_at:'2026-10-12T23:58:00Z',updated_at:'2026-10-13T00:02:00Z'}),
+    previous=job(42,{created_at:'2026-10-09T23:57:00Z',started_at:'2026-10-09T23:58:00Z',completed_at:'2026-10-10T00:04:00Z',
+      steps:[{number:1,name:'Run workload',status:'completed',conclusion:'success',started_at:'2026-10-09T23:58:00Z',completed_at:'2026-10-10T00:04:00Z'}]}),
+    current=job(42,{id:242,run_attempt:2,created_at:'2026-10-12T23:58:01Z',started_at:'2026-10-12T23:58:02Z',completed_at:'2026-10-13T00:01:00Z',
+      steps:[{number:1,name:'Run workload',status:'completed',conclusion:'success',started_at:'2026-10-12T23:58:02Z',completed_at:'2026-10-13T00:01:00Z'}]}),
+    envelope={start:window.start,end:'2026-10-13T00:00:00.000Z'};
+  const fake=nativeRequest({runs:[latest],mutation:route=>{
+    if(route.endsWith('/attempts/1'))return {ok:true,body:first};
+    if(route.endsWith('/attempts/2'))return {ok:true,body:latest};
+    if(route.includes('/attempts/1/jobs?'))return {ok:true,body:{total_count:1,jobs:[previous]}};
+    if(route.includes('/attempts/2/jobs?'))return {ok:true,body:{total_count:1,jobs:[current]}};return null;
+  }});
+  const fee=await C.collectFeeNativePopulation({request:fake.request,repository,window:envelope});
+  assert.equal(fee.status,'COMPLETE');assert.equal(fee.all_population_packets.length,2);assert.equal(fee.attempts.length,1);
+  const old=fee.all_population_packets.find(p=>p.run.run_attempt===1);
+  assert.equal(old.jobs[0].started_at,'2026-10-09T23:58:00.000Z');assert.equal(old.jobs[0].completed_at,'2026-10-10T00:04:00.000Z');
+  assert.equal(fake.routes.filter(route=>route.includes('/attempts/1/jobs?')).length,2);
+  assert.equal(fake.routes.filter(route=>route.includes('/attempts/2/jobs?')).length,2);
+  assert.ok(fake.routes.filter(route=>route.includes('/actions/runs?')).every(route=>!new URL(route,'https://native.invalid').searchParams.has('created')));
+});
+test('fee Native authenticated packet reuse still closes its own scoped directory twice',async()=>{
+  const r=run(42,{path:C.FEE_NATIVE_WORKFLOW_PATHS[0]}),initial=nativeRequest({runs:[r]}),
+    first=await C.collectFeeNativePopulation({request:initial.request,repository,window}),fake=nativeRequest({runs:[r]});
+  const repeated=await C.collectFeeNativePopulation({request:fake.request,repository,window,authenticatedStoreRaw:first.store_raw});
+  assert.equal(repeated.status,'COMPLETE');assert.equal(repeated.from_sealed,1);assert.equal(repeated.fresh,0);
+  assert.equal(fake.routes.length,2);assert.ok(fake.routes.every(route=>route.includes('/actions/runs?')));
+  assert.equal(repeated.population.cohort_digest,first.population.cohort_digest);
+});
+test('fee Native records a proved latest attempt after close while retaining earlier ordinals',async()=>{
+  const path=C.FEE_NATIVE_WORKFLOW_PATHS[0],first=run(42,{path}),latest=run(42,{path,run_attempt:2,
+    run_started_at:window.end,updated_at:'2026-10-11T00:00:01Z',status:'in_progress',conclusion:null});
+  const fake=nativeRequest({runs:[latest],mutation:route=>route.endsWith('/attempts/1')?{ok:true,body:first}:null});
+  const fee=await C.collectFeeNativePopulation({request:fake.request,repository,window});
+  assert.equal(fee.status,'COMPLETE');assert.equal(fee.all_population_packets.length,1);
+  assert.equal(fee.all_population_packets[0].run.run_attempt,1);
+  assert.deepEqual(fee.population.excluded_attempts,[{key:'42:2',reason_code:'ATTEMPT_START_AT_OR_AFTER_WINDOW_CLOSE'}]);
+  assert.ok(!fake.routes.some(route=>route.includes('/attempts/2')));
+});
+test('fee Native unknown execution times remain null without becoming a population gap',async()=>{
+  const fake=nativeRequest({runs:[run(42,{path:C.FEE_NATIVE_WORKFLOW_PATHS[0],run_started_at:null,conclusion:'cancelled'})],
+    jobs:[job(42,{started_at:null,completed_at:null,conclusion:'cancelled',steps:[]})]});
+  const fee=await C.collectFeeNativePopulation({request:fake.request,repository,window});
+  assert.equal(fee.status,'COMPLETE');assert.equal(fee.population.complete,true);assert.deepEqual(fee.gaps,[]);
+  assert.deepEqual(fee.population.attempt_start_unknown,['42:1']);assert.equal(fee.all_population_packets[0].run.run_started_at,null);
+  assert.equal(fee.all_population_packets[0].jobs[0].started_at,null);assert.equal(fee.all_population_packets[0].jobs[0].completed_at,null);
+});
+test('fee Native refusal keeps the saved packet union and returns explicitly partial workload coverage',async()=>{
+  const paths=C.FEE_NATIVE_WORKFLOW_PATHS,saved=[],fake=nativeRequest({runs:[run(42,{path:paths[0]}),run(43,{path:paths[1]})],
+    jobs:[job(42),job(43)],mutation:route=>route.includes('/runs/43')?{ok:false,stopped:'request_cap'}:null});
+  const fee=await C.collectFeeNativePopulation({request:fake.request,repository,window,onStore:raw=>saved.push(raw)});
+  assert.equal(fee.status,'PARTIAL');assert.equal(fee.population.complete,false);assert.equal(saved.length,1);
+  assert.equal(fee.store_raw,saved[0]);assert.ok(JSON.parse(fee.store_raw).packets['42:1']);
+  assert.equal(fee.all_population_packets.length,1);assert.equal(fee.all_population_packets[0].run.run_id,'42');
+  assert.equal(fee.population.closing_scope_runs,null);assert.equal(fee.population.cohort.length,2);
+  assert.doesNotThrow(()=>packet({nativeStoreRaw:fee.store_raw}));
+});
+test('fee Native rejects changed closing cohort and incomplete job pages instead of claiming complete',async()=>{
+  let directories=0;const member=run(42,{path:C.FEE_NATIVE_WORKFLOW_PATHS[0]});
+  const changed=nativeRequest({runs:[member],mutation:route=>route.includes('/actions/runs?')&&++directories===2?
+    {ok:true,body:{total_count:1,workflow_runs:[{...member,run_attempt:2}]}}:null});
+  const closure=await C.collectFeeNativePopulation({request:changed.request,repository,window});
+  assert.equal(closure.status,'PARTIAL');assert.equal(closure.reason_code,'NATIVE_COHORT_CHANGED_AT_CLOSE');
+  assert.equal(closure.population.complete,false);assert.equal(closure.all_population_packets.length,1);
+  let jobPages=0;const short=nativeRequest({runs:[member],mutation:route=>route.includes('/jobs?')&&++jobPages===2?
+    {ok:true,body:{total_count:2,jobs:[job()]}}:null});
+  const pages=await C.collectFeeNativePopulation({request:short.request,repository,window});
+  assert.equal(pages.status,'PARTIAL');assert.equal(pages.population.complete,false);assert.equal(pages.all_population_packets.length,0);
+  assert.equal(pages.gaps[0].reason_code,'native_page_short_or_overfull');
+});
+test('fee Native still proves the entire retained directory when no scoped run is selected',async()=>{
+  const complete=uncappedDirectoryFixture({grow:false}),fee=await C.collectFeeNativePopulation({request:complete.request,repository,window});
+  assert.equal(fee.status,'COMPLETE');assert.equal(fee.population.initial_total,250);assert.equal(fee.population.initial_scope_runs,0);
+  assert.equal(fee.population.closing_scope_runs,0);assert.equal(complete.calls,8);assert.equal(fee.all_population_packets.length,0);
+  const removed=uncappedDirectoryFixture({remove:true}),partial=await C.collectFeeNativePopulation({request:removed.request,repository,window});
+  assert.equal(partial.status,'PARTIAL');assert.equal(partial.population.complete,false);
+});
 test('authenticated Native consistency does not produce missing four-source/clock values or T0',async()=>{
   const fake=nativeRequest();const result=await C.collectR9Measurement({request:fake.request,budget:U.createBudget({source:'app',cap:2000}),repository,window});
   assert.equal(result.source_authenticated,true);assert.equal(result.official_metric,false);assert.equal(result.t0,null);
@@ -438,7 +535,7 @@ if(process.env.CLUED_R9_CHECKOUT_CHILD!=='1')test('M4: default self-test loads a
       fs.mkdirSync(path.dirname(path.join(temp,rel)),{recursive:true});fs.copyFileSync(src,path.join(temp,rel));}
     const env={...process.env,CLUED_R9_CHECKOUT_CHILD:'1'};delete env.CLUED_R9_TEST_DEPENDENCY_ROOT;delete env.CLUED_R9_TEST_REPO_ROOT;
     delete env.NODE_TEST_CONTEXT;
-    const run=spawnSync(process.execPath,['--test','scripts/ci/merge-admission-r9-collector.test.mjs'],{cwd:temp,env,encoding:'utf8'});
+    const run=spawnSync(process.execPath,['--test','--test-reporter=tap','scripts/ci/merge-admission-r9-collector.test.mjs'],{cwd:temp,env,encoding:'utf8'});
     assert.equal(run.status,0,(run.stdout??'')+(run.stderr??''));assert.match(run.stdout,/# fail 0/);assert.doesNotMatch(run.stdout,/MODULE_NOT_FOUND/);
   }finally{if(!path.resolve(temp).startsWith(path.resolve(os.tmpdir())+path.sep))throw Error('TEMP_SCOPE_REFUSED');fs.rmSync(temp,{recursive:true,force:true});}
 });
