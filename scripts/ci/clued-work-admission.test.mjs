@@ -1761,7 +1761,7 @@ test("owner review (re-review 7, MAJOR-3): environments, new secrets, self-hoste
     paths.map((p) => `protected_path:${p}`));
 });
 
-test("owner review: the workflows on main that hold an environment are exactly the release, storage, attestation and admission ones", () => {
+test("owner review: the workflows on main that hold an environment are exactly the release, storage, attestation, admission and handover qualification ones", () => {
   const dir = path.join(ROOT, ".github", "workflows");
   const holders = [];
   for (const file of fs.readdirSync(dir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
@@ -1771,7 +1771,7 @@ test("owner review: the workflows on main that hold an environment are exactly t
   }
   // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
   assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-slot-ci.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml", "clued-work-claim-handover-revoke.yml"]);
 });
 

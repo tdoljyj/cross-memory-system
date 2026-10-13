@@ -1,0 +1,1678 @@
+{
+  "schema": "clued.external-qualification-source-pins.candidate/2",
+  "source_commit": "2ed3bf2a2985858153e472481f41cef5e4fcd818",
+  "authority": "none",
+  "verification": "reference baseline only; independent acceptance object must hash COMPLETE final executionPaths set including new driver/provider/catalog/source-check/2 workflows/profile/catalog/pins/operator SQL",
+  "files": [
+    {
+      "path": "apps/clued-cloud/package-lock.json",
+      "mode": "100644",
+      "git_blob_sha1": "d52eb554d5829d8b7933c298dcdc7bd6bff6f6c0"
+    },
+    {
+      "path": "apps/clued-cloud/package.json",
+      "mode": "100644",
+      "git_blob_sha1": "15e2f7ef40dbea8cacf32822fc52d2cb9f655932"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/202608230001_clued_continuity.sql",
+      "mode": "100644",
+      "git_blob_sha1": "184858dc48298aeddabc12744ffebbf9fb3e7784"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9fa55d35b8fa47197c99bc031c074f1980468fbc"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260823182409_clued_memory_crud.sql",
+      "mode": "100644",
+      "git_blob_sha1": "da7d4bf54d6b099d24aa603369be3adac9957a4a"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260823182517_harden_clued_memory_grants.sql",
+      "mode": "100644",
+      "git_blob_sha1": "935ea0fe0cea3eadd0caf8cdec7cd7717308ae30"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/202608240003_project_lifecycle_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "580933cf7ba3be6c7531f8fe74f101aa6d2e64c5"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260824014005_unified_record_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "dbf60e8dd3cff1fdadebaa462fc41cd86444767c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260824123000_map_optimistic_conflicts_to_http_409.sql",
+      "mode": "100644",
+      "git_blob_sha1": "87ec121927e30a0d31141bc9903987215e2daf79"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/202608250005_oauth_mcp_binding.sql",
+      "mode": "100644",
+      "git_blob_sha1": "13527a59569a5edbb3f9fe4301f693caa037802f"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0ce020a8cabbcdf287926bf88af171c65470fa65"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825183608_clued_m1_map_current_legacy_records.sql",
+      "mode": "100644",
+      "git_blob_sha1": "68d391ae440db992b275310c4cd0352258f241e6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql",
+      "mode": "100644",
+      "git_blob_sha1": "12d7b5eb9a556ff65fb3ea9122f4585a34bfe65c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8a9bca9dc9ec3d921afbc67b7dec9f042a160377"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c5125d9bf0c48e62c75ff95d043b32f46523a68e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql",
+      "mode": "100644",
+      "git_blob_sha1": "41896dd24dd63056deb9acccc4e671b82d22393c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260827084500_p5_attempt_reissue_linearization.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f291162c74c3a5e458123370323091f64c115f96"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260828125643_clued_log_card_api_contract_v12.sql",
+      "mode": "100644",
+      "git_blob_sha1": "71e990fbecad58a347715bd9b49de42aa86ac6d7"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260828183205_p5_audit_lint_compatibility.sql",
+      "mode": "100644",
+      "git_blob_sha1": "1ec9366f352f73dc471f706410f3e46f7c390547"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260829091757_clued_log_isolation_forward_fix.sql",
+      "mode": "100644",
+      "git_blob_sha1": "5051f83d7398f5dc116d5945461170ac20d9bff5"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260829100000_clued_legacy_log_alias_bridge.sql",
+      "mode": "100644",
+      "git_blob_sha1": "31feb9b246d2a9e9561118522da6d26e0f554e96"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907123955_clued_context_ownership_publication_v11.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a14b83b273b228f70b62cc9f0cf74a41adcf5588"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8e16d57f3c1a34e3eb2c6779d513f6bb1b222e72"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907172309_retire_context_ownership_publication_v11.sql",
+      "mode": "100644",
+      "git_blob_sha1": "1124532473246e8b9f454865bd3751d28ea4d052"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173030_clued_development_context_runtime_v14.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0d62e95726f56982ef9125d02ba6eb7266738eec"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3bbf3c1f5d0172d5d2c748f20d88fd55dc8e12b1"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173032_clued_project_invitations_v13.sql",
+      "mode": "100644",
+      "git_blob_sha1": "02c05bebb5510555b1ec0b48683babb8bc9b96fd"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260908073933_clued_project_list_authorized_scope.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8574f2caf4a84c35e98e4219f67437f47f1b76f0"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "mode": "100644",
+      "git_blob_sha1": "08c9e422977bc88fcb16375c27e90efd5c7a803d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260908102500_clued_checkpoint_replay_receipt.sql",
+      "mode": "100644",
+      "git_blob_sha1": "bc83f11c657ecca71525e582ef73cefa64d3672b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260908135500_authorized_record_list_before_limit.sql",
+      "mode": "100644",
+      "git_blob_sha1": "18d356a8248dec13f8b36b3b0f709d8db638fd17"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260921193000_k_cont_single_stage.sql",
+      "mode": "100644",
+      "git_blob_sha1": "ab8adb52e88334dcb07a1afd11138313257e8383"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260921203000_k_cont_resume_work_log_delta.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f13c3e72d5d848c3afb93f801c72cac3ddc67041"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260921204000_k_cont_resume_import_budget_delta.sql",
+      "mode": "100644",
+      "git_blob_sha1": "1cd14222d7a75062efa429727368e237520c4ac0"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260921211000_k_cont_constraint_body_resume_delta.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7a960a9331166ab476a8b9fb14577c990db69c4c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260921215146_k_cont_checkpoint_coverage_mode_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "fe1855d4cf11666c6b84ca590bfe4477e4d05261"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260921230126_k_cont_review_boundary_fix.sql",
+      "mode": "100644",
+      "git_blob_sha1": "521e29a72f71b1192793317ba90075483b8b453f"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260921234000_k_cont_scope_refs_redaction.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3164e05615b93585ac3990e3be6b9342c9cc12ec"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922001800_k_cont_target_ref_read_boundary.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0cc8bf2f76c29a7b667933796651afd635955dae"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922013000_k_cont_audit_visibility_boundary.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c893272fd29cebf915074f61d3ec5fa251e44d4e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922023000_k_cont_evidence_ref_scope.sql",
+      "mode": "100644",
+      "git_blob_sha1": "efa45cf724f92ffa9178b6cc06789a416e78fd4d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922030000_k_cont_checkpoint_audit_visibility_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a8d6175e82438f7884065ae42581c1b79b6def71"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922030001_sync_m1_record_priority_projection.sql",
+      "mode": "100644",
+      "git_blob_sha1": "526c3a0ca705052d255984dead6230f5ae3d4b1a"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922092355_bug_20260922_002_currentness_core.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9dacfb74aab3a2bd325d9020e64d6f4b0d4d6b9f"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922092810_bug_20260922_002_legacy_carrier_inventory.sql",
+      "mode": "100644",
+      "git_blob_sha1": "abb6ec48e3d5bd061cf076c7b2bd015fb6eefc95"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922092932_bug_20260922_002_admission_reconcile.sql",
+      "mode": "100644",
+      "git_blob_sha1": "1fd98470e8411d7049c43c6e37c0de7904ce6e9e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922093621_bug_20260922_002_projection_rebuild_gate.sql",
+      "mode": "100644",
+      "git_blob_sha1": "b1df3991b4402aa7f734ec71953e65dc7b4bd0e0"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922093948_bug_20260922_002_currentness_read_surfaces.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f3d96fcf63e2ad10cad524839ce33560adbc347b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922094719_bug_20260922_002_g6_full_gate.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4458b4d3a59ede2c356ffcc8d54ca929dcc572a7"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922140000_context_v2_terminal_restore_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "69954734f7f05283fccc018b28d9fba8e75e5305"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922142533_context_v2_frontier_source_contract.sql",
+      "mode": "100644",
+      "git_blob_sha1": "12bc3603190843221b9563563786b892d6afb753"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922143312_context_v2_execution_intent_identity.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c168b9376a4bc0b462bce077a1bfef043325aee9"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922150000_context_v2_current_read_entrypoints.sql",
+      "mode": "100644",
+      "git_blob_sha1": "dffbe1419bb0b0d1ee48f8e09b071b2092b8ec0d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922153022_context_v2_resume_record_currentness.sql",
+      "mode": "100644",
+      "git_blob_sha1": "afd8df05c68ccedcb72bc76c00f209174c0a6c41"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922162702_legacy_create_carrier_receipt_reconcile.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c924d53abe0e346351e6a333cbc9f13c8e985869"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922165922_legacy_existing_retraction_reconcile.sql",
+      "mode": "100644",
+      "git_blob_sha1": "38bd23a27313277471fb29aa91827812562ca7fc"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260922173000_approved_legacy_successor_reconcile.sql",
+      "mode": "100644",
+      "git_blob_sha1": "99cfc90674adabc3659df8fb1b729f2c532298f3"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260923193000_context_v2_approved_legacy_continuity_once.sql",
+      "mode": "100644",
+      "git_blob_sha1": "35665093873d6d3fdc98b8fe204733a64eb51a73"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260923213000_post_commit_projection_refresh_pipeline.sql",
+      "mode": "100644",
+      "git_blob_sha1": "5852d91dc436d6e1e202b4da4fc540575da890e9"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260923213100_projection_refresh_exact_key_lease.sql",
+      "mode": "100644",
+      "git_blob_sha1": "290e04d1c6004e906bce0def528feb3b01b0fd03"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260923213200_projection_refresh_watchdog.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e7b2b1991cf2a960b56af84ce6e88f70a072421a"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924110000_mtpe_universal_intake_auto_priority.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a7b09bf78e0d08f8a79952a63f162bb3e336f60b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924120000_project_lifecycle_successor_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7ec200b6629c3d893d440ed02eaaa042d53a83ff"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924121000_project_lifecycle_successor_v2_frontier_invalidation.sql",
+      "mode": "100644",
+      "git_blob_sha1": "517dd81b916e1c4c55cbc76111d7b07fb3eadcd1"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924130000_mtpe_frontier_eligibility_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "885b5d18de87ead2755c69ba100434c016f93440"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924140000_mtpe_frontier_eligibility_v2_1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4743fceab2405087014110491c7371716d54e12d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924150000_global_scope_projection_invalidation.sql",
+      "mode": "100644",
+      "git_blob_sha1": "6f3e5a26d2b921f41cb25f8665ae2432c0a465bd"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924160000_information_flow_candidate_store.sql",
+      "mode": "100644",
+      "git_blob_sha1": "d2cf657edf08454f35d780ed11dc6cdcc6ec7811"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924170000_mtpe_read_set_coverage.sql",
+      "mode": "100644",
+      "git_blob_sha1": "30ad71955c435c0abf75282881b2ec300ed8274d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924180000_information_flow_intake_transport.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2958b463821462d8b07839fae8ae498c2fe6ec92"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924190000_information_flow_promotion.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3bc3352f1a889cbc99f10179bae75fbbca5c7a18"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924200000_information_flow_context_policy.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2e8559f846d8ef4144f4e18b0b6442667c770f8d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924210000_bug_20260924_001_capture_unknown.sql",
+      "mode": "100644",
+      "git_blob_sha1": "01fde0ac7a07a7a08affc5f3ce4c03e44c181c30"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924220000_information_flow_invalidation.sql",
+      "mode": "100644",
+      "git_blob_sha1": "23f9040c498d718036edeecac5ceb1bd115f9740"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924230000_decision_supersede_v12_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7c874a24ddafacefda74808a1b546d43c5b67df6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924233000_projection_head_event_shadow_fix.sql",
+      "mode": "100644",
+      "git_blob_sha1": "b814bab5718e6b2f7802d850c98e1eb889adb7f1"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260925000000_information_flow_token_hardening.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f6d9f3b8f22d53bcd83dd1fca38258f4b04d5673"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260925005000_event_continuity_manifest_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e86dd2cbe0a0151e0f50542ce0bc31e931721686"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260925010000_event_continuity_manifest_v1_evidence_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "38aac224e192f76f7c7ef686594dccc1040159e6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260925020000_record_update_field_merge.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9ab5aba2feaaab85a552bbb5ff9697b1f9ab7e98"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260925030000_search_context_cross_scope.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8486aac73b310b27985c1d6eb56d62219164046b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260925040000_search_context_followups.sql",
+      "mode": "100644",
+      "git_blob_sha1": "506266c0d60bb789c6ac8415a93022378be868ef"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260926000000_integration_runtime_registry_derivation.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8c519ade4f91a1ff18ba368ee5e7b82fdb67111e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260926134500_resource_center_artifact_authority_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "88b2fedf787d5ba7b7f93b46ed88e1e7e6a9a085"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260926160610_resource_center_mutation_journal_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7fc44025af259fe58bdf789c5656b088691fd9d9"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927053041_resource_center_renewal_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "25342cdce59641c29bca3ce88c50b48fcf4e5b78"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927073103_resource_center_account_connection_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "cade2812181c12847af5af86bb4278add6652da6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927075249_resource_center_oauth_connector_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0eb766508b1f05a7d17b89301a55f31e770141de"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927083521_resource_center_account_refresh_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3cd555da1b90ffcd7c6cd6c7b8d2f4b0d12a5de2"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927093948_resource_center_account_jobs_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a67746e6f3ae51569a5b65131f83ee9aa9514579"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927103110_resource_center_provider_attempt_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e1c2e905db6b8c8538f2329b0d05e36b1076ff4e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927104436_resource_center_cloud_bridge_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "38eb4fd8a4dee4cde6d670dab4516ac44ffe5736"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927145426_resource_center_default_refresh_consent_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "ebec4b68ea2f0defa803dd1ca45a56394a5ba2a5"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927165558_resource_center_client_grant_readback_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "58a77491f7fab7b1c10b49ddb3fb4df67edbced9"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927183650_resource_center_directory_probe_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3e9a8c51fc7b3b0bf0d15a48b99edc737141e228"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927201506_resource_center_native_recovery_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e88230d7d5aaa619d99c74ff0741eab70c43c880"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927211632_resource_center_credential_recovery_oauth_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0e977ddeaa65e7d9c19e4adfa3867bf30df64435"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260927232454_resource_center_binding_expiry_compat_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2c5c79477c22b7c32538cf5d4f42b0ba85df718c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928051323_resource_center_account_policy_foundation_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "1f8fb4f29ab210fc3fa3b4888801c47b7c49f85f"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928051543_resource_center_account_policy_legacy_fence_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e7f51296a90d9fed2793809133a3a4f51f647056"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928060125_resource_center_client_capability_admin_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7de78d19a416c12245b23d76acb97fc39777150d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928063442_resource_center_policy_transition_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "d97f35171efe04d5edf49d59bc945e62f3f8b5d0"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928070005_resource_center_account_jobs_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3b1a6f64a6c536a5668e7fbd70e1309b21599d3c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928072813_resource_center_account_cloud_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "11021cc481700c7a70ce098c9f9e98b771f7d9d2"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928074834_resource_center_verified_settlement_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a33154a2437c939e27470d9ec79077801c69ff3c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928091131_resource_center_storage_admin_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8de13a2b4990238a47ed6ed50295f5c26891c410"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928113000_resource_center_storage_source_reader_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "022145f0f53caa38070a9cd9e3ff8ff64123dfc1"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928165000_resource_center_account_recovery_descriptor_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "77e8e7b348acfad17bc2d569f250fbbed3faa593"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260928174500_resource_center_owner_management_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e38453de8ec307ea713a38b00db90b7af7492730"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929010000_resource_center_account_recovery_oauth_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f307988b38adbefeb5f4c6784faa60b19f2a691c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929020000_resource_center_recovery_auto_settle.sql",
+      "mode": "100644",
+      "git_blob_sha1": "cee2de8d7bc743b96670a8bf3b6d4cd3e25c80f4"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929040000_storage_scheduled_recovery_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "69d3ab6edca54ca821f30781feb842b788712932"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929133000_resume_record_targets_primary_key_lookup.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a24b28cfcbf93fad0ea53e4e5ac065d1be141651"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929150000_context_policy_decision_own_lifecycle.sql",
+      "mode": "100644",
+      "git_blob_sha1": "fe5acaab06f09d3b0fc7313799c375719c0095e0"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929180000_resource_center_authority_denial_reasons_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "91782fa1aac418e5463e71654128a172e8d3695c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929190000_projection_watchdog_builder_served.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a3a5006dc4a733af61cfacbef7a4537ec0dfbf60"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260929200000_resource_center_directory_sharing_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "87af0c07e0bc564767de6520c98ef7dd33a4d84b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930010000_storage_read_access_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9908a9bd6376800e5ebdd2f6456bcfab62dcff46"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930040000_storage_client_redirect_identity_v3.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9051d294db160a25ae8be27a68e772bbe4a018a9"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930060000_storage_read_content_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "93e9ec2e1ea50a169d03adff4b579878c3cba798"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930080000_storage_modify_level_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7cfbc3482be8ea64607d0fef708e5ca29b5fb72c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930100000_storage_modify_execution_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "bc0fb685fe9d26021af467781d9cbe3cf8850881"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930120000_storage_overwrite_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "b0019df25ad0fb605b22cfe8383d37e4b1a1aed4"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930140000_storage_scope_profile_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "34712b02a36a082e5f1cb0a6f02b184f145e02b8"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930160000_storage_normal_use_n1a.sql",
+      "mode": "100644",
+      "git_blob_sha1": "de812e8a3d9fd5b37c56808bbc4fba22bd90ef85"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930180000_storage_binary_upload_n3.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4b1355b8085d91865229cf8cee0f7f4afeacafdc"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930200000_storage_read_budget_n4.sql",
+      "mode": "100644",
+      "git_blob_sha1": "ae7353b0a84e65a4f0dbcf9373082b3332e46106"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930210000_checkpoint_session_renewal.sql",
+      "mode": "100644",
+      "git_blob_sha1": "bee2af229c81c9584252cd7057080a29e72c00e5"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930220000_mtpe_owner_pin_read_write_consistency.sql",
+      "mode": "100644",
+      "git_blob_sha1": "384a3d72e52d019e2c9628672851b31d4febb5cd"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930230000_storage_dispatch_reason_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2ef656237eccf9a8ec846b127de9cef69f165709"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260930233000_storage_relative_paths_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "34300bfd2ddba214f774e79e222b72f1229389af"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001000000_resume_constraint_index.sql",
+      "mode": "100644",
+      "git_blob_sha1": "78315fc18f2917d803002398a007ea4c7a94575b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001010000_storage_relative_paths_link_v3.sql",
+      "mode": "100644",
+      "git_blob_sha1": "22143355144ee2643cd834d37aab0d65fe6e3820"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001020000_storage_budgets_n4.sql",
+      "mode": "100644",
+      "git_blob_sha1": "bf0f5f50bb4dc1176e7633b26931729f4789dfb6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001030000_task_dependency_target_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "fa95bef89cb25144c3c630367369b77ce7f2fc58"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2d63974f8973e8adb48c1bbdd9f0fe77276f90bb"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001060000_work_claims_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "d86bd411ca897cc91b771c53c2fec2b6fa293978"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001070000_decision_supersede_schema_version_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "b1c2b730d64441b13424981d3b51e9ab3570d381"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001080000_work_claims_transport_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "cd4513c3aadbd2d3cf15e70c3524c2e35abf6e05"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001120000_storage_onboard_gate_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e81b1fc11943cf381ae8758c2f0e26ef19ed43c2"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261001130000_storage_destructive_p5.sql",
+      "mode": "100644",
+      "git_blob_sha1": "bb5c2b13bc814f28daa0f332377ae01740657191"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002000000_checkpoint_backlog_controls.sql",
+      "mode": "100644",
+      "git_blob_sha1": "5c6ab91258712781d8caebff95fe30fa48e502ff"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002010000_session_context_from_token.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0fef9aab536c717e0b0979f6d281fe017f05545a"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002030000_mtpe_owner_pin_focus_cas.sql",
+      "mode": "100644",
+      "git_blob_sha1": "b5988c826d5b8688f4c65bfa39605e8a65892913"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002050000_work_claims_admission_hardening.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2b34db72c2ba430b9c64d981e280ece989cf54c6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002060000_now_conflict_null_project_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4f0cdb429e35d62b4f2d70220c90a4bcba123c45"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002060001_work_claims_session_cap.sql",
+      "mode": "100644",
+      "git_blob_sha1": "dc8f1837319caeeca354512b0b826a455ea26cfa"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002070000_storage_registered_sibling_roots_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "de0e8b0a732d60e7c1f49855e3e0843836fc087a"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002072000_work_claims_minor_fixes.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e4c20eed85b590d8d7274e13ad58db2e46f4745e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002080000_storage_directory_move_p6.sql",
+      "mode": "100644",
+      "git_blob_sha1": "6a032a669f5b120e4844227473c848af505c0ed7"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002090000_storage_directory_move_descendants_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9f2455fccbb59ffcd9ae7d65f893127b3d5d97f8"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002100000_work_claims_count_caps.sql",
+      "mode": "100644",
+      "git_blob_sha1": "6173a3828ed3a10be0911afc7aec55e19f831570"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002130000_storage_directory_sharing_digest_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "6fb37b4ab800d0acb9b84fbd2eafe90b39893565"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002150000_work_claims_retry_after.sql",
+      "mode": "100644",
+      "git_blob_sha1": "56ce1aa3d7c5cc287cf123b358591e3da07d3b7c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002170000_storage_release_unattempted_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c1e8a882dc7760dfa7ce53ef39eb695483509ef6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002190000_work_claim_exemptions_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7841c37cfe6af53ae7e3aa85029ca738cc350644"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002200000_storage_adopt_p7.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e0eebd72fe52dfe1b9cc7c2f258ddd50bad2feeb"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002210000_work_claims_resource_kinds.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7079a63b0b7f2030ca48ad67e1432677199f1744"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261002220000_owner_grants_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "efcc57e877a211ec091c1b49c03ae35e284102a1"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003030000_work_claims_owner_grants.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f7dbb86c886c9189c0c6111f25f661cde1a0c3be"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003050000_work_claims_rate_buckets.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4e3feb4c396ba7759959748da33402b68cb76c40"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003070000_work_claims_reject_receipts_renew_takeover.sql",
+      "mode": "100644",
+      "git_blob_sha1": "927bfb0c8e0cd1d4f4d6f4c5126e89b3758f3088"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003080000_work_claims_storage_door.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a621cb49d62abcbad00546c48dd70967407e596e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003100000_event_carrier_decision_guard.sql",
+      "mode": "100644",
+      "git_blob_sha1": "ae1cedb5a698938f627ecde811c7d26424f1013a"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003120000_work_claims_multi_copy.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c40ce35b7701aaeb13e93dd14ba2857eca33fa5b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003170000_owner_grants_release_door.sql",
+      "mode": "100644",
+      "git_blob_sha1": "de7f7858a27345dbf9ba3c10e8221e0582356ac5"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003180000_work_claims_task_ci_metering.sql",
+      "mode": "100644",
+      "git_blob_sha1": "404fc16392bcc55cce2db479927a09867f416056"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003190000_owner_grants_scope_choice.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8f6f70c440a16bffd3a332f859c78fbdf2a33a85"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003200000_work_claims_binding_roles.sql",
+      "mode": "100644",
+      "git_blob_sha1": "d68e2cc1626034881e6a6fb7cae771edeba12110"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261003230000_binding_roles_list_volatile.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7265a58584504aeef8eb819b51906ee52e50f123"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004050000_binding_roles_fail_closed.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c523f2cf5280eddce39e31d53a673a8cfc881a1c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql",
+      "mode": "100644",
+      "git_blob_sha1": "bc8105ea9f3b2b896338056bd081de0431a12b06"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004130000_owner_grant_default_by_risk.sql",
+      "mode": "100644",
+      "git_blob_sha1": "8df81770cbc29963af89f8de8261f588354a17a7"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004140000_authorization_expiry_365.sql",
+      "mode": "100644",
+      "git_blob_sha1": "046624154aea82b0b8f600aa430b7e21ebda83de"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004150000_connection_permission_requests.sql",
+      "mode": "100644",
+      "git_blob_sha1": "15d7176422a863056e3685cd9f92f31de432e88e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004170000_headless_legacy_binding_revoke.sql",
+      "mode": "100644",
+      "git_blob_sha1": "76da2a86f1c8c29fdbf68de4ddf9a6504799bfe2"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004180000_owner_grants_list_ids.sql",
+      "mode": "100644",
+      "git_blob_sha1": "98e5a714ef5562f19d35e18251b318ac34949791"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004200000_owner_request_bundles.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9ecf7f8b0e4fe6b457484c1eb781feb37dca0101"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004210000_authorization_roles.sql",
+      "mode": "100644",
+      "git_blob_sha1": "eeaa6e439f586460ef9ec03f2538feda07da9662"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261004220000_legacy_revoke_keeps_roles.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c3abd671212437a0b57eb48e6c4d3d9c01a9d2a0"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005090000_integration_runtime_identity_claim.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9800592103c31df1bfe42d7d0d39043f63eee93b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005100000_integration_runtime_errata_004.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f1dded9b69113216fe8f73fa75cd96537ad37a64"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005120000_owner_grants_admission_door.sql",
+      "mode": "100644",
+      "git_blob_sha1": "688ba947a9b8128af9c63e33ee417e6ecf87bfeb"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005130000_integration_runtime_verification.sql",
+      "mode": "100644",
+      "git_blob_sha1": "dd86513da954220964c01de934a0df5fc841ab5c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005140000_owner_review_hardening.sql",
+      "mode": "100644",
+      "git_blob_sha1": "fe7a03292f6ae83d7b5a2709eff504ad95fb8e19"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005150000_integration_runtime_revocation_lifecycle.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2ce51e1ad779e609d242c5eb5f46ce9950219ca4"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005163000_integration_runtime_grants.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4af56892ab07e025e855f5939509ec84b0e63ee7"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005190000_work_claims_lease_key.sql",
+      "mode": "100644",
+      "git_blob_sha1": "af6a0996c5804f3d1fad920f3ef55bc78000303c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005200000_work_claims_owner_handover.sql",
+      "mode": "100644",
+      "git_blob_sha1": "dac810d6b5044ba1181b44f66d8c0c0a8412c44b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261006060000_binding_scopes_evaluated_once.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f11961b988d4cdf4048e1628c395401d3b639d50"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261006090000_agent_messages_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "5855b97d7790a3e890711456c99d3afbb3523285"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261006120000_work_claims_merge_slot.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e49e98ab52f4c9cf6ee35a4318ca08bac9e72fa9"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261006150000_search_context_rereview.sql",
+      "mode": "100644",
+      "git_blob_sha1": "d367dfe08f0f4ad415409f69df61b86fcce0c419"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261006170000_storage_connections_list.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0a434e26872b6f5f04a3647ea41f519e89de8797"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261006180000_work_claims_continuation.sql",
+      "mode": "100644",
+      "git_blob_sha1": "728ebcf9c9b4d912095280b15aed16e8aa1c817e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261007000000_storage_connections_display_name.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c0aa40da4bda1205d2c99fbd4c7bc4a888bbaa6c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261007060000_integration_runtime_ready_profiles.sql",
+      "mode": "100644",
+      "git_blob_sha1": "978674b488e5bcc1464565e4eabb0fa69416b045"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261007120000_db_security_hygiene.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e761bc8069aa46ee2081dc03588dce03d64a9a6f"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261007130044_model_domain_sources.sql",
+      "mode": "100644",
+      "git_blob_sha1": "fefb0572ed6383c727fc2bcdf9c771b111d16176"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261007150000_storage_binary_replace_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "53f31e10687dfb1131387365c4fc8b512e9de8ef"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261007161246_model_reference_owner_approval_source.sql",
+      "mode": "100644",
+      "git_blob_sha1": "504eb38c07503d317038e114403e130ccaf92449"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261007200000_storage_recovery_deadlock_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "26f939629baf945015c33509e7a3a612d15a7565"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008000000_storage_queued_dispatch_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "58aa701be9dc80cfda40f2048c563626e45ffd00"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008010000_storage_queued_dispatch_window_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "83b5ad3e13d8cb8a8e5d54d3bc68ec26f4053dc2"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008030000_storage_staging_retain_until_settled_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a9cfa90a95aa31e499c4be235c6c3a76fd10d8fe"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008065024_model_domain_actor_free_successor.sql",
+      "mode": "100644",
+      "git_blob_sha1": "79490df226009aca536dfd5f0e526346e97961ac"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008080000_storage_backoff_cap_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "28fdbccaf562535ba251f90b6f010f3d4c44b723"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008120000_storage_access_digest_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "b11f41449d3740693793dc5faaacbf95df76a118"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008140000_storage_ancestor_identity_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "88b7210c7855981c20fefb3c983d0149e55327a3"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008150000_credential_table_privileges_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "9bb41d71df03bbb4e2ff2aafd20b68b92a394250"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008152103_model_domain_atomic_bootstrap.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a450d2fe678e80b2110e60dfad0662129071e887"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008170000_owner_auto_approve_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "96f4fd4afaf5b96008a978919b49ce639a547268"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008190000_agent_messages_switch_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "d02607e7960ffa722ea6fdf96c8a8efcd9bf4a23"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261008210000_credential_verifier_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "533d09a8638466dd08d2b85561836ef337865d5d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009010000_work_claims_merge_slot_touch_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0780540c99e5b867f79db55445a02ea1bea0b1ee"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009020000_owner_request_answers_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "7c205a732f92c069364960331c919aa480110bc6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009040000_revoke_legacy_audit_bindings_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "89c30b11d4909916ff931a02c4ad4fd6b5df68e5"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009050000_close_v12_raw_binding_fallback_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "127409bb845213f37e5c583c96f84e766ac8acb0"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009070000_owner_grant_use_lookup_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3c4e6b0f92315eab49e8e168cf132022f947b1cb"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009070001_issuer_identity_credentials_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e640dc3e2059442429295fef1e2faee740d602d3"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009070002_worker_gateway_transition_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "48d59e4a0ae05a12a832c5dfa10dbd88e49e2f7d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009080000_work_claims_merge_queue_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0466d232f3762149bc5700416c18e8f2df9f3323"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009110000_audit_receipt_lookup_indexes_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "972435d60f93045d52bdf92bee063de1fe340788"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009160000_worker_gateway_request_context_probe_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "3604d7216e0bbef2bbb0113fed20534026f02306"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261009160100_close_worker_gateway_request_context_probe_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "c76ca283f2b43e8e62be403392e128ca4f654eae"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010030000_search_context_text_cache_reapply.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4a76cab57a0dcbbfee072259ef8b909bf7fe19c1"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010055701_storage_owner_lifecycle_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "2a1eba32a8136dc0ee1dbbdb97baecdcce450341"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010112852_merge_slot_ci_notice_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "ec345429a3a286f83bebc046637d5d0d4e34decb"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010133000_dataset_split_native_grant_correction_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e22b8ab116442028ed1a40445506717fb07e29c6"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010150000_storage_owner_root_trash_scope_v2.sql",
+      "mode": "100644",
+      "git_blob_sha1": "f1817a6c26bdf602609ac29719674985ec125629"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "4844d1d13351c5493ea755d64885ad2bd49beea3"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010175022_dataset_split_native_grant_currentness_scope_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "082d4136682204547536bba42374a08a18dd874d"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011005439_model_domain_bootstrap_claim_currentness_scope_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "dd5ceb808f1891775d2368027f0ff34a2b6521ef"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011033947_merge_admission_measurement_history_atomic_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "60992fdb7d9d55e9bc34fdf8f8a9b84dcdbb7f24"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011035952_storage_master_control_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "0196b404921a7c73371df54b2f43c0ea8e0931b1"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011040822_task_owner_detail_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "42d4154354f35502ccbb2626c860cdd7b72d8df9"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011041300_dataset_split_native_grant_binding_successor_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a6582ecd3bf21caf23d6f9587b861ec7e69d5e53"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011050507_merge_admission_measurement_capabilities_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "db2ca028a439841588e1c2807e785d3bdd3cc19b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011101500_storage_reconnect_retry_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "ec5f48706a7d1fe8aad414e05fe338dcc652c930"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011113259_merge_admission_measurement_clock_target_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a13e7ec9c09db13eb852929a9375842c34338185"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261011131755_work_claim_handover_execution_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "a9cccf7b840c0741a5a3b69a273df0d8db5a0b90"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261012030548_merge_admission_clock_audit_transport_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "d4802e819a9cd0d3877e30b7446a4f6edd412e8c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261012033722_storage_reconnect_refresh_default_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "e848c1608df3ec718de30af89f6b1c5e26dfcbfd"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261012103238_storage_demand_refresh_prepare_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "6676e1ad0ee5a87785210ad146e6cf5444da0275"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261012113128_storage_demand_refresh_runtime_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "b8c00292abdd611bba166a33ac055238cdaa883c"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261012114500_work_claim_handover_legacy_drain_v1.sql",
+      "mode": "100644",
+      "git_blob_sha1": "eee022c2aff43224de4df5c1a75198390637b55d"
+    },
+    {
+      "path": "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "49ad4f3d6fc07ced6827416eadd8ab4fa6d88ebc"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "d1443df1cb2f2bf57a62e1d6ccb0114f966d5ccc"
+    },
+    {
+      "path": "scripts/ci/activity-conflict-caller.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "cc897f36587d0b8cc8367322b84ec14506c19dba"
+    },
+    {
+      "path": "scripts/ci/check_active_doc_links.py",
+      "mode": "100644",
+      "git_blob_sha1": "b3caf5820ed68dc6cfef94f549bb0a56313c41e7"
+    },
+    {
+      "path": "scripts/ci/check_contract_placement.py",
+      "mode": "100644",
+      "git_blob_sha1": "b861c8e101dbc244ffb7854398638db9caf9d5cc"
+    },
+    {
+      "path": "scripts/ci/check_design_refs.py",
+      "mode": "100644",
+      "git_blob_sha1": "a2ce870214a478cab93d421b5518743b17b1aa94"
+    },
+    {
+      "path": "scripts/ci/ci-usage-attribution.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "2e90e288fdd0245446cfe19b4effe6b29e28bfa3"
+    },
+    {
+      "path": "scripts/ci/ci-usage-attribution.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "a1564d57109a81af51ff69da46fccd3bb9d79937"
+    },
+    {
+      "path": "scripts/ci/ci-usage-report.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "102fa911e26985a0af4c6345100c0a3d28ccf516"
+    },
+    {
+      "path": "scripts/ci/ci-usage-report.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "6a162356794aa2cd24f5c1942d109b93d8889bd8"
+    },
+    {
+      "path": "scripts/ci/clued-docs-only.py",
+      "mode": "100644",
+      "git_blob_sha1": "395f086b58ea3ff6cb5946660da734cc5072938f"
+    },
+    {
+      "path": "scripts/ci/clued-g4-fresh-start.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "e541a988a16def21899cb86a9b8ea236107a7972"
+    },
+    {
+      "path": "scripts/ci/clued-g4-fresh-start.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "f58c0b3c37e2710d166e0dedf01839b6d1125420"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-profiles.json",
+      "mode": "100644",
+      "git_blob_sha1": "c1ef04ecda2d48a8fc40bc00ad7a5ba468d2dd9d"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-role-specs.json",
+      "mode": "100644",
+      "git_blob_sha1": "0f9cad7e3ddd47c612a5966923c23d5123200a29"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-runtime.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "c6176c8d0652928feb644ddfd71f6a79cc144e26"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-runtime.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "b2054b04c5968bdfe4322473f35e5f27e1d0baa3"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "859b26a0f203459c67f1567ccfb91009fba37133"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "4336b1954a0b8a89db823f578c1718387dc71813"
+    },
+    {
+      "path": "scripts/ci/clued-managed-auto-merge.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "738e887104de888abc9bd63f2d86a135a891ffb8"
+    },
+    {
+      "path": "scripts/ci/clued-merge-executor.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "1da1b9d693ec98b1c9bec577b7e0c78e9571659c"
+    },
+    {
+      "path": "scripts/ci/clued-merge-executor.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "58df372e14cf6a155f4ac20113505532655e2c2d"
+    },
+    {
+      "path": "scripts/ci/clued-merge-slot-ci.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "4f44087ea8457b89e10ece99a326c5b37b3eab55"
+    },
+    {
+      "path": "scripts/ci/clued-merge-slot-ci.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "620af8e2e25b808eeacfb43a357dbfc75758f611"
+    },
+    {
+      "path": "scripts/ci/clued-push-reuse.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "bc3982f20207e2aa183718d508610a9f523618d1"
+    },
+    {
+      "path": "scripts/ci/clued-push-reuse.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "efc24ad8b94a85e41e69227036c5609915a3f510"
+    },
+    {
+      "path": "scripts/ci/clued-release-grant.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "3b91f6fad7c11c0e318c7e11d55956cb1916a6f4"
+    },
+    {
+      "path": "scripts/ci/clued-release-grant.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "9bab66256cd451411a9c35925e1b6ae55d8fc5d8"
+    },
+    {
+      "path": "scripts/ci/clued-work-admission.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "fbe0a6c8febac2d3bef5358f26920f60ea91f725"
+    },
+    {
+      "path": "scripts/ci/clued-work-admission.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "b5591098f95bfa3d815a9f8cf6831bfe3a202ae2"
+    },
+    {
+      "path": "scripts/ci/clued-work-claim-handover.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "be243eec8d08c42fc3b2582c078a5fce693bf98a"
+    },
+    {
+      "path": "scripts/ci/clued-work-claim-handover.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "487465c37a171b392eb124330b7d7929246a12b5"
+    },
+    {
+      "path": "scripts/ci/clued-workflow-profile.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "79bcd1b1e1591eecb65c7b00813ae7e34718c917"
+    },
+    {
+      "path": "scripts/ci/clued-workflow-profile.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "030c5167c2410a4ee7b9c0168a92a5fbb7e21103"
+    },
+    {
+      "path": "scripts/ci/clued_release_tags.py",
+      "mode": "100644",
+      "git_blob_sha1": "ddcf627022ad24c7f742deafff7ce1c082cfaed7"
+    },
+    {
+      "path": "scripts/ci/merge-admission-clock-bootstrap.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "aea8e5478ecfddc6fd600df0e2234cb5dec18651"
+    },
+    {
+      "path": "scripts/ci/merge-admission-clock-bootstrap.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "4947199daf2cbac2b9be3a99135101bfdfeb3125"
+    },
+    {
+      "path": "scripts/ci/merge-admission-clock-source.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "0cdb4e1e352a3fb288fad4ea58338a2ec3e40285"
+    },
+    {
+      "path": "scripts/ci/merge-admission-clock-source.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "96fdf06a0c017dd49e6d77567f069ecb54f37444"
+    },
+    {
+      "path": "scripts/ci/merge-admission-four-sources.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "f791bc6b2d9453055af1daf208f5877def98f885"
+    },
+    {
+      "path": "scripts/ci/merge-admission-four-sources.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "bffc05bcf785cbf6363cebdf3f861f508db3c91a"
+    },
+    {
+      "path": "scripts/ci/merge-admission-measurement-history.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "6799c148ee7baf51a5ba989de73fb8bffb054f6f"
+    },
+    {
+      "path": "scripts/ci/merge-admission-measurement-history.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "69706c856e83c2b791d67fd5dcbefcb35430b6b9"
+    },
+    {
+      "path": "scripts/ci/merge-admission-native-activity.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "46a3db44b79236b26dc8a50b263761d599552c63"
+    },
+    {
+      "path": "scripts/ci/merge-admission-native-population.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "7a36de38394d99d866b26f4b3b75de363dd89531"
+    },
+    {
+      "path": "scripts/ci/merge-admission-natural-frame.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "2a03ab12d33281770aa8d65bc1065e267a3cbdcd"
+    },
+    {
+      "path": "scripts/ci/merge-admission-natural-frame.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "b599e7eea4284f4046c20bcc70d6913260fa336f"
+    },
+    {
+      "path": "scripts/ci/merge-admission-natural-intake.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "9fa194134b15c0e980d24f9ae475e48f9b45992d"
+    },
+    {
+      "path": "scripts/ci/merge-admission-policy-file.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "1846292d9b93c88919f39eaa1eaa59817e91a227"
+    },
+    {
+      "path": "scripts/ci/merge-admission-policy.fixtures.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "ed612e7f6bcff6f7e9f843f57b8e8f33ef074f95"
+    },
+    {
+      "path": "scripts/ci/merge-admission-policy.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "a3f6830e0087474d3e36222d12975deb7830c4d3"
+    },
+    {
+      "path": "scripts/ci/merge-admission-policy.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "9ff38ac2c2212b98c3ed79d46b6e28b3a80236de"
+    },
+    {
+      "path": "scripts/ci/merge-admission-r9-collector.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "9c6bd4e650f3d9e15dc3b7be0a72b87c9a0458cb"
+    },
+    {
+      "path": "scripts/ci/merge-admission-r9-collector.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "1dc138f02aebbac043b6724527e0fff93e7c89c8"
+    },
+    {
+      "path": "scripts/ci/merge-admission-r9-runtime-inputs.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "83c26f38f72dd6b72dcd0077f32e3391622b7967"
+    },
+    {
+      "path": "scripts/ci/merge-admission-r9-source.json",
+      "mode": "100644",
+      "git_blob_sha1": "7ef76730c81680a157ca0a35d0dfb9a73d215225"
+    },
+    {
+      "path": "scripts/ci/merge-admission-source-producer.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "60d4b938d4361fd01cf7bbebfc8ca0e6d18fa2d2"
+    },
+    {
+      "path": "scripts/ci/merge-admission-source-producer.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "1183d3bf4d302f24d1b22479077b9086f46da7de"
+    },
+    {
+      "path": "scripts/ci/nonpush-seal-caller.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "43e6ecb85e69be727b1a5e6bfe8b10203daef90d"
+    },
+    {
+      "path": "scripts/ci/npm-cache-observation.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "8c4078cca852c2eccf1383f5568235ae3d3c5a43"
+    },
+    {
+      "path": "scripts/ci/npm-cache-observation.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "9d41c9278c541dc1421f3e0817854c106fc50a15"
+    },
+    {
+      "path": "scripts/ci/public-mcp-hosted-space.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "a8ed0db21e35177af09eae22f6b3b1bf21081a3b"
+    },
+    {
+      "path": "scripts/ci/public-mcp-hosted-space.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "9ba33859d993b5db75ead83251190f6466644f93"
+    },
+    {
+      "path": "scripts/ci/public-mcp-supabase-isolation.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "df889edf4e8ab0e0078d88dddff2e1948f720834"
+    },
+    {
+      "path": "scripts/ci/public-mcp-supabase-isolation.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "bfedec007fbfab9118823fa7abd6097499265e08"
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "mode": "100644",
+      "git_blob_sha1": "64fe5e4232929310375833d8f9f3d78152a293b0"
+    },
+    {
+      "path": "scripts/ci/self-hosted/README.md",
+      "mode": "100644",
+      "git_blob_sha1": "62ec5f871c602ec3e943b0610a9e0f17e1c33dab"
+    },
+    {
+      "path": "scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1",
+      "mode": "100644",
+      "git_blob_sha1": "9c9dd2d64d5d59c8576053110aaf17420c295d56"
+    },
+    {
+      "path": "scripts/ci/self-hosted/bootstrap-linux-runner.sh",
+      "mode": "100644",
+      "git_blob_sha1": "45bb49c3843249099f0f09a1c1b558f4af1eac61"
+    },
+    {
+      "path": "scripts/ci/self-hosted/bootstrap-windows-runner.ps1",
+      "mode": "100644",
+      "git_blob_sha1": "58eac8a42757122f6ce5901902f15146d54fbdc0"
+    },
+    {
+      "path": "scripts/ci/self-hosted/ci_health.py",
+      "mode": "100644",
+      "git_blob_sha1": "ea096610d12b7adb400145879bbf4fbbf206c46a"
+    },
+    {
+      "path": "scripts/ci/self-hosted/ci_health_analyze.py",
+      "mode": "100644",
+      "git_blob_sha1": "6fd11f1e8e83ecdf33a745fb51f361bcb9b7be1f"
+    },
+    {
+      "path": "scripts/ci/self-hosted/ci_health_transport.py",
+      "mode": "100644",
+      "git_blob_sha1": "8bc1d8e63bb7e77fa2fa25ac2f28c131ad1c6f89"
+    },
+    {
+      "path": "scripts/ci/self-hosted/host-port-lock.sh",
+      "mode": "100755",
+      "git_blob_sha1": "cfb0c3e5d399c3699d27d4fbbebe96e13628d99b"
+    },
+    {
+      "path": "scripts/ci/self-hosted/node-profiles.json",
+      "mode": "100644",
+      "git_blob_sha1": "4c6f850ca94b964747de7a183851bcc38e333fd0"
+    },
+    {
+      "path": "scripts/ci/self-hosted/render-host-watchdog.ps1",
+      "mode": "100644",
+      "git_blob_sha1": "3e844ae28a716a8e73ebb9aef4b8ee3986c9deb9"
+    },
+    {
+      "path": "scripts/ci/self-hosted/validate_node_profiles.py",
+      "mode": "100644",
+      "git_blob_sha1": "d6b0c3d96e2f9959877d3e833b3f5725e1b633ec"
+    },
+    {
+      "path": "scripts/ci/test_check_contract_placement.py",
+      "mode": "100644",
+      "git_blob_sha1": "c2632533201bf4c626d2acd595ce88e3efc9c18d"
+    },
+    {
+      "path": "scripts/ci/test_check_design_refs.py",
+      "mode": "100644",
+      "git_blob_sha1": "9213683b1020bdb9b0a4b17a1d1ccd2984edfb0a"
+    },
+    {
+      "path": "scripts/ci/test_clued_docs_only.py",
+      "mode": "100644",
+      "git_blob_sha1": "509cf8c428349a13d979584e3493435445defa27"
+    },
+    {
+      "path": "scripts/ci/test_clued_release_tags.py",
+      "mode": "100644",
+      "git_blob_sha1": "b448500a8165f8d45ee88638357993589583c955"
+    },
+    {
+      "path": "scripts/ci/test_validate_runner_budget_policy.py",
+      "mode": "100644",
+      "git_blob_sha1": "e8cdd191bd9ef439a46cfc472fe26644374a032a"
+    },
+    {
+      "path": "scripts/ci/validate_runner_budget_policy.py",
+      "mode": "100644",
+      "git_blob_sha1": "c424dda2926dcbb51d4d8bce8c1a98c9de8a0ced"
+    },
+    {
+      "path": "scripts/runner/README.md",
+      "mode": "100644",
+      "git_blob_sha1": "6e0db4ea6aac4fc2be2809b9cae21ca04a757288"
+    },
+    {
+      "path": "scripts/runner/clued-runner-job-started.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "dd4f1e61750bac0dac06cf2fbf5dd79bd7f4f947"
+    },
+    {
+      "path": "scripts/runner/clued-runner-job-started.ps1",
+      "mode": "100644",
+      "git_blob_sha1": "fef4e73df2d80afe79bb7efebd8b8cd27e4cdf95"
+    },
+    {
+      "path": "scripts/runner/clued-runner-job-started.sh",
+      "mode": "100755",
+      "git_blob_sha1": "8bed3c563fe901551f512aeb274c79e2e222ce43"
+    },
+    {
+      "path": "scripts/runner/clued-runner-job-started.test.mjs",
+      "mode": "100644",
+      "git_blob_sha1": "28df24d2b34505f3e59432038644469b1373b6e5"
+    }
+  ]
+}

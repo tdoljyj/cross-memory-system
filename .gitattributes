@@ -60,3 +60,4 @@ work/recovery-root9/postbudget-cas-p3/reserve_gate.seq102-inheritance.full.templ
 work/recovery-root9/stage2a/runtime-function-patch.UNSEALED.sql -text
 work/recovery-root9/stage2c/root9_apply_once.sealed.sql -text
 work/recovery-root9/stage2c/runtime-series-guard.sealed.fragment.sql -text
+scripts/ci/clued-handover-external-source-pins.json -text

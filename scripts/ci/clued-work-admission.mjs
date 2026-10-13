@@ -1799,7 +1799,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
 // environment's branch policy keeps the token from it anyway.
 
 export const DISPATCH_ADMISSION_WORKFLOW = "clued-work-admission-dispatch.yml";
-export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml"];
+export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml"];
 export const DISPATCH_ADMISSION_TTL_SECONDS = 1800;
 export const ADMITTED_HEAD_TITLE = "clued-admitted-head";
 
