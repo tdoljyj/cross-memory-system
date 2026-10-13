@@ -86,7 +86,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "work-handover-current-epoch-proxy-v1";
+export const HOOK_VERSION = "work-handover-current-epoch-proxy-dispatch-v1";
+export const COMPONENT_VERSION = "1.0.0";
 
 // Native fetch otherwise ignores the runner's established proxy settings.
 // Enable Node's own proxy support before any credential or network read,
@@ -112,7 +113,7 @@ export function proxyBootstrapArguments({ env = process.env, execArgv = process.
 
 // The same list as DISPATCH_GATED_WORKFLOWS in scripts/ci/clued-work-admission.mjs
 // (this file is installed alone, so it keeps its own copy; a test compares them).
-export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml"];
+export const DISPATCH_GATED_WORKFLOWS = ["clued-connection-authorization.yml", "clued-g4-database.yml", "information-flow-e2e.yml", "clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml"];
 const MAIN_EVENTS = new Set(["push", "schedule", "workflow_run", "pull_request_target", "workflow_dispatch"]);
 
 export function workflowPathOf(env) {

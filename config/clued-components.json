@@ -140,6 +140,21 @@
       "content_sha256": "0dc40be75363da599b8996202efd58733214546f481580f57e71350a3b10b5fe"
     },
     {
+      "id": "script.runner-handover-qualifier",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Runner handover qualifier with frozen exact Source identities and separate actual Git-object provenance validation.",
+      "root": "scripts/runner",
+      "files": [
+        "qualify-work-handover.mjs"
+      ],
+      "content_sha256": "becfaac789374d15858f5b0205f1661b2fc955aba0603ca4c8842b9589b7842c",
+      "version_marker": {
+        "file": "qualify-work-handover.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
       "id": "script.components",
       "kind": "script",
       "version": "1.0.1",

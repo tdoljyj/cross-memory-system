@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+export const COMPONENT_VERSION = "1.0.0";
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
@@ -172,10 +173,73 @@ $inspectionStage='serialize'
 
 // Isolated observations exercise the exact protected installed code. They
 // complement, and cannot replace, actual PR/dispatch job and revocation proof.
-const accepted = new Map([
-  ['6627684cf0bd92f11085aaa858875381051249456a35f747660f07eaf304abe0', '443a589d0696761104b5bd3c962bf57b34b1ab3f'],
-  ['7c35368f8e50f5cd3e73e9edfc8bfe137dc91a3ef66fbdd3e5839bea6226992d', '4f2951a66f995a4a61088f1196399a45521315d3'],
-]);
+
+// The accepted identities are internal immutable authority, selected only by
+// the exact raw hook digest. CLI/env/caller data cannot add or replace them.
+export const ACCEPTED_HOOK_SOURCES = Object.freeze([
+  {
+    "sha256": "6627684cf0bd92f11085aaa858875381051249456a35f747660f07eaf304abe0",
+    "source_commit": "443a589d0696761104b5bd3c962bf57b34b1ab3f",
+    "source_path": "scripts/runner/clued-runner-job-started.mjs",
+    "hook_version": "work-handover-current-epoch-proxy-v1",
+    "component_version": null
+  },
+  {
+    "sha256": "7c35368f8e50f5cd3e73e9edfc8bfe137dc91a3ef66fbdd3e5839bea6226992d",
+    "source_commit": "4f2951a66f995a4a61088f1196399a45521315d3",
+    "source_path": "scripts/runner/clued-runner-job-started.mjs",
+    "hook_version": "work-handover-current-epoch-proxy-v1",
+    "component_version": null
+  },
+  {
+    "sha256": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
+    "source_commit": "31fb47dd369a2e0296ecc548ea15a4c6a0f0af2e",
+    "source_path": "scripts/runner/clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs",
+    "hook_version": "work-handover-current-epoch-proxy-dispatch-v1",
+    "component_version": "1.0.0"
+  }
+].map(record=>Object.freeze(record)));
+const accepted = new Map(ACCEPTED_HOOK_SOURCES.map(record=>[record.sha256,record]));
+export function acceptedHookSource(digest) {
+  const record=accepted.get(digest);
+  assert.ok(record,'The hook is not an accepted exact source');
+  return record;
+}
+function readGitSourceObject(record) {
+  assert.ok(ACCEPTED_HOOK_SOURCES.includes(record),'Caller-declared Source is not authority');
+  const environment={...process.env,GIT_NO_LAZY_FETCH:'1'};
+  const result=spawnSync('git',['show',`${record.source_commit}:${record.source_path}`],
+    {cwd:path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..'),env:environment,
+      encoding:null,timeout:10000,maxBuffer:524288,windowsHide:true});
+  if(result.error||result.status!==0||!Buffer.isBuffer(result.stdout))
+    throw new Error('SOURCE_OBJECT_UNAVAILABLE: accepted commit/path cannot be read without fetching');
+  return result.stdout;
+}
+// Local acceptance and independent provenance checks call the default reader
+// on actual immutable Git objects. Shallow runner CLI jobs do not call it or
+// silently fetch history. An injected negative fixture is never Git proof.
+export function verifyAcceptedHookSource(digest,{readSource=readGitSourceObject,expectedIdentity=null,primaryBytes=null}={}) {
+  const record=acceptedHookSource(digest);
+  if(expectedIdentity!==null) {
+    for(const [key,value] of Object.entries(expectedIdentity)) {
+      assert.ok(['source_commit','source_path','hook_version','component_version'].includes(key),'Unknown Source selector');
+      assert.equal(value,record[key],`Accepted Source ${key} differs`);
+    }
+  }
+  const raw=readSource(record);
+  assert.ok(Buffer.isBuffer(raw),'SOURCE_OBJECT_UNAVAILABLE: source reader did not return raw bytes');
+  assert.equal(createHash('sha256').update(raw).digest('hex'),record.sha256,'Accepted Source raw digest differs');
+  const text=raw.toString('utf8');
+  assert.equal(/^export const HOOK_VERSION = "([^"\r\n]+)";$/m.exec(text)?.[1],record.hook_version,'Accepted Source hook version differs');
+  const numeric=/^export const COMPONENT_VERSION = "([0-9.]+)";$/m.exec(text)?.[1]??null;
+  assert.equal(numeric,record.component_version,'Accepted Source numeric component version differs');
+  if(primaryBytes!==null) {
+    assert.ok(Buffer.isBuffer(primaryBytes),'Primary distribution must be raw bytes');
+    assert.deepEqual(primaryBytes,raw,'Primary distribution differs from accepted immutable Source bytes');
+  }
+  return Object.freeze({...record,source_git_object_verified:readSource===readGitSourceObject});
+}
+
 async function main(){
 const args = process.argv.slice(2);
 const candidate = args.includes('--candidate');
@@ -203,9 +267,10 @@ if (!candidate) {
 }
 const digest = () => createHash('sha256').update(fs.readFileSync(hookPath)).digest('hex');
 const before = digest();
-assert.ok(accepted.has(before), 'The hook is not an accepted exact source');
+const source=acceptedHookSource(before);
 const hook = await import(pathToFileURL(hookPath).href);
-assert.equal(hook.HOOK_VERSION, 'work-handover-current-epoch-proxy-v1');
+assert.equal(hook.HOOK_VERSION, source.hook_version);
+if(source.component_version!==null)assert.equal(hook.COMPONENT_VERSION,source.component_version);
 const publicConfiguration = fs.readFileSync(value('--public-config'), 'utf8');
 const match=/return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(publicConfiguration);
 assert.ok(match, 'Public configuration is invalid');
@@ -271,7 +336,7 @@ for(const [name,overrides,expectedStatus,pattern] of [
 assert.equal(digest(),before,'Hook changed during CLI qualification');
 console.log(JSON.stringify({schema:'clued.installed-handover-hook-qualification/1',status:'pass',
   boundary:candidate?'source_candidate':'protected_installed_code',machine:os.hostname(),platform:process.platform,
-  node:process.version,uid:process.getuid?.()??null,source_commit:accepted.get(before),source_sha256:before,
+  node:process.version,uid:process.getuid?.()??null,source_commit:source.source_commit,source_path:source.source_path,source_sha256:before,
   hook_version:hook.HOOK_VERSION,protection_verified:!candidate,cases,live_pr_qualified:false,live_dispatch_qualified:false,
   external_revocation_qualified:false,activation_authorized:false,observed_at:new Date().toISOString()}));
 }
