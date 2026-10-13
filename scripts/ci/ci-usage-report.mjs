@@ -199,7 +199,8 @@ export function isRateLimited(response, bodyText = "") {
 }
 
 // request(route) -> { ok: true, body }, or { ok: false, stopped } when the
-// budget or the rate limit stops the run. Any other non-OK answer throws.
+// budget, rate limit or provider HTTP 5xx stops the run. Other non-OK answers
+// still throw; a typed stop preserves observations without claiming coverage.
 export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) {
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   let preflightInFlight = null;
@@ -226,7 +227,7 @@ export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) 
       budget.stopped = "rate_limit_floor";
       return { ok: false, stopped: budget.stopped };
     }
-    budget.used += 1;
+    const requestOrdinal = ++budget.used;
     const firstAppRead = budget.app_quota_preflight?.status === "pending";
     let releasePreflight;
     if (firstAppRead) preflightInFlight = new Promise(resolve => { releasePreflight = resolve; });
@@ -259,6 +260,14 @@ export function budgetedFetch(fetchImpl, env, budget, token = env.GITHUB_TOKEN) 
         return { ok: false, stopped: budget.stopped };
       }
       if (firstAppRead && budget.app_quota_preflight.status === "refused") return { ok: false, stopped: budget.stopped };
+      if (response.status >= 500 && response.status <= 599) {
+        budget.stopped = "provider_error";
+        const pathname = typeof route === "string" ? route.split("?")[0] : "";
+        // Never retain the response body, query, token or headers as a cause.
+        const safeRoute = pathname.length <= 1000 && /^\/repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(pathname) ? pathname : null;
+        budget.provider_error ??= { http_status: response.status, route: safeRoute, request_ordinal: requestOrdinal };
+        return { ok: false, stopped: budget.stopped };
+      }
       if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
       if (responseType === "bytes") {
         const chunks = []; let size = 0;
@@ -605,6 +614,7 @@ export function computeMetrics({ runs, pulls, jobsByRun, coverage, window, budge
   metrics.api_requests = {
     status: "measured", token_source: budget.source, used: budget.used, cap: budget.cap, remaining_seen: budget.remaining,
     limit_seen: budget.limit, stopped: budget.stopped, by_pool: null,
+    ...(budget.provider_error ? { provider_error: { ...budget.provider_error } } : {}),
     ...(budget.source === "app" ? { app_quota_preflight: { ...budget.app_quota_preflight } } : {}),
     not_measured: { by_pool: budget.source === "app"
       ? "the measurement App's quota is its own; the GITHUB_TOKEN pool was not used"
@@ -879,6 +889,10 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch, {
       } catch { report.fee_workload = {schema:'clued.ci-fee-target-day-workload/1',repository,status:'partial',
         reason_code:'FEE_COLLECTION_FAILED',provider_visible_population_complete:false,billing_population_complete:null,official_metric:false}; }
       Object.assign(report.metrics.api_requests,{used:budget.used,remaining_seen:budget.remaining,limit_seen:budget.limit,stopped:budget.stopped});
+    }
+    if (budget.provider_error) {
+      Object.assign(report.coverage, { stopped: budget.stopped, partial: true });
+      report.metrics.api_requests.provider_error = { ...budget.provider_error };
     }
     // Seal the complete retained union, including bounded fee preparation.
     // A local pending cache/marker never becomes an authenticated restore.
