@@ -216,6 +216,82 @@
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
+    },
+    {
+      "id": "script.handover-external-driver",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-driver.late-idle-source3-v1.mjs"
+      ],
+      "content_sha256": "15b97ddf636c6b469486f7058883df9bc80a8e5c1204b9e1bccfddb10f07c3a3",
+      "version_marker": {
+        "file": "clued-handover-external-driver.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.handover-external-source-check",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-source-check.late-idle-source3-v1.mjs"
+      ],
+      "content_sha256": "bb309d2c49e1cb6742756f6a196bb3ba946e34f4d43fe261e271a2a335d95c4e",
+      "version_marker": {
+        "file": "clued-handover-external-source-check.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.handover-external-journal",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-journal.late-idle-source3-v1.mjs"
+      ],
+      "content_sha256": "861bc80d12a473cb3701df29439f9527682e74793aeeb15435169c07181ec444",
+      "version_marker": {
+        "file": "clued-handover-external-journal.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.handover-external-register",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-register.late-idle-source3-v1.mjs",
+        "fixtures/clued-handover-operator-registration.late-idle-source3-v1.sql"
+      ],
+      "content_sha256": "a996f2c20ae988dccd296c8ac59ef931bf2d7ea50e232102cdd2714a56764752",
+      "version_marker": {
+        "file": "clued-handover-external-register.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.workflow-source-profile",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-workflow-profile.mjs"
+      ],
+      "content_sha256": "42ac7ebfdf7f0d2cb3b94af67c6da2c7234fda462da6b70bc70ddc2a137623b9",
+      "version_marker": {
+        "file": "clued-workflow-profile.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
     }
   ]
 }
