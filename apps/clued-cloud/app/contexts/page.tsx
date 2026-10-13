@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
+import ImprintPanel from "../imprints/ImprintPanel";
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../supabase-browser";
 import "./contexts.css";
@@ -57,6 +58,8 @@ export default function ContextsPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
+  const [listingOwner, setListingOwner] = useState("");
+  const [selectedContextId, setSelectedContextId] = useState("");
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [hasPending, setHasPending] = useState(false);
@@ -80,6 +83,8 @@ export default function ContextsPage() {
       if (!validListing(value)) throw new RequestFailure("服务返回了不完整的开发上下文列表。", true);
       if (epoch.current !== generation || controller.signal.aborted) return null;
       setListing(value);
+      setListingOwner(JSON.stringify([who.user.id, who.access_token]));
+      setSelectedContextId(previous => value.contexts.some(context => context.id === previous) ? previous : "");
       setProjectId(previous => value.projects.some(project => project.id === previous) ? previous : "");
       return value;
     } catch (failure) {
@@ -93,14 +98,16 @@ export default function ContextsPage() {
     let timer: number | undefined;
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       if (disposed) return;
-      const changed = first || currentSession.current?.user.id !== next?.user.id;
+      const changed = first || currentSession.current?.user.id !== next?.user.id
+        || currentSession.current?.access_token !== next?.access_token;
       first = false; currentSession.current = next; setSession(next); setReady(true);
       if (!changed) return;
       const generation = ++epoch.current;
       readController.current?.abort(); writeController.current?.abort(); writeController.current = null;
       window.clearTimeout(timer);
       pending.current = next ? restoreCreation(next.user.id) : null;
-      setHasPending(Boolean(pending.current)); setListing(null); setProjectId(""); setName(""); setEnvironment("test");
+      setHasPending(Boolean(pending.current)); setListing(null); setListingOwner(""); setSelectedContextId("");
+      setProjectId(""); setName(""); setEnvironment("test");
       setWorking(false); setError(""); setNotice(""); setLoading(Boolean(next));
       if (next) timer = window.setTimeout(() => { void read(next, generation); }, 0);
     });
@@ -152,6 +159,8 @@ export default function ContextsPage() {
     } catch { if (!currentSession.current) setError("退出尚未确认，请重新加载页面后检查登录状态。"); }
   }
   const busy = loading || working;
+  const visibleListing = session && listingOwner === JSON.stringify([session.user.id, session.access_token]) ? listing : null;
+  const selectedContext = visibleListing?.contexts.find(context => context.id === selectedContextId);
   return <main className="context-page">
     <header><Link href="/">Clued / 账号</Link><Link href="/oauth/connections">客户端连接</Link></header>
     <h1>项目开发上下文</h1>
@@ -161,15 +170,19 @@ export default function ContextsPage() {
       <button type="button" disabled={busy} onClick={() => currentSession.current && void read(currentSession.current, epoch.current)}>刷新上下文</button>
       {loading && <p role="status">正在读取开发上下文…</p>}
       {hasPending && <section aria-label="待确认创建"><p>有一次创建尚未确认，请先核对原操作。</p><button type="button" disabled={busy} onClick={() => void create()}>核对原操作</button></section>}
-      {listing && <>
+      {visibleListing && <>
         <section aria-label="已有开发上下文"><h2>我的开发上下文</h2>
-          {!listing.contexts.length ? <p>尚未创建开发上下文。</p> : listing.contexts.map(context => <article key={context.id}>
-            <h3>{context.name}</h3><p>{listing.projects.find(project => project.id === context.project_id)?.name || "已有项目"} · {environments[context.environment]}</p>
+          {!visibleListing.contexts.length ? <p>尚未创建开发上下文。</p> : visibleListing.contexts.map(context => <article key={context.id}>
+            <h3>{context.name}</h3><p>{visibleListing.projects.find(project => project.id === context.project_id)?.name || "已有项目"} · {environments[context.environment]}</p>
+            <button type="button" onClick={() => setSelectedContextId(context.id)} aria-pressed={selectedContextId === context.id}>浏览此上下文印记</button>
           </article>)}
         </section>
+        {selectedContext && session && <ImprintPanel key={`${session.user.id}:${selectedContext.id}`}
+          session={session} locale="zh-CN" developmentContextId={selectedContext.id} developmentContextName={selectedContext.name}
+          projects={visibleListing.projects.filter(project => project.id === selectedContext.project_id)} />}
         <section aria-label="创建开发上下文"><h2>创建开发上下文</h2>
-          {!listing.projects.length ? <p>当前账户尚无自己拥有的项目，请先在 Clued 中创建项目。</p> : <form onSubmit={create}>
-            <label>所属项目<select required disabled={busy || hasPending} value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">选择已有项目</option>{listing.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+          {!visibleListing.projects.length ? <p>当前账户尚无自己拥有的项目，请先在 Clued 中创建项目。</p> : <form onSubmit={create}>
+            <label>所属项目<select required disabled={busy || hasPending} value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">选择已有项目</option>{visibleListing.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             <label>上下文名称<input required maxLength={120} disabled={busy || hasPending} value={name} onChange={event => setName(event.target.value)} /></label>
             <label>环境<select disabled={busy || hasPending} value={environment} onChange={event => setEnvironment(event.target.value)}>{Object.entries(environments).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <button type="submit" disabled={busy || hasPending || !projectId || !name.trim()}>创建上下文</button>
