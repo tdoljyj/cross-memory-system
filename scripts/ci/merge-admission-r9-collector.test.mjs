@@ -623,6 +623,52 @@ test('post-close progress allowance cannot hide changed identity, ordinal, creat
   }
 });
 
+test('a refused directory head identity change reports bounded public conflict fields',async()=>{
+  const f=advancingPostWindowPrefix({head_sha:'d'.repeat(40)}),r=await C.collectIncrementalNative({request:f.request,repository,window});
+  assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  assert.equal(r.inventory_conflict.run_id,'500');assert.equal(r.inventory_conflict.stage,'CLOSING_DIRECTORY_HEAD');
+  assert.ok(r.inventory_conflict.changed_fields.includes('head_sha'));
+  assert.deepEqual(Object.keys(r.inventory_conflict).sort(),['after','before','changed_fields','run_id','stage']);
+  assert.deepEqual(Object.keys(r.inventory_conflict.before).sort(),['conclusion','created_at','run_attempt','run_started_at','status','updated_at']);
+  assert.equal(r.inventory_conflict.before.status,'queued');assert.equal(r.inventory_conflict.after.status,'completed');
+  assert.equal(r.population.complete,false);
+});
+
+test('conflict diagnostics never echo an unvalidated Native conclusion',async()=>{
+  for(const conclusion of [{private:'untrusted-body'},'https://untrusted.invalid/'+('x'.repeat(4000)),17]){
+    const f=advancingPostWindowPrefix({head_sha:'d'.repeat(40),conclusion}),r=await C.collectIncrementalNative({request:f.request,repository,window});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+    assert.equal(r.inventory_conflict.after.conclusion,null);assert.equal(r.population.complete,false);
+    assert.ok(r.inventory_conflict.changed_fields.includes('conclusion'));
+    assert.ok(!JSON.stringify(r.inventory_conflict).includes('untrusted'));
+  }
+});
+
+test('the actual report writer retains a conflict diagnosis without promoting metrics or T0',async()=>{
+  const conflict=advancingPostWindowPrefix({head_sha:'d'.repeat(40)}),fake=nativeRequest({sourceContract:contract(false),mutation:route=>
+    route.includes('/actions/runs?')&&!new URL(route,'https://native.invalid').searchParams.has('created')?conflict.request(route):null});
+  const files=new Map();
+  const fetchImpl=async(url)=>{
+    const route=String(url).replace('https://api.github.com','');let body;
+    if(route===`/repos/${repository}/installation`)body={id:1};
+    else if(route==='/app/installations/1/access_tokens')return new Response(JSON.stringify({token:'mock-measurement-token'}),{status:201});
+    else if(route.startsWith(`/repos/${repository}/pulls?`))body=[];
+    else body=(await fake.request(route)).body;
+    return new Response(JSON.stringify(body),{headers:{'x-ratelimit-remaining':'4000','x-ratelimit-limit':'5000'}});
+  };
+  const key=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs8',format:'pem'});
+  const result=await U.main({GITHUB_REPOSITORY:repository,GITHUB_WORKSPACE:'/fixture',GITHUB_TOKEN:'mock-fallback',
+    CLUED_MEASURE_APP_ID:'1',CLUED_MEASURE_APP_KEY:key,GITHUB_RUN_ID:'42',GITHUB_RUN_ATTEMPT:'1',GITHUB_SHA:head,CI_USAGE_DAYS:'1'},fetchImpl,
+    {now:new Date(window.end),readFile:p=>{const rel=String(p).replace(/\\/g,'/').replace('/fixture/','');
+      if(Object.hasOwn(content,rel))return content[rel];throw Error('MISSING_FIXTURE_FILE');},
+    writeFile:(p,b)=>files.set(path.basename(p),b),mkdir:()=>{},appendFile:()=>{},log:()=>{},logError:()=>{},clock:()=>0,r9SourceContractRaw:selection()});
+  assert.equal(result,0);const report=JSON.parse(files.get('ci-usage-report.json'));
+  assert.equal(report.r9.native_coverage.inventory_conflict.run_id,'500');
+  assert.equal(report.r9.native_coverage.reason_code,'NATIVE_INVENTORY_BOUNDARY_CHANGED');
+  assert.equal(report.r9.source_readiness.complete,false);assert.equal(report.r9.t0,null);
+  assert.equal(report.r9.metrics.update_main_rounds.value,null);assert.equal(report.metrics.hosted_minutes.total,9);
+});
+
 test('pre-close progress remains a boundary change even when it finishes after close',async()=>{
   const before=run(42,{status:'in_progress',conclusion:null});let inventories=0;
   const f=nativeRequest({runs:[before],mutation:route=>route.includes('/actions/runs?')?
