@@ -124,6 +124,8 @@ test('real Native artifact/run/default-branch/source-role proof authenticates a 
   assert.equal(proof.status,'AUTHENTICATED_SEALED_ARTIFACT');
   assert.equal(proof.proof.kind,'NATIVE_ARTIFACT_DIGEST_DEFAULTBRANCH_REGISTERED_SOURCE_ROLE');
   assert.equal(proof.packet.four_source,null);assert.equal(proof.packet.clock,null);
+  assert.equal(fake.routes.filter(route=>route===`/repos/${repository}/contents/${C.R9_PUBLISHER_PATH}?ref=${head}`).length,1,
+    'reuse the same verified immutable publisher bytes for role and source-blob validation');
 });
 test('hash, current default-branch and caller authority flags do not register a publisher',async()=>{
   const fake=nativeRequest();const proof=await C.verifyR9SealedArtifact({request:fake.request,repository,contract:contract(false),artifactId:'9'});
@@ -452,11 +454,16 @@ test('R6 actual caller exposes activity PARTIAL without blanketing independent N
     runtime={source_contract_raw:selection(clock.pins,f.expected),forward_epoch:{epoch_id:coverage.epoch_id},operation_coverage:coverage,natural_selection:sourceSelection,
       proof_profiles_raw:f.p.proof_profiles_raw,role_specs_raw:f.p.role_specs_raw,execution_workflow_blobs:sourceSelection.workflow_blobs,
       admission_source_bytes:{[head]:{texts,...Object.fromEntries(['script','workflow','reverify_workflow','policy'].map(k=>[k+'_blob',expected.admission_sources[0][k+'_blob']]))}}};
+  let registryReads=0;
   const fake=nativeRequest({runs:[],jobs:[],mutation:route=>{
-    if(route.includes('/contents/scripts/ci/merge-admission-r9-source.json'))return {ok:true,body:{type:'file',path:'scripts/ci/merge-admission-r9-source.json',encoding:'base64',sha:workflowBlob(rawCfg),content:Buffer.from(rawCfg).toString('base64')}};
+    if(route.includes('/contents/scripts/ci/merge-admission-r9-source.json')){
+      if(++registryReads>1)return {ok:false,stopped:'request_cap'};
+      return {ok:true,body:{type:'file',path:'scripts/ci/merge-admission-r9-source.json',encoding:'base64',sha:workflowBlob(rawCfg),content:Buffer.from(rawCfg).toString('base64')}};}
     if(route.includes('/events?'))return {ok:true,body:[]};return null;
   }}),result=await C.collectR9Measurement({request:fake.request,budget:U.createBudget({source:'app',cap:2000}),repository,window,
     sourceContractRaw:runtime.source_contract_raw,naturalSelection:sourceSelection,runtimeInputs:runtime,liveClock:clock.clock});
+  assert.equal(registryReads,1,'reuse the independent immutable registry captured with this contract head');
+  assert.ok(!result.gaps.includes('INDEPENDENT_NATURAL_SOURCE_REGISTRY_NOT_ESTABLISHED'));
   assert.equal(result.native.status,'COMPLETE');assert.equal(result.activity_coverage.status,'PARTIAL');assert.equal(result.activity_coverage.delivery_through_window_end,'UNKNOWN');
   assert.equal(result.activity_coverage.closing_delivery_watermark,null);assert.equal(result.metrics.queue_depth_p95.official_metric,true);assert.equal(result.metrics.queue_depth_p95.value,0);
   assert.equal(result.metrics.update_main_rounds.official_metric,true);assert.equal(result.metrics.update_main_rounds.value,0);assert.equal(result.metrics.cancellation_causes.denominator,0);
