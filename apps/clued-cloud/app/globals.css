@@ -541,6 +541,51 @@ textarea:focus {
   background: rgba(255,255,255,.025);
 }
 .record-levels, .record-tabs { display: flex; flex-wrap: wrap; gap: 7px; }
+.legacy-work-views { margin-top: 20px; color: #a7b0ab; font-size: 12px; }
+.legacy-work-views > summary { cursor: pointer; }
+.imprints-panel { gap: 18px; }
+.imprints-panel h3 { margin: 0; }
+.imprints-panel .record-tabs { gap: 8px; }
+.imprints-panel .record-tabs button { font-size: 13px; padding: 9px 13px; }
+.imprints-panel .record-tabs button.active {
+  color: #ffc28e;
+  border-color: rgba(255,145,65,.55);
+  background: rgba(255,145,65,.12);
+}
+.imprints-tools, .imprints-filters, .imprints-toolbar {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 12px; min-width: 0;
+}
+.imprints-tools label, .imprints-filters label { display: grid; gap: 6px; min-width: 0; }
+.imprints-tools input, .imprints-tools select, .imprints-filters input, .imprints-filters select,
+.imprints-editor input, .imprints-panel .record-form input, .imprints-panel .record-form textarea {
+  min-width: 0; max-width: 100%; padding: 9px 11px; border: 1px solid var(--line);
+  border-radius: 8px; background: #101512; color: #e7ebe8; font: inherit;
+}
+.imprints-tools input[type="search"] { width: min(100%, 320px); }
+.imprints-grid { display: grid; gap: 12px; min-width: 0; }
+.imprints-panel .record-item { padding: 16px; gap: 12px; }
+.imprints-panel .record-item strong { font-size: 14px; }
+.imprints-card-meta, .imprints-domains { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.imprints-panel .imprints-card-meta span, .imprints-panel .imprints-card-meta time { font-size: 12px; }
+.imprints-domains span { padding: 4px 8px; border-radius: 6px; background: rgba(255,145,65,.08); color: #ffc28e; }
+.imprints-editor, .imprints-detail, .imprints-source { display: grid; min-width: 0; gap: 10px; }
+.imprints-checkboxes { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.imprints-checkboxes label { display: inline-flex; gap: 6px; align-items: center; }
+.imprints-panel input[type="checkbox"] { accent-color: #ff9141; width: auto; }
+.imprints-content { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
+.imprints-panel .record-details pre { max-height: 420px; font-size: 12px; line-height: 1.65; }
+.imprints-panel .record-details summary { color: #ffc28e; font-size: 12px; }
+.imprints-panel button:focus-visible, .imprints-panel input:focus-visible,
+.imprints-panel select:focus-visible, .imprints-panel summary:focus-visible {
+  outline: 2px solid #ff9141; outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  .imprints-tools label, .imprints-filters label { width: 100%; }
+  .imprints-tools input[type="search"] { width: 100%; }
+  .imprints-panel .record-tabs { gap: 6px; }
+  .imprints-panel .record-tabs button { flex: 0 0 auto; padding: 8px 10px; }
+  .imprints-panel .record-item { padding: 12px; }
+}
 .record-levels button, .record-tabs button {
   padding: 7px 10px;
   color: #8d9891;

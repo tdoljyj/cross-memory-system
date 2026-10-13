@@ -22,6 +22,7 @@ function fixture({ hash = "", storage = new Map(), extraAuth = {} } = {}) {
   if(name==='react')return React;
   if(name==='react/jsx-runtime')return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props}),Fragment:'fragment'};
   if(name.endsWith('/supabase-browser'))return {supabase:{auth},restoreBrowserSession:async()=>({session:null,error:null,authType:null})};
+  if(name==='../imprints/ImprintPanel')return {__esModule:true,default:'imprint-panel'};
   if(name==='./contexts.css')return {};
   if(name==='next/link')return {__esModule:true,default:'a'};throw Error(name);
  },AbortController,Error,TypeError,encodeURIComponent,URL,URLSearchParams,crypto:{randomUUID:()=>"fixture-operation-"+(++seq)},window:{sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},history:{replaceState:(_data,_unused,path)=>histories.push(path)},setInterval:()=>999,clearInterval:()=>{},setTimeout(cb){const id=++seq;timers.set(id,cb);return id;},clearTimeout(id){timers.delete(id);},location:{hash,pathname:'/oauth/projects',search:'',origin:'https://clued.example.test',assign(url){navigations.push(url);}}},
@@ -68,14 +69,16 @@ test('late owner A list cannot populate owner B account',async t=>{
 
 test('create selects an existing owned project, uses current human token, and confirms the actual reloaded context',async t=>{
  const f=await ready(t);fill(f);
- f.emit('TOKEN_REFRESHED',{...session('owner'),access_token:'fixture-refreshed'});create(f);await f.settle();
- assert.equal(f.requests[1].url,'/v1/development/owner');assert.equal(f.requests[1].options.headers.Authorization,'Bearer fixture-refreshed');
- const input=JSON.parse(f.requests[1].options.body);
+ f.emit('TOKEN_REFRESHED',{...session('owner'),access_token:'fixture-refreshed'});f.runTimers();
+ assert.equal(JSON.parse(f.requests[1].options.body).op,'owner_list');
+ f.respond(1,listing);await f.settle();fill(f);create(f);await f.settle();
+ assert.equal(f.requests[2].url,'/v1/development/owner');assert.equal(f.requests[2].options.headers.Authorization,'Bearer fixture-refreshed');
+ const input=JSON.parse(f.requests[2].options.body);
  assert.deepEqual(Object.keys(input).sort(),['environment','idempotency_key','name','op','project_id']);
  assert.equal(input.project_id,'project-A');assert.equal(input.environment,'test');assert.equal(input.op,'context_create');
- f.respond(1,{status:'committed',result:context});await f.settle();assert.ok(!f.text().includes('已创建开发上下文。'));
- assert.equal(JSON.parse(f.requests[2].options.body).op,'owner_list');
- f.respond(2,{...listing,contexts:[context]});await f.settle();
+ f.respond(2,{status:'committed',result:context});await f.settle();assert.ok(!f.text().includes('已创建开发上下文。'));
+ assert.equal(JSON.parse(f.requests[3].options.body).op,'owner_list');
+ f.respond(3,{...listing,contexts:[context]});await f.settle();
  assert.ok(f.text().includes('已创建开发上下文。'));assert.ok(f.text().includes('Development notes'));assert.equal(f.storage.size,0);
 });
 
