@@ -1,5 +1,6 @@
 """Existing technical projection examples; no new Corpus/Gold/model calls."""
 import copy
+import builtins
 import hashlib
 import importlib.util
 import json
@@ -12,7 +13,12 @@ OLD = importlib.util.module_from_spec(spec); spec.loader.exec_module(OLD)
 spec = importlib.util.spec_from_file_location("candidate_domain_contract", ROOT / "scripts/model-program/workflow_domain_contract.py")
 # Reuse the existing tests' private imports without global sys.path mutation.
 M = type(OLD.M)("candidate_domain_contract")
-M.__dict__["__builtins__"] = OLD.namespace
+domain_builtins = dict(vars(builtins))
+def domain_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "decision_candidate_projection": return OLD.M
+    return OLD.private_import(name, globals, locals, fromlist, level)
+domain_builtins["__import__"] = domain_import
+M.__dict__["__builtins__"] = domain_builtins
 exec(compile(Path(spec.origin).read_bytes(), spec.origin, "exec"), M.__dict__)
 PACKAGE_PATH = ROOT / "development/contracts/model-program/workflow-domain/TaskSpecs.candidate.v1.json"
 RAW = PACKAGE_PATH.read_bytes()
@@ -26,7 +32,75 @@ def bind(task, supplied, raw=RAW, pin=PIN, schema_digest=None):
                             schema_digest or selected["output_schema_digest"])
 
 
+def domain_context(candidate=None, reference=None, order=None, missing_reference=False):
+    task = "decision.context_relevance"
+    saved, bindings, policy, old_candidate = OLD.setup(task)
+    got = bind(task, bindings[0]["task_input"])
+    bindings[0]["output_schema_digest"] = got["output_schema_digest"]
+    saved[0]["raw_output"] = OLD.encoded(candidate or old_candidate)
+    if reference is not None: bindings[0]["scoring_reference"]["relevance"] = reference
+    if missing_reference: bindings[0]["scoring_reference"] = None
+    return M.project_task_snapshot(RAW, PIN, saved, bindings, policy, task_key=task,
+        runtime_status_categories=OLD.RUNTIME, scoring_category_keys=OLD.KEYS,
+        stable_context_order=order)
+
+
 class WorkflowDomainContractTests(unittest.TestCase):
+    def test_domain_raw_scores_must_agree_with_ranking(self):
+        _, _, _, candidate = OLD.setup("decision.context_relevance")
+        candidate["value"]["ranking"][0]["score"] = -8
+        candidate["value"]["ranking"][1]["score"] = -3
+        got = domain_context(candidate, order=["a", "b"])
+        self.assertEqual(got["scorer_records"][0]["status"], "invalid")
+        self.assertIn("DECISION_PROJECTION_CONTEXT_SCORE_ORDER", got["slots"][0]["gaps"])
+        self.assertEqual(got["slots"][0]["original_provider_status"], "saved-success")
+
+    def test_domain_ties_use_explicit_frozen_order(self):
+        _, _, _, candidate = OLD.setup("decision.context_relevance")
+        for item in candidate["value"]["ranking"]: item["score"] = -3
+        self.assertTrue(domain_context(candidate, order=["a", "b"])["scorer_report"]["results"][0]["candidate_valid"])
+        self.assertEqual(domain_context(candidate, order=["b", "a"])["scorer_records"][0]["status"], "invalid")
+
+    def test_context_contract_and_definition_identity_are_auditable_not_authority(self):
+        left = domain_context(order=["a", "b"])
+        right = domain_context(order=["b", "a"])
+        self.assertNotEqual(left["context_contract_sha256"], right["context_contract_sha256"])
+        self.assertEqual(left["context_contract"]["stable_context_order"], ["a", "b"])
+        self.assertEqual(left["candidate_definition_package_sha256"], PIN)
+        self.assertFalse(left["domain_adoption_verified"])
+
+    def test_domain_reference_grades_are_discrete_zero_through_three(self):
+        for grade in (4, 0.5, True, -1):
+            with self.assertRaises(ValueError): domain_context(reference={"a":grade,"b":1}, order=["a", "b"])
+        for grade in (0, 1, 2, 3, 0.0, 3.0):
+            self.assertTrue(domain_context(reference={"a":grade,"b":1}, order=["a", "b"])["scorer_report"]["results"][0]["candidate_valid"])
+
+    def test_domain_frozen_order_must_be_bound_to_complete_context_set(self):
+        for order in (None, ["a"], ["a", "a"], ["a", "foreign"]):
+            with self.assertRaises(ValueError): domain_context(order=order)
+
+    def test_domain_signed_scores_rank_only_and_missing_truth_remain_supported(self):
+        got = domain_context(order=["a", "b"])
+        self.assertTrue(got["scorer_report"]["results"][0]["candidate_valid"])
+        _, _, _, candidate = OLD.setup("decision.context_relevance")
+        candidate["score_kind"] = "NONE"
+        for item in candidate["value"]["ranking"]: item["score"] = None
+        got = domain_context(candidate, order=["b", "a"])
+        self.assertTrue(got["scorer_report"]["results"][0]["candidate_valid"])
+        self.assertFalse(got["domain_adoption_verified"])
+        unknown = domain_context(order=["a", "b"], missing_reference=True)
+        self.assertIsNone(unknown["scorer_report"]["mean_ndcg"])
+        self.assertIsNone(unknown["scorer_report"]["results"][0]["ndcg"])
+
+    def test_domain_semantic_drift_is_refused_even_with_new_package_hash(self):
+        _, bindings, _, _ = OLD.setup()
+        for index in range(3):
+            package = copy.deepcopy(PACKAGE)
+            package["specs"][index]["definition"]["new_semantics"] = "changed"
+            raw = OLD.encoded(package)
+            with self.assertRaises(ValueError): bind(package["specs"][index]["logical_task"],
+                bindings[0]["task_input"], raw, hashlib.sha256(raw).hexdigest())
+
     def test_all_existing_task_inputs_bound_without_mutation_or_authority(self):
         for task in M.TASKS:
             _s, bindings, _p, _c = OLD.setup(task)
