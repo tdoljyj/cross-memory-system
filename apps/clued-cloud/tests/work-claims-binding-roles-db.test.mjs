@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Binding roles (migration 20261003200000, Task 869d2db7, Owner Decision
@@ -63,6 +64,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await enableManualOwnerApprovalFixture(admin);
 
     const userId = uuid();
     const otherUser = uuid();

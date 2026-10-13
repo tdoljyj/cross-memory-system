@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 // Permission simplification step 3 (migration 20261004200000_owner_request_bundles;
@@ -66,6 +67,7 @@ test('owner request bundles: one link for several actions, each member granted a
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await enableManualOwnerApprovalFixture(admin);
 
     const userId = uuid();
     const otherUser = uuid();

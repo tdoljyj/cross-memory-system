@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claim continuation (migration 20261006180000, GenericWorkClaim §10.8,
@@ -63,6 +64,7 @@ test('work claims: a same-Binding continuation of a completed claim takes no tok
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await enableManualOwnerApprovalFixture(admin);
 
     const userId = uuid();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at)
