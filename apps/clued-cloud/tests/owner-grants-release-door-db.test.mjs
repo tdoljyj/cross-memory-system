@@ -11,6 +11,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 // the authorization database job already lists.
 import './owner-grants-admission-door-db.case.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 // Owner Credential v0.1, rollout step 4 (migration 20261003170000_owner_grants_release_door;
@@ -68,6 +69,7 @@ test('owner grants: the release door consumes by action and commit and opens a r
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
+    await enableManualOwnerApprovalFixture(admin);
 
     const userId = uuid();
     const otherUser = uuid();

@@ -41,6 +41,8 @@ function fixture(compiled) {
     if (name.endsWith('/supabase-browser')) return { supabase };
     if (name.endsWith('.css')) return {};
     if (name === 'next/link') return { __esModule: true, default: 'a' };
+    // Grants navigation only; automatic approval behavior has its own tests.
+    if (name === './AutoApprovalSwitch') return { __esModule: true, default: 'auto-approval-switch', isAutoApprovalState: () => false };
     throw Error(name);
   }, Error, Date, Number, String, Array, JSON, Intl,
   navigator: { clipboard: { writeText: async value => { copied.push(value); } } } });

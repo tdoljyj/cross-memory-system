@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { enableManualOwnerApprovalFixture } from './manual-owner-approval-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 // Owner Credential v0.1, step 3 (migration 20261003030000): over the per-Task
@@ -67,6 +68,7 @@ test('work claims over the per-Task cap consume Owner Grants; refusals carry an 
         catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
       }
       await allowRawTestBindings(admin);
+      await enableManualOwnerApprovalFixture(admin);
     };
     // Everything before step 3 first, so a legacy exemption can be granted
     // the old way; then step 3 and anything after it.
