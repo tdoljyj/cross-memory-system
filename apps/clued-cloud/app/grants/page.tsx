@@ -4,30 +4,33 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../supabase-browser";
+import AutoApprovalSwitch, { isAutoApprovalState } from "./AutoApprovalSwitch";
 import "../contexts/contexts.css";
 import "../confirm/owner.css";
 
 // Owner Credential v0.1 §5: the Owner's live grants (time left, uses) with
 // one-click revoke, and the Agent requests still waiting. Revoking takes effect
-// for every later use. §12: the auto-approval switch, turned on in two steps
-// over the view Clued renders and off in one. All RPCs run as this signed-in
-// account session.
+// for every later use. §12 successor: a persistent Owner switch saved with
+// version CAS. All RPCs run as this signed-in account session.
 type Json = Record<string, unknown>;
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const MESSAGES: Record<string, string> = {
   direct_human_session_required: "需要你本人直接登录 Clued，授权给应用的登录不能管理授权。",
   owner_grant_not_found: "找不到这条授权，可能已过期。",
-  confirmation_token_expired: "确认已过期，请重新点“打开自动审批”。",
-  confirmation_view_stale: "可自动通过的动作刚有变化，请重新点“打开自动审批”。",
+  owner_auto_approve_version_conflict: "设置已在别处更新，已显示最新状态。请确认后再操作。",
+  owner_auto_approve_session_id_required: "请重新登录 Clued 后再修改自动审批。",
+  owner_auto_approve_successor_required: "自动审批设置已更新，请刷新页面。",
 };
-// Durations offered for the switch (Decision 5ce219c6: default 24 hours, at most 7 days).
-const DURATIONS: [number, string][] = [[3600, "1 小时"], [14400, "4 小时"], [86400, "24 小时"], [259200, "3 天"], [604800, "7 天"]];
-class RequestFailure extends Error {}
+class RequestFailure extends Error {
+  constructor(message: string, readonly autoApproval?: unknown) { super(message); }
+}
 
-async function rpc(name: string, input: Json): Promise<Json> {
+async function rpc(name: string, input: Json, accessToken?: string): Promise<Json> {
   let result: { data: unknown; error: { message?: string; code?: string } | null };
   try {
-    result = await supabase.rpc(name, { p_input: input });
+    const request = supabase.rpc(name, { p_input: input });
+    if (accessToken) request.setHeader("Authorization", "Bearer " + accessToken);
+    result = await request;
   } catch { throw new RequestFailure("网络请求未完成，请刷新后查看结果。"); }
   if (result.error) {
     const code = result.error.message ?? "";
@@ -37,7 +40,7 @@ async function rpc(name: string, input: Json): Promise<Json> {
   if (!object(value)) throw new RequestFailure("服务返回了无法识别的结果。");
   if (value.status === "rejected" || value.status === "failed") {
     const code = typeof value.error_code === "string" ? value.error_code : String(value.status);
-    throw new RequestFailure(MESSAGES[code] ?? "请求被拒绝（" + code + "）。");
+    throw new RequestFailure(MESSAGES[code] ?? "请求被拒绝（" + code + "）。", value.auto_approve);
   }
   return value;
 }
@@ -64,8 +67,6 @@ export default function OwnerGrantsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [auto, setAuto] = useState<Json | null>(null);
-  const [duration, setDuration] = useState(86400);
-  const [offer, setOffer] = useState<Json | null>(null);
   const current = useRef<Session | null>(null);
   const epoch = useRef(0);
 
@@ -78,7 +79,7 @@ export default function OwnerGrantsPage() {
       current.current = next; setSession(next); setReady(true);
       if (!changed) return;
       ++epoch.current;
-      setGrants(null); setRequests([]); setAuto(null); setOffer(null); setError(""); setNotice(""); setWorking(false);
+      setGrants(null); setRequests([]); setAuto(null); setError(""); setNotice(""); setWorking(false);
     });
     return () => { disposed = true; ++lifetime.current; data.subscription.unsubscribe(); };
   }, []);
@@ -116,53 +117,25 @@ export default function OwnerGrantsPage() {
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
-  // Step 1: Clued renders what turning the switch on covers; nothing changes yet.
-  async function offerAuto() {
-    if (!current.current || working) return;
+  async function setAutoEnabled(enabled: boolean, baseVersion: number) {
+    const clickedSession = current.current;
+    if (!clickedSession || working || !isAutoApprovalState(auto) || auto.version !== baseVersion) return;
     const generation = epoch.current;
     setWorking(true); setError(""); setNotice("");
     try {
-      const value = await rpc("clued_owner_auto_approve_confirmation_issue_v1", { expires_seconds: duration });
-      if (epoch.current === generation) setOffer(value);
-    } catch (failure) {
-      if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法打开，请刷新后重试。");
-    } finally { if (epoch.current === generation) setWorking(false); }
-  }
-
-  // Step 2: commit exactly the token and view shown.
-  async function confirmAuto() {
-    if (!current.current || working || !offer) return;
-    const generation = epoch.current;
-    setWorking(true); setError(""); setNotice("");
-    try {
-      const value = await rpc("clued_owner_auto_approve_on_v1",
-        { confirmation_token: offer.confirmation_token, view_digest: offer.view_digest });
+      const value = await rpc("clued_owner_auto_approve_set_v1", { enabled, base_version: baseVersion }, clickedSession.access_token);
       if (epoch.current !== generation) return;
-      setOffer(null);
-      if (object(value.auto_approve)) setAuto(value.auto_approve);
-      setNotice("自动审批已打开。");
+      if (value.status !== "committed" || !isAutoApprovalState(value.auto_approve)) throw new RequestFailure("服务返回了无法识别的自动审批状态，请刷新后查看结果。");
+      setAuto(value.auto_approve);
+      setNotice(value.auto_approve.on ? "自动审批已开启。" : "自动审批已关闭，新的申请需要你确认。");
     } catch (failure) {
-      if (epoch.current === generation) { setOffer(null); setError(failure instanceof RequestFailure ? failure.message : "暂时无法打开，请刷新后查看结果。"); }
-    } finally { if (epoch.current === generation) setWorking(false); }
-  }
-
-  async function turnOffAuto() {
-    if (!current.current || working) return;
-    const generation = epoch.current;
-    setWorking(true); setError(""); setNotice("");
-    try {
-      const value = await rpc("clued_owner_auto_approve_off_v1", {});
       if (epoch.current !== generation) return;
-      if (object(value.auto_approve)) setAuto(value.auto_approve);
-      setNotice("自动审批已关闭，之后的申请需要你确认。已自动发出的授权仍在下面，可以逐条撤销。");
-    } catch (failure) {
-      if (epoch.current === generation) setError(failure instanceof RequestFailure ? failure.message : "暂时无法关闭，请刷新后重试。");
+      if (failure instanceof RequestFailure && isAutoApprovalState(failure.autoApproval)) setAuto(failure.autoApproval);
+      setError(failure instanceof RequestFailure ? failure.message : "暂时无法保存，请刷新后查看结果。");
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
   const now = Date.now();
-  const view = object(offer?.confirmation_view) ? offer.confirmation_view as Json : null;
-  const titles = (value: unknown) => Array.isArray(value) ? value.filter(object) : [];
   return <main className="context-page owner-confirm">
     <header><Link href="/">Clued</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/work-claims/race">多份模式</Link> <Link href="/bindings">专用 Binding</Link></header>
     <h1>我的授权</h1>
@@ -170,27 +143,8 @@ export default function OwnerGrantsPage() {
     <p className="context-muted">你给 Agent 的授权都在这里。撤销立即生效。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Clued</Link> 后查看你的授权。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
-      {auto && <section aria-label="自动审批"><h2>自动审批</h2>
-        {auto.on ? <>
-          <p>已打开，{remaining(auto.expires_at, now)}。打开期间，Agent 提交的申请会自动通过，每条授权都列在下面。</p>
-          <p className="context-muted">不会自动通过：{titles(auto.excluded).map(x => String(x.title ?? x.action)).join("、")}。</p>
-          <div className="owner-actions"><button type="button" disabled={working} onClick={() => void turnOffAuto()}>关闭自动审批</button></div>
-        </> : view ? <>
-          <p>打开 {DURATIONS.find(([seconds]) => seconds === view.expires_seconds)?.[1] ?? String(view.expires_seconds) + " 秒"}，到期自动关闭。期间这些申请会自动通过：</p>
-          <ul>{titles(view.covers).map(x => <li key={String(x.action)}>{String(x.title)}（{String(x.action)}）：{x.approval === "grant" ? "按 Agent 建议的时长和次数" : "只批这一次"}</li>)}</ul>
-          <p className="context-muted">仍需你确认：{titles(view.excluded).map(x => String(x.title ?? x.action)).join("、")}。</p>
-          <div className="owner-actions">
-            <button type="button" disabled={working} onClick={() => void confirmAuto()}>确认打开</button>
-            <button type="button" disabled={working} onClick={() => setOffer(null)}>取消</button>
-          </div>
-        </> : <>
-          <p className="context-muted">已关闭。打开后，Agent 提交的申请会自动通过，不用你逐条点。</p>
-          <label>时长 <select value={duration} disabled={working} onChange={event => setDuration(Number(event.target.value))}>
-            {DURATIONS.map(([seconds, label]) => <option key={seconds} value={seconds}>{label}</option>)}
-          </select></label>{" "}
-          <button type="button" disabled={working} onClick={() => void offerAuto()}>打开自动审批</button>
-        </>}
-      </section>}
+      <AutoApprovalSwitch auto={auto} working={working}
+        onToggle={(enabled, baseVersion) => void setAutoEnabled(enabled, baseVersion)} />
       {requests.length > 0 && <section aria-label="等待确认"><h2>等待你确认</h2>
         <ul>{requests.map(request => <li key={String(request.request_id)}>
           {shortId(request.request_id) && <code>申请 {shortId(request.request_id)}</code>}{" "}
