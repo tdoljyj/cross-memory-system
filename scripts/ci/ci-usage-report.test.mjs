@@ -2,7 +2,7 @@
 // No network: fetch is mocked, and no GitHub request is ever made.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync,createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -43,7 +43,10 @@ import {
   halvesOf,
   rangeOf,
   windowOf,
+  FEE_WORKLOAD_DAYS,FEE_WORKLOAD_WINDOW,FEE_WORKLOAD_MARKER,projectFeeWorkload,collectFeeWorkload,
 } from "./ci-usage-report.mjs";
+import {FEE_NATIVE_WORKFLOW_PATHS} from './merge-admission-r9-collector.mjs';
+import {NATIVE_POPULATION_SCHEMA,inspectNativePopulationStore} from './merge-admission-native-population.mjs';
 import { gateFindings, workflowFormFindings } from "./clued-work-admission.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -53,6 +56,139 @@ const WINDOW = windowOf(NOW, 7);
 const SELF = ["self-hosted", "Linux", "X64", "clued", "pool-general", "trust-internal"];
 const HOSTED = ["ubuntu-latest"];
 const sha = (n) => String(n).padStart(40, "0");
+
+// Historical Native fixtures have the same validated Store grammar as the
+// real provider captures; assertions concern UTC allocation, not a copy of it.
+const feeDigest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function feePacket(id, {attempt=1,workflow=FEE_NATIVE_WORKFLOW_PATHS[0],created='2026-10-08T00:00:00.000Z',
+  started='2026-10-10T12:00:00.000Z',completed='2026-10-10T12:02:00.000Z',conclusion='success',labels=HOSTED,
+  jobCreated=started ?? '2026-10-10T12:00:00.000Z',updated=completed ?? '2026-10-10T12:03:00.000Z'}={}) {
+  const run={run_id:String(id),run_attempt:attempt,workflow_id:'700',path:workflow,event:'workflow_run',head_sha:sha(id),
+    status:'completed',conclusion:'success',created_at:created,run_started_at:started,updated_at:updated,pull_requests:[]};
+  const jobs=[{id:String(id*100+attempt),run_id:String(id),run_attempt:attempt,name:'actual runner job',status:'completed',conclusion,
+    created_at:jobCreated,started_at:started,completed_at:completed,labels,steps:[]}];
+  return {run,jobs,run_digest:feeDigest(run),jobs_digest:feeDigest(jobs),job_count:1,
+    timing_basis:{attempt_start:'native_run_started_at_nullable',terminal_update:'native_updated_at_not_completion_time'}};
+}
+function feeNative(packets=[], {complete=true,gaps=[],scopeWindow=FEE_WORKLOAD_WINDOW}={}) {
+  const entries=Object.fromEntries(packets.map(p=>[`${p.run.run_id}:${p.run.run_attempt}`,p])), runs=new Map();
+  for(const p of packets)runs.set(p.run.run_id,{run_id:p.run.run_id,latest_attempt:Math.max(runs.get(p.run.run_id)?.latest_attempt??0,p.run.run_attempt),workflow_path:p.run.path.split('@')[0]});
+  const store_raw=JSON.stringify({schema:NATIVE_POPULATION_SCHEMA,repository:REPO,packets:entries});
+  assert.equal(inspectNativePopulationStore(store_raw,REPO).status,'VALID_DATA_STORE','fixture must pass the independent Native validator');
+  return {status:complete?'COMPLETE':'PARTIAL',store_raw,gaps,all_population_packets:packets,
+    population:{scope:'fee_native_terminal_packets_run_envelope_intersection',complete,workflow_paths:[...FEE_NATIVE_WORKFLOW_PATHS],
+      window:{...scopeWindow},initial_scope_runs:runs.size,closing_scope_runs:complete?runs.size:null,
+      cohort:[...runs.values()],excluded_attempts:[]}};
+}
+const feeRow = (value,day,workflow=FEE_NATIVE_WORKFLOW_PATHS[0]) => value.rows.find(r=>r.day===day&&r.workflow_path===workflow);
+
+test('fee UTC projection preserves old-created reruns and both natural days without billing allocation',()=>{
+  const p1=feePacket(800),p2=feePacket(800,{attempt:2,started:'2026-10-12T01:00:00.000Z',completed:'2026-10-12T01:03:00.000Z'});
+  const out=projectFeeWorkload(feeNative([p1,p2]),REPO,NOW.toISOString());
+  assert.equal(out.provider_visible_population_complete,true);
+  assert.equal(feeRow(out,'2026-10-10').execution_minutes,2);
+  assert.equal(feeRow(out,'2026-10-12').execution_minutes,3);
+  assert.equal(feeRow(out,'2026-10-12').jobs[0].run_attempt,2);
+  assert.equal(out.rows.length,12);assert.equal(out.billing_population_complete,null);assert.equal(out.official_metric,false);
+  assert.ok(out.rows.every(r=>r.billed_amount===null&&r.billing_minutes===null));
+});
+
+test('fee UTC projection clips midnight spans and retains the separate start-day alternative',()=>{
+  const p=feePacket(801,{started:'2026-10-09T23:59:00.000Z',completed:'2026-10-10T00:02:00.000Z'});
+  const q=feePacket(802,{started:'2026-10-12T23:59:00.000Z',completed:'2026-10-13T00:02:00.000Z'});
+  const out=projectFeeWorkload(feeNative([p,q]),REPO,NOW.toISOString());
+  assert.equal(feeRow(out,'2026-10-10').execution_minutes,2);
+  assert.equal(feeRow(out,'2026-10-10').started_day_full_minutes_observed,0);
+  assert.equal(feeRow(out,'2026-10-12').execution_minutes,1);
+  assert.equal(feeRow(out,'2026-10-12').started_day_full_minutes_observed,3);
+  assert.equal(feeRow(out,'2026-10-12').jobs[0].full_execution_minutes,3);
+});
+
+test('fee partial scope never converts an absent workflow or known subset to complete zero',()=>{
+  const out=projectFeeWorkload(feeNative([feePacket(803)],{complete:false,gaps:[{key:'900:1',reason_code:'native_request_stopped'}]}),REPO,NOW.toISOString());
+  assert.equal(out.provider_visible_population_complete,false);
+  assert.equal(feeRow(out,'2026-10-10').execution_minutes_observed,2);
+  assert.ok(out.rows.every(r=>r.execution_minutes===null));
+  assert.equal(out.rows[1].executed_jobs_observed,0);assert.equal(out.rows[1].execution_minutes,null);
+});
+
+test('fee rejects a complete R9 window and a missing historical ordinal as fee population authority',()=>{
+  const wrong=feeNative([feePacket(804)],{scopeWindow:{start:'2026-10-12T23:56:02.241600Z',end:'2026-10-13T10:00:00.000Z'}});
+  assert.equal(projectFeeWorkload(wrong,REPO,NOW.toISOString()).provider_visible_population_complete,false);
+  const missing=feeNative([feePacket(805,{attempt:2})]);
+  const out=projectFeeWorkload(missing,REPO,NOW.toISOString());
+  assert.equal(out.provider_visible_population_complete,false);assert.deepEqual(out.missing_attempt_keys,['805:1']);
+});
+
+test('fee distinguishes no-execution scheduler jobs, zero-length executions and unknown timing',()=>{
+  const skipped=feePacket(806,{started:null,completed:'2026-10-10T12:01:00.000Z',conclusion:'skipped'});
+  const zero=feePacket(807,{completed:'2026-10-10T12:00:00.000Z'});
+  const unknown=feePacket(808,{started:null,completed:'2026-10-10T12:01:00.000Z',conclusion:'cancelled',labels:SELF});
+  // A real cancelled execution with unknown start is not a zero-step scheduler projection.
+  unknown.jobs[0].steps=[{number:1,name:'execution observed',status:'completed',conclusion:'cancelled',started_at:null,completed_at:null}];
+  unknown.jobs_digest=feeDigest(unknown.jobs);
+  const out=projectFeeWorkload(feeNative([skipped,zero,unknown]),REPO,NOW.toISOString());
+  const row=feeRow(out,'2026-10-10');
+  assert.equal(row.non_execution_jobs_observed,1);assert.equal(row.executed_jobs_observed,1);
+  assert.equal(row.execution_minutes_observed,0);assert.equal(row.execution_minutes,null);
+  assert.deepEqual(row.timing_unknown_job_keys,['808:1:80801']);
+});
+
+test('fee native union contains each job once and separates hosted and self-hosted observations',()=>{
+  const out=projectFeeWorkload(feeNative([feePacket(809),feePacket(810,{labels:SELF})]),REPO,NOW.toISOString());
+  const row=feeRow(out,'2026-10-10');
+  assert.equal(row.execution_minutes,4);assert.equal(row.hosted_execution_minutes_observed,2);assert.equal(row.self_hosted_execution_minutes_observed,2);
+  assert.equal(new Set(row.jobs.map(j=>j.key)).size,2);
+  const bad=feeNative([feePacket(811)]);const parsed=JSON.parse(bad.store_raw);parsed.packets['811:1'].jobs[0].id='999';bad.store_raw=JSON.stringify(parsed);
+  assert.equal(projectFeeWorkload(bad,REPO,NOW.toISOString()).provider_visible_population_complete,false);
+});
+
+test('fee unknown endpoints use known start and end bounds to exclude impossible UTC days',()=>{
+  const late=feePacket(820,{started:'2026-10-12T12:00:00.000Z',completed:null,conclusion:'cancelled',
+    jobCreated:'2026-10-09T12:00:00.000Z',updated:'2026-10-13T00:00:00.000Z'});
+  late.jobs[0].steps=[{number:1,name:'executed',status:'completed',conclusion:'cancelled',
+    started_at:'2026-10-12T12:00:00.000Z',completed_at:null}];late.jobs_digest=feeDigest(late.jobs);
+  const early=feePacket(821,{started:null,completed:'2026-10-10T12:01:00.000Z',conclusion:'cancelled',updated:'2026-10-13T00:00:00.000Z'});
+  early.jobs[0].steps=[{number:1,name:'executed',status:'completed',conclusion:'cancelled',started_at:null,completed_at:null}];
+  early.jobs_digest=feeDigest(early.jobs);
+  const out=projectFeeWorkload(feeNative([late,early]),REPO,NOW.toISOString());
+  assert.deepEqual(feeRow(out,'2026-10-10').timing_unknown_job_keys,['821:1:82101']);
+  assert.deepEqual(feeRow(out,'2026-10-12').timing_unknown_job_keys,['820:1:82001']);
+  assert.equal(feeRow(projectFeeWorkload(feeNative([late]),REPO,NOW.toISOString()),'2026-10-10').execution_minutes,0);
+  assert.equal(feeRow(projectFeeWorkload(feeNative([early]),REPO,NOW.toISOString()),'2026-10-12').execution_minutes,0);
+});
+
+test('fee supplement uses only the existing App remainder, with no retry or fallback pool',async()=>{
+  for(const patch of [{source:'github_token'},{used:2000},{remaining:599},{stopped:'request_cap'},{deadline:0}]){
+    let calls=0;const mem=memoryFs(), budget={source:'app',used:100,cap:2000,remaining:4000,floor:600,stopped:null,deadline:100,clock:()=>1,...patch};
+    const out=await collectFeeWorkload({request:()=>{throw Error('no network');},budget,repository:REPO,r9:{source_authenticated:true,next_native_store_raw:feeNative().store_raw},
+      now:new Date('2026-10-13T00:01:00Z'),eventName:'workflow_dispatch',cacheDir:'/fee',...mem,writerSignature:'a'.repeat(64),collectNative:async()=>{calls++;throw Error('must not collect');}});
+    assert.equal(calls,0);assert.equal(out.provider_visible_population_complete,false);
+  }
+});
+
+test('fee successful scan retains the Native union; local marker suppresses calls without asserting population authority',async()=>{
+  const mem=memoryFs(), native=feeNative([feePacket(812)]),r9={source_authenticated:true,next_native_store_raw:feeNative().store_raw};let calls=0;
+  const params={budget:{source:'app',used:100,cap:2000,remaining:4000,floor:600,stopped:null,deadline:100,clock:()=>1},repository:REPO,r9,
+    now:new Date('2026-10-13T00:01:00Z'),eventName:'workflow_dispatch',cacheDir:'/fee',...mem,writerSignature:'b'.repeat(64),reportRunId:'1000',
+    collectNative:async args=>{calls++;assert.equal(args.authenticatedStoreRaw,r9.next_native_store_raw);assert.deepEqual(args.window,FEE_WORKLOAD_WINDOW);return native;}};
+  const out=await collectFeeWorkload(params);assert.equal(out.provider_visible_population_complete,true);assert.equal(calls,1);
+  assert.equal(r9.next_native_store_raw,native.store_raw);assert.ok(mem.files.has(path.join('/fee',FEE_WORKLOAD_MARKER)));
+  const reused=await collectFeeWorkload(params);assert.equal(calls,1);assert.equal(reused.status,'prior_scan_not_repeated');
+  assert.equal(reused.provider_visible_population_complete,null);assert.equal(reused.official_metric,false);assert.equal(reused.prior_report_run_id,'1000');
+  const changed=await collectFeeWorkload({...params,writerSignature:'c'.repeat(64)});assert.equal(calls,2);assert.equal(changed.provider_visible_population_complete,true);
+});
+
+test('fee marker corruption is ignored, scheduled runs do not launch the finite manual backfill',async()=>{
+  const mem=memoryFs();mem.files.set(path.join('/fee',FEE_WORKLOAD_MARKER),JSON.stringify({schema:'clued.ci-fee-scan-marker/1',repository:REPO,
+    writer_signature:'d'.repeat(64),days:FEE_WORKLOAD_DAYS,workflow_paths:FEE_NATIVE_WORKFLOW_PATHS,packets:[null]}));let calls=0;
+  const params={budget:{source:'app',used:0,cap:2000,remaining:5000,floor:600,stopped:null,deadline:100,clock:()=>1},repository:REPO,
+    r9:{source_authenticated:true,next_native_store_raw:feeNative().store_raw},now:new Date('2026-10-13T00:01:00Z'),eventName:'workflow_dispatch',cacheDir:'/fee',...mem,
+    writerSignature:'d'.repeat(64),collectNative:async()=>{calls++;return feeNative([],{complete:false});}};
+  const out=await collectFeeWorkload(params);assert.equal(calls,1);assert.equal(out.provider_visible_population_complete,false);
+  assert.equal(await collectFeeWorkload({...params,eventName:'schedule'}),null);assert.equal(calls,1);
+  assert.equal(await collectFeeWorkload({...params,now:new Date('2026-10-12T23:59:00Z')}),null);assert.equal(calls,1);
+});
 
 const run = (id, extra = {}) => ({ id, name: "w", path: ".github/workflows/w.yml@refs/pull/1/merge", event: "pull_request", status: "completed",
   conclusion: "success", run_attempt: 1, head_branch: "feature", head_sha: sha(id), created_at: "2026-10-05T10:00:00Z", pull_requests: [], ...extra });

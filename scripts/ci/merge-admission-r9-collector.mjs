@@ -360,13 +360,40 @@ async function fullInventory(request,repository,window,rangesRead){
 const selected=(items,w)=>items.filter(r=>timestampMicros(r.created_at)<timestampMicros(w.end)&&timestampMicros(r.updated_at)>=timestampMicros(w.start));
 const nativeAdmissionKind=(r,jobs,e)=>e.admission_sources.some(s=>[s.workflow_path,s.reverify_workflow_path].includes(r.path.split('@')[0]))&&
   (jobs.length===0||jobs.some(j=>j.name!=='clued-work-adopt'&&!nativeJobIsNonExecution(j)));
+// The fee observation has an explicit, fixed workflow scope. It uses the same
+// complete retained directory and Native barriers, never a created>=opening
+// search or a caller-selected workflow list. This is workload evidence only;
+// daily allocation and any billable-price interpretation belong to its caller.
+export const FEE_NATIVE_WORKFLOW_PATHS=Object.freeze([
+  '.github/workflows/clued-merge-slot-ci.yml',
+  '.github/workflows/clued-merge-executor.yml',
+  '.github/workflows/clued-work-admission-reverify.yml',
+  '.github/workflows/clued-work-admission.yml',
+  '.github/workflows/clued-ci-health.yml',
+  '.github/workflows/clued-work-admission-dispatch.yml',
+]);
+const feeWorkflowPaths=new Set(FEE_NATIVE_WORKFLOW_PATHS);
+export async function collectFeeNativePopulation({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{}}){
+  return collectScopedNative({request,repository,window,authenticatedStoreRaw,onStore},true);
+}
 // Skip sealed terminal packets as a batch after the initial/closing Native
 // inventory barriers. Only newly missing/changed attempt packets need jobs.
 export async function collectIncrementalNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null}){
-  let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null;const gaps=[];let fresh=0,fromSealed=0,observerExcluded=false;
+  return collectScopedNative({request,repository,window,authenticatedStoreRaw,onStore,observer});
+}
+async function collectScopedNative({request,repository,window,authenticatedStoreRaw=null,onStore=()=>{},observer=null},feeOnly=false){
+  let storeRaw=authenticatedStoreRaw??emptyNativePopulationStore(repository),initial=null,first=null,closing=null,closingScope=null;
+  const gaps=[],excludedAttempts=[];let fresh=0,fromSealed=0,observerExcluded=false;
+  const select=items=>selected(items,window).filter(r=>!feeOnly||feeWorkflowPaths.has(r.path.split('@')[0]));
+  const retained=()=>Object.values(inspectNativePopulationStore(storeRaw,repository).packets??{}).filter(p=>first?.some(r=>r.id===p.run.run_id));
+  const feeCoverage=()=>feeOnly?{scope:'fee_native_terminal_packets_run_envelope_intersection',
+    workflow_paths:[...FEE_NATIVE_WORKFLOW_PATHS],window:{...window},
+    initial_scope_runs:first?.length??null,closing_scope_runs:closingScope?.length??null,
+    cohort:(first??[]).map(r=>({run_id:r.id,latest_attempt:r.run_attempt,workflow_path:r.path.split('@')[0]})),
+    excluded_attempts:excludedAttempts}:{};
   try{
     if(inspectNativePopulationStore(storeRaw,repository).status!=='VALID_DATA_STORE')fail('NATIVE_STORE_INVALID');
-    initial=await inventory(request,repository,window);const first=selected(initial.items,window);
+    initial=await inventory(request,repository,window);first=select(initial.items);
     for(let offset=0;offset<first.length;offset+=4){
       const batch=first.slice(offset,offset+4),basis=storeRaw;
       const outcomes=await Promise.allSettled(batch.map(async run=>{
@@ -384,7 +411,10 @@ export async function collectIncrementalNative({request,repository,window,authen
         // outside its own execution denominator. Older ordinal packets remain.
         if(observer?.run_id===run.id&&run.run_attempt===observer.run_attempt&&observer.run_attempt===attempt&&run.path.split('@')[0]===R9_PUBLISHER_PATH&&
           run.head_sha===observer.head_sha&&run.status==='in_progress'){observerExcluded=true;continue;}
-        if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end))continue;
+        if(attempt===run.run_attempt&&run.run_started_at!==null&&timestampMicros(run.run_started_at)>=timestampMicros(window.end)){
+          if(feeOnly)excludedAttempts.push({key:run.id+':'+attempt,reason_code:'ATTEMPT_START_AT_OR_AFTER_WINDOW_CLOSE'});
+          continue;
+        }
         const existing=packets[run.id+':'+attempt];
         if(latestMatches&&existing){localSealed++;continue;}
         const captured=await captureNativeAttempt({request,repository,runId:run.id,attempt,storeRaw:local});
@@ -423,8 +453,8 @@ export async function collectIncrementalNative({request,repository,window,authen
       if(outcomes.some(r=>r.status==='rejected'))fail(reason(outcomes.find(r=>r.status==='rejected').reason));
       if(results.some(r=>r.localGaps.some(g=>/request|cap|floor|budget|slice|limit|stop/i.test(g.reason_code??''))))fail('NATIVE_CAPTURE_BUDGET_PARTIAL');
     }
-    const closing=await inventory(request,repository,window);
-    if(hash(first)!==hash(selected(closing.items,window)))fail('NATIVE_COHORT_CHANGED_AT_CLOSE');
+    closing=await inventory(request,repository,window);closingScope=select(closing.items);
+    if(hash(first)!==hash(closingScope))fail('NATIVE_COHORT_CHANGED_AT_CLOSE');
     const all=inspectNativePopulationStore(storeRaw,repository).packets;
     const retainedPackets=Object.values(all).filter(p=>first.some(r=>r.id===p.run.run_id));
     // Historical ordinal captures are retained durably, but a terminal upper
@@ -437,10 +467,12 @@ export async function collectIncrementalNative({request,repository,window,authen
     return {status:gaps.length?'PARTIAL':'COMPLETE',store_raw:storeRaw,attempts,population_packets:populationPackets,all_population_packets:retainedPackets,gaps,fresh,from_sealed:fromSealed,
       population:{initial_total:initial.total,closing_total:closing.total,cohort_digest:hash(first),complete:gaps.length===0,
         scope:'native_terminal_packets_run_envelope_intersection',created_cutoff:window.end,initial_ranges:initial.ranges_read,closing_ranges:closing.ranges_read,attempt_start_unknown:unknownStarts,
+        ...feeCoverage(),
         ...(observerExcluded?{current_observer_exclusion:{...observer,reason_code:'CURRENT_IN_PROGRESS_OBSERVER_IS_NOT_ITS_OWN_TERMINAL_EXECUTION'}}:{})}};
   }catch(e){return {status:'PARTIAL',reason_code:reason(e),store_raw:storeRaw,attempts:[],gaps,fresh,from_sealed:fromSealed,
+    ...(feeOnly?{all_population_packets:retained(),population_packets:retained().filter(p=>p.run.status!=='completed'||timestampMicros(p.run.updated_at)>=timestampMicros(window.start))}:{}),
     ...(e instanceof NativeInventoryConflict?{inventory_conflict:e.detail}:{}),
-    population:{initial_total:initial?.total??null,closing_total:null,complete:false}};}
+    population:{initial_total:initial?.total??null,closing_total:feeOnly?closing?.total??null:null,complete:false,...feeCoverage()}};}
 }
 const unavailable=reason_code=>({status:'partial',value:null,reason_code,official_metric:false,source_authenticated:false});
 
