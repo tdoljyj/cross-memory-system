@@ -55,8 +55,13 @@ function makeDevelopmentCurrentnessReader({tools, ownerCapture, issued, sessionR
   need(record?.record_type === 'decision' && record.authority === 'user_explicit'
     && record.lifecycle_status === 'active' && record.canonical_scope === SCOPE
     && record.receipt_id === capture.receipt_id && SHA.test(record.content_hash), 'EXACT_OWNER_DECISION_REQUIRED');
-  const approval = record.type_fields?.model_development_experiment_approval;
-  need(approval?.kind === 'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT'
+  const rationale = record.type_fields?.rationale;
+  need(rationale && typeof rationale === 'object' && !Array.isArray(rationale),
+    'EXACT_DEVELOPMENT_APPROVAL_REQUIRED');
+  // The public M1 schema carries this payload only inside rationale.
+  const approval = rationale.model_development_experiment_approval;
+  need(approval && typeof approval === 'object' && !Array.isArray(approval)
+    && approval.kind === 'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT'
     && approval.task_id === TASK && approval.purpose_id === 'development'
     && approval.max_attempts === 1 && approval.training_allowed === false
     && approval.production_allowed === false && approval.qualification_allowed === false,

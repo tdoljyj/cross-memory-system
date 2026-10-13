@@ -13,9 +13,9 @@ function fixture() {
   const record = {id:'SOURCE-ONLY-APPROVAL', record_type:'decision', authority:'user_explicit',
     lifecycle_status:'active', canonical_scope:SCOPE, receipt_id:'SOURCE-ONLY-RECEIPT',
     content_hash:'1'.repeat(64), content:'SOURCE FIXTURE NOT PERMISSION', version:1,
-    type_fields:{model_development_experiment_approval:{kind:'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT',
+    type_fields:{rationale:{model_development_experiment_approval:{kind:'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT',
       task_id:TASK, purpose_id:'development', profile_id:'DEV-SOURCE-ONLY', request_sha256:'2'.repeat(64),
-      max_attempts:1, training_allowed:false, production_allowed:false, qualification_allowed:false, window}}};
+      max_attempts:1, training_allowed:false, production_allowed:false, qualification_allowed:false, window}}}};
   const ownerCapture = {structuredContent:{status:'committed',receipt_id:record.receipt_id,
     event_ids:['999999999'], supplemental:{record}}};
   const issued = {status:'ISSUED',task_id:TASK,profile_id:'DEV-SOURCE-ONLY',request_sha256:'2'.repeat(64),
@@ -61,9 +61,32 @@ test('authoring/adoption/observed capture cannot become experiment approval',()=
   }
 });
 
+test('malformed rationale never falls back to a valid legacy top-level approval',()=>{
+  const approval=fixture().ownerCapture.structuredContent.supplemental.record.type_fields.rationale.model_development_experiment_approval;
+  for(const rationale of [undefined,null,JSON.stringify(approval),[],{},
+    Object.assign([],{model_development_experiment_approval:clone(approval)})]) {
+    const f=fixture(), fields=f.ownerCapture.structuredContent.supplemental.record.type_fields;
+    fields.model_development_experiment_approval=clone(approval);
+    fields.rationale=rationale;
+    assert.throws(()=>makeDevelopmentCurrentnessReader(f),/EXACT_DEVELOPMENT_APPROVAL_REQUIRED/);
+    assert.equal(f.calls.length,0);
+  }
+});
+
+test('missing or malformed nested approval never selects a valid legacy payload',()=>{
+  const approval=fixture().ownerCapture.structuredContent.supplemental.record.type_fields.rationale.model_development_experiment_approval;
+  for(const payload of [undefined,null,JSON.stringify(approval),[],{},Object.assign([],clone(approval))]) {
+    const f=fixture(), fields=f.ownerCapture.structuredContent.supplemental.record.type_fields;
+    fields.model_development_experiment_approval=clone(approval);
+    fields.rationale.model_development_experiment_approval=payload;
+    assert.throws(()=>makeDevelopmentCurrentnessReader(f),/EXACT_DEVELOPMENT_APPROVAL_REQUIRED/);
+    assert.equal(f.calls.length,0);
+  }
+});
+
 test('candidate and terminal M1 profiles reject before any protected read',()=>{
   for(const change of [f=>f.issued.status='CANDIDATE',f=>{
-    f.issued.profile_id='M1-OLD';f.ownerCapture.structuredContent.supplemental.record.type_fields.model_development_experiment_approval.profile_id='M1-OLD';}]){
+    f.issued.profile_id='M1-OLD';f.ownerCapture.structuredContent.supplemental.record.type_fields.rationale.model_development_experiment_approval.profile_id='M1-OLD';}]){
     const f=fixture();change(f);assert.throws(()=>makeDevelopmentCurrentnessReader(f));assert.equal(f.calls.length,0);
   }
 });
@@ -97,7 +120,7 @@ test('task version and currentness failure require revalidation',async()=>{
 });
 
 test('expired or unzoned approval is never renewed by reading',()=>{
-  const f=fixture();f.ownerCapture.structuredContent.supplemental.record.type_fields.model_development_experiment_approval.window.stop_at='2000-01-01T00:00:00';
+  const f=fixture();f.ownerCapture.structuredContent.supplemental.record.type_fields.rationale.model_development_experiment_approval.window.stop_at='2000-01-01T00:00:00';
   assert.throws(()=>makeDevelopmentCurrentnessReader(f),/UTC_WINDOW_REQUIRED/);assert.equal(f.calls.length,0);
 });
 
@@ -105,7 +128,7 @@ test('invalid UTC calendar dates and normalized midnight reject before protected
   for(const invalid of ['2026-02-30T00:00:00Z', '2026-10-13T24:00:00Z',
     '2026-04-31T12:00:00.000000Z', '2026-10-13T00:61:00Z']) {
     const f=fixture();
-    f.ownerCapture.structuredContent.supplemental.record.type_fields.model_development_experiment_approval.window.not_before=invalid;
+    f.ownerCapture.structuredContent.supplemental.record.type_fields.rationale.model_development_experiment_approval.window.not_before=invalid;
     assert.throws(()=>makeDevelopmentCurrentnessReader(f), /UTC_WINDOW_REQUIRED/);
     assert.equal(f.calls.length,0);
   }
