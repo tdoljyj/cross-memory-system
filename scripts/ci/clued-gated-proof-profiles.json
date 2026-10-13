@@ -2988,5 +2988,1435 @@
         }
       ]
     }
-  }
+  },
+  "future_workflows": [
+    {
+      "file": ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      "consumer_id": "company-linux-01",
+      "registration_status": "accepted_not_installed",
+      "purpose": "work_handover_consumer_qualification",
+      "source_profile": {
+        "registration_status": "registered",
+        "workflow_blob": "f1e02e5ebbfe582daf43e7b22a527914a4ab1218",
+        "source_sha256": "3738f8f610b776c6ad26ece82e90de848008cf5365a141fd378d009a0d1a4c4b",
+        "source_yaml": "name: Clued handover hook qualification / company-linux-01\n\non:\n  workflow_dispatch:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-work-handover-qualification-*.yml'\n      - 'scripts/runner/qualify-work-handover*'\n      - '.github/actions/ci-temporary-storage/coverage.json'\n      - 'scripts/ci/clued-gated-proof-profiles.json'\n      - 'scripts/ci/clued-gated-proof-role-specs.json'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: handover-hook-company-linux-01-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: handover-hook-company-linux-01\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, runner-company-linux-01]\n    timeout-minutes: 8\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Verify source candidate or protected installed code\n        shell: bash\n        env:\n          EXPECTED_RUNNER: clued-ci-company-linux-01\n          QUALIFICATION_EVENT: ${{ github.event_name }}\n        run: |\n          set -euo pipefail\n          test \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\n          probe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\n          if [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\n          node scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\n          cat handover-hook-qualification.json\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: handover-hook-company-linux-01-${{ github.run_id }}\n          path: handover-hook-qualification.json\n          if-no-files-found: error\n          retention-days: 90\n",
+        "primary_ids": [
+          "qualify"
+        ],
+        "pull_request": {
+          "paths": [
+            ".github/workflows/clued-work-handover-qualification-*.yml",
+            "scripts/runner/qualify-work-handover*",
+            ".github/actions/ci-temporary-storage/coverage.json",
+            "scripts/ci/clued-gated-proof-profiles.json",
+            "scripts/ci/clued-gated-proof-role-specs.json"
+          ]
+        },
+        "gated": true,
+        "routes": [
+          {
+            "job_id": "qualify",
+            "name": "handover-hook-company-linux-01",
+            "self_hosted": true,
+            "required_steps": {
+              "Verify source candidate or protected installed code": 1
+            },
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ]
+      },
+      "workflow_definition": {
+        "name": "Clued handover hook qualification / company-linux-01",
+        "on": {
+          "workflow_dispatch": null,
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-work-handover-qualification-*.yml",
+              "scripts/runner/qualify-work-handover*",
+              ".github/actions/ci-temporary-storage/coverage.json",
+              "scripts/ci/clued-gated-proof-profiles.json",
+              "scripts/ci/clued-gated-proof-role-specs.json"
+            ]
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "handover-hook-company-linux-01-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": true
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "handover-hook-company-linux-01",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-docker-linux",
+              "runtime-wsl2",
+              "runner-company-linux-01"
+            ],
+            "timeout-minutes": 8,
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Verify source candidate or protected installed code",
+                "shell": "bash",
+                "env": {
+                  "EXPECTED_RUNNER": "clued-ci-company-linux-01",
+                  "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                },
+                "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+              },
+              {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "handover-hook-company-linux-01-${{ github.run_id }}",
+                  "path": "handover-hook-qualification.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      },
+      "exact_source_acceptance_scope": {
+        "repository": "tdoljyj/cross-memory-system",
+        "default_branch": "main",
+        "operation": "new_workflow_file_installation",
+        "file": ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+        "purpose": "work_handover_consumer_qualification",
+        "consumer_id": "company-linux-01",
+        "workflow_blob": "f1e02e5ebbfe582daf43e7b22a527914a4ab1218",
+        "source_sha256": "3738f8f610b776c6ad26ece82e90de848008cf5365a141fd378d009a0d1a4c4b",
+        "primary_ids": [
+          "qualify"
+        ],
+        "roles": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "2c3c34a3c702cd2347ac42440dac10aee31edd469aa4f45f3f04ab21199712f6"
+          }
+        ],
+        "command_digests": [
+          {
+            "job_id": "qualify",
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ],
+        "workflow_definition_sha256": "7a9596371c3ea2210b7edc8fa5db9c45699ababb6f2e83eb69b097e7a1e9e8b2",
+        "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
+      },
+      "source_acceptance": {
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
+        "subject_sha256": "b88ecdd231b39225d584d6c9b6c953ea3cf925697b98dbaf3c36862fee82b24b"
+      }
+    },
+    {
+      "file": ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      "consumer_id": "company-linux-02",
+      "registration_status": "accepted_not_installed",
+      "purpose": "work_handover_consumer_qualification",
+      "source_profile": {
+        "registration_status": "registered",
+        "workflow_blob": "c4aee6b6a1dd789072906dd39ffba2d6a99a3988",
+        "source_sha256": "7c5b46dd52e318cc2a745057f325be4e53498b5760df5c371087669c363139c4",
+        "source_yaml": "name: Clued handover hook qualification / company-linux-02\n\non:\n  workflow_dispatch:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-work-handover-qualification-*.yml'\n      - 'scripts/runner/qualify-work-handover*'\n      - '.github/actions/ci-temporary-storage/coverage.json'\n      - 'scripts/ci/clued-gated-proof-profiles.json'\n      - 'scripts/ci/clued-gated-proof-role-specs.json'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: handover-hook-company-linux-02-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: handover-hook-company-linux-02\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, runner-company-linux-02]\n    timeout-minutes: 8\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Verify source candidate or protected installed code\n        shell: bash\n        env:\n          EXPECTED_RUNNER: clued-ci-company-linux-02\n          QUALIFICATION_EVENT: ${{ github.event_name }}\n        run: |\n          set -euo pipefail\n          test \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\n          probe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\n          if [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\n          node scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\n          cat handover-hook-qualification.json\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: handover-hook-company-linux-02-${{ github.run_id }}\n          path: handover-hook-qualification.json\n          if-no-files-found: error\n          retention-days: 90\n",
+        "primary_ids": [
+          "qualify"
+        ],
+        "pull_request": {
+          "paths": [
+            ".github/workflows/clued-work-handover-qualification-*.yml",
+            "scripts/runner/qualify-work-handover*",
+            ".github/actions/ci-temporary-storage/coverage.json",
+            "scripts/ci/clued-gated-proof-profiles.json",
+            "scripts/ci/clued-gated-proof-role-specs.json"
+          ]
+        },
+        "gated": true,
+        "routes": [
+          {
+            "job_id": "qualify",
+            "name": "handover-hook-company-linux-02",
+            "self_hosted": true,
+            "required_steps": {
+              "Verify source candidate or protected installed code": 1
+            },
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ]
+      },
+      "workflow_definition": {
+        "name": "Clued handover hook qualification / company-linux-02",
+        "on": {
+          "workflow_dispatch": null,
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-work-handover-qualification-*.yml",
+              "scripts/runner/qualify-work-handover*",
+              ".github/actions/ci-temporary-storage/coverage.json",
+              "scripts/ci/clued-gated-proof-profiles.json",
+              "scripts/ci/clued-gated-proof-role-specs.json"
+            ]
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "handover-hook-company-linux-02-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": true
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "handover-hook-company-linux-02",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-docker-linux",
+              "runtime-wsl2",
+              "runner-company-linux-02"
+            ],
+            "timeout-minutes": 8,
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Verify source candidate or protected installed code",
+                "shell": "bash",
+                "env": {
+                  "EXPECTED_RUNNER": "clued-ci-company-linux-02",
+                  "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                },
+                "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+              },
+              {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "handover-hook-company-linux-02-${{ github.run_id }}",
+                  "path": "handover-hook-qualification.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      },
+      "exact_source_acceptance_scope": {
+        "repository": "tdoljyj/cross-memory-system",
+        "default_branch": "main",
+        "operation": "new_workflow_file_installation",
+        "file": ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+        "purpose": "work_handover_consumer_qualification",
+        "consumer_id": "company-linux-02",
+        "workflow_blob": "c4aee6b6a1dd789072906dd39ffba2d6a99a3988",
+        "source_sha256": "7c5b46dd52e318cc2a745057f325be4e53498b5760df5c371087669c363139c4",
+        "primary_ids": [
+          "qualify"
+        ],
+        "roles": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "76196eeeafd9542ab208af9e0ebd27ca25e3b2fd20280df985632c3d783bfa67"
+          }
+        ],
+        "command_digests": [
+          {
+            "job_id": "qualify",
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ],
+        "workflow_definition_sha256": "f2598da0c75dce581066d3a51db8fa7084be6de290d2383158f52bf10e062dc5",
+        "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
+      },
+      "source_acceptance": {
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
+        "subject_sha256": "e4b01013d27cf8f25facf340b2d5f4bd8bfb0e2b7d88a86f787b62f9295187df"
+      }
+    },
+    {
+      "file": ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      "consumer_id": "company-linux-03",
+      "registration_status": "accepted_not_installed",
+      "purpose": "work_handover_consumer_qualification",
+      "source_profile": {
+        "registration_status": "registered",
+        "workflow_blob": "411f13aab6f5b1688ed4878a9a0802176e6b52de",
+        "source_sha256": "0109e57b59e94faf8c152fe0f861541eaa974d5bf783280a5d3b777b98335159",
+        "source_yaml": "name: Clued handover hook qualification / company-linux-03\n\non:\n  workflow_dispatch:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-work-handover-qualification-*.yml'\n      - 'scripts/runner/qualify-work-handover*'\n      - '.github/actions/ci-temporary-storage/coverage.json'\n      - 'scripts/ci/clued-gated-proof-profiles.json'\n      - 'scripts/ci/clued-gated-proof-role-specs.json'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: handover-hook-company-linux-03-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: handover-hook-company-linux-03\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, runner-company-linux-03]\n    timeout-minutes: 8\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Verify source candidate or protected installed code\n        shell: bash\n        env:\n          EXPECTED_RUNNER: clued-ci-company-linux-03\n          QUALIFICATION_EVENT: ${{ github.event_name }}\n        run: |\n          set -euo pipefail\n          test \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\n          probe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\n          if [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\n          node scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\n          cat handover-hook-qualification.json\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: handover-hook-company-linux-03-${{ github.run_id }}\n          path: handover-hook-qualification.json\n          if-no-files-found: error\n          retention-days: 90\n",
+        "primary_ids": [
+          "qualify"
+        ],
+        "pull_request": {
+          "paths": [
+            ".github/workflows/clued-work-handover-qualification-*.yml",
+            "scripts/runner/qualify-work-handover*",
+            ".github/actions/ci-temporary-storage/coverage.json",
+            "scripts/ci/clued-gated-proof-profiles.json",
+            "scripts/ci/clued-gated-proof-role-specs.json"
+          ]
+        },
+        "gated": true,
+        "routes": [
+          {
+            "job_id": "qualify",
+            "name": "handover-hook-company-linux-03",
+            "self_hosted": true,
+            "required_steps": {
+              "Verify source candidate or protected installed code": 1
+            },
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ]
+      },
+      "workflow_definition": {
+        "name": "Clued handover hook qualification / company-linux-03",
+        "on": {
+          "workflow_dispatch": null,
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-work-handover-qualification-*.yml",
+              "scripts/runner/qualify-work-handover*",
+              ".github/actions/ci-temporary-storage/coverage.json",
+              "scripts/ci/clued-gated-proof-profiles.json",
+              "scripts/ci/clued-gated-proof-role-specs.json"
+            ]
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "handover-hook-company-linux-03-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": true
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "handover-hook-company-linux-03",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-docker-linux",
+              "runtime-wsl2",
+              "runner-company-linux-03"
+            ],
+            "timeout-minutes": 8,
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Verify source candidate or protected installed code",
+                "shell": "bash",
+                "env": {
+                  "EXPECTED_RUNNER": "clued-ci-company-linux-03",
+                  "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                },
+                "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+              },
+              {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "handover-hook-company-linux-03-${{ github.run_id }}",
+                  "path": "handover-hook-qualification.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      },
+      "exact_source_acceptance_scope": {
+        "repository": "tdoljyj/cross-memory-system",
+        "default_branch": "main",
+        "operation": "new_workflow_file_installation",
+        "file": ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+        "purpose": "work_handover_consumer_qualification",
+        "consumer_id": "company-linux-03",
+        "workflow_blob": "411f13aab6f5b1688ed4878a9a0802176e6b52de",
+        "source_sha256": "0109e57b59e94faf8c152fe0f861541eaa974d5bf783280a5d3b777b98335159",
+        "primary_ids": [
+          "qualify"
+        ],
+        "roles": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "561b6a72b00ce0ca6eb7f664a35e48067235ec0b8dd8b417e07b5db4425b87dd"
+          }
+        ],
+        "command_digests": [
+          {
+            "job_id": "qualify",
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ],
+        "workflow_definition_sha256": "958def5c93f70e5a636882b2d1bbc98f421049c3ade625205e2a97f22fc151d5",
+        "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
+      },
+      "source_acceptance": {
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
+        "subject_sha256": "b136679acfaf3b259b96541c3cf8b2c28b039a039af3b9312e02b355b2e75ab7"
+      }
+    },
+    {
+      "file": ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      "consumer_id": "company-linux-04",
+      "registration_status": "accepted_not_installed",
+      "purpose": "work_handover_consumer_qualification",
+      "source_profile": {
+        "registration_status": "registered",
+        "workflow_blob": "30f95c881e816cdbbe27aec150d30eae616744cc",
+        "source_sha256": "e3b35b4d7e0ab3dd2f2491d85bc61f4d2196d7774780d300d5be07a5910c0629",
+        "source_yaml": "name: Clued handover hook qualification / company-linux-04\n\non:\n  workflow_dispatch:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-work-handover-qualification-*.yml'\n      - 'scripts/runner/qualify-work-handover*'\n      - '.github/actions/ci-temporary-storage/coverage.json'\n      - 'scripts/ci/clued-gated-proof-profiles.json'\n      - 'scripts/ci/clued-gated-proof-role-specs.json'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: handover-hook-company-linux-04-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: handover-hook-company-linux-04\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, runner-company-linux-04]\n    timeout-minutes: 8\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Verify source candidate or protected installed code\n        shell: bash\n        env:\n          EXPECTED_RUNNER: clued-ci-company-linux-04\n          QUALIFICATION_EVENT: ${{ github.event_name }}\n        run: |\n          set -euo pipefail\n          test \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\n          probe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\n          if [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\n          node scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\n          cat handover-hook-qualification.json\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: handover-hook-company-linux-04-${{ github.run_id }}\n          path: handover-hook-qualification.json\n          if-no-files-found: error\n          retention-days: 90\n",
+        "primary_ids": [
+          "qualify"
+        ],
+        "pull_request": {
+          "paths": [
+            ".github/workflows/clued-work-handover-qualification-*.yml",
+            "scripts/runner/qualify-work-handover*",
+            ".github/actions/ci-temporary-storage/coverage.json",
+            "scripts/ci/clued-gated-proof-profiles.json",
+            "scripts/ci/clued-gated-proof-role-specs.json"
+          ]
+        },
+        "gated": true,
+        "routes": [
+          {
+            "job_id": "qualify",
+            "name": "handover-hook-company-linux-04",
+            "self_hosted": true,
+            "required_steps": {
+              "Verify source candidate or protected installed code": 1
+            },
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ]
+      },
+      "workflow_definition": {
+        "name": "Clued handover hook qualification / company-linux-04",
+        "on": {
+          "workflow_dispatch": null,
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-work-handover-qualification-*.yml",
+              "scripts/runner/qualify-work-handover*",
+              ".github/actions/ci-temporary-storage/coverage.json",
+              "scripts/ci/clued-gated-proof-profiles.json",
+              "scripts/ci/clued-gated-proof-role-specs.json"
+            ]
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "handover-hook-company-linux-04-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": true
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "handover-hook-company-linux-04",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-docker-linux",
+              "runtime-wsl2",
+              "runner-company-linux-04"
+            ],
+            "timeout-minutes": 8,
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Verify source candidate or protected installed code",
+                "shell": "bash",
+                "env": {
+                  "EXPECTED_RUNNER": "clued-ci-company-linux-04",
+                  "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                },
+                "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+              },
+              {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "handover-hook-company-linux-04-${{ github.run_id }}",
+                  "path": "handover-hook-qualification.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      },
+      "exact_source_acceptance_scope": {
+        "repository": "tdoljyj/cross-memory-system",
+        "default_branch": "main",
+        "operation": "new_workflow_file_installation",
+        "file": ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+        "purpose": "work_handover_consumer_qualification",
+        "consumer_id": "company-linux-04",
+        "workflow_blob": "30f95c881e816cdbbe27aec150d30eae616744cc",
+        "source_sha256": "e3b35b4d7e0ab3dd2f2491d85bc61f4d2196d7774780d300d5be07a5910c0629",
+        "primary_ids": [
+          "qualify"
+        ],
+        "roles": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "e40d5b8f38a94b8db9b84bc4ba2e3c385d8b53889be68561461b066cec9182b1"
+          }
+        ],
+        "command_digests": [
+          {
+            "job_id": "qualify",
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ],
+        "workflow_definition_sha256": "60203833f3e99b6d4add01d4eafb90f6db3848b979f16560f24580edbd07a61c",
+        "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
+      },
+      "source_acceptance": {
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
+        "subject_sha256": "39deb86504c184e7e31950f555738bec0b69657be4264c67f20f5ad801c35a44"
+      }
+    },
+    {
+      "file": ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      "consumer_id": "home-linux-01",
+      "registration_status": "accepted_not_installed",
+      "purpose": "work_handover_consumer_qualification",
+      "source_profile": {
+        "registration_status": "registered",
+        "workflow_blob": "2ac1aba2a9fd236bcdedac39ac9a435248c8b02e",
+        "source_sha256": "610590b365426a594ce10f732accc1e2fea86c79183c32a8e5b617057e8de3e1",
+        "source_yaml": "name: Clued handover hook qualification / home-linux-01\n\non:\n  workflow_dispatch:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-work-handover-qualification-*.yml'\n      - 'scripts/runner/qualify-work-handover*'\n      - '.github/actions/ci-temporary-storage/coverage.json'\n      - 'scripts/ci/clued-gated-proof-profiles.json'\n      - 'scripts/ci/clued-gated-proof-role-specs.json'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: handover-hook-home-linux-01-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: handover-hook-home-linux-01\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux, runtime-wsl2, site-home]\n    timeout-minutes: 8\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Verify source candidate or protected installed code\n        shell: bash\n        env:\n          EXPECTED_RUNNER: clued-ci-home-linux-01\n          QUALIFICATION_EVENT: ${{ github.event_name }}\n        run: |\n          set -euo pipefail\n          test \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\n          probe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\n          if [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\n          node scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\n          cat handover-hook-qualification.json\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: handover-hook-home-linux-01-${{ github.run_id }}\n          path: handover-hook-qualification.json\n          if-no-files-found: error\n          retention-days: 90\n",
+        "primary_ids": [
+          "qualify"
+        ],
+        "pull_request": {
+          "paths": [
+            ".github/workflows/clued-work-handover-qualification-*.yml",
+            "scripts/runner/qualify-work-handover*",
+            ".github/actions/ci-temporary-storage/coverage.json",
+            "scripts/ci/clued-gated-proof-profiles.json",
+            "scripts/ci/clued-gated-proof-role-specs.json"
+          ]
+        },
+        "gated": true,
+        "routes": [
+          {
+            "job_id": "qualify",
+            "name": "handover-hook-home-linux-01",
+            "self_hosted": true,
+            "required_steps": {
+              "Verify source candidate or protected installed code": 1
+            },
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ]
+      },
+      "workflow_definition": {
+        "name": "Clued handover hook qualification / home-linux-01",
+        "on": {
+          "workflow_dispatch": null,
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-work-handover-qualification-*.yml",
+              "scripts/runner/qualify-work-handover*",
+              ".github/actions/ci-temporary-storage/coverage.json",
+              "scripts/ci/clued-gated-proof-profiles.json",
+              "scripts/ci/clued-gated-proof-role-specs.json"
+            ]
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "handover-hook-home-linux-01-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": true
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "handover-hook-home-linux-01",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-docker-linux",
+              "runtime-wsl2",
+              "site-home"
+            ],
+            "timeout-minutes": 8,
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Verify source candidate or protected installed code",
+                "shell": "bash",
+                "env": {
+                  "EXPECTED_RUNNER": "clued-ci-home-linux-01",
+                  "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                },
+                "run": "set -euo pipefail\ntest \"$RUNNER_NAME\" = \"$EXPECTED_RUNNER\"\nprobe_args=(--public-config apps/clued-cloud/app/supabase-public-config.ts)\nif [[ \"$QUALIFICATION_EVENT\" == pull_request ]]; then probe_args+=(--candidate --hook scripts/runner/clued-runner-job-started.mjs); fi\nnode scripts/runner/qualify-work-handover.mjs \"${probe_args[@]}\" > handover-hook-qualification.json\ncat handover-hook-qualification.json\n"
+              },
+              {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "handover-hook-home-linux-01-${{ github.run_id }}",
+                  "path": "handover-hook-qualification.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      },
+      "exact_source_acceptance_scope": {
+        "repository": "tdoljyj/cross-memory-system",
+        "default_branch": "main",
+        "operation": "new_workflow_file_installation",
+        "file": ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+        "purpose": "work_handover_consumer_qualification",
+        "consumer_id": "home-linux-01",
+        "workflow_blob": "2ac1aba2a9fd236bcdedac39ac9a435248c8b02e",
+        "source_sha256": "610590b365426a594ce10f732accc1e2fea86c79183c32a8e5b617057e8de3e1",
+        "primary_ids": [
+          "qualify"
+        ],
+        "roles": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "ec55c050878f235f0cce61c4f82756bd7ef269291369cad6c82a40d10a9b9edb"
+          }
+        ],
+        "command_digests": [
+          {
+            "job_id": "qualify",
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "d48a3a3bfa998da4c2a1c331c07d0cbab25dd13b3cf37f541c0b16466a04d823"
+              ]
+            }
+          }
+        ],
+        "workflow_definition_sha256": "effe7757f701545784e54677f94a2aa8b0be30cca54ccc05864849f849d3711e",
+        "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
+      },
+      "source_acceptance": {
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
+        "subject_sha256": "ba74602e8b9c0c79f10565447e99fbb208d086a00ce7aeb6a6924325ec488e9a"
+      }
+    },
+    {
+      "file": ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      "consumer_id": "company-win-01",
+      "registration_status": "accepted_not_installed",
+      "purpose": "work_handover_consumer_qualification",
+      "source_profile": {
+        "registration_status": "registered",
+        "workflow_blob": "6e9cf8df20614d82d878ad95c3787659ed3cfb4b",
+        "source_sha256": "dec104e90e576d22229d9a320168f91c677f2c82611494f1b2c4f14fcbf53780",
+        "source_yaml": "name: Clued handover hook qualification / company-win-01\n\non:\n  workflow_dispatch:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-work-handover-qualification-*.yml'\n      - 'scripts/runner/qualify-work-handover*'\n      - '.github/actions/ci-temporary-storage/coverage.json'\n      - 'scripts/ci/clued-gated-proof-profiles.json'\n      - 'scripts/ci/clued-gated-proof-role-specs.json'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: handover-hook-company-win-01-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: handover-hook-company-win-01\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))\n    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, cap-node24, site-company]\n    timeout-minutes: 8\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Verify source candidate or protected installed code\n        shell: powershell\n        env:\n          EXPECTED_RUNNER: clued-ci-company-win-01\n          QUALIFICATION_EVENT: ${{ github.event_name }}\n        run: |\n          $ErrorActionPreference = 'Stop'\n          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER) { throw 'Runner route mismatch.' }\n          $probeArgs=@('--public-config','apps/clued-cloud/app/supabase-public-config.ts')\n          if ($env:QUALIFICATION_EVENT -eq 'pull_request') { $probeArgs+=@('--candidate','--hook','scripts/runner/clued-runner-job-started.mjs') }\n          $report = & node scripts/runner/qualify-work-handover.mjs @probeArgs\n          if ($LASTEXITCODE -ne 0) { throw 'Hook qualification failed.' }\n          Set-Content -LiteralPath handover-hook-qualification.json -Value $report -Encoding UTF8\n          Write-Output $report\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: handover-hook-company-win-01-${{ github.run_id }}\n          path: handover-hook-qualification.json\n          if-no-files-found: error\n          retention-days: 90\n",
+        "primary_ids": [
+          "qualify"
+        ],
+        "pull_request": {
+          "paths": [
+            ".github/workflows/clued-work-handover-qualification-*.yml",
+            "scripts/runner/qualify-work-handover*",
+            ".github/actions/ci-temporary-storage/coverage.json",
+            "scripts/ci/clued-gated-proof-profiles.json",
+            "scripts/ci/clued-gated-proof-role-specs.json"
+          ]
+        },
+        "gated": true,
+        "routes": [
+          {
+            "job_id": "qualify",
+            "name": "handover-hook-company-win-01",
+            "self_hosted": true,
+            "required_steps": {
+              "Verify source candidate or protected installed code": 1
+            },
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "0c1649a9cd5c8d301189f97fcfc8b6ae59fb8274378915652ccc6b7cdb8a9c29"
+              ]
+            }
+          }
+        ]
+      },
+      "workflow_definition": {
+        "name": "Clued handover hook qualification / company-win-01",
+        "on": {
+          "workflow_dispatch": null,
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-work-handover-qualification-*.yml",
+              "scripts/runner/qualify-work-handover*",
+              ".github/actions/ci-temporary-storage/coverage.json",
+              "scripts/ci/clued-gated-proof-profiles.json",
+              "scripts/ci/clued-gated-proof-role-specs.json"
+            ]
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "handover-hook-company-win-01-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": true
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "handover-hook-company-win-01",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+            "runs-on": [
+              "self-hosted",
+              "Windows",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-python312",
+              "cap-node24",
+              "site-company"
+            ],
+            "timeout-minutes": 8,
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Verify source candidate or protected installed code",
+                "shell": "powershell",
+                "env": {
+                  "EXPECTED_RUNNER": "clued-ci-company-win-01",
+                  "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                },
+                "run": "$ErrorActionPreference = 'Stop'\nif ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER) { throw 'Runner route mismatch.' }\n$probeArgs=@('--public-config','apps/clued-cloud/app/supabase-public-config.ts')\nif ($env:QUALIFICATION_EVENT -eq 'pull_request') { $probeArgs+=@('--candidate','--hook','scripts/runner/clued-runner-job-started.mjs') }\n$report = & node scripts/runner/qualify-work-handover.mjs @probeArgs\nif ($LASTEXITCODE -ne 0) { throw 'Hook qualification failed.' }\nSet-Content -LiteralPath handover-hook-qualification.json -Value $report -Encoding UTF8\nWrite-Output $report\n"
+              },
+              {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "handover-hook-company-win-01-${{ github.run_id }}",
+                  "path": "handover-hook-qualification.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      },
+      "exact_source_acceptance_scope": {
+        "repository": "tdoljyj/cross-memory-system",
+        "default_branch": "main",
+        "operation": "new_workflow_file_installation",
+        "file": ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+        "purpose": "work_handover_consumer_qualification",
+        "consumer_id": "company-win-01",
+        "workflow_blob": "6e9cf8df20614d82d878ad95c3787659ed3cfb4b",
+        "source_sha256": "dec104e90e576d22229d9a320168f91c677f2c82611494f1b2c4f14fcbf53780",
+        "primary_ids": [
+          "qualify"
+        ],
+        "roles": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "f1d041c7970e498dc863cde6ef5b0060c71e73cd44f9fdc3142439e64fb53c93"
+          }
+        ],
+        "command_digests": [
+          {
+            "job_id": "qualify",
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "0c1649a9cd5c8d301189f97fcfc8b6ae59fb8274378915652ccc6b7cdb8a9c29"
+              ]
+            }
+          }
+        ],
+        "workflow_definition_sha256": "0f4f1f2923d69c5fea7d96f9780c3bae2ee83a5bef6d5dcdfff400b8de723e9e",
+        "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
+      },
+      "source_acceptance": {
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
+        "subject_sha256": "f0fed0923d61b859f873fc4fa118f17d724279db5f169fe99a0dd6a5f8b591cc"
+      }
+    },
+    {
+      "file": ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      "consumer_id": "home-win-01",
+      "registration_status": "accepted_not_installed",
+      "purpose": "work_handover_consumer_qualification",
+      "source_profile": {
+        "registration_status": "registered",
+        "workflow_blob": "0a6d9ec09e4d6a7e02aba6c40a96b3502a7b894c",
+        "source_sha256": "695deb0d77646b22adc842d1aace94a9aa7edeb01e9ad47e72b4dd3866b51ca8",
+        "source_yaml": "name: Clued handover hook qualification / home-win-01\n\non:\n  workflow_dispatch:\n  pull_request:\n    paths:\n      - '.github/workflows/clued-work-handover-qualification-*.yml'\n      - 'scripts/runner/qualify-work-handover*'\n      - '.github/actions/ci-temporary-storage/coverage.json'\n      - 'scripts/ci/clued-gated-proof-profiles.json'\n      - 'scripts/ci/clued-gated-proof-role-specs.json'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: handover-hook-home-win-01-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    name: handover-hook-home-win-01\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))\n    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, cap-node24, site-home]\n    timeout-minutes: 8\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with:\n          persist-credentials: false\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        with:\n          node-version: 24.19.0\n      - name: Verify source candidate or protected installed code\n        shell: powershell\n        env:\n          EXPECTED_RUNNER: clued-ci-home-win-01\n          QUALIFICATION_EVENT: ${{ github.event_name }}\n        run: |\n          $ErrorActionPreference = 'Stop'\n          if ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER) { throw 'Runner route mismatch.' }\n          $probeArgs=@('--public-config','apps/clued-cloud/app/supabase-public-config.ts')\n          if ($env:QUALIFICATION_EVENT -eq 'pull_request') { $probeArgs+=@('--candidate','--hook','scripts/runner/clued-runner-job-started.mjs') }\n          $report = & node scripts/runner/qualify-work-handover.mjs @probeArgs\n          if ($LASTEXITCODE -ne 0) { throw 'Hook qualification failed.' }\n          Set-Content -LiteralPath handover-hook-qualification.json -Value $report -Encoding UTF8\n          Write-Output $report\n      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: handover-hook-home-win-01-${{ github.run_id }}\n          path: handover-hook-qualification.json\n          if-no-files-found: error\n          retention-days: 90\n",
+        "primary_ids": [
+          "qualify"
+        ],
+        "pull_request": {
+          "paths": [
+            ".github/workflows/clued-work-handover-qualification-*.yml",
+            "scripts/runner/qualify-work-handover*",
+            ".github/actions/ci-temporary-storage/coverage.json",
+            "scripts/ci/clued-gated-proof-profiles.json",
+            "scripts/ci/clued-gated-proof-role-specs.json"
+          ]
+        },
+        "gated": true,
+        "routes": [
+          {
+            "job_id": "qualify",
+            "name": "handover-hook-home-win-01",
+            "self_hosted": true,
+            "required_steps": {
+              "Verify source candidate or protected installed code": 1
+            },
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "0c1649a9cd5c8d301189f97fcfc8b6ae59fb8274378915652ccc6b7cdb8a9c29"
+              ]
+            }
+          }
+        ]
+      },
+      "workflow_definition": {
+        "name": "Clued handover hook qualification / home-win-01",
+        "on": {
+          "workflow_dispatch": null,
+          "pull_request": {
+            "paths": [
+              ".github/workflows/clued-work-handover-qualification-*.yml",
+              "scripts/runner/qualify-work-handover*",
+              ".github/actions/ci-temporary-storage/coverage.json",
+              "scripts/ci/clued-gated-proof-profiles.json",
+              "scripts/ci/clued-gated-proof-role-specs.json"
+            ]
+          }
+        },
+        "permissions": {
+          "contents": "read"
+        },
+        "concurrency": {
+          "group": "handover-hook-home-win-01-${{ github.event.pull_request.number || github.ref }}",
+          "cancel-in-progress": true
+        },
+        "jobs": {
+          "admission-gate": {
+            "name": "admission-gate",
+            "runs-on": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal"
+            ],
+            "timeout-minutes": 10,
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read"
+            },
+            "outputs": {
+              "admitted": "${{ steps.gate.outputs.admitted }}",
+              "enforced": "${{ steps.gate.outputs.enforced }}",
+              "verdict": "${{ steps.gate.outputs.verdict }}"
+            },
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false,
+                  "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                }
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "id": "gate",
+                "env": {
+                  "GITHUB_TOKEN": "${{ github.token }}"
+                },
+                "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+              }
+            ]
+          },
+          "qualify": {
+            "name": "handover-hook-home-win-01",
+            "needs": "admission-gate",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner))",
+            "runs-on": [
+              "self-hosted",
+              "Windows",
+              "X64",
+              "clued",
+              "pool-general",
+              "trust-internal",
+              "cap-python312",
+              "cap-node24",
+              "site-home"
+            ],
+            "timeout-minutes": 8,
+            "steps": [
+              {
+                "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                "with": {
+                  "persist-credentials": false
+                }
+              },
+              {
+                "name": "Configure job temporary storage",
+                "uses": "./.github/actions/ci-temporary-storage"
+              },
+              {
+                "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                "with": {
+                  "node-version": "24.19.0"
+                }
+              },
+              {
+                "name": "Verify source candidate or protected installed code",
+                "shell": "powershell",
+                "env": {
+                  "EXPECTED_RUNNER": "clued-ci-home-win-01",
+                  "QUALIFICATION_EVENT": "${{ github.event_name }}"
+                },
+                "run": "$ErrorActionPreference = 'Stop'\nif ($env:RUNNER_NAME -ne $env:EXPECTED_RUNNER) { throw 'Runner route mismatch.' }\n$probeArgs=@('--public-config','apps/clued-cloud/app/supabase-public-config.ts')\nif ($env:QUALIFICATION_EVENT -eq 'pull_request') { $probeArgs+=@('--candidate','--hook','scripts/runner/clued-runner-job-started.mjs') }\n$report = & node scripts/runner/qualify-work-handover.mjs @probeArgs\nif ($LASTEXITCODE -ne 0) { throw 'Hook qualification failed.' }\nSet-Content -LiteralPath handover-hook-qualification.json -Value $report -Encoding UTF8\nWrite-Output $report\n"
+              },
+              {
+                "uses": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                "with": {
+                  "name": "handover-hook-home-win-01-${{ github.run_id }}",
+                  "path": "handover-hook-qualification.json",
+                  "if-no-files-found": "error",
+                  "retention-days": 90
+                }
+              }
+            ]
+          }
+        }
+      },
+      "exact_source_acceptance_scope": {
+        "repository": "tdoljyj/cross-memory-system",
+        "default_branch": "main",
+        "operation": "new_workflow_file_installation",
+        "file": ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+        "purpose": "work_handover_consumer_qualification",
+        "consumer_id": "home-win-01",
+        "workflow_blob": "0a6d9ec09e4d6a7e02aba6c40a96b3502a7b894c",
+        "source_sha256": "695deb0d77646b22adc842d1aace94a9aa7edeb01e9ad47e72b4dd3866b51ca8",
+        "primary_ids": [
+          "qualify"
+        ],
+        "roles": [
+          {
+            "job_id": "qualify",
+            "definition_sha256": "db1af5846e54c9f7ce843ca0ad2a4b91018f5b3e92c331722a27490c61aed92f"
+          }
+        ],
+        "command_digests": [
+          {
+            "job_id": "qualify",
+            "command_digests": {
+              "Verify source candidate or protected installed code": [
+                "0c1649a9cd5c8d301189f97fcfc8b6ae59fb8274378915652ccc6b7cdb8a9c29"
+              ]
+            }
+          }
+        ],
+        "workflow_definition_sha256": "24541e06ae5d354acf2292ddc186f3c8e586e5461a1db6a071ff365c1b623a8c",
+        "frozen_gate_sha256": "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9"
+      },
+      "source_acceptance": {
+        "status": "accepted",
+        "authority": "owner",
+        "decision_ref": "clued:decision:83c6ee59-bb30-465b-a826-871021216bc4@v1",
+        "receipt_id": "14b7829a-9496-41ff-aa51-2c6fdfc46a9a",
+        "subject_sha256": "4cc987fb8861a2b6b3651cad17272a4c2a97a25fc05fdf349bc6f22b13cfce1f"
+      }
+    }
+  ]
 }
