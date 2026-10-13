@@ -236,17 +236,19 @@ class NativeInventoryConflict extends Error{
       before:progress(prior),after:progress(current)};
   }
 }
-// The fixed-window denominator excludes runs created at/after its close.
-// Their queue/start/completion metadata can advance while older pages are
-// read. Keep their identity and ordinal fixed, and preserve the latest wire
-// projection; never use this allowance for a pre-close run or an old rerun.
+// Creation fixes membership; it does not freeze later lifecycle observations.
+// Once a row is created or already observed as updated at/after the close,
+// later normal progress cannot change that fixed membership. Keep identity,
+// ordinal and start fixed, retain the latest wire projection, and still refuse
+// pre-close progress, terminal rewrites and old reruns.
 function inventoryDuplicate(prior,current,cutoff,stage){
   if(same(prior,current))return current;
   const identity=r=>({id:r.id,run_attempt:r.run_attempt,workflow_id:r.workflow_id,path:r.path,event:r.event,
     head_sha:r.head_sha,created_at:r.created_at,pull_requests:r.pull_requests});
   const phase=s=>s==='completed'?2:s==='in_progress'?1:0;
-  if(timestampMicros(prior.created_at)>=cutoff&&timestampMicros(current.created_at)>=cutoff&&
-    same(identity(prior),identity(current))&&prior.status!=='completed'&&phase(current.status)>=phase(prior.status)&&
+  if((timestampMicros(prior.created_at)>=cutoff||timestampMicros(prior.updated_at)>=cutoff)&&
+    timestampMicros(current.updated_at)>=cutoff&&same(identity(prior),identity(current))&&
+    prior.status!=='completed'&&phase(current.status)>=phase(prior.status)&&
     current.updated_at>=prior.updated_at&&
     (prior.run_started_at===null||current.run_started_at===prior.run_started_at))return current;
   throw new NativeInventoryConflict(prior,current,stage);
@@ -288,7 +290,8 @@ async function rangeInventory(request,repository,window){
         if(leafIds.has(run.id))fail('NATIVE_INVENTORY_DUPLICATE_ID');leafIds.add(run.id);
         const prior=ids.get(run.id);if(prior){
           if(created!==BigInt(range.lo)*1000n&&created!==BigInt(range.hi)*1000n)fail('NATIVE_INVENTORY_DUPLICATE_ID');
-          if(!same(prior,run))throw new NativeInventoryConflict(prior,run,'SPLIT_RANGE_OVERLAP');
+          const latest=inventoryDuplicate(prior,run,timestampMicros(window.end),'SPLIT_RANGE_OVERLAP');
+          ids.set(run.id,latest);items[items.findIndex(r=>r.id===run.id)]=latest;
         }else{ids.set(run.id,run);items.push(run);}count++;if(items.length>MAX_RUNS)fail('NATIVE_INVENTORY_ITEM_CAP');}
       if(count===total)break;
     }
@@ -315,7 +318,8 @@ async function inventory(request,repository,window){
   if(prefix.length===100)return rangeInventory(request,repository,window);
   const expected=first.total-prefix.length,ids=new Map(),all=new Map(),initialMax=first.rows.length?BigInt(first.rows[0].id):0n;let total=first.total,lastId=null;
   const append=rows=>{for(const r of rows){
-    const old=all.get(r.id);if(old){all.set(r.id,inventoryDuplicate(old,r,cutoff,'SHIFTED_PAGE_DUPLICATE'));continue;}
+    const old=all.get(r.id);if(old){const latest=inventoryDuplicate(old,r,cutoff,'SHIFTED_PAGE_DUPLICATE');
+      all.set(r.id,latest);if(ids.has(r.id))ids.set(r.id,latest);continue;}
     if(lastId!==null&&BigInt(r.id)>lastId)fail('NATIVE_INVENTORY_ORDER_UNPROVED');lastId=BigInt(r.id);all.set(r.id,r);
     if(timestampMicros(r.created_at)>=cutoff){if(!prefix.some(p=>p.id===r.id))fail('NATIVE_INVENTORY_PREFIX_NOT_CLOSED');continue;}
     const prior=ids.get(r.id);if(prior){if(!same(prior,r))throw new NativeInventoryConflict(prior,r,'FIXED_MEMBER_DUPLICATE');continue;}
@@ -331,7 +335,8 @@ async function inventory(request,repository,window){
     if(afterPrefix.length===100||closing.total-afterPrefix.length!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_CHANGED');
     const added=closing.rows.filter(r=>!all.has(r.id));
     if(added.some(r=>BigInt(r.id)<=initialMax||timestampMicros(r.created_at)<cutoff)||closing.total-first.total!==added.length)fail('NATIVE_INVENTORY_HEAD_ADDITIONS_UNPROVED');
-    for(const r of closing.rows){all.set(r.id,all.has(r.id)?inventoryDuplicate(all.get(r.id),r,cutoff,'CLOSING_DIRECTORY_HEAD'):r);}
+    for(const r of closing.rows){const latest=all.has(r.id)?inventoryDuplicate(all.get(r.id),r,cutoff,'CLOSING_DIRECTORY_HEAD'):r;
+      all.set(r.id,latest);if(ids.has(r.id))ids.set(r.id,latest);}
     if(all.size!==closing.total)fail('NATIVE_INVENTORY_WHOLE_DENOMINATOR_UNPROVED');}
   if(ids.size!==expected)fail('NATIVE_INVENTORY_FIXED_DENOMINATOR_UNPROVED');
   return {items:sorted([...ids.values()]),total:ids.size,created_cutoff:window.end,ranges_read:0,directory_mode:'UNCAPPED_FIXED_PREFIX_BARRIER'};
@@ -365,7 +370,7 @@ export async function collectIncrementalNative({request,repository,window,authen
     for(let offset=0;offset<first.length;offset+=4){
       const batch=first.slice(offset,offset+4),basis=storeRaw;
       const outcomes=await Promise.allSettled(batch.map(async run=>{
-        let local=basis,localFresh=0,localSealed=0;const localGaps=[];
+        let local=basis,localFresh=0,localSealed=0,inventoryRun=run;const localGaps=[];
         if(observer?.run_id===run.id&&run.run_attempt!==observer.run_attempt)
           localGaps.push({key:run.id+':'+run.run_attempt,reason_code:'CURRENT_OBSERVER_INVENTORY_CHANGED'});
       const packets=inspectNativePopulationStore(storeRaw,repository).packets;
@@ -386,14 +391,27 @@ export async function collectIncrementalNative({request,repository,window,authen
         if(captured.status!=='COMPLETE'){localGaps.push({key:run.id+':'+attempt,reason_code:captured.reason_code});
           if(/request|cap|floor|budget|slice|limit|stop/i.test(captured.reason_code??''))break;continue;}
         local=captured.store_raw;localFresh++;
-        if(captured.barriers?.latest_digest!==hash(normalized))return {local,localFresh,localSealed,localGaps,fatal:'NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH'};
+        if(captured.barriers?.latest_digest!==hash(normalized)){
+          // A terminal current attempt double-captured from Native may have
+          // finished after an already post-close inventory observation. Its
+          // independently captured latest digest must prove the same exact
+          // projection; historical ordinals and unproved changes still fail.
+          const p=captured.packet.run,latest={id:p.run_id,run_attempt:p.run_attempt,workflow_id:p.workflow_id,path:p.path,event:p.event,
+            head_sha:p.head_sha,status:p.status,conclusion:p.conclusion,created_at:p.created_at,updated_at:p.updated_at,
+            run_started_at:p.run_started_at,pull_requests:p.pull_requests};
+          if(attempt!==run.run_attempt||captured.barriers.latest_digest!==hash(p))
+            return {local,localFresh,localSealed,localGaps,fatal:'NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH'};
+          try{inventoryRun=inventoryDuplicate(run,latest,timestampMicros(window.end),'NATIVE_CAPTURE_PROGRESS');}
+          catch{return {local,localFresh,localSealed,localGaps,fatal:'NATIVE_CAPTURE_INVENTORY_BARRIER_MISMATCH'};}
+        }
       }
-      return {local,localFresh,localSealed,localGaps};
+      return {local,localFresh,localSealed,localGaps,inventoryRun};
       }));
       // Serialize publication after joining the batch. Never overwrite another
       // capture's packet; the ordinary store validator checks the full union.
       const results=outcomes.filter(r=>r.status==='fulfilled').map(r=>r.value),joined=JSON.parse(storeRaw);
       for(const result of results){
+        if(result.inventoryRun)first[first.findIndex(r=>r.id===result.inventoryRun.id)]=result.inventoryRun;
         for(const [k,p] of Object.entries(JSON.parse(result.local).packets)){
           if(joined.packets[k]&&!same(joined.packets[k],p))fail('NATIVE_BATCH_PACKET_CONFLICT');joined.packets[k]=p;
         }
