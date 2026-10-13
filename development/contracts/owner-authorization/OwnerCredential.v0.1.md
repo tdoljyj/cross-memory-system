@@ -32,7 +32,7 @@
   - 发布 workflow：job 进 `clued-release` environment；新增 `migrate` 模式（输入 `migrations`，逗号分隔的文件名）；`deploy` 与 `migrate` 先跑 `scripts/ci/clued-release-grant.mjs`。
   - 授权检查先只提示（Owner 选择）：Owner 设仓库变量 `CLUED_RELEASE_GRANT_ENFORCE=true` 后才拦。
   - Agent 合同升到第 20 版，§6.6 写明发布与迁移前按提交申请授权。
-- 自动审批开关（§12，Owner Decision `5ce219c6`，Task `8eb340c7`）：迁移 `20261008170000_owner_auto_approve_v1.sql`，测试 `tests/owner-auto-approve-db.test.mjs`、`tests/owner-grants-ui.test.mjs`、`tests/owner-requests-transport.test.mjs`。需生产迁移与 Worker 发布后生效；Agent 合同与工具说明的补写见 Task `ce42fc18`。
+- 自动审批开关（§12，后继 Owner Decision `78388e18`，Task `9b560d13`）：持久设置迁移 `20261013023000_owner_auto_approve_persistent_switch.sql`，测试 `tests/owner-auto-approve-db.test.mjs`、`tests/owner-auto-approve-persistent-db.test.mjs`、`tests/owner-auto-approve-ui.test.mjs`、`tests/owner-grants-ui.test.mjs`。后继需正式迁移与 Worker 发布后生效；原限时实施（Decision `5ce219c6`、Task `8eb340c7`、迁移 `20261008170000_owner_auto_approve_v1.sql`）保留为已完成历史。
 - 批完自动告诉 Agent（§13，Owner Decision `973e1b5b`，Task `d5bd604e`）：迁移 `20261009020000_owner_request_answers_v1.sql`，测试 `tests/owner-request-answers-db.test.mjs`、`tests/owner-requests-transport.test.mjs`、`tests/agent-messages-transport.test.mjs`。需生产迁移与 Worker 发布后生效。
 - 第 5 步（Owner 授权 2026-10-03，Task `340693ee`）：Agent 合同升到第 14 版，§6.6 写明 Owner 批准只来自 Owner 本人登录的页面、`confirm_url` 原样交给 Owner、不得自称已批准、被拒或过期就停；§4 错误表的 `work_claim_budget_exhausted` 改为先给 `owner_request.confirm_url`。尚无门口消费的动作（发布、迁移）仍按 §6.4 需要明确授权。Worker 发布后服务端 `/clued-agent.md` 才是第 14 版。
 日期：2026-10-02
@@ -293,16 +293,16 @@ Clued 维护一张"受信宿主公钥"表，由 Owner 在 Native 页面登记。
 
 ---
 
-## 12. 自动审批开关（Owner Decision `5ce219c6`，Task `8eb340c7`）
+## 12. 自动审批开关（Owner Decision `78388e18`，Task `9b560d13`）
 
-Owner 打开开关后，在开关有效期内，Agent 或门口提交的申请当场获批，不用 Owner 逐条点。打开开关本身就是 Owner 提前给出的批准，所以 §3.2"Agent 只能发起请求，不能批准请求"不变：Agent 开不了开关，也批不了、放宽不了任何授权。
+本节由 Owner Decision `78388e18` 替代原 Decision `5ce219c6` 的限时交互；原 Task `8eb340c7` 保持已完成。精确后继接口见 [OwnerAutoApprovalPersistentSwitch.v0.1.md](OwnerAutoApprovalPersistentSwitch.v0.1.md)。自动审批默认开启，持续到 Owner 手动关闭。开启期间，Agent 或门口提交的适用申请当场获批，不用 Owner 逐条点。默认政策和 Owner 保存的选择提供提前批准；§3.2"Agent 只能发起请求，不能批准请求"不变：Agent 不能修改开关，也不能自行批准或放宽授权。
 
 ### 12.1 开与关
 
-- **打开**：只在 `/grants` 页面，由 Owner 本人登录后两步确认（`clued_owner_auto_approve_confirmation_issue_v1` + `clued_owner_auto_approve_on_v1`），与 §5 的授权确认同一套一次性令牌：只在同一登录会话、5 分钟内、对 Clued 渲染出的同一份视图有效。视图列出会自动通过的动作、每个动作的批法和仍需 Owner 确认的动作。
-- **时长**：打开时选，默认 24 小时，最长 7 天，到期自动关闭。再次打开会替换正在生效的那一段。
-- **关闭**：一步（`clued_owner_auto_approve_off_v1`），与撤销授权一样，因为它只收回权限。关闭后新申请照常等 Owner 确认；已自动发出的授权留在 `/grants`，到期或由 Owner 逐条撤销。
-- Receipt：`OWNER_AUTO_APPROVE_ON`、`OWNER_AUTO_APPROVE_OFF`；令牌出错时记 `OWNER_AUTO_APPROVE_REJECTED`。
+- **默认**：账号未保存设置时为开启，版本为 0。旧计时开启及自然到期转为持续开启；最后一次明确手动关闭保持关闭。原始时段、令牌和回执保留历史。
+- **开与关**：只在 `/grants` 页面，由 Owner 本人登录后单次切换。`clued_owner_auto_approve_set_v1` 接收 `enabled` 和读取到的 `base_version`，服务校验 Native 登录会话并以 CAS 保存布尔选择。过期页面的写入被拒绝；页面仅显示服务返回的有效状态。
+- **持续有效**：开关不选择时长、不倒计时、不自动到期。关闭后新申请照常等 Owner 确认；已自动发出的授权留在 `/grants`，按各自期限到期或由 Owner 逐条撤销。
+- Receipt：`OWNER_AUTO_APPROVE_SET`；默认政策实际首次用于批准时记 `OWNER_AUTO_APPROVE_DEFAULT`；旧状态转换记 `OWNER_AUTO_APPROVE_MIGRATED`。旧限时开启/关闭 RPC 返回 `owner_auto_approve_successor_required`，不能覆盖新设置。
 
 ### 12.2 自动通过的范围
 
@@ -319,7 +319,7 @@ Owner 打开开关后，在开关有效期内，Agent 或门口提交的申请�
 - 高风险动作"只批这一次"：1 次、24 小时；
 - 常规动作"管一段时间"：按 Agent 建议的时长和次数，没有建议时为 4 小时。
 
-授权只给发起请求的那个 Binding，只覆盖请求里的资源，到期时间不晚于开关的到期时间。授权记 `OWNER_GRANT_GIVEN` Receipt，`principal` 为 `owner_auto_approve`，并记下开关那次打开的 Receipt。`/grants` 上标"来源：自动审批"。
+授权只给发起请求的那个 Binding，只覆盖请求里的资源，并按上述规则独立到期；持久开关不产生永久授权。授权记 `OWNER_GRANT_GIVEN` Receipt，`principal` 为 `owner_auto_approve`，绑定实际默认政策、迁移或 Owner 设置的 Receipt 与设置版本。默认开启首次批准同样必须先建立可审计的政策载体。`/grants` 上标"来源：自动审批"。
 
 ### 12.4 在哪里生效（当场回执）
 
@@ -332,7 +332,7 @@ Owner 打开开关后，在开关有效期内，Agent 或门口提交的申请�
 
 ### 12.5 不保护什么（补充 §9）
 
-开关有效期间，§6.1 发布授权与 §6.3 准入复核对上述动作不再等 Owner：Agent 可以在这段时间里发布、迁移，或合并改动准入与发布门口本身的 PR。开关的保护只剩时长上限、Receipt 记录和随时可关。所以默认 24 小时，最长 7 天。
+开关开启期间，§6.1 发布授权与 §6.3 准入复核对上述动作不再等待逐次点击；正式门仍核验对应授权、精确资源、Binding、认领、版本及适用检查。该选择取消了开关的自动到期，Owner 可随时关闭；每条授权的次数、独立期限、Receipt 和撤销能力保持。开关不改变其它未覆盖动作、数据范围或执行资格。
 
 ## 13. 批完自动告诉 Agent（Owner Decision `973e1b5b`，Task `d5bd604e`）
 
