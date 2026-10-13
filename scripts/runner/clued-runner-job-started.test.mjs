@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 
 import { ADMISSION_APP_ID as ADMISSION_APP, DISPATCH_GATED_WORKFLOWS as ADMISSION_DISPATCH_GATED, resolvePublicSupabaseConfig } from "../ci/clued-work-admission.mjs";
-import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
+import { ADMISSION_APP_ID, DISPATCH_GATED_WORKFLOWS, HOOK_VERSION, COMPONENT_VERSION, decide, decideWithCurrentEpoch, main, proxyBootstrapArguments, shortCheckFindings, workflowPathOf } from "./clued-runner-job-started.mjs";
 import { workflowIsGated } from "../ci/clued-work-admission.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -133,6 +133,37 @@ test("runner current epoch: old successful GitHub admission cannot start a hande
   await assert.rejects(execute({body:{status:"ok",guard_required:true,epoch_current:null}}),/observation is invalid/);
 });
 
+test("runner current epoch: new handover branch dispatches still require the exact current execution target", async () => {
+  const root = path.resolve(import.meta.dirname, "../..");
+  const configuration = fs.readFileSync(path.join(root, "apps/clued-cloud/app/supabase-public-config.ts"), "utf8");
+  const publicConfig = resolvePublicSupabaseConfig({}, root);
+  const rpc = `${publicConfig.url}/rest/v1/rpc/clued_work_verify_v1`;
+  const configUrl = `${API}/contents/apps/clued-cloud/app/supabase-public-config.ts?ref=main`;
+  for (const file of ["clued-handover-external-qualification.yml", "clued-handover-disposable-idle.yml"]) {
+    const same = { [file]: "1".repeat(40) };
+    const execute = async observation => {
+      const fake = fakeFetch({ [RUN]: thisRun(), [`${LIST}${SHA}`]: listing(same), [`${LIST}main`]: listing(same),
+        [configUrl]: { body: { type: "file", encoding: "base64", content: Buffer.from(configuration).toString("base64") } },
+        [rpc]: observation });
+      const result = await decideWithCurrentEpoch({ env: env({ GITHUB_EVENT_NAME: "workflow_dispatch",
+        GITHUB_REF: "refs/heads/clued-handover-disposable-fixture", GITHUB_REF_NAME: "clued-handover-disposable-fixture",
+        GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/clued-handover-disposable-fixture` }),
+        fetchImpl: fake.fetchImpl, readFile: p => p === "/token" ? "ghp_read" : prEvent() });
+      return { result, calls: fake.calls };
+    };
+    const current = await execute({ body: { status: "ok", guard_required: true, epoch_current: true } });
+    assert.equal(current.result.allow, true, file);
+    const stale = await execute({ body: { status: "ok", guard_required: true, epoch_current: false } });
+    assert.equal(stale.result.allow, false, file);
+    assert.match(stale.result.reason, /epoch is stale/);
+    const query = stale.calls.find(c => c.url === rpc);
+    assert.deepEqual(JSON.parse(query.body), { p_token_hash: null, p_input: { action: "execution_current",
+      repository: "o/r", head_sha: SHA, target_branch: "clued-handover-disposable-fixture", workflow: file } });
+    await assert.rejects(execute({ status: 503, body: null }), /epoch unavailable/);
+    await assert.rejects(execute({ body: { status: "ok", guard_required: true, epoch_current: null } }), /observation is invalid/);
+  }
+});
+
 test("runner hook: main's own runs start without any call", async () => {
   for (const event of ["push", "schedule", "workflow_run", "pull_request_target", "workflow_dispatch"]) {
     const { result, calls } = await run({ GITHUB_EVENT_NAME: event, GITHUB_REF: "refs/heads/main" }, {});
@@ -240,7 +271,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "work-handover-current-epoch-proxy-v1");
+  assert.equal(HOOK_VERSION, "work-handover-current-epoch-proxy-dispatch-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -663,6 +694,21 @@ test("runner hook (re-review 3 N-R1, re-review 5 n1): only the admission run of 
 
 test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be dispatched off main", async () => {
   assert.deepEqual(DISPATCH_GATED_WORKFLOWS, ADMISSION_DISPATCH_GATED, "the same list as the admission script");
+  for (const file of DISPATCH_GATED_WORKFLOWS) {
+    const dispatch = { GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x",
+      GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/feature/x` };
+    const same = { [file]: "1".repeat(40), "trivy.yml": "2".repeat(40) };
+    const identical = { [`${LIST}${SHA}`]: listing(same), [`${LIST}main`]: listing(same) };
+    const permitted = await run(dispatch, identical);
+    assert.equal(permitted.result.allow, true, `${file}: identical workflows`);
+    const changed = await run(dispatch, { ...identical, [`${LIST}${SHA}`]: listing({ ...same, [file]: "9".repeat(40) }) });
+    assert.equal(changed.result.allow, false, `${file}: changed workflow`);
+    assert.match(changed.result.reason, /workflows differ from main/);
+    const rerun = await run({ ...dispatch, GITHUB_RUN_ATTEMPT: "2" }, { ...identical, [RUN]: thisRun({ run_attempt: 2 }) });
+    assert.equal(rerun.result.allow, false, `${file}: branch dispatch rerun`);
+    assert.match(rerun.result.reason, /re-runs are refused/);
+    assert.deepEqual(rerun.calls.map((c) => c.url), [RUN]);
+  }
   for (const file of ["clued-integration-runtime-nightly.yml", "mps03-native-agent.yml", "trivy.yml"]) {
     const { result, calls } = await run({ GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/feature/x",
       GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/feature/x` }, {});
@@ -744,4 +790,12 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
   assert.match((await decideWith({}, { [INSTALLATION]: { status: 404, body: null } })).error, /installation returned 404/);
   assert.match((await decideWith({}, { [MINT]: { status: 403, body: null } })).error, /access_tokens returned 403/);
   assert.match((await decideWith({}, { [MINT]: { status: 201, body: {} } })).error, /returned no installation token/);
+});
+
+// The numeric registry binds the immutable source, so the primary copy must match every raw byte.
+test("primary runner is the exact accepted immutable numeric successor source", () => {
+  assert.equal(COMPONENT_VERSION, "1.0.0");
+  const primary = fs.readFileSync(new URL("./clued-runner-job-started.mjs", import.meta.url));
+  const source = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs", import.meta.url));
+  assert.deepEqual(primary, source);
 });
