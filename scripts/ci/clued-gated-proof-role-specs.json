@@ -205,6 +205,16 @@
             "job_id": "untrusted-linux",
             "definition_sha256": "64d577a93366bfde9622d48c8c4f59171181dd8770dc3be93c27a890afbae2e6"
           }
+        ],
+        "fbae19b9afee314358c82a781d889e2041c7798e": [
+          {
+            "job_id": "trusted-windows",
+            "definition_sha256": "7f6c5f8d933ebfea52bc765c4867c2b1ad461c5a715c8da0046bf182158437a8"
+          },
+          {
+            "job_id": "untrusted-linux",
+            "definition_sha256": "64d577a93366bfde9622d48c8c4f59171181dd8770dc3be93c27a890afbae2e6"
+          }
         ]
       }
     },

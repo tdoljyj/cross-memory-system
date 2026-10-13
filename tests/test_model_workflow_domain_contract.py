@@ -69,6 +69,26 @@ class WorkflowDomainContractTests(unittest.TestCase):
         self.assertEqual(left["candidate_definition_package_sha256"], PIN)
         self.assertFalse(left["domain_adoption_verified"])
 
+    def test_domain_and_test_only_changes_trigger_both_existing_ci_events(self):
+        workflow = ".github/workflows/model-program-m2-scoped-consumer.yml"
+        raw = (ROOT / workflow).read_bytes(); text = raw.decode("utf-8")
+        additions = ("development/contracts/model-program/workflow-domain/**", "tests/test_model_workflow_domain_contract.py")
+        pull = text.split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
+        push = text.split("  push:\n", 1)[1].split("\npermissions:\n", 1)[0]
+        for section in (pull, push):
+            for pattern in additions: self.assertIn('      - "' + pattern + '"', section)
+        blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+        profiles = json.loads((ROOT / "scripts/ci/clued-gated-proof-profiles.json").read_bytes())
+        root = profiles["workflows"][workflow]
+        selected = [entry for entry in [root, *root.get("accepted_sources", [])] if entry["workflow_blob"] == blob]
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]["source_yaml"], text)
+        self.assertEqual(selected[0]["source_sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertTrue(set(additions) <= set(selected[0]["pull_request"]["paths"]))
+        roles = json.loads((ROOT / "scripts/ci/clued-gated-proof-role-specs.json").read_bytes())
+        self.assertEqual(roles["workflows"][workflow]["sources"][blob],
+                         roles["workflows"][workflow]["sources"][root["workflow_blob"]])
+
     def test_domain_reference_grades_are_discrete_zero_through_three(self):
         for grade in (4, 0.5, True, -1):
             with self.assertRaises(ValueError): domain_context(reference={"a":grade,"b":1}, order=["a", "b"])
