@@ -48,7 +48,8 @@ function fixture({ standaloneLocale } = {}) {
       async signOut() { return { error: null }; } },
     rpc(name, args) { let resolve, reject; const pending = new Promise((yes, no) => { resolve = yes; reject = no; });
       const call = { name, args, resolve, reject, headers: {} }; rpc.push(call);
-      return { then: (...args) => pending.then(...args), setHeader(name, value) { call.headers[name] = value; return this; } }; },
+      return { then: (...args) => pending.then(...args), setHeader(name, value) { call.headers[name] = value; return this; },
+        abortSignal(signal) { call.signal = signal; return this; } }; },
   };
   function load(file) {
     if (moduleCache.has(file)) return moduleCache.get(file);
@@ -57,6 +58,7 @@ function fixture({ standaloneLocale } = {}) {
       module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
     } }).outputText;
     vm.runInNewContext(compiled, { exports, AbortController, Date, Intl, Map, Set, Array, JSON, Error, TextEncoder, crypto: webcrypto,
+      setInterval, clearInterval, setTimeout, clearTimeout,
       queueMicrotask: callback => microtasks.push(callback),
       window: { sessionStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
         setTimeout(callback) { const id = ++timerId; timers.set(id, callback); return id; }, clearTimeout(id) { timers.delete(id); } },

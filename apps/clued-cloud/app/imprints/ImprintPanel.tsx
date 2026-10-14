@@ -72,7 +72,10 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
   const [noteBusy, setNoteBusy] = useState<Bound<boolean> | null>(null);
   // Bind the SDK request to this Session snapshot. Its shared auth client may
   // change accounts while awaiting; a later account must not receive this write.
-  const rpc: NativeRpc = (name, args) => supabase.rpc(name, args).setHeader("Authorization", "Bearer " + session.access_token);
+  const rpc: NativeRpc = (name, args, signal) => {
+    const request = supabase.rpc(name, args).setHeader("Authorization", "Bearer " + session.access_token);
+    return signal ? request.abortSignal(signal) : request;
+  };
   const input = (cursor = 0): ReadInput => ({ view, scope: readScope, query, include_history: history, limit: 30, cursor,
     ...(kind ? { record_type: kind } : {}), ...(extraDomain ? { domains: [extraDomain] } : {}) });
   const visible = list?.selection === selection ? list.value : null;
@@ -85,7 +88,7 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
     const previous = cursor > 0 && list?.selection === selection ? list.value.records : [];
     setList({ selection, value: { status: "loading", records: [], page: { next_cursor: null, complete: false } } });
     try {
-      const page = await readImprints(rpc, input(cursor), developmentContextId);
+      const page = await readImprints(rpc, input(cursor), developmentContextId, { isCurrent: () => fence.current.current(ticket) });
       if (fence.current.current(ticket)) setList({ selection, value: { ...page, records: uniqueRecords([...previous, ...page.records]), status: "ready" } });
     } catch (failure) {
       if (fence.current.current(ticket)) setList({ selection, value: { status: failure instanceof ImprintFailure && failure.reason === "unavailable" ? "unavailable" : "unknown", records: [], page: { next_cursor: null, complete: false }, error: failureText(failure, locale) } });
@@ -100,7 +103,8 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
     setDetail({ selection, value: { loading: true, record: null, error: "" } });
     try {
       const result = await readImprints(rpc, { view: "all", scope: "all", query: "", include_history: true, limit: 30, cursor: 0, id,
-        ...(development && sourceNamespace ? { source_kind: sourceNamespace } : {}) }, developmentContextId);
+        ...(development && sourceNamespace ? { source_kind: sourceNamespace } : {}) }, developmentContextId,
+        { isCurrent: () => fence.current.current(ticket) });
       if (fence.current.current(ticket)) setDetail({ selection, value: { loading: false, record: result.records[0] ?? null, error: result.records.length ? "" : t.unavailable } });
     } catch (failure) { if (fence.current.current(ticket)) setDetail({ selection, value: { loading: false, record: null, error: failureText(failure, locale) } }); }
   }
@@ -207,7 +211,7 @@ function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommit
   async function sourceRead(evidence: string) {
     if (development && sourceKind(record) !== "canonical") return;
     const ticket = fence.current.begin("source"); setSource({ selection, record, value: { loading: true, value: null, error: "" } });
-    try { const value = await readSource(rpc, record.id, evidence, includeHistory, record.version); if (fence.current.current(ticket)) setSource({ selection, record, value: { loading: false, value, error: "" } }); }
+    try { const value = await readSource(rpc, record.id, evidence, includeHistory, record.version, { isCurrent: () => fence.current.current(ticket) }); if (fence.current.current(ticket)) setSource({ selection, record, value: { loading: false, value, error: "" } }); }
     catch (failure) { if (fence.current.current(ticket)) setSource({ selection, record, value: { loading: false, value: null, error: failureText(failure, locale) } }); }
   }
   const sources = evidenceReferences(record), relations = relatedReferences(record);

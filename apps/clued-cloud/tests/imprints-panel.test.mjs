@@ -32,6 +32,7 @@ function modules(React = {}, supabase = {}, crypto = webcrypto) {
       module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, esModuleInterop: true,
     } }).outputText;
     vm.runInNewContext(compiled, { exports, crypto, TextEncoder, Date, Intl, Map, Set, Array, JSON, Error,
+      AbortController, setInterval, clearInterval, setTimeout, clearTimeout,
       queueMicrotask: callback => React.queueMicrotask ? React.queueMicrotask(callback) : queueMicrotask(callback),
       require(name) {
         if (name === 'react') return React;
@@ -74,7 +75,8 @@ function fixture(initial = session('owner'), locale = 'zh-CN', initialDevelopmen
     let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
     const call = { name, args, resolve, reject, headers: {} }; calls.push(call); notifyRpc();
-    return { then: (...args) => promise.then(...args), setHeader(name, value) { call.headers[name] = value; return this; } };
+    return { then: (...args) => promise.then(...args), setHeader(name, value) { call.headers[name] = value; return this; },
+      abortSignal(signal) { call.signal = signal; return this; } };
   } };
   const m = modules(React, supabase, crypto), Panel = m.load('ImprintPanel.tsx').default;
   function render() {
