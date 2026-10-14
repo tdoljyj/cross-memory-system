@@ -1,6 +1,6 @@
-# Clued Self-hosted CI Compute Pool — Node Profiles
+# Kooyumi Self-hosted CI Compute Pool — Node Profiles
 
-This directory is the canonical onboarding and lifecycle surface for trusted Clued self-hosted CI nodes.
+This directory is the canonical onboarding and lifecycle surface for trusted Kooyumi self-hosted CI nodes.
 
 The maintained operating requirements and dated runtime evidence are in [Runner configuration and operations](../../../docs/maintenance/runner-configuration-and-operations.md). The JSON inventory declares desired identity/capacity; it is not online state, complete host qualification or a grant to install/stop nodes.
 

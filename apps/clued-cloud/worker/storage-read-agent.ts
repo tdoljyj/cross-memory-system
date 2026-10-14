@@ -74,9 +74,9 @@ const READ_HINTS: Record<string, string> = {
 };
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
 /** Fixed hint when the connection's sealed Google access has expired (BUG-20261007-005). */
-export const CREDENTIAL_RENEWAL_HINT = "This storage connection's Google access has expired and Clued has not renewed it yet. " +
-  "Clued renews it automatically, but not while an unfinished storage job on the same root is still being settled. " +
-  "Retry in a few minutes; if reads keep failing, tell the user to check this connection and its jobs on the Clued storage page.";
+export const CREDENTIAL_RENEWAL_HINT = "This storage connection's Google access has expired and Kooyumi has not renewed it yet. " +
+  "Kooyumi renews it automatically, but not while an unfinished storage job on the same root is still being settled. " +
+  "Retry in a few minutes; if reads keep failing, tell the user to check this connection and its jobs on the Kooyumi storage page.";
 
 export class StorageReadError extends Error {
   constructor(readonly code: "storage_read_input_invalid" | "storage_read_unavailable" | "not_found_in_scope" | "cursor_invalid" |

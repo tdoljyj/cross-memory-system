@@ -1,4 +1,4 @@
-# Clued Cloud production release
+# Kooyumi Cloud production release
 
 The supported production Worker release entry is the owner-dispatched
 `Clued Cloud production release` GitHub Actions workflow on `main`. It checks
@@ -20,7 +20,7 @@ as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
   Cloudflare token or changing production.
 - `backup` runs before an authorized schema migration when the target has no
   confirmed managed backup/PITR restore point. It creates a custom-format dump
-  of the schemas affected by Clued migrations, validates the dump and encrypted
+  of the schemas affected by Kooyumi migrations, validates the dump and encrypted
   round-trip, destroys runner plaintext, and uploads only the encrypted dump
   plus a checksum manifest.
 - `source-capture` captures one reviewed nonsecret storage client source and
