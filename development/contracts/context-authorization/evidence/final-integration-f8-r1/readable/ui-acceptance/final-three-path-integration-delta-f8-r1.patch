@@ -1,0 +1,60 @@
+diff --git a/apps/clued-cloud/tests/task-goal-delivery-db.test.mjs b/apps/clued-cloud/tests/task-goal-delivery-db.test.mjs
+index a5a04669..d43c422f 100644
+--- a/apps/clued-cloud/tests/task-goal-delivery-db.test.mjs
++++ b/apps/clued-cloud/tests/task-goal-delivery-db.test.mjs
+@@ -123,9 +123,20 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
+         user_confirmed: true, confidence_reason: 'Isolated recognized Project fixture', source_refs: [],
+         source_unavailable_reason: 'Synthetic disposable Project', idempotency_key: uuid(),
+         mutation: { name: 'goal-project-' + id, progress_status: 'active', aliases: [] } };
+-      const recognized = (await admin.query('select clued_private.project_mutation_core_v2($1,null,$2,clued_private.m1_sha256($2)) v',
+-        [user, create])).rows[0].v;
+-      assert.equal(recognized.status, 'committed', JSON.stringify(recognized));
++      // The current private core requires the same early Owner/fanout lock
++      // order as the Native entrance, including disposable admin seed data.
++      await admin.query('begin');
++      try {
++        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [user]);
++        await admin.query('select clued_private.authorization_writer_lock_fanout_v2($1)', [user]);
++        const recognized = (await admin.query('select clued_private.project_mutation_core_v2($1,null,$2,clued_private.m1_sha256($2)) v',
++          [user, create])).rows[0].v;
++        assert.equal(recognized.status, 'committed', JSON.stringify(recognized));
++        await admin.query('commit');
++      } catch (error) {
++        await admin.query('rollback');
++        throw error;
++      }
+     }
+     const connect = async (role) => {
+       const c = server.getPgClient(); clients.push(c); await c.connect();
+diff --git a/apps/clued-cloud/worker/generated/components.ts b/apps/clued-cloud/worker/generated/components.ts
+index 65d6398b..8118dac3 100644
+--- a/apps/clued-cloud/worker/generated/components.ts
++++ b/apps/clued-cloud/worker/generated/components.ts
+@@ -5,7 +5,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
+   "product": "1.6",
+   "skill.clued": "1.0.20",
+   "agent-contract": "49",
+-  "mcp.server": "0.6.5",
++  "mcp.server": "0.6.6",
+   "hook.runner-job-started": "1.0.0",
+   "hook.capture-guard": "1.0.1",
+   "hook.work-claim-guard": "1.1.4",
+@@ -23,4 +23,4 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
+   "script.handover-external-register": "1.0.0",
+   "script.workflow-source-profile": "1.0.0"
+ };
+-export const MCP_SERVER_VERSION = "0.6.5";
++export const MCP_SERVER_VERSION = "0.6.6";
+diff --git a/config/clued-components.json b/config/clued-components.json
+index c3066c05..4e9bd91e 100644
+--- a/config/clued-components.json
++++ b/config/clued-components.json
+@@ -50,7 +50,7 @@
+     {
+       "id": "mcp.server",
+       "kind": "service",
+-      "version": "0.6.5",
++      "version": "0.6.6",
+       "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+     },
+     {

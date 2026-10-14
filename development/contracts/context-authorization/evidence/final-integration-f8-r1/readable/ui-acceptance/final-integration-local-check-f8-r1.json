@@ -1,0 +1,177 @@
+{
+  "schema": "clued.final-integration-local-check/1",
+  "head": "2bc619b9d709cfb3156ff3867a8555699b4f4e4d",
+  "actual_main": "9231cb10ea70b43dd741dc4debd9a874d24cf853",
+  "mcp_version_working_copy": "0.6.6",
+  "claim_id": "2c722a48-1fe3-42d9-974a-c5516e553f7a",
+  "fence": 8,
+  "lease": 2,
+  "source_before": {
+    "config/clued-components.json": "7d9ace9fb38ea95fe1db80d7d823fbcc91d69bacbc367294e8305e06dea9abad",
+    "apps/clued-cloud/worker/generated/components.ts": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+    "apps/clued-cloud/worker/generated/agent-contract.ts": "3c377f1bb4e15f11262d547154bc5e61e6af39c99bd59c9bc5759ad303a1ba7d",
+    "apps/clued-cloud/app/page.tsx": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+    "apps/clued-cloud/app/imprints/ImprintPanel.tsx": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+    "apps/clued-cloud/worker/delegated-oauth.ts": "70fbf60344fe1a182fb53d644f6b7b70116673b5e5946eb7b7a8edb1ad065b49",
+    "apps/clued-cloud/worker/records.ts": "c48459d8c435db68aac1a3cdeeefeb65c95525aabdc415dd2aa9f19cae3607fb",
+    "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+    "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+    "apps/clued-cloud/supabase/migrations/20261014132753_task_goal_delivery_v1.sql": "316fce6d3730d0ba795064f95ef314b27e3fdfe050dfc27c037a9a1d4a4beddf",
+    "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+    "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs": "883c044404255eb15e83d3457f09e8dd92275276fe03492c29608c441f57aae2",
+    "apps/clued-cloud/tests/authorization-roles-db.test.mjs": "3398b5f558e7bc3f8b7d76dafa02a3f76af76450fe0384558ccc69aeaa60e2e7",
+    "apps/clued-cloud/tests/connection-permission-request-db.test.mjs": "14b90bf8de5c70d8e14bd84043aa2568ff117b0df438eb6318eac9fe5e8ee179",
+    "apps/clued-cloud/tests/authorization-closeout.test.mjs": "3485c6c437daade50ff774853588d4e8442efe9017c56f4f2ce4c03160a66f3c",
+    "apps/clued-cloud/tests/k-cont-db.test.mjs": "ba3535f24c60d6dd2ac10950ac528f9e5031b808edf6c35c504c3de35c39d3b7",
+    "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs": "f72df71e15e2f271e2fcc4d0eacbea0748423c8c3ed01af7d2acf58089d2a647",
+    "apps/clued-cloud/tests/task-goal-delivery-db.test.mjs": "732c6827734ddd18c273ebe4be937df56a082b498b8df7db068de8de592a22c5"
+  },
+  "source_after": {
+    "config/clued-components.json": "7d9ace9fb38ea95fe1db80d7d823fbcc91d69bacbc367294e8305e06dea9abad",
+    "apps/clued-cloud/worker/generated/components.ts": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+    "apps/clued-cloud/worker/generated/agent-contract.ts": "3c377f1bb4e15f11262d547154bc5e61e6af39c99bd59c9bc5759ad303a1ba7d",
+    "apps/clued-cloud/app/page.tsx": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+    "apps/clued-cloud/app/imprints/ImprintPanel.tsx": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+    "apps/clued-cloud/worker/delegated-oauth.ts": "70fbf60344fe1a182fb53d644f6b7b70116673b5e5946eb7b7a8edb1ad065b49",
+    "apps/clued-cloud/worker/records.ts": "c48459d8c435db68aac1a3cdeeefeb65c95525aabdc415dd2aa9f19cae3607fb",
+    "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+    "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+    "apps/clued-cloud/supabase/migrations/20261014132753_task_goal_delivery_v1.sql": "316fce6d3730d0ba795064f95ef314b27e3fdfe050dfc27c037a9a1d4a4beddf",
+    "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+    "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs": "883c044404255eb15e83d3457f09e8dd92275276fe03492c29608c441f57aae2",
+    "apps/clued-cloud/tests/authorization-roles-db.test.mjs": "3398b5f558e7bc3f8b7d76dafa02a3f76af76450fe0384558ccc69aeaa60e2e7",
+    "apps/clued-cloud/tests/connection-permission-request-db.test.mjs": "14b90bf8de5c70d8e14bd84043aa2568ff117b0df438eb6318eac9fe5e8ee179",
+    "apps/clued-cloud/tests/authorization-closeout.test.mjs": "3485c6c437daade50ff774853588d4e8442efe9017c56f4f2ce4c03160a66f3c",
+    "apps/clued-cloud/tests/k-cont-db.test.mjs": "ba3535f24c60d6dd2ac10950ac528f9e5031b808edf6c35c504c3de35c39d3b7",
+    "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs": "f72df71e15e2f271e2fcc4d0eacbea0748423c8c3ed01af7d2acf58089d2a647",
+    "apps/clued-cloud/tests/task-goal-delivery-db.test.mjs": "732c6827734ddd18c273ebe4be937df56a082b498b8df7db068de8de592a22c5"
+  },
+  "source_unchanged": true,
+  "runs": [
+    {
+      "label": "database",
+      "args": [
+        "scripts/run-tests.mjs",
+        "--test",
+        "--test-force-exit",
+        "tests/all-contexts-authorization-db.test.mjs",
+        "tests/all-contexts-authorization-locks-db.test.mjs",
+        "tests/authorization-roles-db.test.mjs",
+        "tests/connection-permission-request-db.test.mjs",
+        "tests/authorization-closeout.test.mjs",
+        "tests/k-cont-db.test.mjs",
+        "tests/integration-runtime-lifecycle-db.test.mjs",
+        "tests/task-goal-delivery-db.test.mjs"
+      ],
+      "started_utc": "2026-10-14T17:36:50.295537+00:00",
+      "finished_utc": "2026-10-14T17:37:24.345614+00:00",
+      "exit_code": 1,
+      "timed_out": false,
+      "log": "final-integration-database-f8-r1.log",
+      "log_sha256": "d0fc0d787b56ee205a1bb08840c67c645615f765c78c713b6584797ce849da8b",
+      "last_lines": [
+        "    position: undefined,",
+        "    internalPosition: undefined,",
+        "    internalQuery: undefined,",
+        "    where: 'PL/pgSQL function clued_private.authorization_writer_require_v2(uuid) line 5 at RAISE\\nSQL statement \"SELECT clued_private.authorization_writer_require_v2(p_user_id)\"\\nPL/pgSQL function clued_private.project_mutation_core_v2(uuid,uuid,jsonb,text) line 10 at PERFORM',",
+        "    schema: undefined,",
+        "    table: undefined,",
+        "    column: undefined,",
+        "    dataType: undefined,",
+        "    constraint: undefined,",
+        "    file: 'pl_exec.c',",
+        "    line: '3923',",
+        "    routine: 'exec_stmt_raise'",
+        "  }"
+      ]
+    },
+    {
+      "label": "typecheck",
+      "args": [
+        "node_modules/typescript/bin/tsc",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "started_utc": "2026-10-14T17:36:50.295537+00:00",
+      "finished_utc": "2026-10-14T17:36:56.282963+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "log": "final-integration-typecheck-f8-r1.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "last_lines": []
+    },
+    {
+      "label": "build",
+      "args": [
+        "node_modules/vinext/dist/cli.js",
+        "build"
+      ],
+      "started_utc": "2026-10-14T17:36:50.297050+00:00",
+      "finished_utc": "2026-10-14T17:37:08.967780+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "log": "final-integration-build-f8-r1.log",
+      "log_sha256": "5ac68261e01415a6340d7d9a2fc3c65bc9b28685d184e80c5977d4d2d29ac9ab",
+      "last_lines": [
+        "  ├ ? /tasks                  ",
+        "  ├ ? /work-claims            ",
+        "  ├ ? /work-claims/exemption  ",
+        "  └ ? /work-claims/race       ",
+        "",
+        "  ƒ Dynamic  ? Unknown",
+        "",
+        "  ? Some routes could not be classified. vinext currently uses static analysis",
+        "    and cannot detect dynamic API usage (headers(), cookies(), etc.) at build time.",
+        "    Automatic classification will be improved in a future release.",
+        "",
+        "  Build complete. Run `vinext start` to start the production server.",
+        ""
+      ]
+    },
+    {
+      "label": "pdf",
+      "args": [
+        "scripts/build-pdf-extractor.mjs",
+        "--check-main"
+      ],
+      "started_utc": "2026-10-14T17:37:08.978152+00:00",
+      "finished_utc": "2026-10-14T17:37:09.570133+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "log": "final-integration-pdf-f8-r1.log",
+      "log_sha256": "1cd9b4b73484af6bb358903fbb1e8c7f6c8f669825f161b71d2d5221725c3b40",
+      "last_lines": [
+        "Built PDF extractor Worker dist\\pdf-extractor\\index.js (4624018 bytes).",
+        "Main Worker server bundle contains no pdf.js."
+      ]
+    },
+    {
+      "label": "rendered",
+      "args": [
+        "scripts/run-tests.mjs",
+        "--test",
+        "tests/rendered-html.test.mjs"
+      ],
+      "started_utc": "2026-10-14T17:37:09.577013+00:00",
+      "finished_utc": "2026-10-14T17:37:09.748513+00:00",
+      "exit_code": 0,
+      "timed_out": false,
+      "log": "final-integration-rendered-f8-r1.log",
+      "log_sha256": "3531cdd94725a5595149969ee2f6cd70b3042f0f0efbddb6b359d718278fa658",
+      "last_lines": [
+        "✔ production build includes the Kooyumi account entry (7.8667ms)",
+        "✔ ships bilingual copy and an eight-character password rule (1.2237ms)",
+        "ℹ tests 2",
+        "ℹ suites 0",
+        "ℹ pass 2",
+        "ℹ fail 0",
+        "ℹ cancelled 0",
+        "ℹ skipped 0",
+        "ℹ todo 0",
+        "ℹ duration_ms 66.1532"
+      ]
+    }
+  ],
+  "qualification": "Actual combined local affected database lifecycle/Goal and production bundle/type/render checks on exact inherited main + pending .6 components. No GitHub CI, production, Owner permission, Native eight-view or archive acceptance. Earlier 215 UI tests remain their separately fixed subject."
+}

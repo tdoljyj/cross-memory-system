@@ -1,0 +1,55 @@
+{
+  "schema": "clued.eight-view-native-run-checklist-independent-review/1",
+  "revision": "r5",
+  "reviewed_at_utc": "2026-10-14T17:18:31Z",
+  "reviewer": "/root/last_source_zero_security_review_r5",
+  "subject": {"path": "eight-view-remaining-native-run-checklist-r5.json", "sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43"},
+  "verdict": "CHANGES_REQUIRED",
+  "finding_counts": {"blocker": 0, "major": 1, "minor": 0},
+  "authority_effect": "independent_read_only_review",
+  "execution_qualification": "PREPARATION_REVIEW_ONLY_NOT_ACTUAL_ACCEPTANCE",
+  "launch_observation": {"provider": "Root fresh resume2541", "enabled": true, "version": 0, "policy_version": 1},
+  "root_claim_observation": {"claim_ref": "2c722a48", "fence": 8, "lease": 1, "source": "Root handoff; no claim/session/Canon call by reviewer"},
+  "findings": [
+    {
+      "id": "NATIVE-R5-01",
+      "severity": "Major",
+      "subject_line": 31,
+      "json_pointer": "/tool_catalog/source_capture/args_template/candidates/items/0/candidate_local_id",
+      "actual": "r5_source_reference",
+      "required_pattern": "^item_[A-Za-z0-9_-]+$",
+      "basis": {"path": "apps/clued-cloud/supabase/migrations/20260924160000_information_flow_candidate_store.sql", "sha256": "308f1b9aa9d1af0669360721606a82e1679c2a09f77649572e3b8ebdaa272985", "line": 211, "second_source": "development/contracts/information-flow/vendored/m0a/candidate-information.v1.schema.json:143"},
+      "effect": "N05's proposed positive request fails intake validation with INSTANCE_SCHEMA_INVALID before Evidence, Submission or Candidate creation. Its follow-on actual Source IDs, ordinary Notes, Native full-body and withdrawal checks cannot proceed from this payload. The original-file replacement recipe inherits the same invalid local ID.",
+      "recommended_fix": "Publish a successor checklist using item_r5_source_reference or another matching deterministic local ID. Preserve r5; keep the one reference candidate, all required fields, exact source anchor, authority=none and real committed-result ID binding. Do not replace this with items=[] or invent Evidence/Candidate IDs."
+    }
+  ],
+  "reviewed_structure": {"steps": 14, "mcp_templates": 23, "distinct_advertised_tools": 14, "tool_template_operations": 52, "missing_template_references": 0, "v01_v24_cases": 24},
+  "bounded_positive_checks": [
+    "Advertised MCP parameter names and operations were inspected without protected calls. Placeholders must be substituted with real typed versions/IDs before execution.",
+    "Intake captures exactly one deterministic reference candidate, then binds actual Submission/Evidence/Candidate IDs; M1 source_refs accept real Evidence IDs, not the segment's local anchor label or Record IDs.",
+    "Native source read checks the actual displayed Canonical Record/version, linked Evidence and stored authorized submission scope. Server segment JSONB hash and rendered source UTF8 hash remain distinct; a Drive locator/hash alone is not Native full-body proof.",
+    "Candidate withdrawal is own pending row CAS and preserves Evidence/submission/history; no promotion, physical deletion, raw restore or empty-Context claim is proposed.",
+    "A02 explicitly requires G_PROJECT_CREATE separately from all-read/all-context policy. Project recognition and archive require their own actual authorization; future Project and future Context inheritance have separate proofs.",
+    "V01-V24 preserve manual/MVP versus Stage3 portions. Real foreign, active-carrier, conflict, superseded and delay fixtures cannot be replaced by random UUIDs, fabricated carriers or DB-only support.",
+    "Fresh Root Task occupancy, body/lifecycle preservation, domain CAS and exact deadline restoration are required. Non-minute-restorable deadlines are skipped rather than truncated.",
+    "Release .6, same-Binding Native Owner consent, exact current action/environment limits and live readback remain prerequisites. No plan, CI, .5 release or local metadata is treated as actual .6/Native acceptance."
+  ],
+  "source_binding_observations": {
+    "scope": "Local allowed Repo reads only, not deployed or Canonical currentness",
+    "declared_hashes_compared": 13,
+    "matched": 10,
+    "different_now": [
+      {"path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md", "declared_sha256": "c9ddae11bcf6bd864e8a9378d53d836840f59c227a52c7cbc8069945236150a7", "observed_sha256": "7846563d670ea58423eed2c70e1b285de1d6766d8fe6d037884eca60d3168c29"},
+      {"path": "apps/clued-cloud/app/imprints/ImprintPanel.tsx", "declared_sha256": "00a339c6d2bbc3b9691897fd70aac1e203014cd46a2a39b911d77cedfe4dd0a7", "observed_sha256": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099"},
+      {"path": "apps/clued-cloud/app/imprints/imprint-client.ts", "declared_sha256": "b137300c77aa3984052dc692f7cf5eabedf0a6c7fa46fdb0d23b5336c0886afe", "observed_sha256": "7522240e01f454d3b63329cd902f5ca135da82bc6a21039ecc610ab56b2bf6ea"}
+    ],
+    "undeclared_hash": {"path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql", "observed_sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4"},
+    "required_boundary": "Keep prior observations historical/as-of and rebind affected source/UI observations before actual execution. No cause of the differences or deployed/current state was inferred."
+  },
+  "limits": [
+    "No actual intake, Evidence, Candidate, Note, Project, Context, Owner confirmation, Source read, restoration or acceptance was executed.",
+    "No protected MCP, new session, Canon, Source/Repo edit, Git, test, build, CI, PG, CUA or Drive call; only this small report was written.",
+    "No new Task, claim or budget; the original checklist was not modified.",
+    "This is a static checklist review, not actual Native/MVP/whole-eight-view or Stage3 acceptance."
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "schema": "clued.final-integration-root-byte-adoption.v1",
+  "authority_effect": "NONE",
+  "verified_at_utc": "2026-10-14T18:16:06.994890+00:00",
+  "fixed_head": "b98991c2fad338b40845ff7f63c9bee2879901dd",
+  "originals": 23,
+  "sidecars": 23,
+  "manifest_files": 29,
+  "mismatches": 0,
+  "preexisting_files_unchanged_before_ledger_append": 139,
+  "ledger_original_sha256": "b463b29b1c2b150e11997b8c78e7b54b4e32dc7553d0f8c57979dec033c7cd26",
+  "ledger_append_sha256": "079f00b00308dc08a33d4a1bb8cd322da2d19341637231422dc5fe0321fe4cf0",
+  "outputs": [
+    {
+      "path": "FinalIntegrationExactEvidenceF8R1.v1.json",
+      "sha256": "612941c58af479abc203c7c64ad3caeb6465f0851b8bcb6eb273c7eac2b68b39",
+      "bytes": 646660
+    },
+    {
+      "path": "FinalIntegrationBoundedSummaryF8R1.v1.json",
+      "sha256": "a4b1afa2dd85ca73c393b2034ec76c9ceb62e3655dbd736b82eadf3929023c37",
+      "bytes": 15731
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-local-check-f8-r1.json",
+      "sha256": "a92829ffc664ef81026078e3aa7e1c9eeb7901e9e314fff9f1563591d274ed2b",
+      "bytes": 10000
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-db-local-check-f8-r2.json",
+      "sha256": "a18e3e28f4c1ef9acf6079c2bfde0f6612a98fb4b28f093fcd1e848f3ce0682c",
+      "bytes": 6153
+    },
+    {
+      "path": "readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json",
+      "sha256": "f11d35391b0b8877118d473a1917565ee53e8b7511ed999eeb889eb7f4bdfafa",
+      "bytes": 19914
+    },
+    {
+      "path": "readable/ui-acceptance/final-three-path-integration-delta-f8-r1.patch",
+      "sha256": "4bb23bc6a51eeb98e17cc8b638fa85b7f263f07d17c60d0b32583f83898196ba",
+      "bytes": 3188
+    },
+    {
+      "path": "readable/ui-acceptance/pr818-local-6c35-secret-scan-review-r1.json",
+      "sha256": "74958af6808978f6d2d538d9aaaf9989596853ecaebac94a326c7c921ff97736",
+      "bytes": 10662
+    },
+    {
+      "path": "readable/ui-acceptance/evidence-preservation-root-verification-f8-r1.json",
+      "sha256": "56dacbfe10f02f9ba032763f072e7a85b779598cd08b22407233c8a98388a6d7",
+      "bytes": 4833
+    },
+    {
+      "path": "readable/ui-acceptance/eight-view-remaining-native-run-checklist-r5.json",
+      "sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43",
+      "bytes": 82238
+    },
+    {
+      "path": "readable/ui-acceptance/eight-view-native-run-checklist-independent-review-r5.json",
+      "sha256": "c5be7bf6032fba65fd6f4343f2cb2d6e22a40e5e99749062a18132196e43bcc7",
+      "bytes": 5913
+    },
+    {
+      "path": "readable/ui-acceptance/eight-view-remaining-native-run-checklist-r6.json",
+      "sha256": "661a973e548e15a8f9e555312f47c666c42030499b565de417e5e0a7c1e7d870",
+      "bytes": 96918
+    },
+    {
+      "path": "readable/ui-acceptance/eight-view-native-run-checklist-independent-review-r6.json",
+      "sha256": "89ddbfd4a70d5dd9dc48100e82679fb17ad3ea1dfa1e959553b2cf2afa5b0f3e",
+      "bytes": 9601
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-database-f8-r1.log",
+      "sha256": "d0fc0d787b56ee205a1bb08840c67c645615f765c78c713b6584797ce849da8b",
+      "bytes": 22501
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-typecheck-f8-r1.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-build-f8-r1.log",
+      "sha256": "5ac68261e01415a6340d7d9a2fc3c65bc9b28685d184e80c5977d4d2d29ac9ab",
+      "bytes": 3004
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-pdf-f8-r1.log",
+      "sha256": "1cd9b4b73484af6bb358903fbb1e8c7f6c8f669825f161b71d2d5221725c3b40",
+      "bytes": 118
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-rendered-f8-r1.log",
+      "sha256": "3531cdd94725a5595149969ee2f6cd70b3042f0f0efbddb6b359d718278fa658",
+      "bytes": 252
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-database-f8-r2.log",
+      "sha256": "cc7678cfa4d830ccfa363b9a79cfc10c87704765520725c513c413918c130a1f",
+      "bytes": 22473
+    },
+    {
+      "path": "readable/ui-acceptance/d01-main9231-task-goal-delivery-db.test.mjs",
+      "sha256": "732c6827734ddd18c273ebe4be937df56a082b498b8df7db068de8de592a22c5",
+      "bytes": 65538
+    },
+    {
+      "path": "readable/repo/apps/clued-cloud/tests/task-goal-delivery-db.test.mjs",
+      "sha256": "4f053ce009804a16563df2f63c47e9bcefc75524d813d2210526b487489d63ee",
+      "bytes": 66064
+    },
+    {
+      "path": "readable/ui-acceptance/d01-main9231-clued-components.json",
+      "sha256": "d98aac58d111d986df4f09684cce0dfd2a803871ab8b5278b9e2a7ab0cc8f872",
+      "bytes": 10767
+    },
+    {
+      "path": "readable/repo/config/clued-components.json",
+      "sha256": "270dbd9432b29946a2bfeade98c01fddd5176f18e36c09871e13ab54656f59ec",
+      "bytes": 10767
+    },
+    {
+      "path": "readable/ui-acceptance/d01-main9231-components.ts",
+      "sha256": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+      "bytes": 1021
+    },
+    {
+      "path": "readable/repo/apps/clued-cloud/worker/generated/components.ts",
+      "sha256": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+      "bytes": 1021
+    },
+    {
+      "path": "readable/ui-acceptance/final-integration-delta-independent-review-f8-r1.json",
+      "sha256": "e5627bc28ef17e4ef5871937d675b9786bbc7fe17ec157383fb8c4f485014e02",
+      "bytes": 17415
+    }
+  ],
+  "qualification": "Independent Root byte verification only; does not replace bounded code reviews or establish CI/production/Native/archive acceptance."
+}
