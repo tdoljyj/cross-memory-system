@@ -6,13 +6,16 @@ import test from 'node:test';
 import ts from 'typescript';
 const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('page.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-let handler, updateHandler, clearHandler, observeHandler, projectEffect, visibility;
+let handler, updateHandler, clearHandler, observeHandler, projectEffect, visibility, selectionKey, confirmed, readFailed;
 function find(node) {
   if (ts.isFunctionDeclaration(node) && node.name?.text === 'handleCreateProject') handler = node;
   if (ts.isFunctionDeclaration(node) && node.name?.text === 'updateProject') updateHandler = node;
   if (ts.isFunctionExpression(node) && node.name?.text === 'clearChangedProjectCreate') clearHandler = node;
   if (ts.isFunctionDeclaration(node) && node.name?.text === 'observeProjectSession') observeHandler = node;
   if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'visibleProjects') visibility = node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'projectSelectionKey') selectionKey = node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'projectsConfirmed') confirmed = node.initializer;
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'projectReadFailed') readFailed = node.initializer;
   if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect'
       && node.arguments[0]?.getText(ast).includes('const epoch = projectActor.current.epoch')) projectEffect = node.arguments[0];
   ts.forEachChild(node, find);
@@ -21,12 +24,20 @@ find(ast);
 assert.ok(handler, 'home project submit handler exists');
 assert.ok(updateHandler, 'home project update handler exists');
 assert.ok(clearHandler, 'pending creation clears on account/name changes');
-assert.ok(observeHandler); assert.ok(projectEffect); assert.ok(visibility);
+assert.ok(observeHandler); assert.ok(projectEffect); assert.ok(visibility); assert.ok(selectionKey); assert.ok(confirmed); assert.ok(readFailed);
 const compiled = ts.transpileModule([handler, updateHandler, clearHandler, observeHandler].map(n => n.getText(ast)).join('\n')
   + '\nthis.submit = handleCreateProject; this.update = updateProject; this.syncPending = clearChangedProjectCreate;'
+  + '\nthis.makeSelectionKey = () => (' + selectionKey.getText(ast) + ');'
+  + '\nthis.confirmedState = () => (' + confirmed.getText(ast) + '); this.failedState = () => (' + readFailed.getText(ast) + ');'
   + '\nthis.visible = () => (' + visibility.getText(ast) + '); this.readProjects = ' + projectEffect.getText(ast) + ';', {
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText;
+// Standard host globals and the real read helper are injected into this AST fixture.
+const recoveryExports = {};
+vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../app/native-read-recovery.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, { exports: recoveryExports, AbortController, setInterval, clearInterval, setTimeout, clearTimeout, Date,
+  console: { info() {} } });
 const project = { id: '11111111-1111-4111-8111-111111111111', name: 'Test project', progress_status: 'not_started', version: 1 };
 function fixture({ response = { status: 'committed', supplemental: { project } }, status = 200, fail = false, session = { user: { id: 'fixture-subject-A' }, access_token: 'fixture-human' }, name = '  Test project  ' } = {}) {
   const state = { projects: [{ id: 'existing', name: 'Existing' }], name, busy: false, error: false, recordTitle: 'Draft', recordContent: 'Body' };
@@ -34,15 +45,20 @@ function fixture({ response = { status: 'committed', supplemental: { project } }
   const network = { response, status, fail };
   let uuidCount = 0;
   const context = {
+    ...recoveryExports, AbortController,
+    get projectsConfirmed() { return context.confirmedState(); },
+    get projectReadFailed() { return context.failedState(); },
     session, view: 'account', projectName: name, projectBusy: false, pendingProjectCreate: { current: null },
-    projects: state.projects, projectSelectionToken: {}, projectsOwner: null,
+    projects: state.projects, projectSelectionToken: {}, projectsOwner: null, projectReload: 0, projectReadError: null,
     projectReadGeneration: { current: 0 },
     projectActor: { current: { subject: session?.user.id ?? '', token: session?.access_token ?? '', epoch: 1 } },
     crypto: { randomUUID: () => ++uuidCount === 1 ? '33333333-3333-4333-8333-333333333333' : '44444444-4444-4444-8444-' + String(uuidCount).padStart(12, '0') },
     setProjectBusy: value => { state.busy = value; },
     setProjectError: value => { state.error = value; },
+    setProjectReadError: value => { context.projectReadError = value; },
     setProjectsOwner: value => { context.projectsOwner = value; },
-    setProjectReload: value => { state.reload = typeof value === 'function' ? value(state.reload ?? 0) : value; },
+    setProjectReload: value => { state.reload = typeof value === 'function' ? value(state.reload ?? 0) : value;
+      context.projectReload = state.reload; refreshSelection(); },
     setRecordTitle: value => { state.recordTitle = value; },
     setRecordContent: value => { state.recordContent = value; },
     setProjectName: value => { state.name = value; context.projectName = value; context.syncPending(); },
@@ -55,17 +71,23 @@ function fixture({ response = { status: 'committed', supplemental: { project } }
       return { ok: network.status >= 200 && network.status < 300, status: network.status, json: async () => value };
     },
   };
-  context.projectsOwner = context.projectSelectionToken;
   vm.runInNewContext(compiled, context);
+  function refreshSelection() {
+    const key = context.makeSelectionKey();
+    if (context.projectSelectionToken.key !== key) context.projectSelectionToken = { key };
+  }
+  refreshSelection(); context.projectsOwner = context.projectSelectionToken;
+  Object.defineProperty(state, 'readError', { get: () => context.projectReadFailed });
   return { state, calls, pending: context.pendingProjectCreate, setNetwork: value => Object.assign(network, value),
     changeName: value => context.setProjectName(value),
     changeSession: value => {
-      const changed = context.session?.user.id !== value?.user.id || context.session?.access_token !== value?.access_token;
       context.observeProjectSession(value); context.session = value;
-      if (changed) context.projectSelectionToken = {};
+      refreshSelection();
       context.syncPending();
     },
-    visible: () => context.visible(), readProjects: () => context.readProjects(),
+    changeView: value => { context.view = value; refreshSelection(); },
+    confirmed: () => context.projectsConfirmed, visible: () => context.visible(),
+    readProjects: () => { context.setProjectReload(value => value + 1); return context.readProjects(); },
     submit: () => context.submit({ preventDefault() {} }), update: (...args) => context.update(...args) };
 }
 test('home creates a recognized project through the Project Lifecycle v2 contract', async () => {
@@ -207,7 +229,8 @@ test('current project list is visible only after a successful owned response; fa
   const f = fixture(); f.setNetwork({ listing: { projects: [project] } });
   f.readProjects(); await settle(); assert.equal(f.visible()[0].id, project.id);
   f.setNetwork({ status: 403 }); f.readProjects(); await settle();
-  assert.equal(f.visible().length, 0); assert.equal(f.state.error, true);
+  assert.equal(f.visible().length, 0); assert.equal(f.confirmed(), false);
+  assert.equal(f.state.readError, true); assert.equal(f.state.error, false);
 });
 
 test('late creates and updates cannot modify a new account or restored A session', async () => {
@@ -229,7 +252,13 @@ test('a project loaded during an in-flight create remains beside the newly creat
   f.setNetwork({ wait: null, listing: { projects: [{ id: 'concurrently-loaded', name: 'Owned existing project' }] } });
   f.readProjects(); await settle(); assert.equal(f.visible()[0].id, 'concurrently-loaded');
   wait.resolve(); await creating;
+  assert.deepEqual(Array.from(f.state.projects, row => row.id), [project.id, 'concurrently-loaded'], 'the committed create preserves concurrently loaded identity');
+  assert.equal(f.state.projects[0].version, project.version, 'the confirmed created project keeps its actual CAS version');
+  assert.equal(f.confirmed(), false, 'the mutation-triggered reload is immediately unconfirmed');
+  const currentListing = Array.from(f.state.projects);
+  f.setNetwork({ listing: { projects: currentListing } }); f.readProjects(); await settle();
   assert.deepEqual(Array.from(f.visible(), row => row.id), [project.id, 'concurrently-loaded']);
+  assert.equal(f.visible()[0].version, project.version);
 });
 
 test('a pre-mutation listing cannot replace committed project creation or progress', async () => {
@@ -237,10 +266,10 @@ test('a pre-mutation listing cannot replace committed project creation or progre
     const updated = { ...project, progress_status: 'active', version: 2 };
     const f = fixture({ response: { status: 'committed', supplemental: { project: updated } } });
     const wait = deferred(); f.setNetwork({ wait: wait.promise, listing: { projects: [project] } });
-    f.readProjects(); f.setNetwork({ wait: null });
+    f.readProjects(); const reloadBeforeMutation = f.state.reload; f.setNetwork({ wait: null });
     await (operation === 'create' ? f.submit() : f.update(project, 'set_progress', { progress_status: 'active' }));
     wait.resolve(); await settle();
-    assert.equal(f.state.reload, 1);
+    assert.equal(f.state.reload, reloadBeforeMutation + 1, 'the committed mutation requests exactly one new read');
     assert.equal(f.state.projects.find(row => row.id === project.id)?.version, operation === 'create' ? 2 : undefined);
     f.setNetwork({ listing: { projects: [updated] } }); f.readProjects(); await settle();
     assert.equal(f.visible()[0].version, 2);
@@ -249,5 +278,43 @@ test('a pre-mutation listing cannot replace committed project creation or progre
 
 test('malformed successful project listing clears cached scope choices rather than throwing during rendering', async () => {
   const f = fixture(); f.setNetwork({ listing: { projects: 'invalid' } }); f.readProjects(); await settle();
-  assert.equal(f.visible().length, 0); assert.equal(f.state.error, true);
+  assert.equal(f.visible().length, 0); assert.equal(f.confirmed(), false);
+  assert.equal(f.state.readError, true); assert.equal(f.state.error, false);
+});
+
+test('project read keeps unknown distinct from confirmed empty and write error', async () => {
+  const f = fixture(); f.setNetwork({ status: 403 });
+  f.readProjects(); assert.equal(f.confirmed(), false); await settle();
+  assert.equal(f.calls.length, 1); assert.equal(f.state.readError, true); assert.equal(f.state.error, false);
+  f.setNetwork({ status: 200, listing: { projects: [] } });
+  f.readProjects(); await settle(); assert.equal(f.confirmed(), true); assert.equal(f.visible().length, 0);
+  assert.equal(f.state.readError, false); assert.equal(f.state.error, false);
+  assert.match(source, /projectsConfirmed \? visibleProjects\.length : "—"/);
+  assert.match(source, /projectsConfirmed && visibleProjects\.length === 0/);
+});
+test('actual project effect recovers only transport with original JWT and no-store', async () => {
+  const f = fixture(); f.setNetwork({ fail: true }); const cleanup = f.readProjects();
+  assert.equal(f.calls.length, 1); f.setNetwork({ fail: false, listing: { projects: [project] } });
+  await new Promise(resolve => setTimeout(resolve, 350)); await settle();
+  assert.equal(f.calls.length, 2); assert.equal(f.visible()[0].id, project.id); assert.equal(f.state.readError, false);
+  assert.ok(f.calls.every(call => call.options.cache === 'no-store'
+    && call.options.headers.authorization === 'Bearer fixture-human' && call.options.signal instanceof AbortSignal));
+  cleanup();
+});
+test('actual project effect cleanup aborts a pending transport and prevents retry', async () => {
+  const f = fixture(); const wait = deferred(); f.setNetwork({ wait: wait.promise, listing: { projects: [project] } });
+  const cleanup = f.readProjects(); const signal = f.calls[0].options.signal; cleanup(); assert.equal(signal.aborted, true);
+  wait.resolve(); await settle(); assert.equal(f.calls.length, 1); assert.equal(f.confirmed(), false); assert.equal(f.state.readError, false);
+});
+
+test('new read/view selection immediately hides cached list and prior read error without an effect setter', async () => {
+  const f = fixture(); assert.equal(f.confirmed(), true);
+  f.changeView('login'); assert.equal(f.confirmed(), false); assert.equal(f.visible().length, 0);
+  f.changeView('account'); assert.equal(f.confirmed(), false, 'A-B-A view changes cannot revive an old response');
+  f.setNetwork({ status: 403 }); f.readProjects(); await settle(); assert.equal(f.state.readError, true);
+  const wait = deferred(); f.setNetwork({ status: 200, wait: wait.promise, listing: { projects: [project] } });
+  const cleanup = f.readProjects();
+  assert.equal(f.confirmed(), false); assert.equal(f.state.readError, false, 'prior error belongs only to its old read selection');
+  assert.equal(f.state.error, false); cleanup(); wait.resolve(); await settle();
+  assert.equal(f.confirmed(), false, 'cleanup does not leave any response confirmed'); assert.equal(f.visible().length, 0);
 });
