@@ -70,3 +70,15 @@ PowerShell 原测试日志／manifest 的 CRLF 字节通过 [ExactOriginalEviden
 [13文件非作者复审 r2](evidence/pr818-fixture-repair-independent-review-r2.json)PASS（0／0／0），原报告 SHA256 `60259fb2ec3b7a34847560b6767b3e022b5b41d8a30ce826df20795ff9a49461`，独立核对上述实际日志、所有 closing 字节和限定说明。Root授权原始日志有PowerShell5混合编码；[解码记录](evidence/pr818-auth-fixtures-r2-root-decoding.json)及UTF8派生日志只转换编码，原始字节在[ExactRepairEvidenceR3.v1.json](evidence/ExactRepairEvidenceR3.v1.json)完整保全，未重跑或修改输出内容。该封套同时保存本轮所有原报告／失败／成功日志及Git LF文本的不同摘要。
 
 此批修复尚待新提交完整CI、受保护合并、备份／两SQL／生产发布、同Binding Native升级及八视图完整页面验收。线上仍为8f960b；不关闭原Task或第三阶段增强。
+
+## 第三轮集成补修与证据文案复审
+
+`c9158c9046af7cd14e1a6d03ec2c4d8843ffc4ea` 的实际迁移／RLS／pgTAP、HTTP E2E、MCP behavior、安全、components、安装和合同位置检查通过。隔离组继续运行时在 S4 的旧 Native flat 缩减请求报 `22023 authorization_source_selection_required_sources_v1`。质量与 MCP protocol 两项在测试执行前报 `clued-runner-hook: REFUSE check failed: fetch failed`；design-refs 的准入服务调用也报 `fetch failed`。这不是本轮磁盘耗尽证据；执行服务访问失败的确切原因仍待独立诊断，不将未运行的测试记为通过。
+
+七个受影响 fixture 保持 Source55ba／ce8不变。S4 完整父测试与 S5 完整父测试各实际 PASS；五个原始准备 fixture 的单次完整串行命令实际 63 PASS，共 65 PASS／0 FAIL／0 SKIP。Native 缩减使用真实 `sources_v1`、来源 CAS 和目标贡献，保留旧 flat 请求拒绝及未选来源不变断言；原始插入仅接真实 Owner 早期协调事务。历史 legacy consent 的原有界协议和拒绝断言保留，不将旧数据普遍升级为全部权限。
+
+[非作者 r3](evidence/pr818-fixture-repair-independent-review-r3.json)代码 PASS，但发现一个轻微证据文案问题：初始无授权／grant不能表示整轮从未有原有受限 filter-only grant。仅收窄 manifest 的这句话，原 manifest 与 r3 报告完整保留。[r4 复审](evidence/pr818-fixture-repair-independent-review-r4.json)PASS（0／0／0），原报告 SHA256 `7e92305b1849429949575d29fdc7fa412180ce0fdd690222c8e82e7a5514d0d2`；修正文案的 manifest 为 `52ddf706549a5e43723aedfb34b074a1949a1e386673a3ab19a589983fe76ee5`。独审再核七个被测文件、两 SQL、helper和三份原日志字节未变，没有新增数据库运行或扩大验收范围。[精确封套](evidence/ExactIntegrationFixtureEvidenceR4.v1.json)保全原字节及 Git 文本变换。
+
+公共扫描三文件已由协调的 PR816 实际合入 main `290d19039bd4c76d0d58dcd606be1de67f693f01`；Root 后续真实 fetch 读到包含 PR819 的 `a9c21058592ef671a742b1ca1dd548276e34fe66`。[只读继承核对](evidence/pr818-main-inheritance-readonly-r4.json)仅证明这些固定对象与本轮实测源码无冲突，不授予新 head CI或生产资格。原未完成 claim40087已如实 abandoned 释放；当前同一原 Task 使用 claim `1ac9f59d-b242-47e6-accf-693b20aa3629`／fence7，写集排除已交接的公共三文件，不重置原 Task 的花费与截止纪律。
+
+此时尚未完成本轮新 head 的全套 CI、合并、生产备份／两 SQL／发布、同 Binding 权限升级或八视图完整真实页面验收。后续主线继承的域名路由和模型观测时序由新 head 集成检查核定；65 项局部测试不替代它们。原 Task 保持 active，第三阶段增强仍未实施。

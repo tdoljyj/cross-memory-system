@@ -95,6 +95,20 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
     for (const name of migrations.filter((name) => name < MIGRATION)) await apply(name);
 
     // ---- fixtures ----------------------------------------------------------------------------
+    let earlyWriterInstalled = false;
+    const withOwnerWriter = async (owner, write) => {
+      // The historical S2c snapshot precedes this protocol. Only fixtures in
+      // the subsequently installed full chain acquire its real Owner mutex.
+      if (!earlyWriterInstalled) return write(false);
+      await admin.query('begin');
+      try {
+        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [owner]);
+        assert.equal((await admin.query('select clued_private.authorization_writer_guard_held_v2($1) held', [owner])).rows[0].held, true);
+        const result = await write(true);
+        await admin.query('commit');
+        return result;
+      } catch (error) { await admin.query('rollback'); throw error; }
+    };
     const newUser = async () => {
       const id = uid();
       await admin.query('insert into auth.users(id, email) values ($1, $2)', [id, `${id}@clued.test`]);
@@ -119,7 +133,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       values ($1, 'https://clued.test/mcp', 'test issuer')`, [issuer]);
     const DEFAULT_ENTRIES = [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }];
     const oauthBinding = async (user, { client = 'client-a', scopes = ['context:read', 'context:write'],
-      entries = DEFAULT_ENTRIES, createdAt = null, expiresAt = null, issuance = 'oauth' } = {}) => {
+      entries = DEFAULT_ENTRIES, createdAt = null, expiresAt = null, issuance = 'oauth' } = {}) => withOwnerWriter(user, async (currentProtocol) => {
       const binding = await rawBinding(user, { scopes });
       let request = null;
       if (issuance === 'oauth') {
@@ -138,8 +152,22 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
             environment, actions) values ($1, $2, $3, $4, $5)`,
         [binding.id, entry.resource_kind, entry.resource_id, entry.environment, entry.actions]);
       }
+      if (currentProtocol && entries.some((entry) => entry.resource_kind === 'scope' && entry.resource_id === 'project:*')) {
+        // This seed is historical flat consent. The retired deferred trigger
+        // is replaced by its explicit guarded legacy expander, which uses
+        // initialize_sources(..., false); it does not create contexts:* consent.
+        const prior = (await admin.query('select scopes from public.clued_agent_bindings where id=$1', [binding.id])).rows[0];
+        const priorAuthorization = (await admin.query('select to_jsonb(a) v from clued_private.authorizations_v12 a where binding_id=$1', [binding.id])).rows[0].v;
+        await admin.query('select clued_private.authorization_all_projects_expand_v1($1)', [binding.id]);
+        assert.deepEqual((await admin.query('select scopes from public.clued_agent_bindings where id=$1', [binding.id])).rows[0], prior);
+        assert.deepEqual((await admin.query('select to_jsonb(a) v from clued_private.authorizations_v12 a where binding_id=$1', [binding.id])).rows[0].v, priorAuthorization);
+        assert.equal((await admin.query('select source_protocol from clued_private.authorization_source_bindings_v2 where binding_id=$1', [binding.id])).rows[0].source_protocol, false);
+        for (const entry of entries) assert.deepEqual((await admin.query(`select actions from clued_private.authorization_entries_v12
+          where binding_id=$1 and resource_kind=$2 and resource_id=$3 and environment=$4`,
+        [binding.id, entry.resource_kind, entry.resource_id, entry.environment])).rows[0].actions, entry.actions);
+      }
       return { ...binding, client, request };
-    };
+    });
 
     // pre-migration Bindings for T-S-4 / T-A9-11
     const preUser = await newUser();
@@ -268,6 +296,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
 
     // every later migration, in production order
     for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+    assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
+    earlyWriterInstalled = true;
     const gateway=await connect();
     await gateway.query('set session authorization authenticator');
     await setWorkerGatewayCaller(gateway);
@@ -1423,8 +1453,8 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
       const user = await newUser();
       const project = async () => {
         const id = uid();
-        await admin.query('insert into public.clued_projects(id, user_id, name, normalized_name, context_key) values ($1, $2, $3, $3, $4)',
-          [id, user, `p-${id.slice(0, 8)}`, `project:${id}`]);
+        await withOwnerWriter(user, () => admin.query('insert into public.clued_projects(id, user_id, name, normalized_name, context_key) values ($1, $2, $3, $3, $4)',
+          [id, user, `p-${id.slice(0, 8)}`, `project:${id}`]));
         return id;
       };
       const p1 = await project();

@@ -1088,8 +1088,42 @@ test('Information Flow S4: Context Policy, service Compiler and MSCP manifests',
       assert.equal((await manifest(e05Manifest)).token_measurement, 'not_measured');
       // The owner reduces the Binding (Native authorization management).
       await as(fresh(userId));
-      await human.query('select public.clued_authorization_manage_v12($1)', [{ op: 'reduce',
-        binding_id: approved.binding_id, base_version: approved.version, selected: [scopeEntry(p5a)] }]);
+      const manage = async (input) => (await human.query('select public.clued_authorization_manage_v12($1) v',
+        [input])).rows[0].v;
+      const authorizationView = async () => (await manage({ op: 'list' })).bindings
+        .find((binding) => binding.binding_id === approved.binding_id);
+      const currentAuthorization = await authorizationView();
+      assert.equal(currentAuthorization.selection_format, 'sources_v1');
+      const exactSource = (scope) => currentAuthorization.sources.filter((source) => source.kind === 'direct'
+        && source.contributions.length === 1 && source.contributions[0].resource_kind === 'scope'
+        && source.contributions[0].resource_id === scope && source.contributions[0].environment === 'canonical');
+      assert.equal(exactSource(p5a).length, 1);
+      assert.equal(exactSource(p5b).length, 1);
+      const [sourceA] = exactSource(p5a), [sourceB] = exactSource(p5b);
+      const bindingAndAuthorization = async () => (await admin.query(`select to_jsonb(b) binding,to_jsonb(a) authorization
+        from public.clued_agent_bindings b join clued_private.authorizations_v12 a on a.binding_id=b.id
+        where b.id=$1`, [approved.binding_id])).rows[0];
+      const beforeFlat = await bindingAndAuthorization();
+      await assert.rejects(manage({ op: 'reduce', binding_id: approved.binding_id,
+        base_version: currentAuthorization.version, selected: [scopeEntry(p5a)] }),
+      (error) => error.code === '22023' && error.message === 'authorization_source_selection_required_sources_v1');
+      assert.deepEqual(await bindingAndAuthorization(), beforeFlat, 'rejected flat reduction changes no Binding or Authorization version or body');
+      assert.deepEqual(await authorizationView(), currentAuthorization, 'rejected flat reduction changes no source, grant or limit DTO');
+      // Omitted sources keep their consent. Revoke the exact B source using
+      // its actual Native identity/version rather than resubmitting projection A.
+      const reduced = await manage({ op: 'reduce', binding_id: approved.binding_id,
+        base_version: currentAuthorization.version, selection_format: 'sources_v1',
+        sources: [{ source_id: sourceB.source_id, base_version: sourceB.version, action_cap: [] }], exceptions: [] });
+      assert.equal(reduced.binding_id, approved.binding_id);
+      assert.equal(Number(reduced.version), Number(currentAuthorization.version) + 1);
+      assert.deepEqual(reduced.selected.map((entry) => entry.resource_id), [p5a]);
+      const afterReduction = await authorizationView();
+      assert.equal(afterReduction.selection_format, 'sources_v1');
+      assert.deepEqual(afterReduction.sources.find((source) => source.source_id === sourceA.source_id), sourceA,
+        'the unsubmitted A source retains its complete identity, version and consent DTO');
+      assert.equal(afterReduction.sources.some((source) => source.source_id === sourceB.source_id), false);
+      assert.deepEqual(afterReduction.grants.map((entry) => entry.resource_id), [p5a], 'Native effective grants retain only A');
+      assert.deepEqual(afterReduction.overrides, currentAuthorization.overrides, 'source removal invents no precise override');
       const e05After = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawAuthorized),
         'E2E-05 after');
       assert.deepEqual(e05After.pack.scopes, [p5a], 'the next compile omits the reduced scope');
