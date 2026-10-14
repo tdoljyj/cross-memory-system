@@ -1269,7 +1269,7 @@
     },
     {
       "name": "clued_record_list",
-      "description": "Read canonical records at the Global level or for one effective project. By default, only records proven current by the shared server Currentness Core are returned; an active Event remains a separate search_context current source. Set include_history=true explicitly for historical or diagnostic records, which are not authoritative current rows. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id. Opted-in Tasks additionally return task_workflow metadata (the server goal_version, definition, delivery_refs and authorized file locators/Receipts). Each linked source is permission-checked again; an inaccessible source stays unknown. This projection grants no additional read or execution authority. Required Clued scope: context:read.",
+      "description": "Read canonical records at the overall planning level (compatible level=global) or for one effective project. By default, only records proven current by the shared server Currentness Core are returned; an active Event remains a separate search_context current source. Set include_history=true explicitly for historical or diagnostic records, which are not authoritative current rows. Read overall planning priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id. Opted-in Tasks additionally return task_workflow metadata (the server goal_version, definition, delivery_refs and authorized file locators/Receipts). Each linked source is permission-checked again; an inaccessible source stays unknown. This projection grants no additional read or execution authority. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -1282,7 +1282,8 @@
               "global",
               "project"
             ],
-            "default": "global"
+            "default": "global",
+            "description": "Use global for overall planning, or project for one effective project."
           },
           "project_id": {
             "type": "string",
