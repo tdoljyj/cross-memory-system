@@ -5,6 +5,7 @@ import { type Session } from "@supabase/supabase-js";
 import { supabase, restoreBrowserSession } from "./supabase-browser";
 import Link from "next/link";
 import ImprintPanel from "./imprints/ImprintPanel";
+import { NativeReadFailure, readNativeJson, runNativeRead } from "./native-read-recovery";
 import {
   formatRecordTime,
   presentCluedLogCard,
@@ -124,6 +125,9 @@ const copy = {
     addingProject: "Adding…",
     projectList: "Your projects",
     noProjects: "No projects yet.",
+    projectsLoading: "Reading projects…",
+    projectsReadUnknown: "The project list could not be confirmed. This does not mean there are no projects.",
+    retryProjectRead: "Read projects again",
     archiveProject: "Archive",
     projectError: "The project change was not confirmed. Your input is kept; please try again.",
     progressNotStarted: "Not started",
@@ -248,6 +252,9 @@ const copy = {
     addingProject: "正在添加…",
     projectList: "你的项目",
     noProjects: "暂无项目。",
+    projectsLoading: "正在读取项目…",
+    projectsReadUnknown: "项目列表尚未读到，不能据此判断没有项目。",
+    retryProjectRead: "重新读取项目",
     archiveProject: "归档",
     projectError: "项目变更尚未确认，已保留输入，请重试。",
     progressNotStarted: "未开始",
@@ -357,15 +364,18 @@ export default function Home() {
   const [minimumPasswordError, setMinimumPasswordError] = useState<number>();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsOwner, setProjectsOwner] = useState<object | null>(null);
-  const projectSelectionKey = JSON.stringify([session?.user.id, session?.access_token]);
+  const [projectReload, setProjectReload] = useState(0);
+  const projectSelectionKey = JSON.stringify([session?.user.id, session?.access_token, view, projectReload]);
   const projectSelectionToken = useMemo(() => ({ key: projectSelectionKey }), [projectSelectionKey]);
-  const visibleProjects = session && projectsOwner === projectSelectionToken ? projects : [];
+  const projectsConfirmed = !!session && view === "account" && projectsOwner === projectSelectionToken;
+  const visibleProjects = projectsConfirmed ? projects : [];
   const projectActor = useRef({ subject: "", token: "", epoch: 0 });
   const projectReadGeneration = useRef(0);
-  const [projectReload, setProjectReload] = useState(0);
   const [projectName, setProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectError, setProjectError] = useState(false);
+  const [projectReadError, setProjectReadError] = useState<object | null>(null);
+  const projectReadFailed = projectReadError === projectSelectionToken;
   const pendingProjectCreate = useRef<{ subject: string; name: string; body: string } | null>(null);
 
   function observeProjectSession(next: Session | null) {
@@ -381,6 +391,7 @@ export default function Home() {
       setProjects([]);
       setProjectBusy(false);
       setProjectError(false);
+      setProjectReadError(null);
       if (pendingProjectCreate.current?.subject !== subject) pendingProjectCreate.current = null;
     }
   }
@@ -463,38 +474,39 @@ export default function Home() {
   useEffect(() => {
     if (!session || view !== "account") return;
     let cancelled = false;
+    const controller = new AbortController();
     const readGeneration = ++projectReadGeneration.current;
     const epoch = projectActor.current.epoch;
     const subject = session.user.id, token = session.access_token;
     const selection = projectSelectionToken;
-    const current = () => !cancelled && projectReadGeneration.current === readGeneration && projectActor.current.epoch === epoch
-      && projectActor.current.subject === subject && projectActor.current.token === token;
-    Promise.allSettled([
-      fetch("/v1/projects", {
-        headers: { authorization: `Bearer ${session.access_token}` },
-      }).then(async (response) => {
-        if (!response.ok) throw new Error("project-list-failed");
-        const result = await response.json() as { projects?: Project[] };
-        if (!Array.isArray(result.projects) || !result.projects.every(project => project && typeof project.id === "string" && typeof project.name === "string")) {
-          throw new Error("invalid-project-list");
-        }
-        return { projects: result.projects };
-      }),
-    ])
-      .then(([projectResult]) => {
+    const current = () => !cancelled && !controller.signal.aborted && projectReadGeneration.current === readGeneration
+      && projectActor.current.epoch === epoch && projectActor.current.subject === subject && projectActor.current.token === token;
+    void runNativeRead("projects.list", async ({ signal }) => {
+      const response = await fetch("/v1/projects", {
+        headers: { authorization: `Bearer ${token}` }, cache: "no-store", signal,
+      });
+      const result = await readNativeJson(response) as { projects?: Project[] } | null;
+      if (!result || !Array.isArray(result.projects) || !result.projects.every(project => project
+        && typeof project.id === "string" && typeof project.name === "string")) {
+        throw new NativeReadFailure({ category: "payload", phase: "payload", status: response.status, type: "PayloadError" });
+      }
+      return result.projects;
+    }, { isCurrent: current, signal: controller.signal })
+      .then(rows => {
         if (!current()) return;
-        if (projectResult.status === "fulfilled") {
-          setProjects(projectResult.value.projects);
-          setProjectsOwner(selection);
-          setProjectError(false);
-        } else {
-          setProjects([]);
-          setProjectsOwner(null);
-          setProjectError(true);
-        }
+        setProjects(rows);
+        setProjectsOwner(selection);
+        setProjectReadError(null);
+      })
+      .catch(() => {
+        if (!current()) return;
+        setProjects([]);
+        setProjectsOwner(null);
+        setProjectReadError(selection);
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [session, view, projectSelectionToken, projectReload]);
 
@@ -810,7 +822,7 @@ export default function Home() {
       scope: recordLevel === "project" ? `project:${recordProjectId}` : "global",
       record_type: recordView,
       source_refs: [],
-      source_unavailable_reason: "Direct user entry in Clued",
+      source_unavailable_reason: "Direct user entry in Kooyumi",
       mutation: {
         title: recordTitle.trim(),
         content: recordContent.trim(),
@@ -821,7 +833,7 @@ export default function Home() {
       authority: "user_explicit",
       user_confirmed: true,
       confidence: 1,
-      confidence_reason: "Direct user entry in Clued",
+      confidence_reason: "Direct user entry in Kooyumi",
     };
     if (pendingRecordCreate.current?.key !== recordCreateKey) {
       pendingRecordCreate.current = { key: recordCreateKey, body: JSON.stringify(input) };
@@ -1076,10 +1088,14 @@ export default function Home() {
                   </button>
                 </form>
                 {projectError && <p className="notice error">{t.projectError}</p>}
+                {!projectsConfirmed && !projectReadFailed && <p className="notice" role="status">{t.projectsLoading}</p>}
+                {projectReadFailed && <p className="notice error" role="alert">{t.projectsReadUnknown}
+                  <button type="button" onClick={() => setProjectReload(value => value + 1)}>{t.retryProjectRead}</button>
+                </p>}
                 <div className="project-columns">
                   <section className="project-group">
-                      <h4>{t.projectList}<span>{visibleProjects.length}</span></h4>
-                      {visibleProjects.length === 0 ? <p className="empty-bindings">{t.noProjects}</p> : visibleProjects.map((project) => (
+                      <h4>{t.projectList}<span>{projectsConfirmed ? visibleProjects.length : "—"}</span></h4>
+                      {projectsConfirmed && visibleProjects.length === 0 ? <p className="empty-bindings">{t.noProjects}</p> : visibleProjects.map((project) => (
                         <article className="project-item" key={project.id}>
                           <div>
                             <strong>{project.name}</strong>
