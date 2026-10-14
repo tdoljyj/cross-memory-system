@@ -1,5 +1,11 @@
 """Observed caller Source tests: finite Python children and hypothetical pins only."""
+import ast
 import builtins
+from datetime import datetime, timezone
+import json
+import math
+import queue
+import threading
 import copy
 import hashlib
 import importlib.util
@@ -299,3 +305,138 @@ print('ok')
             run.assert_not_called()
         self.assertFalse(Path(self.plan["observation_path"]).exists())
 
+
+
+class Clock:
+    now = 100.0
+    def monotonic(self):
+        return self.now
+
+
+class Stream:
+    closed = False
+    def fileno(self):
+        return 1
+    def close(self):
+        self.closed = True
+
+
+def isolated_candidate(transport):
+    # Only compile the timing helpers and execution function. All process/file/
+    # validation boundaries are explicit in-memory technical stubs; no provider.
+    tree = ast.parse((S_PATH).read_bytes())
+    names = {"require", "_capture_provider_timepoint", "_provider_timing_observation", "execute_observed_completion"}
+    selected = ast.Module(body=[node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names], type_ignores=[])
+    clock, stream = Clock(), Stream()
+    phases = []
+    legacy = types.SimpleNamespace(time=clock, CLEANUP_RESERVE_SECONDS=15,
+        digest=lambda value: json.dumps(value, sort_keys=True), verify_file=lambda *_: None,
+        clean_environment=lambda: {})
+    importer = builtins.__import__
+    def local_import(name, *args, **kwargs):
+        if name == "msvcrt":
+            return types.SimpleNamespace(get_osfhandle=lambda _: 1)
+        return importer(name, *args, **kwargs)
+    ns = {"__builtins__": dict(vars(builtins), __import__=local_import), "copy": copy, "datetime": datetime,
+          "timezone": timezone, "math": math, "queue": queue, "threading": threading,
+          "os": types.SimpleNamespace(name="nt"), "legacy": legacy, "_CLOCK_NOT_READ": object(),
+          "Path": lambda _: types.SimpleNamespace(open=lambda _: stream),
+          "validate_plan": lambda *_: None, "_opened_identity": lambda _: {"size": 0, "links": 1},
+          "command": lambda *_: ["technical-in-memory-transport"],
+          "_capture_observation": lambda *_: {"complete": True}}
+    ns["_transport"] = lambda *args: transport(clock, *args)
+    exec(compile(selected, "isolated_timing_candidate", "exec"), ns)
+    def boundary(phase, *_):
+        phases.append(phase)
+        clock.now += 7 if phase == "before_start" else 1
+    plan = {"deadline_monotonic": 300.0, "budget": {"control_wall_seconds": 225, "wall_seconds": 120,
+            "stdout_bytes": 32, "stderr_bytes": 32, "observation_bytes": 32}, "runtime_files": [],
+            "model": {}, "prompt": {}, "output_schema": {}, "observation_path": "technical-only",
+            "working_directory": "technical-only"}
+    return ns, plan, boundary, phases, stream
+
+
+class ProviderTimingChecks(unittest.TestCase):
+    def test_before_start_cost_is_included_repeated_check_does_not_reset_deadline(self):
+        captured = []
+        def transport(clock, argv, cwd, env, deadline, limits, check, stream):
+            captured.append(deadline)
+            check("before_start")
+            check("before_resume")
+            clock.now += 40
+            check("before_start")
+            return {"outcome": "PROCESS_EXIT", "returncode": 0, "owned_cleanup_verified": True}
+        ns, plan, boundary, phases, stream = isolated_candidate(transport)
+        result = ns["execute_observed_completion"](plan, boundary=boundary)
+        self.assertEqual(captured, [224.0])  #104+120, excludes no control time.
+        self.assertEqual(phases.count("before_start"), 1)
+        timing = result["provider_timing_observation"]
+        self.assertEqual(timing["started"]["monotonic_seconds"], 104.0)
+        self.assertEqual(timing["transport_settled"]["monotonic_seconds"], 152.0)
+        self.assertEqual(timing["monotonic_elapsed_ms"], 48000.0)
+        self.assertEqual(result["elapsed_seconds"], 52.0)
+        self.assertEqual(result["elapsed_seconds_scope"], "WHOLE_OBSERVED_EXECUTION_ENTRY")
+        self.assertIsNone(result["usage"])
+        self.assertFalse(result["model_output_validated"])
+        self.assertIsNone(timing["adopted_v2_usage"])
+        self.assertEqual(timing["authority_effect"], "NONE")
+        self.assertTrue(stream.closed)
+
+    def test_expired_repeated_before_start_is_not_renewed_by_timing_capture(self):
+        def transport(clock, argv, cwd, env, deadline, limits, check, stream):
+            self.assertEqual(deadline, 224.0)
+            clock.now = deadline
+            check("before_start")
+            self.fail("expired original deadline was renewed")
+        ns, plan, boundary, phases, stream = isolated_candidate(transport)
+        with self.assertRaisesRegex(ValueError, "BOUNDARY_DEADLINE"):
+            ns["execute_observed_completion"](plan, boundary=boundary)
+        self.assertEqual(phases.count("before_start"), 1)
+        self.assertTrue(stream.closed)
+
+    def test_clock_failures_regressions_and_invalid_utc_stay_explicit(self):
+        ns, _, _, _, _ = isolated_candidate(lambda *_: None)
+        class BrokenDatetime(datetime):
+            @classmethod
+            def now(cls, _):
+                raise OSError("technical clock failure")
+        def fail_monotonic():
+            raise RuntimeError("technical clock failure")
+        ns["datetime"] = BrokenDatetime
+        ns["legacy"].time = types.SimpleNamespace(monotonic=fail_monotonic)
+        point = ns["_capture_provider_timepoint"]()
+        self.assertIsNone(point["monotonic_seconds"])
+        self.assertIsNone(point["utc_rfc3339"])
+        self.assertEqual(point["clock_errors"], ["MONOTONIC_READ_FAILED:RuntimeError", "UTC_READ_FAILED:OSError"])
+        timing = ns["_provider_timing_observation"](point, point)
+        self.assertFalse(timing["measurement_complete"])
+        self.assertIsNone(timing["monotonic_elapsed_ms"])
+        self.assertIsNone(timing["adopted_v2_usage"])
+        ns["datetime"] = datetime
+        for first, last in [
+            ({"monotonic_seconds": 10, "utc_rfc3339": "2031-01-01T00:00:02Z", "clock_errors": []},
+             {"monotonic_seconds": 9, "utc_rfc3339": "2031-01-01T00:00:01Z", "clock_errors": []}),
+            ({"monotonic_seconds": 10, "utc_rfc3339": "invalid", "clock_errors": []},
+             {"monotonic_seconds": 11, "utc_rfc3339": "invalid", "clock_errors": []})]:
+            timing = ns["_provider_timing_observation"](first, last)
+            self.assertFalse(timing["measurement_complete"])
+            self.assertTrue(timing["clock_errors"])
+            self.assertIsNone(timing["adopted_v2_usage"])
+        for value in (float("nan"), float("inf"), True):
+            self.assertIsNone(ns["_capture_provider_timepoint"](value)["monotonic_seconds"])
+
+    def test_existing_plan_command_transport_and_capture_functions_are_unchanged(self):
+        # Preserve the accepted protected helper bodies while adding clocks only
+        # in execute_observed_completion. Text digests are platform independent.
+        expected = {
+            "require": "208b5b2b2b4054dae0ef9fc405dff7e09333a576dd4b9bc7adbf3bd0b2638046",
+            "validate_plan": "966fbc3f00305c65c1483f497a9fd947079e7db9401d94bc7f52d0a54d875a41",
+            "command": "c51017f8b60dd6956d52ac92dd9de5ee0127ee7f5de196d4e30e14904ad04fd2",
+            "_opened_identity": "e36f5ab2ace0d7722af6a56e9ad0ac2b311718d96c5dc7a43d75d97cb983288c",
+            "_transport": "6e58afa18b7321e05dbabf2ae75c039d8590ce956c5df342ed3f09a0987b0342",
+            "_capture_observation": "464536a25f0cf13fdff584fa99fa27155bed67d4972e509d1cfa51e59b617b2e"}
+        source = S_PATH.read_text()
+        tree = ast.parse(source)
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        for name, digest in expected.items():
+            self.assertEqual(hashlib.sha256(ast.get_source_segment(source, functions[name]).encode()).hexdigest(), digest, name)
