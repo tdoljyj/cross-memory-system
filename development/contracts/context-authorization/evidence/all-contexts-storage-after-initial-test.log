@@ -37,9 +37,9 @@ run_started_utc=2026-10-14T09:03:54.7586710Z
 test at tests\all-contexts-authorization-locks-db.test.mjs:232:13
 ✖ retired project alias keeps its sealed source/OID/ACL; direct and legacy OAuth paths deny (129.8792ms)
   AssertionError [ERR_ASSERTION]: The input did not match the regular expression /legacy_oauth_requires_new_provider_reauthorization/. Input:
-  
+
   'error: permission denied for function clued_development_oauth_call_v14'
-  
+
       at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
       at async TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs:246:7)
       at async Test.run (node:internal/test_runner/test:1389:7)
@@ -68,10 +68,10 @@ test at tests\all-contexts-authorization-locks-db.test.mjs:295:13
 ✖ storage waiter holds no auth/session/issuer/attempt row lock and revalidates session expiry after the Owner wait (113.5591ms)
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
   + actual - expected
-  
+
   + 'credential_staged'
   - 'staged'
-  
+
       at TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs:314:14)
       at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
       at async Test.run (node:internal/test_runner/test:1389:7)
