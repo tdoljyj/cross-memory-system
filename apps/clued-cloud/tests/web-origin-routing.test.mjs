@@ -32,7 +32,7 @@ test("web alias never creates an OAuth issuer or accepts MCP and OAuth protocol 
 });
 
 test("existing consent and Google callback pages navigate to their original origin", async () => {
-  for (const path of ["/bindings", "/oauth/account", "/oauth/projects", "/oauth/connections", "/oauth/consent", "/storage/onboard", "/storage/google/callback", "/.well-known/oauth-authorization-server"]) {
+  for (const path of ["/bindings", "/oauth/account", "/oauth/projects", "/oauth/connections", "/oauth/consent", "/storage/onboard", "/storage/google/callback", "/.well-known/oauth-authorization-server", "/v1/continuity/bootstrap", "/clued-agent.md"]) {
     const response = await routeWebOrigin(new Request(web + path + "?state=test"), env, async () => { throw Error("compatibility page changed origin"); });
     assert.equal(response.status, 302);
     assert.equal(response.headers.get("location"), legacy + path + "?state=test");

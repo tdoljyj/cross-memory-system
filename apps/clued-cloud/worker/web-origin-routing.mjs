@@ -1,6 +1,7 @@
 const COMPATIBILITY_PAGES = new Set([
   "/bindings", "/oauth/account", "/oauth/projects", "/oauth/consent", "/oauth/connections",
   "/storage", "/storage/admin", "/storage/connections", "/storage/onboard", "/storage/google/callback",
+  "/v1/continuity/bootstrap", "/clued-agent.md",
 ]);
 
 function configuredOrigin(value) {
