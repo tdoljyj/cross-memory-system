@@ -19,11 +19,13 @@ import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } f
 import { createPdfExtractorCheckGate, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
 import { runStorageQueuedSweepScheduled } from "./storage-queued-dispatch";
 import { runStorageAccessDigestBackfillScheduled } from "./storage-access-digest-backfill";
+import { routeWebOrigin } from "./web-origin-routing.mjs";
 
 /** One per isolate: caches the last check result and allows one check in flight (StorageNormalUse §4.5). */
 const pdfExtractorCheck = createPdfExtractorCheckGate();
 
 interface Env extends ContinuityEnv, DelegatedOAuthEnv {
+  CLUED_WEB_ORIGINS?: string;
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
@@ -87,6 +89,8 @@ const legacyWorker = {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const webResponse = await routeWebOrigin(request, env, (next) => legacyWorker.fetch(next, env, ctx));
+    if (webResponse) return webResponse;
     if (delegatedOAuthEnabled(env)) {
       return handleDelegatedOAuth(request, env, ctx as globalThis.ExecutionContext, (next) => legacyWorker.fetch(next, env, ctx));
     }
