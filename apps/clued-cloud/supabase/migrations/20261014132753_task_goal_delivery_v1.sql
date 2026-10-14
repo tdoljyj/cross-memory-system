@@ -437,13 +437,14 @@ begin
   perform clued_private.task_goal_delivery_validate_v1(w);
   select * into r from public.clued_audit_receipts where id=new.receipt_id and user_id=new.user_id;
   for e in select value from jsonb_array_elements(w->'delivery_refs') loop
-    -- Existing refs may be retained as history even when their source is no
-    -- longer readable. Cancellation/archive/goal edits must remain possible.
+    -- Only changed refs require reference admission. Unchanged history cannot
+    -- block completion; its current required/condition eligibility is checked
+    -- freshly by the completion projection below, including Storage access.
     previous_ref:=null;
     if TG_OP='UPDATE' then select value into previous_ref from jsonb_array_elements(
       coalesce(old.type_fields->'task_workflow'->'delivery_refs','[]'::jsonb))
       where value->>'deliverable_id'=e->>'deliverable_id'; end if;
-    if previous_ref=e and not (new.lifecycle_status='completed' and old.lifecycle_status is distinct from 'completed') then continue; end if;
+    if previous_ref=e then continue; end if;
     select * into j from clued_private.storage_jobs_v1 where owner_id=new.user_id and job_id=(e->>'job_id')::uuid;
     select * into p from clued_private.resource_center_profiles_v1 where id=(select profile_id
       from clued_private.storage_connections_v1 where id=j.connection_id and owner_id=new.user_id) and user_id=new.user_id;

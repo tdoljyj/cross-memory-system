@@ -257,7 +257,7 @@ function definitionError(definition: Definition) {
   return "";
 }
 function driveFileUrl(providerId: unknown) {
-  return typeof providerId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(providerId)
+  return typeof providerId === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(providerId)
     ? "https://drive.google.com/file/d/" + providerId + "/view" : null;
 }
 function fileLink(delivery: Delivery) {

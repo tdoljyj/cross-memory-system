@@ -224,6 +224,22 @@ test('workflow: malformed provider file identity cannot generate an apparently v
   assert.ok(f.text().includes('返回结果无法核实')); assert.ok(!f.nodes('a').some(node => node.props.href === 'https://drive.google.com/file/d/file/../../foreign/view'));
 });
 
+for (const length of [129, 160]) {
+  test('workflow: registry-valid ' + length + '-character Drive identity retains its exact HTTPS link', async t => {
+    const f = fixture(); t.after(() => f.unmount()); const providerId = 'A'.repeat(length), link = 'https://drive.google.com/file/d/' + providerId + '/view';
+    await loaded(f, workflowRead(eligibleWorkflow({ deliveries: [proof({ provider_file_id: providerId, link })] })));
+    assert.ok(!f.text().includes('返回结果无法核实')); assert.ok(f.text().includes('当前完成条件已满足'));
+    assert.ok(f.nodes('a').some(node => node.props.href === link));
+  });
+}
+
+test('workflow: over-limit 161-character Drive identity remains unknown', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const providerId = 'A'.repeat(161), link = 'https://drive.google.com/file/d/' + providerId + '/view';
+  await loaded(f, workflowRead(eligibleWorkflow({ deliveries: [proof({ provider_file_id: providerId, link })] })));
+  assert.ok(f.text().includes('返回结果无法核实')); assert.ok(!f.text().includes('当前完成条件已满足'));
+  assert.ok(!f.nodes('a').some(node => node.props.href === link));
+});
+
 test('workflow: verified legacy MIME remains unknown instead of invented', async t => {
   const f = fixture(); t.after(() => f.unmount()); await loaded(f, workflowRead(eligibleWorkflow({ deliveries: [proof({ mime_type: null })] })));
   assert.ok(f.text().includes('文件类型尚未核验'));

@@ -601,6 +601,55 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
       assert.equal(historical.committed_versions[id], Number(before.version));
       assert.equal(historical.event_ids.length, 1);
     });
+    await suite.test('an unavailable old-goal optional attachment cannot block a fresh required Global delivery', async () => {
+      const sourceScope = 'project:' + otherProject, target = await registeredRoot();
+      const client = await approvedClient(target, ['global', scope, sourceScope]), gateway = await connect();
+      await setWorkerGatewayCaller(gateway);
+      const required = await file(), optional = await file({ p: otherProject });
+      const readyId = await put({ scope: 'global' }), blockedId = await put({ scope: 'global' });
+      const definition = (needsAttachment, revised = false) => goal({
+        goal: revised ? 'Deliver the revised report; prior attachment is historical' : 'Deliver the report with an optional attachment',
+        deliverables: [{ id: 'report', label: 'Required report', required: true },
+          { id: 'attachment', label: 'Optional attachment', required: false }],
+        conditions: [{ id: 'report_version', kind: 'file_integrity', text: 'Exact required report version', deliverable_id: 'report' },
+          ...(needsAttachment ? [{ id: 'attachment_version', kind: 'file_integrity', text: 'Attachment is an explicit condition', deliverable_id: 'attachment' }] : [])]
+      });
+      for (const [id, needsAttachment] of [[readyId, false], [blockedId, true]]) {
+        await setGoal(id, definition(needsAttachment));
+        await bind(id, required.job);
+        const original = await read(id);
+        assert.equal((await call({ action: 'bind_delivery', id, base_record_version: original.record_version,
+          goal_version: original.task_workflow.goal_version, deliverable_id: 'attachment', job_id: optional.job,
+          idempotency_key: uuid() })).status, 'committed');
+        assert.equal((await setGoal(id, definition(needsAttachment, true))).status, 'committed');
+        assert.equal((await bind(id, required.job)).status, 'committed');
+      }
+      await admin.query("delete from clued_private.authorization_entries_v12 where binding_id=$1 and resource_kind='scope' and resource_id=$2", [client.id, sourceScope]);
+      await admin.query("update public.clued_projects set lifecycle_status='completed',progress_status='completed' where id=$1", [otherProject]);
+      const ready = await read(readyId);
+      assert.equal(ready.task_workflow.completion.eligible, true, JSON.stringify(ready.task_workflow));
+      const attachment = ready.task_workflow.deliveries.find((d) => d.deliverable_id === 'attachment');
+      assert.deepEqual(attachment, { deliverable_id: 'attachment', status: 'unknown', reason: 'delivery_unavailable' });
+      assert.notEqual(ready.task_workflow.delivery_refs.find((r) => r.deliverable_id === 'attachment').goal_version,
+        ready.task_workflow.goal_version);
+      assert.equal((await read(blockedId)).task_workflow.completion.eligible, false,
+        'an optional item tied to a file_integrity condition remains mandatory');
+      const close = async (id) => {
+        const t = await stored(id);
+        return (await gateway.query('select public.clued_record_mutate($1,$2) v', [client.token, {
+          operation: 'close', id, base_version: t.version, scope: 'global', record_type: 'task', record_schema_version: 1,
+          lifecycle_status: 'completed', authority: 'observed', confidence_reason: 'Current required delivery has exact persisted proof',
+          mutation: { closure_summary: 'Required report completed; unavailable historical optional attachment is not a condition' },
+          idempotency_key: uuid()
+        }])).rows[0].v;
+      };
+      rejected(await close(blockedId), 'task_completion_checks_failed');
+      const finished = await close(readyId);
+      assert.equal(finished.status, 'committed', JSON.stringify(finished));
+      assert.equal((await stored(readyId)).lifecycle_status, 'completed');
+      assert.equal((await stored(blockedId)).lifecycle_status, 'active');
+      assert.equal((await stored(readyId)).type_fields.task_workflow.delivery_refs.length, 2, 'historical optional ref is retained');
+    });
     await suite.test('Global Task cancellation/archive preserve historical refs after source access disappears', async () => {
       const target = await registeredRoot(), client = await approvedClient(target, ['global', scope]), gateway = await connect();
       await setWorkerGatewayCaller(gateway);
@@ -620,7 +669,7 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
       };
       assert.equal((await close(first, 'cancelled')).status, 'committed');
       assert.equal((await close(second, 'archived')).status, 'committed');
-      rejected(await close(third, 'completed'), 'task_delivery_reference_unavailable');
+      rejected(await close(third, 'completed'), 'task_completion_checks_failed');
       const updatedGoal = await setGoal(third, goal({ goal: 'Revised goal retains prior file refs as history' }));
       assert.equal(updatedGoal.status, 'committed', JSON.stringify(updatedGoal));
       // Project closure also makes the file's source unavailable to completion.
