@@ -59,6 +59,11 @@ test('the tool is advertised only behind CLUED_OWNER_REQUESTS_V1, with context:r
   assert.deepEqual(tool._meta['clued/requiredScopes'], ['context:read']);
   assert.match(tool.description, /Required Clued scope: context:read\.$/);
   assert.match(tool.description, /connection\.permission/);
+  assert.match(tool.description, /permission:contexts:\*\/full/);
+  assert.match(tool.description, /For this new contexts:\* syntax only, developer means read\/write/);
+  assert.match(tool.description, /project:\* keeps its original meaning/);
+  assert.match(tool.description, /does not include shared projects automatically/);
+  assert.match(tool.description, /Existing exact restrictions and revocations remain/);
   assert.match(tool.description, /Other actions require context:write\./);
   assert.match(tool.description, /cannot approve/);
   assert.equal(tool.annotations.readOnlyHint, false);
@@ -107,6 +112,25 @@ test('create goes to clued_owner_request_v1 with the Binding hash and returns an
     assert.deepEqual(calls[0].body.p_input, args);
     assert.equal(result.structuredContent.request.confirm_url, `https://clued.test/confirm/${REQUEST_ID}`);
     assert.equal(result.structuredContent.request.user_id, undefined, 'identifiers are sanitized');
+  } finally { restore(); }
+});
+
+test('all-contexts permission requests stay pending on the requesting connection and preserve the exact macro', async () => {
+  const worker = await loadContinuityWorker();
+  const args = { action: 'connection.permission', resources: ['permission:contexts:*/full'],
+    idempotency_key: 'all-contexts-native-consent-1', session_ref: 'owner-current-host' };
+  const { calls, restore } = mockFetch(() => Response.json({ status: 'committed', replayed: false,
+    receipt_id: 'r-all-contexts', request: { ...publicRequest(), action: args.action, resources: args.resources } }));
+  try {
+    const response = await worker.fetch(mcp(bindingToken, TOOL, args), enabled, ctx);
+    const result = (await response.json()).result;
+    assert.equal(result.isError, false);
+    assert.equal(calls.length, 1, 'the request asks for consent; it does not approve or reconnect');
+    assert.equal(calls[0].rpc, 'clued_owner_request_v1');
+    assert.deepEqual(calls[0].body.p_input, args);
+    assert.match(calls[0].body.p_token_hash, /^[0-9a-f]{64}$/);
+    assert.equal(result.structuredContent.request.status, 'pending');
+    assert.equal(result.structuredContent.request.confirm_url, `https://clued.test/confirm/${REQUEST_ID}`);
   } finally { restore(); }
 });
 

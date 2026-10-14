@@ -76,10 +76,10 @@ test('create selects an existing owned project, uses current human token, and co
  const input=JSON.parse(f.requests[2].options.body);
  assert.deepEqual(Object.keys(input).sort(),['environment','idempotency_key','name','op','project_id']);
  assert.equal(input.project_id,'project-A');assert.equal(input.environment,'test');assert.equal(input.op,'context_create');
- f.respond(2,{status:'committed',result:context});await f.settle();assert.ok(!f.text().includes('已创建开发上下文。'));
+ f.respond(2,{status:'committed',result:context});await f.settle();assert.ok(!f.text().includes('已创建上下文。'));
  assert.equal(JSON.parse(f.requests[3].options.body).op,'owner_list');
  f.respond(3,{...listing,contexts:[context]});await f.settle();
- assert.ok(f.text().includes('已创建开发上下文。'));assert.ok(f.text().includes('Development notes'));assert.equal(f.storage.size,0);
+ assert.ok(f.text().includes('已创建上下文。'));assert.ok(f.text().includes('Development notes'));assert.equal(f.storage.size,0);
 });
 
 test('unknown create survives reload and repeats the exact original operation without another key',async t=>{
@@ -90,20 +90,20 @@ test('unknown create survives reload and repeats the exact original operation wi
  assert.equal(resumed.requests[1].options.body,original);
  resumed.respond(1,{status:'committed',result:context,replayed:true});await resumed.settle();
  resumed.respond(2,{...listing,contexts:[context]});await resumed.settle();assert.equal(storage.size,0);
- assert.ok(resumed.text().includes('已创建开发上下文。'));
+ assert.ok(resumed.text().includes('已创建上下文。'));
 });
 
 test('account change clears pending context UI and prevents an old create response claiming success',async t=>{
  const f=await ready(t);fill(f);create(f);await f.settle();
  f.emit('SIGNED_IN',session('other'));f.runTimers();assert.equal(f.requests[1].options.signal.aborted,true);
  f.respond(1,{status:'committed',result:context});await f.settle();
- assert.equal(f.requests.length,3);assert.ok(!f.text().includes('已创建开发上下文。'));assert.ok(!f.text().includes('Development notes'));
+ assert.equal(f.requests.length,3);assert.ok(!f.text().includes('已创建上下文。'));assert.ok(!f.text().includes('Development notes'));
  f.respond(2,{status:'ok',projects:[],contexts:[]});await f.settle();assert.ok(!f.text().includes('核对原操作'));
 });
 
 test('mismatched reloaded result does not claim success and blocks another creation',async t=>{
  const f=await ready(t);fill(f);create(f);await f.settle();
  f.respond(1,{status:'committed',result:context});await f.settle();f.respond(2,listing);await f.settle();
- assert.ok(!f.text().includes('已创建开发上下文。'));assert.ok(f.text().includes('创建结果尚未确认'));
+ assert.ok(!f.text().includes('已创建上下文。'));assert.ok(f.text().includes('创建结果尚未确认'));
  assert.equal(f.button('创建上下文').props.disabled,true);assert.equal(f.storage.size,1);
 });

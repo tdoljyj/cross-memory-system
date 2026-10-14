@@ -173,16 +173,33 @@ function actionText(view: Json | null | undefined, fallback?: unknown) {
   return String(view?.action ?? fallback ?? "");
 }
 const PERMISSION_ACTION = "connection.permission";
-const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执" };
-const CONTEXT_LABELS: Record<string, string> = { global: "个人记忆", profile: "个人资料" };
+const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执", feedback_submit: "提交反馈", reader: "只读", developer: "可编辑（新上下文策略）", full: "全部操作（本次可用）" };
+const ENVIRONMENT_LABELS: Record<string, string> = { test: "测试环境", preview: "预览环境", production: "生产环境" };
+const CONTEXT_LABELS: Record<string, string> = { global: "通用内容", profile: "个人资料", "contexts:*": "全部上下文（含以后新建的自有项目与上下文）", "project:*": "自有项目正式记录（含未来项目）" };
 function permissionText(context: string, name: unknown, action: string) {
   const label = typeof name === "string" && name ? name : CONTEXT_LABELS[context] ?? context;
-  return label + " → 正式记忆 → " + (ACTION_LABELS[action] ?? action);
+  return label + " → " + (ACTION_LABELS[action] ?? action);
 }
 function currentText(row: Json) {
   const id = String(row.resource_id ?? "");
-  const where = row.resource_kind === "scope" ? CONTEXT_LABELS[id] ?? id : id;
-  return where + "：" + list(row.actions).map(action => ACTION_LABELS[action] ?? action).join("、");
+  const where = row.resource_kind === "scope" ? CONTEXT_LABELS[id] ?? row.project_name ?? row.name ?? id
+    : String(row.context_name ?? row.name ?? id) + " · " + (ENVIRONMENT_LABELS[String(row.environment)] ?? String(row.environment ?? ""));
+  return String(where) + "：" + list(row.effective_actions ?? row.actions).map(action => ACTION_LABELS[action] ?? action).join("、");
+}
+
+function requiresContextCoverage(view: Json, request?: Json | null): boolean {
+  return view.action === PERMISSION_ACTION && [...list(view.resources), ...list(request?.resources)].some(resource => /^permission:contexts:\*\//.test(resource));
+}
+function contextCoverageValid(view: Json): boolean {
+  const coverage = object(view.context_coverage) ? view.context_coverage : null;
+  const connection = object(view.connection) ? view.connection : null;
+  const textArray = (value: unknown) => Array.isArray(value) && value.every(item => typeof item === 'string');
+  return !!coverage && !!connection && coverage.snapshot_complete === true && coverage.future_rule === 'owned_existing_and_future'
+    && Number.isSafeInteger(coverage.authorization_version) && Number(coverage.authorization_version) > 0
+    && coverage.authorization_version === connection.version && typeof connection.binding_id === 'string'
+    && textArray(coverage.requested_actions) && textArray(coverage.missing_actions) && Array.isArray(coverage.restricted_resources)
+    && Array.isArray(coverage.resources) && coverage.resources.every(row => object(row) && ['scope','context'].includes(String(row.resource_kind))
+      && typeof row.resource_id === 'string' && typeof row.environment === 'string' && textArray(row.actual_actions) && textArray(row.missing_actions));
 }
 
 export default function OwnerConfirmPage() {
@@ -377,6 +394,7 @@ export default function OwnerConfirmPage() {
           if (fresh.view_digest !== shown) throw new RequestFailure("请求内容有变化，请核对后再点批准。");
           target = fresh;
         }
+        if (requiresContextCoverage(target.view, request) && !contextCoverageValid(target.view)) throw new RequestFailure('全部上下文的覆盖、版本或限制预览不完整，请重新读取后再批准。');
         setPending(target); setIssued(null);
         const value = await rpc("clued_owner_grant_v1", { confirmation_token: target.confirmation_token, view_digest: target.view_digest });
         if (epoch.current !== generation) return;
@@ -500,6 +518,9 @@ export default function OwnerConfirmPage() {
   const connection = view && object(view.connection) ? view.connection : null;
   const permissions = view && Array.isArray(view.permissions) ? view.permissions.filter(object) : [];
   const existing = connection && Array.isArray(connection.current) ? connection.current.filter(object) : [];
+  const coverage = view && object(view.context_coverage) ? view.context_coverage : null;
+  const needsCoverage = !!view && requiresContextCoverage(view, request);
+  const incompleteCoverage = needsCoverage && (!view || !contextCoverageValid(view));
   // A bundle is listed side by side, the request on the page first.
   const items = view && members.length ? [{ id: requestId ?? "", view: view as Json | null },
     ...members.map(member => ({ id: member.id, view: member.issued?.view ?? null }))] : [];
@@ -615,9 +636,25 @@ export default function OwnerConfirmPage() {
               <dt>要加的权限</dt><dd><ul>{permissions.map(item => <li key={String(item.resource)}>
                 {permissionText(String(item.context ?? ""), item.context_name, String(item.action ?? ""))}</li>)}</ul></dd>
               <dt>它现在已有</dt><dd><ul>{existing.map(row => <li key={String(row.resource_kind) + ":" + String(row.resource_id)}>{currentText(row)}</li>)}</ul></dd>
+              {typeof connection?.version === 'number' && <><dt>授权版本</dt><dd>{String(connection.version)}</dd></>}
               {task && <><dt>任务</dt><dd>{String(task.title ?? "")}</dd></>}
               <dt>期限</dt><dd>{connection?.expires_at ? "跟这个连接一样，到 " + new Date(String(connection.expires_at)).toLocaleString() + " 为止" : "跟这个连接一样"}</dd>
-            </dl></section>}
+            </dl>
+            {needsCoverage && <section aria-label="全部上下文覆盖预览"><h3>实际覆盖与保留限制</h3>
+              {incompleteCoverage ? <p role="alert">覆盖、版本或限制预览不完整，暂时无法批准。请重新读取请求。</p> : <>
+                <p>包含通用内容、个人资料及以下自有项目正式记录和上下文。以后新建的自有项目与上下文自动包含；共享或受邀资源不自动加入。</p>
+                <p>本次申请：{list(coverage?.requested_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}。</p>
+                {list(coverage?.missing_actions).length > 0 && <p>客户端未申请或无法增加：{list(coverage?.missing_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}。实际授权受限。</p>}
+                <ul>{(Array.isArray(coverage?.resources) ? coverage.resources.filter(object) : []).map(row => <li key={String(row.resource_kind) + ':' + String(row.resource_id) + ':' + String(row.environment)}>
+                  {currentText({ ...row, effective_actions: row.actual_actions })}
+                  {list(row.missing_actions).length > 0 && <p>缺项：{list(row.missing_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}</p>}
+                  {object(row.limits) && <details><summary>原限制保持</summary><pre>{JSON.stringify(row.limits, null, 2)}</pre></details>}
+                </li>)}</ul>
+                {Array.isArray(coverage?.restricted_resources) && coverage.restricted_resources.length > 0 && <details><summary>受限资源／精确例外</summary><pre>{JSON.stringify(coverage.restricted_resources, null, 2)}</pre></details>}
+                <p>本次宏授权保留现有精确拒绝和字段／历史／版本限制，不能顺带解除它们。</p>
+              </>}
+            </section>}
+            </section>}
           {view && !permission && <section aria-label="要批准什么"><h2>要批准什么</h2>
             <p className="context-muted">以下内容由 Kooyumi 生成，Agent 改不了。</p>
             <dl>
@@ -650,7 +687,7 @@ export default function OwnerConfirmPage() {
           {note && !admissionNote && <section aria-label="Agent 说明" className="owner-note"><h2>Agent 说明（未核实）</h2>
             <p className="context-muted">这段话是 Agent 自己写的，不改变上面要批准的内容。</p><p>{note}</p></section>}
           {!pending && <div className="owner-actions">
-            <button type="button" disabled={working || (items.length ? !picked.length || picked.some(item => !item.view) : !issued)}
+            <button type="button" disabled={working || incompleteCoverage || (items.length ? !picked.length || picked.some(item => !item.view) : !issued)}
               onClick={() => void approve()}>批准</button>
             <button type="button" disabled={working} onClick={() => void reject()}>拒绝</button>
           </div>}

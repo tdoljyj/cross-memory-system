@@ -59,6 +59,16 @@ test('connection permission requests: ask without the scope, Owner approves once
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort()) {
+      // The immutable closeout qualifies its original source bytes. Retain
+      // its real replay at that bounded chain, before authorized successors
+      // intentionally replace an early-entry legacy alias body.
+      if (name === '20261014044323_all_contexts_authorization_v2.sql') {
+        await assertGatewayCloseoutBoundary(admin);
+        const originalCatalog = await snapshotCallerCatalog(admin);
+        await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
+        await assertGatewayCloseoutBoundary(admin);
+        assert.deepEqual(await snapshotCallerCatalog(admin), originalCatalog, 'original closeout replay preserves its qualified source and ACL');
+      }
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -156,7 +166,7 @@ test('connection permission requests: ask without the scope, Owner approves once
     assert.equal(view.default_choice, 'once');
     assert.equal(view.view.action_title, '给发起请求的连接加权限');
     assert.deepEqual(view.view.permissions.map(({ context, context_name, action }) => [context, context_name, action]),
-      [['global', '个人记忆', 'write'], [P, 'M2', 'write']]);
+      [['global', '通用内容', 'write'], [P, 'M2', 'write']]);
     assert.equal(view.view.connection.binding_id, chatgpt);
     assert.equal(view.view.connection.client_name, 'chatgpt');
     assert.deepEqual(view.view.connection.current,
@@ -197,7 +207,8 @@ test('connection permission requests: ask without the scope, Owner approves once
     // The connection keeps its expiry; the change is audited and the grant used up.
     const audit = (await admin.query(`select operation,version from clued_private.authorization_audit_v12
       where binding_id=$1 order by recorded_at`, [chatgpt])).rows;
-    assert.deepEqual(audit, [{ operation: 'extend', version: '2' }]);
+    assert.ok(audit.some((row) => row.operation === 'sources_projection' && row.version === '1'));
+    assert.deepEqual(audit.filter((row) => row.operation === 'extend'), [{ operation: 'extend', version: '2' }]);
     assert.equal((await admin.query(`select clued_private.owner_grant_consume_v1($1,$2,'connection.permission',$3,null) v`,
       [owner, chatgpt, [`permission:${P}/write`]])).rows[0].v, null);
     // The gateway's status check reports the live scopes.
@@ -229,12 +240,10 @@ test('connection permission requests: ask without the scope, Owner approves once
       await assert.rejects(() => anon.query(`select clued_private.${fn}`, args), /permission denied/);
       await assert.rejects(() => human.query(`select clued_private.${fn}`, args), /permission denied/);
     }
-    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    // The complete successor chain keeps the qualified gateway/CI surface;
+    // the source-specific old closeout replay was tested at its own boundary.
     await assertGatewayCloseoutBoundary(admin);
-    const closedCatalog=await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
-    await assertGatewayCloseoutBoundary(admin);
-    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
+    assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => undefined);
     await server.stop().catch(() => undefined);

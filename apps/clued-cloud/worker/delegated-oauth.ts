@@ -193,7 +193,7 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
       const raw = await request.text();
       if (raw.length > 65536) return json({ error: '请求过大。' }, 413);
       input = JSON.parse(raw) as Json;
-      if (!(projects ? ['invite_inspect', 'invite_create', 'invite_accept', 'invite_revoke', 'member_reduce', 'member_revoke'] : ['revoke', 'reduce']).includes(String(input.op))) return json({ error: 'operation_not_allowed' }, 400);
+      if (!(projects ? ['invite_inspect', 'invite_create', 'invite_accept', 'invite_revoke', 'member_reduce', 'member_revoke'] : ['revoke', 'reduce', 'limit_confirmation_issue', 'limit_confirm']).includes(String(input.op))) return json({ error: 'operation_not_allowed' }, 400);
     }
     return json(await rpc(env, token, projects ? 'clued_project_access_v13' : 'clued_authorization_manage_v12', { p_input: input }));
   }

@@ -386,7 +386,7 @@ test('development mode shares eight views but isolates Native families, context 
   const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());
   assert.equal(f.calls[0].name, 'clued_development_imprint_read_v1'); assert.equal(f.calls[0].args.p_input.context_id, OTHER);
   await f.respond(0, page([developmentRecord({ history: [{ version: 1, body: { proposal: 'Earlier proposal' } }] })]));
-  assert.ok(f.text().includes('开发候选')); assert.ok(f.text().includes('原始种类：annotation')); assert.ok(f.text().includes('Earlier proposal'));
+  assert.ok(f.text().includes('候选内容')); assert.ok(f.text().includes('原始种类：annotation')); assert.ok(f.text().includes('Earlier proposal'));
   assert.ok(!f.nodes('form').some(node => node.props['aria-label'] === '保存普通印记'));
   assert.equal(f.nodes('input').filter(node => node.props.type === 'datetime-local').length, 0);
   assert.ok(!f.nodes('button').some(node => f.text(node).startsWith('读取来源:')));
@@ -408,7 +408,7 @@ test('development union uses source_kind plus ID, and Canonical task is distinct
   await f.respond(0, page([developmentRecord({ domains: ['work'] }), canonical]));
   assert.equal(f.nodes('article').length, 2); assert.deepEqual(f.nodes('article').map(node => node.props['data-source-kind']).sort(), ['canonical', 'development']);
   f.click('任务'); await f.respond(1, page([canonical], null, 'strict_current'));
-  assert.equal(f.nodes('article').length, 1); assert.ok(f.text().includes('Accepted project task')); assert.ok(!f.text(f.nodes('article')[0]).includes('开发候选'));
+  assert.equal(f.nodes('article').length, 1); assert.ok(f.text().includes('Accepted project task')); assert.ok(!f.text(f.nodes('article')[0]).includes('候选内容'));
   assert.equal(f.nodes('input').filter(node => node.props.type === 'datetime-local').length, 0);
 });
 
@@ -539,7 +539,7 @@ test('strict Task projection and missing/unrecognized browse semantics cannot by
 test('Dev candidates retain original qualification while Canonical unknown bodies require explicit diagnostic history', async t => {
   const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());
   await f.respond(0, { ...page([developmentRecord({ content: 'READABLE DEV CANDIDATE' })]), selection_complete: false, withheld_record_count: 1 });
-  assert.ok(f.text().includes('READABLE DEV CANDIDATE')); assert.ok(f.text().includes('开发候选')); assert.ok(f.text().includes('部分内容待核对'));
+  assert.ok(f.text().includes('READABLE DEV CANDIDATE')); assert.ok(f.text().includes('候选内容')); assert.ok(f.text().includes('部分内容待核对'));
   f.check('包含旧版本及待核对内容', true);
   const uncertain = record({ id: EVIDENCE, context_id: OTHER, source_kind: 'canonical', source_semantics: 'canonical_record',
     canonical_scope: 'project:' + PROJECT, record_currentness: 'UNKNOWN', authoritative: false, content: 'DIAGNOSTIC CANONICAL BODY' });
@@ -547,4 +547,12 @@ test('Dev candidates retain original qualification while Canonical unknown bodie
   assert.ok(f.text().includes('DIAGNOSTIC CANONICAL BODY')); assert.ok(f.text().includes('当前有效记录')); assert.equal(f.nodes('article').length, 2);
   const client = modules().load('imprint-client.ts');
   await assert.rejects(client.readImprints(async () => ({ data: page([uncertain]), error: null }), { view: 'all', scope: 'all', query: '', include_history: false, limit: 30, cursor: 0 }, OTHER), error => error.reason === 'unknown');
+});
+
+
+test('Immediate authoritative context is a qualified Record badge, not a ninth view or a promotion of candidates',async t=>{
+ const f=fixture();t.after(()=>f.unmount());await f.respond(0,page([record({authoritative:true,source_semantics:'canonical_record'})]));
+ assert.ok(f.text().includes('即时权威上下文'));assert.equal(f.nodes('button').filter(n=>n.props.role==='tab').length,8);
+ f.click('刷新');await f.respond(1,page([record({authoritative:false,record_currentness:'HISTORY'})]));
+ assert.ok(!f.text().includes('即时权威上下文'));assert.ok(f.text().includes('历史'));
 });

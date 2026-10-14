@@ -1,0 +1,56 @@
+UTC_START=2026-10-14T06:35:51.6020101Z
+▶ all-contexts sources, exact permission inheritance and real transaction barriers
+  ✔ eligible policy intersects requested scopes and preserves the API action vocabulary (61.0487ms)
+  ✔ one Native macro approval covers exact self-owned resources with no foreign or execution-policy shortcut (39.605ms)
+  ✔ same-Binding Owner upgrade preserves legacy baseline; removing macro restores only legacy read (142.4512ms)
+  ✔ new explicit Native consent really extends a read-only macro scope ceiling and its future resources (183.8279ms)
+  ✔ new Native policy consent renews an expired source within the unchanged Authorization hard expiry (130.3254ms)
+  ✔ fresh reader consent after expired full never revives old write/full and leaves a live independent source intact (155.8651ms)
+  ✔ specified exact Context and canonical project selections have independent boundaries (28.6136ms)
+  ✔ future Context and future Project inherit only the live self-owned macro (298.8603ms)
+  ✔ precise deny and existing history/field/version ceilings survive macro overlap and future refresh (433.9987ms)
+  ✔ single submitted macro materializes more than 100 real resources without a hidden truncation (330.8335ms)
+  ✔ management DTO exposes real activity, readable names and source-independent denial (132.603ms)
+  ✔ per-source expiry is checked at execution without read repair or killing a live independent source (93.8935ms)
+  ✔ revoked grants reopen only through exact Native old-to-new confirmation and all CAS values (105.7384ms)
+  ✔ historical exact action reduction survives upgrade, refresh and rotation until separate Native confirmation (342.3251ms)
+  ✔ canonical precise denial needs its own Native confirmation with no fabricated grant (228.0977ms)
+  ✔ precise confirmation binds Auth and exact limit versions and burns a stale token atomically (817.6624ms)
+  ✔ an invited Context is separate from the macro and keeps its exact original qualification (977.8919ms)
+  ✔ unupgraded v12 Headless rotation preserves legacy history, fields, expiry and unknown baseline provenance (274.6846ms)
+  ✔ Headless source rotation snapshots every source, exception and exact grant limit (1249.3016ms)
+  ✔ two real clients: approval first then Context creation observes the new policy after waiting (216.3841ms)
+  ✔ two real clients: Context creation first then approval observes the committed new resource (223.3289ms)
+  ✔ two real clients: Native permission approval and Context creation cannot form the old GrantLock/Binding cycle (257.3128ms)
+  ✔ unguarded inserts, fake GUC guard, stronger snapshot and private API calls fail closed (10.7965ms)
+✔ all-contexts sources, exact permission inheritance and real transaction barriers (13810.2932ms)
+✔ OAuth approval accepts lifetimes up to 365 days and refuses longer ones (6644.1165ms)
+✔ authorization roles: project:* covers the Owner's projects, including later ones; roles in requests (7661.0096ms)
+✔ connection permission requests: ask without the scope, Owner approves once, the same connection gains it (7613.6234ms)
+▶ Context v1.1 real PostgreSQL: production-m1
+  ✔ authorization/actual role boundaries and no automatic context authority (55.3489ms)
+  ✔ independent developer save then new user history with exact stable IDs (52.1932ms)
+  ✔ private audit isolation, atomicity, idempotency and concurrent record CAS (96.8002ms)
+  ✔ exact acceptance/publication approval, CAS concurrency and source invalidation (76.5045ms)
+  ✔ current Worker retires historical Context routes (130.5808ms)
+  ✔ feedback minimal disclosure, withdrawal, revocation/replay and freshness (16.9193ms)
+✔ Context v1.1 real PostgreSQL: production-m1 (6638.5014ms)
+▶ Context v1.1 real PostgreSQL: all-repository-migrations
+  ✔ authorization/actual role boundaries and no automatic context authority (50.8953ms)
+  ✔ independent developer save then new user history with exact stable IDs (46.1388ms)
+  ✔ private audit isolation, atomicity, idempotency and concurrent record CAS (85.7376ms)
+  ✔ exact acceptance/publication approval, CAS concurrency and source invalidation (71.6281ms)
+  ✔ current Worker retires historical Context routes (111.8414ms)
+  ✔ feedback minimal disclosure, withdrawal, revocation/replay and freshness (17.9741ms)
+✔ Context v1.1 real PostgreSQL: all-repository-migrations (5543.1427ms)
+✔ headless Binding issuance: Native two steps, least privilege, expiry, rotation (6647.2808ms)
+ℹ tests 42
+ℹ suites 0
+ℹ pass 42
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 55140.8811
+UTC_END=2026-10-14T06:36:46.9226056Z
+EXIT_CODE=0

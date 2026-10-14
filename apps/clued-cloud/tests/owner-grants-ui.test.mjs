@@ -57,7 +57,7 @@ function fixture(compiled, { id = REQUEST } = {}) {
   function render() { cursor = 0; root = exports.default({}); while (effects.length) effects.shift()(); return root; }
   function nodes(type, from = root) { const out = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit);
     if (!n || typeof n !== 'object') return; if (n.type === type) out.push(n); visit(n.props?.children); })(from); return out; }
-  function text(n = root) { if (Array.isArray(n)) return n.map(text).join(''); if (n == null || typeof n === 'boolean') return '';
+  function text(n) { if (arguments.length === 0) n = root; if (Array.isArray(n)) return n.map(text).join(''); if (n == null || typeof n === 'boolean') return '';
     return typeof n === 'object' ? text(n.props?.children ?? null) : String(n); }
   async function settle() { for (let i = 0; i < 12; i++) await Promise.resolve(); render(); }
   function emit(e, s) { authCallback(e, s); render(); }
@@ -177,8 +177,8 @@ test('a connection permission request: names each permission and the connection,
   await f.settle();
   const what = f.text(f.nodes('section').find(n => n.props['aria-label'] === '要批准什么'));
   assert.ok(what.includes('ChatGPT'));
-  assert.ok(what.includes('M2 → 正式记忆 → 新增和修改'));
-  assert.ok(what.includes('个人记忆：读取'));
+  assert.ok(what.includes('M2 → 新增和修改'));
+  assert.ok(what.includes('通用内容：读取'));
   assert.ok(what.includes('不用重新连接'));
   f.button('批准').props.onClick();
   assert.deepEqual(plain([f.calls[2].name, f.calls[2].args]),
@@ -931,4 +931,23 @@ test('a server without persistent state does not invent an enabled switch', asyn
     assert.equal(f.nodes('button').some(n => n.props.role === 'switch'), false);
     assert.ok(f.text().includes('暂时无法读取自动审批状态'));
   }
+});
+
+
+test('all-context upgrade requires a complete matching server coverage snapshot before any Native approval',async t=>{
+ for(const mode of ['complete','missing','stale']){
+  const f=fixture(CONFIRM);t.after(()=>f.unmount());f.emit('INITIAL_SESSION',session('owner'));
+  f.calls[0].resolve({data:{status:'ok',default_choice:'once',request:{...request(),action:'connection.permission',resources:['permission:contexts:*/full']}},error:null});await f.settle();
+  const resource={resource_kind:'context',resource_id:'context-test',environment:'test',context_name:'验收上下文',actual_actions:['read','write'],missing_actions:['close'],limits:{allowed_fields:['content']}};
+  const view={action:'connection.permission',resources:['permission:contexts:*/full'],choice:'once',connection:{binding_id:'same-binding',client_name:'ChatGPT',version:6,current:[]},
+   permissions:[{resource:'permission:contexts:*/full',context:'contexts:*',action:'full'}],context_coverage:{snapshot_complete:true,future_rule:'owned_existing_and_future',authorization_version:6,requested_actions:['read','write','close'],missing_actions:['audit'],resources:[resource],restricted_resources:[resource]}};
+  if(mode==='missing')delete view.context_coverage;if(mode==='stale')view.context_coverage.authorization_version=5;
+  f.calls[1].resolve({data:{status:'issued',confirmation_token:'same-binding-nonce',view_digest:'a'.repeat(64),expires_at:'2099-01-01T00:05:00Z',confirmation_view:view},error:null});await f.settle();
+  assert.equal(f.button('批准').props.disabled,mode!=='complete');
+  if(mode==='complete'){assert.ok(f.text().includes('验收上下文 · 测试环境'));assert.ok(f.text().includes('原限制保持'));}
+  f.button('批准').props.onClick();await f.settle();
+  if(mode==='complete'){assert.equal(f.calls[2].name,'clued_owner_grant_v1');
+   assert.deepEqual(plain(f.calls[2].args.p_input),{confirmation_token:'same-binding-nonce',view_digest:'a'.repeat(64)});}
+  else{assert.equal(f.calls.length,2,'missing or stale preview cannot invoke a grant');assert.ok(f.text().includes('预览不完整'));}
+ }
 });

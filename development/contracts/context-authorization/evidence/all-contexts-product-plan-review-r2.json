@@ -1,0 +1,338 @@
+{
+  "schema": "clued.context-authorization.product-plan-independent-review/1",
+  "revision": "r2",
+  "reviewed_at_utc": "2026-10-14T04:36:08Z",
+  "reviewer": {
+    "role": "non-author independent product-plan reviewer",
+    "subject_modified": false,
+    "independent_native_page_rerun": false,
+    "canonical_business_write": false,
+    "code_tests_or_ci_run": false
+  },
+  "subject": {
+    "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+    "version": "v0.1-r2",
+    "sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+    "status": "PROPOSAL",
+    "independently_observed_main": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "independently_observed_local_head": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "service_advertised_deployment_source": "8f960b5541e29ad279d4976f5c366ea4e1297ad4",
+    "full_text_read": true,
+    "hash_rechecked_unchanged_before_report": true
+  },
+  "predecessor_review": {
+    "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/all-contexts-product-plan-review.json",
+    "sha256": "b0f8ef0264962dfb13aacf34217e1e550532abbe66bdb66a4e617ec854d9a42e",
+    "subject_sha256": "9bcc661dccca9a4af1bf0c118168fb779138e59593027aee8fe2e2ad3df5fa0d",
+    "verdict": "FAIL",
+    "counts": {
+      "BLOCKER": 0,
+      "MAJOR": 2,
+      "MINOR": 2
+    },
+    "preserved": true
+  },
+  "authority": {
+    "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "task": {
+      "id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+      "version": 44
+    },
+    "owner_decision": {
+      "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+      "version": 4
+    },
+    "root_claim": {
+      "id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+      "fence": 6,
+      "lease_version": 2,
+      "status": "ACTIVE",
+      "expires_at": "2026-10-14T06:16:24.48484+00:00",
+      "coverage": "existing plan and review output; no duplicate Task or reviewer execution claim"
+    },
+    "independent_review": {
+      "enabled": true,
+      "version": 0,
+      "policy_version": 1,
+      "observed_from_fresh_resume_receipt": "5cd634c4-fddf-431f-94c5-e812848f4c1f"
+    },
+    "global_admission": {
+      "state": "CURRENT",
+      "receipt": "87840d92-06a4-4bbb-9b6d-af8d8b1ba95a"
+    },
+    "project_admission": {
+      "state": "CURRENT",
+      "receipt": "8dde13e5-2bc5-4275-9f8c-98b9d0519a1c"
+    },
+    "capture": "Root consolidates this review result under the existing Task. Reviewer makes no M1 review-result mutation."
+  },
+  "verdict": "PASS",
+  "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 0,
+    "MINOR": 0
+  },
+  "unresolved_findings": [],
+  "pass_rule": "No unresolved BLOCKER or MAJOR on this exact subject. PASS is an independent product-plan quality conclusion; it is not Owner acceptance, executable permission, code qualification, CI, migration, release or complete Native acceptance.",
+  "original_findings_disposition": [
+    {
+      "id": "P-M01",
+      "original_severity": "MAJOR",
+      "status": "RESOLVED",
+      "sections": [
+        "§1 lines18–35",
+        "§6 item8"
+      ],
+      "verified_change": "简单指定范围直接展示通用内容／个人资料复选框及项目分组；项目正式记录与具名上下文、精确环境独立选择；标题不授权限。首次、空选择、两个方向切换、预设重套、高级例外、账号／快照／版本变化已定义。",
+      "concrete_examples": "仅个人资料只读；仅项目正式记录可编辑；仅单个测试上下文可编辑。三个例子分别唯一推导scope/profile/canonical/read、scope/project:UUID/canonical/read+write、context/UUID/test/read+write，其他环境／资源／未来资源不隐式纳入。",
+      "limits": "描述是可实施选择规则，尚未运行改后UI。OAuth与Headless共用计算模块是后续实现要求。"
+    },
+    {
+      "id": "P-M02",
+      "original_severity": "MAJOR",
+      "status": "RESOLVED",
+      "sections": [
+        "§6.1 lines147–178",
+        "§7"
+      ],
+      "verified_change": "V01–V24逐项列适用阶段、E1精确观察案例和有限覆盖、复用或改后重跑、补证／NOT_VERIFIED。E1及原方案均绑定准确SHA，明确工程测试不替代真实页面证据。V16／V18／V19／V23直接受影响部分已进入本次验证。",
+      "completion_boundaries": "授权修复完成、首版八视图验收完成、原三阶段整体Task完成各有独立门。旧核心GO不会被放大，未支持来源／索引边界与Stage3增强保持明确。",
+      "accepted_identity_invariant": "V10表中Stage3处置指提炼／关联能力；已接受的同一Canonical身份和已有对象复用规则仍适用于当前引用。V22的首版手动来源关系正样本及V24对象独立性仍须补证，不能以Stage3未完成允许当前引用复制正文或重复事项。",
+      "limits": "24项处置齐全不等于24项已实际通过，历史正文与来源全文正样本仍是后续实际验收门。"
+    },
+    {
+      "id": "P-m01",
+      "original_severity": "MINOR",
+      "status": "RESOLVED",
+      "sections": [
+        "§5 lines119–125",
+        "§4.1 lines71–91"
+      ],
+      "verified_change": "旧连接确定显示范围与操作两轴，明确尚不包含项目用途上下文；新连接显示全部上下文含未来＋全部操作本次可用。摘要依effective能力和例外／限制，不能因宏存在称覆盖完整。",
+      "preview": "升级预览绑定同一客户端／Binding／Authorization版本，列旧→新具名资源／实际环境／未来规则、新增动作与scope缺项、期限及history/version/field差异。普通宏保持限制；放宽限制／撤销需另作Native精确确认和CAS。",
+      "limits": "一次可审升级是明确产品要求；本review未执行Owner确认或增加任何权限。"
+    },
+    {
+      "id": "P-m02",
+      "original_severity": "MINOR",
+      "status": "RESOLVED",
+      "sections": [
+        "§1 line11",
+        "§6.1 V18/V19"
+      ],
+      "verified_change": "Record谓词已限定适用类型；其他来源按类型化Authority／Currentness判定，缺能力UNKNOWN。active Event保持独立来源、阻挡／对账和吸收不退役规则；标识不宣称来源全量收齐。",
+      "name_and_push_boundary": "保留Owner最终名称即时权威上下文，历史／候选不升级，不新增第九个默认分类，不声称跨Host实时推送已完成。"
+    }
+  ],
+  "reviewed_product_dimensions": [
+    {
+      "dimension": "目录、范围、视图、当前性",
+      "result": "PASS",
+      "reason": "上下文为目录概念；全部上下文为可授权集合；八视图全部为所选读取范围的已保存可访问内容浏览入口；即时权威为当前权威资格标识。角色／领域标签／项目环境／当前性未混用。"
+    },
+    {
+      "dimension": "已有与未来全部集合",
+      "result": "PASS",
+      "reason": "通用内容、个人资料、全部自有项目正式记录，以及Owner与项目Owner均相同的项目用途上下文按实际环境覆盖；已有和以后新建均包含。共享／邀请及他人资源不自动纳入，撤销／期限／资格保留。"
+    },
+    {
+      "dimension": "指定范围的日常可用性",
+      "result": "PASS",
+      "reason": "基本范围选择已在简单树中完成，操作预设只作用已选资源。未选环境不自动加入，指定范围不隐含未来资源，无技术UUID操作负担。"
+    },
+    {
+      "dimension": "只读／可编辑／全部操作",
+      "result": "PASS",
+      "reason": "可编辑只read/write，全部操作是所请求且资源支持且有效的动作交集。缺项可见；旧developer语义保留，不通过新名称缩减或扩权；业务范围不授生产、模型预算、Secret或独立网盘权限。"
+    },
+    {
+      "dimension": "旧连接与一次升级",
+      "result": "PASS",
+      "reason": "旧project:*不重解释成contexts:*；当前缺上下文的旧全部明确展示原范围。升级同Binding真实Native确认，完整差异可审；不批量升级其他连接，不清除精确deny/限制。"
+    },
+    {
+      "dimension": "OAuth与Headless",
+      "result": "PASS_REQUIREMENT",
+      "reason": "共用范围与动作规则，Headless轮换绑定原来源／例外／限制版本并保留语义；新默认不能替代旧选择。实际实现一致性、一次令牌和轮换回归尚需后续证据。"
+    },
+    {
+      "dimension": "新增来源及事务协议的产品影响",
+      "result": "PASS_AT_PLAN_LEVEL",
+      "reason": "来源贡献可追溯，effective投影与独立同意分离；收窄不会误删别的来源，deny和限制持久，普通升级不清除。创建／批准同事务物化、等待后新读取和有限失败保持既有＋未来承诺；诊断预览不授执行。"
+    },
+    {
+      "dimension": "审核及完成顺序",
+      "result": "PASS",
+      "reason": "独立方案复审→实施→精确代码审核/CI→正常PR/FIFO→现行生产门→真实新同意/能力→原八视图页面验收。三类完成门分开，原Task及Stage3剩余保持。"
+    }
+  ],
+  "future_execution_gates_not_proved": [
+    "实际来源层、精确条目和内部grant的代码／Schema／迁移正确性。",
+    "最终function catalog/ACL、所有真实入口锁图、跨客户端屏障及无死锁／无部分提交证明。",
+    "超过100个真实资源完整覆盖，撤销／到期／限制／来源合成、失败重试及轮换回归。",
+    "OAuth／Headless／旧连接管理的真实改后控件、预览和effective显示。",
+    "精确提交独立代码审核、全部适用GitHub CI、正常PR/FIFO合入。",
+    "精确Native生产授权、备份、SQL迁移、发布与实际postflight。",
+    "当前Owner连接真正升级及能力核验；两个namespace八视图剩余实际页面证据和来源全文／保留历史正样本。",
+    "Stage3原文汇聚、合法模型分类／提炼、增强历史／索引及范围限定旧内容整理。"
+  ],
+  "evidence_limits": [
+    "全文按8f828102...最终SHA重新独立只读复核，并比对CCC→最终仅3条后台措辞变化；受审正文未改，未重新运行网页、代码、CI或生产。",
+    "原报告b0f8ef...保留，原r1 FAIL不被r2 PASS改写；r2只关闭该方案层发现。",
+    "E1/native-ui-acceptance.json及三个截图继续只证明8f部署原有限范围历史核心流程；E1与原r2八视图文稿SHA本轮重核一致，没有把它们当成改后验收。",
+    "精确8f UI源码及served Contract49全文保留在本独立审查上下文，最终SHA复核前再次fresh Global/Project resume仍交付相同版本／SHA及独立审核enabled；未复用另一Agent的admission PASS。",
+    "r2独立ls-remote一次定位f890，local同SHA。工作区仍仅候选目录untracked；未覆盖其他dirty文件，未读memory/。",
+    "共享inbox用mark_read=false读取；消息有其他精确session／claim接收者，未代答或将Agent消息当Owner授权。",
+    "authority_capture_completeness保持unknown；当前性Admission不声明外部全部聊天已捕获。"
+  ],
+  "sources_read": [
+    {
+      "type": "skill",
+      "path": "C:/Users/Windows/.codex/skills/clued/SKILL.md",
+      "version": "1.0.20",
+      "workflow": "references/engineering.md",
+      "qualification": "held in same reviewer context; fresh service version still matches"
+    },
+    {
+      "type": "served_contract",
+      "tool": "clued_agent_bootstrap",
+      "parts_read": [
+        1,
+        2
+      ],
+      "version": 49,
+      "sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+      "qualification": "full text read in this reviewer context; r2fresh resumes return same exact contract"
+    },
+    {
+      "type": "fresh_service_resume",
+      "scope": "global",
+      "receipt": "2154f015-5494-410d-893f-5b64e816eb5d",
+      "version": 1355,
+      "admission": "87840d92-06a4-4bbb-9b6d-af8d8b1ba95a",
+      "state": "CURRENT"
+    },
+    {
+      "type": "fresh_service_resume",
+      "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "receipt": "5cd634c4-fddf-431f-94c5-e812848f4c1f",
+      "version": 2437,
+      "admission": "8dde13e5-2bc5-4275-9f8c-98b9d0519a1c",
+      "state": "CURRENT",
+      "independent_review_enabled": true
+    },
+    {
+      "type": "canonical_record",
+      "id": "72166b09-0fc6-4a28-8551-8e4334280a73",
+      "version": 4905,
+      "scope": "global",
+      "qualification": "freshGlobal State/priority read after r2resume"
+    },
+    {
+      "type": "canonical_record",
+      "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+      "version": 4,
+      "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "qualification": "fresh current full text"
+    },
+    {
+      "type": "canonical_record",
+      "id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+      "version": 44,
+      "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "qualification": "fresh current full text; r1 FAIL outcomes preserved"
+    },
+    {
+      "type": "canonical_record",
+      "id": "9e037a44-1de2-4b75-9e45-2ca0cb2a2daa",
+      "version": 2,
+      "qualification": "accepted three stages and two directory scope, fresh query returns same record"
+    },
+    {
+      "type": "canonical_record",
+      "id": "8d738351-eb20-4e29-ae8b-821af07f0ee9",
+      "version": 3,
+      "qualification": "accepted eight-view definitions and same-identity rules, fresh query returns same record"
+    },
+    {
+      "type": "resident_constraints",
+      "qualification": "fresh Global/Project indexes fully read; relevant IDs/versions unchanged from full texts already read in this context",
+      "ids": [
+        "7b8c1cee-d40d-4184-a9ba-7651888e5c03",
+        "8ba27d66-c72f-4ed1-86ef-b16e273d203a",
+        "f1dbabc4-a329-43e1-bb45-62c72772cf8b",
+        "5fea509f-4613-4fd5-a36f-46b4bb4a2f6e",
+        "5bed3d00-cd0d-4551-96fa-ece5f41ffa73",
+        "ded75f02-2993-4ad9-b006-76e5b8c9d026",
+        "34e35019-36b9-40a5-ab8a-989f755cac3b",
+        "d4663fa2-1d4b-4cc7-b4c8-91508b1e9849",
+        "477a5812-f8e1-4cf6-819b-078ca30ac107"
+      ]
+    },
+    {
+      "type": "review_subject",
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "version": "v0.1-r2",
+      "sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+      "qualification": "Full final text and unchanged hash independently read, CCC→final exact text differences checked"
+    },
+    {
+      "type": "historical_evidence",
+      "path": "work/eight_implementation/ui-acceptance/native-ui-acceptance.json",
+      "sha256": "58c0923c8b187cf738ff001502fef6d7599dbedd76165c8c34c6545a8e8002c0",
+      "qualification": "body held from r1 direct read; hash rechecked r2; limited original scope only"
+    },
+    {
+      "type": "product_requirements",
+      "path": "outputs/Clued_印记默认八视图完整方案_v0.1-r2_20261013.md",
+      "sha256": "7f061207e01d9369924b0bfca8bb8627eacde106aee4fffbfaadece647a00d66",
+      "qualification": "full body held from r1 direct read; hash rechecked r2; V01–V24 requirements not runtime proof"
+    },
+    {
+      "type": "predecessor_review",
+      "path": "work/eight_implementation/ui-acceptance/all-contexts-product-plan-review.json",
+      "sha256": "b0f8ef0264962dfb13aacf34217e1e550532abbe66bdb66a4e617ec854d9a42e",
+      "qualification": "original four findings directly compared and preserved"
+    },
+    {
+      "type": "engineering_instruction",
+      "path": "work/eight_implementation/repo/AGENTS.md",
+      "source_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "qualification": "held same independent context; no memory reads"
+    },
+    {
+      "type": "historical_screenshots_and_exact_ui_source",
+      "source_commit": "8f960b5541e29ad279d4976f5c366ea4e1297ad4",
+      "qualification": "independently viewed/read in r1 same context; reused only to explain original UI gap, not a new-page rerun",
+      "paths": [
+        "work/eight_implementation/ui-acceptance/current-connection.jpg",
+        "work/eight_implementation/ui-acceptance/user-restored.jpg",
+        "work/eight_implementation/ui-acceptance/developer-restored.jpg",
+        "apps/clued-cloud/app/oauth/connections/page.tsx",
+        "apps/clued-cloud/app/oauth/connections/headless.tsx",
+        "apps/clued-cloud/app/oauth/consent/delegated-consent.tsx",
+        "apps/clued-cloud/app/imprints/imprint-model.ts",
+        "apps/clued-cloud/app/imprints/ImprintPanel.tsx"
+      ]
+    }
+  ],
+  "interim_subject_replaced_before_delivery": {
+    "subject_sha256": "ccc852515d61cf313123dca9c842d57159e9b3cedef2149f245222b8661e2c08",
+    "report_path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/all-contexts-product-plan-review-r2-ccc85251.json",
+    "delivery": "interim exact-CCC inspection was held before final delivery when author corrected the source; retained as historical only"
+  },
+  "final_delta_review": {
+    "previous_subject_sha256": "ccc852515d61cf313123dca9c842d57159e9b3cedef2149f245222b8661e2c08",
+    "final_subject_sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+    "full_final_subject_read": true,
+    "independently_compared_changed_lines": [
+      77,
+      95,
+      108
+    ],
+    "unchanged_product_parts": "Simple range tree and examples, role/action copy, old upgrade wording, typed authority labels, V01–V24 and three completion gates are byte-for-byte unchanged from the previously inspected r2.",
+    "expiry_product_effect": "Sources are filtered individually for expiry/revocation/scope before union. An expired short-lived write source cannot remove a separately valid read source, and a stale materialized row cannot revive the expired write source. Common Binding/Authorization/exact resource ceilings remain hard limits; display and actual operations must use live effective abilities.",
+    "lock_product_effect": "Owner mutex comes from the verified service identity and is proved by the current backend's granted Exclusive advisory lock, not caller key/GUC. This reinforces the specified atomic creation/approval and diagnostic-versus-admission boundary; no new product authority or push guarantee is introduced.",
+    "qualification": "No new product-plan finding. Final backend ACL/lock correctness and two-client tests remain later code/runtime gates, not facts proved by this plan review."
+  }
+}

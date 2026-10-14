@@ -1,0 +1,412 @@
+{
+  "schema": "clued.independent-ui-code-review.v1",
+  "created_at": "2026-10-14T05:24:00Z",
+  "reviewer": {
+    "task": "/root/all_contexts_product_plan_review",
+    "non_author": true,
+    "review_only": true
+  },
+  "subject": {
+    "manifest_path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/all-contexts-ui-implementation.json",
+    "manifest_sha256": "eb9378b7869b43e20c7dea572ad7253e60390757828d66d5897fa1d3782ec663",
+    "subject_sha256": "b8be154d65bc82c337b437b7d1d76231cdb5716d5863e75139ba7064c0bfa9a2",
+    "aggregate_definition": "SHA256 of compact JSON files array in manifest order, independently recomputed",
+    "file_count": 17,
+    "files": [
+      {
+        "path": "apps/clued-cloud/app/confirm/[id]/page.tsx",
+        "sha256": "645245e7244ee2c552f5fb522a311a323edba2cf04752f8ef39521fe2732247b"
+      },
+      {
+        "path": "apps/clued-cloud/app/contexts/page.tsx",
+        "sha256": "899ce5c63a994a27c04f428ff0248d47e4e35d89f1047b78ef1d324bbf0dfc09"
+      },
+      {
+        "path": "apps/clued-cloud/app/imprints/ImprintPanel.tsx",
+        "sha256": "d7e004f38e4012c8b60f97ef206225efc9b8350fe9bb9cb4f82ab4ebc014128a"
+      },
+      {
+        "path": "apps/clued-cloud/app/imprints/imprint-model.ts",
+        "sha256": "cd7a47848d0c8f53fd0510afd8d851af33089b5058552a2223a69d85613a4786"
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/connections/headless.tsx",
+        "sha256": "7ccb7e48b3f4c6e0a37f46e81ae8d03fa22136bc4a14f18c7291889c595ad01a"
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/connections/page.tsx",
+        "sha256": "919adcdf2f2cada49f372d26dcefd8703fb9dfc2caddebca1e621a805e372405"
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/consent/delegated-consent.tsx",
+        "sha256": "774c2bfaf46dddc21d2d94d4ba52dd4b3fea4274ad096e5eb78f216dd6a835be"
+      },
+      {
+        "path": "apps/clued-cloud/lib/context-authorization-controls.tsx",
+        "sha256": "3d8a9e450e41437585818e0b276d4b0ec77ecdb2dc8d324fe00cd43302272de5"
+      },
+      {
+        "path": "apps/clued-cloud/lib/context-authorization.ts",
+        "sha256": "cc066e18dab99c1f386a92423fead8b70d528cd31077b5de3962b77380687d4d"
+      },
+      {
+        "path": "apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs",
+        "sha256": "376752563dae90b32b5075fdcbb93e5dcb7bcb89aa6ab5743cee5957d676b3d3"
+      },
+      {
+        "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+        "sha256": "573cba72c0824fd828bcfad6a915d3844c0d67ef501a4507ebc7efa37bb1dc7f"
+      },
+      {
+        "path": "apps/clued-cloud/tests/consent-account-race.test.mjs",
+        "sha256": "87f68f537343be348510805ccefa5a683dadc1500c193bda34abad4fd3876028"
+      },
+      {
+        "path": "apps/clued-cloud/tests/development-contexts-ui.test.mjs",
+        "sha256": "ca23e01cecf8a7daac671a0010b945a54bf81e2de1746297d98fccf941255c0d"
+      },
+      {
+        "path": "apps/clued-cloud/tests/headless-binding-ui.test.mjs",
+        "sha256": "04f182a1b727c3627837ea54cc699eead4db510c66536cfc06fc155cbb7f7a2b"
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprints-context-directory.test.mjs",
+        "sha256": "2b22a14301c054abe5d5d2d4cc32f5228785fb541c37984a5fbb16950eba50c2"
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprints-panel.test.mjs",
+        "sha256": "9f875bfd08c959f193f081a09937b99e7830740d7fc5c04fa3b2134da10f0df2"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-grants-ui.test.mjs",
+        "sha256": "e2a08d93934fcc30e2bd1308c8cc98206adddbb32ac95efe3bba2cc74bc11c64"
+      }
+    ],
+    "all_file_hashes_verified": true,
+    "closing_hash_mismatches": [],
+    "base_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "approved_plan_path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+    "approved_plan_sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3"
+  },
+  "authorization": {
+    "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "task_id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+    "task_version_read": 47,
+    "owner_decision_id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+    "owner_decision_version": 4,
+    "root_claim_id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+    "root_claim_fence": 6,
+    "root_claim_lease_version_reported": 5,
+    "separate_claim_created": false,
+    "canonical_result_write": false,
+    "global": {
+      "context_key": "global",
+      "resume_version": 1360,
+      "resume_receipt_id": "42304609-4edd-4928-8aec-d5fa9abe4ee5",
+      "independent_review_enabled": true,
+      "initial_admission_receipt_id": "d9993be4-b5e8-4528-8b44-1d7133d17003",
+      "closing_admission_receipt_id": "5fc0667c-964b-4a82-954c-eecdf49a2d39",
+      "currentness": "CURRENT",
+      "checkpoint": {
+        "version": 1362,
+        "receipt_id": "784bb3b2-c0b3-4841-8dfc-7cb407184b8e",
+        "status": "committed",
+        "absorbed_event_count": 0,
+        "coverage": {
+          "mode": "explicit",
+          "tracks": [
+            "independent_review"
+          ],
+          "contexts": [
+            "global"
+          ],
+          "event_ids": []
+        }
+      }
+    },
+    "project": {
+      "context_key": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "resume_version": 2442,
+      "resume_receipt_id": "18007b02-f12d-4eb9-9530-909d775ed229",
+      "independent_review_enabled": true,
+      "initial_admission_receipt_id": "2ca75690-de7f-4ca9-8724-d87cce47b31a",
+      "closing_admission_receipt_id": "179abc19-59eb-4356-bb39-673516f04e50",
+      "currentness": "CURRENT",
+      "checkpoint": {
+        "version": 2445,
+        "receipt_id": "32e23145-fbc4-4234-ae16-945a648c430c",
+        "status": "committed",
+        "absorbed_event_count": 0,
+        "coverage": {
+          "mode": "explicit",
+          "tracks": [
+            "independent_review"
+          ],
+          "contexts": [
+            "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+          ],
+          "event_ids": []
+        }
+      }
+    }
+  },
+  "version_boundary": {
+    "independent_remote_main": "af22e8c5d8c70f86d17abb32996a63414a1d5c94",
+    "local_head": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "remote_difference_independently_inspected": [
+      "scripts/model-program/development_host_bridge.cjs",
+      "scripts/model-program/local_completion_execution.py",
+      "tests/test_model_development_host_bridge.cjs",
+      "tests/test_model_local_completion_execution.py"
+    ],
+    "remote_changed_reviewed_ui_auth_sql_contract_paths": false,
+    "qualification": "Exact dirty UI snapshot based on f890; no assertion that local checkout equals current main. No Git mutation or merge performed during concurrent authorship. Final combined commit must align through normal merge and be independently re-reviewed.",
+    "known_deployed_commit": "8f960b5541e29ad279d4976f5c366ea4e1297ad4"
+  },
+  "verdict": "FAIL",
+  "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 1,
+    "MINOR": 0
+  },
+  "ui_code_gate_pass": false,
+  "findings": [
+    {
+      "id": "UI-M01",
+      "severity": "MAJOR",
+      "status": "UNRESOLVED",
+      "title": "Raw legacy Binding is falsely labelled full permission and without expiry",
+      "locations": [
+        {
+          "path": "apps/clued-cloud/app/oauth/connections/headless.tsx",
+          "start_line": 351,
+          "end_line": 352
+        },
+        {
+          "path": "apps/clued-cloud/app/oauth/connections/headless.tsx",
+          "start_line": 105,
+          "end_line": 114
+        },
+        {
+          "path": "apps/clued-cloud/tests/headless-binding-ui.test.mjs",
+          "start_line": 100,
+          "end_line": 100
+        }
+      ],
+      "origin": "Pre-existing misleading display retained in the changed component; explicitly within the requested truthful legacy raw Binding acceptance scope.",
+      "trigger": "List any pre-v12 raw Binding with kind=legacy, scopes=['context:read'], grants=null; or a raw legacy Binding whose replacement retirement supplies a finite expires_at.",
+      "observed": "The type row unconditionally says 旧方式创建（全部权限、无有效期） for every legacy kind. Row/parser discard the real scopes DTO. A finite expiry can be shown in the next row while the type still says no expiry. The component test explicitly preserves that incorrect phrase.",
+      "source_proof": {
+        "path": "apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql",
+        "lines": [
+          124,
+          125,
+          127,
+          129
+        ],
+        "scope": "Read-only existing list DTO excerpt, not execution evidence",
+        "meaning": "kind=legacy only means the v12 authorization row is absent; the list returns b.scopes and an expiry derived from authorization expiry or retirement. It does not assert that every raw Binding holds all permissions or remains valid indefinitely."
+      },
+      "impact": "The Owner receives incorrect permission and lifetime information at the exact point where old connections are assessed and rotated. This defeats the accepted separation of range, operation and legacy coverage; it does not itself prove a backend authorization bypass.",
+      "required_fix": [
+        "Render the creation type as 旧方式创建 without inferring scope or lifetime from kind.",
+        "Preserve and validate actual scopes from the list DTO and display only their true technical operation meaning; when no authoritative resource grant/coverage is supplied, mark resource coverage as unavailable or requiring confirmation rather than inventing all contexts/full rights.",
+        "Display actual expiry/retirement separately; distinguish an absent expiry value from verified indefinite validity.",
+        "Preserve empty explicit rotation selection for legacy grants=null and require the existing real Native two-step confirmation for any replacement or wider selection."
+      ],
+      "minimum_validation": [
+        "Raw legacy fixture with only context:read: display read scope, no write/full/all-context claim, unknown resource coverage qualified.",
+        "Raw legacy fixture with finite retirement and replaced_by: show the actual retirement time with no no-expiry claim.",
+        "Missing or malformed scopes: fail closed or clearly show unknown; do not infer full permission. Keep the existing no implicit-upgrade/no automatic-rotation assertions.",
+        "Replace the test assertion that expects the false full/no-expiry label, rerun the targeted headless component tests, then issue a new exact UI manifest for independent re-review."
+      ]
+    }
+  ],
+  "reviewed_behavior": [
+    {
+      "area": "Scope versus operations",
+      "assessment": "Static implementation separates all-context macro from operation presets. Specified selection begins empty; switching ranges clears exact choices. Reader/developer/full intersect actual row capabilities, and OAuth selections also intersect requested scopes. Existing preset application changes only selected resources."
+    },
+    {
+      "area": "Specified examples and future ownership",
+      "assessment": "Full helper/controls/tests include profile-only, one named project canonical row, and one named test-context row; selected transport preserves exact kind/id/environment. Only contexts:* represents existing plus future owned resources. Shared/invited resources are stated to require separate selection. Actual backend metadata and future-resource enforcement remain combined gates."
+    },
+    {
+      "area": "Legacy OAuth and upgrade",
+      "assessment": "Native management separates range and operations, labels legacy project macro as own project canonical records, and warns that old coverage omits project-use contexts. Reads do not authorize or rotate. Wider authorization requires current client request and Owner confirmation. Actual UI-M01 legacy raw headless mislabel remains."
+    },
+    {
+      "area": "Source-aware reduction",
+      "assessment": "sources_v1 transport submits real source IDs/base versions/action caps and exact overrides with existing IDs/base versions; it does not resubmit derived grants as independent direct selections. Local tests cover removal of new policy preserving legacy read, precise-deny union and malformed source DTO refusal. Persisted server reductions/limits are unqualified until combined review and runtime tests."
+    },
+    {
+      "area": "Headless rotation",
+      "assessment": "Source-aware rotation sends no derived direct selections, binds current source/override versions, requires source_snapshot matching binding version, and preserves limits for Native confirmation. New default macro is not silently copied to old grants=null rotation. Secret issuance remains a separate real issue/confirm step; no production issuance was performed."
+    },
+    {
+      "area": "Native macro approval",
+      "assessment": "Actual confirmation page uses the service-issued token/digest and requires complete matching coverage before approval; actual coverage, missing actions and preserved restrictions are displayed. Missing/stale coverage prevents grant invocation. Client-side validation is supporting UI behavior, not proof of backend snapshot authenticity or atomicity."
+    },
+    {
+      "area": "Record, Event, history and eight views",
+      "assessment": "Immediate authoritative label is a qualified typed-Record badge with authoritative=true, CURRENT, recognized record type and non-candidate/non-legacy semantics. Event authority remains separate. History/candidates are not promoted. VIEW_KEYS remains eight entries; no ninth authorization/currentness view is introduced. Existing namespace, selected context and read fences remain in source. No automatic real-time push promise is added."
+    }
+  ],
+  "sources_read": {
+    "skills": [
+      {
+        "path": "C:/Users/Windows/.codex/skills/clued/SKILL.md",
+        "scope": "Full, previously read within this independent reviewer session"
+      },
+      {
+        "path": "C:/Users/Windows/.codex/skills/clued/references/engineering.md",
+        "scope": "Full, previously read within this independent reviewer session"
+      },
+      {
+        "path": "C:/Users/Windows/.codex/plugins/cache/openai-curated-remote/supabase/1.0.0/skills/supabase/SKILL.md",
+        "scope": "Full; auth SDK code review only"
+      }
+    ],
+    "agent_instructions": [
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/AGENTS.md",
+        "scope": "Current repository instructions previously read; no memory/ content read"
+      },
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/AGENTS.md",
+        "scope": "Full child engineering instructions"
+      }
+    ],
+    "service_contract": {
+      "version": 49,
+      "parts_read": [
+        1,
+        2
+      ],
+      "sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+      "scope": "Both parts independently read in this reviewer context; fresh admissions continue to return same contract"
+    },
+    "canonical_reads": [
+      "Fresh own Global/Project resume and CURRENT admission; independent_review=true",
+      "Global priority State 72166b09-0fc6-4a28-8551-8e4334280a73 v4921 (priority, not execution authority)",
+      "Exact Task v47 and OwnerDecision v4",
+      "Resident relevant constraints; shared inbox read-only, no mark-read/reply/claim impersonation"
+    ],
+    "full_changed_files": [
+      "apps/clued-cloud/app/confirm/[id]/page.tsx",
+      "apps/clued-cloud/app/contexts/page.tsx",
+      "apps/clued-cloud/app/imprints/ImprintPanel.tsx",
+      "apps/clued-cloud/app/imprints/imprint-model.ts",
+      "apps/clued-cloud/app/oauth/connections/headless.tsx",
+      "apps/clued-cloud/app/oauth/connections/page.tsx",
+      "apps/clued-cloud/app/oauth/consent/delegated-consent.tsx",
+      "apps/clued-cloud/lib/context-authorization-controls.tsx",
+      "apps/clued-cloud/lib/context-authorization.ts",
+      "apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs",
+      "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+      "apps/clued-cloud/tests/consent-account-race.test.mjs",
+      "apps/clued-cloud/tests/development-contexts-ui.test.mjs",
+      "apps/clued-cloud/tests/headless-binding-ui.test.mjs",
+      "apps/clued-cloud/tests/imprints-context-directory.test.mjs",
+      "apps/clued-cloud/tests/imprints-panel.test.mjs",
+      "apps/clued-cloud/tests/owner-grants-ui.test.mjs"
+    ],
+    "diff": {
+      "base_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "tracked_files": "Full per-file diff read for each tracked manifest file",
+      "untracked_files": [
+        "apps/clued-cloud/lib/context-authorization-controls.tsx",
+        "apps/clued-cloud/lib/context-authorization.ts",
+        "apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs"
+      ],
+      "untracked_review": "Full actual bytes read; git diff has no untracked contents"
+    },
+    "limited_backend_reads": [
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql",
+        "scope": "Existing raw headless list and confirmation DTO excerpts"
+      },
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "scope": "Evolving uncommitted source/view/list/manage/headless DTO excerpts only; backend excluded from exact UI subject and no SQL verdict"
+      },
+      {
+        "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+        "scope": "Existing /oauth/connections/api RPC passthrough excerpt"
+      }
+    ],
+    "prior_screenshots": "No screenshots or historical browser outputs reused as current implementation proof; no independent browser session rerun."
+  },
+  "validation": {
+    "independently_executed": [
+      "17 per-file SHA256 verification and independent ordered manifest aggregate recomputation",
+      "Full changed UI/test bytes and per-file tracked diff review",
+      "Closing 17-file hash check: no mismatches",
+      "Read-only remote main lookup and exact f890-to-af22 path diff",
+      "Own CURRENT admission and explicit zero-event Global/Project checkpoints"
+    ],
+    "component_tests": {
+      "origin": "Author-provided manifest evidence, source fully reviewed; not independently rerun",
+      "registered_cases": 130,
+      "status": "PASS",
+      "qualification": "Synthetic component/helper coverage only"
+    },
+    "typecheck": {
+      "origin": "Root-reported after latest helper at unchanged b8 snapshot",
+      "status": "PASS",
+      "seconds": 4.46,
+      "independently_rerun": false
+    },
+    "lint": {
+      "origin": "Root-reported scoped lint",
+      "errors": 0,
+      "warnings": 2,
+      "notes": [
+        "connections/page.tsx environmentLabels is now unused after using resourceTitle; routine cleanup alongside author correction.",
+        "confirm page existing effect dependency warning needs baseline qualification; no zero-warning claim."
+      ]
+    },
+    "tests_run_by_reviewer": [],
+    "reason_no_repetition": "Concrete static source and existing DTO establish UI-M01; repeated passing component suite would not change that evidence."
+  },
+  "combined_gate_prerequisites": [
+    {
+      "id": "CG01",
+      "required": "After author fixes UI-M01, produce a new exact 17-file manifest and independent non-author UI re-review; current b8 FAIL must remain preserved."
+    },
+    {
+      "id": "CG02",
+      "required": "Freeze final backend/transport DTO and verify actual SQL -> RPC -> Worker -> UI data, including active, named project/context/environment metadata, coverage, effective actions, sources, overrides and grant limits. Initially observed missing active was subsequently added during this review; that evolving addition and its real DTO test have not been independently qualified by this UI-only gate."
+    },
+    {
+      "id": "CG03",
+      "required": "Provide a real Native precise-limit widening entry if the final accepted implementation includes that flow. This b8 UI has no limit_confirmation_issue/limit_confirm entry. Macro upgrade retains old denies/limits; no automatic clearing is permitted. Inspect exact old/new limits, B/Auth and grant/override CAS, token/digest, actual Native Owner confirmation and stale retries in later combined code and runtime review."
+    },
+    {
+      "id": "CG04",
+      "required": "Independent backend source/provenance, expiration/scope, reduction/deny, role/rotation and serialization/advisory barrier review after exact candidate is stable; this report gives no SQL/security-concurrency acceptance."
+    },
+    {
+      "id": "CG05",
+      "required": "Align final candidate with then-current main through authorized normal merge, freeze exact combined commit, complete required build/typecheck/appropriate tests/non-author code review and CI on that exact commit. Component/typecheck reports do not substitute for this gate."
+    },
+    {
+      "id": "CG06",
+      "required": "Execute approved V01–V24 acceptance with exact deployed commit/namespace, correct Stage3 versus later gates, actual OAuth/Headless/Native browser/service paths and eight-view regressions. Record reuse/rerun/NV boundaries; no historical screenshot promotion."
+    },
+    {
+      "id": "CG07",
+      "required": "Production migration/deployment/permission actions and final Owner acceptance require their separate current authorizations and receipts; none was executed or approved by this UI review."
+    }
+  ],
+  "preserved_boundaries": {
+    "subject_or_code_modified": false,
+    "business_or_permission_modified": false,
+    "claim_or_task_created": false,
+    "ci_or_production_run": false,
+    "memory_directory_read": false,
+    "secrets_written_to_report": false,
+    "checkpoint_events_absorbed": 0,
+    "root_result_capture_required": true
+  }
+}

@@ -5,7 +5,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
   "skill.clued": "1.0.20",
   "agent-contract": "49",
-  "mcp.server": "0.6.4",
+  "mcp.server": "0.6.5",
   "hook.runner-job-started": "1.0.0",
   "hook.capture-guard": "1.0.1",
   "hook.work-claim-guard": "1.1.4",
@@ -23,4 +23,4 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.handover-external-register": "1.0.0",
   "script.workflow-source-profile": "1.0.0"
 };
-export const MCP_SERVER_VERSION = "0.6.4";
+export const MCP_SERVER_VERSION = "0.6.5";

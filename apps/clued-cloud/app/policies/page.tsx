@@ -177,7 +177,7 @@ export default function PoliciesPage() {
   }
 
   return <main className="context-page">
-    <header><Link href="/">Kooyumi / 账号</Link><Link href="/contexts">开发上下文</Link></header>
+    <header><Link href="/">Kooyumi / 账号</Link><Link href="/contexts">上下文</Link></header>
     <h1>上下文策略</h1>
     <p className="context-muted">规定 Agent 通过 context-pack 能读到哪些记录。接受策略需要你本人登录确认：先生成预览，核对无误后再确认接受。</p>
     {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Kooyumi</Link> 后设置上下文策略。</p> : <>
