@@ -320,7 +320,7 @@ test('T-W-2 flag off: bootstrap carries no integration_runtime key; /v1/integrat
     for (const name of TOOLS) {
       const response = await callTool(production, name, { integration_id: ID });
       assert.equal(response.status, 404, name);
-      assert.equal(response.body.error.message, 'Unknown Clued continuity tool.', name);
+      assert.equal(response.body.error.message, 'Unknown Kooyumi continuity tool.', name);
       const unknown = await callTool(production, 'clued_integration_nonexistent');
       assert.deepEqual(response.body, unknown.body, 'indistinguishable from an unknown tool');
     }
