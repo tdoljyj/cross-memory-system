@@ -322,6 +322,11 @@ def load_tests(loader, tests, pattern):
     domain_module = importlib.util.module_from_spec(domain_spec)
     domain_spec.loader.exec_module(domain_module)
     tests.addTests(loader.loadTestsFromModule(domain_module, pattern=pattern))
+    timing_path = ROOT / "tests/test_model_provider_timing_saved_projection.py"
+    timing_spec = importlib.util.spec_from_file_location("m2_provider_timing_specifications", timing_path)
+    timing_module = importlib.util.module_from_spec(timing_spec)
+    timing_spec.loader.exec_module(timing_module)
+    tests.addTests(loader.loadTestsFromModule(timing_module, pattern=pattern))
     return tests
 
 

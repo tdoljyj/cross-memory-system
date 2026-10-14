@@ -8,6 +8,7 @@ bounded by the pinned runtime before decode/sample. This requires an explicitly
 adopted successor, never an old Profile or pre-consume observation.
 """
 import copy
+from datetime import datetime, timezone
 import hashlib
 import math
 import os
@@ -38,6 +39,61 @@ PLAN_FIELDS = {"executable", "working_directory", "runtime_files", "model", "pro
 BUDGET_FIELDS = legacy.BUDGET_FIELDS | {"observation_bytes"}
 CONTROL_BUDGET_FIELDS = BUDGET_FIELDS | {"control_wall_seconds"}
 MAX_OBSERVATION_BYTES = 131072
+_CLOCK_NOT_READ = object()
+
+
+def _capture_provider_timepoint(monotonic_seconds=_CLOCK_NOT_READ):
+    """Local clocks only; UTC and monotonic are separate observations."""
+    point = {"monotonic_seconds": None, "utc_rfc3339": None, "clock_errors": []}
+    try:
+        value = legacy.time.monotonic() if monotonic_seconds is _CLOCK_NOT_READ else monotonic_seconds
+        if type(value) not in (int, float) or not math.isfinite(value):
+            point["clock_errors"].append("MONOTONIC_VALUE_INVALID")
+        else:
+            point["monotonic_seconds"] = value
+    except Exception as exc:
+        point["clock_errors"].append("MONOTONIC_READ_FAILED:" + type(exc).__name__)
+    try:
+        value = datetime.now(timezone.utc)
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset().total_seconds() != 0:
+            point["clock_errors"].append("UTC_VALUE_INVALID")
+        else:
+            point["utc_rfc3339"] = value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    except Exception as exc:
+        point["clock_errors"].append("UTC_READ_FAILED:" + type(exc).__name__)
+    return point
+
+
+def _provider_timing_observation(started, transport_settled):
+    """Measurement evidence only, never adopted invocation usage or authority."""
+    errors = list(started["clock_errors"]) + list(transport_settled["clock_errors"])
+    duration = None
+    first, last = started["monotonic_seconds"], transport_settled["monotonic_seconds"]
+    if first is None or last is None:
+        errors.append("MONOTONIC_ENDPOINT_MISSING")
+    elif last < first:
+        errors.append("MONOTONIC_CLOCK_REGRESSED")
+    else:
+        candidate = (last - first) * 1000
+        if math.isfinite(candidate):
+            duration = candidate
+        else:
+            errors.append("MONOTONIC_DURATION_INVALID")
+    first_utc, last_utc = started["utc_rfc3339"], transport_settled["utc_rfc3339"]
+    if first_utc is None or last_utc is None:
+        errors.append("UTC_ENDPOINT_MISSING")
+    else:
+        try:
+            if datetime.fromisoformat(last_utc.replace("Z", "+00:00")) < datetime.fromisoformat(first_utc.replace("Z", "+00:00")):
+                errors.append("UTC_CLOCK_REGRESSED")
+        except Exception as exc:
+            errors.append("UTC_COMPARISON_FAILED:" + type(exc).__name__)
+    return {"measurement_scope": "FIRST_BEFORE_START_BOUNDARY_TO_TRANSPORT_SETTLED_RETURN",
+            "started": started, "transport_settled": transport_settled,
+            "monotonic_elapsed_ms": duration, "clock_errors": sorted(set(errors)),
+            "measurement_complete": not errors,
+            "utc_and_monotonic_sampled_separately": True,
+            "adopted_v2_usage": None, "authority_effect": "NONE", "qualification": "NOT_ISSUED"}
 
 
 def require(ok, code):
@@ -188,8 +244,9 @@ def execute_observed_completion(plan, *, boundary):
     end = min(end, start + (control if "control_wall_seconds" in frozen["budget"] else wall))
     opened = None
     before_start_completed = False
+    provider_started = None
     def check(phase):
-        nonlocal end, before_start_completed
+        nonlocal end, before_start_completed, provider_started
         if phase == "before_start" and before_start_completed:
             # The primitive repeats this same boundary immediately before
             # Popen. No intervening I/O, no second read or renewed deadline.
@@ -198,7 +255,9 @@ def execute_observed_completion(plan, *, boundary):
         if phase == "before_start":
             # Counting begins before process creation and the final suspended-
             # process check. Slow control reads cannot extend model runtime.
-            end = min(end, legacy.time.monotonic() + wall)
+            before_start_monotonic = legacy.time.monotonic()
+            end = min(end, before_start_monotonic + wall)
+            provider_started = _capture_provider_timepoint(before_start_monotonic)
         require(legacy.time.monotonic() < end, "BOUNDARY_DEADLINE")
         view, reply = copy.deepcopy(frozen), queue.Queue(maxsize=1)
         object_view = copy.deepcopy(opened)
@@ -252,6 +311,8 @@ def execute_observed_completion(plan, *, boundary):
         result = _transport(command(frozen, handle), frozen["working_directory"],
             legacy.clean_environment(), end,
             {k: frozen["budget"][k + "_bytes"] for k in ("stdout", "stderr")}, check, stream)
+        provider_settled = _capture_provider_timepoint()
+        result["provider_timing_observation"] = _provider_timing_observation(provider_started, provider_settled)
         try:
             observed = _capture_observation(stream, frozen["budget"]["observation_bytes"], end + legacy.CLEANUP_RESERVE_SECONDS)
         except Exception as exc:
@@ -274,6 +335,7 @@ def execute_observed_completion(plan, *, boundary):
                 raise
     result["plan_sha256"] = seal
     result["elapsed_seconds"] = legacy.time.monotonic() - start
+    result["elapsed_seconds_scope"] = "WHOLE_OBSERVED_EXECUTION_ENTRY"
     result["usage"], result["model_output_validated"] = None, False
     result["authority_effect"] = "NONE"
     return result
