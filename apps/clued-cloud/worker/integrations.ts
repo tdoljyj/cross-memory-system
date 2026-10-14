@@ -273,7 +273,7 @@ export const INTEGRATION_AUTHORIZATION_CODES = [
   "integration_connection_required", "platform_admin_required", "binding_not_owned",
 ] as const;
 
-const OWNER_RESTORE = "A revoked Integration is restored only by the Owner in Clued (restore), with a new authorization from the same client when it is in a claim conflict; reconnecting does not restore it.";
+const OWNER_RESTORE = "A revoked Integration is restored only by the Owner in Kooyumi (restore), with a new authorization from the same client when it is in a claim conflict; reconnecting does not restore it.";
 export const INTEGRATION_REQUEST_RULE_REJECTIONS: Readonly<Record<string, string | null>> = {
   installation_request_expired: "Open a new Installation Request and retry.",
   installation_request_closed: "Open a new Installation Request and retry.",
@@ -290,14 +290,14 @@ export const INTEGRATION_REQUEST_RULE_REJECTIONS: Readonly<Record<string, string
   host_surface_not_registered: null,
   provider_not_registered: null,
   binding_owned_by_other_integration:
-    "This Binding belongs to another Integration. The Owner can move it in Clued (confirm_rebind, adopt_binding, restore or reconcile); if it is that Integration's current connection, switch that Integration to another connection or reconcile first. Do not revoke that Integration for this: revoking it revokes this Binding too.",
+    "This Binding belongs to another Integration. The Owner can move it in Kooyumi (confirm_rebind, adopt_binding, restore or reconcile); if it is that Integration's current connection, switch that Integration to another connection or reconcile first. Do not revoke that Integration for this: revoking it revokes this Binding too.",
   binding_predates_revocation:
     "This authorization was issued before a revocation and cannot restore or create a connection. Reconnect in the Host and approve again on the consent page.",
   binding_not_adoptable: "Only personal Bindings that are live can be used.",
-  integration_rebind_requires_owner_confirmation: "Ask the Owner to confirm this connection in Clued (confirm_rebind).",
+  integration_rebind_requires_owner_confirmation: "Ask the Owner to confirm this connection in Kooyumi (confirm_rebind).",
   integration_host_mismatch: "The Host is an identity dimension; install a new Integration for this Host.",
   integration_provider_mismatch: null,
-  integration_recovery_forbidden: "Recovery of this Integration is only by the Owner's explicit restore in Clued.",
+  integration_recovery_forbidden: "Recovery of this Integration is only by the Owner's explicit restore in Kooyumi.",
   integration_revoked_requires_explicit_restore: OWNER_RESTORE,
   integration_superseded: "Use the Integration named in superseded_by.",
   integration_claim_blocked:
@@ -305,7 +305,7 @@ export const INTEGRATION_REQUEST_RULE_REJECTIONS: Readonly<Record<string, string
   reconcile_not_applicable: null,
   reconcile_requires_active_connection: "Use REPLACE_HOLDER, or revoke or pause this Integration.",
   reauthorization_scope_expansion_forbidden:
-    "Reauthorize with the original scope; a wider scope needs the Owner's explicit approval in Clued.",
+    "Reauthorize with the original scope; a wider scope needs the Owner's explicit approval in Kooyumi.",
   restore_requires_new_authorization_decision: "Complete a new authorization first, then restore.",
   reauth_mark_not_open: null,
   capability_declaration_exceeds_ceiling: "A Host Adapter can only keep or narrow capabilities.",
@@ -327,7 +327,7 @@ export const INTEGRATION_CONFLICT_CODES = new Set([
   "integration_revoke_connection_set_changed",
 ]);
 
-const RULE_MESSAGE = "The request was refused by a Clued contract rule; reconnecting will not change the outcome.";
+const RULE_MESSAGE = "The request was refused by a Kooyumi contract rule; reconnecting will not change the outcome.";
 
 // §12.3 integrationRuleEnvelope: an M1 envelope rejected inside the Receipt renders exactly like the
 // pre-Receipt rule rejection (category request_rule, same hint table); a conflict code renders as a
