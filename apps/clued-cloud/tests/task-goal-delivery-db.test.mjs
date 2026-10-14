@@ -11,6 +11,10 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { assertGatewayCloseoutBoundary, setWorkerGatewayCaller } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 
+// raw-binding-grants: directly inserted Bindings are inert Storage foreign-key
+// fixtures and never authenticate calls; Agent calls use the actual v12 issuer
+// approval flow below, while Native calls use direct human session claims.
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
