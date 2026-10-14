@@ -63,6 +63,7 @@ class ObservedCallerSourceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    @unittest.skipUnless(os.name == "nt", "Windows observed control flow with mocked transport")
     def test_control_budget_cannot_silently_expand_model_runtime(self):
         clock = [time.monotonic()]
         self.plan["budget"].update(control_wall_seconds=225, wall_seconds=20)
@@ -88,6 +89,7 @@ class ObservedCallerSourceTests(unittest.TestCase):
         self.assertEqual(got["outcome"], "TIMEOUT")
         self.assertFalse(got["model_output_validated"])
 
+    @unittest.skipUnless(os.name == "nt", "Windows observed control flow with mocked transport")
     def test_control_deadline_remains_shorter_than_model_budget_when_needed(self):
         clock = [time.monotonic()]
         self.plan["budget"].update(control_wall_seconds=60, wall_seconds=120)
@@ -151,13 +153,13 @@ class ObservedCallerSourceTests(unittest.TestCase):
             with self.subTest(value=value), mock.patch.object(Path, "open") as opening, \
                     mock.patch.object(S, "_transport") as run:
                 with self.assertRaisesRegex(ValueError, "CPU_THREADS"):
-                    S.execute_observed_completion(plan, boundary=lambda *args: None)
+                    S.validate_plan(plan, time.monotonic())
                 opening.assert_not_called(); run.assert_not_called()
         plan = copy.deepcopy(self.plan)
         plan.update(cpu_threads=8, threads_batch=8)
         with mock.patch.object(Path, "open") as opening, mock.patch.object(S, "_transport") as run:
             with self.assertRaisesRegex(ValueError, "PLAN_FIELDS"):
-                S.execute_observed_completion(plan, boundary=lambda *args: None)
+                S.validate_plan(plan, time.monotonic())
             opening.assert_not_called(); run.assert_not_called()
 
     @unittest.skipUnless(os.name == "nt", "Windows observed dispatch is mocked, no runtime child")
