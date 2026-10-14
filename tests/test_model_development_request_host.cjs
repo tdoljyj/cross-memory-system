@@ -65,6 +65,54 @@ test('explicit hash domain excludes later capture/profile/results and emits prep
   assert.equal(Object.keys(result.candidate_identity).length,8);
   assert.ok(!Object.hasOwn(result,'issued')); assert.ok(!Object.hasOwn(host,'runFixedDevelopmentChild'));
 });
+test('CPU legacy two and explicit eight stay bound to request, approved plan and bootstrap',()=>{
+  const f=fixture(), fixed=f.draft.fixed_startup_preparation;
+  const plan=fixed.execution_plan_without_runtime_monotonic_deadline;
+  assert.ok(!Object.hasOwn(f.request.payload.fixed_startup.execution_plan_without_runtime_monotonic_deadline,'cpu_threads'));
+  assert.deepEqual(host.makeDevelopmentRequestPayload(f.draft,f.window).requestBytes,f.request.requestBytes);
+  plan.cpu_threads=2;fixed.execution_plan_sha256=objectSha(plan);
+  assert.equal(host.makeDevelopmentRequestPayload(f.draft,f.window).payload.device.cpu_threads,2);
+  plan.cpu_threads=8;f.draft.device.cpu_threads=8;
+  assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window),/FIXED_PLAN_OR_STARTUP_DIGEST/);
+  fixed.execution_plan_sha256=objectSha(plan);
+  const next=host.makeDevelopmentRequestPayload(f.draft,f.window);
+  assert.notEqual(next.requestSha256,f.request.requestSha256);
+  const args={...f.bindingArgs,requestBytes:next.requestBytes,expectedRequestSha256:next.requestSha256};
+  assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding(args),/EXACT_OWNER_EXPERIMENT/);
+  f.approval.request_sha256=next.requestSha256;
+  assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding(args),/OWNER_REQUEST_PINS/);
+  f.approval.execution_plan_sha256=fixed.execution_plan_sha256;
+  const prepared=host.prepareFixedDevelopmentOwnerBinding(args);
+  assert.equal(prepared.candidate_bootstrap.plan.cpu_threads,8);
+  assert.equal(prepared.candidate_manifest.execution_plan_sha256,objectSha(prepared.candidate_bootstrap.plan));
+  assert.equal(prepared.permission_issued,false);
+});
+test('CPU device and plan mismatch or invalid integer refuses before preparation',()=>{
+  for(const [device,planThreads] of [[8,undefined],[2,8],[8,2]]) {
+    const f=fixture(),fixed=f.draft.fixed_startup_preparation;
+    f.draft.device.cpu_threads=device;
+    if(planThreads!==undefined)fixed.execution_plan_without_runtime_monotonic_deadline.cpu_threads=planThreads;
+    fixed.execution_plan_sha256=objectSha(fixed.execution_plan_without_runtime_monotonic_deadline);
+    assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window),/PLAN_CPU_THREADS/);
+  }
+  for(const value of [true,false,null,'8',0,1,3,4,16,2.5,8.5]) {
+    const f=fixture();f.draft.device.cpu_threads=value;
+    assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window),/EXACT_DEVICE/);
+    const g=fixture(),fixed=g.draft.fixed_startup_preparation;
+    fixed.execution_plan_without_runtime_monotonic_deadline.cpu_threads=value;
+    fixed.execution_plan_sha256=objectSha(fixed.execution_plan_without_runtime_monotonic_deadline);
+    assert.throws(()=>host.makeDevelopmentRequestPayload(g.draft,g.window),/PLAN_CPU_THREADS/);
+  }
+});
+test('CPU serialized floating spelling cannot bypass canonical request closure',()=>{
+  const f=fixture(),fixed=f.draft.fixed_startup_preparation;
+  f.draft.device.cpu_threads=8;fixed.execution_plan_without_runtime_monotonic_deadline.cpu_threads=8;
+  fixed.execution_plan_sha256=objectSha(fixed.execution_plan_without_runtime_monotonic_deadline);
+  const request=host.makeDevelopmentRequestPayload(f.draft,f.window);
+  const raw=Buffer.from(request.requestBytes.toString().replace('"cpu_threads":8','"cpu_threads":8.0'));
+  assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding({...f.bindingArgs,
+    requestBytes:raw,expectedRequestSha256:sha(raw)}),/REQUEST_CANONICAL/);
+});
 test('separate control budget is frozen in plan and Owner request, never a model extension',()=>{
   const f=fixture();
   f.draft.budget.control_wall_seconds=225;

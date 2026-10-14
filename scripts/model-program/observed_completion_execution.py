@@ -102,7 +102,8 @@ def require(ok, code):
 
 
 def validate_plan(plan, now):
-    require(type(plan) is dict and set(plan) == PLAN_FIELDS, "PLAN_FIELDS")
+    require(type(plan) is dict and set(plan) in (PLAN_FIELDS, PLAN_FIELDS | {"cpu_threads"}), "PLAN_FIELDS")
+    legacy.cpu_threads(plan)
     require(plan["patch_sha256"] == PATCH_SHA256, "PATCH_PIN")
     budget = plan["budget"]
     require(type(budget) is dict and set(budget) in (BUDGET_FIELDS, CONTROL_BUDGET_FIELDS), "BUDGET_FIELDS")

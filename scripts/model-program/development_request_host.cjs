@@ -70,7 +70,8 @@ function validatePayload(p) {
     .reduce((n, size) => n + 4 * Math.ceil(size / 3), 0);
   need(encoded + b.observation_bytes + b.other_result_profile_ledger_and_receipts_max_bytes
     <= b.max_output_storage_bytes, 'SAVED_STORAGE_BOUND');
-  need(p.device?.cpu_threads === 2 && p.device.gpu_layers === 0 && p.device.substitution_allowed === false,
+  need(Number.isSafeInteger(p.device?.cpu_threads) && [2,8].includes(p.device.cpu_threads)
+    && p.device.gpu_layers === 0 && p.device.substitution_allowed === false,
     'EXACT_DEVICE');
   need(/^[0-9a-f]{40}$/.test(p.source?.head) && Array.isArray(p.source.files) && p.source.files.length > 0,
     'SOURCE'); p.source.files.forEach(pin);
@@ -82,6 +83,9 @@ function validatePayload(p) {
   need(f && plan && !Object.hasOwn(plan, 'deadline_monotonic')
     && objectDigest(plan) === f.execution_plan_sha256 && objectDigest(f.startup) === f.startup_sha256,
     'FIXED_PLAN_OR_STARTUP_DIGEST');
+  const threads = Object.hasOwn(plan, 'cpu_threads') ? plan.cpu_threads : 2;
+  need(Number.isSafeInteger(threads) && [2,8].includes(threads) && threads === p.device.cpu_threads,
+    'PLAN_CPU_THREADS');
   for (const name of ['input_tokens','output_tokens','total_tokens','stdout_bytes','stderr_bytes','observation_bytes','wall_seconds'])
     need(plan.budget?.[name] === b[name], 'PLAN_BUDGET');
   need((plan.budget?.control_wall_seconds ?? plan.budget?.wall_seconds) === control,
