@@ -7,6 +7,8 @@ const SCHEMA = 'clued.development-currentness-channel/1';
 const MAX_FRAME_BYTES = 32768;
 const PHASES = new Set(['preflight','before_observation_open','observation_opened','consume',
   'before_start','before_resume','running','before_result']);
+const FAILURE_OUTCOMES = new Set(['ADMISSION_LOST','LAUNCH_FAILURE','TIMEOUT','READ_FAILURE',
+  'OUTPUT_LIMIT','OBSERVATION_UNVERIFIED','CLEANUP_UNVERIFIED']);
 const stable = value => {
   if(Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
   if(value && typeof value === 'object') return '{' + Object.keys(value).sort()
@@ -203,7 +205,8 @@ run_captured_stdio_bootstrap(sys.stdin.buffer,sys.stdout.buffer)`;
   active();
   const child=spawn(startup.python.path,['-I','-S','-B','-u','-c',code,JSON.stringify(startup.sourceFiles)],
     {cwd:startup.workingDirectory,env:startup.environment,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});
-  let buffer=Buffer.alloc(0), total=0, stderrBytes=0, terminal, failure, closed=false, ready=false, sequence=0;
+  let buffer=Buffer.alloc(0), total=0, stderrBytes=0, terminal, failure, closed=false, ready=false,
+    admissionRefused=false, sequence=0;
   let chain=Promise.resolve();
   const end=new Promise(resolve=>{child.on('error',error=>{failure ||= error;});
     child.on('close',code=>{closed=true;resolve(code);});});
@@ -249,15 +252,23 @@ run_captured_stdio_bootstrap(sys.stdin.buffer,sys.stdout.buffer)`;
             && frame.result.authority_effect==='NONE'
             && frame.result.budget_reservation?.status==='SPENT_BEFORE_MODEL_LOAD',
             'TERMINAL_CLEANUP_OR_SPEND');
+          need(!admissionRefused || FAILURE_OUTCOMES.has(frame.result.outcome),
+            'TERMINAL_AFTER_REFUSAL_MUST_FAIL');
           terminal=frame;return;
         }
+        // A refusal seals admission immediately. Only the existing child's
+        // bounded cleanup and failure terminal may continue; another effect
+        // boundary must never dispatch a protected read or receive admission.
+        need(!admissionRefused, 'CURRENTNESS_AFTER_REFUSAL');
         need(line.length<=MAX_FRAME_BYTES, 'CURRENTNESS_FRAME_LIMIT');
         sequence++;
         need(frame.sequence===sequence, 'CURRENTNESS_SEQUENCE');
         const reply=await within(bridge.handle(frame));
         active();need(!failure && !closed, 'LATE_CURRENTNESS_REPLY');
+        if(reply.admitted!==true)admissionRefused=true;
         await write(reply);
-        need(reply.admitted===true,'CURRENTNESS_REFUSED');
+        // Preserve the original deadline. The negative reply lets Python stop
+        // and reap its owned process before emitting its typed failed result.
       }).catch(fail);
     }
   });

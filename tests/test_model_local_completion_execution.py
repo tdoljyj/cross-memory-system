@@ -263,6 +263,32 @@ class OwnedProcessTests(unittest.TestCase):
         self.assertIsNotNone(result["final_returncode"])
         self.assertIn("before_start", count)
 
+    def test_output_chunks_do_not_trigger_one_admission_read_per_chunk(self):
+        phases = []
+        code = "import os,time;[(os.write(1,b'x'*256),time.sleep(.01)) for _ in range(100)]"
+        result = self.execute(code, wall=4, check=phases.append)
+        self.assertEqual(result["outcome"], "PROCESS_EXIT")
+        self.assertEqual(result["stdout_raw"], b"x" * 25600)
+        self.assertEqual(phases, ["before_start", "running", "before_result"])
+        self.assertTrue(result["owned_cleanup_verified"] if os.name == "nt" else True)
+
+    def test_quiet_running_child_is_rechecked_and_revocation_reaps_it(self):
+        checks = []
+        def check(phase):
+            if phase == "running":
+                checks.append(time.monotonic())
+                if len(checks) == 2:
+                    raise ValueError("SOURCE_TEST_LATER_REVOCATION")
+        result = self.execute("import time;time.sleep(30)", wall=8, check=check)
+        self.assertEqual(result["outcome"], "ADMISSION_LOST")
+        self.assertEqual(len(checks), 2)
+        self.assertGreaterEqual(checks[1] - checks[0], 5)
+        self.assertLess(checks[1] - checks[0], 6)
+        self.assertIsNotNone(result["final_returncode"])
+        self.assertLess(result["elapsed_seconds"], 8)
+        if os.name == "nt":
+            self.assertTrue(result["owned_cleanup_verified"])
+
     def test_descendant_holding_pipes_is_owned_and_terminated(self):
         code = "import subprocess,sys;subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']);print('parent',flush=True)"
         result = self.execute(code, wall=0.5)

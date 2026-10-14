@@ -26,6 +26,7 @@ import time
 
 MAX_FILES = 64
 CLEANUP_RESERVE_SECONDS = 13  # Job 5s, parent 5s, two readers 2s, closing margin.
+RUNNING_CURRENTNESS_INTERVAL_SECONDS = 5.0
 PLAN_FIELDS = {"executable", "working_directory", "model", "prompt", "output_schema",
                "runtime_files", "input_token_observation", "budget", "deadline_monotonic"}
 BUDGET_FIELDS = {"input_tokens", "output_tokens", "total_tokens", "wall_seconds",
@@ -260,15 +261,21 @@ def _run_owned(argv, cwd, env, deadline, limits, check_current):
             thread = threading.Thread(target=pump, args=(name, getattr(process, name)), daemon=True)
             threads.append(thread)
             thread.start()
+        next_running_check = 0.0
         while len(eof) < 2 or process.poll() is None:
             if time.monotonic() >= deadline:
                 outcome = "TIMEOUT"
                 break
-            try:
-                check_current("running")
-            except Exception as exc:
-                outcome, detail = "ADMISSION_LOST", type(exc).__name__
-                break
+            if time.monotonic() >= next_running_check:
+                try:
+                    check_current("running")
+                except Exception as exc:
+                    outcome, detail = "ADMISSION_LOST", type(exc).__name__
+                    break
+                # Every scheduled check still performs a fresh admission read.
+                # Output chunking and empty queue polls do not create new reads;
+                # launch, resume and result boundaries remain independently fresh.
+                next_running_check = time.monotonic() + RUNNING_CURRENTNESS_INTERVAL_SECONDS
             try:
                 name, chunk, reader_error = events.get(timeout=min(0.05, max(0.001, deadline - time.monotonic())))
             except queue.Empty:

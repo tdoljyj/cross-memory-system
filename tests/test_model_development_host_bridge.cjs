@@ -106,7 +106,7 @@ test('real non-model Python child exchanges observation over parent-owned privat
 
 // Entire fixed controller integration uses Source-only captures and a pinned
 // non-model child fixture. Neither test data nor a fixture Profile is authority.
-async function controllerFixture(action) {
+async function controllerFixture(action,{wallSeconds=12}={}) {
   const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
   const root=await fs.mkdtemp(path.join(process.env.CLUED_MODEL_SOURCE_TEST_TEMP_ROOT,'fixed-source-'));
   const digest=value=>crypto.createHash('sha256').update(value).digest('hex');
@@ -127,7 +127,7 @@ async function controllerFixture(action) {
       kind:'EXACT_BOUNDED_DEVELOPMENT_EXPERIMENT',task_id:task,purpose_id:'development',profile_id:'DEV-SOURCE-ONLY',
       request_sha256:'2'.repeat(64),max_attempts:1,training_allowed:false,production_allowed:false,qualification_allowed:false,
       window:{not_before:new Date(Date.now()-10000).toISOString(),stop_at:new Date(Date.now()+60000).toISOString()}}}}};
-  const plan={budget:{wall_seconds:12}},issued={status:'ISSUED',task_id:task,profile_id:'DEV-SOURCE-ONLY',
+  const plan={budget:{wall_seconds:wallSeconds}},issued={status:'ISSUED',task_id:task,profile_id:'DEV-SOURCE-ONLY',
     request_sha256:'2'.repeat(64),profile_sha256:'3'.repeat(64),execution_plan_sha256:digest(stable(plan)),
     claim_id:'SOURCE-ONLY-CLAIM',claim_fence:1,task_version:2,task_query:'SOURCE ONLY TASK'};
   const identity={task_id:task,profile_id:issued.profile_id,profile_sha256:issued.profile_sha256,
@@ -150,7 +150,28 @@ async function controllerFixture(action) {
     bound:{identity,execution_plan_sha256:issued.execution_plan_sha256},python,sourceDirectory:root,sourceFiles,
     workingDirectory:root,bootstrap:{schema:'clued.fixed-development-child-bootstrap/1',identity,plan,
       live_pins:{task_version:2,claim_id:issued.claim_id,claim_fence:1},output_directory:root,
-      output_name:'SOURCE_ONLY.jsonl',remaining_seconds:12}}};
+      output_name:'SOURCE_ONLY.jsonl',remaining_seconds:wallSeconds}}};
+}
+
+function refusedChildFixture(body) {
+  return `import sys,json,time,subprocess
+from development_currentness_channel import PrivateCurrentnessChannel
+class SourceOnlyHost:
+ def __enter__(self): return self
+ def __exit__(self,*a): pass
+ def execute(self,identity,plan):
+  binding={"identity":identity,"execution_plan_sha256":observed.legacy.digest({"budget":plan["budget"]})}
+  channel=PrivateCurrentnessChannel(sys.stdin.buffer,sys.stdout.buffer,live_pins={"task_version":2,"claim_id":"SOURCE-ONLY-CLAIM","claim_fence":1})
+${body}
+FixedDevelopmentEntry.for_clued_stdio=classmethod(lambda cls,**kwargs:SourceOnlyHost())`;
+}
+
+function refuseProtectedRead(fixture) {
+  let calls=0;
+  fixture.args.tools.mcp__codex_apps__clued_clued_session_resume=async()=>{
+    calls++;throw Error('SOURCE_ONLY_PROTECTED_READ_REFUSED');
+  };
+  return ()=>calls;
 }
 
 test('fixed controller captures private bootstrap and nested bytes without a model',async()=>{
@@ -168,6 +189,87 @@ test('fixed controller bounds an unresolved protected reader and reaps non-model
   try {await assert.rejects(runFixedDevelopmentChild(f.args),/DEADLINE/);
     assert.ok(performance.now()-start<12500,'hung tool cannot extend total deadline');}
   finally {await f.fs.rm(f.root,{recursive:true});}
+});
+
+test('refusal allows real non-model child cleanup and a typed failed terminal',async()=>{
+  const f=await controllerFixture(refusedChildFixture(`  process=subprocess.Popen([sys.executable,"-I","-S","-c","import time;time.sleep(60)"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  refused=False
+  try:
+   channel("running",binding)
+  except Exception:
+   refused=True
+  finally:
+   time.sleep(0.15)
+   process.terminate()
+   process.wait(timeout=2)
+  assert refused and process.poll() is not None
+  return {"outcome":"ADMISSION_LOST","owned_cleanup_verified":True,"authority_effect":"NONE","budget_reservation":{"status":"SPENT_BEFORE_MODEL_LOAD"},"source_child_reaped":process.poll() is not None}`));
+  const calls=refuseProtectedRead(f);
+  try {
+    const result=await runFixedDevelopmentChild(f.args);
+    assert.equal(result.outcome,'ADMISSION_LOST');
+    assert.equal(result.source_child_reaped,true);
+    assert.equal(result.owned_cleanup_verified,true);
+    assert.equal(result.budget_reservation.status,'SPENT_BEFORE_MODEL_LOAD');
+    assert.equal(calls(),1,'refusal is delivered once without a new protected read');
+  } finally {await f.fs.rm(f.root,{recursive:true});}
+});
+
+test('another effect request after refusal is killed before any protected read',async()=>{
+  const f=await controllerFixture(refusedChildFixture(`  try:
+   channel("running",binding)
+  except Exception:
+   pass
+  frame={"schema":"${SCHEMA}","id":"${'f'.repeat(32)}","sequence":2,"phase":"before_start","binding":binding}
+  sys.stdout.buffer.write((json.dumps(frame,sort_keys=True,separators=(",",":"))+"\\n").encode())
+  sys.stdout.buffer.flush()
+  time.sleep(60)`));
+  const calls=refuseProtectedRead(f);
+  try {
+    await assert.rejects(runFixedDevelopmentChild(f.args),/CURRENTNESS_AFTER_REFUSAL/);
+    assert.equal(calls(),1,'sealed admission cannot dispatch the second request');
+  } finally {await f.fs.rm(f.root,{recursive:true});}
+});
+
+test('refusal does not extend the fixed deadline for a missing failure terminal',async()=>{
+  const f=await controllerFixture(refusedChildFixture(`  try:
+   channel("running",binding)
+  except Exception:
+   pass
+  time.sleep(60)`),{wallSeconds:7});
+  const calls=refuseProtectedRead(f),start=performance.now();
+  try {
+    await assert.rejects(runFixedDevelopmentChild(f.args),/DEADLINE/);
+    assert.equal(calls(),1);
+    assert.ok(performance.now()-start<7500,'refused child is reaped inside the original total');
+  } finally {await f.fs.rm(f.root,{recursive:true});}
+});
+
+test('refusal accepts only known failure terminals with cleanup and spent reservation',async()=>{
+  const cases=[
+    [{outcome:'PROCESS_EXIT'},/TERMINAL_AFTER_REFUSAL_MUST_FAIL/],
+    [{outcome:'UNKNOWN_RESULT'},/TERMINAL_AFTER_REFUSAL_MUST_FAIL/],
+    [{owned_cleanup_verified:false},/TERMINAL_CLEANUP_OR_SPEND/],
+    [{budget_reservation:{status:'NOT_SPENT'}},/TERMINAL_CLEANUP_OR_SPEND/]
+  ];
+  for(const [changes,error] of cases) {
+    const result={outcome:'ADMISSION_LOST',owned_cleanup_verified:true,authority_effect:'NONE',
+      budget_reservation:{status:'SPENT_BEFORE_MODEL_LOAD'},...changes};
+    const encoded=JSON.stringify(JSON.stringify(result));
+    const f=await controllerFixture(refusedChildFixture(`  try:
+   channel("running",binding)
+  except Exception:
+   pass
+  frame={"schema":BOOTSTRAP_SCHEMA,"kind":"terminal_result","result":json.loads(${encoded})}
+  sys.stdout.buffer.write((json.dumps(frame,sort_keys=True,separators=(",",":"))+"\\n").encode())
+  sys.stdout.buffer.flush()
+  time.sleep(60)`));
+    const calls=refuseProtectedRead(f);
+    try {
+      await assert.rejects(runFixedDevelopmentChild(f.args),error);
+      assert.equal(calls(),1);
+    } finally {await f.fs.rm(f.root,{recursive:true});}
+  }
 });
 
 test('fixed controller rejects startup drift and incomplete import closure before launching',async()=>{
