@@ -38,6 +38,8 @@ The existing authorized `record_list`, `search_context` and generic mutation sup
 
 `public.clued_task_goal_delivery_owner_v1(p_input jsonb)` is authenticated-only and validates the actual direct Native human session through existing `authorization_owner_v12`. Every action requires `expected_owner_id` matching the actual session Owner before reading or writing the Task. Delegated OAuth, Agent/Worker gateway, anonymous and service-role callers cannot use it. This prevents a stale tab/account switch from applying another account's displayed draft.
 
+The migration follows existing optional-role ACL discipline: common-role revocations always apply; Worker gateway revocations apply only when its role already exists. It never creates that role or grants gateway access. Historical fixtures may defer the gateway migration, while the normal full chain retains the exact existing gateway RPC surface and all private denies.
+
 Common fields: `{action,id,expected_owner_id}`; mutation actions additionally require `{base_record_version,idempotency_key}`. Accepted actions and additional fields:
 
 | Action | Additional fields | Result |

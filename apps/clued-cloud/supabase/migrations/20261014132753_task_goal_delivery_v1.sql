@@ -27,7 +27,7 @@ alter table clued_private.task_goal_delivery_acceptances_v1 enable row level sec
 alter table clued_private.task_goal_delivery_completion_admissions_v1 enable row level security;
 revoke all on clued_private.task_goal_delivery_acceptances_v1,
   clued_private.task_goal_delivery_completion_admissions_v1
-  from public,anon,authenticated,service_role,clued_worker_gateway;
+  from public,anon,authenticated,service_role;
 
 create function clued_private.task_goal_delivery_audit_immutable_v1()
 returns trigger language plpgsql set search_path='' as $$
@@ -709,7 +709,7 @@ begin
     'task_workflow',projection,'delivery_candidates',candidates);
 end $$;
 
-revoke all on function public.clued_task_goal_delivery_owner_v1(jsonb) from public,anon,authenticated,service_role,clued_worker_gateway;
+revoke all on function public.clued_task_goal_delivery_owner_v1(jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.clued_task_goal_delivery_owner_v1(jsonb) to authenticated;
 revoke all on function
   clued_private.task_goal_delivery_audit_immutable_v1(),
@@ -725,4 +725,29 @@ revoke all on function
   clued_private.task_goal_delivery_guard_v1(),
   clued_private.task_goal_delivery_enrich_list_v1(uuid,jsonb,text[]),
   clued_private.task_goal_delivery_enrich_agent_list_v1(uuid,uuid,jsonb)
-  from public,anon,authenticated,service_role,clued_worker_gateway;
+  from public,anon,authenticated,service_role;
+
+-- Historical lifecycle fixtures defer the optional Worker gateway migration.
+-- Preserve its exact deny boundary when present without creating that role.
+do $gateway_acl$
+begin
+  if exists(select 1 from pg_catalog.pg_roles where rolname='clued_worker_gateway') then
+    revoke all on table clued_private.task_goal_delivery_acceptances_v1,
+      clued_private.task_goal_delivery_completion_admissions_v1 from clued_worker_gateway;
+    revoke all on function public.clued_task_goal_delivery_owner_v1(jsonb),
+      clued_private.task_goal_delivery_audit_immutable_v1(),
+      clued_private.task_goal_delivery_validate_v1(jsonb),
+      clued_private.task_goal_delivery_goal_v1(public.clued_memories),
+      clued_private.task_goal_delivery_metadata_v1(public.clued_memories),
+      clued_private.task_goal_delivery_scope_read_v1(uuid,uuid,text),
+      clued_private.task_goal_delivery_storage_read_v1(uuid,uuid,uuid,uuid),
+      clued_private.task_goal_delivery_file_v1(uuid,text,uuid,jsonb,jsonb,text,boolean),
+      clued_private.task_goal_delivery_projection_v1(uuid,public.clued_memories,uuid,boolean),
+      clued_private.task_goal_delivery_agent_metadata_v1(uuid,uuid,public.clued_memories),
+      clued_private.task_goal_delivery_admit_v1(uuid,uuid,uuid,uuid,bigint,text,jsonb),
+      clued_private.task_goal_delivery_guard_v1(),
+      clued_private.task_goal_delivery_enrich_list_v1(uuid,jsonb,text[]),
+      clued_private.task_goal_delivery_enrich_agent_list_v1(uuid,uuid,jsonb)
+      from clued_worker_gateway;
+  end if;
+end $gateway_acl$;

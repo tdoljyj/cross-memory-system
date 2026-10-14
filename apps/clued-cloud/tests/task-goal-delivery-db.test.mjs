@@ -90,7 +90,27 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((n) => n.endsWith('.sql')).sort()) {
       try {
         const bytes = await fs.readFile(path.join(root, 'supabase/migrations', name));
-        if (name === '20261014132753_task_goal_delivery_v1.sql') await applyProductionWrappedMigration(admin, name, bytes);
+        if (name === '20261014132753_task_goal_delivery_v1.sql') {
+          await suite.test('migration accepts an absent optional gateway role without manufacturing privileges', async () => {
+            // Disposable transaction only: replay the same migration with the
+            // optional gateway absent, then restore its real grants on rollback.
+            await admin.query('begin');
+            try {
+              await admin.query('drop owned by clued_worker_gateway; drop role clued_worker_gateway');
+              await admin.query(bytes.toString('utf8'));
+              assert.equal((await admin.query("select exists(select 1 from pg_roles where rolname='clued_worker_gateway') v")).rows[0].v, false);
+              for (const table of ['task_goal_delivery_acceptances_v1', 'task_goal_delivery_completion_admissions_v1']) {
+                assert.equal((await admin.query('select relrowsecurity from pg_class where oid=$1::regclass', ['clued_private.' + table])).rows[0].relrowsecurity, true);
+                for (const role of ['anon', 'authenticated', 'service_role']) assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE') v", [role, 'clued_private.' + table])).rows[0].v, false);
+              }
+              for (const role of ['anon', 'authenticated', 'service_role']) assert.equal((await admin.query("select has_function_privilege($1,'public.clued_task_goal_delivery_owner_v1(jsonb)','EXECUTE') v", [role])).rows[0].v, role === 'authenticated');
+              const helpers = (await admin.query("select oid::regprocedure::text signature from pg_proc where pronamespace='clued_private'::regnamespace and proname like 'task_goal_delivery_%'")).rows;
+              for (const { signature } of helpers) for (const role of ['anon', 'authenticated', 'service_role']) assert.equal((await admin.query("select has_function_privilege($1,$2::regprocedure,'EXECUTE') v", [role, signature])).rows[0].v, false);
+            } finally { await admin.query('rollback'); }
+            await assertGatewayCloseoutBoundary(admin);
+          });
+          await applyProductionWrappedMigration(admin, name, bytes);
+        }
         else await admin.query(bytes.toString('utf8'));
       }
       catch (error) { throw new Error('Migration ' + name + ': ' + error.message, { cause: error }); }
