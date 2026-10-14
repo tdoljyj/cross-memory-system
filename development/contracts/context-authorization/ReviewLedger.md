@@ -54,3 +54,19 @@ PowerShell 原测试日志／manifest 的 CRLF 字节通过 [ExactOriginalEviden
 11 个受影响测试／E2E 文件已修复：旧 sealed CLOSEOUT 及原断言完整保留、在后继前真实重放；后继实际 OID／Owner／SD／search_path／ACL、GW80／CI8、真实早期锁与私有调用拒绝另行验证。两组本地 PostgreSQL 日志为 9／9 与 30／30 PASS，均 0 SKIP。实际 PG 已复现旧 flat 请求 `22023 authorization_source_selection_required_sources_v1`，验证新来源缩减只撤 B、A 全 DTO 保留、双层 CAS 及最终撤销。Source55ba、序列化ea3、旧 CLOSEOUT 原文均未改变。
 
 [非作者测试差异复审](evidence/pr818-fixture-repair-independent-review-r1.json) PASS（0／0／0），报告 SHA256 `668161a50ac8ea19ab75aac990ff14f37c114967751c83a32e5082411b568bdd`，Root 记入原 Task @61、Receipt `ec7291f0-4d5e-41f6-9693-720ab67e0c1c`、Event `10421`。完整 HTTP E2E、新 head Linux CI、生产和页面验收仍待实际执行；这些修复不替代后续门禁。
+
+## 第二轮检查与实际项目创建入口补修
+
+`3a4dbd2374fb955ac6d910ca327a37c26bd3d751` 的实际数据库迁移／RLS／pgTAP、代码质量、HTTP E2E、MCP 与安全检查通过；隔离测试前两套 86／86、190／190 通过，第三套 76／82 通过。六个失败包括五次旧封存源码重放和一处旧阶段尚未关闭便安装新序列化的顺序错误，不能称整轮通过。
+
+[独立调用盘点](evidence/authorization-writer-callgraph-review.json)另发现真实 Native 资料中心 `activate` 新建 Project 漏接早期协调。Source55ba／旧序列化ea3的实际 PostgreSQL 复现报 `42501 authorization_early_writer_guard_required`，事务完整回滚；它是功能缺陷，与历史测试安装顺序分别记录。[第二轮盘点](evidence/pr818-isolation-second-diagnosis-and-inventory.json)与[修正结论](evidence/pr818-isolation-second-production-reassessment.json)保留，不用静态清单推断所有未运行业务均通过。
+
+当前序列化为 SHA256 `ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58`；Source55ba未变。真实最外 Native 入口在账户／会话、issuer、attempt 和存储锁之前取得 Owner 协调和有序 Binding fanout，再执行原会话及完整业务验证。退役 alias 保全原 `64503257…` 正文和 owner-only ACL，实际 Native／Gateway 入口与私有 core require 均保留。当前[实际锁测试](evidence/all-contexts-storage-final-manifest.json)20／20 PASS，0 FAIL／SKIP，包含真实新建 Project／未来 Context／MCP消费、双序并发等待、非法身份及等待期间会话过期拒绝；前态、首次 fixture 错误与初轮断言失败日志完整保留。
+
+[后端 r3 非作者复审](evidence/all-contexts-security-code-review-r3.json)PASS（0／0／0），原报告 SHA256 `1add2627c0a80963da32f667d2fa6ca6f6c28f02c82047abeba99050815ecdae`，绑定55ba／ce8及实际20日志，关闭调用盘点的两个问题。旧ea3的r2结论保留为历史限定对象，不能替代当前版本。
+
+六个有意延后封存的[历史 fixture](evidence/delayed-closeout-fixture-repair.json)仍运行所有原业务和真实封存重放，再按序安装两后继并另验全 public OID／Owner／SD／配置／ACL与GW80／CI8。实际771 PASS、0 FAIL／SKIP、exit0；六文件未另捕运行前哈希，此限制明确保留，closing哈希与SQL／helper的真实前后哈希已保存。另七个授权 fixture 的Root实际执行10 PASS、0 FAIL／SKIP；admission case直接与被导入各运行一次，不称十个独特用例。
+
+[13文件非作者复审 r2](evidence/pr818-fixture-repair-independent-review-r2.json)PASS（0／0／0），原报告 SHA256 `60259fb2ec3b7a34847560b6767b3e022b5b41d8a30ce826df20795ff9a49461`，独立核对上述实际日志、所有 closing 字节和限定说明。Root授权原始日志有PowerShell5混合编码；[解码记录](evidence/pr818-auth-fixtures-r2-root-decoding.json)及UTF8派生日志只转换编码，原始字节在[ExactRepairEvidenceR3.v1.json](evidence/ExactRepairEvidenceR3.v1.json)完整保全，未重跑或修改输出内容。该封套同时保存本轮所有原报告／失败／成功日志及Git LF文本的不同摘要。
+
+此批修复尚待新提交完整CI、受保护合并、备份／两SQL／生产发布、同Binding Native升级及八视图完整页面验收。线上仍为8f960b；不关闭原Task或第三阶段增强。

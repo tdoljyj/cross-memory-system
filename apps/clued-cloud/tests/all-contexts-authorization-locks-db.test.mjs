@@ -14,6 +14,7 @@ import { assertGatewayCloseoutBoundary, setWorkerGatewayCaller, workerGatewayRpc
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const proof = () => crypto.randomBytes(32).toString('hex');
+const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const expiry = () => new Date(Date.now() + 3600000).toISOString();
 const macro = (actions) => [{ resource_kind: 'scope', resource_id: 'contexts:*', environment: 'canonical', actions }];
 const claims = (sub) => ({ sub, role: 'authenticated', session_id: 'locks-db-native', aal: 'aal1',
@@ -43,12 +44,19 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
       create role service_role nologin bypassrls; create role authenticator nologin noinherit;
       create schema auth; create schema extensions; create extension pgcrypto with schema extensions;
       create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);
+      create table auth.sessions(id uuid primary key,user_id uuid references auth.users(id),not_after timestamptz);
       create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const names = (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((name) => name.endsWith('.sql')).sort();
+    let predecessorCatalog;
+    const entranceCatalog = async () => (await admin.query(`select p.oid::int oid,p.oid::regprocedure::text signature,
+      p.proacl::text acl,p.prosecdef,p.proconfig,encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') source_hash
+      from pg_proc p where p.oid=any(array['public.clued_project_mutate(text,jsonb)'::regprocedure::oid,
+        'public.clued_storage_onboard_v1(text,jsonb)'::regprocedure::oid]) order by 2`)).rows;
     for (const name of names) {
+      if (name === '20261014045157_all_contexts_serialization_v2.sql') predecessorCatalog = await entranceCatalog();
       const sql = await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8');
       if (name.includes('all_contexts')) t.diagnostic(JSON.stringify({ migration: name, sha256: crypto.createHash('sha256').update(sql).digest('hex') }));
       try { await admin.query(sql); }
@@ -113,8 +121,74 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
     };
     const base = await approve(first, await prepare());
 
+    // Exercise the actual Native onboard/OAuth state machine with synthetic
+    // directory effects. No provider request or private activation shortcut.
+    async function storageAttempt() {
+      const session = uuid();
+      await admin.query('insert into auth.sessions(id,user_id) values($1,$2)', [session, owner]);
+      const db = await connect('authenticated', owner);
+      await db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ ...claims(owner), session_id: session })]);
+      const storageSecret = proof();
+      await admin.query(`insert into clued_private.storage_oauth_apps_v1
+        (issuer_hash,oauth_client_id,redirect_uri,read_enabled,execution_enabled)
+        values($1,$2,'https://storage-locks.invalid/storage/google/callback',true,true)`, [sha(storageSecret), `locks-${uuid()}`]);
+      await admin.query(`insert into clued_private.storage_onboard_allowlist_v1(owner_id,note)
+        values($1,'Synthetic Native entrance qualification') on conflict(owner_id) do nothing`, [owner]);
+      const envelope = (tag) => ({ contract: 'clued.storage-credential/1', key_id: 'fixture', nonce: 'N'.repeat(16),
+        ciphertext: tag + crypto.randomBytes(48).toString('base64url') });
+      const call = async (input, caller = db, credential = storageSecret) => (await caller.query(
+        'select public.clued_storage_onboard_v1($1,$2::jsonb) v', [credential, JSON.stringify(input)])).rows[0].v;
+      const name = `Clued_资料中心_${uuid()}`;
+      const disclosure = `点击“确认并连接 Google Drive”即表示你确认：Clued 使用你 Google 云端硬盘中的「${name}」作为资料根目录。`;
+      const input = { action: 'begin', owner_id: owner, onboard_attempt_id: uuid(), oauth_attempt_id: uuid(), connection_id: uuid(),
+        state_hash: sha(uuid()), verifier_envelope: envelope('V'), root: { mode: 'new', name }, tracks: ['资料'],
+        normal_use_requested: false, default_refresh_requested: false, disclosure_version: 'clued.storage-onboard-disclosure/1',
+        disclosure_text: disclosure, disclosure_sha256: sha(disclosure) };
+      assert.equal((await call(input)).status, 'begun');
+      const claimed = (await db.query('select public.clued_storage_oauth_callback_v2($1,$2::jsonb) v',
+        [storageSecret, JSON.stringify({ action: 'claim', state_hash: input.state_hash })])).rows[0].v;
+      assert.equal(claimed.status, 'claimed'); assert.equal(claimed.purpose, 'onboard');
+      const staged = await call({ action: 'stage_credential', state_hash: input.state_hash, provider_subject: `synthetic-${uuid()}`,
+        credential_envelope: envelope('CRED'), provider_scope_profile: 'legacy' });
+      assert.equal(staged.status, 'credential_staged');
+      const run = { onboard_attempt_id: input.onboard_attempt_id, run_token: staged.run_token };
+      const rootId = `drv-${uuid()}`;
+      for (const role of ['root', 'track:资料']) {
+        await call({ ...run, action: 'effect_intent', role });
+        await call({ ...run, action: 'effect_result', role, provider_file_id: role === 'root' ? rootId : `drv-${uuid()}`,
+          version: '1', parents: [role === 'root' ? 'my-drive-root' : rootId], created: true });
+      }
+      return { db, session, call, activate: { ...run, action: 'activate', ancestors: ['my-drive-root'] } };
+    }
+    const storageCanonical = async () => (await admin.query(`select
+      (select count(*) from public.clued_projects where user_id=$1)::int projects,
+      (select count(*) from public.clued_memories where user_id=$1)::int memories,
+      (select count(*) from clued_private.resource_center_profiles_v1 where user_id=$1)::int profiles,
+      (select count(*) from clued_private.storage_connections_v1 where owner_id=$1)::int connections,
+      (select count(*) from public.clued_audit_receipts where user_id=$1)::int receipts,
+      (select count(*) from public.clued_context_events where user_id=$1)::int events`, [owner])).rows[0];
+    await t.test('actual Native storage onboard activate creates a future Project and exact Context authorization', async () => {
+      const attempt = await storageAttempt();
+      const before = await storageCanonical();
+      let result;
+      try { result = await attempt.call(attempt.activate); }
+      catch (error) {
+        assert.deepEqual(await storageCanonical(), before, 'failed real activation rolls back every canonical row');
+        t.diagnostic(JSON.stringify({ actual_storage_activate_error: error.message, code: error.code, where: error.where }));
+        throw error;
+      }
+      assert.equal(result.status, 'completed', JSON.stringify(result));
+      assert.ok((await admin.query(`select 1 from clued_private.authorization_entries_v12 where binding_id=$1
+        and resource_kind='scope' and resource_id=$2 and 'write'=any(actions)`, [base.binding_id, `project:${result.project_id}`])).rowCount);
+      const context = await own(attempt.db, { op: 'context_create', project_id: result.project_id, name: 'Future storage context', environment: 'test' });
+      assert.equal(context.status, 'committed');
+      assert.ok(await grant(base, context.result.id));
+      const listed = await workerGatewayRpc(gateway, 'clued_development_call_v14', base.token, { op: 'context_list', mode: 'development_history' });
+      assert.ok(listed.contexts.some((row) => row.id === context.result.id), 'real all-contexts consumer sees the new exact Context');
+    });
+
     // Query the wait graph, not elapsed sleep, before releasing the held writer.
-    async function barrier(held, holdAction, waiting, waitAction, waitKind = 'mutex') {
+    async function barrier(held, holdAction, waiting, waitAction, waitKind = 'mutex', beforeRelease = null) {
       const pid = Number((await waiting.query('select pg_backend_pid() pid')).rows[0].pid);
       await held.query('begin'); await waiting.query('begin');
       let pending;
@@ -142,6 +216,7 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
             and granted and objsubid=1 and ((classid::bigint<<32)|objid::bigint)=hashtext('owner-grant:'||$2)::bigint) held`, [pid, owner])).rows[0].held;
           assert.equal(grantLock, false, 'Native writer has not acquired owner_grant_lock before B');
         }
+        if (beforeRelease) await beforeRelease(pid);
         await held.query('commit');
         const answer = await pending;
         if (answer.error) throw answer.error;
@@ -153,6 +228,95 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
         throw error;
       }
     }
+
+    await t.test('retired project alias keeps its sealed source/OID/ACL; direct and legacy OAuth paths deny', async () => {
+      const catalog = await entranceCatalog();
+      const old = predecessorCatalog.find((row) => row.signature === 'clued_project_mutate(text,jsonb)');
+      const current = catalog.find((row) => row.signature === old.signature);
+      assert.equal(current.source_hash, '64503257b828c3dcf1405fc378a9d297faf559cec29a373e77e5013e2eb76262');
+      assert.deepEqual(current, old, 'retired alias has the exact frozen catalog row');
+      const oldStorage = predecessorCatalog.find((row) => row.signature === 'clued_storage_onboard_v1(text,jsonb)');
+      const currentStorage = catalog.find((row) => row.signature === oldStorage.signature);
+      assert.notEqual(currentStorage.source_hash, oldStorage.source_hash);
+      assert.deepEqual({ ...currentStorage, source_hash: null }, { ...oldStorage, source_hash: null }, 'Native storage OID, ACL and metadata preserved');
+      const anon = await connect('anon');
+      for (const caller of [anon, gateway]) {
+        await assert.rejects(caller.query('select public.clued_project_mutate($1,$2::jsonb)', [base.token, '{}']), /permission denied/);
+      }
+      await assert.rejects(native(first, 'clued_development_oauth_call_v14', { op: 'context_list' }), /permission denied/);
+      // The retired RPC is already ACL-closed. Test its permanent body denial
+      // separately under the catalog owner, without granting any old caller.
+      await assert.rejects(native(admin, 'clued_development_oauth_call_v14', { op: 'context_list' }),
+        /legacy_oauth_requires_new_provider_reauthorization/);
+      for (const name of ['project_mutation_core', 'project_mutation_core_v2']) {
+        await assert.rejects(admin.query(`select clued_private.${name}($1,null,$2::jsonb,$3)`, [owner, '{}', proof()]),
+          /authorization_early_writer_guard_required/);
+      }
+      t.diagnostic(JSON.stringify({ preserved_retired_alias: current, qualified_storage_entrance: currentStorage }));
+    });
+    await t.test('storage activation and macro approval serialize in both orderings with complete future grants', async () => {
+      const one = await storageAttempt();
+      const request = await prepare();
+      const a = await barrier(one.db, () => one.call(one.activate), second, () => approve(second, request));
+      assert.equal(a.held.status, 'completed');
+      assert.ok((await admin.query(`select 1 from clued_private.authorization_entries_v12 where binding_id=$1
+        and resource_kind='scope' and resource_id=$2 and 'read'=any(actions)`, [a.waited.binding_id, `project:${a.held.project_id}`])).rowCount);
+      const two = await storageAttempt();
+      const nextRequest = await prepare();
+      const b = await barrier(first, () => approve(first, nextRequest), two.db, () => two.call(two.activate));
+      assert.equal(b.waited.status, 'completed');
+      assert.ok((await admin.query(`select 1 from clued_private.authorization_entries_v12 where binding_id=$1
+        and resource_kind='scope' and resource_id=$2 and 'read'=any(actions)`, [b.held.binding_id, `project:${b.waited.project_id}`])).rowCount);
+    });
+    await t.test('actual storage activation denies non-Native caller, missing/foreign sessions, wrong issuer and attempt owner', async () => {
+      const attempt = await storageAttempt();
+      const before = await storageCanonical();
+      const beforeAttempt = (await admin.query('select to_jsonb(a) v from clued_private.storage_onboard_attempts_v1 a where id=$1',
+        [attempt.activate.onboard_attempt_id])).rows[0].v;
+      const anon = await connect('anon');
+      for (const db of [anon, gateway]) await assert.rejects(attempt.call(attempt.activate, db), /permission denied/);
+      for (const sessionId of [null, 'malformed', uuid()]) {
+        await attempt.db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ ...claims(owner), session_id: sessionId })]);
+        await assert.rejects(attempt.call(attempt.activate), /storage_native_session_required/);
+      }
+      const otherSession = uuid();
+      await admin.query('insert into auth.sessions(id,user_id) values($1,$2)', [otherSession, owner]);
+      await attempt.db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ ...claims(owner), session_id: otherSession })]);
+      await assert.rejects(attempt.call(attempt.activate), /storage_onboard_denied/);
+      await attempt.db.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ ...claims(owner), session_id: attempt.session })]);
+      await assert.rejects(attempt.call(attempt.activate, attempt.db, proof()), /issuer.*denied|issuer.*invalid|storage_onboard_denied/);
+      const stranger = uuid(), strangerSession = uuid();
+      await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'stranger.invalid',now())", [stranger]);
+      await admin.query('insert into auth.sessions(id,user_id) values($1,$2)', [strangerSession, stranger]);
+      const outsider = await connect('authenticated', stranger);
+      await outsider.query("select set_config('request.jwt.claims',$1,false)", [JSON.stringify({ ...claims(stranger), session_id: strangerSession })]);
+      await assert.rejects(attempt.call(attempt.activate, outsider), /storage_onboard_denied/);
+      assert.deepEqual(await storageCanonical(), before);
+      assert.deepEqual((await admin.query('select to_jsonb(a) v from clued_private.storage_onboard_attempts_v1 a where id=$1',
+        [attempt.activate.onboard_attempt_id])).rows[0].v, beforeAttempt, 'failed admission changes neither attempt nor canonical contents');
+    });
+    await t.test('storage waiter holds no auth/session/issuer/attempt row lock and revalidates session expiry after the Owner wait', async () => {
+      const attempt = await storageAttempt();
+      const before = await storageCanonical();
+      const result = await barrier(first, () => upsert(first, base), attempt.db, async () => {
+        await assert.rejects(attempt.call(attempt.activate), /storage_native_session_required/);
+        return { status: 'denied_after_wait' };
+      }, 'mutex', async (pid) => {
+        const premature = (await admin.query(`select relation::regclass::text relation,mode from pg_locks where pid=$1
+          and relation in ('auth.users'::regclass,'auth.sessions'::regclass,'clued_private.storage_oauth_apps_v1'::regclass,
+            'clued_private.storage_onboard_attempts_v1'::regclass,'clued_private.storage_oauth_attempts_v1'::regclass)
+          and mode in ('RowShareLock','RowExclusiveLock')`, [pid])).rows;
+        assert.deepEqual(premature, [], 'actual Native entrance takes Owner mutex before every credential/storage row lock');
+        await admin.query('update auth.sessions set not_after=clock_timestamp()-interval \'1 minute\' where id=$1', [attempt.session]);
+      });
+      assert.equal(result.waited.status, 'denied_after_wait');
+      // The holder's deliberate grant update emits one Receipt; compare all
+      // actual storage creation rows and assert this attempt never completed.
+      const after = await storageCanonical();
+      for (const key of ['projects', 'memories', 'profiles', 'connections', 'events']) assert.equal(after[key], before[key], key);
+      assert.equal((await admin.query('select state from clued_private.storage_onboard_attempts_v1 where id=$1',
+        [attempt.activate.onboard_attempt_id])).rows[0].state, 'credential_staged');
+    });
 
     await t.test('real catalog preserves gateway 80 / anon CI8 and private guards are unexposed', async () => {
       await assertGatewayCloseoutBoundary(admin);

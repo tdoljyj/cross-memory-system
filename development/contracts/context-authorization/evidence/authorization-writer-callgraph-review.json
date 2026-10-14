@@ -1,0 +1,223 @@
+{
+  "schema": "clued.authorization-writer-callgraph-review.v1",
+  "reviewer": "/root/authorization_alias_review",
+  "mode": "independent_read_only_source_review",
+  "source_head": "3a4dbd2374fb955ac6d910ca327a37c26bd3d751",
+  "verdict": "CHANGES_REQUIRED",
+  "execution_evidence": {
+    "tests_run": 0,
+    "catalog_queries_run": 0,
+    "scope": "Static repository source and all migration references; no live production or temporary PostgreSQL was accessed."
+  },
+  "findings": [
+    {
+      "id": "AWC-01",
+      "severity": "blocker",
+      "title": "Native storage onboarding omits the early authorization writer protocol",
+      "public_signature": "public.clued_storage_onboard_v1(text,jsonb)",
+      "trigger": "action=activate in a fresh Native session transaction",
+      "direct_call_chain": [
+        "public.clued_storage_onboard_v1 -> clued_private.storage_onboard_activate_v1",
+        "clued_private.storage_onboard_activate_v1 -> clued_private.project_mutation_core_v2"
+      ],
+      "evidence": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql",
+          "line": 448,
+          "claim": "Public Native entry resolves storage_owner_v1 at declaration."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql",
+          "line": 528,
+          "claim": "Locks the onboard attempt FOR UPDATE before activation."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql",
+          "line": 653,
+          "claim": "Takes per-owner onboard lock, then owner/root advisory lock."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql",
+          "line": 665,
+          "claim": "Calls private activation after those locks."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql",
+          "line": 317,
+          "claim": "Private activation creates the Project through project_mutation_core_v2."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+          "line": 258,
+          "claim": "Adds authorization_writer_require_v2 at every project core BEGIN."
+        }
+      ],
+      "outcome": "The Native activation path has no authorization_writer_guard_v2/fanout entrance. Core entry should raise authorization_early_writer_guard_required and roll back activation; this is a product regression, not merely fixture ordering.",
+      "earliest_safe_patch": {
+        "target": "public.clued_storage_onboard_v1(text,jsonb)",
+        "anchor": "First body BEGIN, immediately before the input-validation IF and before issuer:=clued_private.issuer_resolve_identity_compatible_v1(...).",
+        "source_anchor": "begin\\n  if coalesce(length(p_issuer_secret),0)<32 or jsonb_typeof(p_input) is distinct from 'object'",
+        "recommended_protocol": "For op='activate', take authorization_writer_guard_v2(u), recheck storage_owner_v1(), then authorization_writer_lock_fanout_v2(u). Keep all original issuer, Native session, attempt, run-token, expiry and downstream final validation.",
+        "rationale": "Issuer resolution takes issuer credential/app FOR SHARE; expiry sweep and attempt take row locks. Taking the owner mutex in private activation or core is too late and would introduce inverted waits."
+      },
+      "original_lock_order": [
+        "storage_owner_v1: verified Native account and live auth.sessions FOR SHARE",
+        "issuer resolver: issuer credential/app FOR SHARE",
+        "storage_onboard_expire_v1: expired attempts FOR UPDATE SKIP LOCKED",
+        "onboard attempt FOR UPDATE",
+        "storage_onboard_owner_lock_v1",
+        "owner/root advisory",
+        "private activation -> project core currentness lock and receipt -> Project INSERT/future fanout"
+      ],
+      "session_wait_checks": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20260927073103_resource_center_account_connection_v1.sql",
+          "line": 41,
+          "claim": "storage_owner_v1 verifies authorization_owner_v12, session_id, matching auth.sessions owner and wall-clock not_after, with FOR SHARE."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql",
+          "line": 666,
+          "claim": "After activation and lock waits, the public entry re-runs storage_owner_v1 and checks attempt expires_at using clock_timestamp; failure rolls back all activation effects."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261009070001_issuer_identity_credentials_v1.sql",
+          "line": 130,
+          "claim": "Issuer resolver verifies active credential, wall-clock valid_until and live issuer/app after FOR SHARE waits."
+        }
+      ],
+      "required_verification": [
+        "A real Native public activation in a fresh transaction succeeds without any test-only early-writer trigger.",
+        "Its newly created owned Project gets exact contexts:* contributions; an owned Context created under it gets the same environment-specific macro authority.",
+        "Native activation waits at the owner authorization mutex before holding onboard/app/Project/Binding locks.",
+        "Race activation versus macro approval/reduction/revocation in both orders; resulting authorization is current and complete, and deleted/denied authority is not resurrected.",
+        "Native session expiry and attempt expiry while waiting refuse and leave no Project/authorization/grant/connection partial effects.",
+        "Private project core still refuses without early guard; no late guard is added to bypass this invariant."
+      ],
+      "coverage_gap": "all-contexts-authorization-locks-db.test.mjs exercises gateway Project creation and Native Context creation, but contains no storage onboarding case. Existing resource-center-storage-onboard-db.fixture.mjs uses real Native public activation; its harness defers gateway closeout and may fail earlier at new serialization qualification, so its existence is not evidence that the new activation path works."
+    },
+    {
+      "id": "AWC-02",
+      "severity": "major",
+      "title": "Unnecessary patch changes a frozen, retired legacy alias",
+      "target": "public.clued_project_mutate(text,jsonb)",
+      "current_patch": "serialization project_entrances adds authorization_writer_project_hint_v2(p_token_hash,false)",
+      "recommendation": "Remove only this alias from the project_entrances patch list. Preserve project_mutation_core require and Native clued_user_project_mutate guard/fanout, and retain all current gateway v2 writer protocol.",
+      "evidence": [
+        {
+          "path": "apps/clued-cloud/worker/projects.ts",
+          "line": 54,
+          "claim": "Actual Worker tool routes clued_project_mutate to clued_project_mutate_v2."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+          "line": 373,
+          "claim": "resolve_oauth_binding is permanently fail-closed with legacy_oauth_requires_new_provider_reauthorization."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20260924110000_mtpe_universal_intake_auto_priority.sql",
+          "line": 752,
+          "claim": "Only retained business caller is clued_oauth_call, which invokes the retired resolver before its alias branch."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+          "line": 110,
+          "claim": "Legacy alias is separately frozen outside current Worker80/CI8."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+          "line": 117,
+          "claim": "Closeout pins legacy source SHA256 64503257b828c3dcf1405fc378a9d297faf559cec29a373e77e5013e2eb76262."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+          "line": 408,
+          "claim": "Alias loses PUBLIC/anon execution and receives no gateway grant; non-anonymous existing ACL preserved."
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "line": 781,
+          "claim": "Original alias explicitly revoked authenticated execution."
+        }
+      ],
+      "qualification": "Static call graph supports the recommendation. Actual final catalog OID/source/ACL and negative calls still require runtime tests. Preserve frozen CLOSEOUT SQL and do not rewrite its historical hash to accommodate this unnecessary patch.",
+      "required_verification": [
+        "Legacy alias prosrc SHA, OID, owner, SECURITY DEFINER, search_path and ACL unchanged across new successors.",
+        "Anon and gateway direct calls denied; authenticated direct call remains denied under the actual final catalog. Inspect service_role/existing non-anonymous entries rather than assuming their absence.",
+        "Legacy OAuth rejects before the alias branch and creates no receipt or Project.",
+        "Direct private old/new project cores without early guard still fail closed.",
+        "Supported Native old/new project mutations and gateway v2 mutation really succeed and preserve early mutex/fanout behavior.",
+        "Replaying frozen closeout after the successors remains valid without weakening its manifest/source drift checks."
+      ]
+    }
+  ],
+  "core_caller_inventory": [
+    {
+      "core": "clued_private.project_mutation_core(uuid,uuid,jsonb,text)",
+      "callers": [
+        {
+          "signature": "public.clued_project_mutate(text,jsonb)",
+          "status": "Retired direct alias, withdrawn from anon/gateway; only old OAuth internal branch fails before call.",
+          "definition": "20260825171129_clued_m1_runtime_contracts.sql:695"
+        },
+        {
+          "signature": "public.clued_user_project_mutate(jsonb,text)",
+          "status": "Supported Native entry; new serialization supplies early guard+fanout.",
+          "definition": "20261014045157_all_contexts_serialization_v2.sql:293"
+        }
+      ]
+    },
+    {
+      "core": "clued_private.project_mutation_core_v2(uuid,uuid,jsonb,text)",
+      "callers": [
+        {
+          "signature": "public.clued_project_mutate_v2(text,jsonb)",
+          "status": "Supported Worker gateway entry; new serialization supplies gateway hint + early fanout.",
+          "definition": "20260924120000_project_lifecycle_successor_v2.sql:499"
+        },
+        {
+          "signature": "public.clued_user_project_mutate_v2(jsonb,text)",
+          "status": "Supported Native entry; new serialization supplies early guard+fanout.",
+          "definition": "20261014045157_all_contexts_serialization_v2.sql:301"
+        },
+        {
+          "signature": "clued_private.storage_onboard_activate_v1(uuid,clued_private.storage_onboard_attempts_v1,clued_private.storage_oauth_apps_v1,jsonb)",
+          "status": "Real Native indirect caller via public.clued_storage_onboard_v1(text,jsonb); missing early guard+fanout.",
+          "definition": "20261001040000_storage_onboard_n0.sql:317"
+        }
+      ]
+    },
+    {
+      "core": "clued_private.project_observe_core(uuid,uuid,jsonb)",
+      "callers": [
+        {
+          "signature": "public.clued_project_observe(text,jsonb)",
+          "status": "Retained entry, patched with binding hint + fanout.",
+          "definition": "202608240003_project_lifecycle_v1.sql:391"
+        },
+        {
+          "signature": "public.clued_user_project_observe(jsonb)",
+          "status": "Native entry, replaced with guard+fanout.",
+          "definition": "20261014045157_all_contexts_serialization_v2.sql:277"
+        }
+      ]
+    },
+    {
+      "core": "clued_private.project_update_core(uuid,uuid,jsonb)",
+      "callers": [
+        {
+          "signature": "public.clued_project_update(text,jsonb)",
+          "status": "Retained entry, patched with binding hint + fanout.",
+          "definition": "20260824123000_map_optimistic_conflicts_to_http_409.sql:34"
+        },
+        {
+          "signature": "public.clued_user_project_update(jsonb)",
+          "status": "Native entry, replaced with guard+fanout.",
+          "definition": "20261014045157_all_contexts_serialization_v2.sql:285"
+        }
+      ]
+    }
+  ],
+  "inventory_boundary": "All SQL references to the four private project cores across migrations were searched. Project INSERTs are present in observe_core, old mutation_core and v2 mutation_core only. P5 gateway performs updates, not Project creation, and has no direct call to these cores. No dynamic string call beyond migration patch signature lists was found.",
+  "decision_limits": "This report is independent static review evidence, not an Owner approval, passing runtime test, production acceptance or completion of the original eight-view Task."
+}

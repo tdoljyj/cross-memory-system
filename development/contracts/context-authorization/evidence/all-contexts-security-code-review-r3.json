@@ -1,0 +1,207 @@
+{
+  "schema": "clued.all-contexts-security-code-review.v3",
+  "reviewer": "/root/authorization_alias_review",
+  "reviewer_independence": {
+    "source_author": false,
+    "test_author": false,
+    "role": "Independent reviewer; prior involvement was read-only call-graph diagnosis AWC-01/AWC-02.",
+    "source_or_test_edits": 0,
+    "postgres_runs": 0,
+    "ci_runs": 0,
+    "clued_writes": 0
+  },
+  "verdict": "PASS",
+  "severity_counts": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0
+  },
+  "reviewed_subject": {
+    "repository": "tdoljyj/cross-memory-system",
+    "checkout_head": "3a4dbd2374fb955ac6d910ca327a37c26bd3d751",
+    "qualification": "Uncommitted exact candidate bytes below. This review does not qualify all content of checkout_head or any future head.",
+    "files": [
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+        "read_scope": "Entire source protocol migration; unchanged bytes independently inspected."
+      },
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+        "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+        "read_scope": "Entire serialization migration and complete delta from checkout HEAD."
+      },
+      {
+        "path": "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs",
+        "sha256": "883c044404255eb15e83d3457f09e8dd92275276fe03492c29608c441f57aae2",
+        "read_scope": "Full relevant setup, real storage state-machine calls, assertions, barriers, retained negative cases and complete delta."
+      },
+      {
+        "path": "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs",
+        "sha256": "e44218a813629219bd290d343e43154510f7dca4df7bf584a6c78a5e83bdbeef",
+        "read_scope": "Admin fixture early-lock admission boundary; role-specific bypass checks inspected."
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "path": "work/eight_implementation/ui-acceptance/all-contexts-storage-final-test.log",
+      "sha256": "936e93e709c35bcefc3cbbb1692ce2bc73ba3ec839eedb59c5be8914a427a9f8",
+      "qualification": "Read actual complete execution log; source hashes match frozen candidate; 20 pass, 0 fail/skip/cancelled, exit 0.",
+      "started_utc": "2026-10-14T09:05:14.0024424Z",
+      "finished_utc": "2026-10-14T09:05:24.0635511Z",
+      "node": "v24.19.0"
+    },
+    {
+      "path": "work/eight_implementation/ui-acceptance/all-contexts-storage-final-manifest.json",
+      "sha256": "161adfdd5eee9c855c73d7ce2323adc6a7b6c26ac9f8a0026fc4f39d9ebc111d",
+      "qualification": "Author manifest read and compared against source bytes and raw logs; not used as a substitute for reading their assertions."
+    },
+    {
+      "path": "work/eight_implementation/ui-acceptance/all-contexts-storage-before-reproduction.log",
+      "sha256": "b6fba540aa87c55d12a43a69158ad1bf0ea0c0336ce301af8531cd3223908cf2",
+      "qualification": "Preserved failed predecessor execution: serialization ea3abed2, actual Native public activation enters require through private activation/core and raises 42501; rollback assertion executes before rethrow.",
+      "started_utc": "2026-10-14T09:00:26.5975792Z",
+      "finished_utc": "2026-10-14T09:00:35.5084428Z",
+      "exit_code": 1
+    },
+    {
+      "path": "work/eight_implementation/ui-acceptance/authorization-writer-callgraph-review.json",
+      "sha256": "89f3d5ca1cc40873361dae9f66a8d938e97892ed7b30ac60a9827f16930fccd4",
+      "qualification": "Prior independent CHANGES_REQUIRED findings remain preserved; their exact two findings are closed below, not overwritten."
+    }
+  ],
+  "review_checks": [
+    {
+      "id": "R3-01",
+      "subject": "Unlocked Native coordination hint",
+      "result": "PASS",
+      "evidence": "serialization:77-94",
+      "reason": "Reads auth.uid plus Native client/session shape and matching live auth.sessions without FOR SHARE/UPDATE or advisory locks. It returns only a coordination Owner ID, has no grant/mutation return, and is revoked from PUBLIC/anon/authenticated/service_role. It cannot replace actual storage authorization."
+    },
+    {
+      "id": "R3-02",
+      "subject": "Actual earliest Native writer entrance",
+      "result": "PASS",
+      "evidence": "serialization:286-302; locks test:170,257,298",
+      "reason": "Exact anchored replacement removes locking storage_owner_v1 initializer. Only activate executes hint -> Owner mutex -> sorted existing Binding/Authorization fanout -> original storage_owner_v1. That real checker therefore executes in a fresh READ COMMITTED statement after every mutex/fanout wait. It precedes original issuer credential/app locks, attempt sweep/writes and storage advisory locks. Other actions still run original storage_owner_v1 before original validation/issuer/body."
+    },
+    {
+      "id": "R3-03",
+      "subject": "Native and issuer authority retained",
+      "result": "PASS",
+      "evidence": "Original storage_onboard_v1/activate source and issuer_identity_credentials migration inspected; locks test:271,298",
+      "reason": "Patch does not replace original issuer proof resolver, live Native account/session checker, attempt owner/session, expiry, run token, disclosure, allowlist/read gate, credential staging, master-control behavior, or final wall-clock session/attempt rechecks. Fresh failure after a wait rolls back activation. Wrong role/session/issuer/Owner actually denied without changing attempt or canonical contents."
+    },
+    {
+      "id": "R3-04",
+      "subject": "Future exact authorization from real storage creation",
+      "result": "PASS",
+      "evidence": "locks test:170; final log positive Native activation",
+      "reason": "Real Native begin -> OAuth claim -> stage -> directory effect intent/result -> public activate succeeds; Project receives macro write authority; a real owned Context created below it receives exact grant; actual gateway Context list consumes that grant. No private activation shortcut or provider call is used."
+    },
+    {
+      "id": "R3-05",
+      "subject": "Observed lock order and currentness",
+      "result": "PASS",
+      "evidence": "locks test:257,298 and barrier wait-graph checks",
+      "reason": "Storage activation versus macro approval executes in both orderings with observed mutex waits and complete resulting Project entries. Waiting activation holds no premature auth/session/issuer-app/attempt row lock. Changing actual session not_after during the wait causes the resumed Native activation to deny; storage Project/Record/profile/connection/Event counts stay unchanged and attempt stays credential_staged."
+    },
+    {
+      "id": "R3-06",
+      "subject": "Frozen retired alias and supported Project entrances",
+      "result": "PASS",
+      "evidence": "serialization:257-280,334-349; locks test:232; worker/projects.ts:54",
+      "reason": "Only unnecessary legacy alias patch is removed. Actual catalog preserves alias OID 17061, owner-only ACL, SECURITY DEFINER, empty search_path and original source SHA64503257. Anon/gateway direct calls refuse. Both private mutation cores still require real early guard; both actually reject without it. Native v1/v2 wrappers still have guard+fanout; current gateway v2 retains gateway hint+fanout and is exercised in retained actual creator test. Native observe/update protocol is retained."
+    },
+    {
+      "id": "R3-07",
+      "subject": "No RPC/identity/ACL widening",
+      "result": "PASS",
+      "evidence": "serialization anchored patch mechanism, qualification DO and final private revokes; locks test:232,321",
+      "reason": "Existing functions use CREATE OR REPLACE against pg_get_functiondef, preserving OID, owner and ACL rather than dropping/recreating or issuing new public grants. Runtime comparison verifies old/new storage OID, ACL, SECURITY DEFINER and search_path; gateway 80/anon CI8 boundary passes. Runtime effective execute scan includes all authorization_writer helpers, including new storage hint, for anon/authenticated/gateway and finds no exposed helper. Static explicit revocation also covers service_role."
+    },
+    {
+      "id": "R3-08",
+      "subject": "Fixture does not mask missing real entrance",
+      "result": "PASS",
+      "evidence": "raw-binding-grants-fixture.mjs:35-58; before and after raw logs",
+      "reason": "Test-only insert hook takes guard only for session_user postgres with current_setting(role)=none. Actual Native and gateway calls are SET ROLE authenticated/clued_worker_gateway, so hook returns without guard. The preserved actual pre-fix 42501 confirms the fixture did not manufacture success. Direct no-guard cores and fake/late guard negative tests remain included; no skips were introduced."
+    },
+    {
+      "id": "R3-09",
+      "subject": "Full source protocol invariants",
+      "result": "PASS",
+      "evidence": "Complete unchanged source migration 55ba independently read; complete serialization ce8 independently read",
+      "reason": "Owned resource and parent Project checks, precise environments, legacy source separation, retained grant expiry/history/field ceilings, sticky exact deny, source/grant/override/Auth CAS, separate Native limit confirmation, permanent legacy OAuth resolver denial and fail-closed readiness are retained. No late private-core guard acquisition, broad admin fallback or new authority source was added by this repair."
+    }
+  ],
+  "prior_findings_closed": [
+    {
+      "id": "AWC-01",
+      "previous_severity": "blocker",
+      "status": "CLOSED_FOR_EXACT_REVIEWED_CANDIDATE",
+      "resolution": "Real outer Native activate now enters early guard/fanout before locking account/session/issuer/attempt. Actual predecessor failure and repaired positive/concurrent/negative execution were read, not inferred from an older PASS.",
+      "proof_checks": [
+        "R3-01",
+        "R3-02",
+        "R3-03",
+        "R3-04",
+        "R3-05",
+        "R3-08"
+      ]
+    },
+    {
+      "id": "AWC-02",
+      "previous_severity": "major",
+      "status": "CLOSED_FOR_EXACT_REVIEWED_CANDIDATE",
+      "resolution": "Legacy alias body is preserved and private core guard remains; supported Native and gateway paths keep their protocol. Actual final catalog and direct denial/no-guard core tests establish the repaired boundary.",
+      "proof_checks": [
+        "R3-06",
+        "R3-07"
+      ]
+    }
+  ],
+  "runtime_catalog_observed": {
+    "retired_alias": {
+      "oid": 17061,
+      "signature": "clued_project_mutate(text,jsonb)",
+      "acl": "{postgres=X/postgres}",
+      "security_definer": true,
+      "search_path": "",
+      "source_sha256": "64503257b828c3dcf1405fc378a9d297faf559cec29a373e77e5013e2eb76262"
+    },
+    "storage_entrance": {
+      "oid": 22269,
+      "signature": "clued_storage_onboard_v1(text,jsonb)",
+      "acl": "{postgres=X/postgres,authenticated=X/postgres}",
+      "security_definer": true,
+      "search_path": "",
+      "source_sha256": "140939b0f31eb0b7df869e6eefd4b3d8a9f91c7c193f8544e5ac7cfe41d17b16"
+    },
+    "owner_preservation": "Runtime diagnostic does not emit proowner. Owner preservation was reviewed from unchanged OIDs and CREATE OR REPLACE semantics with no ALTER OWNER/drop/recreate; no new runtime owner measurement is claimed.",
+    "legacy_oauth": "Actual retained test checks old development OAuth ACL denial and its permanent body refusal separately as catalog owner. Project OAuth dispatch reaches the separately sealed, fail-closed resolve_oauth_binding; that call graph was inspected rather than reported as a separate runtime call."
+  },
+  "test_result_boundary": {
+    "counts": {
+      "tests": 20,
+      "pass": 20,
+      "fail": 0,
+      "skip": 0,
+      "cancelled": 0
+    },
+    "includes": "One parent test plus nineteen subtests; actual source hashes emitted in the same raw execution.",
+    "not_claimed": [
+      "Linux CI completion",
+      "all other database fixture suites on the repaired candidate",
+      "separate runtime tests of every Native v1/v2 project operation",
+      "real provider storage onboarding",
+      "same-Binding production permission widening",
+      "production migration/release",
+      "complete eight-view page acceptance",
+      "Stage 3 implementation"
+    ],
+    "unchanged_native_project_wrappers": "Reviewed as unchanged guarded code; retained runtime test exercises gateway v2 creation and Native Context creation. Native v1/v2 Project operations are not labeled newly runtime-tested here."
+  },
+  "invalidation": "Any change to reviewed source/test/fixture bytes or execution evidence invalidates this exact review and requires a new affected review. This report is technical independent approval of the bounded candidate, not Owner production authority or completion of the original Task."
+}

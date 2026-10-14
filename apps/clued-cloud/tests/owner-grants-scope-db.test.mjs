@@ -30,7 +30,7 @@ async function applyQualifiedMigrations(admin, names) {
   let originalTargets;
   const successors = new Map([
     ['20261014044323_all_contexts_authorization_v2.sql', '55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b'],
-    ['20261014045157_all_contexts_serialization_v2.sql', 'ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad'],
+    ['20261014045157_all_contexts_serialization_v2.sql', 'ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58'],
   ]);
   for (const name of names) {
     if (name === '20261014044323_all_contexts_authorization_v2.sql') {
@@ -55,8 +55,12 @@ async function applyQualifiedMigrations(admin, names) {
   assert.deepEqual(await catalog(), originalTargets, 'successors preserve existing OIDs, owners, security metadata and ACL');
   await assertGatewayCloseoutBoundary(admin);
   assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
-  assert.match((await admin.query("select prosrc from pg_proc where oid='public.clued_project_mutate(text,jsonb)'::regprocedure")).rows[0].prosrc,
-    /authorization_writer_project_hint_v2/, 'the current legacy alias really enters the early writer protocol');
+  assert.equal((await admin.query("select encode(sha256(convert_to(prosrc,'UTF8')),'hex') source_hash from pg_proc where oid='public.clued_project_mutate(text,jsonb)'::regprocedure")).rows[0].source_hash,
+    '64503257b828c3dcf1405fc378a9d297faf559cec29a373e77e5013e2eb76262', 'retired alias keeps its sealed business body');
+  for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+    assert.equal((await admin.query("select has_function_privilege($1,'public.clued_project_mutate(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed,
+      false, role + ' cannot execute the retired alias');
+  }
   for (const signature of ['clued_private.authorization_writer_guard_v2(uuid)',
     'clued_private.authorization_writer_require_v2(uuid)', 'clued_private.authorization_sources_view_v2(uuid)']) {
     for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {

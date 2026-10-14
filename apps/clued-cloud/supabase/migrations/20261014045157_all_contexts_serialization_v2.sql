@@ -70,6 +70,26 @@ begin
   perform clued_private.authorization_writer_lock_fanout_v2(owner_hint,array[binding_hint]);
 end $$;
 
+-- Storage activation creates a Project. Its old declaration initializer
+-- called storage_owner_v1 and locked auth.users/auth.sessions before the Owner
+-- mutex. This unlocked Native hint only identifies the coordination target;
+-- the original storage_owner_v1 must authenticate again after every wait.
+create function clued_private.authorization_writer_storage_native_hint_v2() returns uuid
+language plpgsql volatile security definer set search_path='' as $$
+declare owner_hint uuid:=auth.uid(); session_hint uuid;
+begin
+  if owner_hint is null or nullif(auth.jwt()->>'client_id','') is not null then
+    raise exception 'direct_human_session_required' using errcode='42501'; end if;
+  begin session_hint:=(auth.jwt()->>'session_id')::uuid;
+  exception when invalid_text_representation then
+    raise exception 'storage_native_session_required' using errcode='42501'; end;
+  if session_hint is null or not exists(select 1 from auth.sessions s
+    where s.id=session_hint and s.user_id=owner_hint
+      and (to_jsonb(s)->>'not_after' is null or (to_jsonb(s)->>'not_after')::timestamptz>clock_timestamp())) then
+    raise exception 'storage_native_session_required' using errcode='42501'; end if;
+  return owner_hint;
+end $$;
+
 -- A Context Owner may revoke a saved shared grant whose Binding belongs to
 -- its invited subject. Discover that second Owner without row locks, take the
 -- Owner union in UUID order, then the actual core revalidates the saved grant.
@@ -233,13 +253,13 @@ select clued_private.authorization_serialization_patch_v2('public.clued_headless
   v_id:=(p_input->>'binding_id')::uuid;$a$);
 
 -- Existing private project cores cannot acquire the guard late: they require
--- the early caller protocol. Legacy aliases retain their existing ACLs.
+-- the early caller protocol. The retired mutate alias retains its sealed body.
 do $project_entrances$
 declare sig text; definition text; source text; anchor text; added text;
 begin
   foreach sig in array array['public.clued_project_observe(text,jsonb)',
       'public.clued_project_update(text,jsonb)',
-      'public.clued_project_mutate(text,jsonb)','public.clued_project_mutate_v2(text,jsonb)'] loop
+      'public.clued_project_mutate_v2(text,jsonb)'] loop
     source:=(select prosrc from pg_proc where oid=sig::regprocedure);
     anchor:=substring(source from E'(?i)\\nbegin\\n');
     if anchor is null then raise exception 'authorization_project_entrance_changed: %',sig; end if;
@@ -258,6 +278,27 @@ begin
       anchor||'  perform clued_private.authorization_writer_require_v2(p_user_id);'||E'\n');
   end loop;
 end $project_entrances$;
+
+-- Outermost Native activation, before account/session SHARE, issuer SHARE,
+-- attempt expiry writes, attempt UPDATE or storage-owner advisory locks.
+-- The original body, issuer verifier, disclosure/gate/master seals and final
+-- session/attempt rechecks remain intact. Other actions keep their old verifier.
+select clued_private.authorization_serialization_patch_v2('public.clued_storage_onboard_v1(text,jsonb)',
+  $a$declare u uuid:=clued_private.storage_owner_v1(); op text:=p_input->>'action'; issuer text;$a$,
+  $a$declare u uuid; op text:=p_input->>'action'; issuer text;$a$);
+select clued_private.authorization_serialization_patch_v2('public.clued_storage_onboard_v1(text,jsonb)',
+  $a$
+begin
+$a$,
+  $a$
+begin
+  if op='activate' then
+    u:=clued_private.authorization_writer_storage_native_hint_v2();
+    perform clued_private.authorization_writer_guard_v2(u);
+    perform clued_private.authorization_writer_lock_fanout_v2(u);
+  end if;
+  u:=clued_private.storage_owner_v1();
+$a$);
 
 -- Integration self-revocation also ends Bound credentials. Its first real
 -- locks remain L1 sorted Bindings; coordinate before L1, never inside the core.
@@ -395,7 +436,8 @@ begin
    'public.clued_owner_request_v1(text,jsonb)',
    'public.clued_owner_grant_v1(jsonb)',
    'public.clued_headless_binding_issue_v1(jsonb)',
-   'public.clued_project_mutate_v2(text,jsonb)'] loop
+   'public.clued_project_mutate_v2(text,jsonb)',
+   'public.clued_storage_onboard_v1(text,jsonb)'] loop
    if not exists(select 1 from pg_proc where oid=sig::regprocedure and prosecdef and proconfig=array['search_path=""']::text[]) then
      raise exception 'authorization_serialization_catalog_invalid: %',sig; end if;
  end loop;
@@ -410,6 +452,7 @@ revoke all on function clued_private.authorization_writer_binding_hint_v2(text),
  clued_private.authorization_writer_lock_binding_v2(uuid,uuid),
  clued_private.authorization_writer_lock_fanout_v2(uuid,uuid[]),
  clued_private.authorization_writer_project_hint_v2(text,boolean),
+ clued_private.authorization_writer_storage_native_hint_v2(),
  clued_private.authorization_writer_native_context_v2(uuid,jsonb),
  clued_private.authorization_writer_permission_request_v2(uuid,uuid),
  clued_private.authorization_writer_permission_token_v2(uuid,text),
