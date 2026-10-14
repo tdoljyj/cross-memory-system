@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://clued.pixelgrav.com"),
+  metadataBase: new URL("https://kooyumi.pixelgrav.com"),
   title: "Kooyumi — Let the good continue.",
   description:
     "Find what's good. Keep it going.",
