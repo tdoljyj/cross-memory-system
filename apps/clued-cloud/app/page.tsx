@@ -810,7 +810,7 @@ export default function Home() {
       scope: recordLevel === "project" ? `project:${recordProjectId}` : "global",
       record_type: recordView,
       source_refs: [],
-      source_unavailable_reason: "Direct user entry in Clued",
+      source_unavailable_reason: "Direct user entry in Kooyumi",
       mutation: {
         title: recordTitle.trim(),
         content: recordContent.trim(),
@@ -821,7 +821,7 @@ export default function Home() {
       authority: "user_explicit",
       user_confirmed: true,
       confidence: 1,
-      confidence_reason: "Direct user entry in Clued",
+      confidence_reason: "Direct user entry in Kooyumi",
     };
     if (pendingRecordCreate.current?.key !== recordCreateKey) {
       pendingRecordCreate.current = { key: recordCreateKey, body: JSON.stringify(input) };
