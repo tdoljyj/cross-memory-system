@@ -49,12 +49,69 @@ class CompletionPlanTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--device") + 1], "none")
         self.assertIn("--no-op-offload", argv)
         self.assertIn("--no-kv-offload", argv)
+        self.assertEqual(argv[argv.index("--threads") + 1], "2")
+        self.assertEqual(argv[argv.index("--threads-batch") + 1], "2")
         self.assertEqual(argv[argv.index("--predict") + 1], "512")
         self.assertNotIn("--server-base", argv)
         bad = copy.deepcopy(self.plan)
         bad["extra_argv"] = ["--model-url", "https://invalid"]
         with self.assertRaisesRegex(ValueError, "PLAN_FIELDS"):
             S.validate_plan(bad, time.monotonic())
+
+    def test_cpu_threads_default_two_and_only_explicit_eight_changes_thread_argv(self):
+        legacy = S.command(self.plan)
+        for threads in (2, 8):
+            with self.subTest(threads=threads):
+                plan = copy.deepcopy(self.plan)
+                plan["cpu_threads"] = threads
+                S.validate_plan(plan, time.monotonic())
+                expected = list(legacy)
+                for flag in ("--threads", "--threads-batch"):
+                    expected[expected.index(flag) + 1] = str(threads)
+                self.assertEqual(S.command(plan), expected)
+        self.assertNotIn("cpu_threads", self.plan)
+
+    def test_cpu_threads_invalid_type_or_value_and_unknown_option_are_rejected(self):
+        for value in (True, False, None, "8", 2.0, 8.0, 0, 1, 3, 4, 16, 2.5, 8.5):
+            plan = copy.deepcopy(self.plan)
+            plan["cpu_threads"] = value
+            with self.subTest(value=value), mock.patch.object(S, "file_identity") as identity:
+                with self.assertRaisesRegex(ValueError, "CPU_THREADS"):
+                    S.validate_plan(plan, time.monotonic())
+                identity.assert_not_called()
+                with self.assertRaisesRegex(ValueError, "CPU_THREADS"):
+                    S.command(plan)
+        plan = copy.deepcopy(self.plan)
+        plan.update(cpu_threads=8, threads_batch=8)
+        with self.assertRaisesRegex(ValueError, "PLAN_FIELDS"):
+            S.validate_plan(plan, time.monotonic())
+
+    @unittest.skipUnless(os.name == "nt", "Windows dispatch is mocked, no runtime child")
+    def test_cpu8_plan_digest_and_dispatch_remain_bound(self):
+        self.plan["cpu_threads"] = 8
+        self.plan["budget"]["wall_seconds"] = 30
+        phases = []
+        def boundary(phase, view, plan_digest):
+            phases.append(phase)
+            self.assertEqual(view["cpu_threads"], 8)
+            self.assertEqual(plan_digest, S.digest(self.plan))
+            self.assertEqual(plan_digest, S.digest(view))
+        def transport(argv, *args):
+            self.assertEqual(phases, ["preflight", "consume"])
+            for flag in ("--threads", "--threads-batch"):
+                self.assertEqual(argv[argv.index(flag) + 1], "8")
+            return {"outcome": "PROCESS_EXIT", "stdout_raw": b"{}", "stderr_raw": b"",
+                    "elapsed_seconds": 0.001, "usage": None, "model_output_validated": False}
+        with mock.patch.object(S, "_run_owned", side_effect=transport) as dispatch:
+            result = S.execute_fixed_completion(self.plan, boundary=boundary)
+        dispatch.assert_called_once()
+        self.assertEqual(result["plan_sha256"], S.digest(self.plan))
+        def mutate(phase, view, plan_digest):
+            view["cpu_threads"] = 2
+        with mock.patch.object(S, "_run_owned") as dispatch:
+            with self.assertRaisesRegex(ValueError, "BOUNDARY_RESULT_OR_MUTATION"):
+                S.execute_fixed_completion(self.plan, boundary=mutate)
+            dispatch.assert_not_called()
 
     def test_required_input_token_observation_matches_prompt_and_total_ceiling(self):
         for change in ({"count": True}, {"count": 0}, {"count": 4097}, {"prompt_sha256": "0" * 64}, {"reference": None}):
