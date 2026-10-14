@@ -1,6 +1,6 @@
-# 上下文授权统一合同 v0.1-r2
+# 上下文授权统一合同 v0.1-r3
 
-状态：PROPOSAL，r1 产品与安全独立审核均 FAIL；本修订须按新 SHA 复审通过后按 Owner 条件实施，尚未改变线上权限。
+状态：r2 已通过产品与安全独立审核；r3 仅补原 Task 引用，不改变范围或执行要求，须核对该元数据差异。r2 原字节及审核绑定保存在 evidence/AcceptedPlanR2.v1.json；尚未改变线上权限。
 
 Owner 来源：Clued Decision `1b609e13-9b44-47fb-90a1-89a74bf9875e` v4；执行复用 Task `d5dee826-27d7-452b-8948-48fe8ae8a961`。工程基线 main `f890a19da620bcd60efa20d44a0a78f9099c95bf`，受查部署 `8f960b5541e29ad279d4976f5c366ea4e1297ad4`。本合同是 `PermissionSimplification.v0.1` 的限定后继，不改其历史同意，不改数据身份、命名完整性固定来源或 Canonical 资格。
 
@@ -164,7 +164,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首�
 | V12 决定替代可追溯 | 首版；E1 `qualified_saved_and_strict_views` 限历史可见与严格视图排除 | 补后继／适用范围与旧正文追溯；Context v1→v2 不冒充正式 Decision 接受 |
 | V13 未整理来源可读 | 首版已保存来源可读；入口汇聚属 Stage3；E1 正向全文 NOT_VERIFIED | 补完整正文正样本；外部未入库内容不计入已保存全集 |
 | V14 预览可打开全文 | 首版；E1 `user_multilabel_identity_body`、`source_missing_body_semantics` 只证明正文和诚实缺失 | 正向来源全文与必要历史需补，不能用 locator-only 代替 |
-| V15 保存后索引延迟 | 首版状态边界／Stage3汇聚索引增强；E1 未验证延迟 | 可控缺索引／延迟测试保持明确状态并能浏览已保存全文；增强未实现不宣称完成 |
+| V15 保存后索引延迟 | 首版状态边界／Stage3汇聚索引增强；E1 未验证延迟 | 可控缺索引／延迟测试保持明确状态并能浏览已保存全文；增强未实现不宣称完成（Task d5dee826） |
 | V16 无权内容与敏感数量隔离 | 首版，直接受授权改动影响；E1 `user_body_search_and_intersection` 限项目/通用正反过滤 | 本次重跑 Owner／foreign／共享未选／环境／来源无权及数量隔离；标签不扩权 |
 | V17 改标签不改身份 | 首版；E1 `labels_remove_restore` 限活动 Task | 改后活动／终态／候选及两个 namespace 回归，保存原正文与状态 |
 | V18 UNKNOWN/STALE/CONFLICT | 首版，直接受新标识影响；E1 不完整 | 本次逐态测试与页面样本，缺能力不贴即时权威、不猜当前行动 |
@@ -173,7 +173,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首�
 | V21 工作追加任务交集 | 首版；E1 `user_body_search_and_intersection` 限工作＋Task | 改后两目录重跑；Context 记录的kind不因用途标签被提为正式 Task |
 | V22 来源与条目共用出处 | 首版来源链接／Stage3自动关联；E1 缺完整样本 | 手动现有来源关联正样本需补，证明未复制可编辑正文；自动关联仍 Stage3 |
 | V23 来源／历史词检索 | 首版现行检索范围；Stage3统一索引增强；E1 `developer_history_no_fabrication` PASS_LIMITED、`developer_revision_history_namespace` BLOCKED_PERMISSION、`positive_source_full_body` NOT_VERIFIED | 本次授权后补项目用途 v1→v2 与历史保留；明确来源原文未索引限制并可浏览全文；不伪造全库词检索 |
-| V24 标签不级联独立事项 | 首版对象独立性；Stage3批量关联；E1 无完整样本 | 补原记录／独立Task/Decision不同ID案例，无静默级联；未实现批量传播保持未验证 |
+| V24 标签不级联独立事项 | 首版对象独立性；Stage3批量关联；E1 无完整样本 | 补原记录／独立Task/Decision不同ID案例，无静默级联；未实现批量传播保持未验证（Task d5dee826） |
 
 三个完成门分别记录：授权修复完成＝本节 1–11 实际通过并部署、当前旧连接真实升级及能力核验；首版八视图验收完成＝所有首版适用部分有精确实际证据，未支持的来源／索引边界明确且满足已接受首版范围，Stage3 部分明确保留；整体原 Task 完成＝已接受三阶段及原剩余全部实现和验收。只补旧权限缺口或既有核心 GO 不能关闭整个原 Task，不另建重复执行 Task。
 

@@ -4,7 +4,7 @@
 
 ## 方案审核
 
-受查方案：[AllContextsAuthorization.v0.1.md](AllContextsAuthorization.v0.1.md)，v0.1-r2，SHA256 `8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3`。保留该受查文件原字节；其 `PROPOSAL` 表示方案文档阶段，不抹去后续审核回执。
+受查方案 v0.1-r2，SHA256 `8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3`。其原字节保存在 [AcceptedPlanR2.v1.json](evidence/AcceptedPlanR2.v1.json) 的 `original_base64`，同时可从固定提交 `4d05eb04d64fb8655cbe522a3dfcecf0d3c74904` 的原方案路径取得；`PROPOSAL` 表示当时方案文档阶段，不抹去后续审核回执。当前 [AllContextsAuthorization.v0.1.md](AllContextsAuthorization.v0.1.md) 为仅补任务引用的 r3，内容差异另行审核，不将 r2 的 SHA 当成新文档 SHA。
 
 | 非作者审核 | 结论 | 报告 SHA256 |
 | --- | --- | --- |
@@ -40,3 +40,17 @@ PowerShell 原测试日志／manifest 的 CRLF 字节通过 [ExactOriginalEviden
 最终提交的 CI、生产备份／两份迁移／发布／上线核验尚须分别绑定实际提交证据。代码审核和阶段性本地测试不能替代这些结论。对既有连接的“全部上下文”升级仍由同一 Binding 的 Native Owner 确认完成。
 
 授权修复完成后按受查方案 §6.1 回到八视图验收。原验收仅为 `CORE_FLOWS_PASSED_FULL_ACCEPTANCE_INCOMPLETE`；实际上下文旧版本正文、来源全文正样本和受影响授权／当前性用例仍须补证。原任务的第三阶段增强也不能因本次授权修复而标记完成。
+
+## PR818 首次正式检查与修复候选
+
+实际失败 head `4d05eb04d64fb8655cbe522a3dfcecf0d3c74904` 已保留。方案两处延期说明缺原 Task ID，r3 只补 `Task d5dee826` 与版本／状态元数据，范围和语义保留。密钥扫描 pinned v8.30.1 在分支及完整祖先历史均只找到两条：上述最终 r2 代码报告第 150／152 行的文件校验摘要。非作者[诊断](evidence/pr818-gitleaks-diagnosis.json) SHA256 `218b919af0b1f94058c22769775d98dd4de8f4613c76f293ed562412b15daf25` 核对每个值等于其实际代码文件 SHA256，属于 `ARTIFACT_DIGEST`；没有将失败称为通过或把真实密钥隐藏。Root 实际撤销自动合并、退出 FIFO，并将失败及定位记入原 Task @57，Receipt `5b06446e-2a26-4a8b-aa3d-ad8141123f0f`、Event `10364`。
+
+修复候选只增加两条完整 commit／path／rule／line 历史例外，原 482 条、默认扫描规则和全局例外数量 0 均保留。Helper 针对这个报告路径还验证精确提交、两个行号、原因、固定报告 SHA、原行键值，以及同一不可变提交中对应源码的 SHA；新提交、新路径或修改报告不能借用此例外。8 项局部验证通过；原文档编号检查 53 个文档通过；实际历史核证为 484 fingerprints／69 commits／124 files／130 Git objects。该候选仍须非作者差异复审、新提交的保护门和实际完整扫描，不沿用首次 head 的许可或失败结果。
+
+[CI 元数据差异复审](evidence/all-contexts-ci-delta-review-r1.json) PASS（0／0／0），报告 SHA256 `643a67f30267783c1148251e513a0592231694f043444ebe5510dd4c4b8f6462`。复审逐条确认默认 TOML／原 482 记录不变，仅增加已证明的两个不可变摘要位置；r3 仅版本／状态及两处原 Task 引用，r2 解码后与原固定 Git blob 完全一致。
+
+另三项集成检查的[独立诊断](evidence/pr818-stack-failures.json)，SHA256 `159974afd86365a2730d7f44a0f0e3d44ad6fb8819bf06ba43b8453b28e6ccc9`：G4 实际 251 migrations、db lint、72 pgTAP 通过，失败发生在旧阶段测试提前装入后继；隔离组 175／184 通过，剩余涉及旧 CLOSEOUT 重放阶段、未持真实锁的测试插入；HTTP E2E-05 则使用旧缩减协议。没有这些日志中的磁盘耗尽证据。
+
+11 个受影响测试／E2E 文件已修复：旧 sealed CLOSEOUT 及原断言完整保留、在后继前真实重放；后继实际 OID／Owner／SD／search_path／ACL、GW80／CI8、真实早期锁与私有调用拒绝另行验证。两组本地 PostgreSQL 日志为 9／9 与 30／30 PASS，均 0 SKIP。实际 PG 已复现旧 flat 请求 `22023 authorization_source_selection_required_sources_v1`，验证新来源缩减只撤 B、A 全 DTO 保留、双层 CAS 及最终撤销。Source55ba、序列化ea3、旧 CLOSEOUT 原文均未改变。
+
+[非作者测试差异复审](evidence/pr818-fixture-repair-independent-review-r1.json) PASS（0／0／0），报告 SHA256 `668161a50ac8ea19ab75aac990ff14f37c114967751c83a32e5082411b568bdd`，Root 记入原 Task @61、Receipt `ec7291f0-4d5e-41f6-9693-720ab67e0c1c`、Event `10421`。完整 HTTP E2E、新 head Linux CI、生产和页面验收仍待实际执行；这些修复不替代后续门禁。

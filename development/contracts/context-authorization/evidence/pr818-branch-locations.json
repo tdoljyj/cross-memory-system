@@ -1,0 +1,23 @@
+{
+  "exit_code": 1,
+  "start_utc": "2026-10-14T07:26:54.2604762Z",
+  "end_utc": "2026-10-14T07:26:54.8080753Z",
+  "findings": [
+    {
+      "File": "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json",
+      "StartLine": 150,
+      "EndLine": 150,
+      "RuleID": "generic-api-key",
+      "Commit": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+      "Fingerprint": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:150"
+    },
+    {
+      "File": "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json",
+      "StartLine": 152,
+      "EndLine": 152,
+      "RuleID": "generic-api-key",
+      "Commit": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+      "Fingerprint": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:152"
+    }
+  ]
+}

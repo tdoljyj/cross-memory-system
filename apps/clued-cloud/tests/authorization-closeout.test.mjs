@@ -8,12 +8,78 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
+import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// The sealed G6 closeout qualifies its original sources, before these two
+// authorized successors. Keep its real replay and separately prove the current
+// catalog rather than asking the historical seal to accept a changed body.
+async function applyQualifiedMigrations(admin, names) {
+  const targets = ['public.clued_project_mutate(text,jsonb)',
+    'public.clued_development_owner_v14(jsonb)', 'public.clued_authorization_manage_v12(jsonb)'];
+  const catalog = async () => (await admin.query(`select p.oid, p.oid::regprocedure::text signature,
+    pg_get_userbyid(p.proowner) owner,p.prosecdef,p.proconfig,p.proacl::text acl
+    from pg_proc p where p.oid=any($1::regprocedure[]) order by p.oid`, [targets])).rows;
+  let originalTargets;
+  const successors = new Map([
+    ['20261014044323_all_contexts_authorization_v2.sql', '55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b'],
+    ['20261014045157_all_contexts_serialization_v2.sql', 'ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad'],
+  ]);
+  for (const name of names) {
+    if (name === '20261014044323_all_contexts_authorization_v2.sql') {
+      await assertGatewayCloseoutBoundary(admin);
+      const closedCatalog = await snapshotCallerCatalog(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
+      await assertGatewayCloseoutBoundary(admin);
+      assert.deepEqual(await snapshotCallerCatalog(admin), closedCatalog,
+        'actual sealed G6 replay preserves original definitions and ACL at its bounded stage');
+      originalTargets = await catalog();
+      assert.equal(originalTargets.length, targets.length);
+    }
+    const sql = await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8');
+    if (successors.has(name)) assert.equal(crypto.createHash('sha256').update(sql).digest('hex'), successors.get(name));
+    try { await admin.query(sql); }
+    catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+    if (name === '20261014044323_all_contexts_authorization_v2.sql') {
+      assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, false);
+    }
+  }
+  assert.ok(originalTargets, 'both successors run only after the bounded closeout proof');
+  assert.deepEqual(await catalog(), originalTargets, 'successors preserve existing OIDs, owners, security metadata and ACL');
+  await assertGatewayCloseoutBoundary(admin);
+  assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
+  assert.match((await admin.query("select prosrc from pg_proc where oid='public.clued_project_mutate(text,jsonb)'::regprocedure")).rows[0].prosrc,
+    /authorization_writer_project_hint_v2/, 'the current legacy alias really enters the early writer protocol');
+  for (const signature of ['clued_private.authorization_writer_guard_v2(uuid)',
+    'clued_private.authorization_writer_require_v2(uuid)', 'clued_private.authorization_sources_view_v2(uuid)']) {
+    for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+      assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') allowed", [role, signature])).rows[0].allowed,
+        false, `${role} cannot directly call private successor helper ${signature}`);
+    }
+  }
+}
+
 const key = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const future = () => new Date(Date.now() + 3600000).toISOString();
 const selectedContext = (id, actions) => ({ resource_kind: 'context', resource_id: id, environment: 'test', actions });
+
+async function guardedProjectInsert(admin, owner, sql, values) {
+  await admin.query('begin');
+  try {
+    await admin.query('select clued_private.authorization_writer_guard_v2($1)', [owner]);
+    assert.equal((await admin.query('select clued_private.authorization_writer_guard_held_v2($1) held', [owner])).rows[0].held,
+      true, 'raw fixture setup holds the real granted Owner advisory transaction lock before INSERT');
+    const result = await admin.query(sql, values);
+    await admin.query('commit');
+    return result;
+  } catch (error) {
+    await admin.query('rollback');
+    throw error;
+  }
+}
+
 async function freePort() {
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
@@ -34,7 +100,7 @@ test('Authorization closeout: new resources and interrupted multi-step work', { 
     const admin = server.getPgClient(); clients.push(admin); await admin.connect();
     await admin.query("create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;create table auth.users(id uuid primary key,email text);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
     const migrations = (await fs.readdir(path.join(root, 'supabase/migrations'))).filter(name => name.endsWith('.sql') && !name.includes('p5_')).sort();
-    for (const name of migrations) await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+    await applyQualifiedMigrations(admin, migrations);
     await allowTestIssuerCredentials(admin);
     await admin.query('insert into auth.users values($1,$2)', [user, 'closeout@example.invalid']);
     await admin.query('insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,$3)', [issuer, resource, 'Local closeout']);
@@ -61,7 +127,7 @@ test('Authorization closeout: new resources and interrupted multi-step work', { 
     }
     async function project(name) {
       const id = key();
-      await admin.query('insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,$3,$4,$5)', [id, user, name, name.toLowerCase(), 'project:' + id]);
+      await guardedProjectInsert(admin, user, 'insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,$3,$4,$5)', [id, user, name, name.toLowerCase(), 'project:' + id]);
       const context = await rpc(owner, 'clued_development_owner_v14', [{ op: 'context_create', idempotency_key: key(), name: name + ' development', project_id: id, environment: 'test' }]);
       return { id, context: context.result.id };
     }

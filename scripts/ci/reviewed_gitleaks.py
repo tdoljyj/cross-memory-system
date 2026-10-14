@@ -12,7 +12,14 @@ import tomllib
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
-EXPECTED_COUNT = 482
+EXPECTED_COUNT = 484
+REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
+REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
+REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
+REVIEW_DOCUMENT_DIGEST_LINES = {
+    150: "apps/clued-cloud/worker/delegated-oauth.ts",
+    152: "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+}
 IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 KINDS = {
     "GIT_OBJECT_METADATA", "OWNER_COMMIT_ID", "API_BUNDLE_DIGEST",
@@ -59,7 +66,8 @@ def parse_records(text):
         # apps/clued-cloud/tests/ holds synthetic fixtures only (reviewed 2026-09-23).
         # The A03 register is admitted by exact path only (reviewed 2026-09-24, PR #330).
         if (not (path.startswith(("artifacts/", "scripts/", "work/", "apps/clued-cloud/tests/"))
-                 or path == "development/contracts/information-flow/known-limitations.m0d.v0.1.json")
+                 or path == "development/contracts/information-flow/known-limitations.m0d.v0.1.json"
+                 or path == REVIEW_DOCUMENT_PATH)
                 or any(p in ("", ".", "..") for p in path.split("/"))
                 or any(c in path for c in "\\*?[]\r\n")
                 or not re.fullmatch(r"[1-9][0-9]*", line)):
@@ -70,6 +78,11 @@ def parse_records(text):
             raise ValueError("Unreviewed reason")
         if rule == "sourcegraph-access-token" and record["kinds"] != ["GIT_OBJECT_METADATA"]:
             raise ValueError("Object rule requires object proof")
+        if path == REVIEW_DOCUMENT_PATH and (
+                commit != REVIEW_DOCUMENT_COMMIT or rule != "generic-api-key"
+                or int(line) not in REVIEW_DOCUMENT_DIGEST_LINES
+                or record["kinds"] != ["ARTIFACT_DIGEST"]):
+            raise ValueError("Authorization review exception identity changed")
         fingerprints.append(record["fingerprint"])
     if len(set(fingerprints)) != len(fingerprints):
         raise ValueError("Duplicate reviewed fingerprint")
@@ -99,6 +112,25 @@ def _ensure_reviewed_commits(repo, records):
     return commits
 
 
+def verify_auth_review_digest(repo, text, line_number):
+    """Prove the two pinned matches are digests of the same immutable source."""
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != REVIEW_DOCUMENT_SHA256:
+        raise ValueError("Authorization review bytes changed")
+    source_path = REVIEW_DOCUMENT_DIGEST_LINES.get(line_number)
+    if source_path is None:
+        raise ValueError("Unreviewed authorization digest line")
+    document = json.loads(text)
+    digest = document["reviewed_file_hashes"].get(source_path)
+    if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("Authorization review has no exact artifact digest")
+    line = text.splitlines()[line_number - 1].strip().rstrip(",")
+    if json.loads("{" + line + "}") != {source_path: digest}:
+        raise ValueError("Authorization digest location changed")
+    blob = run(["git", "cat-file", "blob", f"{REVIEW_DOCUMENT_COMMIT}:{source_path}"], cwd=repo)
+    if hashlib.sha256(blob).hexdigest() != digest:
+        raise ValueError("Authorization digest differs from immutable artifact")
+
+
 def verify_history(repo, records):
     commits = _ensure_reviewed_commits(repo, records)
     blobs = {}
@@ -110,6 +142,8 @@ def verify_history(repo, records):
         text = blobs[key]
         if int(line) > len(text.splitlines()):
             raise ValueError("Reviewed location no longer resolves")
+        if path == REVIEW_DOCUMENT_PATH:
+            verify_auth_review_digest(repo, text, int(line))
         if rule == "sourcegraph-access-token":
             if not path.endswith("/IndependentEnvOrderSourcePublicationAcceptance.json") or "sgp_" in text:
                 raise ValueError("Unexpected historical object subject")

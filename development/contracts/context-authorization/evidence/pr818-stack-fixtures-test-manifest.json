@@ -1,0 +1,46 @@
+{
+  "schema": "clued.pr818.stack-fixture-test.v1",
+  "start_utc": "2026-10-14T16:00:12.9800457+08:00",
+  "end_utc": "2026-10-14T16:00:28.9854461+08:00",
+  "duration_seconds": 16.0054004,
+  "runtime": "v24.19.0",
+  "exit_code": 0,
+  "log_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-stack-fixtures-test.log",
+  "log_sha256": "f8e0f8bc5bdefac41d6a986ac0f1a7583cc87edaac0607ad3544b1b0a9a69d6d",
+  "qualification": "Actual embedded PostgreSQL; historical bounded CLOSEOUT plus ordered current successors; not Linux G4 or HTTP E2E",
+  "e2e_run": "not run locally",
+  "files": [
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-db.test.mjs",
+      "sha256": "bd4bde9815003f44c3fe59db03fe5cff16c34a74abcc6382d9b83326f80211d3"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-lifecycle-successor-v2-db.test.mjs",
+      "sha256": "c25fc51a706c85976bd5aa7d27b470ed2c583fd9d39798b2926ed53dfcf7c946"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs",
+      "sha256": "be9bc28c94ee2003ba3d48767ea5a9093fb73b17e8f1d21f764afa18c69f283a"
+    },
+    {
+      "path": "apps/clued-cloud/evals/information-flow-e2e/scenarios/e2e-05.mjs",
+      "sha256": "975d21f7ca7147e22158e71cb63f7286556833b4e5e14dd8301bbf270cbb67ba"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad"
+    }
+  ],
+  "counts": {
+    "tests": 30,
+    "pass": 30,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  }
+}
