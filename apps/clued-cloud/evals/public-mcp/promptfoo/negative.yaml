@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
-description: Clued public MCP three-case fail-closed acceptance
+description: Kooyumi public MCP three-case fail-closed acceptance
 providers:
   - id: file://raw-provider.mjs
     label: clued-isolated-raw
@@ -20,7 +20,7 @@ tests:
     assert:
       - type: is-json
       - type: contains
-        value: 'Authorize with Clued OAuth or a Clued Binding Token.'
+        value: 'Authorize with Kooyumi OAuth or a Clued Binding Token.'
   - description: Owner A cannot address Owner B context
     options: { runSerially: true }
     vars:
@@ -53,6 +53,6 @@ tests:
     assert:
       - type: is-json
       - type: contains
-        value: 'Unknown Clued continuity tool.'
+        value: 'Unknown Kooyumi continuity tool.'
       - type: not-contains
         value: 'inputSchema'

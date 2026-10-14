@@ -41,7 +41,7 @@ function originOf(env: DelegatedOAuthEnv) {
 }
 function userToken(request: Request) {
   const token = request.headers.get('Authorization')?.match(/^Bearer (\S+)$/)?.[1];
-  if (!token) throw new AuthorizationFailure(401, '请先登录 Clued。');
+  if (!token) throw new AuthorizationFailure(401, '请先登录 Kooyumi。');
   return token;
 }
 function transient(status: number) { return status === 429 || status >= 500; }
@@ -82,12 +82,12 @@ async function bindingRpc(env: DelegatedOAuthEnv, name: string, bindingToken: st
     body: JSON.stringify({ p_token_hash: await hash(bindingToken) }), signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) {
-    if (transient(response.status)) throw new OAuthError('temporarily_unavailable', { description: 'Clued authorization service is temporarily unavailable.', statusCode: 503 });
+    if (transient(response.status)) throw new OAuthError('temporarily_unavailable', { description: 'Kooyumi authorization service is temporarily unavailable.', statusCode: 503 });
     const problem = await response.json().catch(() => null) as { code?: unknown } | null;
     if (response.status === 401 && typeof problem?.code === 'string' && /^PGRST30[123]$/.test(problem.code)) {
-      throw new OAuthError('temporarily_unavailable', { description: 'Clued authorization service is temporarily unavailable.', statusCode: 503 });
+      throw new OAuthError('temporarily_unavailable', { description: 'Kooyumi authorization service is temporarily unavailable.', statusCode: 503 });
     }
-    throw new OAuthError('invalid_grant', { description: 'Clued authorization is revoked or unavailable to this connection.' });
+    throw new OAuthError('invalid_grant', { description: 'Kooyumi authorization is revoked or unavailable to this connection.' });
   }
   return await response.json() as Json;
 }
@@ -98,9 +98,9 @@ async function bindingRpc(env: DelegatedOAuthEnv, name: string, bindingToken: st
 // the flag existed, never exceeds its own scopes.
 async function checkBinding(env: DelegatedOAuthEnv, props: AuthProps): Promise<readonly string[]> {
   const expiry = Date.parse(props?.expiresAt);
-  if (!props || !/^clued_bnd_[a-f0-9]{64}$/.test(props.bindingToken) || !Array.isArray(props.scopes) || !Number.isFinite(expiry) || expiry <= Date.now()) throw new OAuthError('invalid_grant', { description: 'Clued authorization is expired or revoked.' });
+  if (!props || !/^clued_bnd_[a-f0-9]{64}$/.test(props.bindingToken) || !Array.isArray(props.scopes) || !Number.isFinite(expiry) || expiry <= Date.now()) throw new OAuthError('invalid_grant', { description: 'Kooyumi authorization is expired or revoked.' });
   const status = await bindingRpc(env, 'clued_authorization_status_v12', props.bindingToken);
-  if (status.active !== true || status.binding_id !== props.bindingId) throw new OAuthError('invalid_grant', { description: 'Clued authorization is expired or revoked.' });
+  if (status.active !== true || status.binding_id !== props.bindingId) throw new OAuthError('invalid_grant', { description: 'Kooyumi authorization is expired or revoked.' });
   const live = status.scopes;
   if (!Array.isArray(live) || !live.every(scope => typeof scope === 'string')) return props.scopes;
   return props.narrowed === false ? live as string[] : props.scopes.filter(scope => live.includes(scope));
@@ -322,7 +322,7 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
       authorizeEndpoint: '/oauth/authorize', tokenEndpoint: '/oauth/token', clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: SCOPES, clientIdMetadataDocumentEnabled: false, allowPlainPKCE: false, allowImplicitFlow: false,
       accessTokenTTL: 900, refreshTokenTTL: 365 * 86400,
-      resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'Clued' },
+      resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'Kooyumi' },
       tokenExchangeCallback: async ({ grantType, props, scope, requestedScope }) => {
         await checkBinding(env, props);
         const narrowed = scope.some(item => !requestedScope.includes(item));

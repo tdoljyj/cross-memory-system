@@ -1,6 +1,6 @@
-# Clued Cloud
+# Kooyumi Cloud
 
-Clued Cloud is the production-service implementation for Clued continuity, Canonical context and the signed-in account surface. The deployed service uses Cloudflare Workers and a Supabase/PostgreSQL-backed Canonical Store.
+Kooyumi Cloud is the production-service implementation for Kooyumi (formerly Clued) continuity, Canonical context and the signed-in account surface. The deployed service uses Cloudflare Workers and a Supabase/PostgreSQL-backed Canonical Store.
 
 This directory is an engineering source tree. Repository source, tests and documentation do **not** by themselves prove what is currently deployed in production.
 
@@ -16,7 +16,7 @@ This directory is an engineering source tree. Repository source, tests and docum
 
 ## Runtime authority boundary
 
-The authenticated Clued service is the online Canonical Authority.
+The authenticated Kooyumi service is the online Canonical Authority.
 
 ```text
 App / Web / Agent / MCP
@@ -63,7 +63,7 @@ Do **not** treat that physical compatibility field as the long-term product orga
 
 The accepted successor direction is implemented in a reviewable v2 candidate:
 
-- Clued creates a Project when it determines the item is a Project.
+- Kooyumi creates a Project when it determines the item is a Project.
 - Recognition confidence/reason remain backend metadata/evidence.
 - Project progress remains separate from recognition.
 - The v2 public/product Project contract removes certainty as a lifecycle/filter axis.
