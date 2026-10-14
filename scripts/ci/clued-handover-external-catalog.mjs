@@ -7,7 +7,8 @@ const query=
   "select 'namespace' kind,n.nspname identity,pg_get_userbyid(n.nspowner) owner,coalesce(n.nspacl::text,'') detail "+
   "from pg_namespace n where "+N+" union all "+
   "select 'relation',n.nspname||'.'||c.relname,pg_get_userbyid(c.relowner),"+
-  "c.relkind::text||':'||coalesce(c.relacl::text,'') from pg_class c join pg_namespace n on n.oid=c.relnamespace where "+N+" or c.oid>=16384 union all "+
+  "jsonb_build_object('relation',c.oid::text,'original_detail',c.relkind::text||':'||coalesce(c.relacl::text,''))::text "+
+  "from pg_class c join pg_namespace n on n.oid=c.relnamespace where "+N+" or c.oid>=16384 union all "+
   "select 'index',n.nspname||'.'||c.relname,pg_get_userbyid(c.relowner),"+
   "jsonb_build_object('definition',pg_get_indexdef(i.indexrelid),'state',to_jsonb(i),"+
   "'expressions',pg_get_expr(i.indexprs,i.indrelid),'predicate',pg_get_expr(i.indpred,i.indrelid),"+
