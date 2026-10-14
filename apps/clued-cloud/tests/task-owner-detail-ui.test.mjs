@@ -44,12 +44,20 @@ function fixture(compiled = PAGE, initialId = TASK) {
     useState(initial) { const i = cursor++; hooks[i] ??= { value: typeof initial === 'function' ? initial() : initial };
       return [hooks[i].value, value => { hooks[i].value = typeof value === 'function' ? value(hooks[i].value) : value; }]; },
     useRef(value) { const i = cursor++; hooks[i] ??= { current: value }; return hooks[i]; },
+    useCallback(callback, deps) { const i = cursor++; if (!hooks[i] || !equal(hooks[i].deps, deps)) hooks[i] = { value: callback, deps }; return hooks[i].value; },
     useEffect(callback, deps) { const i = cursor++; if (!hooks[i] || !equal(hooks[i].deps, deps)) { const old = hooks[i];
       hooks[i] = { deps }; effects.push(() => { old?.cleanup?.(); hooks[i].cleanup = callback(); }); } },
   };
+  React.useLayoutEffect = React.useEffect;
   const auth = { onAuthStateChange(cb) { authCallback = cb; return { data: { subscription: { unsubscribe() { authCallback = null; } } } }; },
     async signOut() { signouts++; return { error: null }; } };
-  const supabase = { auth, rpc(name, args) { let resolve, reject;
+  const supabase = { auth, rpc(name, args) {
+    // The independently loaded workflow has separate dedicated tests. Keep
+    // this legacy detail fixture focused on its canonical RPC/race ordering.
+    if (name === 'clued_task_goal_delivery_owner_v1') return Promise.resolve({ data: {
+      status: 'ok', task_id: args.p_input.id, record_version: 8, task_workflow: null, delivery_candidates: [],
+    }, error: null });
+    let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ name, args, resolve, reject }); return promise; } };
   const exports = {};
   vm.runInNewContext(compiled, { exports, require(name) {

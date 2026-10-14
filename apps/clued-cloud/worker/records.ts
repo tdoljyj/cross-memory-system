@@ -1,3 +1,5 @@
+import { taskWorkflowSchema } from "./task-goal-delivery-schema";
+
 export interface RecordFeatureEnv {
   PROJECT_VIEWS_V2?: string;
 }
@@ -62,7 +64,7 @@ export const recordTools = [
   {
     name: "clued_record_list",
     description:
-      "Read canonical records at the Global level or for one effective project. By default, only records proven current by the shared server Currentness Core are returned; an active Event remains a separate search_context current source. Set include_history=true explicitly for historical or diagnostic records, which are not authoritative current rows. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id.",
+      "Read canonical records at the Global level or for one effective project. By default, only records proven current by the shared server Currentness Core are returned; an active Event remains a separate search_context current source. Set include_history=true explicitly for historical or diagnostic records, which are not authoritative current rows. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id. Opted-in Tasks additionally return task_workflow metadata (the server goal_version, definition, delivery_refs and authorized file locators/Receipts). Each linked source is permission-checked again; an inaccessible source stays unknown. This projection grants no additional read or execution authority.",
     inputSchema: {
       type: "object",
       required: ["record_type"],
@@ -111,6 +113,7 @@ export const recordTools = [
               state_kind: { description: "Required for state; manual is used for a manual State. No database value enum." },
               fact_kind: { description: "Required for profile_fact; preference is used for a preference. No database value enum." },
               note_kind: { description: "Required for note; log is used for a follow-up note. No database value enum." },
+              task_workflow: taskWorkflowSchema,
             } },
             relations: { type: "object" },
             closure_summary: { type: "string" },
