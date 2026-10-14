@@ -1,0 +1,185 @@
+{
+  "schema": "clued.independent-code-review/1",
+  "review_id": "all-contexts-security-code-review-r2",
+  "reviewer": "/root/all_contexts_final_security — non-author independent security reviewer",
+  "verdict": "PASS",
+  "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 0,
+    "MINOR": 0
+  },
+  "review_completed_at_utc": "2026-10-14T07:12:13Z",
+  "subject": {
+    "repository": "tdoljyj/cross-memory-system",
+    "branch": "codex/all-contexts-authorization-20261014",
+    "authoring_base_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "reviewed_commit": "1c1b5f36996ac662cbcbfc9bbb3bae3c3e3c0a78",
+    "main_inherited_commit": "af22e8c5d8c70f86d17abb32996a63414a1d5c94",
+    "plan_sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+    "source_path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+    "source_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+    "serialization_path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+    "serialization_sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad",
+    "opening_source_sha256": "ad2dd45c9e778f1365e3994ca2e065d4127309eedf11c366c220eec6020a778a",
+    "opening_to_final_qualification": "Root removed one surplus terminal blank line only. Reviewer independently rehashed final 55ba bytes and reread the terminal SQL. No SQL statement, reviewed transport or test changed. Source/serialization final hashes were rechecked before report delivery.",
+    "scope": "Complete new Source and serialization SQL; both new database suites and raw fixture; prior Native, v12/v13, gateway and Headless kernels at the changed call boundaries; affected compatibility test diffs; exact HTTP forwarding and MCP permission descriptor; package database script and component version consistency. UI has its separate non-author r3 review, and this report does not reapprove that UI."
+  },
+  "admission": {
+    "contract_version": 49,
+    "contract_sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+    "skill_version": "1.0.20",
+    "independent_review_enabled": true,
+    "independent_review_policy_version": 1,
+    "independent_review_execution_authority": false,
+    "global_resume_receipt": "c423fe05-b2cf-4c0f-8f0c-2e306aaebad5",
+    "global_admission_receipt": "de4ee44d-3932-4328-9fd9-83b44db40b76",
+    "project_resume_receipt": "7d3260f2-cd68-4abe-a19e-d30c869d80bc",
+    "project_admission_receipt": "434ac242-7d98-4eed-a672-1024d0f3912c",
+    "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "task_id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+    "task_version_read": 52,
+    "owner_decision_id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+    "owner_decision_version_read": 4,
+    "root_claim_id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+    "root_claim_fence_at_launch": 6,
+    "root_claim_lease_version_at_launch": 7,
+    "note": "Existing Root claim/budget only; no separate Task/claim, no Canonical record mutation, no CI, no Source edit or runtime execution by this reviewer. Fresh enabled setting read before review. Shared-Binding inbox inspected with mark_read=false; unrelated holder threads were not answered on another holder's behalf. Console-specific preview instruction read; current Owner Decision v4 explicitly authorizes this authorization review and implementation sequence."
+  },
+  "findings": [],
+  "closed_findings": [
+    {
+      "id": "SQL-M1",
+      "prior_severity": "MAJOR",
+      "status": "CLOSED_IN_FINAL_CODE",
+      "location": "authorization_initialize_sources_v2, authorization_effective_no_lock_v2, authorization_context_upgrade_view_v2",
+      "basis": "First source capture detects a narrower normalized old g.actions ceiling even when history/version/fields are otherwise unrestricted. It persists the intersected exact ceiling before rebuilding; close maps to internal write without inventing new actions. Legacy diagnostic actions intersect the actual live grant. Real regression retains read-only capability after macro upgrade, future refresh and Headless rotation; separate Native exact confirmation alone restores write."
+    },
+    {
+      "id": "SQL-M2",
+      "prior_severity": "MAJOR",
+      "status": "CLOSED_IN_FINAL_CODE",
+      "location": "authorization_add_selection_v2 and connection_permission_apply_v1",
+      "basis": "Same live contexts_policy extends only the scopes associated with the explicitly requested new actions, within the target Binding's post-approval scopes. It does not broaden unrelated sources. Runtime regression starts with context:read only, approves developer and full on that same Binding, and checks existing/future Context writes plus resource-supported exact actions."
+    },
+    {
+      "id": "SQL-M2-EXPIRED-FULL",
+      "prior_severity": "MAJOR",
+      "status": "CLOSED_IN_FINAL_CODE",
+      "location": "authorization_add_selection_v2 expired-policy branch and connection_permission_check_v1",
+      "basis": "Expired policy identity is retired and versioned; a new policy carries only the newly approved actions. Already-granted checks require live source and source scope ceiling. Regression proves expired full followed by reader cannot revive write/full on existing or future resources, while a distinct live direct write remains valid."
+    },
+    {
+      "id": "SQL-m1",
+      "prior_severity": "MINOR",
+      "status": "CLOSED_IN_FINAL_CODE",
+      "location": "authorization_effective_no_lock_v2 legacy fallback",
+      "basis": "The unupgraded fallback now intersects the actual saved qualification's current membership actions as well as live grant actions. Regression narrows a saved original membership from read/write to read and confirms diagnostic read-only display and execution denial."
+    },
+    {
+      "id": "SQL-PRIVACY",
+      "prior_severity": "MAJOR",
+      "status": "CLOSED_AND_RECHECKED",
+      "location": "authorization_resource_metadata_v2",
+      "basis": "Live metadata requires actual self ownership of both Context and parent Project or the exact original live membership matching current resource owners/environment and active resource owner. Revocation makes names and project relationship null and effective actions empty. Regression renames both private resources after revoke, checks no new names in the reachable management response and refused Headless preview, and ensures a later new membership cannot replace the original qualification."
+    }
+  ],
+  "verified_boundaries": [
+    "All-owned macro covers general/profile, own project canonical scopes and own Contexts whose parent Project is also owned; shared qualifications remain explicit. The macro itself never grants business admission.",
+    "Source activation remains closed after the first migration and opens only after ordered serialization qualification. Own future Project/Context materialization remains exact, without a 100-derived-resource cap; the 105-Context test executes a write to the final resource.",
+    "Baseline, new direct, old project policy and new contexts policy are distinct source contributions. Per-source expiry precedes union. Precise deny/allow, old grant expiry/revocation, field/history/version/cursor limits persist; diagnostic reads never repair grant projections.",
+    "Reduce is source-ID/version/CAS bound and can only narrow sources or exact exceptions. Ambiguous upgraded flat selections are rejected. Grant changes preserve precise denies and tighter ceilings.",
+    "Precise widening is Native account-session only, with an exact old-to-new digest, Binding/Authorization/override/grant CAS, source snapshot, short-lived session-bound token, same-request prohibition and atomic success or rejected-token burn. Scope limits use null grant IDs; neither macro nor old grant_upsert clears a revocation.",
+    "Owner transaction mutex is acquired at actual early entry, proved through matching backend/database/granted Exclusive advisory pg_locks, and rejects stronger transaction snapshots. Public/private Project aliases, Native Context writers, permission consumers, rotation, revocation and expiry use it before relevant row locks.",
+    "Project fan-out prelocks the union of old/new policies and actual creator Binding in UUID order before resolver/resource locks. Native permission approval acquires target Binding/Authorization before GrantLock/token. Ordinary business reads/writes retain exact locked admission and do not acquire the Owner writer mutex.",
+    "Context listing uses one globally sorted own/member Context set. Native management list/preview remains diagnostic and avoids writer mutex/Binding/Context execution locks.",
+    "Headless rotation binds all source/exception/limit snapshots and versions, then clones their original semantics and tighter expiry rather than regenerating from default selections. Unupgraded v12 rotates through preserved legacy snapshot without guessing independent source provenance.",
+    "Public RPC identities/ACLs are preserved with anchored in-place patches; private adapters are revoked. Existing exact gateway 80 / anon CI8 boundary is checked. Immutable old CLOSEOUT replay remains at its original bounded source chain, followed by successor boundary checks.",
+    "HTTP only adds two exact Native operations. Owner bearer, Origin, bounded request size, unknown-op rejection and sanitized database refusals remain. Smaller access-token scope checks are unchanged; MCP descriptors keep old project/developer semantics and separate production/storage/model rights.",
+    "Only the two new real database suites are added to the existing package command. Package is a protected path and still needs exact-head admission. Component mcp.server 0.6.5 matches generated marker; no agent-contract or Skill version change is inferred."
+  ],
+  "evidence": {
+    "final_combined_local": {
+      "manifest_path": "all-contexts-final-package-manifest.json",
+      "manifest_sha256": "daf7c4446130184d13cf141a49aa43606ae3a83f6c0cd17c3838734fe6757fba",
+      "log_path": "all-contexts-final-package-test.log",
+      "log_sha256": "e50f74de88a84fe4d5de6ce756671649f142d247efce4afcab586eefe667a74d",
+      "executor": "Root; reviewer independently read/hash-verified artifacts and actual reporter migration diagnostics",
+      "head": "1c1b5f36996ac662cbcbfc9bbb3bae3c3e3c0a78",
+      "start_utc": "2026-10-14T07:08:43.8510047Z",
+      "end_utc": "2026-10-14T07:09:47.4227329Z",
+      "runtime": "Node v24.19.0 on Windows; real isolated EmbeddedPostgres",
+      "exit_code": 0,
+      "counts": {
+        "tests": 57,
+        "passed": 57,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "qualification": "Seven exact affected groups: Source 24, serialization locks 15, roles 1, permission request 1, Headless 1, expiry 1, historical Context two-chain group 14. This is scoped local runtime evidence, not full Linux CI, Native human approval, production or whole eight-view acceptance."
+    },
+    "historical_connection": {
+      "manifest_path": "all-contexts-historical-connection-r1-manifest.json",
+      "manifest_sha256": "edaeab80c485e9209cbd1a95384023984133546432729b7b03f960ec845120c7",
+      "log_sha256": "d84414e522f12987394f089f8f003f91994218ab9dd1f5966e5054cbec06613c",
+      "runtime": "Node v24.19.0 on Windows",
+      "counts": {
+        "tests": 20,
+        "passed": 20,
+        "failed": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "qualification": "Unchanged historical v12 bounded chain only. Prior parent failure/hang without force-exit was not reproduced; root cause remains UNKNOWN and is not attributed to OS, network or disk."
+    },
+    "prior_local": {
+      "source_42_sha256": "24f4a5ccb920d259a2aa50b44317b5e361f514e003d210a2c1911f5d562802af",
+      "source_42_subject": "ad2dd45c9e778f1365e3994ca2e065d4127309eedf11c366c220eec6020a778a",
+      "locks_15_sha256": "3c81f2562e49594962e3fee77e37fca28555677897a3ffa0949d68a60aefb8a1",
+      "qualification": "Preserved historical precursor evidence. Original lock reporter is PASS with absolute run time/runtime/direct exit unknown, per limited provenance manifest; final 57-group direct invocation supplies new qualification. Earlier 95c81 58/58 was invalidated by independent material findings and remains historical."
+    }
+  },
+  "reviewed_file_hashes": {
+    "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs": "e037a8511aa2982723ee5aa2ac1877cfe4f291680da1569b0c4b8d37ab56ac86",
+    "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs": "821f6a924c4189fe998bd8be5c8ba91f31c224bba13673d51533d35123090334",
+    "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs": "e44218a813629219bd290d343e43154510f7dca4df7bf584a6c78a5e83bdbeef",
+    "apps/clued-cloud/tests/authorization-roles-db.test.mjs": "7934ff3c7a54e48dfc27bf6bcfcde9ca2a0ff82212bfceb0ebd32798c8ada845",
+    "apps/clued-cloud/tests/connection-permission-request-db.test.mjs": "40344709ebf1f8818162b2a7b37f4d424452f493c953b66a7c93833ee480bec9",
+    "apps/clued-cloud/tests/headless-binding-issuance-db.test.mjs": "3be17ba6646e481c0964cb9581a605abf1db871aa0fb47286316b2892b9eb169",
+    "apps/clued-cloud/worker/delegated-oauth.ts": "a0aa32dba4ba0b582c0244857f0b67ee48e3b8114ffc3ce32eb36fbf9c1303e2",
+    "apps/clued-cloud/worker/owner-requests.ts": "9d7ffdebc21230764921418807ac1523bc4a48e0becd9d6caee62649a6f17c1c",
+    "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs": "f1a31efae54306d8df6f9cf54fd05cca800be5fe43650314a7aacd79a818b6a3",
+    "apps/clued-cloud/package.json": "78b872e62dcdcdae1c42a936ec12ff634ba758db1c70ea6bf43636f9a4cdc055",
+    "config/clued-components.json": "2ff5c768b2a3b0af2610447b94aefb9f65822c6276bc6dca9e756368667f8f18",
+    "apps/clued-cloud/worker/generated/components.ts": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c"
+  },
+  "sources_read": [
+    "Installed Clued Skill 1.0.20 and engineering reference; full served Agent Contract49 in both parts; applicable root and app AGENTS.",
+    "Fresh Global Priority Frontier state 72166b09 v4971, Project State f622209b v23 applicability, original executable Task d5dee826 v52 and Owner Decision 1b609e13 v4. Active constraints read in full for review, alignment, component, capture and defect boundaries.",
+    "Accepted exact r2 plan 8f8281 and archived non-author r1 security failure 50c0de9d2e389690e9f5ace061697d3298cc00421fd0b41075aa8cb7d0cc8679.",
+    "Complete new Source and serialization SQL and both new test files; raw-binding fixture; relevant original v12/v13/development/Headless Native and effective admission bodies; affected compatibility test diffs and gateway catalog enumeration.",
+    "Complete delegated OAuth and Owner request Worker files, new transport test, package diff and component manifest/generated marker.",
+    "Independent git ls-remote origin main returned af22e8c5d8c70f86d17abb32996a63414a1d5c94. Final local merge inherits only four model bridge/runtime/test files; no reviewed authorization file changed from main.",
+    "https://www.postgresql.org/docs/current/view-pg-locks.html",
+    "https://www.postgresql.org/docs/current/explicit-locking.html",
+    "https://supabase.com/docs/guides/database/functions",
+    "https://developers.cloudflare.com/workers/best-practices/workers-best-practices/"
+  ],
+  "limitations": {
+    "tests_run_by_reviewer": 0,
+    "ci_runs": 0,
+    "production_actions": 0,
+    "subject_edits": 0,
+    "business_record_writes": 0,
+    "artifacts_written": "This independent engineering review report only. Root owns Canonical capture and formal evidence placement.",
+    "current_deployed_source_observed_at_bootstrap": "8f960b5541e29ad279d4976f5c366ea4e1297ad4",
+    "authority": "PASS is an independent review conclusion for exact subject bytes, not Owner acceptance or authority to bypass any separate gate."
+  },
+  "remaining": [
+    "Final pushed head's protected-change admission, applicable exact-head Linux CI and ready-PR FIFO merge.",
+    "Fresh actual backup, ordered two-migration production application, release preflight/deploy/postflight with their exact current grants and receipts.",
+    "Current Owner's real Native same-Binding new contexts:* consent and concrete capability verification; this report grants no new connection permissions.",
+    "Original eight-view real-page applicable acceptance, including retained Context revisions and positive saved-source full body. Original Stage3 work remains unimplemented; this authorization review does not complete original Task."
+  ]
+}

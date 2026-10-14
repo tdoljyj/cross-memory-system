@@ -29,6 +29,14 @@ UI [r3 非作者复审](evidence/all-contexts-ui-code-review-r3.json)通过（0 
 
 原 `connection-authorization-db.test.mjs` 旧有界迁移链经独立隔离重验，未改测试，按现有数据库命令使用 `--test-force-exit`：20 PASS / 0 FAIL / 0 SKIP，实际 exit 0，Node v24.19.0，2026-10-14T07:00:22.7819322Z 至 07:00:30.0255685Z。日志 SHA256 `d84414e522f12987394f089f8f003f91994218ab9dd1f5966e5054cbec06613c`，manifest SHA256 `edaeab80c485e9209cbd1a95384023984133546432729b7b03f960ec845120c7`。先前父测试失败后挂起未复现，具体原因仍 UNKNOWN；保留失败，不以本次通过替换历史。Root 将上述局部资格记入原 Task @52，Receipt `c4d84f57-0ddc-4ecb-9144-115dd09cead9`、Event `10283`。离线迁移账本验证通过：258 production rows、11 repository-only、2 pending；两份新迁移尚未应用。
 
-代码的最终非作者审核、最终提交的 CI、生产备份／两份迁移／发布／上线核验尚须分别绑定实际文件与提交证据。阶段性本地测试不能替代这些结论。对既有连接的“全部上下文”升级仍由同一 Binding 的 Native Owner 确认完成。
+最终提交清理 Source 文件末尾一个空行，保留必要的末尾 LF，SQL 语义未变。最终 Source SHA256 `55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b`；序列化后继仍为上述 `ea3abed2…`。普通提交 `b8a5596b` 后正常合并远端 main `af22e8c5d8c70f86d17abb32996a63414a1d5c94`，本地固定候选为 `1c1b5f36996ac662cbcbfc9bbb3bae3c3e3c0a78`。main 继承只涉及四个模型桥接／运行时测试文件，不改本次授权界面或数据库。
+
+Root 对最终字节直接执行七组组合数据库回归：57 PASS / 0 FAIL / 0 SKIP、exit 0，Node v24.19.0 on Windows，2026-10-14T07:08:43.8510047Z 至 07:09:47.4227329Z。完整日志原 SHA256 `e50f74de88a84fe4d5de6ce756671649f142d247efce4afcab586eefe667a74d`、原 manifest SHA256 `daf7c4446130184d13cf141a49aa43606ae3a83f6c0cd17c3838734fe6757fba`。该组合包含来源及并发测试，具有直接执行证明；上述 ad2 字节及无直接退出证明的旧锁报告保留为历史。
+
+PowerShell 原测试日志／manifest 的 CRLF 字节通过 [ExactOriginalEvidence.v1.json](evidence/ExactOriginalEvidence.v1.json) 的 `original_base64` 精确保全。相邻可读文本遵守仓库 LF 规则；每个条目同时绑定原 SHA256、规范化文本 SHA256 与变换，不能混用两种哈希。
+
+最终后端 [r2 非作者代码审核](evidence/all-contexts-security-code-review-r2.json) **PASS，0 Blocker / 0 Major / 0 Minor**，报告 SHA256 `d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21`，受查候选 `1c1b5f36996ac662cbcbfc9bbb3bae3c3e3c0a78`，绑定 Source55ba／序列化ea3。原 r1 问题及过期全权限来源只重新确认只读时可能恢复旧操作的问题均已关闭；Reviewer 实际核读最终代码与 Root 57 项直接执行证据，未自行跑 CI、改源码或执行 Native 扩权。Root 已记入原 Task @55：Receipt `6fb743db-8517-4f26-8a81-58332fd4dfdc`，Event `10322`。
+
+最终提交的 CI、生产备份／两份迁移／发布／上线核验尚须分别绑定实际提交证据。代码审核和阶段性本地测试不能替代这些结论。对既有连接的“全部上下文”升级仍由同一 Binding 的 Native Owner 确认完成。
 
 授权修复完成后按受查方案 §6.1 回到八视图验收。原验收仅为 `CORE_FLOWS_PASSED_FULL_ACCEPTANCE_INCOMPLETE`；实际上下文旧版本正文、来源全文正样本和受影响授权／当前性用例仍须补证。原任务的第三阶段增强也不能因本次授权修复而标记完成。
