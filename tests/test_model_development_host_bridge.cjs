@@ -8,6 +8,27 @@ const obs={...bound.identity,kind:'CURRENT_OWNER_DECISION_AND_PROFILE_BINDING_OB
   approval_content_hash:'4'.repeat(64),task_version:2,claim_id:'SOURCE ONLY CLAIM',claim_fence:3,
   authority_effect:'NONE',permission_issued:false,attempt_consumed:false};
 const frame=(sequence=1)=>({schema:SCHEMA,id:'1'.repeat(32),sequence,phase:'consume',binding:structuredClone(bound)});
+test('4B mailbox ceiling is explicit and never inferred from session/model spelling',()=>{
+  assert.throws(()=>makeCapturedToolMailbox({sessionRef:'4B-CPU8',wallSeconds:585}),/MAILBOX_CAPTURE/);
+  assert.throws(()=>makeCapturedToolMailbox({sessionRef:'SOURCE ONLY',wallSeconds:585,developmentBudgetClass:'unknown'}),/DEVELOPMENT_BUDGET_CLASS/);
+  const box=makeCapturedToolMailbox({sessionRef:'SOURCE ONLY',wallSeconds:585,
+    developmentBudgetClass:'m1_shortlist_4b_bf16_cpu8_v1'});
+  assert.deepEqual(box.take(),[]);box.close();
+  assert.throws(()=>makeCapturedToolMailbox({sessionRef:'SOURCE ONLY',wallSeconds:586,
+    developmentBudgetClass:'m1_shortlist_4b_bf16_cpu8_v1'}),/MAILBOX_CAPTURE/);
+});
+test('4B longer window has a finite read count while legacy remains 256 and cancel seals both',async()=>{
+  const scope='project:0597aa60-9b98-4da6-a4ab-63d7705b632f';
+  for(const [cls,limit] of [[undefined,256],['m1_shortlist_4b_bf16_cpu8_v1',640]]) {
+    const box=makeCapturedToolMailbox({sessionRef:'SOURCE ONLY',wallSeconds:2,developmentBudgetClass:cls});
+    for(let i=0;i<limit;i++) {
+      const pending=box.tools.mcp__codex_apps__clued_clued_work_verify({scope,claim_id:'SOURCE ONLY'});
+      const [row]=box.take();box.settle(row.id,{isError:false,content:[]});await pending;
+    }
+    assert.throws(()=>box.tools.mcp__codex_apps__clued_clued_work_verify({scope,claim_id:'SOURCE ONLY'}),/SEALED_OR_LIMIT/);
+    box.close();assert.throws(()=>box.take(),/SEALED/);
+  }
+});
 
 test('Host-only mailbox preserves four protected reads, context and one-use replies',async()=>{
   const mailbox=makeCapturedToolMailbox({sessionRef:'SOURCE ONLY SESSION',wallSeconds:2});
