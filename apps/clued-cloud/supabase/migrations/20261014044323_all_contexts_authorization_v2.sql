@@ -98,7 +98,7 @@ language sql stable security definer set search_path='' as $$
   select jsonb_build_object('resource_kind','scope','resource_id',v.id,'environment','canonical','name',v.name,
     'ownership','self','project_id',null,'project_name',null,'context_name',null,
     'actions',to_jsonb(clued_private.authorization_actions_v2(array['read','write','close','restore','audit'],p_scopes,'scope'))) item
-    from (values('global','通用内容'),('profile','个人资料')) v(id,name)
+    from (values('global','个人记录'),('profile','个人资料')) v(id,name)
   union all
   select jsonb_build_object('resource_kind','scope','resource_id','project:'||p.id,'environment','canonical','name',p.name,
     'ownership','self','project_id',p.id,'project_name',p.name,'context_name',null,
@@ -417,6 +417,61 @@ begin
   return result;
 end $$;
 
+-- Current Source authority is observed without rebuilding or restoring cached
+-- permissions. Policy entries retain only their live, consent-clipped ceiling;
+-- they are not exact-resource admission. NULL preserves the pre-Source contract.
+create function clued_private.authorization_current_projection_v2(p_binding uuid)
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
+declare b public.clued_agent_bindings; a clued_private.authorizations_v12; e record;
+  acts text[]; selection jsonb:='[]'; scopes text[];
+begin
+ if not exists(select 1 from clued_private.authorization_source_bindings_v2 where binding_id=p_binding) then return null; end if;
+ select * into b from public.clued_agent_bindings where id=p_binding;
+ select * into a from clued_private.authorizations_v12 where binding_id=p_binding;
+ if b.id is not null and a.binding_id is not null and b.revoked_at is null and a.revoked_at is null
+   and a.expires_at>clock_timestamp() and ((to_jsonb(b)->>'expires_at') is null
+     or (to_jsonb(b)->>'expires_at')::timestamptz>clock_timestamp()) then
+   for e in select * from clued_private.authorization_entries_v12 where binding_id=p_binding
+     order by resource_kind collate "C",resource_id collate "C",environment collate "C" loop
+     if e.resource_kind='scope' and e.resource_id in ('project:*','contexts:*') then
+       select coalesce(array_agg(distinct x order by x),'{}') into acts
+         from clued_private.authorization_sources_v2 s join clued_private.authorization_contributions_v2 c on c.source_id=s.id
+         cross join lateral unnest(clued_private.authorization_actions_v2(c.actions,b.scopes,'policy')) x
+         where s.binding_id=p_binding and s.owner_id=b.user_id and s.revoked_at is null and s.expires_at>clock_timestamp()
+           and c.resource_kind=e.resource_kind and c.resource_id=e.resource_id and c.environment=e.environment
+           and c.qualification_id is null and x=any(s.actions)
+           and x=any(clued_private.authorization_actions_v2(s.actions,s.scope_ceiling,'policy'));
+     else
+       acts:=clued_private.authorization_effective_no_lock_v2(p_binding,e.resource_kind,e.resource_id,e.environment);
+     end if;
+     if cardinality(acts)>0 then selection:=selection||jsonb_build_array(jsonb_build_object(
+       'resource_kind',e.resource_kind,'resource_id',e.resource_id,'environment',e.environment,'actions',acts)); end if;
+   end loop;
+ end if;
+ scopes:=coalesce(clued_private.authorization_scope_union_v12(selection),'{}');
+ return jsonb_build_object('scopes',scopes,'entries',selection,'has_permissions',cardinality(scopes)>0);
+end $$;
+
+create function clued_private.authorization_current_require_v2(p_binding uuid)
+returns void language plpgsql volatile security definer set search_path='' as $$
+declare projection jsonb;
+begin
+ projection:=clued_private.authorization_current_projection_v2(p_binding);
+ if projection is not null and not (projection->>'has_permissions')::boolean then
+   raise exception 'authorization_no_effective_source_permission' using errcode='42501';
+ end if;
+end $$;
+
+-- Execution rechecks do not repair Source rows and do not affect Native control
+-- actors. Their callers retain the existing Binding/Integration lock order.
+create function clued_private.authorization_current_actor_require_v2(p_actor jsonb)
+returns void language plpgsql volatile security definer set search_path='' as $$
+begin
+ if p_actor->>'kind'='binding' then
+   perform clued_private.authorization_current_require_v2((p_actor->>'binding_id')::uuid);
+ end if;
+end $$;
+
 create function clued_private.authorization_materialize_resource_v2(p_binding uuid,p_kind text,p_id text,p_env text)
 returns void language plpgsql volatile security definer set search_path='' as $$
 declare b public.clued_agent_bindings; a clued_private.authorizations_v12; s record; acts text[]; c clued_private.development_spaces_v14;
@@ -520,27 +575,36 @@ end $$;
 create or replace function clued_private.authorization_rebuild_projection_v2(p_binding uuid)
 returns void language plpgsql volatile security definer set search_path='' as $$
 declare b public.clued_agent_bindings; a clued_private.authorizations_v12; resource_row record;
+ source_scopes text[]; projected_scopes text[];
 begin
  select * into b from public.clued_agent_bindings where id=p_binding;
  perform clued_private.authorization_writer_require_v2(b.user_id);
  select * into b from public.clued_agent_bindings where id=p_binding for update;
  select * into a from clued_private.authorizations_v12 where binding_id=p_binding for update;
+ select coalesce(array_agg(distinct x order by x),'{}') into source_scopes
+   from clued_private.authorization_sources_v2 s cross join lateral unnest(s.scope_ceiling) x
+   where s.binding_id=p_binding and s.revoked_at is null and s.expires_at>clock_timestamp();
+ if cardinality(source_scopes)=0 then
+   raise exception 'authorization_empty_projection_requires_binding_revoke' using errcode='22023',
+     detail='本次修改未保存。此连接已无有效授权，请使用“撤销连接”或重新授权。';
+ end if;
  update public.clued_agent_bindings set context_keys=case when exists(select 1 from clued_private.authorization_sources_v2 source_row
    where source_row.binding_id=p_binding and source_row.kind='contexts_policy' and source_row.revoked_at is null)
    or exists(select 1 from clued_private.authorization_sources_v2 source_row join clued_private.authorization_contributions_v2 contribution on contribution.source_id=source_row.id
      where source_row.binding_id=p_binding and contribution.resource_kind='scope' and contribution.resource_id='project:*')
-   then array['*'] else b.context_keys end,scopes=coalesce((
-   select array_agg(distinct x order by x) from clued_private.authorization_sources_v2 s
-   cross join lateral unnest(s.scope_ceiling) x where s.binding_id=p_binding and s.revoked_at is null
-     and s.expires_at>clock_timestamp()),'{}') where id=p_binding;
+   then array['*'] else b.context_keys end,scopes=source_scopes where id=p_binding;
  delete from clued_private.authorization_entries_v12 where binding_id=p_binding;
  for resource_row in select distinct e.resource_kind,e.resource_id,e.environment
    from clued_private.authorization_contributions_v2 e join clued_private.authorization_sources_v2 s on s.id=e.source_id
    where s.binding_id=p_binding order by e.resource_kind,e.resource_id,e.environment loop
    perform clued_private.authorization_project_resource_v2(p_binding,resource_row.resource_kind,resource_row.resource_id,resource_row.environment);
  end loop;
- update public.clued_agent_bindings set scopes=coalesce(clued_private.authorization_scope_union_v12(
-   clued_private.authorization_selection_v12(p_binding)),'{}') where id=p_binding;
+ projected_scopes:=coalesce(clued_private.authorization_scope_union_v12(clued_private.authorization_selection_v12(p_binding)),'{}');
+ if cardinality(projected_scopes)=0 then
+   raise exception 'authorization_empty_projection_requires_binding_revoke' using errcode='22023',
+     detail='本次修改未保存。该操作会移除连接的最后一项有效权限，请使用“撤销连接”。';
+ end if;
+ update public.clued_agent_bindings set scopes=projected_scopes where id=p_binding;
  insert into clued_private.authorization_audit_v12(owner_id,binding_id,request_id,operation,version,selected)
    values(b.user_id,p_binding,a.request_id,'sources_projection',a.version,clued_private.authorization_selection_v12(p_binding));
 end $$;
@@ -572,7 +636,7 @@ begin
    if p_env<>'canonical' then return unavailable; end if;
    if p_id in ('global','profile','project:*','contexts:*') then
      return jsonb_build_object('availability','available','qualification_status','current','ownership','self','name',case p_id
-       when 'global' then '通用内容' when 'profile' then '个人资料' when 'project:*' then '我的全部项目（含以后新建的）'
+       when 'global' then '个人记录' when 'profile' then '个人资料' when 'project:*' then '我的全部项目（含以后新建的）'
        else '全部上下文（含以后新建的）' end,'project_id',null,'project_name',null,'context_name',null);
    end if;
    select * into p from public.clued_projects where 'project:'||id=p_id and user_id=a.owner_id;
@@ -1046,7 +1110,7 @@ begin
    'coverage',clued_private.authorization_coverage_v2(bid)));
  parsed:=clued_private.connection_permission_parse_v1(array(select jsonb_array_elements_text(p_choices->'resources')));
  result:=jsonb_set(result,'{permissions}',coalesce((select jsonb_agg(x||jsonb_build_object('context_name',
-   case x->>'context' when 'contexts:*' then '全部上下文（含以后新建的）' when 'global' then '通用内容'
+   case x->>'context' when 'contexts:*' then '全部上下文（含以后新建的）' when 'global' then '个人记录'
    when 'profile' then '个人资料' when 'project:*' then '我的全部项目（含以后新建的）'
    else (select p.name from public.clued_projects p where 'project:'||p.id=x->>'context' and p.user_id=p_user_id) end))
    from jsonb_array_elements(parsed) x),'[]'));
@@ -1306,7 +1370,7 @@ begin
       or p_choices->>'resource_id' in ('contexts:*','project:*') then
      raise exception 'precise_confirmation_owned_resource_required' using errcode='42501'; end if;
    if p_choices->>'resource_id' in ('global','profile') then
-     resource_name:=case p_choices->>'resource_id' when 'global' then '通用内容' else '个人资料' end;
+     resource_name:=case p_choices->>'resource_id' when 'global' then '个人记录' else '个人资料' end;
    else
      select p.id,p.name into project_id,resource_name from public.clued_projects p
        where 'project:'||p.id=p_choices->>'resource_id' and p.user_id=p_owner;
@@ -1491,6 +1555,192 @@ begin
      'error_code',error_text,'authoritative',false);
  end;
 end $$;
+
+-- Integration execution/facts must not treat a cached nonempty Binding ceiling
+-- as live authority after Source expiry or an exact-resource revocation. The
+-- status and monotonic revoke entrances remain available; raw/pre-Source bodies
+-- retain their established behavior. Replacing bodies preserves OIDs and ACLs.
+do $integration_sources$
+declare definition text; anchor text; signature text; source_gate text;
+begin
+ select pg_get_functiondef('clued_private.integration_binding_authority_v1(uuid)'::regprocedure) into definition;
+ anchor:='declare v_scopes text[]; v_entries jsonb;';
+ if strpos(definition,anchor)=0 then raise exception 'integration_source_authority_anchor_changed'; end if;
+ definition:=replace(definition,anchor,anchor||' v_source jsonb;');
+ anchor:=E'\nbegin';
+ if strpos(definition,anchor)=0 then raise exception 'integration_source_authority_begin_anchor_changed'; end if;
+ source_gate:=E'\nbegin\n  v_source := clued_private.authorization_current_projection_v2(p_binding_id);\n  if v_source is not null then return v_source - ''has_permissions''; end if;\n';
+ definition:=replace(definition,anchor,source_gate);
+ execute definition;
+
+ select pg_get_functiondef('clued_private.integration_binding_identity_v1(uuid)'::regprocedure) into definition;
+ anchor:='v_expires timestamptz; v_account_ok boolean; v_provider text; v_pcid text;';
+ if strpos(definition,anchor)=0 then raise exception 'integration_source_identity_anchor_changed'; end if;
+ definition:=replace(definition,anchor,anchor||' v_source jsonb;');
+ anchor:='  return pg_catalog.jsonb_build_object(';
+ if strpos(definition,anchor)=0 then raise exception 'integration_source_identity_return_anchor_changed'; end if;
+ definition:=replace(definition,anchor,E'  v_source := clued_private.authorization_current_projection_v2(b.id);\n'||anchor);
+ definition:=replace(definition,'''scopes'', pg_catalog.to_jsonb(b.scopes),',
+   '''scopes'', coalesce(v_source->''scopes'',pg_catalog.to_jsonb(b.scopes)),');
+ definition:=replace(definition,'''live'', b.revoked_at is null and',
+   '''live'', coalesce((v_source->>''has_permissions'')::boolean,true) and b.revoked_at is null and');
+ definition:=replace(definition,'''auth_usable'', b.revoked_at is null and',
+   '''auth_usable'', coalesce((v_source->>''has_permissions'')::boolean,true) and b.revoked_at is null and');
+ execute definition;
+
+ select pg_get_functiondef('clued_private.integration_normalize_detail_v1(uuid,timestamp with time zone)'::regprocedure) into definition;
+ anchor:='  -- reported facts (§5.6), current and not past valid_until';
+ if strpos(definition,anchor)=0 then raise exception 'integration_source_normalize_anchor_changed'; end if;
+ source_gate:=$body$
+  -- Source authority is current server truth, independent of the reported-fact
+  -- as-of fold below. Capabilities require the action on the same exact entry.
+  declare source_view jsonb;
+  begin
+    if v_has_c and v_has_b then
+      source_view := clued_private.authorization_current_projection_v2(b.id);
+      if source_view is not null then
+        v_scopes := array(select jsonb_array_elements_text(source_view->'scopes'));
+        if not (source_view->>'has_permissions')::boolean then
+          -- The credential still exists: NONE/NOT_GRANTED is reserved for no
+          -- connection. Use the existing failed-authorization vocabulary.
+          v_authz := case when not exists(select 1 from clued_private.authorization_sources_v2 s
+              where s.binding_id=b.id and s.revoked_at is null and s.expires_at>clock_timestamp())
+            and exists(select 1 from clued_private.authorization_sources_v2 s
+              where s.binding_id=b.id and s.revoked_at is null and s.expires_at<=clock_timestamp())
+            then 'EXPIRED' else 'REVOKED_CONNECTION' end;
+        end if;
+        v_caps := array(select cap from (values ('audit.read','audit'), ('context.read','read'), ('context.write','write'),
+            ('development_history.read','read'), ('evidence.write','write'), ('project.read','read'), ('project.write','write')) m(cap,act)
+          where exists(select 1 from jsonb_array_elements(source_view->'entries') e
+            where (e->'actions') ? m.act
+              and (cap<>'development_history.read' or e->>'resource_kind'='context')
+              and (cap not in ('project.read','project.write') or e->>'resource_kind'='scope' and e->>'resource_id' like 'project:%'))
+          order by cap collate "C");
+        v_resource := jsonb_build_object('mode','ENTRIES','capabilities',v_caps);
+      end if;
+    end if;
+  end;
+
+$body$;
+ definition:=replace(definition,anchor,source_gate||anchor);
+ execute definition;
+
+ for signature in select x from unnest(array[
+   'public.clued_integration_request_open_v1(text,jsonb)',
+   'public.clued_integration_create_or_bind_v1(text,jsonb)',
+   'public.clued_integration_identity_update_v1(text,jsonb)',
+   'public.clued_integration_reconcile_request_v1(text,jsonb)',
+   'public.clued_integration_declare_v1(text,jsonb)',
+   'public.clued_integration_report_v1(text,jsonb)',
+   'public.clued_integration_verify_v1(text,jsonb)']) x loop
+   select pg_get_functiondef(signature::regprocedure) into definition;
+   anchor:=case when signature like '%request_open%' then
+     '  b := clued_private.integration_auth_binding_v1(p_token_hash, ''{}'', false);' else
+     '  b := clued_private.integration_auth_binding_v1(p_token_hash, ''{}'', true);' end;
+   if strpos(definition,anchor)=0 or length(definition)-length(replace(definition,anchor,''))<>length(anchor) then
+     raise exception 'integration_source_execution_anchor_changed: %',signature; end if;
+   definition:=replace(definition,anchor,anchor||E'\n  perform clued_private.authorization_current_require_v2(b.id);');
+   execute definition;
+ end loop;
+end $integration_sources$;
+
+-- The entrance check can precede a real Request/claim/Integration/receipt wait.
+-- Recheck after those waits before mutation, then once more after the core has
+-- returned. The last check is outside the core's receipt-preserving exception
+-- block, so a loss of authority rolls back its entire call, including receipts
+-- and any mutation that waited internally. Observers and revoke are unchanged.
+do $integration_wait_sources$
+declare definition text; signature text; anchor text; rec record; point integer; matches integer;
+  gate text:=E'    perform clued_private.authorization_current_actor_require_v2(p_actor);\n';
+  return_pattern text:='return (clued_private[.]integration_[a-z0-9_]+[(][^;]+);';
+begin
+ for rec in select * from (values
+   ('clued_private.integration_write_open_v1(jsonb,uuid,uuid,bigint,uuid,timestamp with time zone)',
+     '  v_revocation := clued_private.integration_materialize_connection_revoke_v1('),
+   ('clued_private.integration_bind_core_v1(jsonb,uuid,jsonb,text,uuid,text)',
+     '    -- step 7: create'),
+   ('clued_private.integration_identity_update_core_v1(jsonb,uuid,jsonb,text)',
+     '    v_state := clued_private.integration_claim_core_v1(v_id, v_identity, v_receipt.id);'),
+   ('clued_private.integration_reconcile_request_core_v1(jsonb,uuid,jsonb,text)',
+     '    update clued_private.integrations_v1 set identity_claim_state = ''PENDING_RECONCILE'' where integration_id = v_id;'),
+   ('clued_private.integration_declare_core_v1(jsonb,uuid,jsonb,text)',
+     '    insert into clued_private.integration_capability_declarations_v1('),
+   ('clued_private.integration_fact_core_v1(jsonb,uuid,jsonb,text,text)',
+     '    update clued_private.integration_facts_v1 set fact_status = case v_action when ''set'' then ''SUPERSEDED'' else ''CLEARED'' end'),
+   ('clued_private.integration_verify_baseline_core_v1(jsonb,uuid,jsonb,text)',
+     '    insert into clued_private.integration_canonical_verifications_v1('),
+   ('clued_private.integration_verify_ready_core_v1(jsonb,uuid,jsonb,text)',
+     '    insert into clued_private.integration_ready_verifications_v1(')
+ ) v(signature,anchor) loop
+   select pg_get_functiondef(rec.signature::regprocedure) into definition;
+   if strpos(definition,rec.anchor)=0 or length(definition)-length(replace(definition,rec.anchor,''))<>length(rec.anchor) then
+     raise exception 'integration_source_prewrite_anchor_changed: %',rec.signature; end if;
+   definition:=replace(definition,rec.anchor,gate||rec.anchor);
+   -- These cores acquire I themselves rather than using write_open. Preserve
+   -- FOUND until its old ownership check, then recheck before any evaluation or
+   -- revocation materialization can write. Request/claim waits are checked again
+   -- at the dedicated prewrite anchors above.
+   if rec.signature like '%identity_update_core%' or rec.signature like '%reconcile_request_core%'
+     or rec.signature like '%verify_ready_core%' or rec.signature like '%bind_core%' then
+     anchor:='    if not found then raise exception ''integration_not_owned'' using errcode = ''42501''; end if;';
+     if strpos(definition,anchor)=0 then raise exception 'integration_source_locked_owner_anchor_changed: %',rec.signature; end if;
+     definition:=replace(definition,anchor,anchor||E'\n'||gate);
+   end if;
+   if rec.signature like '%bind_core%' then
+     -- A refreshed live identity supplies current scopes/authority after L3/4/5.
+     anchor:='    -- step 6: guards on an existing target';
+     if strpos(definition,anchor)=0 then raise exception 'integration_source_bind_guard_anchor_changed'; end if;
+     definition:=replace(definition,anchor,gate||E'    if p_connection_binding is not null then\n      v_conn := clued_private.integration_binding_identity_v1(p_connection_binding);\n      v_authority := v_conn->''authority'';\n      if v_conn is null or not (v_conn->>''live'')::boolean then\n        raise exception ''binding_not_adoptable'' using errcode=''42501'';\n      end if;\n    end if;\n'||anchor);
+     anchor:='    -- step 7: create';
+     definition:=replace(definition,anchor,E'    if p_connection_binding is not null then\n      v_conn := clued_private.integration_binding_identity_v1(p_connection_binding);\n      v_authority := v_conn->''authority'';\n      if v_conn is null or not (v_conn->>''live'')::boolean then\n        raise exception ''binding_not_adoptable'' using errcode=''42501'';\n      end if;\n    end if;\n'||anchor);
+   end if;
+   if rec.signature like '%identity_update_core%' or rec.signature like '%reconcile_request_core%' then
+     anchor:='    v_revocation := clued_private.integration_materialize_connection_revoke_v1(';
+     if strpos(definition,anchor)=0 then raise exception 'integration_source_materialization_anchor_changed: %',rec.signature; end if;
+     definition:=replace(definition,anchor,gate||anchor);
+   end if;
+   execute definition;
+ end loop;
+
+ select pg_get_functiondef('clued_private.integration_request_open_core_v1(jsonb,uuid,jsonb)'::regprocedure) into definition;
+ anchor:='  insert into clued_private.integration_installation_requests_v1(';
+ if strpos(definition,anchor)=0 then raise exception 'integration_source_request_prewrite_anchor_changed'; end if;
+ definition:=replace(definition,anchor,gate||anchor);
+ -- The unique-key INSERT itself can wait. Check in both result branches, without
+ -- changing FOUND before the existing branch decision or replay SELECT.
+ anchor:='    select * into r from clued_private.integration_installation_requests_v1 where owner_id = p_owner and request_key = v_key;';
+ if length(definition)-length(replace(definition,anchor,''))<>length(anchor) then
+   raise exception 'integration_source_request_result_anchor_changed'; end if;
+ definition:=replace(definition,anchor,gate||anchor);
+ anchor:='  return pg_catalog.jsonb_build_object(''request_id'', r.request_id, ''replayed'', false,';
+ if strpos(definition,anchor)=0 then raise exception 'integration_source_request_return_anchor_changed'; end if;
+ definition:=replace(definition,anchor,gate||anchor);
+ execute definition;
+
+ for signature in select x from unnest(array[
+   'public.clued_integration_request_open_v1(text,jsonb)',
+   'public.clued_integration_create_or_bind_v1(text,jsonb)',
+   'public.clued_integration_identity_update_v1(text,jsonb)',
+   'public.clued_integration_reconcile_request_v1(text,jsonb)',
+   'public.clued_integration_declare_v1(text,jsonb)',
+   'public.clued_integration_report_v1(text,jsonb)',
+   'public.clued_integration_verify_v1(text,jsonb)']) x loop
+   select pg_get_functiondef(signature::regprocedure) into definition;
+   point:=strpos(definition,E'\nbegin');
+   if point=0 then raise exception 'integration_source_result_declare_anchor_changed: %',signature; end if;
+   definition:=substr(definition,1,point-1)||E'\n  v_authorization_result jsonb; v_authorization_before jsonb; v_authorization_after jsonb;'||substr(definition,point);
+   anchor:='  perform clued_private.authorization_current_require_v2(b.id);';
+   if length(definition)-length(replace(definition,anchor,''))<>length(anchor) then
+     raise exception 'integration_source_result_snapshot_anchor_changed: %',signature; end if;
+   definition:=replace(definition,anchor,anchor||E'\n  v_authorization_before := clued_private.authorization_current_projection_v2(b.id);');
+   select count(*) into matches from regexp_matches(definition,return_pattern,'g');
+   if matches<>(case when signature like '%integration_verify_v1%' then 2 else 1 end) then
+     raise exception 'integration_source_result_return_anchor_changed: %',signature; end if;
+   definition:=regexp_replace(definition,return_pattern,
+     E'v_authorization_result := \\1;\n  perform clued_private.authorization_current_require_v2(b.id);\n  v_authorization_after := clued_private.authorization_current_projection_v2(b.id);\n  if v_authorization_before is not null and v_authorization_after is distinct from v_authorization_before then\n    raise exception ''authorization_source_permission_changed_during_call'' using errcode=''42501'';\n  end if;\n  return v_authorization_result;','g');
+   execute definition;
+ end loop;
+end $integration_wait_sources$;
 
 -- Private adapters are never independent consumer entrances. Public RPC OIDs
 -- and their existing qualified Native/gateway ACLs above remain unchanged.

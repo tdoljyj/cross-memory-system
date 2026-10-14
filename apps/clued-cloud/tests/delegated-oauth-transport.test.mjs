@@ -161,6 +161,29 @@ test('Native exact limit confirmation forwards Owner credentials and CAS without
     assert.equal((await response.text()).includes('private SQL'), false);
   } finally { globalThis.fetch = originalFetch; }
 });
+test('last-permission reduction exposes only its controlled business code and keeps private diagnostics redacted', async () => {
+  const f = fixture();
+  try {
+    const headers = { Authorization: 'Bearer human-session-test', Origin: origin, 'Content-Type': 'application/json' };
+    const post = op => f.run('/oauth/connections/api', { method: 'POST', headers, body: JSON.stringify({ op, binding_id: '20000000-0000-4000-8000-000000000001', base_version: 4 }) });
+    f.nativeManagement.status = 400;
+    f.nativeManagement.response = { code: '22023', message: 'authorization_empty_projection_requires_binding_revoke', details: 'private SQL and context identity' };
+    let response = await post('reduce');
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.equal(result.error, 'authorization_empty_projection_requires_binding_revoke');
+    assert.ok(result.message.includes('本次修改未保存'));
+    assert.ok(!JSON.stringify(result).includes('private SQL'));
+    response = await post('revoke');
+    assert.equal(response.status, 403, 'the business-code exception is limited to reduction');
+    assert.ok(!(await response.text()).includes('authorization_empty_projection'));
+    f.nativeManagement.response = { code: '22023', message: 'private SQL and context identity' };
+    response = await post('reduce');
+    assert.equal(response.status, 403);
+    assert.ok(!(await response.text()).includes('private SQL'));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 // A gateway scope refusal is a tool error (HTTP 200, isError) carrying what to request; Hosts drop 403 bodies.
 async function scopeDenied(response) {
   assert.equal(response.status, 200);

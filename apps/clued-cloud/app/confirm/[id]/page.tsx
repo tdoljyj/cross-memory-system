@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabase-browser";
+import { authorizationDisplayOrder } from "../../../lib/context-authorization";
 import "../../contexts/contexts.css";
 import "../owner.css";
 
@@ -175,7 +176,7 @@ function actionText(view: Json | null | undefined, fallback?: unknown) {
 const PERMISSION_ACTION = "connection.permission";
 const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执", feedback_submit: "提交反馈", reader: "只读", developer: "可编辑（新上下文策略）", full: "全部操作（本次可用）" };
 const ENVIRONMENT_LABELS: Record<string, string> = { test: "测试环境", preview: "预览环境", production: "生产环境" };
-const CONTEXT_LABELS: Record<string, string> = { global: "通用内容", profile: "个人资料", "contexts:*": "全部上下文（含以后新建的自有项目与上下文）", "project:*": "自有项目正式记录（含未来项目）" };
+const CONTEXT_LABELS: Record<string, string> = { global: "个人记录", profile: "个人资料", "contexts:*": "全部上下文（含以后新建的自有项目与上下文）", "project:*": "自有项目正式记录（含未来项目）" };
 function permissionText(context: string, name: unknown, action: string) {
   const label = typeof name === "string" && name ? name : CONTEXT_LABELS[context] ?? context;
   return label + " → " + (ACTION_LABELS[action] ?? action);
@@ -633,19 +634,19 @@ export default function OwnerConfirmPage() {
             <p className="context-muted">以下内容由 Kooyumi 生成，Agent 改不了。批准后权限加到这个连接上，不用重新连接。</p>
             <dl>
               <dt>给哪个连接</dt><dd>{String(connection?.client_name ?? grantee?.agent_name ?? "发起请求的连接")}</dd>
-              <dt>要加的权限</dt><dd><ul>{permissions.map(item => <li key={String(item.resource)}>
+              <dt>要加的权限</dt><dd><ul>{authorizationDisplayOrder(permissions).map(item => <li key={String(item.resource)}>
                 {permissionText(String(item.context ?? ""), item.context_name, String(item.action ?? ""))}</li>)}</ul></dd>
-              <dt>它现在已有</dt><dd><ul>{existing.map(row => <li key={String(row.resource_kind) + ":" + String(row.resource_id)}>{currentText(row)}</li>)}</ul></dd>
+              <dt>它现在已有</dt><dd><ul>{authorizationDisplayOrder(existing).map(row => <li key={String(row.resource_kind) + ":" + String(row.resource_id)}>{currentText(row)}</li>)}</ul></dd>
               {typeof connection?.version === 'number' && <><dt>授权版本</dt><dd>{String(connection.version)}</dd></>}
               {task && <><dt>任务</dt><dd>{String(task.title ?? "")}</dd></>}
               <dt>期限</dt><dd>{connection?.expires_at ? "跟这个连接一样，到 " + new Date(String(connection.expires_at)).toLocaleString() + " 为止" : "跟这个连接一样"}</dd>
             </dl>
             {needsCoverage && <section aria-label="全部上下文覆盖预览"><h3>实际覆盖与保留限制</h3>
               {incompleteCoverage ? <p role="alert">覆盖、版本或限制预览不完整，暂时无法批准。请重新读取请求。</p> : <>
-                <p>包含通用内容、个人资料及以下自有项目正式记录和上下文。以后新建的自有项目与上下文自动包含；共享或受邀资源不自动加入。</p>
+                <p>包含个人资料、个人记录及以下自有项目正式记录和上下文。以后新建的自有项目与上下文自动包含；共享或受邀资源不自动加入。</p>
                 <p>本次申请：{list(coverage?.requested_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}。</p>
                 {list(coverage?.missing_actions).length > 0 && <p>客户端未申请或无法增加：{list(coverage?.missing_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}。实际授权受限。</p>}
-                <ul>{(Array.isArray(coverage?.resources) ? coverage.resources.filter(object) : []).map(row => <li key={String(row.resource_kind) + ':' + String(row.resource_id) + ':' + String(row.environment)}>
+                <ul>{authorizationDisplayOrder(Array.isArray(coverage?.resources) ? coverage.resources.filter(object) : []).map(row => <li key={String(row.resource_kind) + ':' + String(row.resource_id) + ':' + String(row.environment)}>
                   {currentText({ ...row, effective_actions: row.actual_actions })}
                   {list(row.missing_actions).length > 0 && <p>缺项：{list(row.missing_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}</p>}
                   {object(row.limits) && <details><summary>原限制保持</summary><pre>{JSON.stringify(row.limits, null, 2)}</pre></details>}

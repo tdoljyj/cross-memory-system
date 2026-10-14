@@ -30,7 +30,7 @@ async function applyQualifiedMigrations(admin, names) {
     from pg_proc p where p.oid=any($1::regprocedure[]) order by p.oid`, [targets])).rows;
   let originalTargets;
   const successors = new Map([
-    ['20261014044323_all_contexts_authorization_v2.sql', '55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b'],
+    ['20261014044323_all_contexts_authorization_v2.sql', 'b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8'],
     ['20261014045157_all_contexts_serialization_v2.sql', 'ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58'],
   ]);
   for (const name of names) {

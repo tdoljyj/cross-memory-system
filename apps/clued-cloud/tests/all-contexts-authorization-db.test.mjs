@@ -193,6 +193,82 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       return result;
     }
 
+    async function completeProjection(bindingId) {
+      const tables = [
+        ['binding', 'select to_jsonb(a) value from public.clued_agent_bindings a where id=$1'],
+        ['authorization', 'select to_jsonb(a) value from clued_private.authorizations_v12 a where binding_id=$1'],
+        ['source_mode', 'select to_jsonb(a) value from clued_private.authorization_source_bindings_v2 a where binding_id=$1'],
+        ['sources', 'select to_jsonb(a) value from clued_private.authorization_sources_v2 a where binding_id=$1 order by id'],
+        ['contributions', 'select to_jsonb(a) value from clued_private.authorization_contributions_v2 a join clued_private.authorization_sources_v2 s on s.id=a.source_id where s.binding_id=$1 order by a.source_id,a.resource_kind,a.resource_id,a.environment'],
+        ['overrides', 'select to_jsonb(a) value from clued_private.authorization_resource_overrides_v2 a where binding_id=$1 order by id'],
+        ['entries', 'select to_jsonb(a) value from clued_private.authorization_entries_v12 a where binding_id=$1 order by resource_kind,resource_id,environment'],
+        ['grants', 'select to_jsonb(a) value from clued_private.development_grants_v14 a where binding_id=$1 order by id'],
+        ['authorization_audit', 'select to_jsonb(a) value from clued_private.authorization_audit_v12 a where binding_id=$1 order by recorded_at,operation'],
+      ];
+      const result = {};
+      for (const [name, sql] of tables) result[name] = (await admin.query(sql, [bindingId])).rows.map((row) => row.value);
+      for (const [name, table] of [['receipts', 'clued_audit_receipts'], ['events', 'clued_context_events']]) {
+        result[name] = (await admin.query(`select to_jsonb(a) value from public.${table} a where user_id=$1 order by id`, [owner])).rows.map((row) => row.value);
+      }
+      return result;
+    }
+    const constraints = async () => (await admin.query(`select conname,convalidated,pg_get_constraintdef(oid) definition
+      from pg_constraint where conrelid='public.clued_agent_bindings'::regclass order by conname`)).rows;
+    const integrationCall = (binding, name, input, db = gateway) => workerGatewayRpc(db, name, binding.token, input);
+    async function installIntegration(binding, options = {}) {
+      const opened = await integrationCall(binding, 'clued_integration_request_open_v1', {
+        request_key: uuid(), intent: 'create_or_bind', host: 'anthropic.claude', host_surface: 'chat',
+        adapter_family: 'test-adapter', adapter_version: '1.0.0', installation_phase: 'COMPLETED', ...options,
+      });
+      const bound = await integrationCall(binding, 'clued_integration_create_or_bind_v1', {
+        idempotency_key: uuid(), request_id: opened.request_id, binding_intent: 'CREATE_OR_BIND',
+      });
+      assert.equal(bound.status, 'committed', JSON.stringify(bound));
+      return bound.supplemental.integration_id;
+    }
+    const sourceProjection = async (bindingId) => (await admin.query(
+      'select clued_private.authorization_current_projection_v2($1) value', [bindingId])).rows[0].value;
+    const normalized = async (integrationId) => (await admin.query(
+      'select clued_private.integration_normalize_detail_v1($1,clock_timestamp()) value', [integrationId])).rows[0].value;
+    const evaluateIntegration = async (integrationId) => (await admin.query(
+      'select clued_private.integration_evaluate_v1($1,clock_timestamp()) value', [integrationId])).rows[0].value;
+    const diagnosticRows = async (integrationId) => (await admin.query(
+      'select to_jsonb(a) value from clued_private.integration_derivation_diagnostics_v1 a where integration_id=$1 order by facts_sha256',
+      [integrationId])).rows.map((row) => row.value);
+    async function assertLostAuthorityState(binding, integrationId, state) {
+      const before = await completeProjection(binding.binding_id);
+      const beforeBusiness = await integrationBusiness(integrationId);
+      const beforeDiagnostics = await diagnosticRows(integrationId);
+      const result = await evaluateIntegration(integrationId);
+      assert.equal(result.valid, true, JSON.stringify(result));
+      assert.deepEqual(result.reason_codes, []);
+      assert.deepEqual(result.effective_capabilities, []);
+      assert.equal(result.facts.authentication_state, 'USABLE', 'a current valid credential is never forged into NONE');
+      assert.equal(result.facts.authorization_state, state);
+      const status = await integrationCall(binding, 'clued_integration_status_v1', { integration_id: integrationId });
+      assert.equal(status.integration.evaluation.valid, true, JSON.stringify(status));
+      assert.deepEqual(status.integration.evaluation.reason_codes, []);
+      assert.deepEqual(status.integration.evaluation.effective_capabilities, []);
+      assert.deepEqual(await diagnosticRows(integrationId), beforeDiagnostics, 'ordinary Source loss is not invalid input and adds no diagnostic');
+      assert.deepEqual(await completeProjection(binding.binding_id), before, 'evaluate/status adds no receipt/event or authorization mutation');
+      assert.deepEqual(await integrationBusiness(integrationId), beforeBusiness, 'evaluate/status adds no Integration business mutation');
+    }
+    async function integrationBusiness(integrationId) {
+      const result = {};
+      for (const table of ['integrations_v1', 'integration_connections_v1', 'integration_facts_v1',
+        'integration_capability_declarations_v1', 'integration_canonical_verifications_v1', 'integration_ready_verifications_v1', 'integration_operation_log_v1',
+        'integration_revocations_v1', 'integration_reauth_marks_v1', 'integration_identity_snapshots_v1', 'integration_claims_v1',
+        'integration_derivation_diagnostics_v1', 'integration_regrants_v1']) {
+        result[table] = (await admin.query(`select to_jsonb(a) value from clued_private.${table} a where integration_id=$1 order by to_jsonb(a)::text`,
+          [integrationId])).rows.map((row) => row.value);
+      }
+      result.requests = (await admin.query(`select to_jsonb(a) value from clued_private.integration_installation_requests_v1 a
+        where owner_id=$1 order by request_id`, [owner])).rows.map((row) => row.value);
+      result.binding_owners = (await admin.query(`select to_jsonb(a) value from clued_private.integration_binding_owners_v1 a
+        where owner_id=$1 order by binding_id`, [owner])).rows.map((row) => row.value);
+      return result;
+    }
+
     await t.test('eligible policy intersects requested scopes and preserves the API action vocabulary', async () => {
       const request = await prepare();
       const item = request.eligible.find((row) => row.resource_id === 'contexts:*');
@@ -397,6 +473,304 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       assert.equal((await bindingView(binding.binding_id)).active, false);
     });
 
+    await t.test('last live source and last effective exact entry reject with a business error and complete rollback; explicit revoke truly denies MCP', async () => {
+      for (const mode of ['last-source', 'last-entry']) {
+        const request = await prepare(['context:read']);
+        assert.ok(request.eligible.some((row) => row.resource_kind === 'scope' && row.resource_id === 'global' && row.actions.includes('read')));
+        const binding = await approve(request, [scope('global', ['read'])]);
+        const read = () => workerGatewayRpc(gateway, 'clued_record_list', binding.token, { level: 'global', record_type: 'note' });
+        assert.ok(Array.isArray((await read()).records));
+        const view = await bindingView(binding.binding_id);
+        assert.equal(view.selection_format, 'sources_v1');
+        assert.ok(view.sources.length > 0 && view.sources.every((s) => s.kind === 'direct'));
+        const before = await completeProjection(binding.binding_id);
+        const beforeConstraints = await constraints();
+        await assert.rejects(() => sourcesReduce(binding.binding_id,
+          mode === 'last-source' ? view.sources.map((s) => sourceSelection(s, [])) : [],
+          mode === 'last-entry' ? [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', denied_actions: ['read'] }] : []),
+        (error) => error.code === '22023' && error.message === 'authorization_empty_projection_requires_binding_revoke'
+          && /未保存/.test(error.detail) && /撤销连接/.test(error.detail) && error.constraint === undefined);
+        assert.deepEqual(await completeProjection(binding.binding_id), before, `${mode}: B/Auth/Sources/contributions/overrides/entries/grants/audit/receipts/events fully roll back`);
+        assert.deepEqual(await bindingView(binding.binding_id), view, `${mode}: actual Native DTO is unchanged`);
+        assert.deepEqual(await constraints(), beforeConstraints, 'the validated NONEMPTY CHECK remains exact');
+        assert.ok(Array.isArray((await read()).records), 'failed unsaved reduction retains the original access');
+        await native('clued_authorization_manage_v12', { op: 'revoke', binding_id: binding.binding_id, base_version: view.version });
+        assert.equal((await bindingView(binding.binding_id)).active, false);
+        await denied(read());
+        await denied(integrationCall(binding, 'clued_integration_request_open_v1', { request_key: uuid() }));
+      }
+    });
+
+    await t.test('a future project policy with zero owned projects remains meaningful and later materializes a real project', async () => {
+      const freshOwner = uuid();
+      await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'future-only@example.invalid',now())", [freshOwner]);
+      const freshHuman = await connect('authenticated', freshOwner);
+      assert.equal(Number((await admin.query('select count(*) n from public.clued_projects where user_id=$1', [freshOwner])).rows[0].n), 0);
+      const binding = await authorize([scope('project:*', ['read'])], ['context:read'], freshHuman);
+      assert.deepEqual((await entry(binding.binding_id, 'scope', 'project:*')).actions, ['read']);
+      const current = await sourceProjection(binding.binding_id);
+      assert.equal(current.has_permissions, true);
+      assert.deepEqual(current.scopes, ['context:read']);
+      assert.equal(current.entries.length, 1, 'only the authorized future policy exists before any project');
+      const newProject = await fixtureProject(freshOwner, 'First future-only project');
+      assert.deepEqual((await entry(binding.binding_id, 'scope', `project:${newProject}`)).actions, ['read']);
+      const read = await workerGatewayRpc(gateway, 'clued_record_list', binding.token, { level: 'project', project_id: newProject, record_type: 'note' });
+      assert.ok(Array.isArray(read.records));
+    });
+
+    await t.test('expired final source cannot execute Integration mutations or revive cached authority; Native revoke remains available', async () => {
+      const binding = await authorize([context(testContext, ['read', 'write'])]);
+      const id = await installIntegration(binding);
+      const original = await bindingView(binding.binding_id);
+      const cached = await entries(binding.binding_id);
+      await admin.query("update clued_private.authorization_sources_v2 set expires_at=clock_timestamp()-interval '1 second' where binding_id=$1", [binding.binding_id]);
+      assert.equal((await sourceProjection(binding.binding_id)).has_permissions, false);
+      const identity = (await admin.query('select clued_private.integration_binding_identity_v1($1) value', [binding.binding_id])).rows[0].value;
+      assert.equal(identity.live, false); assert.equal(identity.auth_usable, false);
+      assert.deepEqual(identity.authority, { scopes: [], entries: [] });
+      const facts = (await normalized(id)).facts;
+      assert.deepEqual(facts.oauth_scope_facts, []);
+      assert.deepEqual(facts.resource_action_scope_facts.capabilities, []);
+      const snapshot = await completeProjection(binding.binding_id);
+      const integrationBefore = await integrationBusiness(id);
+      for (const name of ['clued_integration_request_open_v1', 'clued_integration_create_or_bind_v1',
+        'clued_integration_identity_update_v1', 'clued_integration_reconcile_request_v1',
+        'clued_integration_declare_v1', 'clued_integration_report_v1', 'clued_integration_verify_v1']) {
+        await denied(integrationCall(binding, name, { integration_id: id, request_key: uuid(), idempotency_key: uuid(),
+          kind: 'ready_profile', request_id: uuid(), binding_intent: 'CREATE_OR_BIND' }), /authorization_no_effective_source_permission/);
+      }
+      await denied(development(binding, { op: 'record_list', context_id: testContext }));
+      assert.deepEqual(await completeProjection(binding.binding_id), snapshot, 'execution refusals are read-only with no receipts or Source repair');
+      assert.deepEqual(await integrationBusiness(id), integrationBefore, 'no integration, link, fact, declaration, verification, operation, revoke or reauth row changes');
+      assert.deepEqual(await entries(binding.binding_id), cached, 'cached nonempty projection is not execution authority');
+      const status = await integrationCall(binding, 'clued_integration_status_v1', { integration_id: id });
+      assert.ok(status.integration, 'diagnostics remain reachable with a valid credential');
+      await assertLostAuthorityState(binding, id, 'EXPIRED');
+      await native('clued_authorization_manage_v12', { op: 'revoke', binding_id: binding.binding_id, base_version: original.version });
+      await denied(development(binding, { op: 'record_list', context_id: testContext }));
+    });
+
+    await t.test('revoking the final Context grant commits without Source rebuild rollback and denies MCP and Integration execution', async () => {
+      const binding = await authorize([context(testContext, ['read', 'write'])]);
+      const id = await installIntegration(binding);
+      const initial = await grant(binding.binding_id, testContext);
+      const result = await own({ op: 'grant_revoke', context_id: testContext, grant_id: initial.id, base_version: initial.version });
+      assert.equal(result.status, 'committed', JSON.stringify(result));
+      assert.ok((await grant(binding.binding_id, testContext)).revoked_at);
+      assert.equal(await entry(binding.binding_id, 'context', testContext, 'test'), undefined);
+      assert.equal((await sourceProjection(binding.binding_id)).has_permissions, false);
+      await denied(development(binding, { op: 'record_list', context_id: testContext }));
+      await denied(write(binding, testContext, 'Revoked final Context permission'));
+      await denied(integrationCall(binding, 'clued_integration_report_v1', { integration_id: id }), /authorization_no_effective_source_permission/);
+      await denied(integrationCall(binding, 'clued_integration_verify_v1', { integration_id: id, kind: 'ready_profile' }), /authorization_no_effective_source_permission/);
+      const facts = (await normalized(id)).facts;
+      assert.deepEqual(facts.oauth_scope_facts, []);
+      assert.deepEqual(facts.resource_action_scope_facts.capabilities, []);
+      await assertLostAuthorityState(binding, id, 'REVOKED_CONNECTION');
+      const view = await bindingView(binding.binding_id);
+      await native('clued_authorization_manage_v12', { op: 'revoke', binding_id: binding.binding_id, base_version: view.version });
+      await denied(development(binding, { op: 'record_list', context_id: testContext }));
+    });
+
+    await t.test('Integration capabilities use the same live exact entry, retaining read while independently expired write is denied', async () => {
+      const binding = await authorize([scope('global', ['write']), scope(`project:${project}`, ['read'])]);
+      const id = await installIntegration(binding);
+      const facts = (await normalized(id)).facts;
+      assert.ok(facts.resource_action_scope_facts.capabilities.includes('project.read'));
+      assert.ok(!facts.resource_action_scope_facts.capabilities.includes('project.write'), 'global write cannot synthesize project write');
+      const view = await bindingView(binding.binding_id);
+      const writeSource = view.sources.find((s) => s.contributions.some((c) => c.resource_id === 'global'));
+      await admin.query("update clued_private.authorization_sources_v2 set expires_at=clock_timestamp()-interval '1 second' where id=$1", [writeSource.source_id]);
+      const after = (await normalized(id)).facts;
+      assert.deepEqual(after.oauth_scope_facts, ['context:read']);
+      assert.ok(after.resource_action_scope_facts.capabilities.includes('project.read'));
+      assert.ok(!after.resource_action_scope_facts.capabilities.includes('context.write'));
+      assert.equal((await sourceProjection(binding.binding_id)).has_permissions, true);
+    });
+
+    await t.test('all seven Integration business families reject final membership revoke and natural Source expiry after actual waits with full rollback', async (waitTests) => {
+      // Disposable registry extension, as in the existing Integration runtime
+      // fixtures: real public calls create complete/claimed identities and a
+      // legitimate collision for reconcile. No Binding/Source/claim simulation.
+      await admin.query(`insert into clued_private.integration_hosts_v1(host,tenant_dimension,account_dimension,
+        tenant_evidence_kinds,account_evidence_kinds,first_authorization_required,registry_version,capability_snapshot_ref)
+        values('source.wait.tenant','REQUIRED','NOT_APPLICABLE',array['TEST_TENANT_ID'],'{}',true,1,'disposable Source wait fixture')`);
+      await admin.query(`insert into clued_private.integration_host_surfaces_v1(host,surface,capability_ceiling,host_features,registry_version)
+        values('source.wait.tenant','default',array['audit.read','context.read','context.write','development_history.read','evidence.write','project.read','project.write'],
+          '{"mcp_tools":true,"oauth":true}',1)`);
+      await admin.query(`insert into clued_private.integration_ready_profiles_v1(profile_id,profile_version,required_capabilities,
+        required_qualification,evidence_rules,freshness_ttl)
+        values('source.wait.read',1,array['context.read'],'ANY','{"context.read":{"kind":"resume_after_link"}}',interval '5 minutes')`);
+      const names = ['clued_integration_request_open_v1', 'clued_integration_create_or_bind_v1',
+        'clued_integration_identity_update_v1', 'clued_integration_reconcile_request_v1',
+        'clued_integration_declare_v1', 'clued_integration_report_v1', 'clued_integration_verify_v1'];
+      for (const loss of ['membership-revoke', 'natural-expiry']) for (const name of names) {
+        await waitTests.test(`${name}: ${loss} while actually blocked`, async () => {
+          let membership;
+          if (loss === 'membership-revoke') {
+            const invite = await native('clued_project_access_v13', { op: 'invite_create', project_id: foreignProject, environment: 'test',
+              target_email: 'all-contexts@example.invalid', role: 'editor', actions: ['read', 'write'], expires_at: future(), idempotency_key: uuid() }, foreignHuman);
+            membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
+              base_version: invite.version, idempotency_key: uuid() });
+          }
+          const binding = await authorize([context(loss === 'membership-revoke' ? foreignContext : testContext, ['read', 'write'])]);
+          const tenant = { status: 'VALUE', value: uuid(), evidence_kind: 'TEST_TENANT_ID' };
+          let id;
+          if (name === 'clued_integration_reconcile_request_v1') {
+            const holding = await authorize([scope('global', ['read'])], ['context:read']);
+            await installIntegration(holding, { host: 'source.wait.tenant', host_surface: 'default', tenant });
+            id = await installIntegration(binding, { host: 'source.wait.tenant', host_surface: 'default' });
+            const base = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
+            const conflict = await integrationCall(binding, 'clued_integration_identity_update_v1', {
+              idempotency_key: uuid(), integration_id: id, base_version: base, tenant });
+            assert.equal(conflict.status, 'committed', JSON.stringify(conflict));
+            assert.equal(conflict.supplemental.identity_claim_state, 'CLAIM_CONFLICT');
+          } else id = await installIntegration(binding, { host: 'source.wait.tenant', host_surface: 'default', tenant });
+          const version = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
+          const requestPayload = { request_key: uuid(), intent: 'reauthorization', target_integration_id: id,
+            host: 'source.wait.tenant', host_surface: 'default', tenant, adapter_family: 'test-adapter', adapter_version: '1.0.0', installation_phase: 'COMPLETED' };
+          let input = { integration_id: id, base_version: version, idempotency_key: uuid() };
+          if (name === 'clued_integration_request_open_v1') input = requestPayload;
+          if (name === 'clued_integration_create_or_bind_v1') {
+            const req = await integrationCall(binding, 'clued_integration_request_open_v1', requestPayload);
+            input = { request_id: req.request_id, binding_intent: 'REAUTHORIZATION', idempotency_key: uuid() };
+          }
+          if (name === 'clued_integration_declare_v1') Object.assign(input, { host_surface: 'default', declared_capabilities: ['context.read'],
+            host_features: { mcp_tools: true }, adapter_family: 'test-adapter', adapter_version: '1.0.0' });
+          if (name === 'clued_integration_report_v1') Object.assign(input, { action: 'set', truth_class: 'adapter_state', value: 'BLOCKED', reason: 'Source wait boundary' });
+          if (name === 'clued_integration_verify_v1') Object.assign(input, { kind: 'ready_profile', profile_id: 'source.wait.read', profile_version: 1 });
+          const holder = await connect();
+          const waiting = await connect();
+          if (loss === 'natural-expiry') await admin.query(`update clued_private.authorization_sources_v2
+            set expires_at=clock_timestamp()+interval '1500 milliseconds' where binding_id=$1`, [binding.binding_id]);
+          assert.equal((await sourceProjection(binding.binding_id)).has_permissions, true, 'permission is live before entering the RPC');
+          await holder.query('begin');
+          let pending;
+          try {
+            if (name === 'clued_integration_request_open_v1') {
+              await integrationCall(binding, name, input, holder);
+              await holder.query('reset role');
+            } else {
+              await holder.query('select 1 from clued_private.integrations_v1 where integration_id=$1 for update', [id]);
+            }
+            pending = integrationCall(binding, name, input, waiting).then((value) => ({ value }), (error) => ({ error }));
+            const actualWait = await waitForLock(waiting, holder);
+            assert.equal(actualWait.wait_event_type, 'Lock');
+            if (loss === 'membership-revoke') {
+              const revoked = await native('clued_project_access_v13', { op: 'member_revoke', membership_id: membership.membership_id,
+                base_version: membership.version, idempotency_key: uuid() }, foreignHuman);
+              assert.ok(revoked, 'real membership revoke commits while the Binding/Integration operation remains blocked');
+              assert.ok((await admin.query('select revoked_at from clued_private.project_memberships_v13 where id=$1',
+                [membership.membership_id])).rows[0].revoked_at);
+            } else {
+              const deadline = Date.now() + 4000;
+              while ((await sourceProjection(binding.binding_id)).has_permissions && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+            }
+            assert.equal((await sourceProjection(binding.binding_id)).has_permissions, false, 'authority is lost while the actual backend is still waiting');
+            const revokedWait = await waitForLock(waiting, holder);
+            assert.equal(revokedWait.wait_event_type, 'Lock');
+            // Capture before release, so a buggy waiting call cannot commit
+            // before the baseline read and hide its own effects. Only the
+            // Request holder has a legitimate pending business row to account for.
+            const before = await completeProjection(binding.binding_id);
+            const businessBefore = await integrationBusiness(id);
+            if (name === 'clued_integration_request_open_v1') {
+              const heldRequest = (await holder.query('select to_jsonb(a) value from clued_private.integration_installation_requests_v1 a where owner_id=$1 and request_key=$2',
+                [owner, input.request_key])).rows[0].value;
+              businessBefore.requests.push(heldRequest);
+              businessBefore.requests.sort((a, b) => a.request_id < b.request_id ? -1 : a.request_id > b.request_id ? 1 : 0);
+            }
+            const diagnosticsBefore = await diagnosticRows(id);
+            await holder.query('commit');
+            const result = await pending;
+            assert.ok(result.error, JSON.stringify(result.value));
+            assert.equal(result.error.code, '42501');
+            assert.equal(result.error.message, 'authorization_no_effective_source_permission');
+            assert.deepEqual(await completeProjection(binding.binding_id), before, 'no Binding, Source, authorization, receipt or event effect from the refused RPC');
+            assert.deepEqual(await integrationBusiness(id), businessBefore, 'no Integration, Request, identity, claim, fact, declaration, verification, link, ownership, revoke or reauth effect');
+            assert.deepEqual(await diagnosticRows(id), diagnosticsBefore, 'no artificial invalid-input diagnostic');
+            const evaluated = await evaluateIntegration(id);
+            assert.equal(evaluated.valid, true, JSON.stringify(evaluated));
+            assert.deepEqual(evaluated.reason_codes, []);
+            assert.deepEqual(evaluated.effective_capabilities, []);
+            waitTests.diagnostic(JSON.stringify({ family: name, loss, wait_event: actualWait.wait_event,
+              source_live_before_wait: true, source_live_at_release: false, actual_error: { code: result.error.code, message: result.error.message } }));
+          } finally {
+            await holder.query('rollback').catch(() => {});
+            if (pending) await pending;
+          }
+        });
+      }
+    });
+
+    await t.test('partial permission loss while waiting retains real read but rolls back the entered operation instead of committing an old authority snapshot', async () => {
+      for (const loss of ['membership-read-only', 'independent-write-expiry']) {
+        let membership;
+        let binding;
+        if (loss === 'membership-read-only') {
+          const invite = await native('clued_project_access_v13', { op: 'invite_create', project_id: foreignProject, environment: 'test',
+            target_email: 'all-contexts@example.invalid', role: 'editor', actions: ['read', 'write'], expires_at: future(), idempotency_key: uuid() }, foreignHuman);
+          membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
+            base_version: invite.version, idempotency_key: uuid() });
+          binding = await authorize([context(foreignContext, ['read', 'write'])]);
+        } else binding = await authorize([scope('global', ['read']), context(testContext, ['write'])]);
+        const id = await installIntegration(binding);
+        const version = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
+        const holder = await connect();
+        const waiting = await connect();
+        if (loss === 'independent-write-expiry') {
+          const source = (await bindingView(binding.binding_id)).sources.find((s) => s.contributions.some((c) => c.resource_id === testContext));
+          assert.ok(source);
+          await admin.query("update clued_private.authorization_sources_v2 set expires_at=clock_timestamp()+interval '1500 milliseconds' where id=$1", [source.source_id]);
+        }
+        await holder.query('begin');
+        let pending;
+        try {
+          await holder.query('select 1 from clued_private.integrations_v1 where integration_id=$1 for update', [id]);
+          pending = integrationCall(binding, 'clued_integration_report_v1', { integration_id: id, base_version: version,
+            idempotency_key: uuid(), action: 'set', truth_class: 'adapter_state', value: 'BLOCKED', reason: 'Partial Source wait boundary' }, waiting)
+            .then((value) => ({ value }), (error) => ({ error }));
+          await waitForLock(waiting, holder);
+          if (loss === 'membership-read-only') {
+            const reduced = await native('clued_project_access_v13', { op: 'member_reduce', membership_id: membership.membership_id,
+              base_version: membership.version, actions: ['read'], idempotency_key: uuid() }, foreignHuman);
+            assert.ok(reduced);
+            assert.deepEqual((await admin.query('select actions from clued_private.project_memberships_v13 where id=$1', [membership.membership_id])).rows[0].actions, ['read']);
+          } else {
+            const deadline = Date.now() + 4000;
+            while ((await sourceProjection(binding.binding_id)).scopes.includes('context:write') && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          const current = await sourceProjection(binding.binding_id);
+          assert.equal(current.has_permissions, true);
+          assert.deepEqual(current.scopes, ['context:read']);
+          await waitForLock(waiting, holder);
+          const before = await completeProjection(binding.binding_id);
+          const businessBefore = await integrationBusiness(id);
+          await holder.query('commit');
+          const result = await pending;
+          assert.ok(result.error, JSON.stringify(result.value));
+          assert.equal(result.error.code, '42501');
+          assert.equal(result.error.message, 'authorization_source_permission_changed_during_call');
+          assert.deepEqual(await completeProjection(binding.binding_id), before);
+          assert.deepEqual(await integrationBusiness(id), businessBefore);
+          assert.deepEqual((await sourceProjection(binding.binding_id)).scopes, ['context:read'], 'the separately committed restriction is retained');
+          if (loss === 'membership-read-only') {
+            assert.equal((await development(binding, { op: 'record_list', context_id: foreignContext })).status, 'ok');
+            await denied(write(binding, foreignContext, 'Reduced member write remains denied'));
+            const member = (await admin.query('select version from clued_private.project_memberships_v13 where id=$1', [membership.membership_id])).rows[0];
+            await native('clued_project_access_v13', { op: 'member_revoke', membership_id: membership.membership_id,
+              base_version: member.version, idempotency_key: uuid() }, foreignHuman);
+          } else {
+            assert.ok(Array.isArray((await workerGatewayRpc(gateway, 'clued_record_list', binding.token, { level: 'global', record_type: 'note' })).records));
+            await denied(write(binding, testContext, 'Expired independent write remains denied'));
+          }
+        } finally {
+          await holder.query('rollback').catch(() => {});
+          if (pending) await pending;
+        }
+      }
+    });
+
     await t.test('per-source expiry is checked at execution without read repair or killing a live independent source', async () => {
       const binding = await authorize([context(testContext, ['read']), macro(['write'])]);
       const sources = (await bindingView(binding.binding_id)).sources;
@@ -545,6 +919,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       const macroBinding = await authorize([macro(['read', 'write'])]);
       await denied(write(macroBinding, foreignContext, 'Shared is not part of all-owned'));
       const explicit = await approve(request, [{ ...context(foreignContext, ['read', 'write']), qualification_id: uuid() }]);
+      const invitedIntegration = await installIntegration(explicit);
       assert.equal((await write(explicit, foreignContext, 'Explicit invitation qualification')).status, 'committed');
       assert.equal((await admin.query('select qualification_id from clued_private.authorization_entries_v12 where binding_id=$1 and resource_id=$2',
         [explicit.binding_id, foreignContext])).rows[0].qualification_id, membership.membership_id, 'client cannot forge qualification ID');
@@ -558,6 +933,11 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       await native('clued_project_access_v13', { op: 'member_revoke', membership_id: membership.membership_id, base_version: reducedMember.version,
         idempotency_key: uuid() }, foreignHuman);
       await denied(write(explicit, foreignContext, 'Revoked membership'));
+      assert.equal((await sourceProjection(explicit.binding_id)).has_permissions, false, 'revoked exact qualification cannot remain effective Source authority');
+      assert.deepEqual((await normalized(invitedIntegration)).facts.resource_action_scope_facts.capabilities, []);
+      await assertLostAuthorityState(explicit, invitedIntegration, 'REVOKED_CONNECTION');
+      await denied(integrationCall(explicit, 'clued_integration_verify_v1', { integration_id: invitedIntegration, kind: 'ready_profile' }),
+        /authorization_no_effective_source_permission/);
       await admin.query("update clued_private.development_spaces_v14 set name='PRIVATE RENAMED CONTEXT AFTER REVOKE' where id=$1", [foreignContext]);
       await admin.query("update public.clued_projects set name='PRIVATE RENAMED PROJECT AFTER REVOKE' where id=$1", [foreignProject]);
       const invalid = (await bindingView(explicit.binding_id)).grants.find((r) => r.resource_id === foreignContext);
@@ -717,10 +1097,10 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
   } finally {
     for (const db of clients.reverse()) await db.end().catch(() => {});
-    await server.stop().catch(() => {});
     const target = path.resolve(directory);
     assert.equal(path.dirname(target), path.resolve(os.tmpdir()));
     assert.ok(path.basename(target).startsWith('clued-all-contexts-'));
+    await server.stop().catch(() => {});
     await fs.rm(target, { recursive: true, force: true });
   }
 });

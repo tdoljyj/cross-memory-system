@@ -200,7 +200,7 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
     const issued = await native('clued_owner_grant_confirmation_issue_v1', { request_id: asked.request.request_id, choice: 'once' });
     assert.equal(issued.status, 'issued', JSON.stringify(issued));
     assert.deepEqual(issued.confirmation_view.permissions.map((p) => [p.context, p.context_name, p.action, p.role]), [
-      ['global', '通用内容', 'read', 'reader'],
+      ['global', '个人记录', 'read', 'reader'],
       ['project:*', '我的全部项目（含以后新建的）', 'read', 'developer'],
       ['project:*', '我的全部项目（含以后新建的）', 'write', 'developer'],
       ['project:*', '我的全部项目（含以后新建的）', 'close', 'developer'],

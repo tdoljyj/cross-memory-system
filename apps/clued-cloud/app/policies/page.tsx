@@ -185,8 +185,8 @@ export default function PoliciesPage() {
       {editing && <form onSubmit={preview} aria-label="策略内容">
         <label>任务类<input required maxLength={120} disabled={working} value={taskClass} onChange={event => setTaskClass(event.target.value)} /></label>
         <fieldset><legend>记录范围</legend>
-          <label><input type="checkbox" disabled={working} checked={scopes.includes("global")} onChange={event => setScopes(toggle(scopes, "global", event.target.checked))} />全局</label>
           <label><input type="checkbox" disabled={working} checked={scopes.includes("profile")} onChange={event => setScopes(toggle(scopes, "profile", event.target.checked))} />个人资料</label>
+          <label><input type="checkbox" disabled={working} checked={scopes.includes("global")} onChange={event => setScopes(toggle(scopes, "global", event.target.checked))} />个人记录</label>
           {projects === null ? <p role="status">正在读取项目…</p> : projects.map(project => <label key={project.id}>
             <input type="checkbox" disabled={working} checked={scopes.includes("project:" + project.id)} onChange={event => setScopes(toggle(scopes, "project:" + project.id, event.target.checked))} />项目：{project.name}</label>)}
         </fieldset>

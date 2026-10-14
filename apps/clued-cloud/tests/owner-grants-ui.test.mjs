@@ -12,6 +12,8 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
 const CONFIRM = compile('../app/confirm/[id]/page.tsx');
 const GRANTS = compile('../app/grants/page.tsx');
 const SWITCH = compile('../app/grants/AutoApprovalSwitch.tsx');
+const AUTHORIZATION = {};
+vm.runInNewContext(compile('../lib/context-authorization.ts'), { exports: AUTHORIZATION });
 const REQUEST = '33333333-3333-4333-8333-333333333333';
 
 function fixture(compiled, { id = REQUEST } = {}) {
@@ -51,6 +53,7 @@ function fixture(compiled, { id = REQUEST } = {}) {
     if (name.endsWith('.css')) return {};
     if (name === 'next/link') return { __esModule: true, default: 'a' };
     if (name === 'next/navigation') return { useParams: () => ({ id }) };
+    if (name === '../../../lib/context-authorization') return AUTHORIZATION;
     throw Error(name);
   }, Error, Date, Number, String, Math, Array,
   fetch(url) { fetches.push(url); return new Promise(() => {}); } });
@@ -178,7 +181,7 @@ test('a connection permission request: names each permission and the connection,
   const what = f.text(f.nodes('section').find(n => n.props['aria-label'] === '要批准什么'));
   assert.ok(what.includes('ChatGPT'));
   assert.ok(what.includes('M2 → 新增和修改'));
-  assert.ok(what.includes('通用内容：读取'));
+  assert.ok(what.includes('个人记录：读取'));
   assert.ok(what.includes('不用重新连接'));
   f.button('批准').props.onClick();
   assert.deepEqual(plain([f.calls[2].name, f.calls[2].args]),

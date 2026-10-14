@@ -49,6 +49,7 @@ function fixture(respond) {
   }, AbortController, Error, TypeError, JSON, Date, Number, String, Math, Array, Object,
   window: { setTimeout(cb) { const id = ++seq; timers.set(id, cb); return id; }, clearTimeout(id) { timers.delete(id); }, confirm: () => true },
   fetch: async (url, options = {}) => { requests.push({ url, options }); const body = respond(url, options);
+    if (body instanceof Response) return body;
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }; } });
   function render() { cursor = 0; root = exports.default({}); while (effects.length) effects.shift()(); return root; }
   function nodes(type, from = root) { const out = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit);
@@ -87,7 +88,7 @@ test('legacy project grants retain their operations while range no longer claims
   assert.ok(shown.includes('尚不包含项目用途上下文'));
   assert.ok(shown.includes('自有项目正式记录（含未来项目）'));
   const legends = f.nodes('legend', card).map(n => f.text(n));
-  assert.deepEqual(legends, ['通用内容', '自有项目正式记录（含未来项目）'], 'covered projects are not listed');
+  assert.deepEqual(legends, ['个人记录', '自有项目正式记录（含未来项目）'], 'covered projects are not listed');
   // Untick write on project:*: the reduction sends project:* narrowed and no covered project row.
   const all = f.nodes('fieldset', card)[1];
   const write = f.nodes('input', all).find((n, i) => i === 1);
@@ -140,6 +141,44 @@ test('sources_v1 reduction sends actual source identities and preserves legacy r
  assert.equal(sent.selection_format,'sources_v1');assert.equal(sent.selected,undefined);
  assert.deepEqual(sent.sources,[{source_id:'source-old',base_version:2,action_cap:['read']},{source_id:'source-new',base_version:4,action_cap:[]}]);
  assert.deepEqual(sent.exceptions,[]);assert.ok(f.text().includes('权限已减少'));assert.ok(f.text().includes('只读'));
+});
+
+test('empty-source refusal explains that nothing was saved and requires rereading before explicit revoke', async () => {
+  const source = { source_id: '30000000-0000-4000-8000-000000000001', version: 2, kind: 'direct', actions: ['read'], contributions: [scope('global', ['read'])] };
+  let binding = { ...connection([scope('global', ['read'])]), selection_format: 'sources_v1', sources: [source], overrides: [], coverage: { status: 'complete', differences: [] } };
+  const f = fixture((url, options) => {
+    if (url === '/v1/storage/owner') return { clients: [] };
+    if (options.method === 'POST') {
+      if (JSON.parse(options.body).op === 'reduce') return Response.json({ error: 'authorization_empty_projection_requires_binding_revoke', message: 'private diagnostics must not be displayed' }, { status: 400 });
+      binding = { ...binding, version: 4, active: false }; return { version: 4 };
+    }
+    return { bindings: [binding] };
+  });
+  await f.open();
+  const field = f.nodes('fieldset').find(n => f.text(f.nodes('legend', n)[0]) === '独立明确授权');
+  assert.ok(field);
+  for (const box of f.nodes('input', field)) box.props.onChange({ target: { checked: false } });
+  f.render(); f.nodes('button').find(n => f.text(n) === '保存减少后的权限').props.onClick(); await f.settle();
+  assert.ok(f.text().includes('本次修改未保存'));
+  assert.ok(f.text().includes('重新读取后使用“撤销此连接”'));
+  assert.ok(!f.text().includes('private diagnostics'));
+  assert.ok(!f.text().includes('权限已减少'));
+  assert.equal(binding.version, 3); assert.equal(binding.active, true);
+  assert.equal(f.nodes('button').find(n => f.text(n) === '撤销此连接').props.disabled, true);
+  f.nodes('button').find(n => f.text(n) === '重新读取连接').props.onClick(); await f.settle();
+  f.nodes('button').find(n => f.text(n) === '撤销此连接').props.onClick(); await f.settle();
+  assert.ok(f.text().includes('连接已撤销'));
+  assert.deepEqual(f.requests.filter(r => r.url === '/oauth/connections/api' && r.options.method === 'POST').map(r => JSON.parse(r.options.body).op), ['reduce', 'revoke']);
+});
+
+test('connection display puts profile before personal records while precise source payload stays unchanged', async () => {
+  const rows = [scope(A, ['read']), scope('global', ['read']), scope('profile', ['read'])];
+  const f = fixture(url => url === '/v1/storage/owner' ? { clients: [] } : { bindings: [connection(rows)] });
+  await f.open();
+  const card = f.nodes('article')[0];
+  assert.deepEqual(f.nodes('legend', card).map(n => f.text(n)), ['个人资料', '个人记录', '项目正式记录']);
+  assert.ok(f.text(card).includes('个人资料、个人记录、项目正式记录'));
+  assert.deepEqual(rows.map(row => row.resource_id), [A, 'global', 'profile']);
 });
 
 test('stored macro with restricted coverage never displays complete authorization and exact reduction uses real override CAS',async()=>{

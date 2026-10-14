@@ -15,7 +15,7 @@ export const isAllContexts = (row: Resource) => row.resource_kind === "scope" &&
 export const isMacro = (row: Resource) => row.resource_kind === "scope" && [ALL_CONTEXTS, ALL_PROJECTS].includes(row.resource_id);
 export function resourceTitle(row: Resource): string {
   if (row.resource_kind === "context") return `${row.context_name || row.name || "未命名上下文"} · ${ENVIRONMENT_LABELS[row.environment] || row.environment}`;
-  if (row.resource_id === "global") return "通用内容";
+  if (row.resource_id === "global") return "个人记录";
   if (row.resource_id === "profile") return "个人资料";
   if (row.resource_id === ALL_CONTEXTS) return "全部上下文（含以后新建的）";
   if (row.resource_id === ALL_PROJECTS) return "自有项目正式记录（含未来项目）";
@@ -56,18 +56,28 @@ export function selectedResources(rows: Resource[], selected: Selection): Resour
   return rows.map(row => ({ resource_kind: row.resource_kind, resource_id: row.resource_id, environment: row.environment,
     actions: row.actions.filter(action => (selected[resourceKey(row)] || []).includes(action)) })).filter(row => row.actions.length);
 }
+export function authorizationDisplayOrder<T extends { resource_kind?: unknown; resource_id?: unknown; context?: unknown }>(rows: readonly T[]): T[] {
+  const rank = (row: T) => {
+    if (row.resource_kind && row.resource_kind !== "scope") return 2;
+    const id = row.resource_id ?? row.context;
+    return id === "profile" ? 0 : id === "global" ? 1 : 2;
+  };
+  return [...rows].sort((a, b) => rank(a) - rank(b));
+}
 export function resourceGroups(rows: Resource[]): { key: string; name: string; rows: Resource[] }[] {
   const groups = new Map<string, { key: string; name: string; rows: Resource[] }>();
   for (const row of rows.filter(row => !isMacro(row))) {
     const project = row.project_id || (row.resource_kind === "scope" && row.resource_id.startsWith("project:") ? row.resource_id.slice(8) : null);
     const key = project || (row.resource_kind === "context" ? "unresolved-contexts" : "personal");
     const name = project ? row.project_name || (row.resource_kind === "scope" ? row.name : undefined) || "项目（名称暂不可用）"
-      : row.resource_kind === "context" ? "上下文（所属项目尚未提供）" : "通用内容与个人资料";
+      : row.resource_kind === "context" ? "上下文（所属项目尚未提供）" : "个人资料与个人记录";
     if (!groups.has(key)) groups.set(key, { key, name, rows: [] });
     else if (row.project_name) groups.get(key)!.name = row.project_name;
     groups.get(key)!.rows.push(row);
   }
-  return [...groups.values()];
+  const personal = groups.get("personal");
+  if (personal) personal.rows = authorizationDisplayOrder(personal.rows);
+  return personal ? [personal, ...[...groups.values()].filter(group => group.key !== "personal")] : [...groups.values()];
 }
 export function operationSummary(rows: Resource[], legacy = false): string {
   if (!rows.length) return "无可用操作";

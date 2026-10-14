@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabase-browser";
 import ContextAuthorizationControls from '../../../lib/context-authorization-controls';
-import { ACTION_LABELS as ACTIONS, applyPreset, changeRange, initialSelection, isAllContexts, operationSummary, presetActions,
+import { ACTION_LABELS as ACTIONS, applyPreset, authorizationDisplayOrder, changeRange, initialSelection, isAllContexts, operationSummary, presetActions,
   resourceKey as grantKey, resourceTitle as resourceName, selectedResources, type Resource, type OperationPreset } from '../../../lib/context-authorization';
 
 // Headless Binding issuance (Task 364212a1, Owner Decision 6e0371e3). A client
@@ -307,7 +307,7 @@ export default function HeadlessBindings() {
       <dl className="oauth-details">
         <div><dt>名称</dt><dd>{String(view.label)}</dd></div>
         <div><dt>有效期</dt><dd>{`签发后 ${String(view.days)} 天`}</dd></div>
-        <div><dt>权限</dt><dd>{grants(view.selected).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
+        <div><dt>权限</dt><dd>{authorizationDisplayOrder(grants(view.selected)).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
         {object(view.source_snapshot) && <div><dt>保留的来源与限制版本</dt><dd><pre>{JSON.stringify(view.source_snapshot, null, 2)}</pre></dd></div>}
         {viewReplaces && <div><dt>替换</dt><dd>{`「${String(viewReplaces.agent_name)}」，签发后 ${String(viewReplaces.grace_minutes)} 分钟失效`}
           {strings(viewReplaces.roles).length ? `；角色 ${strings(viewReplaces.roles).map(r => ROLES[r] ?? r).join("、")} 移到新令牌` : ""}</dd></div>}
@@ -360,7 +360,7 @@ export default function HeadlessBindings() {
               {!row.grants && <div><dt>具体资源范围</dt><dd>授权明细未提供，不能推断为全部上下文；需要核对实际资格和资源授权。</dd></div>}</>}
             {row.roles.length > 0 && <div><dt>专用角色</dt><dd>{row.roles.map(r => ROLES[r] ?? r).join("、")}</dd></div>}
             {secretsFor(row.roles).length > 0 && <div><dt>令牌存放在</dt><dd>{secretsFor(row.roles).join("；")}</dd></div>}
-            {row.grants && <div><dt>权限</dt><dd>{row.grants.map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
+            {row.grants && <div><dt>权限</dt><dd>{authorizationDisplayOrder(row.grants).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
             <div><dt>连接编号</dt><dd>{row.binding_id}</dd></div>
           </dl>
           <div className="oauth-actions">

@@ -166,7 +166,7 @@ test('connection permission requests: ask without the scope, Owner approves once
     assert.equal(view.default_choice, 'once');
     assert.equal(view.view.action_title, '给发起请求的连接加权限');
     assert.deepEqual(view.view.permissions.map(({ context, context_name, action }) => [context, context_name, action]),
-      [['global', '通用内容', 'write'], [P, 'M2', 'write']]);
+      [['global', '个人记录', 'write'], [P, 'M2', 'write']]);
     assert.equal(view.view.connection.binding_id, chatgpt);
     assert.equal(view.view.connection.client_name, 'chatgpt');
     assert.deepEqual(view.view.connection.current,

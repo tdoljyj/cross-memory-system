@@ -104,7 +104,7 @@ test('issuing is two steps and the token is shown once', async t => {
   f.nodes('input').find(n => n.props.maxLength === 80).props.onChange({ target: { value: '  Nightly script ' } });
   f.nodes('select')[0].props.onChange({ target: { value: '90' } });
   f.render();
-  checkbox(f, '通用内容', '读取').props.onChange({ target: { checked: true } });
+  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } });
   f.render();
   checkbox(f, 'Alpha', '新增和修改').props.onChange({ target: { checked: true } });
   f.render();
@@ -121,7 +121,7 @@ test('issuing is two steps and the token is shown once', async t => {
   await f.settle();
   const panel = f.nodes('section').find(n => n.props['aria-label'] === '确认签发');
   assert.ok(f.text(panel).includes('签发后 90 天'));
-  assert.ok(f.text(panel).includes('通用内容：读取；Alpha：新增和修改'));
+  assert.ok(f.text(panel).includes('个人记录：读取；Alpha：新增和修改'));
   assert.ok(f.nodes('button').filter(n => ['轮换为新令牌', '撤销'].includes(f.text(n))).every(n => n.props.disabled),
     'nothing else starts while a confirmation waits');
   f.button('确认签发', panel).props.onClick();
@@ -159,7 +159,7 @@ test('rotating the legacy CI Binding names it and shows the moving role', async 
   assert.ok(f.nodes('div', rotating).some(n => n.props['aria-label'] === '轮换表单'), 'form inside the clicked card');
   assert.ok(!f.nodes('button', rotating).some(n => f.text(n) === '轮换为新令牌'));
   assert.equal(f.nodes('div').filter(n => n.props['aria-label'] === '签发表单').length, 0, 'no second form at the top');
-  checkbox(f, '通用内容', '读取').props.onChange({ target: { checked: true } }); f.render();
+  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } }); f.render();
   f.button('预览').props.onClick();
   assert.deepEqual(plain(f.calls[1].args.p_input), { label: 'clued-work-admission', days: 30, replaces_binding_id: 'b-legacy',
     selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }] });
@@ -180,10 +180,10 @@ test('rotating a headless Binding starts from its current grants; revoking uses 
   await open(f);
   const head = f.nodes('article').find(n => f.text(n).includes('CI reader'));
   f.button('轮换为新令牌', head).props.onClick(); f.render();
-  assert.equal(checkbox(f, '通用内容', '读取').props.checked, true);
-  assert.equal(checkbox(f, '通用内容', '新增和修改').props.checked, false);
+  assert.equal(checkbox(f, '个人记录', '读取').props.checked, true);
+  assert.equal(checkbox(f, '个人记录', '新增和修改').props.checked, false);
   f.button('改为签发新令牌').props.onClick(); f.render();
-  assert.equal(checkbox(f, '通用内容', '读取').props.checked, false);
+  assert.equal(checkbox(f, '个人记录', '读取').props.checked, false);
   f.button('撤销', head).props.onClick();
   assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_authorization_manage_v12',
     { p_input: { op: 'revoke', binding_id: 'b-head', base_version: 2 } }]);
@@ -244,7 +244,7 @@ test('a refusal is shown in plain words', async t => {
   const f = fixture(); t.after(() => f.unmount());
   await open(f);
   f.nodes('input').find(n => n.props.maxLength === 80).props.onChange({ target: { value: 'x' } });
-  checkbox(f, '通用内容', '查看审计回执').props.onChange({ target: { checked: true } }); f.render();
+  checkbox(f, '个人记录', '查看审计回执').props.onChange({ target: { checked: true } }); f.render();
   f.button('预览').props.onClick();
   f.calls[1].resolve({ data: { status: 'rejected', error_code: 'headless_binding_role_scope_missing' }, error: null }); await f.settle();
   assert.ok(f.text().includes('新令牌需要保留对应权限'));
@@ -261,7 +261,7 @@ test('a role Binding names its GitHub secret, and a rotation says which secret t
   const plainCard = f.nodes('article').find(n => f.text(n).includes('CI reader'));
   assert.ok(!f.text(plainCard).includes('令牌存放在'), 'a Binding without a role names no secret');
   f.button('轮换为新令牌', legacy).props.onClick(); f.render();
-  checkbox(f, '通用内容', '读取').props.onChange({ target: { checked: true } }); f.render();
+  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } }); f.render();
   f.button('预览').props.onClick();
   f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'clued_hbc_r', view_digest: 'r'.repeat(64),
     confirmation_view: { label: 'clued-work-admission', days: 30, selected: [], replaces: { binding_id: 'b-legacy',

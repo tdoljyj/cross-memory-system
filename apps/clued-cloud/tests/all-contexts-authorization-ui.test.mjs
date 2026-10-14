@@ -42,6 +42,24 @@ test('full policy is one real macro, presets cannot add an unselected resource, 
   assert.deepEqual(plain(auth.presetActions({...rows[2],actions:['write']},'reader')),[]);
 });
 
+test('specified-scope display orders profile, personal records and projects without changing authorization payloads', () => {
+  const rows = [context('test'), scope('global'), scope(P), scope('profile'), context('preview')];
+  const before = plain(rows);
+  const selected = { [auth.resourceKey(rows[0])]: ['read'], [auth.resourceKey(rows[1])]: ['read', 'write'] };
+  const payload = plain(auth.selectedResources(rows, selected));
+  const groups = auth.resourceGroups(rows);
+  assert.deepEqual(plain(groups.map(group => group.key)), ['personal', P.slice(8)]);
+  assert.deepEqual(plain(groups[0].rows.map(row => row.resource_id)), ['profile', 'global']);
+  assert.equal(groups[0].name, '个人资料与个人记录');
+  assert.deepEqual(plain(groups[1].rows), [before[0], before[2], before[4]]);
+  assert.deepEqual(plain(rows), before);
+  assert.deepEqual(plain(auth.selectedResources(rows, selected)), payload);
+  assert.deepEqual(plain(auth.authorizationDisplayOrder(rows)), [before[3], before[1], before[0], before[2], before[4]]);
+  const preview = [{ context: P }, { context: 'global' }, { context: 'profile' }];
+  assert.deepEqual(plain(auth.authorizationDisplayOrder(preview)), [preview[2], preview[1], preview[0]]);
+  assert.deepEqual(plain(preview), [{ context: P }, { context: 'global' }, { context: 'profile' }]);
+});
+
 test('verified Record display does not promote a candidate, retained history, legacy Record or Event', () => {
   const current={record_type:'note',authoritative:true,record_currentness:'CURRENT',source_semantics:'canonical_record'};
   assert.equal(model.immediateAuthoritativeRecord(current),true);

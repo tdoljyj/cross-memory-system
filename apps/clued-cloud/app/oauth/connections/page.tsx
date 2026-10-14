@@ -5,7 +5,7 @@ import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabase-browser";
 import Link from "next/link";
 import HeadlessBindings from "./headless";
-import { ALL_CONTEXTS, operationSummary, resourceTitle, type Resource } from '../../../lib/context-authorization';
+import { ALL_CONTEXTS, authorizationDisplayOrder, operationSummary, resourceTitle, type Resource } from '../../../lib/context-authorization';
 
 const API = "/oauth/connections/api";
 // Headless Bindings share the v12 authorization table; they are listed and
@@ -120,6 +120,12 @@ function isBinding(value: unknown): value is Binding {
 
 async function readResponse(response: Response, fallback: string): Promise<unknown> {
   if (!response.ok) {
+    if (response.status === 400) {
+      const problem: unknown = await response.json().catch(() => null);
+      if (isObject(problem) && problem.error === 'authorization_empty_projection_requires_binding_revoke') {
+        throw new Error('本次修改未保存。要取消此连接的全部权限，请重新读取后使用“撤销此连接”。');
+      }
+    }
     const messages: Record<number, string> = {
       401: "登录已失效，请重新登录后再读取连接。",
       403: "当前账户无权管理此连接。",
@@ -157,7 +163,7 @@ function selectedGrants(binding: Binding, selection: Selection): Grant[] {
 function rangeName(binding: Binding): string {
   const all = binding.grants.some(grant => grant.resource_kind === 'scope' && grant.resource_id === ALL_CONTEXTS);
   if (all) return binding.coverage?.status === 'complete' ? '全部上下文（含以后新建的）' : '全部上下文策略 · 自定义／受限';
-  return binding.grants.filter(grant => !(grant.resource_kind === 'scope' && grant.resource_id.startsWith('project:') && grant.resource_id !== ALL_PROJECTS && allProjectsGrant(binding)))
+  return authorizationDisplayOrder(binding.grants.filter(grant => !(grant.resource_kind === 'scope' && grant.resource_id.startsWith('project:') && grant.resource_id !== ALL_PROJECTS && allProjectsGrant(binding))))
     .map(resourceTitle).join('、') || '无业务范围';
 }
 const grantTitle = resourceTitle;
@@ -604,7 +610,7 @@ export default function OAuthConnectionsPage() {
                 </fieldset>)}
               </section>}
               {binding.grants.length === 0 && <p className="oauth-copy">此连接没有业务访问权限。</p>}
-              {binding.grants.filter(grant => binding.selection_format === "sources_v1" ? ![ALL_CONTEXTS, ALL_PROJECTS].includes(grant.resource_id) : !coveredByAll(binding, selection, grant)).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
+              {authorizationDisplayOrder(binding.grants.filter(grant => binding.selection_format === "sources_v1" ? ![ALL_CONTEXTS, ALL_PROJECTS].includes(grant.resource_id) : !coveredByAll(binding, selection, grant))).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
                 style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
                 <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>
                   {grantTitle(grant)}
