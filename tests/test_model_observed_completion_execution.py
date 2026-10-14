@@ -127,6 +127,72 @@ class ObservedCallerSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"PLAN_FIELDS"):
                 S.validate_plan(bad,time.monotonic())
 
+    def test_cpu_threads_optional_selection_preserves_legacy_argv_and_closure(self):
+        legacy = S.command(self.plan, 123)
+        self.assertEqual(legacy[legacy.index("--threads") + 1], "2")
+        self.assertEqual(legacy[legacy.index("--threads-batch") + 1], "2")
+        with mock.patch.object(S, "RUNTIME_FILES", self.fixture_pins):
+            S.validate_plan(self.plan, time.monotonic())
+            for threads in (2, 8):
+                with self.subTest(threads=threads):
+                    plan = copy.deepcopy(self.plan)
+                    plan["cpu_threads"] = threads
+                    S.validate_plan(plan, time.monotonic())
+                    expected = list(legacy)
+                    for flag in ("--threads", "--threads-batch"):
+                        expected[expected.index(flag) + 1] = str(threads)
+                    self.assertEqual(S.command(plan, 123), expected)
+        self.assertNotIn("cpu_threads", self.plan)
+
+    def test_cpu_threads_invalid_values_or_unknown_options_have_no_file_io_or_transport(self):
+        for value in (True, False, None, "8", 2.0, 8.0, 0, 1, 3, 4, 16, 2.5, 8.5):
+            plan = copy.deepcopy(self.plan)
+            plan["cpu_threads"] = value
+            with self.subTest(value=value), mock.patch.object(Path, "open") as opening, \
+                    mock.patch.object(S, "_transport") as run:
+                with self.assertRaisesRegex(ValueError, "CPU_THREADS"):
+                    S.execute_observed_completion(plan, boundary=lambda *args: None)
+                opening.assert_not_called(); run.assert_not_called()
+        plan = copy.deepcopy(self.plan)
+        plan.update(cpu_threads=8, threads_batch=8)
+        with mock.patch.object(Path, "open") as opening, mock.patch.object(S, "_transport") as run:
+            with self.assertRaisesRegex(ValueError, "PLAN_FIELDS"):
+                S.execute_observed_completion(plan, boundary=lambda *args: None)
+            opening.assert_not_called(); run.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows observed dispatch is mocked, no runtime child")
+    def test_cpu8_observed_caller_binds_frozen_plan_and_both_flags_to_mock_transport(self):
+        self.plan["cpu_threads"] = 8
+        phases = []
+        def boundary(phase, view, seal, opened):
+            phases.append(phase)
+            self.assertEqual(view["cpu_threads"], 8)
+            self.assertEqual(seal, L.digest(self.plan))
+            self.assertEqual(seal, L.digest(view))
+        def transport(argv, cwd, env, deadline, limits, check, stream):
+            self.assertEqual(phases[:4], ["preflight", "before_observation_open", "observation_opened", "consume"])
+            for flag in ("--threads", "--threads-batch"):
+                self.assertEqual(argv[argv.index(flag) + 1], "8")
+            self.assertIn("--clued-observation-handle", argv)
+            check("before_resume"); check("before_result")
+            stream.write(b'{"fixture":true}\n'); stream.flush()
+            return {"outcome": "PROCESS_EXIT", "returncode": 0, "owned_cleanup_verified": True,
+                    "stdout_raw": b"{}", "stderr_raw": b"", "usage": None, "elapsed_seconds": 0.01}
+        with mock.patch.object(S, "RUNTIME_FILES", self.fixture_pins), \
+                mock.patch.object(S, "_transport", side_effect=transport) as run:
+            result = S.execute_observed_completion(self.plan, boundary=boundary)
+        run.assert_called_once()
+        self.assertEqual(result["plan_sha256"], L.digest(self.plan))
+        self.assertIn("before_resume", phases); self.assertIn("before_result", phases)
+        self.assertEqual(result["observation_capture"]["raw"], b'{"fixture":true}\n')
+        self.assertIsNone(result["usage"]); self.assertFalse(result["model_output_validated"])
+        def mutate(phase, view, seal, opened):
+            view["cpu_threads"] = 2
+        with mock.patch.object(Path, "open") as opening, mock.patch.object(S, "_transport") as run:
+            with self.assertRaisesRegex(ValueError, "BOUNDARY_RESULT_OR_MUTATION"):
+                S.execute_observed_completion(self.plan, boundary=mutate)
+            opening.assert_not_called(); run.assert_not_called()
+
     def test_no_boundary_and_mutating_boundary_have_no_io_or_launch(self):
         with mock.patch.object(Path,"open") as opening, mock.patch.object(S,"_transport") as run:
             with self.assertRaisesRegex(ValueError,"TRUSTED_BOUNDARY"):
@@ -425,12 +491,12 @@ class ProviderTimingChecks(unittest.TestCase):
         for value in (float("nan"), float("inf"), True):
             self.assertIsNone(ns["_capture_provider_timepoint"](value)["monotonic_seconds"])
 
-    def test_existing_plan_command_transport_and_capture_functions_are_unchanged(self):
-        # Preserve the accepted protected helper bodies while adding clocks only
-        # in execute_observed_completion. Text digests are platform independent.
+    def test_runtime_guard_command_transport_and_capture_source_pins_remain_fixed(self):
+        # The plan guard adds only the optional CPU selector. Other protected
+        # helper bodies retain their accepted platform-independent text pins.
         expected = {
             "require": "208b5b2b2b4054dae0ef9fc405dff7e09333a576dd4b9bc7adbf3bd0b2638046",
-            "validate_plan": "966fbc3f00305c65c1483f497a9fd947079e7db9401d94bc7f52d0a54d875a41",
+            "validate_plan": "7f81f4a9221fc99b8ee76b1882203a4b2c2bfb3f49ec7e2fcec88d8aaafc1df2",
             "command": "c51017f8b60dd6956d52ac92dd9de5ee0127ee7f5de196d4e30e14904ad04fd2",
             "_opened_identity": "e36f5ab2ace0d7722af6a56e9ad0ac2b311718d96c5dc7a43d75d97cb983288c",
             "_transport": "6e58afa18b7321e05dbabf2ae75c039d8590ce956c5df342ed3f09a0987b0342",

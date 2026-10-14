@@ -81,8 +81,16 @@ def verify_file(value, deadline=None):
     return path
 
 
+def cpu_threads(plan):
+    """Only an explicit integer plan field selects CPU8; legacy plans keep CPU2."""
+    value = plan.get("cpu_threads", 2)
+    require(type(value) is int and value in (2, 8), "CPU_THREADS")
+    return value
+
+
 def validate_plan(plan, now, deadline=None):
-    require(type(plan) is dict and set(plan) == PLAN_FIELDS, "PLAN_FIELDS")
+    require(type(plan) is dict and set(plan) in (PLAN_FIELDS, PLAN_FIELDS | {"cpu_threads"}), "PLAN_FIELDS")
+    cpu_threads(plan)
     budget = plan["budget"]
     require(type(budget) is dict and set(budget) == BUDGET_FIELDS, "BUDGET_FIELDS")
     for name, ceiling in (("input_tokens", 4096), ("output_tokens", 512),
@@ -118,9 +126,10 @@ def validate_plan(plan, now, deadline=None):
 
 def command(plan):
     """No extra argv, server, download, cache, GPU, interactive or external API."""
+    threads = str(cpu_threads(plan))
     return [plan["executable"]["path"], "--model", plan["model"]["path"],
             "--file", plan["prompt"]["path"], "--json-schema-file", plan["output_schema"]["path"],
-            "--threads", "2", "--threads-batch", "2", "--ctx-size", "8192",
+            "--threads", threads, "--threads-batch", threads, "--ctx-size", "8192",
             "--predict", str(plan["budget"]["output_tokens"]), "--device", "none",
             "--gpu-layers", "0", "--no-op-offload", "--no-kv-offload", "--no-context-shift",
             "--no-conversation", "--no-warmup", "--temp", "0",
