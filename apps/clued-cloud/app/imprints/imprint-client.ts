@@ -1,8 +1,11 @@
 import { canEditDue, domain, matchesProjection, normalizeRecord, normalizedDomains, object, sourceKind, uniqueRecords, uuid,
   type Domain, type ImprintRecord, type Json, type ReadInput, type ReadPage } from "./imprint-model";
-export type NativeRpc = (name: string, args: Json) => PromiseLike<{ data: unknown; error: { message?: string; code?: string } | null }>;
+import { NativeReadFailure, runNativeRead, type NativeReadOperation, type NativeReadOptions } from "../native-read-recovery";
+export type NativeRpc = (name: string, args: Json, signal?: AbortSignal) => PromiseLike<{
+  data: unknown; error: { message?: string; code?: string } | null; status?: number;
+}>;
 export class ImprintFailure extends Error {
-  constructor(public reason: "unknown" | "conflict" | "unavailable", public code = "") { super(reason); }
+  constructor(public reason: "unknown" | "conflict" | "unavailable", public code = "", public readFailure?: NativeReadFailure) { super(reason); }
 }
 const CONFLICT_CODES = new Set(["record_version_conflict", "organization_version_conflict", "development_record_version_conflict",
   "context_version_conflict", "stale_base_version", "IDEMPOTENCY_KEY_CONFLICT"]);
@@ -19,10 +22,65 @@ async function call(rpc: NativeRpc, name: string, args: Json): Promise<Json> {
     return result.data;
   } catch (failure) { if (failure instanceof ImprintFailure) throw failure; throw new ImprintFailure("unknown"); }
 }
-export async function readImprints(rpc: NativeRpc, input: ReadInput, contextId?: string): Promise<ReadPage> {
+const READ_OPERATIONS: Record<string, NativeReadOperation> = {
+  clued_imprint_read_v1: "imprints.read", clued_development_imprint_read_v1: "imprints.read", clued_imprint_source_v1: "imprints.source",
+};
+/** Only the three named read RPCs recover. Write calls keep their original single attempt. */
+async function callRead<T>(rpc: NativeRpc, name: string, args: Json, options: NativeReadOptions, validate: (value: Json) => T): Promise<T> {
+  const operation = READ_OPERATIONS[name];
+  if (!operation) throw new ImprintFailure("unknown", "read_operation_invalid");
+  let admittedFailure: ImprintFailure | undefined;
+  try {
+    return await runNativeRead(operation, async ({ signal }) => {
+      const result = await rpc(name, args, signal);
+      if (result.error) {
+        if (result.status === 0) {
+          const type = /^AbortError\b/.test(result.error.message ?? "") ? "AbortError"
+            : /^TypeError\b/.test(result.error.message ?? "") ? "TypeError" : "Unknown";
+          throw new NativeReadFailure({ category: "transport", phase: "transport", status: 0, type });
+        }
+        admittedFailure = new ImprintFailure(CONFLICT_CODES.has(result.error.message ?? "") || result.error.code === "40001"
+          ? "conflict" : "unavailable", result.error.message ?? result.error.code ?? "");
+        const http = typeof result.status === "number" && result.status >= 400;
+        throw new NativeReadFailure({ category: http ? "http" : "semantic", phase: http ? "http" : "semantic",
+          status: result.status, type: http ? "HttpError" : "SemanticError" });
+      }
+      if (!object(result.data)) throw new NativeReadFailure({ category: "payload", phase: "payload", status: result.status, type: "PayloadError" });
+      if (result.data.status === "conflict" || result.data.status === "rejected") {
+        const code = typeof result.data.error_code === "string" ? result.data.error_code : "";
+        admittedFailure = new ImprintFailure(result.data.status === "conflict" || CONFLICT_CODES.has(code) ? "conflict" : "unavailable", code);
+        throw new NativeReadFailure({ category: "semantic", phase: "semantic", status: result.status, type: "SemanticError" });
+      }
+      try { return validate(result.data); }
+      catch (failure) {
+        if (failure instanceof ImprintFailure) admittedFailure = failure;
+        const semantic = failure instanceof ImprintFailure && failure.reason !== "unknown";
+        throw new NativeReadFailure({ category: semantic ? "semantic" : "payload", phase: semantic ? "semantic" : "payload",
+          status: result.status, type: semantic ? "SemanticError" : "PayloadError" });
+      }
+    }, options);
+  } catch (failure) {
+    if (failure instanceof NativeReadFailure) {
+      // A transport interruption proves neither an empty scope nor an authorization denial.
+      if (failure.category === "transport" || failure.category === "cancelled" || failure.category === "stale") {
+        throw new ImprintFailure("unknown", "read_interrupted", failure);
+      }
+      if (admittedFailure) { admittedFailure.readFailure = failure; throw admittedFailure; }
+      throw new ImprintFailure("unknown", "read_result_unconfirmed", failure);
+    }
+    throw new ImprintFailure("unknown");
+  }
+}
+export async function readImprints(rpc: NativeRpc, input: ReadInput, contextId?: string,
+  options: NativeReadOptions = { isCurrent: () => true }): Promise<ReadPage> {
   const development = contextId !== undefined;
   if (development && !uuid(contextId)) throw new ImprintFailure("unavailable", "invalid_development_context");
-  const value = await call(rpc, development ? "clued_development_imprint_read_v1" : "clued_imprint_read_v1", { p_input: development ? { ...input, context_id: contextId } : input });
+  return await callRead(rpc, development ? "clued_development_imprint_read_v1" : "clued_imprint_read_v1",
+    { p_input: development ? { ...input, context_id: contextId } : input }, options,
+    value => parseImprintPage(value, input, contextId));
+}
+function parseImprintPage(value: Json, input: ReadInput, contextId?: string): ReadPage {
+  const development = contextId !== undefined;
   if (development && typeof value.view_unavailable_reason === "string") throw new ImprintFailure("unavailable", "development_formal_view_unavailable");
   const browseView = input.view === "all" || domain(input.view);
   const browse = browseView && value.read_semantics === "qualified_saved_latest";
@@ -53,21 +111,23 @@ export async function readImprints(rpc: NativeRpc, input: ReadInput, contextId?:
   catch { throw new ImprintFailure("unknown"); }
 }
 export type SourceRead = { available: boolean; content: string | null; evidence: Json | null; segment: unknown; reason: string; historical: boolean; evidenceStatus: string };
-export async function readSource(rpc: NativeRpc, recordId: string, evidenceId: string, includeHistory = false, recordVersion?: number): Promise<SourceRead> {
-  const value = await call(rpc, "clued_imprint_source_v1", { p_input: { record_id: recordId, evidence_id: evidenceId,
-    include_history: includeHistory, ...(recordVersion !== undefined ? { record_version: recordVersion } : {}) } });
-  const available = value.status === "available" || (value.status === "ok" && value.available === true);
-  const unavailable = value.status === "unavailable" || (value.status === "ok" && value.available === false);
-  if (!available && !unavailable) throw new ImprintFailure("unknown");
-  if (available && recordVersion !== undefined && value.record_version !== recordVersion) throw new ImprintFailure("unknown");
-  const historical = value.source_semantics === "historical_evidence";
-  if (available && historical && (value.authoritative !== false || value.current_input_eligible !== false)) throw new ImprintFailure("unknown");
-  if (available && (value.evidence_status === "withdrawn" || value.evidence_status === "invalidated")
-    && (!includeHistory || !historical || value.authoritative !== false || value.current_input_eligible !== false)) throw new ImprintFailure("unknown");
-  return { available, content: available && typeof value.content === "string" ? value.content : null,
-    evidence: object(value.evidence) ? value.evidence : null, segment: value.segment ?? null,
-    reason: typeof value.unavailable_reason === "string" ? value.unavailable_reason : "", historical,
-    evidenceStatus: typeof value.evidence_status === "string" ? value.evidence_status : "" };
+export async function readSource(rpc: NativeRpc, recordId: string, evidenceId: string, includeHistory = false, recordVersion?: number,
+  options: NativeReadOptions = { isCurrent: () => true }): Promise<SourceRead> {
+  return await callRead(rpc, "clued_imprint_source_v1", { p_input: { record_id: recordId, evidence_id: evidenceId,
+    include_history: includeHistory, ...(recordVersion !== undefined ? { record_version: recordVersion } : {}) } }, options, value => {
+    const available = value.status === "available" || (value.status === "ok" && value.available === true);
+    const unavailable = value.status === "unavailable" || (value.status === "ok" && value.available === false);
+    if (!available && !unavailable) throw new ImprintFailure("unknown");
+    if (available && recordVersion !== undefined && value.record_version !== recordVersion) throw new ImprintFailure("unknown");
+    const historical = value.source_semantics === "historical_evidence";
+    if (available && historical && (value.authoritative !== false || value.current_input_eligible !== false)) throw new ImprintFailure("unknown");
+    if (available && (value.evidence_status === "withdrawn" || value.evidence_status === "invalidated")
+      && (!includeHistory || !historical || value.authoritative !== false || value.current_input_eligible !== false)) throw new ImprintFailure("unknown");
+    return { available, content: available && typeof value.content === "string" ? value.content : null,
+      evidence: object(value.evidence) ? value.evidence : null, segment: value.segment ?? null,
+      reason: typeof value.unavailable_reason === "string" ? value.unavailable_reason : "", historical,
+      evidenceStatus: typeof value.evidence_status === "string" ? value.evidence_status : "" };
+  });
 }
 export type PreparedWrite = { input: Json; serialized: string; hash: string };
 export async function prepareWrite(input: Json): Promise<PreparedWrite> {
