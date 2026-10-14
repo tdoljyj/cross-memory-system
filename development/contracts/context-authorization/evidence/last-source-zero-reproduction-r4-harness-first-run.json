@@ -1,0 +1,12 @@
+{
+  "schema": "clued.last-source-reproduction-run.v1",
+  "started_at": "2026-10-14T11:30:30.5323983Z",
+  "ended_at": "2026-10-14T11:30:37.5252994Z",
+  "runtime": "Node.js v24.19.0",
+  "exit_code": 1,
+  "command": "C:/Program Files/nodejs/node.exe work/eight_implementation/ui-acceptance/last-source-zero-reproduction-r4.mjs",
+  "script_before_sha256": "1f470c54b8c8cfcbd0d3cae3c431eab373418b564859a3b7064fc49e72b2c5b7",
+  "script_after_sha256": "1f470c54b8c8cfcbd0d3cae3c431eab373418b564859a3b7064fc49e72b2c5b7",
+  "log_sha256": "b3a66b41eaabdd77f68dac8d8cdd0d68920173990bfeb5b9ed5ef67cfbe8692a",
+  "qualification": "standalone boundary reproduction; exit0 means confirmed observed behavior, not successful Source fix"
+}

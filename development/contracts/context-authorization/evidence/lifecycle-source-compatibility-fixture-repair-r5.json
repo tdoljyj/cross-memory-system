@@ -1,0 +1,168 @@
+{
+  "schema": "clued.lifecycle-source-compatibility-fixture-repair.r5",
+  "status": "COMPLETE_LOCAL_PARENT_PASS_FORMAL_REVIEW_PENDING",
+  "claim": {
+    "id": "1ac9f59d-b242-47e6-accf-693b20aa3629",
+    "fence": 7,
+    "lease_version": 6
+  },
+  "fixture": {
+    "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+    "sha256": "f72df71e15e2f271e2fcc4d0eacbea0748423c8c3ed01af7d2acf58089d2a647"
+  },
+  "supplement": [
+    "在真实pre-Source历史stage的holder COMMIT前后实查Integration版本增长。",
+    "历史retry后实查两个Binding和Authorization的revoked_at非空，并对两个原token调用原resolve_binding工具实际拒绝。",
+    "当前T-A11-10/T-A11-23标题明确Owner serialization，旧S0拒绝和O7窗口在历史stage证明。",
+    "未改Source、helper、其它fixture、guard、ACL、timeout、skip或focus。"
+  ],
+  "validation": {
+    "syntax": "PASS",
+    "scoped_diff_check": "PASS",
+    "new_fixture_pg_run": true
+  },
+  "preserved_r4": {
+    "manifest": {
+      "path": "work/eight_implementation/ui-acceptance/lifecycle-source-compatibility-fixture-repair-r4.json",
+      "sha256": "7cbb9b33afe05a04e4224f681e52c3ea7ddfefdd8b02975855ff94c51f61917b"
+    },
+    "runs": [
+      {
+        "log": "work/eight_implementation/ui-acceptance/lifecycle-source-compatibility-first-test-r4.log",
+        "sha256": "383a1906953fe6e1110a9a80be302ef18eb6ea7adc2be9bd83929b91a54dacc3",
+        "fixture_sha256": "fbcb19f9cc58ca69129c8e270eb5d00a739edaca684851b2aa49447d7a2ce3a8",
+        "source_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+        "serialization_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+        "started_utc": "2026-10-14T11:46:17.0611186Z",
+        "finished_utc": "2026-10-14T11:46:24.7564307Z",
+        "exit_code": 1,
+        "counts": {
+          "tests": 9,
+          "pass": 8,
+          "fail": 1,
+          "skip": 0
+        },
+        "failure": "23505 historical synthetic platform administrator singleton collided with subsequent current fixture setup; historical proofs passed, current target cases unexecuted."
+      },
+      {
+        "log": "work/eight_implementation/ui-acceptance/lifecycle-source-compatibility-second-test-r4.log",
+        "sha256": "4e5e4244983ae2b4cecc7724a1da6a4bb36aa65d69df16ce1be0d90e2fd8d340",
+        "fixture_sha256": "bde79fdc409b061111e5c522de2bcc8e9aea64e66105a6f15d2cc165614c326e",
+        "source_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+        "serialization_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+        "started_utc": "2026-10-14T11:47:47.6510043Z",
+        "finished_utc": "2026-10-14T11:48:01.3285475Z",
+        "exit_code": 0,
+        "counts": {
+          "tests": 46,
+          "pass": 46,
+          "fail": 0,
+          "skip": 0
+        },
+        "duration_ms": 13570.0076,
+        "cleanup": "Historical singleton removed by exact synthetic subject in finally; holder/waiter completed; EmbeddedPostgres stopped and owned temporary directory cleaned."
+      }
+    ]
+  },
+  "next_run": {
+    "status": "COMPLETED_ON_FROZEN_FINAL_SOURCE",
+    "source_final_sha256": "c5fafc46416bd8da81d73501c636de1affad1e6d5eebc6024fd6c1848c55311e",
+    "reason": "Source author stopped all PG and Root explicitly resumed one complete parent; all Source and fixture bytes matched the declared freeze."
+  },
+  "boundaries": [
+    "r4 and first failed run are unchanged and retained with their exact bytes/times; they are not used as final new Source evidence.",
+    "The historical补证 and all current lifecycle cases now actually pass on f72 fixture plus frozen c5/ce8; runtime before/after Source identity is asserted in the test.",
+    "Readonly review prompted missing historical assertions, which now have real PG evidence. Formal independent acceptance and full Stack/CI/production/UI qualification remain owned by Root."
+  ],
+  "final_run": {
+    "command": "C:/Program Files/nodejs/node.exe --test --test-reporter=tap tests/integration-runtime-lifecycle-db.test.mjs",
+    "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo\\apps\\clued-cloud",
+    "node": "v24.19.0",
+    "started_utc": "2026-10-14T12:43:21.3228922Z",
+    "finished_utc": "2026-10-14T12:43:37.1244186Z",
+    "exit_code": 0,
+    "duration_ms": 15649.6582,
+    "parent_duration_ms": 15555.368,
+    "counts": {
+      "tests": 46,
+      "pass": 46,
+      "fail": 0,
+      "skip": 0,
+      "cancelled": 0,
+      "parents": 1,
+      "direct_children": 43,
+      "grandchildren": 2
+    },
+    "fixture_sha256": "f72df71e15e2f271e2fcc4d0eacbea0748423c8c3ed01af7d2acf58089d2a647",
+    "source_before_after": [
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "before_run_sha256": "c5fafc46416bd8da81d73501c636de1affad1e6d5eebc6024fd6c1848c55311e",
+        "after_run_sha256": "c5fafc46416bd8da81d73501c636de1affad1e6d5eebc6024fd6c1848c55311e"
+      },
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+        "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+        "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+      }
+    ],
+    "log": {
+      "path": "work/eight_implementation/ui-acceptance/lifecycle-source-compatibility-final-test-r5.log",
+      "sha256": "797d4460a2dd93d0ed3a350a90d55720be22a4b415f7b0a20e211ed8a9f2434a"
+    },
+    "targeted": [
+      {
+        "name": "original T-A11-10 pre-Source S0 change rejects, has no revoke write, then retries",
+        "duration_ms": 195.3242,
+        "status": "PASS",
+        "new_actual_assertions": [
+          "holder COMMIT increases Integration version",
+          "both Binding rows revoked",
+          "both Authorization rows revoked",
+          "both original tokens refused"
+        ]
+      },
+      {
+        "name": "original T-A11-23 pre-Source late consent survives then O7/revoke/restore closes it",
+        "duration_ms": 110.8844,
+        "status": "PASS"
+      },
+      {
+        "name": "T-A11-10 current Owner serialization: full revoke set, reverse refusal and 50 interleavings (old S0 retry proved historically)",
+        "duration_ms": 1350.0695,
+        "status": "PASS",
+        "rounds": 50
+      },
+      {
+        "name": "T-A11-13 a v12 reduce lowers the ceiling used for the next link",
+        "duration_ms": 121.3434,
+        "status": "PASS",
+        "format": "legacy flat selected"
+      },
+      {
+        "name": "T-A11-23 current Owner serialization closes the late-consent window; revoke/restore stay safe (old O7 window proved historically)",
+        "duration_ms": 133.9745,
+        "status": "PASS",
+        "followUps": [
+          "revoke",
+          "restore"
+        ]
+      }
+    ],
+    "cleanup": {
+      "historical_admin_singleton": "Removed by exact synthetic subject_id in historical finally before current setup",
+      "holder_waiter_transactions": "Finalized by finally plus pending transaction completion",
+      "embedded_postgres": "stop called by the complete parent finally",
+      "temporary_directory": "Owned mkdtemp directory removed by existing parent finally",
+      "post_run_test_or_postgres_processes": 0,
+      "no_background_test_or_pg": true
+    },
+    "limits": [
+      "Exactly one complete parent run after final Source freeze; no name filter, focus, skip or timeout change.",
+      "This run covers f72 fixture and c5/ce8 Source only. The old r4 46 PASS is retained as historical byte-specific evidence.",
+      "Do not add Source author 29, compat12 and these46 to declare entire Stack qualification.",
+      "Existing pg client concurrent-query DeprecationWarning is preserved, not suppressed.",
+      "No Source, helper, other fixture or UI edits; no Canon/CP/commit/push/CI/production actions."
+    ]
+  }
+}

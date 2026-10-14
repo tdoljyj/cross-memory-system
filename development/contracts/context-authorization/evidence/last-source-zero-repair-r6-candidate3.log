@@ -1,0 +1,68 @@
+▶ all-contexts sources, exact permission inheritance and real transaction barriers
+  ✔ eligible policy intersects requested scopes and preserves the API action vocabulary (60.4847ms)
+  ✔ one Native macro approval covers exact self-owned resources with no foreign or execution-policy shortcut (42.2922ms)
+  ✔ same-Binding Owner upgrade preserves legacy baseline; removing macro restores only legacy read (149.1453ms)
+  ✔ new explicit Native consent really extends a read-only macro scope ceiling and its future resources (179.9571ms)
+  ✔ new Native policy consent renews an expired source within the unchanged Authorization hard expiry (130.5579ms)
+  ✔ fresh reader consent after expired full never revives old write/full and leaves a live independent source intact (156.1013ms)
+  ✔ specified exact Context and canonical project selections have independent boundaries (23.5327ms)
+  ✔ future Context and future Project inherit only the live self-owned macro (282.2233ms)
+  ✔ precise deny and existing history/field/version ceilings survive macro overlap and future refresh (443.6115ms)
+  ✔ single submitted macro materializes more than 100 real resources without a hidden truncation (290.0315ms)
+  ✔ management DTO exposes real activity, readable names and source-independent denial (128.9739ms)
+  ✔ last live source and last effective exact entry reject with a business error and complete rollback; explicit revoke truly denies MCP (516.5617ms)
+  ✔ a future project policy with zero owned projects remains meaningful and later materializes a real project (81.5979ms)
+  ✔ expired final source cannot execute Integration mutations or revive cached authority; Native revoke remains available (177.1726ms)
+  ✔ revoking the final Context grant commits without Source rebuild rollback and denies MCP and Integration execution (99.5552ms)
+  ✔ Integration capabilities use the same live exact entry, retaining read while independently expired write is denied (92.0323ms)
+  ▶ all seven Integration business families reject final membership revoke and natural Source expiry after actual waits with full rollback
+    ✔ clued_integration_request_open_v1: membership-revoke while actually blocked (160.3416ms)
+    ✔ clued_integration_create_or_bind_v1: membership-revoke while actually blocked (122.5403ms)
+    ✔ clued_integration_identity_update_v1: membership-revoke while actually blocked (125.1887ms)
+    ✔ clued_integration_reconcile_request_v1: membership-revoke while actually blocked (140.3448ms)
+    ✔ clued_integration_declare_v1: membership-revoke while actually blocked (124.1874ms)
+    ✔ clued_integration_report_v1: membership-revoke while actually blocked (125.9332ms)
+    ✔ clued_integration_verify_v1: membership-revoke while actually blocked (142.1114ms)
+    ✔ clued_integration_request_open_v1: natural-expiry while actually blocked (1605.4563ms)
+    ✔ clued_integration_create_or_bind_v1: natural-expiry while actually blocked (1612.9368ms)
+    ✔ clued_integration_identity_update_v1: natural-expiry while actually blocked (1704.5004ms)
+    ✔ clued_integration_reconcile_request_v1: natural-expiry while actually blocked (1627.4662ms)
+    ✔ clued_integration_declare_v1: natural-expiry while actually blocked (1694.6017ms)
+    ✔ clued_integration_report_v1: natural-expiry while actually blocked (1721.6555ms)
+    ✔ clued_integration_verify_v1: natural-expiry while actually blocked (1607.8181ms)
+  ✔ all seven Integration business families reject final membership revoke and natural Source expiry after actual waits with full rollback (12521.0954ms)
+  ℹ {"family":"clued_integration_request_open_v1","loss":"membership-revoke","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_create_or_bind_v1","loss":"membership-revoke","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_identity_update_v1","loss":"membership-revoke","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_reconcile_request_v1","loss":"membership-revoke","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_declare_v1","loss":"membership-revoke","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_report_v1","loss":"membership-revoke","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_verify_v1","loss":"membership-revoke","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_request_open_v1","loss":"natural-expiry","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_create_or_bind_v1","loss":"natural-expiry","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_identity_update_v1","loss":"natural-expiry","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_reconcile_request_v1","loss":"natural-expiry","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_declare_v1","loss":"natural-expiry","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_report_v1","loss":"natural-expiry","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ℹ {"family":"clued_integration_verify_v1","loss":"natural-expiry","wait_event":"transactionid","source_live_before_wait":true,"source_live_at_release":false,"actual_error":{"code":"42501","message":"authorization_no_effective_source_permission"}}
+  ✔ per-source expiry is checked at execution without read repair or killing a live independent source (97.9637ms)
+  ✔ revoked grants reopen only through exact Native old-to-new confirmation and all CAS values (114.41ms)
+  ✔ historical exact action reduction survives upgrade, refresh and rotation until separate Native confirmation (360.6191ms)
+  ✔ canonical precise denial needs its own Native confirmation with no fabricated grant (249.065ms)
+  ✔ precise confirmation binds Auth and exact limit versions and burns a stale token atomically (501.8401ms)
+  ✔ an invited Context is separate from the macro and keeps its exact original qualification (550.7603ms)
+  ✔ unupgraded v12 Headless rotation preserves legacy history, fields, expiry and unknown baseline provenance (140.2916ms)
+  ✔ Headless source rotation snapshots every source, exception and exact grant limit (591.0563ms)
+  ✔ two real clients: approval first then Context creation observes the new policy after waiting (179.9447ms)
+  ✔ two real clients: Context creation first then approval observes the committed new resource (178.9346ms)
+  ✔ two real clients: Native permission approval and Context creation cannot form the old GrantLock/Binding cycle (345.9605ms)
+  ✔ unguarded inserts, fake GUC guard, stronger snapshot and private API calls fail closed (5.6245ms)
+✔ all-contexts sources, exact permission inheritance and real transaction barriers (25471.787ms)
+ℹ tests 44
+ℹ suites 0
+ℹ pass 44
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 25578.3724

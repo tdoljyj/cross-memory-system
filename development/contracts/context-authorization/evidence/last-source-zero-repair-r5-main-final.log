@@ -1,0 +1,70 @@
+▶ all-contexts sources, exact permission inheritance and real transaction barriers
+  ✔ eligible policy intersects requested scopes and preserves the API action vocabulary (64.6913ms)
+  ✔ one Native macro approval covers exact self-owned resources with no foreign or execution-policy shortcut (41.9344ms)
+  ✔ same-Binding Owner upgrade preserves legacy baseline; removing macro restores only legacy read (147.8278ms)
+  ✔ new explicit Native consent really extends a read-only macro scope ceiling and its future resources (176.3931ms)
+  ✔ new Native policy consent renews an expired source within the unchanged Authorization hard expiry (126.6979ms)
+  ✔ fresh reader consent after expired full never revives old write/full and leaves a live independent source intact (160.2859ms)
+  ✔ specified exact Context and canonical project selections have independent boundaries (23.1233ms)
+  ✔ future Context and future Project inherit only the live self-owned macro (290.3989ms)
+  ✔ precise deny and existing history/field/version ceilings survive macro overlap and future refresh (436.7253ms)
+  ✔ single submitted macro materializes more than 100 real resources without a hidden truncation (411.6939ms)
+  ✔ management DTO exposes real activity, readable names and source-independent denial (124.9111ms)
+  ✔ last live source and last effective exact entry reject with a business error and complete rollback; explicit revoke truly denies MCP (483.52ms)
+  ✔ a future project policy with zero owned projects remains meaningful and later materializes a real project (91.9078ms)
+  ✖ expired final source cannot execute Integration mutations or revive cached authority; Native revoke remains available (260.1289ms)
+  ✔ revoking the final Context grant commits without Source rebuild rollback and denies MCP and Integration execution (155.9764ms)
+  ✔ Integration capabilities use the same live exact entry, retaining read while independently expired write is denied (146.4293ms)
+  ✔ per-source expiry is checked at execution without read repair or killing a live independent source (172.7699ms)
+  ✔ revoked grants reopen only through exact Native old-to-new confirmation and all CAS values (210.1989ms)
+  ✔ historical exact action reduction survives upgrade, refresh and rotation until separate Native confirmation (713.5665ms)
+  ✔ canonical precise denial needs its own Native confirmation with no fabricated grant (447.0256ms)
+  ✔ precise confirmation binds Auth and exact limit versions and burns a stale token atomically (941.2121ms)
+  ✔ an invited Context is separate from the macro and keeps its exact original qualification (1032.2546ms)
+  ✔ unupgraded v12 Headless rotation preserves legacy history, fields, expiry and unknown baseline provenance (238.1077ms)
+  ✔ Headless source rotation snapshots every source, exception and exact grant limit (1026.13ms)
+  ✔ two real clients: approval first then Context creation observes the new policy after waiting (295.8544ms)
+  ✔ two real clients: Context creation first then approval observes the committed new resource (174.6641ms)
+  ✔ two real clients: Native permission approval and Context creation cannot form the old GrantLock/Binding cycle (501.3069ms)
+  ✔ unguarded inserts, fake GUC guard, stronger snapshot and private API calls fail closed (8.3337ms)
+✖ all-contexts sources, exact permission inheritance and real transaction barriers (16759.6718ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 27
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16859.4734
+
+✖ failing tests:
+
+test at tests\all-contexts-authorization-db.test.mjs:493:13
+✖ expired final source cannot execute Integration mutations or revive cached authority; Native revoke remains available (260.1289ms)
+  error: relation "clued_private.integration_verifications_v1" does not exist
+      at C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\node_modules\pg\lib\client.js:694:17
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async integrationBusiness (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs:238:26)
+      at async TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs:507:33)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs:493:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    length: 141,
+    severity: 'ERROR',
+    code: '42P01',
+    detail: undefined,
+    hint: undefined,
+    position: '31',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'parse_relation.c',
+    line: '1448',
+    routine: 'parserOpenTable'
+  }

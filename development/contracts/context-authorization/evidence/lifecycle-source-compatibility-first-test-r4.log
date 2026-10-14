@@ -1,0 +1,85 @@
+run_started_utc=2026-10-14T11:46:17.0611186Z
+v24.19.0
+C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\tests\integration-runtime-lifecycle-db.test.mjs fbcb19f9cc58ca69129c8e270eb5d00a739edaca684851b2aa49447d7a2ce3a8
+C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\supabase\migrations\20261014044323_all_contexts_authorization_v2.sql 55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b
+C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\supabase\migrations\20261014045157_all_contexts_serialization_v2.sql ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58
+TAP version 13
+# Subtest: S2c PR-4: revocation, restore, reauth marks, capability expansion and lifecycle
+    # Subtest: T-S-3 the migration adds functions only and replaces only five S2c objects
+    ok 1 - T-S-3 the migration adds functions only and replaces only five S2c objects
+      ---
+      duration_ms: 3.0756
+      type: 'test'
+      ...
+    # Subtest: T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)
+    ok 2 - T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)
+      ---
+      duration_ms: 1.9145
+      type: 'test'
+      ...
+    # Subtest: T-S-2 the grant migration changes the ACL of exactly the §5.13 public RPCs and nothing else
+    ok 3 - T-S-2 the grant migration changes the ACL of exactly the §5.13 public RPCs and nothing else
+      ---
+      duration_ms: 1.4958
+      type: 'test'
+      ...
+    # Subtest: T-S-2 after the target grants: exactly §5.13
+    ok 4 - T-S-2 after the target grants: exactly §5.13
+      ---
+      duration_ms: 1.5571
+      type: 'test'
+      ...
+    # Subtest: Historical pre-Source stage preserves the original connection-set and known-boundary proofs
+        # Subtest: original T-A11-10 pre-Source S0 change rejects, has no revoke write, then retries
+        ok 1 - original T-A11-10 pre-Source S0 change rejects, has no revoke write, then retries
+          ---
+          duration_ms: 197.7787
+          type: 'test'
+          ...
+        # Subtest: original T-A11-23 pre-Source late consent survives then O7/revoke/restore closes it
+        ok 2 - original T-A11-23 pre-Source late consent survives then O7/revoke/restore closes it
+          ---
+          duration_ms: 111.1993
+          type: 'test'
+          ...
+        1..2
+    ok 5 - Historical pre-Source stage preserves the original connection-set and known-boundary proofs
+      ---
+      duration_ms: 496.1043
+      type: 'test'
+      ...
+    # {"phase":"qualified historical before Source migration","source_guard_installed":false,"next_migration":"20261014044323_all_contexts_authorization_v2.sql","original_assertions_preserved":["S0-change rejected/retry","known boundary 1","O7","next revoke","restore"]}
+    # Subtest: T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout
+    ok 6 - T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout
+      ---
+      duration_ms: 0.8343
+      type: 'test'
+      ...
+    1..6
+not ok 1 - S2c PR-4: revocation, restore, reauth marks, capability expansion and lifecycle
+  ---
+  duration_ms: 7441.789
+  type: 'test'
+  location: 'C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo\\apps\\clued-cloud\\tests\\integration-runtime-lifecycle-db.test.mjs:54:1'
+  failureType: 'testCodeFailure'
+  error: 'duplicate key value violates unique constraint "platform_admin_v13_pkey"'
+  code: '23505'
+  name: 'error'
+  stack: |-
+    C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\node_modules\pg\lib\client.js:694:17
+    process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    async TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs:435:5)
+    async Test.run (node:internal/test_runner/test:1389:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+# {"source_before":[{"migration":"20261014044323_all_contexts_authorization_v2.sql","sha256":"55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"},{"migration":"20261014045157_all_contexts_serialization_v2.sql","sha256":"ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"}]}
+1..1
+# tests 9
+# suites 0
+# pass 8
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7531.6839
+run_finished_utc=2026-10-14T11:46:24.7564307Z exit_code=1

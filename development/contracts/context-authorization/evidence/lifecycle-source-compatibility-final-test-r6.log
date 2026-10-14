@@ -1,0 +1,299 @@
+run_started_utc=2026-10-14T13:34:16.2306965Z
+v24.19.0
+C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\tests\integration-runtime-lifecycle-db.test.mjs f72df71e15e2f271e2fcc4d0eacbea0748423c8c3ed01af7d2acf58089d2a647
+C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\supabase\migrations\20261014044323_all_contexts_authorization_v2.sql b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8
+C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\supabase\migrations\20261014045157_all_contexts_serialization_v2.sql ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58
+TAP version 13
+# Subtest: S2c PR-4: revocation, restore, reauth marks, capability expansion and lifecycle
+    # Subtest: T-S-3 the migration adds functions only and replaces only five S2c objects
+    ok 1 - T-S-3 the migration adds functions only and replaces only five S2c objects
+      ---
+      duration_ms: 3.6247
+      type: 'test'
+      ...
+    # Subtest: T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)
+    ok 2 - T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)
+      ---
+      duration_ms: 2.5382
+      type: 'test'
+      ...
+    # Subtest: T-S-2 the grant migration changes the ACL of exactly the §5.13 public RPCs and nothing else
+    ok 3 - T-S-2 the grant migration changes the ACL of exactly the §5.13 public RPCs and nothing else
+      ---
+      duration_ms: 1.4551
+      type: 'test'
+      ...
+    # Subtest: T-S-2 after the target grants: exactly §5.13
+    ok 4 - T-S-2 after the target grants: exactly §5.13
+      ---
+      duration_ms: 1.4652
+      type: 'test'
+      ...
+    # Subtest: Historical pre-Source stage preserves the original connection-set and known-boundary proofs
+        # Subtest: original T-A11-10 pre-Source S0 change rejects, has no revoke write, then retries
+        ok 1 - original T-A11-10 pre-Source S0 change rejects, has no revoke write, then retries
+          ---
+          duration_ms: 201.1984
+          type: 'test'
+          ...
+        # Subtest: original T-A11-23 pre-Source late consent survives then O7/revoke/restore closes it
+        ok 2 - original T-A11-23 pre-Source late consent survives then O7/revoke/restore closes it
+          ---
+          duration_ms: 108.1933
+          type: 'test'
+          ...
+        1..2
+    ok 5 - Historical pre-Source stage preserves the original connection-set and known-boundary proofs
+      ---
+      duration_ms: 389.3766
+      type: 'test'
+      ...
+    # {"phase":"qualified historical before Source migration","source_guard_installed":false,"next_migration":"20261014044323_all_contexts_authorization_v2.sql","original_assertions_preserved":["S0-change rejected/retry","known boundary 1","O7","next revoke","restore"]}
+    # Subtest: T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout
+    ok 6 - T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout
+      ---
+      duration_ms: 0.886
+      type: 'test'
+      ...
+# (node:20752) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: T-S-5 revoke_self without a valid token reads and writes nothing (403 before any Receipt)
+    ok 7 - T-S-5 revoke_self without a valid token reads and writes nothing (403 before any Receipt)
+      ---
+      duration_ms: 146.2739
+      type: 'test'
+      ...
+    # Subtest: T-A11-1 a real revocation is not cleared by an ordinary OAuth retry (test.complete + clued.oauth.v12)
+    ok 8 - T-A11-1 a real revocation is not cleared by an ordinary OAuth retry (test.complete + clued.oauth.v12)
+      ---
+      duration_ms: 51.7831
+      type: 'test'
+      ...
+    # Subtest: T-A11-1b an incomplete identity creates a new Integration; the revoked one is never restored
+    ok 9 - T-A11-1b an incomplete identity creates a new Integration; the revoked one is never restored
+      ---
+      duration_ms: 43.4564
+      type: 'test'
+      ...
+    # Subtest: T-A11-2 no recovery through cached or never-linked credentials; the sweep and its siblings
+    ok 10 - T-A11-2 no recovery through cached or never-linked credentials; the sweep and its siblings
+      ---
+      duration_ms: 58.0836
+      type: 'test'
+      ...
+    # Subtest: T-A11-3 explicit restore: new Receipt and provenance, VERIFYING, marks cleared, superseded refused
+    ok 11 - T-A11-3 explicit restore: new Receipt and provenance, VERIFYING, marks cleared, superseded refused
+      ---
+      duration_ms: 81.7591
+      type: 'test'
+      ...
+    # Subtest: T-A11-4 expiry and reauth marks → REAUTH_REQUIRED; a Host disconnect → REVOKED; FORBIDS_REAUTH → BLOCKED
+    ok 12 - T-A11-4 expiry and reauth marks → REAUTH_REQUIRED; a Host disconnect → REVOKED; FORBIDS_REAUTH → BLOCKED
+      ---
+      duration_ms: 64.749
+      type: 'test'
+      ...
+    # Subtest: T-A11-4b (b)(c) every connection-level revoke derives REVOKED; restore materializes the adopted row
+    ok 13 - T-A11-4b (b)(c) every connection-level revoke derives REVOKED; restore materializes the adopted row
+      ---
+      duration_ms: 143.8969
+      type: 'test'
+      ...
+    # Subtest: T-A11-5 no automatic expansion of scope, entries or authority through re-OAuth
+    ok 14 - T-A11-5 no automatic expansion of scope, entries or authority through re-OAuth
+      ---
+      duration_ms: 72.7679
+      type: 'test'
+      ...
+    # Subtest: T-A11-6 / T-A11-7 REVOKED wins over reauth marks, incompatibility, claim conflict and expiry
+    ok 15 - T-A11-6 / T-A11-7 REVOKED wins over reauth marks, incompatibility, claim conflict and expiry
+      ---
+      duration_ms: 78.1226
+      type: 'test'
+      ...
+    # Subtest: T-A11-8 revoke_self is limited to its own provider connection (PARTIAL_CONNECTION_REVOKE)
+    ok 16 - T-A11-8 revoke_self is limited to its own provider connection (PARTIAL_CONNECTION_REVOKE)
+      ---
+      duration_ms: 83.2601
+      type: 'test'
+      ...
+    # Subtest: T-A11-9 revocation is unconditional: an invalid Integration is still revoked through every channel
+    ok 17 - T-A11-9 revocation is unconditional: an invalid Integration is still revoked through every channel
+      ---
+      duration_ms: 87.8186
+      type: 'test'
+      ...
+    # Subtest: T-A11-10 current Owner serialization: full revoke set, reverse refusal and 50 interleavings (old S0 retry proved historically)
+    ok 18 - T-A11-10 current Owner serialization: full revoke set, reverse refusal and 50 interleavings (old S0 retry proved historically)
+      ---
+      duration_ms: 1227.3737
+      type: 'test'
+      ...
+    # Subtest: T-A11-11 derived REVOKED with a live HISTORICAL Binding: explicit revoke materializes and extends
+    ok 19 - T-A11-11 derived REVOKED with a live HISTORICAL Binding: explicit revoke materializes and extends
+      ---
+      duration_ms: 69.325
+      type: 'test'
+      ...
+    # Subtest: T-A11-12 a revoke never crosses owners (C7 tampering is only counted)
+    ok 20 - T-A11-12 a revoke never crosses owners (C7 tampering is only counted)
+      ---
+      duration_ms: 24.8778
+      type: 'test'
+      ...
+    # Subtest: T-A11-13 a v12 reduce lowers the ceiling used for the next link
+    ok 21 - T-A11-13 a v12 reduce lowers the ceiling used for the next link
+      ---
+      duration_ms: 109.1712
+      type: 'test'
+      ...
+    # Subtest: T-A11-14 a revoked Integration with invalid facts still refuses a reauthorization
+    ok 22 - T-A11-14 a revoked Integration with invalid facts still refuses a reauthorization
+      ---
+      duration_ms: 24.4675
+      type: 'test'
+      ...
+    # Subtest: T-A11-15 revocation scope after supersede, and REPLACE_HOLDER rule 2 over a revoked holder
+    ok 23 - T-A11-15 revocation scope after supersede, and REPLACE_HOLDER rule 2 over a revoked holder
+      ---
+      duration_ms: 190.6156
+      type: 'test'
+      ...
+    # Subtest: T-A11-16 no fork escapes a revocation
+    ok 24 - T-A11-16 no fork escapes a revocation
+      ---
+      duration_ms: 84.2075
+      type: 'test'
+      ...
+    # Subtest: T-A11-17 a revoked I cannot REBIND_TO_HOLDER; same-client restore unlocks REPLACE_HOLDER
+    ok 25 - T-A11-17 a revoked I cannot REBIND_TO_HOLDER; same-client restore unlocks REPLACE_HOLDER
+      ---
+      duration_ms: 239.6657
+      type: 'test'
+      ...
+    # Subtest: T-A11-18 the materialized row's time does not depend on who materializes it
+    ok 26 - T-A11-18 the materialized row's time does not depend on who materializes it
+      ---
+      duration_ms: 96.1727
+      type: 'test'
+      ...
+    # Subtest: T-A11-19 restore follows the provider and identity rules; ownership on restore
+    ok 27 - T-A11-19 restore follows the provider and identity rules; ownership on restore
+      ---
+      duration_ms: 282.8231
+      type: 'test'
+      ...
+    # Subtest: T-A11-20 REBIND_TO_HOLDER receiving guards (a)(b)
+    ok 28 - T-A11-20 REBIND_TO_HOLDER receiving guards (a)(b)
+      ---
+      duration_ms: 41.5771
+      type: 'test'
+      ...
+    # Subtest: T-A11-21 restore revokes the superseded credentials (REVOCATION and FORBIDS_REAUTH_RECOVERY)
+    ok 29 - T-A11-21 restore revokes the superseded credentials (REVOCATION and FORBIDS_REAUTH_RECOVERY)
+      ---
+      duration_ms: 120.4194
+      type: 'test'
+      ...
+    # Subtest: T-A11-22 sweep concurrency boundaries
+    ok 30 - T-A11-22 sweep concurrency boundaries
+      ---
+      duration_ms: 104.5903
+      type: 'test'
+      ...
+    # Subtest: T-A11-23 current Owner serialization closes the late-consent window; revoke/restore stay safe (old O7 window proved historically)
+    ok 31 - T-A11-23 current Owner serialization closes the late-consent window; revoke/restore stay safe (old O7 window proved historically)
+      ---
+      duration_ms: 142.9951
+      type: 'test'
+      ...
+    # Subtest: T-A11-24 a repeated revoke cuts at rev_at(I), never later
+    ok 32 - T-A11-24 a repeated revoke cuts at rev_at(I), never later
+      ---
+      duration_ms: 37.6926
+      type: 'test'
+      ...
+    # Subtest: T-A11-25 lineage along a supersede chain (Lin*)
+    ok 33 - T-A11-25 lineage along a supersede chain (Lin*)
+      ---
+      duration_ms: 94.863
+      type: 'test'
+      ...
+    # Subtest: T-A9-2 the Binding-initiated path: INSTALL_PENDING → VERIFYING → ACTIVE → DEGRADED
+    ok 34 - T-A9-2 the Binding-initiated path: INSTALL_PENDING → VERIFYING → ACTIVE → DEGRADED
+      ---
+      duration_ms: 26.194
+      type: 'test'
+      ...
+    # Subtest: T-A9-3 the Native-initiated path: INSTALL_PENDING → AUTH_PENDING → VERIFYING → ACTIVE
+    ok 35 - T-A9-3 the Native-initiated path: INSTALL_PENDING → AUTH_PENDING → VERIFYING → ACTIVE
+      ---
+      duration_ms: 33.8604
+      type: 'test'
+      ...
+    # Subtest: T-A9-9 a SUPERSEDED Integration never returns to ACTIVE / DEGRADED / REAUTH_REQUIRED
+    ok 36 - T-A9-9 a SUPERSEDED Integration never returns to ACTIVE / DEGRADED / REAUTH_REQUIRED
+      ---
+      duration_ms: 61.3208
+      type: 'test'
+      ...
+    # Subtest: T-A9-4 every state is reached by a real RPC sequence
+    ok 37 - T-A9-4 every state is reached by a real RPC sequence
+      ---
+      duration_ms: 108.3518
+      type: 'test'
+      ...
+    # Subtest: T-A9-5 Request close / archive never change the Integration
+    ok 38 - T-A9-5 Request close / archive never change the Integration
+      ---
+      duration_ms: 26.9396
+      type: 'test'
+      ...
+    # Subtest: T-A9-6 rebind-class intents never reset to INSTALL_PENDING
+    ok 39 - T-A9-6 rebind-class intents never reset to INSTALL_PENDING
+      ---
+      duration_ms: 123.4334
+      type: 'test'
+      ...
+    # Subtest: T-A9-8 pause / resume, and the Owner cannot lift a policy pause
+    ok 40 - T-A9-8 pause / resume, and the Owner cannot lift a policy pause
+      ---
+      duration_ms: 61.0903
+      type: 'test'
+      ...
+    # Subtest: T-A9-10 the (state, operation) transition table; every success has its Receipt and operation log
+    ok 41 - T-A9-10 the (state, operation) transition table; every success has its Receipt and operation log
+      ---
+      duration_ms: 2047.7565
+      type: 'test'
+      ...
+    # Subtest: T-A9-12 FORBIDS_REAUTH on the write path; FORBIDS_REAUTH_RECOVERY restore
+    ok 42 - T-A9-12 FORBIDS_REAUTH on the write path; FORBIDS_REAUTH_RECOVERY restore
+      ---
+      duration_ms: 143.7575
+      type: 'test'
+      ...
+    # Subtest: Operator entry: admin only, input validation, idempotent replay and key conflicts
+    ok 43 - Operator entry: admin only, input validation, idempotent replay and key conflicts
+      ---
+      duration_ms: 56.7137
+      type: 'test'
+      ...
+    1..43
+ok 1 - S2c PR-4: revocation, restore, reauth marks, capability expansion and lifecycle
+  ---
+  duration_ms: 13117.3869
+  type: 'test'
+  ...
+# {"source_before":[{"migration":"20261014044323_all_contexts_authorization_v2.sql","sha256":"b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8"},{"migration":"20261014045157_all_contexts_serialization_v2.sql","sha256":"ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"}]}
+# {"source_after":[{"migration":"20261014044323_all_contexts_authorization_v2.sql","sha256":"b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8"},{"migration":"20261014045157_all_contexts_serialization_v2.sql","sha256":"ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"}]}
+1..1
+# tests 46
+# suites 0
+# pass 46
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 13215.0286
+run_finished_utc=2026-10-14T13:34:29.6166016Z exit_code=0

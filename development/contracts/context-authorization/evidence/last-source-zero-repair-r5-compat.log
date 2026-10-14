@@ -1,0 +1,21 @@
+▶ Authorization closeout: new resources and interrupted multi-step work
+  ✔ A11: a project created after consent requires a new grant and cannot expand the old binding (96.9836ms)
+  ✔ A15: revoking between steps rejects the next write and preserves the first record event and receipt (27.8287ms)
+✔ Authorization closeout: new resources and interrupted multi-step work (8391.7116ms)
+✔ authorization roles: project:* covers the Owner's projects, including later ones; roles in requests (7991.5226ms)
+✔ connection permission requests: ask without the scope, Owner approves once, the same connection gains it (7509.4444ms)
+✔ K-CONT explicit coverage preserves unabsorbed continuity (8353.5017ms)
+✔ owner grants: the admission door admits a protected commit once per grant and opens a request otherwise (7569.8002ms)
+✔ owner grants: requests, Native two-step grants, consumption and revocation (7764.7933ms)
+✔ owner grants: the admission door admits a protected commit once per grant and opens a request otherwise (7981.2437ms)
+✔ owner grants: the release door consumes by action and commit and opens a request otherwise (7668.756ms)
+✔ owner grants: the confirmation page narrows or widens a request's resources (7367.0776ms)
+✔ owner request bundles: one link for several actions, each member granted and consumed on its own (7227.0178ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 79823.6295

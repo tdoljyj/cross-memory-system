@@ -1,0 +1,37 @@
+[
+  {
+    "path": "tests/authorization-closeout.test.mjs",
+    "before_sha256": "91fc9e37cbacdcbf1cd05006d4ba406ec6e98434c19b7549fdd2fdd3f888fe3f",
+    "after_sha256": "85c4f3d1ef6dcc859ba0ec17c1b9111d016c561ed19dc578bcd23ddd1fdb2641"
+  },
+  {
+    "path": "tests/k-cont-db.test.mjs",
+    "before_sha256": "f36db9313f9aad2cfa60f33d4346872789e33bc627f8bf54e575ddbb253ae909",
+    "after_sha256": "bab4cd3d18899366558c99f07783c04d9c2143d19bd7455bbbcfe0ff4759cc51"
+  },
+  {
+    "path": "tests/owner-grants-db.test.mjs",
+    "before_sha256": "a9c34042bef34dcdad9df7c9df3217e3873473138ef0392ba058abdcd4593403",
+    "after_sha256": "7d12316b8b336577e5d43dca00b7c64e54e110a9007b97c4d3ffed303938573d"
+  },
+  {
+    "path": "tests/owner-grants-admission-door-db.case.mjs",
+    "before_sha256": "23862785fa5f9592e5ea47e0c26c0b2f20028fc3e428c301d2797651928c279b",
+    "after_sha256": "2d54d24cabf5022998536829b0365d97f6cdb67c56d840f5418f4fc907102c7c"
+  },
+  {
+    "path": "tests/owner-grants-release-door-db.test.mjs",
+    "before_sha256": "e7ab963319f39b4dae36f248223b4da131ddf88d2df9cc47365cab8126a8f1ab",
+    "after_sha256": "dd9b8ac390636f99818d82d6617ec44ad381f633260693bda4c3f3a3591a283c"
+  },
+  {
+    "path": "tests/owner-grants-scope-db.test.mjs",
+    "before_sha256": "4babca9e028dee67a150f9aac2fbc4799831f5609e4aa391e2b3a8e442c12afa",
+    "after_sha256": "b3cc5c13586744e9b8fa07a08dd31f0b19906bb94999f4f84f27035702cbd8db"
+  },
+  {
+    "path": "tests/owner-request-bundles-db.test.mjs",
+    "before_sha256": "1904895adc88baa4959e900fcaadd7893419a752631a95b768d95eb94fb10cde",
+    "after_sha256": "5c2335949eb4a8c81b3eb6d796abb8985152c0338e39f4b5c6dbae83548ae9ce"
+  }
+]

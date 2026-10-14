@@ -1,0 +1,48 @@
+{
+  "schema": "clued.last-source-zero-independent-review-r6/1",
+  "reviewer": "/root/last_source_zero_security_review_r5",
+  "verdict": "BOUNDED_PASS",
+  "code_qualified": true,
+  "report_qualified": true,
+  "findings": [],
+  "source_sha": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+  "sql2_sha": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+  "test_sha": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+  "report_sha": "795803c9eb3492c04464543749a811fb5e4c63af2a8a44e3283841ff930b03a9",
+  "closing_manifest_sha": "91cfc5cf41a9eca8e6829600cc5e63f02485b5a8e161ab9f4fa43dc3716f7515",
+  "references_checked": 45,
+  "hash_mismatches": 0,
+  "report_manifest_files_consistent": true,
+  "evidence": {
+    "main": {
+      "pass": 45,
+      "fail": 0,
+      "skip": 0
+    },
+    "compat": {
+      "pass": 12,
+      "fail": 0,
+      "skip": 0
+    },
+    "full_loss_wait_vectors": 14,
+    "declared_vectors_equal_raw_trace": true,
+    "partial_loss_wait_scenarios": 2,
+    "verify_wait_branch": "ready_profile",
+    "canonical_baseline": "static_gate_review_only",
+    "failed_install_runs_retained": 2,
+    "failed_installs_count_as_case_pass": false
+  },
+  "launch": {
+    "provider": "Root fresh resume2519",
+    "enabled": true,
+    "version": 0,
+    "policy_version": 1,
+    "reconcile": "CURRENT fd191bc4-ceba-43a1-b0a2-4d82674536c0"
+  },
+  "authority_effect": "independent_read_only_review",
+  "limits": [
+    "No extra budget or execution permission.",
+    "Exact r6 Source/test/report/manifest only; excludes later lifecycle46, UI/API, production/online acceptance.",
+    "Reviewer did not run PG/Git/CI or write Source/fixture/Canon."
+  ]
+}

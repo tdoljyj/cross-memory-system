@@ -1,0 +1,420 @@
+diff --git a/apps/clued-cloud/app/confirm/[id]/page.tsx b/apps/clued-cloud/app/confirm/[id]/page.tsx
+index bd4c83c8..6e236b02 100644
+--- a/apps/clued-cloud/app/confirm/[id]/page.tsx
++++ b/apps/clued-cloud/app/confirm/[id]/page.tsx
+@@ -5,6 +5,7 @@ import Link from "next/link";
+ import { useParams } from "next/navigation";
+ import { type Session } from "@supabase/supabase-js";
+ import { supabase } from "../../supabase-browser";
++import { authorizationDisplayOrder } from "../../../lib/context-authorization";
+ import "../../contexts/contexts.css";
+ import "../owner.css";
+ 
+@@ -175,7 +176,7 @@ function actionText(view: Json | null | undefined, fallback?: unknown) {
+ const PERMISSION_ACTION = "connection.permission";
+ const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执", feedback_submit: "提交反馈", reader: "只读", developer: "可编辑（新上下文策略）", full: "全部操作（本次可用）" };
+ const ENVIRONMENT_LABELS: Record<string, string> = { test: "测试环境", preview: "预览环境", production: "生产环境" };
+-const CONTEXT_LABELS: Record<string, string> = { global: "通用内容", profile: "个人资料", "contexts:*": "全部上下文（含以后新建的自有项目与上下文）", "project:*": "自有项目正式记录（含未来项目）" };
++const CONTEXT_LABELS: Record<string, string> = { global: "个人记录", profile: "个人资料", "contexts:*": "全部上下文（含以后新建的自有项目与上下文）", "project:*": "自有项目正式记录（含未来项目）" };
+ function permissionText(context: string, name: unknown, action: string) {
+   const label = typeof name === "string" && name ? name : CONTEXT_LABELS[context] ?? context;
+   return label + " → " + (ACTION_LABELS[action] ?? action);
+@@ -633,19 +634,19 @@ export default function OwnerConfirmPage() {
+             <p className="context-muted">以下内容由 Kooyumi 生成，Agent 改不了。批准后权限加到这个连接上，不用重新连接。</p>
+             <dl>
+               <dt>给哪个连接</dt><dd>{String(connection?.client_name ?? grantee?.agent_name ?? "发起请求的连接")}</dd>
+-              <dt>要加的权限</dt><dd><ul>{permissions.map(item => <li key={String(item.resource)}>
++              <dt>要加的权限</dt><dd><ul>{authorizationDisplayOrder(permissions).map(item => <li key={String(item.resource)}>
+                 {permissionText(String(item.context ?? ""), item.context_name, String(item.action ?? ""))}</li>)}</ul></dd>
+-              <dt>它现在已有</dt><dd><ul>{existing.map(row => <li key={String(row.resource_kind) + ":" + String(row.resource_id)}>{currentText(row)}</li>)}</ul></dd>
++              <dt>它现在已有</dt><dd><ul>{authorizationDisplayOrder(existing).map(row => <li key={String(row.resource_kind) + ":" + String(row.resource_id)}>{currentText(row)}</li>)}</ul></dd>
+               {typeof connection?.version === 'number' && <><dt>授权版本</dt><dd>{String(connection.version)}</dd></>}
+               {task && <><dt>任务</dt><dd>{String(task.title ?? "")}</dd></>}
+               <dt>期限</dt><dd>{connection?.expires_at ? "跟这个连接一样，到 " + new Date(String(connection.expires_at)).toLocaleString() + " 为止" : "跟这个连接一样"}</dd>
+             </dl>
+             {needsCoverage && <section aria-label="全部上下文覆盖预览"><h3>实际覆盖与保留限制</h3>
+               {incompleteCoverage ? <p role="alert">覆盖、版本或限制预览不完整，暂时无法批准。请重新读取请求。</p> : <>
+-                <p>包含通用内容、个人资料及以下自有项目正式记录和上下文。以后新建的自有项目与上下文自动包含；共享或受邀资源不自动加入。</p>
++                <p>包含个人资料、个人记录及以下自有项目正式记录和上下文。以后新建的自有项目与上下文自动包含；共享或受邀资源不自动加入。</p>
+                 <p>本次申请：{list(coverage?.requested_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}。</p>
+                 {list(coverage?.missing_actions).length > 0 && <p>客户端未申请或无法增加：{list(coverage?.missing_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}。实际授权受限。</p>}
+-                <ul>{(Array.isArray(coverage?.resources) ? coverage.resources.filter(object) : []).map(row => <li key={String(row.resource_kind) + ':' + String(row.resource_id) + ':' + String(row.environment)}>
++                <ul>{authorizationDisplayOrder(Array.isArray(coverage?.resources) ? coverage.resources.filter(object) : []).map(row => <li key={String(row.resource_kind) + ':' + String(row.resource_id) + ':' + String(row.environment)}>
+                   {currentText({ ...row, effective_actions: row.actual_actions })}
+                   {list(row.missing_actions).length > 0 && <p>缺项：{list(row.missing_actions).map(action => ACTION_LABELS[action] ?? action).join('、')}</p>}
+                   {object(row.limits) && <details><summary>原限制保持</summary><pre>{JSON.stringify(row.limits, null, 2)}</pre></details>}
+diff --git a/apps/clued-cloud/app/imprints/ImprintPanel.tsx b/apps/clued-cloud/app/imprints/ImprintPanel.tsx
+index ac79feb4..31ddc9e0 100644
+--- a/apps/clued-cloud/app/imprints/ImprintPanel.tsx
++++ b/apps/clued-cloud/app/imprints/ImprintPanel.tsx
+@@ -12,12 +12,12 @@ import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-s
+ 
+ const COPY = {
+   "zh-CN": {
+-    title: "印记", description: "从不同入口找回同一条内容，正文与状态只维护一份。", scope: "查询范围", allScopes: "所有有权查看的范围", global: "通用内容", query: "搜索当前视图", search: "搜索", refresh: "刷新", type: "内容性质", anyType: "全部性质", extraDomain: "追加领域（同时满足）", anyDomain: "不追加", history: "包含旧版本及待核对内容", coverage: "搜索当前视图中已保存的标题与正文。来源全文通过出处读取，尚未纳入全文检索；历史开关只读取实际保留的记录，不代表所有旧版本都已保存。", loading: "正在读取印记…", unknown: "读取结果未知，不能据此判断没有内容。请刷新重试。", unavailable: "当前读取或保存未获准、未接入或暂不可用。", conflict: "对象已有更新，请刷新并核对后再保存。", empty: "这个范围内没有匹配的印记。未归类内容可到全部查看。", more: "加载更多", partial: "还有内容未加载。", complete: "本次查询结果已显示。", noteTitle: "保存普通印记", saveScope: "保存到", titleField: "标题", contentField: "完整正文", save: "保存印记", saving: "正在保存…", saved: "已保存", savedNote: "普通印记已保存；未归类也能在全部找到。", openAll: "到全部查看", unclassified: "未归类", domains: "领域", editDomains: "修改这条印记的领域", domainsHelp: "只修改当前对象；关联任务、决定和来源不会自动改标签。留空也可保存。", saveDomains: "保存领域", savedDomains: "领域已保存", details: "阅读全文与出处", full: "完整正文", identity: "对象 ID", version: "版本", state: "状态", currentness: "当前性", historical: "这份内容不是已确认的当前有效记录；历史或待核对内容不授权执行。", relations: "关联记录", related: "读取关联记录", source: "已保存出处", sourceButton: "读取来源", sourceBody: "已保存来源正文", sourceMetadata: "来源定位与保存信息", locatorOnly: "只有来源定位信息，没有可读取的已保存全文。", sourceMissing: "来源全文目前不可读取；定位信息不等于全文已经收齐。", noSource: "没有可读取的已保存来源引用。", due: "任务期限（北京时间）", dueHelp: "留空表示没有期限；只修改期限，不改执行正文或生命周期。", dueReadOnly: "终态或当前性未确认的任务不能在这里修改期限。", saveDue: "保存期限", savedDue: "期限已保存", closure: "结案说明", recordDetail: "关联印记详情", close: "关闭详情", receipt: "保存回执", clearQuery: "清除搜索", typeNames: { task: "任务", decision: "决策", note: "笔记／记录", state: "事实／状态", profile_fact: "个人事实" },
++    title: "印记", description: "从不同入口找回同一条内容，正文与状态只维护一份。", scope: "查询范围", allScopes: "所有有权查看的范围", global: "个人记录", query: "搜索当前视图", search: "搜索", refresh: "刷新", type: "内容性质", anyType: "全部性质", extraDomain: "追加领域（同时满足）", anyDomain: "不追加", history: "包含旧版本及待核对内容", coverage: "搜索当前视图中已保存的标题与正文。来源全文通过出处读取，尚未纳入全文检索；历史开关只读取实际保留的记录，不代表所有旧版本都已保存。", loading: "正在读取印记…", unknown: "读取结果未知，不能据此判断没有内容。请刷新重试。", unavailable: "当前读取或保存未获准、未接入或暂不可用。", conflict: "对象已有更新，请刷新并核对后再保存。", empty: "这个范围内没有匹配的印记。未归类内容可到全部查看。", more: "加载更多", partial: "还有内容未加载。", complete: "本次查询结果已显示。", noteTitle: "保存普通印记", saveScope: "保存到", titleField: "标题", contentField: "完整正文", save: "保存印记", saving: "正在保存…", saved: "已保存", savedNote: "普通印记已保存；未归类也能在全部找到。", openAll: "到全部查看", unclassified: "未归类", domains: "领域", editDomains: "修改这条印记的领域", domainsHelp: "只修改当前对象；关联任务、决定和来源不会自动改标签。留空也可保存。", saveDomains: "保存领域", savedDomains: "领域已保存", details: "阅读全文与出处", full: "完整正文", identity: "对象 ID", version: "版本", state: "状态", currentness: "当前性", historical: "这份内容不是已确认的当前有效记录；历史或待核对内容不授权执行。", relations: "关联记录", related: "读取关联记录", source: "已保存出处", sourceButton: "读取来源", sourceBody: "已保存来源正文", sourceMetadata: "来源定位与保存信息", locatorOnly: "只有来源定位信息，没有可读取的已保存全文。", sourceMissing: "来源全文目前不可读取；定位信息不等于全文已经收齐。", noSource: "没有可读取的已保存来源引用。", due: "任务期限（北京时间）", dueHelp: "留空表示没有期限；只修改期限，不改执行正文或生命周期。", dueReadOnly: "终态或当前性未确认的任务不能在这里修改期限。", saveDue: "保存期限", savedDue: "期限已保存", closure: "结案说明", recordDetail: "关联印记详情", close: "关闭详情", receipt: "保存回执", clearQuery: "清除搜索", typeNames: { task: "任务", decision: "决策", note: "笔记／记录", state: "事实／状态", profile_fact: "个人事实" },
+     lifecycle: { active: "有效", completed: "已完成", cancelled: "已取消", archived: "已归档", superseded: "已替代", revoked: "已撤销", closed: "已关闭" },
+     currentNames: { CURRENT: "当前有效", HISTORY: "历史", UNKNOWN: "尚未确认", STALE: "已过时", SHADOWED_BY_ACTIVE_EVENT: "有后续信息待核对", NOT_CURRENT_FOR_EXECUTION: "不适合当前执行", NOT_AUTHORIZED: "无读取权限" },
+   },
+   en: {
+-    title: "Imprints", description: "Different entrances, one identity, one body and one state.", scope: "Search scope", allScopes: "All authorized scopes", global: "General content", query: "Search this view", search: "Search", refresh: "Refresh", type: "Content type", anyType: "Any type", extraDomain: "Additional domain (intersection)", anyDomain: "None", history: "Include retained revisions and records requiring review", coverage: "Search saved titles and bodies in this view. Saved source text can be read through its reference but is not indexed here. History includes only retained records; it does not imply every old version was saved.", loading: "Reading imprints…", unknown: "The read result is unknown. This does not mean there is no content. Refresh to retry.", unavailable: "The read or save is not admitted, connected or available at present.", conflict: "This object has changed. Refresh and review it before saving.", empty: "No matching imprints in this scope. Unclassified content remains in All.", more: "Load more", partial: "More content has not been loaded.", complete: "This query's results are displayed.", noteTitle: "Save an ordinary imprint", saveScope: "Save in", titleField: "Title", contentField: "Full body", save: "Save imprint", saving: "Saving…", saved: "Saved", savedNote: "The ordinary imprint was saved. Unclassified content can be found in All.", openAll: "View in All", unclassified: "Unclassified", domains: "Domains", editDomains: "Edit this imprint's domains", domainsHelp: "Only this object changes. Related tasks, decisions and sources keep their own labels. An empty selection is allowed.", saveDomains: "Save domains", savedDomains: "Domains saved", details: "Read full body and sources", full: "Full body", identity: "Object ID", version: "Version", state: "State", currentness: "Currentness", historical: "This is not confirmed current content. History or content requiring review does not authorize execution.", relations: "Related records", related: "Read related record", source: "Saved source references", sourceButton: "Read source", sourceBody: "Saved source text", sourceMetadata: "Source locator and storage information", locatorOnly: "Only a locator is available; no saved full text can be read.", sourceMissing: "The source text cannot currently be read. A locator is not proof that the full text was captured.", noSource: "No readable saved source reference.", due: "Task deadline (Beijing time)", dueHelp: "Leave empty for no deadline. Only the deadline changes; execution text and lifecycle are preserved.", dueReadOnly: "Terminal tasks and tasks without confirmed currentness cannot have their deadline edited here.", saveDue: "Save deadline", savedDue: "Deadline saved", closure: "Closure summary", recordDetail: "Related imprint detail", close: "Close detail", receipt: "Save receipt", clearQuery: "Clear search", typeNames: { task: "Task", decision: "Decision", note: "Note / record", state: "Fact / state", profile_fact: "Personal fact" },
++    title: "Imprints", description: "Different entrances, one identity, one body and one state.", scope: "Search scope", allScopes: "All authorized scopes", global: "Personal records", query: "Search this view", search: "Search", refresh: "Refresh", type: "Content type", anyType: "Any type", extraDomain: "Additional domain (intersection)", anyDomain: "None", history: "Include retained revisions and records requiring review", coverage: "Search saved titles and bodies in this view. Saved source text can be read through its reference but is not indexed here. History includes only retained records; it does not imply every old version was saved.", loading: "Reading imprints…", unknown: "The read result is unknown. This does not mean there is no content. Refresh to retry.", unavailable: "The read or save is not admitted, connected or available at present.", conflict: "This object has changed. Refresh and review it before saving.", empty: "No matching imprints in this scope. Unclassified content remains in All.", more: "Load more", partial: "More content has not been loaded.", complete: "This query's results are displayed.", noteTitle: "Save an ordinary imprint", saveScope: "Save in", titleField: "Title", contentField: "Full body", save: "Save imprint", saving: "Saving…", saved: "Saved", savedNote: "The ordinary imprint was saved. Unclassified content can be found in All.", openAll: "View in All", unclassified: "Unclassified", domains: "Domains", editDomains: "Edit this imprint's domains", domainsHelp: "Only this object changes. Related tasks, decisions and sources keep their own labels. An empty selection is allowed.", saveDomains: "Save domains", savedDomains: "Domains saved", details: "Read full body and sources", full: "Full body", identity: "Object ID", version: "Version", state: "State", currentness: "Currentness", historical: "This is not confirmed current content. History or content requiring review does not authorize execution.", relations: "Related records", related: "Read related record", source: "Saved source references", sourceButton: "Read source", sourceBody: "Saved source text", sourceMetadata: "Source locator and storage information", locatorOnly: "Only a locator is available; no saved full text can be read.", sourceMissing: "The source text cannot currently be read. A locator is not proof that the full text was captured.", noSource: "No readable saved source reference.", due: "Task deadline (Beijing time)", dueHelp: "Leave empty for no deadline. Only the deadline changes; execution text and lifecycle are preserved.", dueReadOnly: "Terminal tasks and tasks without confirmed currentness cannot have their deadline edited here.", saveDue: "Save deadline", savedDue: "Deadline saved", closure: "Closure summary", recordDetail: "Related imprint detail", close: "Close detail", receipt: "Save receipt", clearQuery: "Clear search", typeNames: { task: "Task", decision: "Decision", note: "Note / record", state: "Fact / state", profile_fact: "Personal fact" },
+     lifecycle: { active: "Active", completed: "Completed", cancelled: "Cancelled", archived: "Archived", superseded: "Superseded", revoked: "Revoked", closed: "Closed" },
+     currentNames: { CURRENT: "Current", HISTORY: "History", UNKNOWN: "Unknown", STALE: "Stale", SHADOWED_BY_ACTIVE_EVENT: "Later information requires review", NOT_CURRENT_FOR_EXECUTION: "Not current for execution", NOT_AUTHORIZED: "Not authorized" },
+   },
+diff --git a/apps/clued-cloud/app/page.tsx b/apps/clued-cloud/app/page.tsx
+index 65e2ab0a..0212b041 100644
+--- a/apps/clued-cloud/app/page.tsx
++++ b/apps/clued-cloud/app/page.tsx
+@@ -132,8 +132,8 @@ const copy = {
+     progressCompleted: "Completed",
+     progressArchived: "Archived",
+     workViewsTitle: "Current work",
+-    workViewsCopy: "Read global priority first, then project State, Tasks and Decisions. Log and Archive are evidence on demand; every view keeps the same canonical ID.",
+-    globalLevel: "Global",
++    workViewsCopy: "Read priorities across projects first, then project State, Tasks and Decisions. Log and Archive are evidence on demand; every view keeps the same canonical ID.",
++    globalLevel: "Personal records",
+     projectLevel: "Project",
+     chooseProject: "Choose a project",
+     stateView: "State",
+@@ -256,8 +256,8 @@ const copy = {
+     progressCompleted: "已完成",
+     progressArchived: "已归档",
+     workViewsTitle: "当前工作",
+-    workViewsCopy: "先读全局优先级，再读项目状态、任务和决策；日志与归档仅按需作证据，每个视图保留同一个 canonical ID。",
+-    globalLevel: "全局",
++    workViewsCopy: "先读跨项目优先级，再读项目状态、任务和决策；日志与归档仅按需作证据，每个视图保留同一个 canonical ID。",
++    globalLevel: "个人记录",
+     projectLevel: "项目",
+     chooseProject: "选择一个项目",
+     stateView: "状态",
+diff --git a/apps/clued-cloud/app/policies/page.tsx b/apps/clued-cloud/app/policies/page.tsx
+index 81d950cc..11d04ca1 100644
+--- a/apps/clued-cloud/app/policies/page.tsx
++++ b/apps/clued-cloud/app/policies/page.tsx
+@@ -185,7 +185,7 @@ export default function PoliciesPage() {
+       {editing && <form onSubmit={preview} aria-label="策略内容">
+         <label>任务类<input required maxLength={120} disabled={working} value={taskClass} onChange={event => setTaskClass(event.target.value)} /></label>
+         <fieldset><legend>记录范围</legend>
+-          <label><input type="checkbox" disabled={working} checked={scopes.includes("global")} onChange={event => setScopes(toggle(scopes, "global", event.target.checked))} />全局</label>
++          <label><input type="checkbox" disabled={working} checked={scopes.includes("global")} onChange={event => setScopes(toggle(scopes, "global", event.target.checked))} />个人记录</label>
+           <label><input type="checkbox" disabled={working} checked={scopes.includes("profile")} onChange={event => setScopes(toggle(scopes, "profile", event.target.checked))} />个人资料</label>
+           {projects === null ? <p role="status">正在读取项目…</p> : projects.map(project => <label key={project.id}>
+             <input type="checkbox" disabled={working} checked={scopes.includes("project:" + project.id)} onChange={event => setScopes(toggle(scopes, "project:" + project.id, event.target.checked))} />项目：{project.name}</label>)}
+diff --git a/apps/clued-cloud/lib/context-authorization-controls.tsx b/apps/clued-cloud/lib/context-authorization-controls.tsx
+index f47ea06d..5851e4c6 100644
+--- a/apps/clued-cloud/lib/context-authorization-controls.tsx
++++ b/apps/clued-cloud/lib/context-authorization-controls.tsx
+@@ -1,5 +1,5 @@
+ "use client";
+-import { ACTION_LABELS, ALL_PROJECTS, OPERATION_LABELS, availablePresets, isAllContexts, isMacro, resourceGroups, resourceKey, resourceTitle,
++import { ACTION_LABELS, ALL_PROJECTS, OPERATION_LABELS, authorizationDisplayOrder, availablePresets, isAllContexts, isMacro, resourceGroups, resourceKey, resourceTitle,
+   type OperationPreset, type Resource, type Selection } from "./context-authorization";
+ 
+ export default function ContextAuthorizationControls({ rows, selected, preset, range, custom, busy, notice, allowLegacyProjectPolicy = false, onRange, onPreset, onResource, onAction }: {
+@@ -15,7 +15,7 @@ export default function ContextAuthorizationControls({ rows, selected, preset, r
+     <fieldset className="oauth-range" disabled={busy}><legend>范围</legend>
+       {macro && <label><input type="radio" name="context-range" checked={range === "all"} onChange={() => onRange("all")} />全部上下文（含以后新建的）</label>}
+       <label><input type="radio" name="context-range" checked={range === "specified"} onChange={() => onRange("specified")} />指定范围</label>
+-      {range === "all" && <p>包含通用内容、个人资料及全部自有项目的正式记录和上下文，以后新建的自有项目与上下文也自动包含；共享或受邀资源需单独选择。</p>}
++      {range === "all" && <p>包含个人资料、个人记录及全部自有项目的正式记录和上下文，以后新建的自有项目与上下文也自动包含；共享或受邀资源需单独选择。</p>}
+       {range === "specified" && <><p>{rows.some(row => row.resource_id === ALL_PROJECTS && (selected[resourceKey(row)] || []).length) ? "原自有项目正式记录策略仍包含未来项目；它不包含项目用途上下文，属于自定义范围。" : "只授权勾选的具体资源和环境，不包含未来新建资源。"}</p>{resourceGroups(rows).map(group => <section key={group.key}>
+         <h3>{group.name}</h3>{group.rows.map(row => <label key={resourceKey(row)} className="oauth-project-choice">
+           <input type="checkbox" checked={(selected[resourceKey(row)] || []).length > 0} onChange={event => onResource(row, event.target.checked)} />
+@@ -30,7 +30,7 @@ export default function ContextAuthorizationControls({ rows, selected, preset, r
+     {!options.includes("developer") && <p>本次未具备读取和写入申请；简单模式只提供只读。其他实际可申请动作可在高级中选择。</p>}
+     {notice && <p role="status">{notice}</p>}
+     <details className="oauth-advanced"><summary>高级：逐项调整动作</summary>
+-      {(range === "all" && macro ? [macro] : rows.filter(row => !isMacro(row) || allowLegacyProjectPolicy && row.resource_id === ALL_PROJECTS)).map(row => <fieldset key={resourceKey(row)} disabled={busy}>
++      {authorizationDisplayOrder(range === "all" && macro ? [macro] : rows.filter(row => !isMacro(row) || allowLegacyProjectPolicy && row.resource_id === ALL_PROJECTS)).map(row => <fieldset key={resourceKey(row)} disabled={busy}>
+         <legend>{resourceTitle(row)}</legend><details><summary>资源详情</summary><p>{row.resource_id} · {row.environment}</p></details>
+         <label><input className="oauth-group-checkbox" type="checkbox" disabled={busy}
+           checked={row.actions.length > 0 && row.actions.every(action => (selected[resourceKey(row)] || []).includes(action))}
+diff --git a/apps/clued-cloud/lib/context-authorization.ts b/apps/clued-cloud/lib/context-authorization.ts
+index ffa9e263..7d4471e7 100644
+--- a/apps/clued-cloud/lib/context-authorization.ts
++++ b/apps/clued-cloud/lib/context-authorization.ts
+@@ -15,7 +15,7 @@ export const isAllContexts = (row: Resource) => row.resource_kind === "scope" &&
+ export const isMacro = (row: Resource) => row.resource_kind === "scope" && [ALL_CONTEXTS, ALL_PROJECTS].includes(row.resource_id);
+ export function resourceTitle(row: Resource): string {
+   if (row.resource_kind === "context") return `${row.context_name || row.name || "未命名上下文"} · ${ENVIRONMENT_LABELS[row.environment] || row.environment}`;
+-  if (row.resource_id === "global") return "通用内容";
++  if (row.resource_id === "global") return "个人记录";
+   if (row.resource_id === "profile") return "个人资料";
+   if (row.resource_id === ALL_CONTEXTS) return "全部上下文（含以后新建的）";
+   if (row.resource_id === ALL_PROJECTS) return "自有项目正式记录（含未来项目）";
+@@ -56,18 +56,28 @@ export function selectedResources(rows: Resource[], selected: Selection): Resour
+   return rows.map(row => ({ resource_kind: row.resource_kind, resource_id: row.resource_id, environment: row.environment,
+     actions: row.actions.filter(action => (selected[resourceKey(row)] || []).includes(action)) })).filter(row => row.actions.length);
+ }
++export function authorizationDisplayOrder<T extends { resource_kind?: unknown; resource_id?: unknown; context?: unknown }>(rows: readonly T[]): T[] {
++  const rank = (row: T) => {
++    if (row.resource_kind && row.resource_kind !== "scope") return 2;
++    const id = row.resource_id ?? row.context;
++    return id === "profile" ? 0 : id === "global" ? 1 : 2;
++  };
++  return [...rows].sort((a, b) => rank(a) - rank(b));
++}
+ export function resourceGroups(rows: Resource[]): { key: string; name: string; rows: Resource[] }[] {
+   const groups = new Map<string, { key: string; name: string; rows: Resource[] }>();
+   for (const row of rows.filter(row => !isMacro(row))) {
+     const project = row.project_id || (row.resource_kind === "scope" && row.resource_id.startsWith("project:") ? row.resource_id.slice(8) : null);
+     const key = project || (row.resource_kind === "context" ? "unresolved-contexts" : "personal");
+     const name = project ? row.project_name || (row.resource_kind === "scope" ? row.name : undefined) || "项目（名称暂不可用）"
+-      : row.resource_kind === "context" ? "上下文（所属项目尚未提供）" : "通用内容与个人资料";
++      : row.resource_kind === "context" ? "上下文（所属项目尚未提供）" : "个人资料与个人记录";
+     if (!groups.has(key)) groups.set(key, { key, name, rows: [] });
+     else if (row.project_name) groups.get(key)!.name = row.project_name;
+     groups.get(key)!.rows.push(row);
+   }
+-  return [...groups.values()];
++  const personal = groups.get("personal");
++  if (personal) personal.rows = authorizationDisplayOrder(personal.rows);
++  return personal ? [personal, ...[...groups.values()].filter(group => group.key !== "personal")] : [...groups.values()];
+ }
+ export function operationSummary(rows: Resource[], legacy = false): string {
+   if (!rows.length) return "无可用操作";
+diff --git a/apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs b/apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs
+index 016c9ae7..f1dc3d41 100644
+--- a/apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs
++++ b/apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs
+@@ -42,6 +42,24 @@ test('full policy is one real macro, presets cannot add an unselected resource,
+   assert.deepEqual(plain(auth.presetActions({...rows[2],actions:['write']},'reader')),[]);
+ });
+ 
++test('specified-scope display orders profile, personal records and projects without changing authorization payloads', () => {
++  const rows = [context('test'), scope('global'), scope(P), scope('profile'), context('preview')];
++  const before = plain(rows);
++  const selected = { [auth.resourceKey(rows[0])]: ['read'], [auth.resourceKey(rows[1])]: ['read', 'write'] };
++  const payload = plain(auth.selectedResources(rows, selected));
++  const groups = auth.resourceGroups(rows);
++  assert.deepEqual(plain(groups.map(group => group.key)), ['personal', P.slice(8)]);
++  assert.deepEqual(plain(groups[0].rows.map(row => row.resource_id)), ['profile', 'global']);
++  assert.equal(groups[0].name, '个人资料与个人记录');
++  assert.deepEqual(plain(groups[1].rows), [before[0], before[2], before[4]]);
++  assert.deepEqual(plain(rows), before);
++  assert.deepEqual(plain(auth.selectedResources(rows, selected)), payload);
++  assert.deepEqual(plain(auth.authorizationDisplayOrder(rows)), [before[3], before[1], before[0], before[2], before[4]]);
++  const preview = [{ context: P }, { context: 'global' }, { context: 'profile' }];
++  assert.deepEqual(plain(auth.authorizationDisplayOrder(preview)), [preview[2], preview[1], preview[0]]);
++  assert.deepEqual(plain(preview), [{ context: P }, { context: 'global' }, { context: 'profile' }]);
++});
++
+ test('verified Record display does not promote a candidate, retained history, legacy Record or Event', () => {
+   const current={record_type:'note',authoritative:true,record_currentness:'CURRENT',source_semantics:'canonical_record'};
+   assert.equal(model.immediateAuthoritativeRecord(current),true);
+diff --git a/apps/clued-cloud/tests/authorization-roles-ui.test.mjs b/apps/clued-cloud/tests/authorization-roles-ui.test.mjs
+index 6f4da41d..b6924251 100644
+--- a/apps/clued-cloud/tests/authorization-roles-ui.test.mjs
++++ b/apps/clued-cloud/tests/authorization-roles-ui.test.mjs
+@@ -87,7 +87,7 @@ test('legacy project grants retain their operations while range no longer claims
+   assert.ok(shown.includes('尚不包含项目用途上下文'));
+   assert.ok(shown.includes('自有项目正式记录（含未来项目）'));
+   const legends = f.nodes('legend', card).map(n => f.text(n));
+-  assert.deepEqual(legends, ['通用内容', '自有项目正式记录（含未来项目）'], 'covered projects are not listed');
++  assert.deepEqual(legends, ['个人记录', '自有项目正式记录（含未来项目）'], 'covered projects are not listed');
+   // Untick write on project:*: the reduction sends project:* narrowed and no covered project row.
+   const all = f.nodes('fieldset', card)[1];
+   const write = f.nodes('input', all).find((n, i) => i === 1);
+diff --git a/apps/clued-cloud/tests/headless-binding-ui.test.mjs b/apps/clued-cloud/tests/headless-binding-ui.test.mjs
+index 0ce15027..bdc3d40c 100644
+--- a/apps/clued-cloud/tests/headless-binding-ui.test.mjs
++++ b/apps/clued-cloud/tests/headless-binding-ui.test.mjs
+@@ -104,7 +104,7 @@ test('issuing is two steps and the token is shown once', async t => {
+   f.nodes('input').find(n => n.props.maxLength === 80).props.onChange({ target: { value: '  Nightly script ' } });
+   f.nodes('select')[0].props.onChange({ target: { value: '90' } });
+   f.render();
+-  checkbox(f, '通用内容', '读取').props.onChange({ target: { checked: true } });
++  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } });
+   f.render();
+   checkbox(f, 'Alpha', '新增和修改').props.onChange({ target: { checked: true } });
+   f.render();
+@@ -121,7 +121,7 @@ test('issuing is two steps and the token is shown once', async t => {
+   await f.settle();
+   const panel = f.nodes('section').find(n => n.props['aria-label'] === '确认签发');
+   assert.ok(f.text(panel).includes('签发后 90 天'));
+-  assert.ok(f.text(panel).includes('通用内容：读取；Alpha：新增和修改'));
++  assert.ok(f.text(panel).includes('个人记录：读取；Alpha：新增和修改'));
+   assert.ok(f.nodes('button').filter(n => ['轮换为新令牌', '撤销'].includes(f.text(n))).every(n => n.props.disabled),
+     'nothing else starts while a confirmation waits');
+   f.button('确认签发', panel).props.onClick();
+@@ -159,7 +159,7 @@ test('rotating the legacy CI Binding names it and shows the moving role', async
+   assert.ok(f.nodes('div', rotating).some(n => n.props['aria-label'] === '轮换表单'), 'form inside the clicked card');
+   assert.ok(!f.nodes('button', rotating).some(n => f.text(n) === '轮换为新令牌'));
+   assert.equal(f.nodes('div').filter(n => n.props['aria-label'] === '签发表单').length, 0, 'no second form at the top');
+-  checkbox(f, '通用内容', '读取').props.onChange({ target: { checked: true } }); f.render();
++  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } }); f.render();
+   f.button('预览').props.onClick();
+   assert.deepEqual(plain(f.calls[1].args.p_input), { label: 'clued-work-admission', days: 30, replaces_binding_id: 'b-legacy',
+     selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }] });
+@@ -180,10 +180,10 @@ test('rotating a headless Binding starts from its current grants; revoking uses
+   await open(f);
+   const head = f.nodes('article').find(n => f.text(n).includes('CI reader'));
+   f.button('轮换为新令牌', head).props.onClick(); f.render();
+-  assert.equal(checkbox(f, '通用内容', '读取').props.checked, true);
+-  assert.equal(checkbox(f, '通用内容', '新增和修改').props.checked, false);
++  assert.equal(checkbox(f, '个人记录', '读取').props.checked, true);
++  assert.equal(checkbox(f, '个人记录', '新增和修改').props.checked, false);
+   f.button('改为签发新令牌').props.onClick(); f.render();
+-  assert.equal(checkbox(f, '通用内容', '读取').props.checked, false);
++  assert.equal(checkbox(f, '个人记录', '读取').props.checked, false);
+   f.button('撤销', head).props.onClick();
+   assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_authorization_manage_v12',
+     { p_input: { op: 'revoke', binding_id: 'b-head', base_version: 2 } }]);
+@@ -244,7 +244,7 @@ test('a refusal is shown in plain words', async t => {
+   const f = fixture(); t.after(() => f.unmount());
+   await open(f);
+   f.nodes('input').find(n => n.props.maxLength === 80).props.onChange({ target: { value: 'x' } });
+-  checkbox(f, '通用内容', '查看审计回执').props.onChange({ target: { checked: true } }); f.render();
++  checkbox(f, '个人记录', '查看审计回执').props.onChange({ target: { checked: true } }); f.render();
+   f.button('预览').props.onClick();
+   f.calls[1].resolve({ data: { status: 'rejected', error_code: 'headless_binding_role_scope_missing' }, error: null }); await f.settle();
+   assert.ok(f.text().includes('新令牌需要保留对应权限'));
+@@ -261,7 +261,7 @@ test('a role Binding names its GitHub secret, and a rotation says which secret t
+   const plainCard = f.nodes('article').find(n => f.text(n).includes('CI reader'));
+   assert.ok(!f.text(plainCard).includes('令牌存放在'), 'a Binding without a role names no secret');
+   f.button('轮换为新令牌', legacy).props.onClick(); f.render();
+-  checkbox(f, '通用内容', '读取').props.onChange({ target: { checked: true } }); f.render();
++  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } }); f.render();
+   f.button('预览').props.onClick();
+   f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'clued_hbc_r', view_digest: 'r'.repeat(64),
+     confirmation_view: { label: 'clued-work-admission', days: 30, selected: [], replaces: { binding_id: 'b-legacy',
+diff --git a/apps/clued-cloud/tests/owner-grants-ui.test.mjs b/apps/clued-cloud/tests/owner-grants-ui.test.mjs
+index 5f15159c..3e238c5e 100644
+--- a/apps/clued-cloud/tests/owner-grants-ui.test.mjs
++++ b/apps/clued-cloud/tests/owner-grants-ui.test.mjs
+@@ -12,6 +12,8 @@ const compile = path => ts.transpileModule(readFileSync(new URL(path, import.met
+ const CONFIRM = compile('../app/confirm/[id]/page.tsx');
+ const GRANTS = compile('../app/grants/page.tsx');
+ const SWITCH = compile('../app/grants/AutoApprovalSwitch.tsx');
++const AUTHORIZATION = {};
++vm.runInNewContext(compile('../lib/context-authorization.ts'), { exports: AUTHORIZATION });
+ const REQUEST = '33333333-3333-4333-8333-333333333333';
+ 
+ function fixture(compiled, { id = REQUEST } = {}) {
+@@ -51,6 +53,7 @@ function fixture(compiled, { id = REQUEST } = {}) {
+     if (name.endsWith('.css')) return {};
+     if (name === 'next/link') return { __esModule: true, default: 'a' };
+     if (name === 'next/navigation') return { useParams: () => ({ id }) };
++    if (name === '../../../lib/context-authorization') return AUTHORIZATION;
+     throw Error(name);
+   }, Error, Date, Number, String, Math, Array,
+   fetch(url) { fetches.push(url); return new Promise(() => {}); } });
+@@ -178,7 +181,7 @@ test('a connection permission request: names each permission and the connection,
+   const what = f.text(f.nodes('section').find(n => n.props['aria-label'] === '要批准什么'));
+   assert.ok(what.includes('ChatGPT'));
+   assert.ok(what.includes('M2 → 新增和修改'));
+-  assert.ok(what.includes('通用内容：读取'));
++  assert.ok(what.includes('个人记录：读取'));
+   assert.ok(what.includes('不用重新连接'));
+   f.button('批准').props.onClick();
+   assert.deepEqual(plain([f.calls[2].name, f.calls[2].args]),
+diff --git a/apps/clued-cloud/worker/owner-requests.ts b/apps/clued-cloud/worker/owner-requests.ts
+index 77663453..7b3c2718 100644
+--- a/apps/clued-cloud/worker/owner-requests.ts
++++ b/apps/clued-cloud/worker/owner-requests.ts
+@@ -24,7 +24,7 @@ export const ownerRequestTools = [
+   {
+     name: OWNER_REQUEST_TOOL,
+     description:
+-      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, repo.protected_change, work_claim.extra_claims, connection.permission). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. connection.permission asks for a permission your own connection lacks, one resource per context and action: permission:<global|profile|project:<id>>/<read|write|close|restore|audit>, for example permission:project:<id>/write, or a preset role instead of the action: reader (read), developer (read, write, close, restore) or full (all five canonical operations), for example permission:project:<id>/developer; project:* keeps its original meaning: all of the Owner's own project canonical records, including later projects. The new permission:contexts:*/reader|developer|full or individual action requests the Owner's general content, profile, all own project canonical records and all own Contexts whose projects are also own, existing and future; it does not include shared projects automatically. For this new contexts:* syntax only, developer means read/write; full intersects requested client scopes and each resource's supported operations (canonical read/write/close/restore/audit, Context read/write/close/feedback_submit). Existing exact restrictions and revocations remain; macro consent does not clear them, grant production/member/Secret/model/storage rights, or override a downscoped access token. For example permission:contexts:*/full. No task_id or suggested_grant for connection.permission. Any live connection can send it, even one that cannot read or write that context. Once the Owner approves, the permission is on this same connection: retry the refused call, no reconnect needed. repo.protected_change is opened only by the admission check for a pushed pull request (agent contract §1.7); asking for it yourself is refused with owner_request_action_door_only: give the Owner the link the check printed. Several actions for the same work, for example a production migration and the deploy of the same commit: send actions [{action, resources}, ...] (2 to 5, distinct, not connection.permission) instead of action and resources; you get one confirm_url, the Owner approves all of them with one click, and request.bundle lists each member's request_id and status. Send session_ref (your Host session id) when you create: once the Owner decides, the answer comes to that session by itself, as agent_inbox.owner_answers in clued_session_resume and clued_work_renew and as owner_answers in clued_agent_inbox, so you need not ask again or wait for the Owner to tell you. Status: send request_id alone to read pending, approved_once, granted, rejected or expired; reading a decided request's status also marks its answer read. A request expires after 24 hours. Idempotent by idempotency_key. Other actions require context:write.",
++      "Ask the Owner to approve an action that needs their permission (registered actions: release.production, migration.production, repo.protected_change, work_claim.extra_claims, connection.permission). Create: send action, resources (kind:value or repository paths/globs) and idempotency_key, optionally task_id, suggested_grant and agent_note. The result carries request_id and confirm_url: give confirm_url to the Owner as is. The Owner opens it signed in to Clued and approves once, grants a time-limited permission, or rejects; you cannot approve it and must not claim the Owner approved in your own words. connection.permission asks for a permission your own connection lacks, one resource per context and action: permission:<global|profile|project:<id>>/<read|write|close|restore|audit>, for example permission:project:<id>/write, or a preset role instead of the action: reader (read), developer (read, write, close, restore) or full (all five canonical operations), for example permission:project:<id>/developer; project:* keeps its original meaning: all of the Owner's own project canonical records, including later projects. The new permission:contexts:*/reader|developer|full or individual action requests the Owner's profile, personal records (the existing global canonical scope), all own project canonical records and all own Contexts whose projects are also own, existing and future; it does not include shared projects automatically. For this new contexts:* syntax only, developer means read/write; full intersects requested client scopes and each resource's supported operations (canonical read/write/close/restore/audit, Context read/write/close/feedback_submit). Existing exact restrictions and revocations remain; macro consent does not clear them, grant production/member/Secret/model/storage rights, or override a downscoped access token. For example permission:contexts:*/full. No task_id or suggested_grant for connection.permission. Any live connection can send it, even one that cannot read or write that context. Once the Owner approves, the permission is on this same connection: retry the refused call, no reconnect needed. repo.protected_change is opened only by the admission check for a pushed pull request (agent contract §1.7); asking for it yourself is refused with owner_request_action_door_only: give the Owner the link the check printed. Several actions for the same work, for example a production migration and the deploy of the same commit: send actions [{action, resources}, ...] (2 to 5, distinct, not connection.permission) instead of action and resources; you get one confirm_url, the Owner approves all of them with one click, and request.bundle lists each member's request_id and status. Send session_ref (your Host session id) when you create: once the Owner decides, the answer comes to that session by itself, as agent_inbox.owner_answers in clued_session_resume and clued_work_renew and as owner_answers in clued_agent_inbox, so you need not ask again or wait for the Owner to tell you. Status: send request_id alone to read pending, approved_once, granted, rejected or expired; reading a decided request's status also marks its answer read. A request expires after 24 hours. Idempotent by idempotency_key. Other actions require context:write.",
+     inputSchema: {
+       type: "object",
+       properties: {
+diff --git a/apps/clued-cloud/worker/permission-guidance.ts b/apps/clued-cloud/worker/permission-guidance.ts
+index 2ff3c622..cf281bbd 100644
+--- a/apps/clued-cloud/worker/permission-guidance.ts
++++ b/apps/clued-cloud/worker/permission-guidance.ts
+@@ -24,7 +24,7 @@ function contextOf(args: Json, toolName: string): string | null {
+   const replacement = args.replacement && typeof args.replacement === 'object' ? (args.replacement as Json).scope : undefined;
+   const named = [scope, args.context_key, args.event_scope, replacement].find(value => value !== undefined && value !== null);
+   if (named !== undefined) return typeof named === 'string' && CONTEXT.test(named.toLowerCase()) ? named.toLowerCase() : null;
+-  // The database reads such calls as Global; a call naming a project in some
++  // The database reads such calls as personal records (global); a call naming a project in some
+   // other way is not guessed.
+   return projectId ? null : 'global';
+ }
+diff --git a/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md b/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md
+index 4651081d..9b654485 100644
+--- a/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md
++++ b/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md
+@@ -1,10 +1,12 @@
+-# 上下文授权统一合同 v0.1-r3
++# 上下文授权统一合同 v0.1-r4
+ 
+-状态：r2 已通过产品与安全独立审核；r3 仅补原 Task 引用，不改变范围或执行要求，须核对该元数据差异。r2 原字节及审核绑定保存在 evidence/AcceptedPlanR2.v1.json；尚未改变线上权限。
++状态：r2 已通过产品与安全独立审核；r3 仅补原 Task 引用；r4 按 Owner Decision v6 将原内容范围名称统一为“个人记录”，并按确认顺序展示个人资料、个人记录、各项目；不改变授权集合、操作或限制。原 r2 字节及审核绑定保存在 evidence/AcceptedPlanR2.v1.json；名称差异须独立核对，尚未发布本轮授权修复。
+ 
+-Owner 来源：Clued Decision `1b609e13-9b44-47fb-90a1-89a74bf9875e` v4；执行复用 Task `d5dee826-27d7-452b-8948-48fe8ae8a961`。工程基线 main `f890a19da620bcd60efa20d44a0a78f9099c95bf`，受查部署 `8f960b5541e29ad279d4976f5c366ea4e1297ad4`。本合同是 `PermissionSimplification.v0.1` 的限定后继，不改其历史同意，不改数据身份、命名完整性固定来源或 Canonical 资格。
++Owner 来源：Clued Decision `1b609e13-9b44-47fb-90a1-89a74bf9875e` v6；执行复用 Task `d5dee826-27d7-452b-8948-48fe8ae8a961`。工程基线 main `f890a19da620bcd60efa20d44a0a78f9099c95bf`，受查部署 `8f960b5541e29ad279d4976f5c366ea4e1297ad4`。本合同是 `PermissionSimplification.v0.1` 的限定后继，不改其历史同意，不改数据身份、命名完整性固定来源或 Canonical 资格。
+ 
+-## 1. 用户概念与界面
++## 1. 统一概念与界面
++
++“个人记录”是内容范围的统一概念名，适用于用户／开发目录、授权、接口说明与工程术语；原“通用内容／全局视图”作为历史别名。它容纳未纳入具体项目的待办、想法、心得、灵感和计划，也可包含工作、学习与创作。个人资料独立管理身份／偏好等事实；项目内容归对应项目。八视图的“日常”是生活事务分类，与范围分开。兼容标识 `global` 精确指向个人记录，不表示汇总项目内容，也不增加权限。
+ 
+ 目录统一叫“上下文”。“用户/开发”是用途，项目和环境是所属范围；它们不形成不同的上下文概念。底层 `global` / `profile` / `project:<UUID>` / 精确 Context UUID 和 `development_history` 模式保留。
+ 
+@@ -15,11 +17,11 @@ Owner 来源：Clued Decision `1b609e13-9b44-47fb-90a1-89a74bf9875e` v4；执行
+ - 范围：全部上下文（含以后新建的）／指定范围。
+ - 操作权限：只读／可编辑／全部操作。
+ 
+-“全局视图”在授权页改为“通用内容”；个人资料是独立可限制的内容范围。“正式记忆”不作为每行重复后缀。简单指定范围直接展示下列选择树，不要求进入高级才能选择基本范围：
++“全局视图”在授权页改为“个人记录”；个人资料是独立可限制的内容范围。“正式记忆”不作为每行重复后缀。简单指定范围直接展示下列选择树，不要求进入高级才能选择基本范围：
+ 
+-- 通用内容、个人资料各有独立复选框。
++- 个人资料、个人记录各有独立复选框。
+ - 项目按可读名称分组。组内“项目正式记录”与每个具名上下文分别勾选；上下文同时显示测试／预览／生产环境。技术 UUID 只放详情，但提交身份仍是精确 UUID／环境／资格。
+-- 分组标题不授予权限；若提供“选择本组现有全部条目”，须显示明确条目数量和环境，不包含未来资源，也不暗含通用内容或个人资料。未选条目绝不隐式授予。
++- 分组标题不授予权限；若提供“选择本组现有全部条目”，须显示明确条目数量和环境，不包含未来资源，也不暗含个人记录或个人资料。未选条目绝不隐式授予。
+ - 高级只用于逐资源动作、现行支持的限制或明确例外；非预设动作组合、资源例外显示“自定义”。
+ 
+ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首次读取且提供 `contexts:*` 时显示“全部上下文＋全部操作（本次可用）”，只预选、不提交；没有策略能力则进入空的指定范围，至少选择一项才能继续。全部切为指定时清空所选精确资源并提示重新勾选，保留操作预设；指定切为全部时只选策略宏，预览重新列出实际覆盖与未来规则，取消精确例外须在提交前清楚显示。更换操作预设只改变已选资源的动作，不能加入未选资源；高级改动使操作显示自定义，重新套用预设会明确替换已选资源的自定义动作，例外仍须显示。账号切换、资源快照或版本变化使旧选择／预览失效，沿现行竞态防护重新读取。
+@@ -28,7 +30,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ | 简单选择 | 提交预览及精确结果 |
+ |---|---|
+-| 指定范围 → 只勾个人资料 → 只读 | `scope/profile/canonical/read`；通用内容、项目、上下文均无授权 |
++| 指定范围 → 只勾个人资料 → 只读 | `scope/profile/canonical/read`；个人记录、项目、上下文均无授权 |
+ | 指定范围 → Clued 项目只勾“项目正式记录” → 可编辑 | `scope/project:<Clued UUID>/canonical/{read,write}`；该项目用途上下文及以后新建资源均无授权 |
+ | 指定范围 → Clued 项目只勾“验收上下文 · 测试环境” → 可编辑 | `context/<精确 Context UUID>/test/{read,write}`；项目正式记录、预览和生产环境均无授权，未来新建同名测试上下文也无授权 |
+ 
+@@ -38,8 +40,8 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ 对实际授权主体 U，全部上下文包含：
+ 
+-1. U 的通用内容（现有 `global`）。
+-2. U 的个人资料（现有 `profile`）。
++1. U 的个人资料（现有 `profile`）。
++2. U 的个人记录（现有 `global`）。
+ 3. U 本人拥有的每个项目的正式记录范围。
+ 4. U 本人拥有、且所属项目也由 U 本人拥有的每个项目用途上下文，按其实际环境授权。
+ 
+@@ -51,7 +53,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ | 内容范围 | 只读 | 可编辑 | 全部操作的最大可选动作 |
+ |---|---|---|---|
+-| 通用内容、个人资料、自有项目正式记录 | read | read, write | read, write, close, restore, audit |
++| 个人资料、个人记录、自有项目正式记录 | read | read, write | read, write, close, restore, audit |
+ | 项目用途上下文 | read | read, write | read, write, close, feedback_submit |
+ 
+ 每一项只取本次客户端实际请求且该资源现行 API 支持的动作；不自动追加未申请的 OAuth scope。未请求或不支持的动作不会被虚构为已授予。页上显示实际动作和缺项：缺少写入请求时只提供只读预设；不可表示为可编辑或全部操作已具备所有动作。
+@@ -116,7 +118,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ ## 5. 旧连接与权限管理
+ 
+-旧 `project:*` 仍只表达其原来批准的自有项目正式记录；不得重解释成新策略。旧“全部”角色显示不再由几个 canonical 条目猜出完整上下文授权。当前旧连接的确定显示例：范围“通用内容、个人资料、自有项目正式记录（含未来项目）”，操作按 effective 动作显示“全部操作（原授权）”或“自定义”，并明示“尚不包含项目用途上下文”。不能继续只显示“全部”造成完整覆盖的错觉。缺新覆盖策略或对应能力时准确显示原范围／自定义，并提供一次明确的升级入口。
++旧 `project:*` 仍只表达其原来批准的自有项目正式记录；不得重解释成新策略。旧“全部”角色显示不再由几个 canonical 条目猜出完整上下文授权。当前旧连接的确定显示例：范围“个人资料、个人记录、自有项目正式记录（含未来项目）”，操作按 effective 动作显示“全部操作（原授权）”或“自定义”，并明示“尚不包含项目用途上下文”。不能继续只显示“全部”造成完整覆盖的错觉。缺新覆盖策略或对应能力时准确显示原范围／自定义，并提供一次明确的升级入口。
+ 
+ 新 OAuth 同意页选择“全部上下文＋全部操作”后同时批准已有与未来集合，不能只枚举当时的 Context。授权请求的范围快照、真实请求 scope、Owner 身份、版本、到期和同意回执继续绑定。
+ 
+@@ -130,7 +132,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ ## 6. 必须通过的验收
+ 
+-1. 已有通用内容、个人资料、自有项目正式记录及自有项目用途上下文均按选择有真实 read/write 等能力，而非只有角色名。
++1. 已有个人资料、个人记录、自有项目正式记录及自有项目用途上下文均按选择有真实 read/write 等能力，而非只有角色名。
+ 2. 批准之后新建项目、同一旧项目下新建 Context、不同实际环境下新建 Context 均按新策略继承；无需再补权限。
+ 3. 只读不能写；可编辑不能关闭／恢复／审计／反馈；全部操作只给真实申请且支持的动作。未请求写权限的客户端不能被预设扩大。
+ 4. 他人项目、共享／邀请上下文、Context Owner 与项目 Owner 不一致、环境伪造均不自动纳入。

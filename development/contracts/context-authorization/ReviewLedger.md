@@ -82,3 +82,13 @@ PowerShell 原测试日志／manifest 的 CRLF 字节通过 [ExactOriginalEviden
 公共扫描三文件已由协调的 PR816 实际合入 main `290d19039bd4c76d0d58dcd606be1de67f693f01`；Root 后续真实 fetch 读到包含 PR819 的 `a9c21058592ef671a742b1ca1dd548276e34fe66`。[只读继承核对](evidence/pr818-main-inheritance-readonly-r4.json)仅证明这些固定对象与本轮实测源码无冲突，不授予新 head CI或生产资格。原未完成 claim40087已如实 abandoned 释放；当前同一原 Task 使用 claim `1ac9f59d-b242-47e6-accf-693b20aa3629`／fence7，写集排除已交接的公共三文件，不重置原 Task 的花费与截止纪律。
 
 此时尚未完成本轮新 head 的全套 CI、合并、生产备份／两 SQL／发布、同 Binding 权限升级或八视图完整真实页面验收。后续主线继承的域名路由和模型观测时序由新 head 集成检查核定；65 项局部测试不替代它们。原 Task 保持 active，第三阶段增强仍未实施。
+
+## r6 授权修复与限定证据（待 Root 采纳的追加段）
+
+当前受查 Source SQL SHA256 `b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8`，序列化 SQL `ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58`。主测试固定为 `3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35`。此前 r5 的两项 Major 已修；[r6 非作者 Source／报告复审](evidence/last-source-zero-security-review-r6.json)为 BOUNDED_PASS，原报告 SHA256 `d880fcc2cdc702644609a02662cae17835ad3b1836552a513cf4893556a85591`，代码与报告分别通过。复制源码、封装 Base64 或制作本包不产生第二份独立审核。
+
+实际限定执行分别为主父 45 PASS／0 FAIL／0 SKIP、兼容组 12 PASS／0 FAIL／0 SKIP、生命周期父 46 PASS／0 FAIL／0 SKIP、UI／HTTP 60 PASS／0 FAIL／0 SKIP，不能相加宣称全 Stack 通过。主父保存七类操作的十四个真实等待后撤权／自然到期及两种部分收窄回滚证据；状态计算 valid=true、空 capability、无人工 diagnostic。生命周期父同时包含独立保留的旧阶段和当前阶段证明，不把全部 46 项描述为只针对新 Source。
+
+UI／API [r2 差异复审](evidence/personal-records-name-order-code-review-r2.json)的原 SHA256 `5b9889b7a03b5a0888582461ef56887cec410eb08f477d59d795f0015dc96cf3`，PASS 仅限受查七文件；overall_naming 仍 CHANGES_REQUIRED，首页 R1-Major-01 尚未关闭。真实浏览器整体验收、后续主线／新 head 完整 CI、受保护合并、生产备份／迁移／发布、同 Binding Native 升级及八视图完整验收仍未完成，本段不关闭原 Task 或第三阶段增强。
+
+[r6 原字节封套](evidence/ExactAuthorizationRepairEvidenceR6.v1.json) SHA256 `20290df1152ec2b30bc00aa267afcce1fc41b47d60181575e471e4937feba370` 保全原报告、原日志、原始失败与固定源码字节；相邻可读副本只按明确 identity／CRLF_to_LF 变换生成。原 SHA 与 Git LF 文本 SHA 分开列明。r4 复现、r5 CHANGES_REQUIRED、r6 两次安装失败及界面失败均保留，不改写为通过。详细范围与所有摘要见[限定工程摘要](evidence/AuthorizationRepairR6BoundedSummary.v1.json) SHA256 `525650d606dfebdf2681ca6201400829ccadc5b7248bdbf504ad5b407b4fe1c8`。

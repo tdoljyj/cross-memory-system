@@ -1,0 +1,767 @@
+{
+  "schema": "clued.authorization-repair-r6-bounded-engineering-summary.v1",
+  "authority_effect": "NONE",
+  "package_revision": "r6-candidate-2",
+  "candidate_status": "OFFLINE_CANDIDATE_ROOT_ADOPTION_REQUIRED",
+  "task": {
+    "id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+    "claim_id": "1ac9f59d-b242-47e6-accf-693b20aa3629",
+    "fence": 7,
+    "packaging_lease_reported_by_root": 9,
+    "budget_reset": false
+  },
+  "source": {
+    "sql1_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+    "sql2_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+    "main_test_sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35"
+  },
+  "original_envelope": {
+    "path": "ExactAuthorizationRepairEvidenceR6.v1.json",
+    "sha256": "20290df1152ec2b30bc00aa267afcce1fc41b47d60181575e471e4937feba370",
+    "schema": "clued.exact-original-engineering-evidence.v1",
+    "byte_preservation_is_not_independent_review": true
+  },
+  "current_bounded_evidence": [
+    {
+      "id": "source-main",
+      "counts": {
+        "pass": 45,
+        "fail": 0,
+        "skip": 0
+      },
+      "run": {
+        "path": "last-source-zero-repair-r6-qualification-run.json",
+        "original_sha256": "c50448ea41c53239eaa1566aff9e77e968898dc3e2d2da6b1fcb9145926f744e",
+        "original_bytes": 778
+      },
+      "log": {
+        "path": "last-source-zero-repair-r6-qualification.log",
+        "original_sha256": "ebb4b4c76dd122d615149a48fb5a4086e40cb194a1baf5a0b2e09eb18483fbdf",
+        "original_bytes": 9027
+      },
+      "scope": "Full owned PG parent; 14 last-loss wait vectors plus 2 partial-loss scenarios. Verify wait branch is ready_profile; canonical-baseline wait is not separately proved."
+    },
+    {
+      "id": "compatibility",
+      "counts": {
+        "pass": 12,
+        "fail": 0,
+        "skip": 0
+      },
+      "run": {
+        "path": "last-source-zero-repair-r6-compat-run.json",
+        "original_sha256": "b09f3c45e6eefa50401d3e3d2893f28472a18c45083ea539e3b20c0f03d550c4",
+        "original_bytes": 995
+      },
+      "log": {
+        "path": "last-source-zero-repair-r6-compat.log",
+        "original_sha256": "9c5d8294da67c00a7628b2f818f094fa955f4ef2f9927e179a7372a1bbe6f235",
+        "original_bytes": 1498
+      },
+      "scope": "Seven current SHA-pin fixtures and two label fixtures; case/root admission parent both execute, not 12 unique cases."
+    },
+    {
+      "id": "lifecycle",
+      "counts": {
+        "pass": 46,
+        "fail": 0,
+        "skip": 0
+      },
+      "report": {
+        "path": "lifecycle-source-compatibility-fixture-repair-r6.json",
+        "original_sha256": "fdde0b4e178bbeb118aa14f343d93dacdbe188cb9fa9f64274a582c0a33e107c",
+        "original_bytes": 13589
+      },
+      "log": {
+        "path": "lifecycle-source-compatibility-final-test-r6.log",
+        "original_sha256": "f2996e2c63395c2a3293ba0e2a69aaa1cd00e5dd125b0bf35f5914cf8f9c7883",
+        "original_bytes": 14252
+      },
+      "scope": "One full frozen fixture parent contains explicitly qualified historical pre-Source proofs and current r6 proofs; 46 does not mean 46 exclusively current-source cases."
+    },
+    {
+      "id": "ui-api",
+      "counts": {
+        "pass": 60,
+        "fail": 0,
+        "skip": 0
+      },
+      "review": {
+        "path": "personal-records-name-order-code-review-r2.json",
+        "original_sha256": "5b9889b7a03b5a0888582461ef56887cec410eb08f477d59d795f0015dc96cf3",
+        "original_bytes": 14411
+      },
+      "log": {
+        "path": "personal-order-and-empty-source-ui-transport-r3.log",
+        "original_sha256": "5178bbaa85580f6fadcfae0a86e7af82e151f44d631b12ce049d4693aa8f9b29",
+        "original_bytes": 6549
+      },
+      "scope": "Frozen seven-file delta bounded PASS; component/HTTP double evidence, not whole browser/SQL/production. Typecheck exit0 comes from Root execution/subject; an empty log alone is not proof."
+    }
+  ],
+  "independent_reviews": [
+    {
+      "reviewer": "/root/last_source_zero_security_review_r5",
+      "role": "NON_AUTHOR_EXACT_SOURCE_AND_REPORT_REVIEW",
+      "report": {
+        "path": "last-source-zero-security-review-r6.json",
+        "original_sha256": "d880fcc2cdc702644609a02662cae17835ad3b1836552a513cf4893556a85591",
+        "original_bytes": 1708
+      },
+      "verdict": "BOUNDED_PASS",
+      "code_qualified": true,
+      "report_qualified": true,
+      "copied_source_is_not_second_review": true
+    },
+    {
+      "reviewer": "/root/pr818_stack_failure_diagnosis",
+      "role": "NON_AUTHOR_FROZEN_UI_API_DELTA_REVIEW",
+      "report": {
+        "path": "personal-records-name-order-code-review-r2.json",
+        "original_sha256": "5b9889b7a03b5a0888582461ef56887cec410eb08f477d59d795f0015dc96cf3",
+        "original_bytes": 14411
+      },
+      "verdict": "PASS",
+      "overall_naming_verdict": "CHANGES_REQUIRED"
+    }
+  ],
+  "historical_evidence": [
+    {
+      "path": "last-source-zero-repair-r5-compat-run.json",
+      "original_sha256": "8647ab47043af31e2d85f76e25a6c8f75ac6cf2f39963da87ec7932055a9c257",
+      "original_bytes": 995,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-compat.log",
+      "original_sha256": "0a5277813e7e8b8083632f63b7bfe8c35c85bd152540c7dc88d3e45424bc596d",
+      "original_bytes": 1498,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-main-final-run.json",
+      "original_sha256": "69e922f77765575a3c9b06b22f5c12cea5cb1d5b8303f84e6248236d17c47c11",
+      "original_bytes": 778,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-main-final.log",
+      "original_sha256": "0a13b19c8484120c7243bbb7530c37fa76a6229479b50d388dd2a29c43da4b46",
+      "original_bytes": 5372,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-main-run.json",
+      "original_sha256": "961010bf3bc402321068dd3bd1affb68e62609d6264df7ec97ff74ec75833b00",
+      "original_bytes": 693,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-main.log",
+      "original_sha256": "4bb1a9da7f5a125d2d65aec228925f3377152ea285d78ec7ed76591c138d6b30",
+      "original_bytes": 3608,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-pins.json",
+      "original_sha256": "407a4a94183293f9f22fb2fbce4bef36c6657dff7949566be0aa938df83f0053",
+      "original_bytes": 1664,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-qualification-run.json",
+      "original_sha256": "a1da6d936581408cc31e7e68c25b58a476b9692a87f7ed84c09f25eb9bc5f19f",
+      "original_bytes": 778,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-qualification.log",
+      "original_sha256": "fb1d29d82a516efa5cf289010104281bd0b025307e2d40aec3af432d2610b211",
+      "original_bytes": 3607,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-source.sql",
+      "original_sha256": "c5fafc46416bd8da81d73501c636de1affad1e6d5eebc6024fd6c1848c55311e",
+      "original_bytes": 131521,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r5-test.mjs",
+      "original_sha256": "130984cd3a66b4d24978bbeda3afbb8b7128bfcd751d4ef13ad60fe34bdb5dc6",
+      "original_bytes": 71326,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r6-candidate-run.json",
+      "original_sha256": "1e581cac67f7559d8ddf0cbe8014baf27b433e63fd175eab953ff8addb680c63",
+      "original_bytes": 778,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r6-candidate.log",
+      "original_sha256": "7d508424c370d47d2f36f0d42066990e82734f1efcf83d774b5d6b16057c58b9",
+      "original_bytes": 2037,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r6-candidate2-run.json",
+      "original_sha256": "59a98f448bb36529ce3a4918c394dbb4ad883e817d5d78d6f027af309010f6eb",
+      "original_bytes": 778,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r6-candidate2.log",
+      "original_sha256": "ef431ffa5b9a0fa31bb3645ba8373b0167f9348526602f6cc52aa7609e26cc2b",
+      "original_bytes": 2124,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r6-candidate3-run.json",
+      "original_sha256": "b3ce48dd51c67dac710307dbaf349a356b2eee7a8a229fd1aa9f5eaf05f390b9",
+      "original_bytes": 778,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-repair-r6-candidate3.log",
+      "original_sha256": "c3cac4d9b7303da1d04356f69ebc18274c576838bb4c8c451bf8f03776942524",
+      "original_bytes": 8865,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-reproduction-r4-harness-first-run.json",
+      "original_sha256": "5d9aa1b7c6b7614264cd963dcddaf1f6d38d902aa9d96edfb8cf249c1a6ad5e8",
+      "original_bytes": 733,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-reproduction-r4-harness-first-run.log",
+      "original_sha256": "b3a66b41eaabdd77f68dac8d8cdd0d68920173990bfeb5b9ed5ef67cfbe8692a",
+      "original_bytes": 745,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-reproduction-r4-run.json",
+      "original_sha256": "9455e51394bd9811e003be199095cc9b1a152d21947175cac6d4e29030659c30",
+      "original_bytes": 1158,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-reproduction-r4.json",
+      "original_sha256": "43c7092175f20a8ae62241dfa7d89791088082ee9a4fa7b2f085fb7dcaca589a",
+      "original_bytes": 12467,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-reproduction-r4.log",
+      "original_sha256": "363d662eaa9f69520913b50edb4bc628c37e3e0ba7dbcf52c6ed0955ac9cb51e",
+      "original_bytes": 553,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-reproduction-r4.mjs",
+      "original_sha256": "f5a7d7b58eb054fd3bf4ef18570f89e55f778991c567e6e8b67afd14484ec334",
+      "original_bytes": 13710,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-safe-repair-proposal-r4.json",
+      "original_sha256": "607c8b99858b7d42ddbed7eafe49ff2cd9274cfdab10a3ccd6092ad3bcb3004d",
+      "original_bytes": 19331,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-safe-repair-r5-manifest.json",
+      "original_sha256": "bdfdfa7388cba9782d68984c5bb0e0bf4ecbecc7da9f0315eaf0e00c51f597ca",
+      "original_bytes": 2858,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-safe-repair-r5.json",
+      "original_sha256": "a366ec376a295f7e7528c53c3fbe04494cfce0998d82146339be0ad050126f41",
+      "original_bytes": 15457,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "last-source-zero-security-review-r5.json",
+      "original_sha256": "04d75b30c25d9298e1f38d1e797177dc3cbad47b12717eb9df66667e93178436",
+      "original_bytes": 3062,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "lifecycle-source-compatibility-final-test-r5.log",
+      "original_sha256": "797d4460a2dd93d0ed3a350a90d55720be22a4b415f7b0a20e211ed8a9f2434a",
+      "original_bytes": 14256,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "lifecycle-source-compatibility-first-test-r4.log",
+      "original_sha256": "383a1906953fe6e1110a9a80be302ef18eb6ea7adc2be9bd83929b91a54dacc3",
+      "original_bytes": 4810,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "lifecycle-source-compatibility-fixture-repair-r4.json",
+      "original_sha256": "7cbb9b33afe05a04e4224f681e52c3ea7ddfefdd8b02975855ff94c51f61917b",
+      "original_bytes": 8582,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "lifecycle-source-compatibility-fixture-repair-r5.json",
+      "original_sha256": "b092feb5968bde1fcd739e1acfc11be9ebd24767cd33da4507b3dd50e5ed7461",
+      "original_bytes": 8198,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "lifecycle-source-compatibility-second-test-r4.log",
+      "original_sha256": "4e5e4244983ae2b4cecc7724a1da6a4bb36aa65d69df16ce1be0d90e2fd8d340",
+      "original_bytes": 14144,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "personal-order-and-empty-source-ui-transport-r1.log",
+      "original_sha256": "818e9faa498103857fa7ce79dc882e0239ac15249608ef4589018275cb2b8f23",
+      "original_bytes": 8191,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "personal-order-and-empty-source-ui-transport-r2.log",
+      "original_sha256": "719393014ae02ed1bb75fbf5a96373afcd612bbf2702ef254303062154fc4f9f",
+      "original_bytes": 7487,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "personal-records-name-order-code-review-r1.json",
+      "original_sha256": "cd6a94fed5692b686c70cd7ec3ca5733032db40aacd0dfc00e0351f0a6403e95",
+      "original_bytes": 5401,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "personal-records-name-order-code-review-subject-r1.json",
+      "original_sha256": "8166020b99ca076508196e740bcf0171ae9d74effd70d36205fa2561a821c710",
+      "original_bytes": 2842,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "personal-records-name-order-eef-frozen-delta-r1.patch",
+      "original_sha256": "ffebc6711c29f5ce90587c26b2ec410029069f925811981f30d0f492ecb84ea2",
+      "original_bytes": 56306,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "personal-records-order-seven-test-r2.log",
+      "original_sha256": "dd007b774569dc382f531816ef55a6634e7effca46aafd2173ae6e0c62de57cf",
+      "original_bytes": 13845,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    },
+    {
+      "path": "pr818-eef-lifecycle-failure-diagnosis-r4.json",
+      "original_sha256": "df51c63e8015ab187bb3b4eb0f6a3d685d4a6a7c35345a021b7ba928c3f5ee24",
+      "original_bytes": 14025,
+      "qualification": "HISTORICAL_ONLY_NOT_R6_ACCEPTANCE"
+    }
+  ],
+  "unresolved": {
+    "home_major": [
+      {
+        "id": "R1-Major-01",
+        "severity": "Major",
+        "path": "apps/clued-cloud/app/page.tsx",
+        "status": "NOT_FIXED_PATH_TEMPORARILY_RELEASED",
+        "basis": "Prior R1 independent review and r2 subject remaining_r1_major; this released path was not reopened or edited in r2.",
+        "prior_review_sha256": "aebf2e8d45f893b456a23d857696a161c256e91ea0ffff0cd8f55410c0938d24",
+        "anchors": [
+          136,
+          260,
+          526,
+          1128
+        ],
+        "description": "Original level=global Standard Work Projection spans project registry and priorities. Its label must not be renamed to the non-project scope=global personal-records content range.",
+        "required_followup": "Coordinate the released home path with its owner, correct the work-projection label, then bind and review its actual successor bytes. This report does not close that Major."
+      }
+    ],
+    "new_head_ci": "NOT_ESTABLISHED",
+    "protected_merge": "NOT_ESTABLISHED",
+    "production_backup_and_migrations": "NOT_ESTABLISHED",
+    "deployment_and_online_checks": "NOT_ESTABLISHED",
+    "same_binding_native_upgrade": "NOT_ESTABLISHED",
+    "whole_browser_and_eight_view_acceptance": "INCOMPLETE",
+    "original_task_or_enhancement_closed": false
+  },
+  "current_subject_checks": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "expected_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+      "bytes": 140719,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "expected_sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+      "bytes": 89137,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+      "expected_sha256": "3398b5f558e7bc3f8b7d76dafa02a3f76af76450fe0384558ccc69aeaa60e2e7",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "3398b5f558e7bc3f8b7d76dafa02a3f76af76450fe0384558ccc69aeaa60e2e7",
+      "bytes": 15101,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-permission-request-db.test.mjs",
+      "expected_sha256": "14b90bf8de5c70d8e14bd84043aa2568ff117b0df438eb6318eac9fe5e8ee179",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "14b90bf8de5c70d8e14bd84043aa2568ff117b0df438eb6318eac9fe5e8ee179",
+      "bytes": 17071,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-closeout.test.mjs",
+      "expected_sha256": "3485c6c437daade50ff774853588d4e8442efe9017c56f4f2ce4c03160a66f3c",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "3485c6c437daade50ff774853588d4e8442efe9017c56f4f2ce4c03160a66f3c",
+      "bytes": 14689,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+      "expected_sha256": "ba3535f24c60d6dd2ac10950ac528f9e5031b808edf6c35c504c3de35c39d3b7",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "ba3535f24c60d6dd2ac10950ac528f9e5031b808edf6c35c504c3de35c39d3b7",
+      "bytes": 36243,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-db.test.mjs",
+      "expected_sha256": "b9300b0556e508fa4bb8ebf536c3d89e63a9d3ada382bfdc27f1564f44a46076",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "b9300b0556e508fa4bb8ebf536c3d89e63a9d3ada382bfdc27f1564f44a46076",
+      "bytes": 23825,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs",
+      "expected_sha256": "4c6e8d461da6ff8004400878d35bab040ae46e91639f1e0d8c1a07a5bb103e1c",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "4c6e8d461da6ff8004400878d35bab040ae46e91639f1e0d8c1a07a5bb103e1c",
+      "bytes": 19804,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-release-door-db.test.mjs",
+      "expected_sha256": "7f9189df6607de3b4374d15de0bafd8ce0e93f69a45a128ad6c8168bf869f92d",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "7f9189df6607de3b4374d15de0bafd8ce0e93f69a45a128ad6c8168bf869f92d",
+      "bytes": 15682,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-scope-db.test.mjs",
+      "expected_sha256": "21a63381df4c53407d37cd00c1dbc70b8a5865c9e880c01586353a6c357309f2",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "21a63381df4c53407d37cd00c1dbc70b8a5865c9e880c01586353a6c357309f2",
+      "bytes": 16281,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-request-bundles-db.test.mjs",
+      "expected_sha256": "f545d69ba2a35853b1af054a7132142c3915cbf016afc4959db5579e1e6d5c64",
+      "roles": [
+        "SOURCE_AUTHOR_FROZEN_SUBJECT"
+      ],
+      "actual_sha256": "f545d69ba2a35853b1af054a7132142c3915cbf016afc4959db5579e1e6d5c64",
+      "bytes": 18988,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "expected_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "roles": [
+        "SERIALIZATION_UNCHANGED"
+      ],
+      "actual_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "bytes": 29711,
+      "match": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+      "expected_sha256": "f72df71e15e2f271e2fcc4d0eacbea0748423c8c3ed01af7d2acf58089d2a647",
+      "roles": [
+        "LIFECYCLE_ACTUAL_FROZEN_FIXTURE"
+      ],
+      "actual_sha256": "f72df71e15e2f271e2fcc4d0eacbea0748423c8c3ed01af7d2acf58089d2a647",
+      "bytes": 154230,
+      "match": true
+    }
+  ],
+  "ui_frozen_subject_checks": [
+    {
+      "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+      "reviewed_sha256": "3e917be778bd8877ee779a57fe548dbe61a0adda9d861c25cfabf69ec14b433a",
+      "actual_sha256": "3e917be778bd8877ee779a57fe548dbe61a0adda9d861c25cfabf69ec14b433a",
+      "bytes": 25421,
+      "exact_match": true,
+      "qualification": "FROZEN_SEVEN_FILE_DELTA_ONLY_NOT_NEW_HEAD_ACCEPTANCE"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/connections/page.tsx",
+      "reviewed_sha256": "3288be602ffa09bb7db94fa7346bb569c147d7961a054ab52e500cf91dec10af",
+      "actual_sha256": "3288be602ffa09bb7db94fa7346bb569c147d7961a054ab52e500cf91dec10af",
+      "bytes": 53778,
+      "exact_match": true,
+      "qualification": "FROZEN_SEVEN_FILE_DELTA_ONLY_NOT_NEW_HEAD_ACCEPTANCE"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/connections/headless.tsx",
+      "reviewed_sha256": "7823381eecdc23f38709c28134bdfdc0451b668af8fcca444e0b1ccbbe59e73e",
+      "actual_sha256": "7823381eecdc23f38709c28134bdfdc0451b668af8fcca444e0b1ccbbe59e73e",
+      "bytes": 27625,
+      "exact_match": true,
+      "qualification": "FROZEN_SEVEN_FILE_DELTA_ONLY_NOT_NEW_HEAD_ACCEPTANCE"
+    },
+    {
+      "path": "apps/clued-cloud/app/policies/page.tsx",
+      "reviewed_sha256": "9c4423fbefb7ea3d6561d25e866019d36a2c722ce93316d59075d5bc7e2c4670",
+      "actual_sha256": "9c4423fbefb7ea3d6561d25e866019d36a2c722ce93316d59075d5bc7e2c4670",
+      "bytes": 14812,
+      "exact_match": true,
+      "qualification": "FROZEN_SEVEN_FILE_DELTA_ONLY_NOT_NEW_HEAD_ACCEPTANCE"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+      "reviewed_sha256": "4cd97a6920549da20edf78f38b2d2453f5b74807708f6734aff45c5ce049cc5d",
+      "actual_sha256": "4cd97a6920549da20edf78f38b2d2453f5b74807708f6734aff45c5ce049cc5d",
+      "bytes": 29900,
+      "exact_match": true,
+      "qualification": "FROZEN_SEVEN_FILE_DELTA_ONLY_NOT_NEW_HEAD_ACCEPTANCE"
+    },
+    {
+      "path": "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+      "reviewed_sha256": "ca214b3bdd28b273dfb2f4c605fe09902e3370716f35ce98fa4d60c52ab465d0",
+      "actual_sha256": "ca214b3bdd28b273dfb2f4c605fe09902e3370716f35ce98fa4d60c52ab465d0",
+      "bytes": 39777,
+      "exact_match": true,
+      "qualification": "FROZEN_SEVEN_FILE_DELTA_ONLY_NOT_NEW_HEAD_ACCEPTANCE"
+    },
+    {
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "reviewed_sha256": "c9ddae11bcf6bd864e8a9378d53d836840f59c227a52c7cbc8069945236150a7",
+      "actual_sha256": "c9ddae11bcf6bd864e8a9378d53d836840f59c227a52c7cbc8069945236150a7",
+      "bytes": 31896,
+      "exact_match": true,
+      "qualification": "FROZEN_SEVEN_FILE_DELTA_ONLY_NOT_NEW_HEAD_ACCEPTANCE"
+    }
+  ],
+  "verified_direct_original_references": [
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/manifest",
+      "original": "last-source-zero-repair-r6-candidate-run.json",
+      "sha256": "1e581cac67f7559d8ddf0cbe8014baf27b433e63fd175eab953ff8addb680c63",
+      "bytes": 778,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/log",
+      "original": "last-source-zero-repair-r6-candidate.log",
+      "sha256": "7d508424c370d47d2f36f0d42066990e82734f1efcf83d774b5d6b16057c58b9",
+      "bytes": 2037,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/manifest",
+      "original": "last-source-zero-repair-r6-candidate2-run.json",
+      "sha256": "59a98f448bb36529ce3a4918c394dbb4ad883e817d5d78d6f027af309010f6eb",
+      "bytes": 778,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/log",
+      "original": "last-source-zero-repair-r6-candidate2.log",
+      "sha256": "ef431ffa5b9a0fa31bb3645ba8373b0167f9348526602f6cc52aa7609e26cc2b",
+      "bytes": 2124,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/manifest",
+      "original": "last-source-zero-repair-r6-candidate3-run.json",
+      "sha256": "b3ce48dd51c67dac710307dbaf349a356b2eee7a8a229fd1aa9f5eaf05f390b9",
+      "bytes": 778,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/log",
+      "original": "last-source-zero-repair-r6-candidate3.log",
+      "sha256": "c3cac4d9b7303da1d04356f69ebc18274c576838bb4c8c451bf8f03776942524",
+      "bytes": 8865,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/manifest",
+      "original": "last-source-zero-repair-r6-qualification-run.json",
+      "sha256": "c50448ea41c53239eaa1566aff9e77e968898dc3e2d2da6b1fcb9145926f744e",
+      "bytes": 778,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/log",
+      "original": "last-source-zero-repair-r6-qualification.log",
+      "sha256": "ebb4b4c76dd122d615149a48fb5a4086e40cb194a1baf5a0b2e09eb18483fbdf",
+      "bytes": 9027,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/manifest",
+      "original": "last-source-zero-repair-r6-compat-run.json",
+      "sha256": "b09f3c45e6eefa50401d3e3d2893f28472a18c45083ea539e3b20c0f03d550c4",
+      "bytes": 995,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/runs/log",
+      "original": "last-source-zero-repair-r6-compat.log",
+      "sha256": "9c5d8294da67c00a7628b2f818f094fa955f4ef2f9927e179a7372a1bbe6f235",
+      "bytes": 1498,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/fixed_artifacts",
+      "original": "last-source-zero-repair-r6-source.sql",
+      "sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+      "bytes": 140719,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6.json",
+      "pointer": "/fixed_artifacts",
+      "original": "last-source-zero-repair-r6-test.mjs",
+      "sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+      "bytes": 89137,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6-manifest.json",
+      "pointer": "/files",
+      "original": "last-source-zero-safe-repair-r6.json",
+      "sha256": "795803c9eb3492c04464543749a811fb5e4c63af2a8a44e3283841ff930b03a9",
+      "bytes": 23164,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6-manifest.json",
+      "pointer": "/files",
+      "original": "last-source-zero-repair-r6-source.sql",
+      "sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+      "bytes": 140719,
+      "verified": true
+    },
+    {
+      "owner": "last-source-zero-safe-repair-r6-manifest.json",
+      "pointer": "/files",
+      "original": "last-source-zero-repair-r6-test.mjs",
+      "sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+      "bytes": 89137,
+      "verified": true
+    },
+    {
+      "owner": "lifecycle-source-compatibility-fixture-repair-r6.json",
+      "pointer": "/run/log",
+      "original": "lifecycle-source-compatibility-final-test-r6.log",
+      "sha256": "f2996e2c63395c2a3293ba0e2a69aaa1cd00e5dd125b0bf35f5914cf8f9c7883",
+      "bytes": 14252,
+      "verified": true
+    },
+    {
+      "owner": "personal-records-name-order-code-review-r2.json",
+      "pointer": "/subject/manifest",
+      "original": "personal-records-name-order-code-review-subject-r2.json",
+      "sha256": "95d7439c7a65f3ee533576daa8f91a76e9fef14ecbcc29f577b0741aa036ffc6",
+      "bytes": 2217,
+      "verified": true
+    },
+    {
+      "owner": "personal-records-name-order-code-review-r2.json",
+      "pointer": "/subject/patch",
+      "original": "personal-records-name-order-eef-frozen-delta-r2.patch",
+      "sha256": "27c27c2dc41f8cdaa0c99399f47effd64b49395f6fae8a8b8965686e5e25e107",
+      "bytes": 29240,
+      "verified": true
+    },
+    {
+      "owner": "personal-records-name-order-code-review-r2.json",
+      "pointer": "/validation/log",
+      "original": "personal-order-and-empty-source-ui-transport-r3.log",
+      "sha256": "5178bbaa85580f6fadcfae0a86e7af82e151f44d631b12ce049d4693aa8f9b29",
+      "bytes": 6549,
+      "verified": true
+    },
+    {
+      "owner": "personal-records-name-order-code-review-r2.json",
+      "pointer": "/validation/typecheck",
+      "original": "personal-order-and-empty-source-typecheck-r2.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "verified": true
+    },
+    {
+      "owner": "personal-records-name-order-code-review-r2.json",
+      "pointer": "/validation/retained_failed_attempts",
+      "original": "personal-order-and-empty-source-ui-transport-r1.log",
+      "sha256": "818e9faa498103857fa7ce79dc882e0239ac15249608ef4589018275cb2b8f23",
+      "bytes": 8191,
+      "verified": true
+    },
+    {
+      "owner": "personal-records-name-order-code-review-r2.json",
+      "pointer": "/validation/retained_failed_attempts",
+      "original": "personal-order-and-empty-source-ui-transport-r2.log",
+      "sha256": "719393014ae02ed1bb75fbf5a96373afcd612bbf2702ef254303062154fc4f9f",
+      "bytes": 7487,
+      "verified": true
+    }
+  ],
+  "limitations": [
+    "No aggregate total or full-product PASS is produced.",
+    "Historical report Source/test hashes remain historical declarations; current subject bytes are checked separately.",
+    "No formal envelope JSON Schema or existing specialized validator was found; this builder validates only the declared byte carrier relations and selected current links.",
+    "No PG/CI/Git/Source/shared-path/Canon operation occurs during packaging.",
+    "New main inheritance and later edits invalidate their exact-file qualification until independently reconciled.",
+    "The original r1 naming report already contains replacement characters in one field; original bytes are preserved without silent reconstruction."
+  ]
+}

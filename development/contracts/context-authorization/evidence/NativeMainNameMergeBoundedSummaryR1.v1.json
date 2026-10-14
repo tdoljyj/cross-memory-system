@@ -1,0 +1,258 @@
+{
+  "schema": "clued.native-main-name-merge-bounded-evidence-summary.v1",
+  "authority_effect": "NONE",
+  "frozen_at_utc": "2026-10-14T17:12:51Z",
+  "status": "CODE_ONLY_BOUNDED_EVIDENCE",
+  "envelope": {
+    "path": "development/contracts/context-authorization/evidence/NativeMainNameMergeExactEvidenceR1.v1.json",
+    "sha256": "4fe712ebfbdac11241e93d2cc9c6edf62018e41957d0181ab19155fbf1a0f5e8",
+    "bytes": 521052
+  },
+  "fixed_subject": {
+    "head": "7ce980e6428c9794e084c3bac684f9ed1b829ab8",
+    "main": "539c6d9eea7a004691b13da38756b06403853b1c",
+    "graph_basis": "Root handoff plus hashed subject metadata; carrier author ran no Git graph inspection.",
+    "code_paths": [
+      "apps/clued-cloud/app/page.tsx",
+      "apps/clued-cloud/app/imprints/ImprintPanel.tsx"
+    ],
+    "contract_worktree_note_separate": true
+  },
+  "inputs": [
+    {
+      "path": "ui-acceptance/native-main-name-merge-independent-review-r1.json",
+      "sha256": "7ca93dd1237fcab84f36e4e375895bd6306cf38f5aeb10c73acaf32b2eea6720",
+      "bytes": 15679,
+      "role": "INDEPENDENT_CODE_REVIEW",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "7ca93dd1237fcab84f36e4e375895bd6306cf38f5aeb10c73acaf32b2eea6720",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/native-main-name-merge-local-check-r1.json",
+      "sha256": "5de6272a9d06965f1993fe4d8c172dde3f11d0fd723277e97d67329293a3294c",
+      "bytes": 8052,
+      "role": "ACTUAL_CHILD_RUN_METADATA",
+      "crlf_count": 111,
+      "prospective_git_text_sha256": "ee8fe852d0ef37edcce1f6a016893ec879eab2c0aa86d207f6933d957685698b",
+      "prospective_git_text_transform": "CRLF_to_LF"
+    },
+    {
+      "path": "ui-acceptance/native-main539-name-merge-subject-r1.json",
+      "sha256": "f13bdb96838bfaad986914fc5786ff9eb0bd57217e960a4346a7d0a2809cfdfd",
+      "bytes": 971,
+      "role": "FIXED_HEAD_MAIN_SUBJECT",
+      "crlf_count": 23,
+      "prospective_git_text_sha256": "b155b99c88d1031eada899f0987b7461e69081056869536d810f6a188b8d292d",
+      "prospective_git_text_transform": "CRLF_to_LF"
+    },
+    {
+      "path": "ui-acceptance/native-main539-name-merge-delta-r1.patch",
+      "sha256": "072ff583f281848824b1f858ebe0aacc33570065f83a1c6e4d0e223a54037a16",
+      "bytes": 27964,
+      "role": "FIXED_MAIN_DELTA",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "072ff583f281848824b1f858ebe0aacc33570065f83a1c6e4d0e223a54037a16",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/native-main539-page.tsx",
+      "sha256": "658a2f8eedee73856a2a967b1d36f40567876ec11284f36b7143cd3fe0a5f82f",
+      "bytes": 57799,
+      "role": "FIXED_MAIN_EXPORT",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "658a2f8eedee73856a2a967b1d36f40567876ec11284f36b7143cd3fe0a5f82f",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/native-main539-ImprintPanel.tsx",
+      "sha256": "06458b2443b32868ad83beb2356093816fa0764f95b288ea8a34e858b0c37293",
+      "bytes": 38549,
+      "role": "FIXED_MAIN_EXPORT",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "06458b2443b32868ad83beb2356093816fa0764f95b288ea8a34e858b0c37293",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/native-main-name-merge-ui-r1.log",
+      "sha256": "a30e33b4885b21abe3946d01d388877cdff826137c1a438617adc46fa08790f9",
+      "bytes": 21958,
+      "role": "ACTUAL_UI_CHILD_LOG",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "a30e33b4885b21abe3946d01d388877cdff826137c1a438617adc46fa08790f9",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/native-main-name-merge-typecheck-r1.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "role": "EMPTY_TYPECHECK_CHILD_LOG",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "repo/apps/clued-cloud/app/page.tsx",
+      "sha256": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+      "bytes": 57846,
+      "role": "EXACT_MERGED_CODE_SNAPSHOT",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "repo/apps/clued-cloud/app/imprints/ImprintPanel.tsx",
+      "sha256": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+      "bytes": 38697,
+      "role": "EXACT_MERGED_CODE_SNAPSHOT",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "repo/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "sha256": "7846563d670ea58423eed2c70e1b285de1d6766d8fe6d037884eca60d3168c29",
+      "bytes": 31999,
+      "role": "SEPARATELY_OBSERVED_WORKTREE_EXPLANATORY_NOTE",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "7846563d670ea58423eed2c70e1b285de1d6766d8fe6d037884eca60d3168c29",
+      "prospective_git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/eight-view-remaining-native-run-checklist-r5.json",
+      "sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43",
+      "bytes": 82238,
+      "role": "NOT_EXECUTED_REVIEW_FOUND_MAJOR_NOT_READY",
+      "crlf_count": 0,
+      "prospective_git_text_sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43",
+      "prospective_git_text_transform": "identity"
+    }
+  ],
+  "qualification": {
+    "code_review": {
+      "verdict": "PASS",
+      "findings": [
+        0,
+        0,
+        0
+      ],
+      "review_sha256": "7ca93dd1237fcab84f36e4e375895bd6306cf38f5aeb10c73acaf32b2eea6720",
+      "reviewer": "/root/pr818_stack_failure_diagnosis",
+      "homepage_predecessor_major": "CLOSED_IN_CODE_ONLY",
+      "limit": "Exact two-code-file successor only; previous reports retain their original verdicts. Carrier creation repeats no independent code review."
+    },
+    "ui_child": {
+      "exit_code": 0,
+      "counts": {
+        "tests": 215,
+        "pass": 215,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "success_trace_lines": 215,
+      "metadata_sha256": "5de6272a9d06965f1993fe4d8c172dde3f11d0fd723277e97d67329293a3294c",
+      "log_sha256": "a30e33b4885b21abe3946d01d388877cdff826137c1a438617adc46fa08790f9",
+      "started_utc": "2026-10-14T16:53:33.046658+00:00",
+      "finished_utc": "2026-10-14T16:53:37.133308+00:00",
+      "args": [
+        "scripts/run-tests.mjs",
+        "--test",
+        "tests/all-contexts-authorization-ui.test.mjs",
+        "tests/authorization-roles-ui.test.mjs",
+        "tests/delegated-oauth-transport.test.mjs",
+        "tests/headless-binding-ui.test.mjs",
+        "tests/owner-grants-ui.test.mjs",
+        "tests/home-project-create.test.mjs",
+        "tests/home-record-currentness.test.mjs",
+        "tests/imprints-panel.test.mjs",
+        "tests/imprints-context-directory.test.mjs",
+        "tests/imprints-read-recovery.test.mjs",
+        "tests/native-first-read-recovery.test.mjs"
+      ],
+      "rerun_by_carrier_author": false,
+      "count_limit": "Not added to earlier 101/60/130/Source/compatibility/lifecycle counts."
+    },
+    "typecheck_child": {
+      "exit_code": 0,
+      "metadata_sha256": "5de6272a9d06965f1993fe4d8c172dde3f11d0fd723277e97d67329293a3294c",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "log_bytes": 0,
+      "started_utc": "2026-10-14T16:53:33.047463+00:00",
+      "finished_utc": "2026-10-14T16:53:40.414694+00:00",
+      "args": [
+        "node_modules/typescript/bin/tsc",
+        "--noEmit",
+        "--incremental",
+        "false"
+      ],
+      "exit_basis": "Actual retained Root local-check metadata; empty log alone is not successful-exit proof.",
+      "rerun_by_carrier_author": false
+    },
+    "outer_wrapper": {
+      "exit_code": 1,
+      "status": "FAILED_AFTER_CHILDREN_AND_REPORT_COMPLETED",
+      "failure": "UnicodeEncodeError: GBK cannot encode U+2714 while printing ensure_ascii=False JSON at check-native-main-merge-r1.py line52.",
+      "observation_basis": "Root's actual exec_command tool result chunk d88fb3; Root reported no independent stderr byte artifact.",
+      "independently_verified_stderr_bytes": false,
+      "child_qualification": "Actual retained UI log and child exit metadata establish the bounded child results; do not state that the outer command exited successfully.",
+      "rerun": false,
+      "original_manifest_not_overwritten": true
+    },
+    "contract_note": {
+      "sha256": "7846563d670ea58423eed2c70e1b285de1d6766d8fe6d037884eca60d3168c29",
+      "status": "SEPARATELY_OBSERVED_WORKTREE_EXPLANATORY_NOTE",
+      "changed_line": 9,
+      "not_asserted_in_fixed_HEAD": true,
+      "review_status": "PASS_EXPLANATORY_DELTA_ONLY",
+      "limit": "Raw full snapshot retained; the explanatory note is not represented as committed in HEAD7ce."
+    },
+    "checklist_r5": {
+      "sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43",
+      "original_status": "PREPARATION_ONLY_NOT_EXECUTED",
+      "status": "NOT_EXECUTED",
+      "readiness": "INDEPENDENT_REVIEW_FOUND_MAJOR_NOT_READY",
+      "reported_finding": "candidate_local_id='r5_source_reference' does not match ^item_[A-Za-z0-9_-]+$; N05 cannot obtain actual Source IDs.",
+      "finding_basis": "Root handoff in this task; no checklist-review byte artifact was provided at this frozen build.",
+      "independent_review_original_included": false,
+      "original_preserved": true,
+      "limit": "Not a ready or executed plan. A successor r6 must be a separate object. This finding does not alter independent two-file code review7ca."
+    },
+    "root_canonical_capture_observation": {
+      "reported_task_version": 92,
+      "reported_event_id": "10813",
+      "reported_receipt_prefix": "35a02961",
+      "basis": "Root instruction only; no Canonical API or original Receipt payload read by carrier author.",
+      "authority_effect": "NONE"
+    },
+    "not_verified": [
+      "CURRENT_HEAD_CI",
+      "D01_COMPONENT_INHERITANCE",
+      "PRODUCTION_DEPLOYMENT",
+      "LIVE_BINDING_PERMISSION",
+      "FULL_EIGHT_VIEW_NATIVE_ACCEPTANCE",
+      "ARCHIVE_ACCEPTANCE",
+      "ENTIRE_PRODUCT_ACCEPTANCE"
+    ]
+  },
+  "historical_reports": "Preserved without overwrite. Closed-in-code-only supersedes only the exact successor homepage code finding, not earlier complete report verdicts.",
+  "operations_performed": [
+    "READ_EXACT_INPUT_BYTES",
+    "EXCLUSIVE_CREATE_NEW_EVIDENCE_FILES",
+    "VERIFY_BASE64_BYTES_AND_HASHES"
+  ],
+  "operations_not_performed": [
+    "SOURCE_EDIT",
+    "COMPONENT_EDIT",
+    "TEST_EDIT",
+    "SPEC_EDIT",
+    "LEDGER_EDIT",
+    "PG",
+    "TEST_RUN",
+    "CI",
+    "GIT_COMMIT",
+    "CANONICAL_OPERATION",
+    "DRIVE"
+  ]
+}
