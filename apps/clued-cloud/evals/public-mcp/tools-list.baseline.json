@@ -1269,7 +1269,7 @@
     },
     {
       "name": "clued_record_list",
-      "description": "Read canonical records at the Global level or for one effective project. By default, only records proven current by the shared server Currentness Core are returned; an active Event remains a separate search_context current source. Set include_history=true explicitly for historical or diagnostic records, which are not authoritative current rows. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id. Required Clued scope: context:read.",
+      "description": "Read canonical records at the overall planning level (compatible level=global) or for one effective project. By default, only records proven current by the shared server Currentness Core are returned; an active Event remains a separate search_context current source. Set include_history=true explicitly for historical or diagnostic records, which are not authoritative current rows. Read overall planning priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id. Opted-in Tasks additionally return task_workflow metadata (the server goal_version, definition, delivery_refs and authorized file locators/Receipts). Each linked source is permission-checked again; an inaccessible source stays unknown. This projection grants no additional read or execution authority. Required Clued scope: context:read.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -1282,7 +1282,8 @@
               "global",
               "project"
             ],
-            "default": "global"
+            "default": "global",
+            "description": "Use global for overall planning, or project for one effective project."
           },
           "project_id": {
             "type": "string",
@@ -1473,6 +1474,262 @@
                   },
                   "note_kind": {
                     "description": "Required for note; log is used for a follow-up note. No database value enum."
+                  },
+                  "task_workflow": {
+                    "type": "object",
+                    "description": "Opt a schema-1 Task into goal and file-delivery completion checks. This marker cannot subsequently be removed. The server derives goal_version from the Task ID, scope, title/body and this definition (excluding delivery_refs). Read that version and definition through clued_record_list or clued_search_context; never invent it. Authorized delivery metadata supplies existing file locators and immutable Receipts after each linked source's permission and current registry are rechecked. Goal/body/input changes make old delivery refs and Owner acceptance stale. These fields do not grant execution or storage permission. Machine mode proves the agreed archived bytes and current registered file version, not fresh provider head or semantic quality. Owner mode needs actual Native Owner acceptance; user_confirmed cannot manufacture it. Business/physical effects remain unsupported for completion.",
+                    "required": [
+                      "contract",
+                      "goal",
+                      "scope",
+                      "completion_level",
+                      "input_versions",
+                      "acceptance_mode",
+                      "conditions",
+                      "deliverables",
+                      "delivery_refs"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "contract": {
+                        "type": "string",
+                        "const": "clued.task-goal-delivery/1"
+                      },
+                      "goal": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4000
+                      },
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4000
+                      },
+                      "completion_level": {
+                        "type": "string",
+                        "enum": [
+                          "artifact",
+                          "business_effect",
+                          "physical_effect"
+                        ]
+                      },
+                      "input_versions": {
+                        "type": "array",
+                        "maxItems": 16,
+                        "items": {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "label",
+                                "kind",
+                                "id",
+                                "version",
+                                "scope"
+                              ],
+                              "properties": {
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "kind": {
+                                  "const": "record"
+                                },
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "version": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "scope": {
+                                  "type": "string",
+                                  "pattern": "^(global|project:[0-9a-fA-F-]{36})$"
+                                }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "label",
+                                "kind",
+                                "id",
+                                "version"
+                              ],
+                              "properties": {
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "kind": {
+                                  "const": "artifact"
+                                },
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "version": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "label",
+                                "kind",
+                                "version"
+                              ],
+                              "properties": {
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                },
+                                "kind": {
+                                  "const": "declared"
+                                },
+                                "version": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 200
+                                }
+                              },
+                              "description": "User-declared external input version, not independently verified. Only owner acceptance mode can acknowledge this limitation."
+                            }
+                          ]
+                        }
+                      },
+                      "acceptance_mode": {
+                        "type": "string",
+                        "enum": [
+                          "machine",
+                          "owner"
+                        ]
+                      },
+                      "conditions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "text",
+                            "kind"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_.-]{1,80}$",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "text": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1000
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "file_integrity",
+                                "owner_review"
+                              ]
+                            },
+                            "deliverable_id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_.-]{1,80}$",
+                              "minLength": 1,
+                              "maxLength": 80
+                            }
+                          }
+                        }
+                      },
+                      "deliverables": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "id",
+                            "label",
+                            "required"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_.-]{1,80}$",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "required": {
+                              "type": "boolean"
+                            },
+                            "path": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1000
+                            },
+                            "mime_type": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 255
+                            },
+                            "sha256": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "description": "Expected criteria, never proof. At least one file must be required. A MIME criterion needs trusted verified MIME; missing MIME is unknown. Renditions cannot replace the original byte identity."
+                        }
+                      },
+                      "delivery_refs": {
+                        "type": "array",
+                        "maxItems": 16,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "deliverable_id",
+                            "job_id",
+                            "goal_version"
+                          ],
+                          "properties": {
+                            "deliverable_id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_.-]{1,80}$",
+                              "minLength": 1,
+                              "maxLength": 80
+                            },
+                            "job_id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "goal_version": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "description": "Bind one existing authorized Storage job to a deliverable and exact server goal_version. The server reads its immutable proof and current registry; caller success, links or hashes are not verification. Queued/unknown jobs cannot complete a required delivery. Old refs may remain as explicitly stale history."
+                        }
+                      }
+                    }
                   }
                 }
               },
