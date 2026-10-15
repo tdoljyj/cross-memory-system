@@ -1,0 +1,17 @@
+{
+  "name": "dev-6a9f92f8ec908191a9ef87838c60177f",
+  "version": "1.0.2",
+  "description": "Kooyumi MCP connection for Codex",
+  "author": {
+    "name": "Kooyumi"
+  },
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Kooyumi",
+    "shortDescription": "Connect to Kooyumi",
+    "longDescription": "Connect Codex directly to the authenticated Kooyumi MCP service. The Kooyumi Skill is installed and enabled separately.",
+    "developerName": "Kooyumi",
+    "category": "Other",
+    "capabilities": []
+  }
+}

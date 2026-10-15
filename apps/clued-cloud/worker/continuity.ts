@@ -1,5 +1,6 @@
 import { projectRpcByTool, projectTools } from "./projects";
 import { withCanonicalMcpError } from "./mcp-error-envelope";
+import { handleMcpProfile, mcpProfileTool, McpProfileError, type McpProfile } from "./mcp-profile";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
@@ -197,6 +198,9 @@ export interface StorageJobQueueMessage {
 
 export interface ContinuityExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
+  /** Server-only identity from the OAuth provider after its current Binding check.
+   * Never populate this from request headers, arguments or a Binding Token. */
+  authenticatedMcpAccount?: McpProfile;
 }
 
 type JsonRpcId = string | number | null;
@@ -2796,11 +2800,24 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
       return json(rpcResult(rpc.id, {}), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/list") {
-      return json(rpcResult(rpc.id, { tools: publicMcpTools(env) }), 200, corsHeaders(request));
+      const tools = publicMcpTools(env);
+      return json(rpcResult(rpc.id, { tools: ctx?.authenticatedMcpAccount
+        ? [...tools, mcpProfileTool] : tools }), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/call") {
       const name = rpc.params?.name;
       const args = rpc.params?.arguments;
+      if (name === mcpProfileTool.name && ctx?.authenticatedMcpAccount) {
+        let result;
+        try {
+          result = await handleMcpProfile(args, async () => ctx.authenticatedMcpAccount);
+        } catch (error) {
+          if (!(error instanceof McpProfileError)) throw error;
+          result = { isError: true, content: [{ type: "text", text: error.code }],
+            structuredContent: { error: { code: error.code } } };
+        }
+        return json(rpcResult(rpc.id, result), 200, { ...corsHeaders(request), "cache-control": "no-store" });
+      }
       const result = withCanonicalMcpError(await callTool(request, env, name, args, ctx));
       return json(rpcResult(rpc.id, result), 200, {
         ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageUploadBeginTool.name || name === storageReadTool.name || name === storageContentTool.name ||
