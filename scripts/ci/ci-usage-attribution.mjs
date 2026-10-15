@@ -3,9 +3,11 @@
 import {ADMISSION_APP_ID} from './clued-work-admission.mjs';
 const SHA = /^[a-f0-9]{40}$/;
 const time = (value) => Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
+// Read-only history spans the check-name cutover; this never admits work.
+const admissionNames=new Set(['kooyumi-admission-verified','clued-admission-verified']);
 
 export function admissionObservation(check, appId, head) {
-  if (check?.name !== 'clued-admission-verified' || check.app?.id !== appId ||
+  if (!admissionNames.has(check?.name) || check.app?.id !== appId ||
       check.head_sha !== head || check.status !== 'completed') return null;
   const match = /^(?:RE-VERIFIED(?: \(state change\))?: )?(ADMITTED|REJECTED|NOT ADMITTED) \[(normal|efficiency|frozen) · (protected|code|docs) · reruns (\d+)\]$/.exec(check.output?.title ?? '');
   const identity = /^pr:([1-9][0-9]{0,9}):run:([0-9]{1,20})$/.exec(check.external_id ?? '');
@@ -62,7 +64,7 @@ export async function collectAttribution({request,repository,runs,pulls,runsOfPu
   if(!appId) return {heads,updates,coverage};
   for(const head of relevant.keys()) {
     try {
-      const listed=await pages(request,`/repos/${repository}/commits/${head}/check-runs?check_name=clued-admission-verified&filter=all`,'check_runs');
+      const listed=await pages(request,`/repos/${repository}/commits/${head}/check-runs?filter=all`,'check_runs');
       if(!listed.complete) continue;
       heads.set(head,listed.items.map(x=>admissionObservation(x,appId,head)).filter(Boolean));
       coverage.heads_complete++;

@@ -224,6 +224,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           MIGRATIONS: ${{ inputs.migrations }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
           CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
         run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
       # OwnerCredential §6.1: each named file from this commit is applied in its
@@ -366,6 +367,7 @@ jobs:
           NODE_OPTIONS: ''
           RELEASE_MODE: ${{ inputs.mode }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
           CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
         run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
       - name: Ensure Storage job queue exists

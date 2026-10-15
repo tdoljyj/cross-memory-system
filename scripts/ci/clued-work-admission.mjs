@@ -2,7 +2,7 @@
 // Work Claim Admission v0.1, step 3 (development/contracts/execution-admission/
 // WorkClaimAdmission.v0.1.md §4.6 L0a/L0b). One script, four modes:
 //
-//   --mode required   the unfiltered `clued-work-admission` check on every PR
+//   --mode required   the unfiltered `kooyumi-work-admission` check on every PR
 //   --mode gate       the `admission-gate` job that heavy self-hosted workflows
 //                     run first; they `needs:` it and run only on admitted=true.
 //                     It does not call Clued and holds no Clued token: it reads
@@ -21,7 +21,7 @@
 //                     the copy on this pull request is adopted (adoptMerged()),
 //                     and returns the merge slot of a merged or closed one
 //
-// The admission run also posts the clued-merge-slot check (mergeSlotState()):
+// The admission run also posts the kooyumi-merge-slot check (mergeSlotState()):
 // a pull request that contains the base branch's tip can merge only while its
 // claim holds the merge slot (agent contract §1.7).
 //
@@ -991,7 +991,7 @@ export async function baseTipCompare(fetchImpl, env, repository, pr) {
 // which makes the head's protected diff against the tip the approved head's
 // diff against its own base. Any protected file a merge brought in differs
 // from the tip in nothing (it is not in the head's diff): it is main's.
-// Only an earlier head whose clued-admission-verified check ever passed is
+// Only an earlier head whose trusted admission check ever passed is
 // asked about, the deepest one first (a head admitted this way leads back to
 // the head the Owner approved), and the Owner review door stays the authority:
 // it admits a head again only while the grant that admitted it is not revoked.
@@ -1034,7 +1034,9 @@ export async function carriedApprovalSource(fetchImpl, env, repository, headSha,
     if (!earlierToTip || !earlierToTip.mergeBase) break;
     const onBase = await compareSummary(fetchImpl, env, repository, earlierToTip.mergeBase, tipCompare.tip);
     if (!onBase || !untouched(onBase.paths)) break;
-    const checks = await appChecksOnHead(fetchImpl, env, repository, earlier);
+    // Historical proof may predate the display-name cutover. The live Owner
+    // door still revalidates the original Grant; current gates use new names.
+    const checks = await appChecksOnHead(fetchImpl, env, repository, earlier, null);
     if (checks.some((check) => check.status === "completed" && check.conclusion === "success")) source = earlier;
     current = earlier;
   }
@@ -1278,12 +1280,12 @@ async function evaluateCore({ env, event, eventName, fetchImpl, workspace, withS
 // merge slot, the trigger ref merge:<owner>/<name>:<branch>, is a first-in,
 // first-out queue whose head holds the slot (migration 20261009080000, Merge
 // Admission step 4); merge_slot_until is set only for the head. The admission run
-// posts the clued-merge-slot check as the clued-admission App: it fails while
+// posts the kooyumi-merge-slot check as the clued-admission App: it fails while
 // the head contains the base branch's tip and the claim does not hold the slot,
 // so once the Owner makes the check required, nobody can merge without it.
 // A head that does not contain the tip passes: GitHub blocks its merge anyway.
 // It is a check of its own because the heavy workflows' gates follow
-// clued-admission-verified, and they must still run on a head that merely
+// kooyumi-admission-verified, and they must still run on a head that merely
 // happens to contain the tip.
 
 // Observe the original evaluator; no permission/result/return-code change.
@@ -1292,7 +1294,7 @@ export async function evaluate(args) {
   return observeEvaluation(evaluateCore,{...args,observation_close_owned:!args.observation_recorder},recorder);
 }
 
-export const MERGE_SLOT_CHECK_NAME = "clued-merge-slot";
+export const MERGE_SLOT_CHECK_NAME = "kooyumi-merge-slot";
 
 export function mergeSlotRef(repository, branch) {
   return `merge:${repository}:${branch}`;
@@ -1326,7 +1328,7 @@ export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, bran
   const [modeState, modeLayer] = String(mode ?? "").split(" · ");
   if (!admitted) {
     return { success: false, title: "Not admitted",
-      summary: "clued-work-admission did not admit this head, so it cannot hold the merge slot." };
+      summary: "kooyumi-work-admission did not admit this head, so it cannot hold the merge slot." };
   }
   switch (state) {
     case "not_required":
@@ -1360,7 +1362,7 @@ export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, bran
 // Re-verification. A check run is a verdict at one moment; the claim behind it
 // can expire, be released or be taken over afterwards. Every hour, for every
 // open, non-draft pull request into the default branch whose newest
-// clued-admission-verified App check (the one the ruleset reads) is a success,
+// kooyumi-admission-verified App check (the one the ruleset reads) is a success,
 // the pull request is evaluated again; when it is no longer admitted, a failing
 // App check is posted on its head, which blocks the merge until a new event
 // re-admits it.
@@ -1377,10 +1379,12 @@ export function mergeSlotCheck({ admitted, state, ref, until, tip, claimId, bran
 export const ADMISSION_WORKFLOW = "clued-work-admission.yml";
 
 export async function appChecksOnHead(fetchImpl, env, repository, headSha, name = APP_CHECK_NAME) {
+  const historical = name === null;
+  const names = new Set(historical ? [APP_CHECK_NAME, "clued-admission-verified"] : [name]);
   const checks = await githubPaged(fetchImpl, env,
-    `/repos/${repository}/commits/${headSha}/check-runs?check_name=${name}&filter=all`, "check_runs");
+    `/repos/${repository}/commits/${headSha}/check-runs?${historical ? "" : `check_name=${name}&`}filter=all`, "check_runs");
   return checks
-    .filter((check) => check && check.name === name && check.head_sha === headSha
+    .filter((check) => check && names.has(check.name) && check.head_sha === headSha
       && check.app && Number(check.app.id) === ADMISSION_APP_ID)
     .sort((a, b) => Number(b.id) - Number(a.id));
 }
@@ -1528,7 +1532,7 @@ export async function reverify(args) {
 }
 
 export function renderReverifySummary(result) {
-  const lines = ["## clued-work-admission re-verification", ""];
+  const lines = ["## kooyumi-work-admission re-verification", ""];
   if (result.mode) {
     lines.push(`**Mode:** \`${result.mode.state}\` · source \`${result.mode.source}\``);
     for (const error of result.mode.errors ?? []) lines.push(`- fail closed to frozen: ${error}`);
@@ -1554,7 +1558,7 @@ export function renderReverifySummary(result) {
 // Gate. The admission-gate jobs run inside `pull_request` workflows, whose
 // workflow file and checkout come from the PR, so they must not hold the Clued
 // token. They do not ask Clued. They read the verdict of the trusted check:
-// the clued-admission-verified check of the clued-admission App that main's
+// the kooyumi-admission-verified check of the clued-admission App that main's
 // admission run of the same event posts on this head (eventAdmissionCheck
 // below); only main's admission run can post it, so neither a look-alike job in a PR workflow nor an admission run of
 // a pull request into another branch satisfies the gate. Both start on the
@@ -1572,7 +1576,7 @@ export const GATE_POLL_SECONDS = 10;
 // Re-review 2, N3c: the pull_requests list of a run names every open pull
 // request with that head, not the one that triggered it, so a pull request
 // into another branch, whose copy of the admission workflow passes anything,
-// could stand in. The trusted signal is the clued-admission-verified check of
+// could stand in. The trusted signal is the kooyumi-admission-verified check of
 // the clued-admission App on the head: its key lives in the clued-admission
 // environment, which deploys from main only, and main's admission job checks
 // out main and runs only for pull requests into main (re-review 6, B1). The
@@ -1660,7 +1664,7 @@ export function rerunAttempt(env) {
   return Number.isInteger(attempt) && attempt > 1 ? attempt : null;
 }
 const RERUN_HOWTO = "re-runs are not admitted; push a new commit";
-const PR_RERUN_HOWTO = "only \"Re-run all jobs\" of the current head's run, as many times as the clued-admission-verified title allows; push a new commit otherwise";
+const PR_RERUN_HOWTO = "only \"Re-run all jobs\" of the current head's run, as many times as the kooyumi-admission-verified title allows; push a new commit otherwise";
 
 // The pull request as it is now, for a re-run (the event payload is the
 // original one). GitHub lets a token with contents: read read it.
@@ -1945,7 +1949,7 @@ async function dispatchAdmitCore({ env, fetchImpl, workspace }) {
 
 export function renderSummary(outcome) {
   const lines = [];
-  lines.push("## clued-work-admission");
+  lines.push("## kooyumi-work-admission");
   lines.push("");
   // Merge Admission v0.1 §10: the mode first, then the rules it gave.
   const admission = outcome.admission_mode;
@@ -2020,14 +2024,14 @@ function appendFile(file, text) {
 
 // ---------------------------------------------------------------------------
 // App-posted check (Owner Decision 37e01bb1). Any job can be named
-// clued-work-admission, so a pull request could add one that passes. This
+// kooyumi-work-admission, so a pull request could add one that passes. This
 // mode posts the admission result once more as the Owner's dedicated GitHub
 // App, whose private key lives only in the clued-admission environment
 // (deployment branches: main). The main ruleset can then require
 // APP_CHECK_NAME from that App, which no pull-request workflow can post.
 // Without the App's id and key it posts nothing and says so.
 
-export const APP_CHECK_NAME = "clued-admission-verified";
+export const APP_CHECK_NAME = "kooyumi-admission-verified";
 
 function base64url(input) {
   return Buffer.from(input).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
@@ -2058,7 +2062,7 @@ async function appRequest(fetchImpl, env, method, route, bearer, body) {
   return response.json();
 }
 
-// Posts one completed clued-admission-verified check as the App. externalId
+// Posts one completed kooyumi-admission-verified check as the App. externalId
 // names the pull request and the run that decided ("pr:<n>:run:<run id>").
 export async function postAppCheckCore({ env, fetchImpl, now = () => Date.now(), headSha, success, title, summary, prNumber, name = APP_CHECK_NAME }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? "").trim();
@@ -2173,7 +2177,7 @@ export async function appCheck({ env, fetchImpl, now = () => Date.now(), observa
   const mode = (env.ADMISSION_MODE ?? "").replace(/[\r\n[\]]/g, " ").trim();
   const result = await postAppCheck({
     env, fetchImpl, now, observation_recorder, headSha, success, title: mode ? `${verdict} [${mode}]` : verdict, prNumber: env.ADMISSION_PR_NUMBER,
-    summary: `clued-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"})${mode ? ` in mode ${mode}` : ""}.`,
+    summary: `kooyumi-work-admission ${success ? "admitted" : "did not admit"} this head (run ${env.GITHUB_RUN_ID ?? "?"})${mode ? ` in mode ${mode}` : ""}.`,
   });
   // The merge slot check on the same head (Owner Decision 2ea795e4).
   const slot = mergeSlotCheck({ admitted: success, state: (env.ADMISSION_MERGE_SLOT ?? "").trim(),
@@ -2335,8 +2339,8 @@ export async function adoptMerged({ env, event, eventName, fetchImpl, workspace 
 }
 
 function renderAdoptSummary(result) {
-  const lines = [result.closed_unmerged ? "## clued-work-admission: merge slot of a closed pull request"
-    : "## clued-work-admission: multi-copy adoption", ""];
+  const lines = [result.closed_unmerged ? "## kooyumi-work-admission: merge slot of a closed pull request"
+    : "## kooyumi-work-admission: multi-copy adoption", ""];
   lines.push(`- Pull request: ${result.pr_ref ?? "n/a"}`);
   if (result.merge_sha) lines.push(`- Merge commit: \`${result.merge_sha}\``);
   if (result.claim_id) lines.push(`- Claim: \`${result.claim_id}\` (${result.scope})`);
@@ -2379,10 +2383,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     console.log(JSON.stringify(result, null, 2));
     appendFile(env.GITHUB_STEP_SUMMARY, renderAdoptSummary(result));
     if (result.error) {
-      console.error(`::error title=clued-work-admission adoption::${result.error}`);
+      console.error(`::error title=kooyumi-work-admission adoption::${result.error}`);
       return 1;
     }
-    if (result.payload?.status === "rejected") console.error(`::warning title=clued-work-admission adoption::${result.reason}`);
+    if (result.payload?.status === "rejected") console.error(`::warning title=kooyumi-work-admission adoption::${result.reason}`);
     return 0;
   }
   if (mode === "app-check") {
@@ -2404,7 +2408,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     console.log(JSON.stringify(result, null, 2));
     appendFile(env.GITHUB_STEP_SUMMARY, renderReverifySummary(result));
     if (result.errors.length) {
-      console.error(`::error title=clued-work-admission re-verification::${result.errors.length} PR(s) could not be re-verified`);
+      console.error(`::error title=kooyumi-work-admission re-verification::${result.errors.length} PR(s) could not be re-verified`);
       return 1;
     }
     return 0;
@@ -2441,20 +2445,20 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
     "",
   ].join("\n"));
   if (outcome.error) {
-    console.error(`::error title=clued-work-admission::${withTokenHint(outcome.error)}`);
+    console.error(`::error title=kooyumi-work-admission::${withTokenHint(outcome.error)}`);
     return 1;
   }
   // PR_NOT_OPEN: the workflow posts no check for it, but the run still fails:
   // the runner hook admits a workflow-changing pull request's jobs on the
   // admission run's success alone (confirmation review MAJOR-N1).
   if (outcome.verdict === "PR_NOT_OPEN") {
-    console.error(`::error title=clued-work-admission::${outcome.reasons.join("; ")}`);
+    console.error(`::error title=kooyumi-work-admission::${outcome.reasons.join("; ")}`);
     return 1;
   }
   if (!outcome.admitted) {
     const text = withTokenHint(`${outcome.verdict}: ${outcome.reasons.join("; ")}`);
     if (mode === "required" || mode === "dispatch-admit") {
-      console.error(`::error title=clued-work-admission::${text}`);
+      console.error(`::error title=kooyumi-work-admission::${text}`);
       return 1;
     }
     // Merge Admission step 2 (review MAJOR-1): on attempt 1 a gate that does

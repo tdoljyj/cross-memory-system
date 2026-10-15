@@ -49,7 +49,7 @@ function rejectedAdmissionFixture(){
   r.record('admission_final',{evaluation_id:uid,entry:'required',completion:'returned',outcome:{head_sha:head,pr_ref:repository+'#727',claim_id:null,enforced:true,admitted:false,verdict:'REJECTED',reasons:['claim_trailer_missing'],admission_mode:{state:'normal',layer:'code'}}});
   for(const e of events)e.source.executed_checkout_sha=subject;
   const n={run:{run_id:'42',run_attempt:1,path:'.github/workflows/clued-work-admission.yml',event:'pull_request_target',head_sha:base,status:'completed',conclusion:'failure',created_at:at(0),run_started_at:at(1),updated_at:at(6),pull_requests:[727]},
-    jobs:[{id:'43',run_id:'42',run_attempt:1,name:'clued-work-admission',status:'completed',conclusion:'failure',created_at:at(1),started_at:at(1),completed_at:at(5),labels:['ubuntu-slim'],steps:[{name:'Verify the work claim with Clued and summarize applicable workflows',conclusion:'failure'}]}]};
+    jobs:[{id:'43',run_id:'42',run_attempt:1,name:'kooyumi-work-admission',status:'completed',conclusion:'failure',created_at:at(1),started_at:at(1),completed_at:at(5),labels:['ubuntu-slim'],steps:[{name:'Verify the work claim with Clued and summarize applicable workflows',conclusion:'failure'}]}]};
   f.native.population_packets=[n];f.attemptRows=[{run_id:'42',attempt:1,pr_number:727,head_sha:base,kind:'admission',status:'completed',conclusion:'failure',started_at:at(1),completed_at:null,
     terminal_interval:{lower_at:at(5),upper_at:at(6),basis:'native_job_completion_lower_and_terminal_update_upper_bounds'}}];
   f.natural.entries=[{run_key:'42:1',job_id:'clued-work-admission',checkout_sha:subject,artifact_digest:'sha256:'+'d'.repeat(64),native_origin:{head_branch:'main',event:'pull_request_target'},packet_raw:JSON.stringify({events})}];
@@ -100,7 +100,8 @@ test('actual provider event time, stable pagination and interval scope are retai
   assert.deepEqual(changed.quarantined_ids,['91']);assert.equal(changed.quarantine[0].observations.length,2);
 });
 
-function intakeVersionFixture({succession=false}={}){
+function intakeVersionFixture({succession=false,renamed=false}={}){
+  const jobId=renamed?'clued-work-admission':'admission',oldName=renamed?'clued-work-admission':'source-job',currentName=renamed?'kooyumi-work-admission':'source-job';
   const paths={script:'scripts/ci/clued-work-admission.mjs',workflow:'.github/workflows/clued-work-admission.yml',
     reverify_workflow:'.github/workflows/clued-work-admission-reverify.yml',policy:'config/merge-admission-policy.json'},runtimePath='scripts/ci/clued-gated-proof-runtime.mjs',
     sourcePaths=[...Object.values(paths),...(succession?[runtimePath]:[])],
@@ -110,20 +111,20 @@ function intakeVersionFixture({succession=false}={}){
     currentTexts={...middleTexts,[paths.script]:'// reviewed current script\n',[paths.policy]:'{"version":"current"}\n',
       ...(succession?{[paths.workflow]:'name: reviewed successor producer\n'}:{})},
     pins=texts=>Object.fromEntries(sourcePaths.map(p=>[p,blob(texts[p])])),oldMap=pins(oldTexts),middleMap=pins(middleTexts),currentMap=pins(currentTexts),
-    currentDescriptor={registration_status:'registered',workflow_path:paths.workflow,workflow_blob:currentMap[paths.workflow],job_id:'admission',
-      job_name:'source-job',source_paths:sourcePaths,source_blobs:currentMap,required_steps:['Export','Upload']},
-    oldDescriptor={...currentDescriptor,workflow_blob:oldMap[paths.workflow],source_blobs:oldMap},
-    middleDescriptor={...currentDescriptor,workflow_blob:middleMap[paths.workflow],source_blobs:middleMap},
-    descriptor={...currentDescriptor,previous_source_blobs:[oldMap,...(succession?[middleMap]:[])]},middle='c'.repeat(40),
+    currentDescriptor={registration_status:'registered',workflow_path:paths.workflow,workflow_blob:currentMap[paths.workflow],job_id:jobId,
+      job_name:currentName,source_paths:sourcePaths,source_blobs:currentMap,required_steps:['Export','Upload']},
+    oldDescriptor={...currentDescriptor,job_name:oldName,workflow_blob:oldMap[paths.workflow],source_blobs:oldMap},
+    middleDescriptor={...currentDescriptor,job_name:oldName,workflow_blob:middleMap[paths.workflow],source_blobs:middleMap},
+    descriptor={...currentDescriptor,previous_source_blobs:[oldMap,...(succession?[middleMap]:[])],...(renamed?{previous_job_name:oldName}:{})},middle='c'.repeat(40),
     textsByCommit={[base]:oldTexts,[head]:currentTexts,...(succession?{[middle]:middleTexts}:{})},records=[];
   for(const [run,artifactId,commit]of [['42','9',base],...(succession?[['46','13',middle]]:[]),['44','11',head]]){
-    const r=createNaturalRecorder({env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:run,GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'admission'},
+    const r=createNaturalRecorder({env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:run,GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:jobId},
       sourcePath:paths.script,write:()=>{},now:()=>at(1)}),session={...r.finish(),executed_checkout_sha:commit},
-      bytes=Buffer.from(JSON.stringify({schema:'clued.merge-admission-natural-artifact/1',identity:{repository,run_id:run,attempt:1,logical_job_key:'admission'},
+      bytes=Buffer.from(JSON.stringify({schema:'clued.merge-admission-natural-artifact/1',identity:{repository,run_id:run,attempt:1,logical_job_key:jobId},
         events:[],sessions:[session],files:[],local_stream:{status:'CLOSED_LOCAL_STREAM',known_gaps:[]}})),
-      artifact={id:artifactId,name:`clued-r9-natural-source-${run}-1-admission`,expired:false,digest:'sha256:'+h(bytes),workflow_run:{id:run,head_sha:commit}},
+      artifact={id:artifactId,name:`clued-r9-natural-source-${run}-1-${jobId}`,expired:false,digest:'sha256:'+h(bytes),workflow_run:{id:run,head_sha:commit}},
       native={run:{run_id:run,run_attempt:1,status:'completed',conclusion:'success',head_sha:commit,path:paths.workflow,event:'push'},
-        jobs:[{id:String(Number(run)+1),name:'source-job',status:'completed',conclusion:'success',steps:['Export','Upload'].map(name=>({name,status:'completed',conclusion:'success'}))}]};
+        jobs:[{id:String(Number(run)+1),name:commit===head?currentName:oldName,status:'completed',conclusion:'success',steps:['Export','Upload'].map(name=>({name,status:'completed',conclusion:'success'}))}]};
     records.push({native,bytes,artifact,commit});
   }
   const routes=[],request=async route=>{
@@ -162,6 +163,25 @@ test('workflow/script succession retains three exact runtime Source versions and
     authenticatedEntries:entries,authenticatedSourceBytes:sources,request:async()=>{reads++;throw Error('OLD_WF_CACHE_MUST_NOT_REREAD');}});
   assert.equal(reused.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(reused.gaps));assert.equal(reads,0);assert.deepEqual(reused.entries,entries);
   assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('check-name migration binds each Native job name to its exact current or historical workflow bytes',async()=>{
+  const f=intakeVersionFixture({succession:true,renamed:true}),r=await f.collect();
+  assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,3);
+  for(const [i,d]of [f.oldDescriptor,f.middleDescriptor,f.currentDescriptor].entries())
+    assert.equal(r.entries[i].descriptor_digest,h(JSON.stringify(d)));
+  const old=await f.collect({native:{status:'COMPLETE',population_packets:[f.records[0].native]},
+    selection:{...f.selection,natural_producers:[f.oldDescriptor]}});
+  assert.equal(old.status,'NATIVE_ORIGIN_BOUND');assert.equal(old.entries[0].descriptor_digest,r.entries[0].descriptor_digest);
+  let reads=0;const reused=await f.collect({native:{status:'COMPLETE',population_packets:[f.records[0].native]},
+    authenticatedEntries:old.entries,authenticatedSourceBytes:old.source_bytes,
+    request:async()=>{reads++;throw Error('OLD_NAME_CACHE_MUST_NOT_REREAD');}});
+  assert.equal(reused.status,'NATIVE_ORIGIN_BOUND');assert.equal(reads,0);
+  for(const [index,name]of [[0,'kooyumi-work-admission'],[2,'clued-work-admission'],[2,'unreviewed-name']]){
+    const bad=intakeVersionFixture({succession:true,renamed:true});bad.records[index].native.jobs[0].name=name;
+    const refused=await bad.collect({native:{status:'COMPLETE',population_packets:[bad.records[index].native]}});
+    assert.equal(refused.status,'PARTIAL',name);assert.equal(refused.entries.length,0,name);
+  }
 });
 
 test('an old workflow cannot borrow successor script or runtime bytes outside its declared complete Source version',async()=>{

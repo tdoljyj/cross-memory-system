@@ -15,6 +15,17 @@ test('bind observation to exact App, head, completed verdict and fixed title gra
   for(const delta of [{output:{title:'ADMITTED [normal · anything · reruns 1]'}},
     {output:{title:'REJECTED: invented private failure reason'}}]) assert.equal(admissionObservation(check(delta),APP,sha(1)).state,null);
 });
+test('read-only history accepts both check-name generations with the same App/head boundary',async()=>{
+  for(const name of ['clued-admission-verified','kooyumi-admission-verified']){
+    assert.equal(admissionObservation(check({name}),APP,sha(1)).state,'normal');
+    assert.equal(admissionObservation(check({name,app:{id:15368}}),APP,sha(1)),null);
+  }
+  assert.equal(admissionObservation(check({name:'kooyumi-merge-slot'}),APP,sha(1)),null);
+  const g=github(),request=g.request;
+  g.request=route=>route.includes('/check-runs?')?{ok:true,body:{total_count:2,check_runs:[check(),check({id:2,name:'kooyumi-admission-verified'})]}}:request(route);
+  const data=await collect(g);assert.equal(data.heads.get(sha(1)).length,2);
+  assert.equal(g.calls.some(route=>route.includes('check_name=')),false);
+});
 test('later re-verification never rewrites earlier job state',()=>{
   const first=admissionObservation(check(),APP,sha(1));
   const later=admissionObservation(check({id:2,completed_at:'2026-10-05T11:00:00Z',output:{title:'RE-VERIFIED (state change): REJECTED [frozen · protected · reruns 0]'}}),APP,sha(1));

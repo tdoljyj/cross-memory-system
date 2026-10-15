@@ -100,6 +100,22 @@ test('five original workflow blocks preserve exact accepted successors and added
   for(const name of ['clued-work-admission.yml','clued-work-admission-reverify.yml','clued-work-admission-dispatch.yml','clued-merge-executor.yml','clued-merge-slot-ci.yml']){
     const old=execFileSync('git',['show',ORIGINAL_WORKFLOW_BASE+':.github/workflows/'+name],{cwd:repo,encoding:'utf8'}),next=fs.readFileSync(path.join(stage,'.github/workflows',name),'utf8').replace(/\r\n/g,'\n');
     let ordinary=name==='clued-merge-executor.yml'?next.replace(/  workflow_dispatch:\n    inputs:[\s\S]*?\npermissions:/,'  workflow_dispatch:\n\npermissions:').replace(/        if: \$\{\{ !inputs.measurement_opt_in \}\}\n/,''):next;
+    // The reviewed display-name migration changes no trigger, permission,
+    // environment, job ID or executable. Normalize only these exact lines
+    // when comparing with the immutable pre-migration workflow witness.
+    const renamedLines=name==='clued-work-admission.yml'?[
+      ['name: kooyumi-work-admission','name: clued-work-admission'],
+      ['    name: kooyumi-work-admission','    name: clued-work-admission'],
+      ['# kooyumi-work-admission; both are GitHub Actions check runs. Closing that needs','# clued-work-admission; both are GitHub Actions check runs. Closing that needs'],
+      ['          # Owner Decision 2ea795e4: the kooyumi-merge-slot check on the same','          # Owner Decision 2ea795e4: the clued-merge-slot check on the same'],
+    ]:name==='clued-merge-slot-ci.yml'?[
+      ["# fails the head's kooyumi-merge-slot check. The hourly report is a step of","# fails the head's clued-merge-slot check. The hourly report is a step of"],
+      ['      - kooyumi-work-admission','      - clued-work-admission'],
+    ]:[];
+    for(const [current,previous]of renamedLines){
+      const lines=ordinary.split('\n');assert.equal(lines.filter(line=>line===current).length,1,name+': exact reviewed display-name change');
+      ordinary=lines.map(line=>line===current?previous:line).join('\n');
+    }
     const additions=acceptedAdditions[name];
     if(additions){
       const exact=additions.anchor+additions.lines.join('\n')+'\n';
@@ -186,9 +202,9 @@ test('actual publication begin/finish evidence survives the recorder and binds N
     const native={repository:env.GITHUB_REPOSITORY,pr_number:727,head_sha:head,run_id:'42',run_attempt:1,
       native_pr:{number:727,head_sha:head,base_repository:env.GITHUB_REPOSITORY,base_ref:'main',default_branch:'main',state:'open',draft:false},
       native_run:{id:'42',run_attempt:1,event:'pull_request_target',path:'.github/workflows/clued-work-admission.yml',head_sha:base,head_branch:'main',pull_requests:[727],status:'completed',conclusion:'success',run_started_at:at},
-      native_job:{id:'101',run_id:'42',run_attempt:1,name:'clued-work-admission',status:'completed',conclusion:'success'}};
+      native_job:{id:'101',run_id:'42',run_attempt:1,name:'kooyumi-work-admission',status:'completed',conclusion:'success'}};
     const f={...observed,kind:'admission_final',source:{...observed.source,executed_checkout_sha:subject},payload:{entry:'required',final_decision_observed:true,head_sha:head,pr_ref:env.GITHUB_REPOSITORY+'#727',claim_id:null,verdict:'ADMITTED',admitted:true,reason_codes:[]}};
-    const app={id:555,app:{id:5164952},name:'clued-admission-verified',head_sha:head,status:'completed',conclusion:result.conclusion,external_id:posted.external_id};
+    const app={id:555,app:{id:5164952},name:'kooyumi-admission-verified',head_sha:head,status:'completed',conclusion:result.conclusion,external_id:posted.external_id};
     const args={finalEvent:f,appEvent:observed,nativeIdentity:native,appNativeObservation:app,sourceCheckoutSha:subject};
     const mapped=admissionEnvelopeInput(args);assert.equal(mapped.status,revoked?'PARTIAL':'ENVELOPE_INPUT_CANDIDATE');
     if(!revoked){assert.equal(mapped.packet.app_observation.external_id,posted.external_id);
@@ -267,7 +283,7 @@ test('positive final packet maps safe natural fields through the real four-sourc
     native_pr:{number:727,head_sha:head,base_repository:env.GITHUB_REPOSITORY,base_ref:'main',default_branch:'main',state:'open',draft:false},
     native_run:{id:'42',run_attempt:1,event:'pull_request_target',path:fixture.paths.workflow,head_sha:base,head_branch:'main',pull_requests:[727],
       status:'completed',conclusion:'failure',run_started_at:'2026-10-11T06:00:00.000Z'},
-    native_job:{id:'43',run_id:'42',run_attempt:1,name:'clued-work-admission',status:'completed',conclusion:'failure'}};
+    native_job:{id:'43',run_id:'42',run_attempt:1,name:'kooyumi-work-admission',status:'completed',conclusion:'failure'}};
   const mapped=admissionEnvelopeInput({finalEvent:events[0],nativeIdentity:native,sourceCheckoutSha:subject});
   assert.equal(mapped.status,'ENVELOPE_INPUT_CANDIDATE');
   const expected={schema:'clued.merge-admission-four-source-expectations/1',repository:env.GITHUB_REPOSITORY,scope:targetScope,
@@ -325,10 +341,12 @@ test('runtime loader validates the current Source registry against actual bytes 
   assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);
   const expected=JSON.parse(r.reviewed_expected_sources_raw);
   assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,cfg.previous_execution_sources);
-  assert.equal(cfg.previous_admission_sources.length,1);assert.equal(expected.admission_sources.length,2);
+  assert.equal(cfg.previous_admission_sources.length,2);assert.equal(expected.admission_sources.length,3);
   assert.deepEqual(expected.admission_sources[0],{...cfg.admission_source,source_checkout_sha:subject,default_branch:'main'});
   assert.deepEqual(expected.admission_sources.slice(1),cfg.previous_admission_sources);
-  const old=expected.admission_sources[1];assert.match(old.source_checkout_sha,/^ea7d[a-f0-9]{36}$/);assert.equal(old.default_branch,'main');
+  const old=expected.admission_sources.find(s=>s.source_checkout_sha==='ea7d09330583e3fc417997b621579de16fee239e');assert.ok(old);assert.equal(old.default_branch,'main');
+  const beforeRename=expected.admission_sources.find(s=>s.source_checkout_sha==='90b9e5acfdf5e459bf5a188ff1ebb7a729f2a305');
+  assert.ok(beforeRename);assert.equal(beforeRename.default_branch,'main');
   assert.equal(old.grammar,'clued.work-admission.evaluate-observation/1');
   for(const k of ['script','workflow','reverify_workflow','policy']){assert.equal(old[k+'_path'],cfg.admission_source[k+'_path']);assert.match(old[k+'_blob'],/^[a-f0-9]{40}$/);}
   assert.deepEqual(r.natural_selection.execution_source_templates,[expected.execution_source,...cfg.previous_execution_sources]);
@@ -562,13 +580,13 @@ test('actual RPC offset times retain microseconds, optional receipts do not repl
     result:{kind:'verdict',verdict:'ADMITTED',reasons:[],payload:{verified_at:'2026-10-11T06:00:02.123456+00:00',claim:{fence:31}}}});
   r.record('admission_final',{entry:'required',evaluation_id:evaluation,completion:'returned',outcome:{head_sha:head,pr_ref:env.GITHUB_REPOSITORY+'#727',
     claim_id:claim,enforced:true,admitted:true,verdict:'ADMITTED',reasons:[],admission_mode:{state:'normal',layer:'code'}}});
-  r.record('app_check',{prNumber:727,headSha:head,name:'clued-admission-verified',admitStepOutcome:'success',result:{check_run_id:555,posted:true,conclusion:'success',external_id:'pr:727:run:42'}});
+  r.record('app_check',{prNumber:727,headSha:head,name:'kooyumi-admission-verified',admitStepOutcome:'success',result:{check_run_id:555,posted:true,conclusion:'success',external_id:'pr:727:run:42'}});
   for(const e of events)e.source.executed_checkout_sha=subject;
   const native={repository:env.GITHUB_REPOSITORY,pr_number:727,head_sha:head,run_id:'42',run_attempt:1,
     native_pr:{number:727,head_sha:head,base_repository:env.GITHUB_REPOSITORY,base_ref:'main',default_branch:'main',state:'open',draft:false},
     native_run:{id:'42',run_attempt:1,event:'pull_request_target',path:fixture.paths.workflow,head_sha:base,head_branch:'main',pull_requests:[727],status:'completed',conclusion:'success',run_started_at:'2026-10-11T06:00:00.000Z'},
-    native_job:{id:'43',run_id:'42',run_attempt:1,name:'clued-work-admission',status:'completed',conclusion:'success'}},
-    app={id:555,app:{id:5164952},name:'clued-admission-verified',head_sha:head,status:'completed',conclusion:'success',external_id:'pr:727:run:42'},
+    native_job:{id:'43',run_id:'42',run_attempt:1,name:'kooyumi-work-admission',status:'completed',conclusion:'success'}},
+    app={id:555,app:{id:5164952},name:'kooyumi-admission-verified',head_sha:head,status:'completed',conclusion:'success',external_id:'pr:727:run:42'},
     args={finalEvent:events[1],claimEvent:events[0],appEvent:events[2],nativeIdentity:native,appNativeObservation:app,sourceCheckoutSha:subject},
     check=m=>four.finalAdmissionObservation(m.packet_raw,JSON.stringify(fixture.bytes),JSON.stringify(expected));
   assert.equal(events[0].payload.verified_at,'2026-10-11T06:00:02.123456Z');assert.equal(events[0].payload.head_admitted_receipt_id,null);

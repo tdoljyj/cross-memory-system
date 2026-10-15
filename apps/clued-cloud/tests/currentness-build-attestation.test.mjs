@@ -17,7 +17,7 @@ test('live attestation reads the fixed HTTPS production health endpoint and exac
     assert.equal(options.redirect, 'error');
     return response({ status: 'ok', service: 'clued-continuity', source_commit: sha });
   });
-  assert.equal(calledUrl, 'https://clued.pixelgrav.com/healthz');
+  assert.equal(calledUrl, 'https://kooyumi.pixelgrav.com/healthz');
   assert.equal(calledUrl, PRODUCTION_HEALTH_URL);
   assert.equal(result, sha);
 });

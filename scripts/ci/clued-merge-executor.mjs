@@ -37,7 +37,7 @@ import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-p
 import { createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
 export const OPT_IN = /^\s*Clued-Auto-Merge:\s*([0-9a-f]{40})\s*$/im;
-const VERIFIED_CHECK = "clued-admission-verified";
+const VERIFIED_CHECK = "kooyumi-admission-verified";
 
 // The head the pull request body opts in to auto-merge for, or null.
 export function optInSha(body) {
@@ -98,7 +98,7 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
   }
   // A fully admitted queue head may recover a gate-only run even before
   // opting in to merge. Rerunning CI never grants permission to merge.
-  if (!admission.admitted || !admission.mode) return stop("the head's clued-admission-verified check for this pull request has not admitted it");
+  if (!admission.admitted || !admission.mode) return stop("the head's kooyumi-admission-verified check for this pull request has not admitted it");
   // The executor's own state wins over the title's: a switch to frozen applies at once.
   const rules = effectiveRules(policy, state, layer);
   if (rules.auto_merge !== "allowed") return stop(`auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer`);

@@ -4,7 +4,9 @@
 import {fileURLToPath} from 'node:url';
 import {appJwt,cluedRpc,ADMISSION_APP_ID} from './clued-work-admission.mjs';
 
-const names=new Set(['clued-admission-verified','clued-merge-slot']);
+// Retained checks can outlive the display-name migration. Revoke both names
+// from the same trusted App; only the Kooyumi names grant current admission.
+const names=new Set(['kooyumi-admission-verified','kooyumi-merge-slot','clued-admission-verified','clued-merge-slot']);
 const repositoryPattern=/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 async function api(fetchImpl,env,token,method,route,body) {
   const response=await fetchImpl((env.GITHUB_API_URL??'https://api.github.com').replace(/\/$/,'')+route,{
