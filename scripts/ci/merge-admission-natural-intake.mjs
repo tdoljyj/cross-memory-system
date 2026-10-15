@@ -16,14 +16,23 @@ const refuse=x=>{throw Error(x);};
 function descriptorVariants(d){
   const hasHistory=Object.hasOwn(d,'previous_source_blobs');
   const renamed=Object.hasOwn(d,'previous_job_name');
+  const versioned=Object.hasOwn(d,'previous_source_versions');
+  if(versioned&&(hasHistory||renamed))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   if(renamed&&(d.workflow_path!=='.github/workflows/clued-work-admission.yml'||
     d.job_id!=='clued-work-admission'||d.job_name!=='kooyumi-work-admission'||
     d.previous_job_name!=='clued-work-admission'||!hasHistory))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   if(d.source_blobs===undefined){
-    if(hasHistory)refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+    if(hasHistory||versioned)refuse('NATURAL_PRODUCER_SELECTION_INVALID');
     return [d];
   }
-  const history=hasHistory?d.previous_source_blobs:[];
+  const versions=versioned?d.previous_source_versions:[];
+  if(versioned&&(!Array.isArray(versions)||versions.length>4||!d.source_paths.includes(d.workflow_path)||
+    versions.some(v=>!object(v)||Object.keys(v).sort().join('|')!=='job_name|source_blobs'||
+      typeof v.job_name!=='string'||!v.job_name||v.job_name!==v.job_name.trim()||
+      v.job_name!==d.job_name&&!(d.workflow_path==='.github/workflows/clued-work-admission.yml'&&
+        d.job_id==='clued-work-admission'&&d.job_name==='kooyumi-work-admission'&&v.job_name==='clued-work-admission'))))
+    refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+  const history=versioned?versions.map(v=>v.source_blobs):hasHistory?d.previous_source_blobs:[];
   if(renamed&&(!history.length||history.some(map=>map?.[d.workflow_path]===d.workflow_blob)))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   if(!Array.isArray(history)||history.length>4||new Set(d.source_paths).size!==d.source_paths.length||
     d.source_paths.some(path=>typeof path!=='string'))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
@@ -36,8 +45,8 @@ function descriptorVariants(d){
   // History authorizes exact historical bytes only. Exclude that declaration
   // from each version's digest so a previously authenticated descriptor keeps
   // its original identity, field order and complete source-map identity.
-  const {previous_source_blobs,previous_job_name,...base}=d;
-  return maps.map((source_blobs,index)=>({...base,job_name:index&&renamed?previous_job_name:d.job_name,
+  const {previous_source_blobs,previous_job_name,previous_source_versions,...base}=d;
+  return maps.map((source_blobs,index)=>({...base,job_name:index&&versioned?versions[index-1].job_name:index&&renamed?previous_job_name:d.job_name,
     workflow_blob:source_blobs[d.workflow_path]??d.workflow_blob,source_blobs}));
 }
 function executionSnapshotValid(snapshot,templates){

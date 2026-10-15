@@ -20,7 +20,7 @@ Binding portal: ${ORIGIN}/
 const servedContract = contract + serviceTail, contractSha = sha256(contract), servedSha = sha256(servedContract);
 function healthy() {
   return { commit, revision: '0.2.14', contract, notBefore,
-    page: { status: 200, body: '<b>Kooyumi Connect</b>' }, legacyPage: { status: 200, body: '<b>Kooyumi Connect</b>' },
+    page: { status: 200, body: '<b>Kooyumi Connect</b>' },
     smoke: { status: 200, body: { ok: true, connect_service: 'clued-connect', revision: '0.2.14', source_commit: commit,
       checked_at: '2026-10-15T10:00:01Z', state_machine: { ok: true },
       upstream: { origin: ORIGIN, resource: ORIGIN + '/mcp', healthz: 200, continuity_policy: 200, official_skill: 200, official_skill_sha256: servedSha } } },
@@ -105,7 +105,7 @@ test('production verification refuses wrong code, old issuers, failed upstream c
     [value => { value.bootstrap.status = 503; }, 'connect_bootstrap_http_503'],
     [value => { value.resource.body.authorization_servers = [LEGACY_ORIGIN]; }, 'connect_resource_mismatch'],
     [value => { value.issuer.body.token_endpoint = LEGACY_ORIGIN + '/oauth/token'; }, 'connect_issuer_mismatch'],
-    [value => { value.legacyPage.body = '<b>Clued Connect</b>'; }, 'connect_brand_mismatch'],
+    [value => { value.page.body = '<b>Clued Connect</b>'; }, 'connect_brand_mismatch'],
     [value => { value.page.status = 302; }, 'connect_page_http_302'],
   ];
   for (const [mutate, expected] of cases) await t.test(expected, () => {
@@ -117,7 +117,7 @@ test('production verification refuses wrong code, old issuers, failed upstream c
 test('production observation uses public GET checks only and refuses redirects or transport failure', async () => {
   const requested = [], value = healthy();
   const bodies = new Map([
-    [ORIGIN + '/connect', value.page], [LEGACY_ORIGIN + '/connect', value.legacyPage],
+    [ORIGIN + '/connect', value.page],
     [ORIGIN + '/connect/api/smoke', value.smoke], [ORIGIN + '/.well-known/oauth-protected-resource/mcp', value.resource],
     [ORIGIN + '/.well-known/oauth-authorization-server', value.issuer],
     [ORIGIN + '/clued-agent.md', value.servedContract], [ORIGIN + '/v1/continuity/bootstrap', value.bootstrap],
@@ -137,6 +137,8 @@ test('production observation uses public GET checks only and refuses redirects o
     return typeof expected.body === 'string' ? new Response(expected.body) : Response.json(expected.body);
   });
   assert.deepEqual(new Set(requested), new Set(bodies.keys()));
+  assert.ok(requested.every(url => new URL(url).origin === ORIGIN), 'new releases must not require legacy DNS or availability');
+  assert.equal(Object.hasOwn(checks, 'legacyPage'), false);
   assert.deepEqual(verifyConnectRelease({ ...value, ...checks }), []);
   const unavailable = await collectChecks(commit, async () => { throw new Error('redirect or network failure'); });
   assert.ok(Object.values(unavailable).every(result => result.status === 0 && result.body === null));

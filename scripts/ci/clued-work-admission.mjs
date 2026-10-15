@@ -765,7 +765,7 @@ export async function ownerReviewDoor(fetchImpl, env, repository, headSha, works
     ? (env.CLUED_CONFIRM_ORIGIN ?? DEFAULT_CONFIRM_ORIGIN).replace(/\/$/, "") + request.confirm_path : null;
   return { kind: body.admitted === true ? "granted" : "pending", resource, grant: body.grant ?? null, confirm_url: confirmUrl };
 }
-const DEFAULT_CONFIRM_ORIGIN = "https://clued.pixelgrav.com";
+const DEFAULT_CONFIRM_ORIGIN = "https://kooyumi.pixelgrav.com";
 
 // ---------------------------------------------------------------------------
 // Clued database RPC (PostgREST, publishable key, Binding token hash).

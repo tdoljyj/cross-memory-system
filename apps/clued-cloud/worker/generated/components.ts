@@ -9,7 +9,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "hook.runner-job-started": "1.0.0",
   "hook.capture-guard": "1.0.2",
   "hook.work-claim-guard": "1.1.4",
-  "hook.version-check": "1.0.1",
+  "hook.version-check": "1.0.2",
   "hook.run-python": "1.0.1",
   "hook.settings": "1.1.1",
   "script.runner-handover-qualifier": "1.0.0",

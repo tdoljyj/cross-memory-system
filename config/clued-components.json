@@ -101,13 +101,13 @@
     {
       "id": "hook.version-check",
       "kind": "hook",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Claude Code hook comparing component versions with the service.",
       "root": "scripts/hooks",
       "files": [
         "clued_version_check.py"
       ],
-      "content_sha256": "58138bd1000b02b9c95a49140634ebab92d73d09c24e7ae5d1aab515dc100c19",
+      "content_sha256": "4bff0ee22d7e266a9f06b4bfce4a985e1f7f14cd6bbbde6f4d6adb01ec97ffb8",
       "version_marker": {
         "file": "clued_version_check.py",
         "pattern": "__version__ = \"{version}\""

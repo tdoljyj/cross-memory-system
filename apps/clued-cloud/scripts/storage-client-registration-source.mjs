@@ -13,7 +13,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const SHA1 = /^[0-9a-f]{40}$/;
 const LIMIT = 65536;
-const RESOURCE = 'https://clued.pixelgrav.com/mcp';
+const RESOURCE_BINDINGS = Object.freeze({
+  'https://clued.pixelgrav.com/mcp': 'OAUTH_KV',
+  'https://kooyumi.pixelgrav.com/mcp': 'KOOYUMI_OAUTH_KV',
+});
 const CLIENT_KEYS = ['clientId', 'clientName', 'redirectUris', 'grantTypes', 'responseTypes',
   'tokenEndpointAuthMethod', 'registrationDate', 'logoUri', 'clientUri', 'policyUri',
   'tosUri', 'jwksUri', 'i18n', 'contacts', 'authMethodExplicit'];
@@ -65,7 +68,8 @@ export function projectClientInfo(raw) {
 function validateRequest(request, requestId, expectedRequestDigest) {
   if (!UUID.test(requestId) || !SHA256.test(expectedRequestDigest) || !object(request)
       || request.id !== requestId || request.request_digest !== expectedRequestDigest
-      || request.resource !== RESOURCE || request.status !== 'approved'
+      || typeof request.resource !== 'string' || !Object.hasOwn(RESOURCE_BINDINGS, request.resource)
+      || request.status !== 'approved'
       || !string(request.client_id) || !string(request.client_name) || !string(request.redirect_uri)
       || !Array.isArray(request.requested_scopes) || !request.requested_scopes.length
       || request.requested_scopes.some(scope => !['context:read', 'context:write', 'audit:read'].includes(scope))) {
@@ -90,14 +94,23 @@ export function buildSourceSnapshot({ rawClient, request, requestId, expectedReq
   return { text, sha256: digest(text), sizeBytes };
 }
 
-export function oauthNamespace(configuration) {
+export function oauthNamespace(configuration, resource) {
   // The committed production configuration is currently strict JSON. If its
   // syntax changes, fail closed instead of extracting a convenient first ID.
+  // Both issuers must remain isolated, even when collecting a legacy request.
   if (!object(configuration) || configuration.name !== 'clued-cloud'
-      || !Array.isArray(configuration.kv_namespaces)) fail('source_namespace_invalid');
-  const matches = configuration.kv_namespaces.filter(item => item?.binding === 'OAUTH_KV');
-  if (matches.length !== 1 || !/^[0-9a-f]{16,64}$/.test(matches[0].id)) fail('source_namespace_invalid');
-  return matches[0].id;
+      || !object(configuration.vars) || configuration.vars.KOOYUMI_OAUTH_ORIGIN !== 'https://kooyumi.pixelgrav.com'
+      || !Array.isArray(configuration.kv_namespaces)
+      || typeof resource !== 'string' || !Object.hasOwn(RESOURCE_BINDINGS, resource)) fail('source_namespace_invalid');
+  const namespaces = {};
+  for (const binding of Object.values(RESOURCE_BINDINGS)) {
+    const matches = configuration.kv_namespaces.filter(item => item?.binding === binding);
+    if (matches.length !== 1 || typeof matches[0].id !== 'string'
+        || !/^[0-9a-f]{16,64}$/.test(matches[0].id)) fail('source_namespace_invalid');
+    namespaces[binding] = matches[0].id;
+  }
+  if (new Set(Object.values(namespaces)).size !== Object.values(RESOURCE_BINDINGS).length) fail('source_namespace_invalid');
+  return namespaces[RESOURCE_BINDINGS[resource]];
 }
 
 export async function fetchExactClient({ accountId, namespaceId, clientId, token, fetchImpl = fetch }) {
@@ -150,7 +163,9 @@ export async function readExactRequest(database, requestId) {
 export async function collectSource({ requestId, expectedRequestDigest, releaseSha, loadRequest, loadClient, now = () => new Date() }) {
   const before = await loadRequest(requestId);
   validateRequest(before, requestId, expectedRequestDigest);
-  const rawClient = await loadClient(before.client_id);
+  // The approved database request selects the namespace. Never probe another
+  // issuer's KV when the exact client is absent or the provider rejects access.
+  const rawClient = await loadClient(before.client_id, before.resource);
   const after = await loadRequest(requestId);
   validateRequest(after, requestId, expectedRequestDigest);
   // Reject a raced request; this still does not claim a distributed transaction
@@ -205,7 +220,6 @@ async function main() {
   const releaseSha = readSourceGit(['rev-parse', 'HEAD']);
   if (releaseSha !== options['--expected-release-sha'] || readSourceGit(['status', '--porcelain', '--untracked-files=normal'])) fail('source_checkout_not_reviewed_clean');
   const configuration = JSON.parse(await readFile(resolve(appDirectory, 'wrangler.production.jsonc'), 'utf8'));
-  const namespaceId = oauthNamespace(configuration);
   const databaseUrl = process.env.CLUED_ATTESTATION_DATABASE_URL;
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const token = process.env.CLOUDFLARE_API_TOKEN;
@@ -218,7 +232,8 @@ async function main() {
   };
   const evidence = await collectSource({ requestId: options['--request-id'],
     expectedRequestDigest: options['--expected-request-digest'], releaseSha, loadRequest,
-    loadClient: clientId => fetchExactClient({ accountId, namespaceId, clientId, token }) });
+    loadClient: (clientId, resource) => fetchExactClient({ accountId,
+      namespaceId: oauthNamespace(configuration, resource), clientId, token }) });
   await saveSource(resolve(options['--output']), evidence);
   console.log(JSON.stringify({ status: 'source_captured_not_qualified', sha256: evidence.sha256, size_bytes: evidence.sizeBytes }));
 }

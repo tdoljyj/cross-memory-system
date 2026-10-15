@@ -34,7 +34,7 @@ import { resolvePublicSupabaseConfig, sha256Hex } from "./clued-work-admission.m
 
 export const DOOR_RPC = "clued_owner_grant_door_consume_v1";
 export const ACTIONS = { deploy: "release.production", migrate: "migration.production" };
-const DEFAULT_ORIGIN = "https://clued.pixelgrav.com";
+const DEFAULT_ORIGIN = "https://kooyumi.pixelgrav.com";
 
 export function grantEnforced(env) {
   return /^(1|true|on|enabled)$/i.test((env.CLUED_RELEASE_GRANT_ENFORCE ?? "").trim());
