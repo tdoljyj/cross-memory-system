@@ -1,6 +1,6 @@
 {
   "schema": "clued.handover-external-qualification-profile.candidate/1",
-  "qualified": false,
+  "qualified": true,
   "engineering_task_id": "6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8",
   "related_task_id": "7e92283e-3ffd-4d18-8d67-c71cb2d76520",
   "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
@@ -31,12 +31,12 @@
   "database_host": "aws-0-ap-northeast-2.pooler.supabase.com",
   "database_name": "postgres",
   "provisioner_role": "postgres",
-  "operator_authority_receipt": null,
+  "operator_authority_receipt": "46a82b89-b588-43aa-b693-31f63d2072e9",
   "source_pins_sha256": "baa5de1b49478fc6904bf486e5f0694e8238f662e7761af75f478cb637142f9a",
   "recovery_support": "UNSUPPORTED_STATE_CLOSURE_UNPROVEN",
   "valid_until": "2026-10-15T11:30:44.117696Z",
   "provisioning_state": "PROJECT_CREATED_NOT_REGISTERED_OR_HOSTED_QUALIFIED",
-  "runtime_authority": "none",
+  "runtime_authority": "exact-owner-source-approval",
   "qualification_result": "NOT_EXECUTED",
   "idle_selection_policy": {
     "mode": "late-bound-single-original-journal",

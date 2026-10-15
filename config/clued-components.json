@@ -289,7 +289,7 @@
         "config/clued-handover-external-catalog.json",
         "config/clued-handover-external-profile.json"
       ],
-      "content_sha256": "8aebaf6d30b4b321117369eaad3955415542eb67cbd5df824cf139a621640a38",
+      "content_sha256": "48bb78e5c92b561b6cda8f4e68ff17fa33496d91461e89400f49a8209eb18012",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-register.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
