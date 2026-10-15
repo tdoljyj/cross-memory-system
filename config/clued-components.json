@@ -336,7 +336,7 @@
         "scripts/storage-google-redirect-cutover.mjs",
         "tests/storage-google-redirect-cutover.test.mjs"
       ],
-      "content_sha256": "aee0fcd8f8d709558776279168003c69a65aef9871b762f69b2be3e545b91368",
+      "content_sha256": "84d033529b8fc691d81262df37ec224a7b1c84c3ce284c724bd03aee104e7496",
       "version_marker": {
         "file": "scripts/storage-google-redirect-cutover.mjs",
         "pattern": "export const VERSION = '{version}';"

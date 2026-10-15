@@ -1,4 +1,7 @@
-// Disposable local PostgreSQL only. Synthetic accounts/envelopes never use a live service.
+// issuer-credentials: disposable table-only PostgreSQL with extracted storage OAuth app/attempt and issuer identity tables.
+// Synthetic identity keys test deployment-config CAS only; no issuer credential
+// table, credential RPC, stage/activate path or test credential grant is created.
+// Synthetic accounts/envelopes never use a live service.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
