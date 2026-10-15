@@ -15,7 +15,7 @@ function recovery(globals = {}) {
 const { runNativeRead, readNativeJson, NativeReadFailure } = recovery();
 const options = diagnostic => ({ isCurrent: () => true, diagnostic: diagnostic ?? (() => {}) });
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
-const results = events => events.filter(event => event.outcome !== "start" && event.outcome !== "lifecycle");
+const results = events => events.filter(event => !["start", "lifecycle", "milestone"].includes(event.outcome));
 
 test("first interrupted request and body recover automatically on the same explicit read", async () => {
   const events = [], start = Date.now(); let calls = 0;
@@ -32,6 +32,7 @@ test("first interrupted request and body recover automatically on the same expli
   assert.equal(events.filter(event => event.outcome === "start").length, calls);
   assert.equal(new Set(events.map(event => event.readId)).size, 1);
   assert.equal(new Set(events.map(event => event.startedAt)).size, 1);
+  assert.ok(events.filter(event => event.outcome === "retry").every(event => !event.callerAbort && !event.stale));
   const serialized = JSON.stringify(events);
   assert.doesNotMatch(serialized, /secret|bearer|private|query|Fixture project|existing/);
 });
@@ -210,4 +211,80 @@ test("default diagnostics are one-line JSON with ephemeral increasing read IDs",
   assert.deepEqual(events.map(event => event.outcome), ["start", "success", "start", "success"]);
   assert.equal(events[0].readId, events[1].readId); assert.equal(events[2].readId, events[0].readId + 1); assert.equal(events[2].readId, events[3].readId);
   assert.equal(events[0].startedAt, events[1].startedAt); assert.ok(events[2].startedAt >= events[0].startedAt);
+});
+
+test("projects attempts use distinct cryptorandom traces shared by start, milestones and result", async () => {
+  const events = [], attempts = []; let sequence = 0;
+  const { runNativeRead } = recovery({ crypto: { randomUUID: () => `11111111-1111-4111-8111-${String(++sequence).padStart(12, "0")}` } });
+  const value = await runNativeRead("projects.list", async attempt => {
+    attempts.push(attempt.traceId);
+    if (attempt.attempt === 1) throw new TypeError("PRIVATE_NETWORK_DETAIL");
+    attempt.observe("response_headers", 200, true);
+    attempt.observe("json_decoded", 200);
+    attempt.observe("payload_validated", 200);
+    attempt.observe("PRIVATE_STAGE_SENTINEL", 200);
+    return "ready";
+  }, options(event => events.push(event)));
+  assert.equal(value, "ready"); assert.equal(attempts.length, 2); assert.notEqual(attempts[0], attempts[1]);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    assert.ok(events.filter(event => event.attempt === attempt).every(event => event.traceId === attempts[attempt - 1]));
+  }
+  assert.deepEqual(events.filter(event => event.outcome === "milestone").map(event => [event.phase, event.status]),
+    [["response_headers", 200], ["json_decoded", 200], ["payload_validated", 200]]);
+  assert.equal(events.find(event => event.phase === "response_headers").responseTraceMatched, true);
+  assert.ok(events.filter(event => event.phase !== "response_headers").every(event => !("responseTraceMatched" in event)));
+  assert.doesNotMatch(JSON.stringify(events), /PRIVATE_NETWORK_DETAIL|PRIVATE_STAGE_SENTINEL/);
+});
+
+test("trace generation is projects-only, nonpersistent and optional when secure crypto fails", async () => {
+  let generated = 0;
+  const { runNativeRead } = recovery({ crypto: { randomUUID() { generated++; throw Error("PRIVATE_CRYPTO_FAILURE"); } } });
+  for (const operation of ["imprints.read", "imprints.source"]) {
+    const events = [];
+    await runNativeRead(operation, async attempt => {
+      assert.equal(attempt.traceId, null); attempt.observe("response_headers", 200, true); return "ready";
+    }, options(event => events.push(event)));
+    assert.equal(events.filter(event => event.outcome === "milestone").length, 0);
+  }
+  assert.equal(generated, 0);
+  const events = [];
+  assert.equal(await runNativeRead("projects.list", async attempt => {
+    assert.equal(attempt.traceId, null); attempt.observe("response_headers", 200); return "ready";
+  }, options(event => events.push(event))), "ready");
+  assert.equal(generated, 1); assert.ok(events.every(event => event.traceId === null));
+  assert.equal(events.find(event => event.phase === "response_headers").responseTraceMatched, null);
+  for (const crypto of [undefined, { randomUUID: () => "PRIVATE_FAKE_TRACE" }]) {
+    const { runNativeRead } = recovery({ crypto });
+    await runNativeRead("projects.list", async attempt => { assert.equal(attempt.traceId, null); return "ready"; }, options());
+  }
+  assert.doesNotMatch(JSON.stringify(events), /PRIVATE_CRYPTO_FAILURE|PRIVATE_FAKE_TRACE/);
+});
+
+test("milestone collector failure never changes success, retries or late-observer cleanup", async () => {
+  let calls = 0, savedObserve;
+  const { runNativeRead } = recovery({ crypto: { randomUUID: () => "11111111-1111-4111-8111-111111111111" },
+    console: { info() { throw Error("PRIVATE_COLLECTOR_FAILURE"); } } });
+  assert.equal(await runNativeRead("projects.list", async attempt => {
+    calls++; savedObserve = attempt.observe;
+    for (const stage of ["response_headers", "json_decoded", "payload_validated"]) attempt.observe(stage, 200);
+    return "ready";
+  }, { isCurrent: () => true }), "ready");
+  assert.equal(calls, 1); assert.doesNotThrow(() => savedObserve("response_headers", 200));
+});
+
+test("guard cancellation and genuine transport failure retain attempt correlation without conflation", async () => {
+  for (const reason of ["caller_abort", "currentness_lost"]) {
+    const events = [], controller = new AbortController(), pending = deferred(); let current = true, observe;
+    const { runNativeRead } = recovery({ crypto: { randomUUID: () => "11111111-1111-4111-8111-111111111111" } });
+    const work = runNativeRead("projects.list", attempt => { observe = attempt.observe; return pending.promise; }, {
+      signal: controller.signal, isCurrent: () => current, diagnostic: event => events.push(event),
+    });
+    if (reason === "caller_abort") controller.abort(); else current = false;
+    await assert.rejects(work, error => error.category === (reason === "caller_abort" ? "cancelled" : "stale"));
+    const failure = events.at(-1); assert.equal(failure.phase, "guard");
+    assert.equal(failure.traceId, events[0].traceId); assert.equal(failure.callerAbort, reason === "caller_abort");
+    assert.equal(failure.stale, reason === "currentness_lost");
+    const length = events.length; observe("payload_validated", 200); pending.resolve("late"); await Promise.resolve();
+    assert.equal(events.length, length, "late response diagnostics cannot masquerade as a current read");
+  }
 });
