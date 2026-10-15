@@ -490,17 +490,21 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
       await migrator.query(closeout);
       await assertGatewayCloseoutBoundary(admin);
     });
-    await t.test('all later migrations follow the proved closeout and preserve actual current authorization OIDs and caller boundaries',async()=>{
-      let authorizationBefore;
-      for (const name of migrations.filter(n=>n>CLOSEOUT_MIGRATION)) {
+    await t.test('the authorization pair preserves exact caller identities and boundaries after all independent successors are installed',async()=>{
+      // Install accepted independent successors before measuring the authorization pair.
+      // Their Native RPC additions must be in the exact baseline, not ignored by it.
+      for (const name of migrations.filter(n=>n>CLOSEOUT_MIGRATION&&!AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(n))) {
         try {
-          if(name===AUTHORIZATION_SUCCESSOR_MIGRATIONS[0]) authorizationBefore=await snapshotAuthorizationCallerBoundary(admin);
           const laterSql=await fs.readFile(path.join(root,'supabase/migrations',name),'utf8');
           if(name===CLOCK_MIGRATION) await applyClockFixtureCapability(admin,migrator,caller,laterSql);
           else await migrator.query(laterSql);
         } catch(error) { throw new Error(`Later migration ${name}: ${error.message}`,{cause:error}); }
       }
-      assert.ok(authorizationBefore,'both real authorization successor files were installed');
+      const authorizationBefore=await snapshotAuthorizationCallerBoundary(admin);
+      for (const name of AUTHORIZATION_SUCCESSOR_MIGRATIONS) {
+        assert.ok(migrations.includes(name),'the exact authorization successor file is present: '+name);
+        await migrator.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));
+      }
       await assertAuthorizationSuccessorBoundary(admin,authorizationBefore);
     });
     await t.test('Native sources_v1 reduction rejects the observed old flat protocol, enforces CAS and preserves untargeted consent',async()=>{
