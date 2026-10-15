@@ -4,7 +4,7 @@ import {catalogIdentityMaps,normalizeCatalogObjects,catalogReference} from './cl
 const sort=rows=>rows.map(r=>JSON.stringify(r)).sort();
 const N="n.nspname not in ('pg_catalog','information_schema') and n.nspname not like 'pg_toast%'";
 const query=
-  "select 'namespace' kind,n.nspname identity,pg_get_userbyid(n.nspowner) owner,coalesce(n.nspacl::text,'') detail "+
+  "select 'namespace' kind,n.nspname::text identity,pg_get_userbyid(n.nspowner) owner,coalesce(n.nspacl::text,'') detail "+
   "from pg_namespace n where "+N+" union all "+
   "select 'relation',n.nspname||'.'||c.relname,pg_get_userbyid(c.relowner),"+
   "jsonb_build_object('relation',c.oid::text,'original_detail',c.relkind::text||':'||coalesce(c.relacl::text,''))::text "+
@@ -85,6 +85,7 @@ const query=
   "left join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum where "+N+" and a.attnum>0 and not a.attisdropped";
 export const CATALOG_OBJECTS_SQL=query;
 export const SEMANTIC_CATALOG_COLUMNS={
+  pg_event_trigger:['oid','evtname','evtevent','evtowner','evtfoid','evtenabled','evttags'],
   pg_enum:['oid','enumtypid','enumsortorder','enumlabel'],
   pg_collation:['oid','collname','collnamespace','collowner','collprovider','collisdeterministic','collencoding',
     'collcollate','collctype','colllocale','collicurules','collversion'],
@@ -106,7 +107,7 @@ export async function localCatalog(client){
   try{
   assertSemanticCatalogColumns((await client.query("select c.relname catalog,a.attname as \"column\" from pg_attribute a "+
     "join pg_class c on c.oid=a.attrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='pg_catalog' "+
-    "and c.relname in ('pg_enum','pg_collation','pg_opclass','pg_opfamily','pg_amop','pg_amproc') and a.attnum>0 and not a.attisdropped")).rows);
+    "and c.relname in ('pg_enum','pg_collation','pg_opclass','pg_opfamily','pg_amop','pg_amproc','pg_event_trigger') and a.attnum>0 and not a.attisdropped")).rows);
   const maps=await catalogIdentityMaps(client);
   return {server_version_num:(await client.query("select current_setting('server_version_num') v")).rows[0].v,
     objects:normalizeCatalogObjects((await client.query(query)).rows,maps),
@@ -115,7 +116,7 @@ export async function localCatalog(client){
       databases:(await client.query('select d.datname,pg_get_userbyid(d.datdba) owner,d.datistemplate,d.datallowconn,'+
         'coalesce(d.datacl::text,\'\') acl,t.spcname tablespace from pg_database d join pg_tablespace t on t.oid=d.dattablespace order by d.datname')).rows,
       tablespaces:(await client.query('select spcname,pg_get_userbyid(spcowner) owner,coalesce(spcacl::text,\'\') acl from pg_tablespace order by spcname')).rows,
-      event_triggers:(await client.query('select evtname,evtevent,pg_get_userbyid(evtowner) owner,evtfoid::oid::text function from pg_event_trigger')).rows
+      event_triggers:(await client.query('select evtname,evtevent,pg_get_userbyid(evtowner) owner,evtfoid::oid::text function,evtenabled,evttags from pg_event_trigger')).rows
         .map(r=>({...r,function:catalogReference(maps,'functions',r.function)})),
       foreign_wrappers:(await client.query('select fdwname,pg_get_userbyid(fdwowner) owner from pg_foreign_data_wrapper')).rows,
       foreign_servers:(await client.query('select srvname,pg_get_userbyid(srvowner) owner from pg_foreign_server')).rows,
