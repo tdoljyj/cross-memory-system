@@ -43,21 +43,42 @@ resurrection is a renewal operation. A machine offline beyond credential expiry
 requires manual reauthorization; this intentionally does not hold a permanent
 bootstrap secret. Normal checks and renewal invoke no model.
 
+The current transport successor fixes renewal/status/stop to
+`https://kooyumi.pixelgrav.com/v1/resource-center/renew`, with the existing
+dedicated renewal credential, closed response shape, redirect refusal and
+15-second timeout. A transport failure never retries the legacy origin.
+Packaging this successor does not rotate or renew a credential by itself.
+
 ## Installation and rollback
 
 Bundle the reviewed daily runner. `installDailyHost` with `existing_host` pins
 the previously accepted config, preserves its exact profile, credential paths,
 consumer runtime and all three state journal identities. Stage a fresh Host
-directory; do not use fresh-install journals as an upgrade. Provision a separate
-owner-private DPAPI journal containing generation zero and pin its file identity.
+directory; do not use fresh-install journals as an upgrade.
+
+For first enrollment only, provision a separate owner-private DPAPI journal
+containing generation zero, pin its identity, enroll the exact accepted pair,
+and write/readback the sealed state through the existing enrollment procedure.
+For an already enrolled Host's transport-only successor, preserve the existing
+`renewal.path`, pinned journal identity and complete sealed history. Do not create
+a generation-zero journal, repeat enrollment or rotate credentials as part of
+changing the service origin.
 
 Only after independent review, CI and live service qualification: hold the old
 executor/lifecycle boundary, check no unresolved work, disable the OLD activation
-marker (retain it), enroll the exact pair and write/readback the sealed state,
+marker (retain it), verify the existing enrollment and sealed-state readback,
 then enable the successor activation and launchers. There must not be two active
 launchers, one outside the lifecycle lock. Run a read-only boundary scan and a
 no-op not-due renewal; validate a full rollover separately with temporary
 credentials/objects. Keep old logs and credentials private for evidence/recovery.
+
+A stopped installation remains stopped when staged as `existing_host`: the
+state directory and its monotonic stop marker are retained. Neither a new
+activation file nor a new service origin can restore stopped, expired or revoked
+authority. Local lock absence does not prove that the jobs ledger or service-side
+provider root is quiet. Complete the original authorized recovery and any required
+reauthorization before enabling a successor; do not remove journals or the stop
+marker to make qualification pass.
 
 The operator may register the pinned `Renew-CluedResourceCenter.ps1` with Windows
 Task Scheduler using `install-resource-center-renewal-task.ps1`, under the same interactive user, least privilege, every 15 minutes
@@ -66,6 +87,13 @@ required. Use hidden PowerShell, scrubbed environment and the fixed pinned
 launcher, never a model wakeup or script supplied by a job. A local error raises
 one user notification per unresolved incident; successful rotation clears only
 that notification marker. Task failures/crash locks require operator attention.
+
+The task installer refuses an existing task. A later approved successor needs a
+separate controlled update and readback of that task's exact launcher path and
+interactive limited-principal settings. `-ValidateOnly` does not update a task.
+An already disabled task stays disabled during staging; source review, package
+creation and local pin checks are not evidence that scheduling or live renewal
+has been enabled.
 
 `Stop-CluedResourceCenter.ps1` (or its double-click `.cmd` launcher) first fsyncs a monotonic local stop marker, then atomically
 revokes the server grant and current pair, even after expiry/lost delivery.

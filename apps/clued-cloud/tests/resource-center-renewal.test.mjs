@@ -8,6 +8,28 @@ import { renewResourceCenter, activeRenewalCredentials, openRenewalStore, withRe
 import { loadContinuityWorker } from "./worker-continuity-loader.mjs";
 
 const hash = v => createHash("sha256").update(v).digest("hex");
+
+test("renewal status, rotation and stop retain their dedicated transport on the fixed Kooyumi origin", async t => {
+  const token = "clued_rcr_" + "a".repeat(64), calls = [], timeouts = new WeakMap(), originalTimeout = AbortSignal.timeout;
+  t.mock.method(AbortSignal, "timeout", ms => { const signal = originalTimeout.call(AbortSignal, ms);timeouts.set(signal, ms);return signal; });
+  for (const action of ["status", "rotate", "stop"]) {
+    const request = { action, request_id: randomUUID() };
+    const result = await callRenewal(token, request, async (url, options) => {
+      calls.push(url);assert.equal(url, "https://kooyumi.pixelgrav.com/v1/resource-center/renew");
+      assert.equal(options.method, "POST");assert.equal(options.redirect, "error");assert.equal(timeouts.get(options.signal), 15000);
+      assert.equal(options.headers.authorization, "Bearer " + token);
+      assert.equal(options.headers["content-type"], "application/json");
+      assert.deepEqual(JSON.parse(options.body), { contract: "clued.resource-center-renewal/1", request });
+      return Response.json({ status: action === "rotate" ? "rotated" : action === "stop" ? "stopped" : "active", receipt_id: randomUUID() });
+    });
+    assert.equal(result.status, action === "rotate" ? "rotated" : action === "stop" ? "stopped" : "active");
+  }
+  const failed = [];
+  await assert.rejects(callRenewal(token, { action: "status", request_id: randomUUID() }, async url => { failed.push(url);throw Error("offline"); }), /offline/);
+  assert.deepEqual(failed, ["https://kooyumi.pixelgrav.com/v1/resource-center/renew"]);
+  assert.equal(calls.length, 3);
+});
+
 function fixture() {
   let time = Date.now();
   const initial = { contract: "clued.resource-center-renewal-state/1", sequence: 0, phase: "active", profile_id: randomUUID(), grant_id: randomUUID(), generation: 0,
@@ -127,7 +149,7 @@ test("dedicated renewal transport never echoes token hashes, rejects other crede
     calls++;assert.equal(JSON.parse(options.body).p_token_hash, hash("clued_rcr_" + "a".repeat(64)));
     return Response.json({ status: "rotated", grant_id: randomUUID(), generation: 1, reader_hash: "should-not-leak" });
   };
-  const call = token => worker.fetch(new Request("https://clued.test/v1/resource-center/renew", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ contract: "clued.resource-center-renewal/1", request: { action: "rotate", reader_hash: "private" } }) }), { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch() {} } }, { waitUntil() {} });
+  const call = token => worker.fetch(new Request("https://kooyumi.pixelgrav.com/v1/resource-center/renew", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ contract: "clued.resource-center-renewal/1", request: { action: "rotate", reader_hash: "private" } }) }), { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", ASSETS: { fetch() {} } }, { waitUntil() {} });
   try {
     for (const prefix of ["clued_rcw_", "clued_rcb_", "clued_bnd_"]) assert.equal((await call(prefix + "a".repeat(64))).status, 403);
     assert.equal(calls, 0);const response = await call("clued_rcr_" + "a".repeat(64));assert.equal(response.headers.get("cache-control"), "no-store");
