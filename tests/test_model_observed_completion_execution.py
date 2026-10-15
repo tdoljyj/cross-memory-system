@@ -63,6 +63,73 @@ class ObservedCallerSourceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def four_b_plan(self):
+        plan = copy.deepcopy(self.plan)
+        plan.update(cpu_threads=8, development_budget_class=L.FOUR_B_BUDGET_CLASS, patch_sha256=S.FOUR_B_PATCH_SHA256)
+        plan["budget"].update(control_wall_seconds=585, wall_seconds=480, output_tokens=1024,
+                              total_tokens=5120, observation_bytes=147456)
+        plan["deadline_monotonic"] = time.monotonic()+580
+        return plan
+
+    def test_four_b_unknown_class_or_wrong_patch_fails_before_file_io(self):
+        plan = self.four_b_plan()
+        with mock.patch.object(L,"file_identity") as identity, mock.patch.object(S,"_transport") as transport:
+            boundary = mock.Mock()
+            unknown=copy.deepcopy(plan);unknown["development_budget_class"]="unknown"
+            with self.assertRaisesRegex(ValueError,"DEVELOPMENT_BUDGET_CLASS"):
+                S.execute_observed_completion(unknown,boundary=boundary)
+            plan["patch_sha256"]=S.PATCH_SHA256
+            with self.assertRaisesRegex(ValueError,"PATCH_PIN"):
+                S.validate_plan(plan,time.monotonic())
+            identity.assert_not_called();transport.assert_not_called();boundary.assert_not_called()
+
+    def test_actual_new_runtime_table_accepts_exact_and_rejects_mixed_or_legacy(self):
+        plan=self.four_b_plan()
+        for row in plan["runtime_files"]:
+            row["bytes"],row["sha256"]=S.FOUR_B_RUNTIME_FILES[Path(row["path"]).name]
+        plan["executable"]=next(r for r in plan["runtime_files"] if Path(r["path"]).name=="llama-completion.exe")
+        # Only the pure plan/closure boundary is exercised; no artifact is loaded.
+        self.assertEqual(S.validate_plan(plan,time.monotonic()),plan["deadline_monotonic"])
+        for name in ("ggml-base.dll","llama-completion.exe"):
+            bad=copy.deepcopy(plan)
+            row=next(r for r in bad["runtime_files"] if Path(r["path"]).name==name)
+            row["bytes"],row["sha256"]=S.RUNTIME_FILES[name]
+            if name=="llama-completion.exe":bad["executable"]=row
+            with self.assertRaisesRegex(ValueError,"RUNTIME_PIN"):S.validate_plan(bad,time.monotonic())
+        legacy=copy.deepcopy(plan);del legacy["development_budget_class"]
+        legacy["budget"].update(output_tokens=512,total_tokens=4608,wall_seconds=120,
+                                control_wall_seconds=225,observation_bytes=131072)
+        legacy["deadline_monotonic"]=time.monotonic()+200;legacy["patch_sha256"]=S.PATCH_SHA256
+        with self.assertRaisesRegex(ValueError,"RUNTIME_PIN"):S.validate_plan(legacy,time.monotonic())
+
+    def test_four_b_fixture_caps_role_identity_and_legacy_runtime_are_separate(self):
+        plan = self.four_b_plan()
+        plan["patch_sha256"]="f"*64
+        plan["model"]["bytes"] = 2147483649  # Metadata fixture only; no giant file/read.
+        with mock.patch.object(S,"FOUR_B_RUNTIME_FILES",self.fixture_pins), \
+                mock.patch.object(S,"FOUR_B_PATCH_SHA256","f"*64), \
+                mock.patch.object(L,"file_identity",wraps=L.file_identity) as identity:
+            self.assertEqual(S.validate_plan(plan,time.monotonic()),plan["deadline_monotonic"])
+            calls=[c for c in identity.call_args_list if c.kwargs]
+            self.assertEqual(len(calls),1)
+            self.assertEqual(calls[0].args[0],plan["model"])
+            self.assertEqual(calls[0].kwargs,{"model_budget_class":L.FOUR_B_BUDGET_CLASS})
+            argv=S.command(plan,123)
+            self.assertEqual(argv[argv.index("--predict")+1],"1024")
+            self.assertEqual(argv[argv.index("--threads")+1],"8")
+            for name, limit in (("wall_seconds",481),("control_wall_seconds",586),("output_tokens",1025),
+                                ("total_tokens",5121),("observation_bytes",147457)):
+                bad=copy.deepcopy(plan);bad["budget"][name]=limit
+                with self.assertRaises(ValueError):S.validate_plan(bad,time.monotonic())
+            bad=copy.deepcopy(plan);bad["deadline_monotonic"]=time.monotonic()+586
+            with self.assertRaisesRegex(ValueError,"DEADLINE"):S.validate_plan(bad,time.monotonic())
+            bad=copy.deepcopy(plan);bad["patch_sha256"]=S.PATCH_SHA256
+            with self.assertRaisesRegex(ValueError,"PATCH_PIN"):S.validate_plan(bad,time.monotonic())
+        old=copy.deepcopy(plan);del old["development_budget_class"]
+        old["patch_sha256"]=S.PATCH_SHA256
+        with self.assertRaisesRegex(ValueError,"BUDGET_OUTPUT_TOKENS"):
+            S.validate_plan(old,time.monotonic())
+
     @unittest.skipUnless(os.name == "nt", "Windows observed control flow with mocked transport")
     def test_control_budget_cannot_silently_expand_model_runtime(self):
         clock = [time.monotonic()]
@@ -398,7 +465,7 @@ def isolated_candidate(transport):
     clock, stream = Clock(), Stream()
     phases = []
     legacy = types.SimpleNamespace(time=clock, CLEANUP_RESERVE_SECONDS=15,
-        digest=lambda value: json.dumps(value, sort_keys=True), verify_file=lambda *_: None,
+        digest=lambda value: json.dumps(value, sort_keys=True), verify_file=lambda *_, **__: None,
         clean_environment=lambda: {})
     importer = builtins.__import__
     def local_import(name, *args, **kwargs):
@@ -410,6 +477,7 @@ def isolated_candidate(transport):
           "os": types.SimpleNamespace(name="nt"), "legacy": legacy, "_CLOCK_NOT_READ": object(),
           "Path": lambda _: types.SimpleNamespace(open=lambda _: stream),
           "validate_plan": lambda *_: None, "_opened_identity": lambda _: {"size": 0, "links": 1},
+           "runtime_policy": lambda plan: (L.development_budget_policy(plan), None, None),
           "command": lambda *_: ["technical-in-memory-transport"],
           "_capture_observation": lambda *_: {"complete": True}}
     ns["_transport"] = lambda *args: transport(clock, *args)
@@ -425,6 +493,27 @@ def isolated_candidate(transport):
 
 
 class ProviderTimingChecks(unittest.TestCase):
+    def test_four_b_model_deadline_never_resets_and_control_cutoff_is_preserved(self):
+        deadlines=[]
+        def transport(clock,argv,cwd,env,deadline,limits,check,stream):
+            deadlines.append(deadline)
+            before=clock.now
+            check("before_start")
+            self.assertEqual(deadlines[-1],deadline)
+            clock.now=deadline
+            with self.assertRaisesRegex(ValueError,"BOUNDARY_DEADLINE"):
+                check("running")
+            self.assertGreaterEqual(clock.now,before)
+            return {"outcome":"TIMEOUT","owned_cleanup_verified":True}
+        ns,plan,boundary,phases,stream=isolated_candidate(transport)
+        plan.update(cpu_threads=8,development_budget_class=L.FOUR_B_BUDGET_CLASS,deadline_monotonic=685.0)
+        plan["budget"].update(wall_seconds=480,control_wall_seconds=585)
+        result=ns["execute_observed_completion"](plan,boundary=boundary)
+        self.assertEqual(result["outcome"],"TIMEOUT")
+        self.assertEqual(len(deadlines),1)
+        self.assertLessEqual(deadlines[0],670.0)  # Original 585-second stop minus cleanup.
+        self.assertTrue(stream.closed)
+
     def test_before_start_cost_is_included_repeated_check_does_not_reset_deadline(self):
         captured = []
         def transport(clock, argv, cwd, env, deadline, limits, check, stream):
@@ -494,11 +583,12 @@ class ProviderTimingChecks(unittest.TestCase):
             self.assertIsNone(ns["_capture_provider_timepoint"](value)["monotonic_seconds"])
 
     def test_runtime_guard_command_transport_and_capture_source_pins_remain_fixed(self):
-        # The plan guard adds only the optional CPU selector. Other protected
-        # helper bodies retain their accepted platform-independent text pins.
+        # The reviewed guard adds explicit class ceilings, its exact runtime
+        # closure, and the model-only size role. Legacy defaults are preserved;
+        # command/transport/capture helpers retain their prior exact text pins.
         expected = {
             "require": "208b5b2b2b4054dae0ef9fc405dff7e09333a576dd4b9bc7adbf3bd0b2638046",
-            "validate_plan": "7f81f4a9221fc99b8ee76b1882203a4b2c2bfb3f49ec7e2fcec88d8aaafc1df2",
+            "validate_plan": "34a45c682362d3a64048b04c5b881de01e3406bbf0b0633a7df612e814fa0770",
             "command": "c51017f8b60dd6956d52ac92dd9de5ee0127ee7f5de196d4e30e14904ad04fd2",
             "_opened_identity": "e36f5ab2ace0d7722af6a56e9ad0ac2b311718d96c5dc7a43d75d97cb983288c",
             "_transport": "6e58afa18b7321e05dbabf2ae75c039d8590ce956c5df342ed3f09a0987b0342",

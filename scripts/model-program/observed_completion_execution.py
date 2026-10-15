@@ -39,6 +39,20 @@ PLAN_FIELDS = {"executable", "working_directory", "runtime_files", "model", "pro
 BUDGET_FIELDS = legacy.BUDGET_FIELDS | {"observation_bytes"}
 CONTROL_BUDGET_FIELDS = BUDGET_FIELDS | {"control_wall_seconds"}
 MAX_OBSERVATION_BYTES = 131072
+# Exact offline-built candidate closure. Pins are not load qualification or
+# experiment permission; never accept a caller-provided substitute or legacy build.
+FOUR_B_RUNTIME_FILES = {
+    'ggml-base.dll': (966144, 'abdd8817e45c5c5c49b5b0ca2b5bacf935a430e8a2bde555394b88c7d7349865'),
+    'ggml-cpu.dll': (1201152, 'b8d05f6734ceaa2b047db2eaa8856763a8d05fea268e36aa7e1befde8185721c'),
+    'ggml.dll': (85504, '7d50cd49a5304f7bd9132cfb1c94c0b5d98fff5cd18f44f4c762038a378893fc'),
+    'libc++.dll': (2000384, '81fb50f0866840d7e5a1d35d48cf31adc02f623a61d8b77daf62881e1e59401b'),
+    'libllama-common.dll': (5781504, 'c03919e282b6a3a676778176f7a5a6ead8e0f1219156638f96eb1668841ef67b'),
+    'libllama-completion-impl.dll': (153600, '49fe6633b804482d6c74d6ffb0c68bbdfad51dde1421a389f8ae1e682643849e'),
+    'libllama.dll': (3793920, 'c3734b36a25638617bc69317765c7d984269b536a0146dcebf4db18ee7065d34'),
+    'libunwind.dll': (183808, 'b0636a4281610124704adb2be2edf5642e830d86c68b7f27dbc9c8154705a780'),
+    'llama-completion.exe': (62464, '9c6fcbc03ad0124b4ae42ad6290308ed131a841dd66692e38bb491a7e6a82cc8'),
+}
+FOUR_B_PATCH_SHA256 = 'e6db7fa673fef009afd6e8d76a08219d2a41f956b323a180f863f48d94597977'
 _CLOCK_NOT_READ = object()
 
 
@@ -101,21 +115,35 @@ def require(ok, code):
         raise ValueError("OBSERVED_COMPLETION_" + code)
 
 
+def runtime_policy(plan):
+    policy = legacy.development_budget_policy(plan)
+    if "development_budget_class" not in plan:
+        return policy, RUNTIME_FILES, PATCH_SHA256
+    require(type(FOUR_B_RUNTIME_FILES) is dict and set(FOUR_B_RUNTIME_FILES) == set(RUNTIME_FILES)
+            and type(FOUR_B_PATCH_SHA256) is str and len(FOUR_B_PATCH_SHA256) == 64
+            and all(c in "0123456789abcdef" for c in FOUR_B_PATCH_SHA256), "RUNTIME_NOT_REVIEWED")
+    require(FOUR_B_PATCH_SHA256 != PATCH_SHA256 and FOUR_B_RUNTIME_FILES != RUNTIME_FILES,
+            "RUNTIME_NOT_REVIEWED")
+    return policy, FOUR_B_RUNTIME_FILES, FOUR_B_PATCH_SHA256
+
+
 def validate_plan(plan, now):
-    require(type(plan) is dict and set(plan) in (PLAN_FIELDS, PLAN_FIELDS | {"cpu_threads"}), "PLAN_FIELDS")
+    require(type(plan) is dict and set(plan) in (PLAN_FIELDS, PLAN_FIELDS | {"cpu_threads"},
+            PLAN_FIELDS | {"cpu_threads", "development_budget_class"}), "PLAN_FIELDS")
     legacy.cpu_threads(plan)
-    require(plan["patch_sha256"] == PATCH_SHA256, "PATCH_PIN")
+    policy, runtime_files, patch_sha256 = runtime_policy(plan)
+    require(plan["patch_sha256"] == patch_sha256, "PATCH_PIN")
     budget = plan["budget"]
     require(type(budget) is dict and set(budget) in (BUDGET_FIELDS, CONTROL_BUDGET_FIELDS), "BUDGET_FIELDS")
-    for key, ceiling in (("input_tokens", 4096), ("output_tokens", 512),
-                         ("total_tokens", 4608), ("stdout_bytes", 1048576),
-                         ("stderr_bytes", 1048576), ("observation_bytes", MAX_OBSERVATION_BYTES)):
+    for key, ceiling in (("input_tokens", 4096), ("output_tokens", policy["output_tokens"]),
+                         ("total_tokens", policy["total_tokens"]), ("stdout_bytes", 1048576),
+                         ("stderr_bytes", 1048576), ("observation_bytes", policy["observation_bytes"])):
         require(type(budget[key]) is int and 1 <= budget[key] <= ceiling, "BUDGET_" + key.upper())
     require(budget["output_tokens"] < budget["total_tokens"], "TOTAL_BUDGET")
     wall, end = budget["wall_seconds"], plan["deadline_monotonic"]
-    require(type(wall) in (int, float) and math.isfinite(wall) and 0 < wall <= 120, "WALL")
+    require(type(wall) in (int, float) and math.isfinite(wall) and 0 < wall <= policy["model_seconds"], "WALL")
     control = budget.get("control_wall_seconds", 120)
-    require(type(control) in (int, float) and math.isfinite(control) and 0 < control <= 225, "CONTROL_WALL")
+    require(type(control) in (int, float) and math.isfinite(control) and 0 < control <= policy["control_seconds"], "CONTROL_WALL")
     require(type(end) in (int, float) and math.isfinite(end) and now < end <= now + control, "DEADLINE")
     directory = Path(plan["working_directory"])
     require(directory.is_absolute() and not str(directory).startswith(("\\\\", "//"))
@@ -124,18 +152,21 @@ def validate_plan(plan, now):
     exe = plan["executable"]
     require(type(exe) is dict and Path(exe.get("path", "")).name == "llama-completion.exe", "EXECUTABLE")
     rows = plan["runtime_files"]
-    require(type(rows) is list and len(rows) == len(RUNTIME_FILES), "RUNTIME_CLOSURE")
+    require(type(rows) is list and len(rows) == len(runtime_files), "RUNTIME_CLOSURE")
     names = []
     for row in rows:
         path = legacy.file_identity(row)
         name = path.name
-        require(path.parent == directory and name in RUNTIME_FILES, "RUNTIME_DIRECTORY_OR_MEMBER")
-        require((row["bytes"], row["sha256"]) == RUNTIME_FILES[name], "RUNTIME_PIN")
+        require(path.parent == directory and name in runtime_files, "RUNTIME_DIRECTORY_OR_MEMBER")
+        require((row["bytes"], row["sha256"]) == runtime_files[name], "RUNTIME_PIN")
         names.append(name)
-    require(set(names) == set(RUNTIME_FILES) and len(set(names)) == len(names), "RUNTIME_CLOSURE")
+    require(set(names) == set(runtime_files) and len(set(names)) == len(names), "RUNTIME_CLOSURE")
     require(exe == next(row for row in rows if Path(row["path"]).name == "llama-completion.exe"), "EXECUTABLE_PIN")
     for key in ("model", "prompt", "output_schema"):
-        legacy.file_identity(plan[key])
+        if key == "model" and "development_budget_class" in plan:
+            legacy.file_identity(plan[key], model_budget_class=plan["development_budget_class"])
+        else:
+            legacy.file_identity(plan[key])
     output = Path(plan["observation_path"])
     require(output.is_absolute() and not str(output).startswith(("\\\\", "//"))
             and output.parent.is_dir() and not output.parent.is_symlink()
@@ -235,13 +266,14 @@ def execute_observed_completion(plan, *, boundary):
     require(callable(boundary), "TRUSTED_BOUNDARY_REQUIRED")
     start = legacy.time.monotonic()
     frozen = copy.deepcopy(plan)
+    policy, _, _ = runtime_policy(frozen)
     seal = legacy.digest(frozen)
     end = frozen.get("deadline_monotonic") if type(frozen) is dict else None
     wall = frozen.get("budget", {}).get("wall_seconds") if type(frozen) is dict else None
     control = frozen.get("budget", {}).get("control_wall_seconds", 120) if type(frozen) is dict else None
-    require(type(control) in (int, float) and math.isfinite(control) and 0 < control <= 225, "CONTROL_WALL")
+    require(type(control) in (int, float) and math.isfinite(control) and 0 < control <= policy["control_seconds"], "CONTROL_WALL")
     require(type(end) in (int, float) and math.isfinite(end) and start < end <= start + control, "DEADLINE")
-    require(type(wall) in (int, float) and math.isfinite(wall) and 0 < wall <= 120, "WALL")
+    require(type(wall) in (int, float) and math.isfinite(wall) and 0 < wall <= policy["model_seconds"], "WALL")
     end = min(end, start + (control if "control_wall_seconds" in frozen["budget"] else wall))
     opened = None
     before_start_completed = False
@@ -286,8 +318,12 @@ def execute_observed_completion(plan, *, boundary):
     deadline = end - legacy.CLEANUP_RESERVE_SECONDS
     require(legacy.time.monotonic() < deadline, "CLEANUP_RESERVATION")
     validate_plan(frozen, legacy.time.monotonic())
-    for row in frozen["runtime_files"] + [frozen[k] for k in ("model", "prompt", "output_schema")]:
-        legacy.verify_file(row, deadline)
+    for role, row in [("runtime", row) for row in frozen["runtime_files"]] + [
+            (key, frozen[key]) for key in ("model", "prompt", "output_schema")]:
+        if role == "model" and "development_budget_class" in frozen:
+            legacy.verify_file(row, deadline, model_budget_class=frozen["development_budget_class"])
+        else:
+            legacy.verify_file(row, deadline)
     check("before_observation_open")
     require(legacy.time.monotonic() < deadline, "DEADLINE_BEFORE_OBSERVATION_OPEN")
     # The caller verifies the new-only private output namespace before this open.

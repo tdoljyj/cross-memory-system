@@ -41,6 +41,35 @@ class CompletionPlanTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_four_b_only_model_role_gets_larger_identity_full_rehash_unchanged(self):
+        row = dict(self.plan["model"], bytes=2147483649)
+        with self.assertRaisesRegex(ValueError, "FILE_SIZE"):
+            S.file_identity(row)
+        self.assertEqual(S.file_identity(row, model_budget_class=S.FOUR_B_BUDGET_CLASS), Path(row["path"]))
+        with self.assertRaisesRegex(ValueError, "FILE_SIZE"):
+            S.file_identity(dict(row, bytes=10 * 1024**3 + 1), model_budget_class=S.FOUR_B_BUDGET_CLASS)
+        with self.assertRaisesRegex(ValueError, "MODEL_BUDGET_CLASS"):
+            S.file_identity(row, model_budget_class="unknown")
+        self.assertEqual(S.verify_file(self.plan["model"], time.monotonic()+5,
+                         model_budget_class=S.FOUR_B_BUDGET_CLASS), Path(row["path"]))
+        with self.assertRaisesRegex(ValueError, "FILE_DRIFT"):
+            S.verify_file(dict(self.plan["model"], sha256="0"*64), time.monotonic()+5,
+                          model_budget_class=S.FOUR_B_BUDGET_CLASS)
+        with self.assertRaisesRegex(ValueError, "DEADLINE"):
+            S.verify_file(self.plan["model"], time.monotonic()-1, model_budget_class=S.FOUR_B_BUDGET_CLASS)
+
+    def test_four_b_class_does_not_widen_legacy_unobserved_entry(self):
+        plan = copy.deepcopy(self.plan)
+        plan.update(cpu_threads=8, development_budget_class=S.FOUR_B_BUDGET_CLASS)
+        self.assertEqual(S.development_budget_policy(plan)["model_seconds"],480)
+        self.assertEqual(S.development_budget_policy({})["model_seconds"],120)
+        with self.assertRaisesRegex(ValueError, "PLAN_FIELDS"):
+            S.validate_plan(plan, time.monotonic())
+        del plan["development_budget_class"]
+        plan["budget"]["wall_seconds"] = 480
+        with self.assertRaisesRegex(ValueError, "WALL_BOUND"):
+            S.validate_plan(plan, time.monotonic())
+
     def test_fixed_command_has_no_arbitrary_options_or_server(self):
         S.validate_plan(self.plan, time.monotonic())
         argv = S.command(self.plan)
