@@ -91,9 +91,9 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     async function native(name, input, db = human) {
       return (await db.query(`select public.${name}($1::jsonb) value`, [JSON.stringify(input)])).rows[0].value;
     }
-    async function prepare(requestedScopes = ['context:read', 'context:write', 'audit:read'], db = human) {
+    async function prepare(requestedScopes = ['context:read', 'context:write', 'audit:read'], db = human, clientId = 'all-contexts-client') {
       return (await db.query('select public.clued_authorization_prepare_v12($1,$2::jsonb) value', [issuer, JSON.stringify({
-        request_digest: proof(), client_id: 'all-contexts-client', client_name: 'All-contexts fixture',
+        request_digest: proof(), client_id: clientId, client_name: 'All-contexts fixture',
         redirect_uri: 'https://client.example.invalid/cb', resource, requested_scopes: requestedScopes,
       })])).rows[0].value;
     }
@@ -104,7 +104,9 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
         [issuer, request.request_id, request.version, JSON.stringify(selected), token, expires])).rows[0].value;
       return { ...result, token, expires };
     }
-    const authorize = async (selected, scopes, db = human) => approve(await prepare(scopes, db), selected, db);
+    // Independent Integration cases must not share a previously revoked OAuth client lineage.
+    // Deliberately related Bindings still pass the same case-local clientId.
+    const authorize = async (selected, scopes, db = human, clientId) => approve(await prepare(scopes, db, clientId), selected, db);
     const own = (input, db = human) => native('clued_development_owner_v14', { idempotency_key: uuid(), ...input }, db);
     const createContext = async (projectId, name, environment = 'test', db = human) => {
       const result = await own({ op: 'context_create', project_id: projectId, name, environment }, db);
@@ -519,7 +521,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('expired final source cannot execute Integration mutations or revive cached authority; Native revoke remains available', async () => {
-      const binding = await authorize([context(testContext, ['read', 'write'])]);
+      const clientId = `all-contexts-integration-${uuid()}`;
+      const binding = await authorize([context(testContext, ['read', 'write'])], undefined, human, clientId);
       const id = await installIntegration(binding);
       const original = await bindingView(binding.binding_id);
       const cached = await entries(binding.binding_id);
@@ -551,7 +554,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('revoking the final Context grant commits without Source rebuild rollback and denies MCP and Integration execution', async () => {
-      const binding = await authorize([context(testContext, ['read', 'write'])]);
+      const clientId = `all-contexts-integration-${uuid()}`;
+      const binding = await authorize([context(testContext, ['read', 'write'])], undefined, human, clientId);
       const id = await installIntegration(binding);
       const initial = await grant(binding.binding_id, testContext);
       const result = await own({ op: 'grant_revoke', context_id: testContext, grant_id: initial.id, base_version: initial.version });
@@ -573,7 +577,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('Integration capabilities use the same live exact entry, retaining read while independently expired write is denied', async () => {
-      const binding = await authorize([scope('global', ['write']), scope(`project:${project}`, ['read'])]);
+      const clientId = `all-contexts-integration-${uuid()}`;
+      const binding = await authorize([scope('global', ['write']), scope(`project:${project}`, ['read'])], undefined, human, clientId);
       const id = await installIntegration(binding);
       const facts = (await normalized(id)).facts;
       assert.ok(facts.resource_action_scope_facts.capabilities.includes('project.read'));
@@ -606,6 +611,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
         'clued_integration_declare_v1', 'clued_integration_report_v1', 'clued_integration_verify_v1'];
       for (const loss of ['membership-revoke', 'natural-expiry']) for (const name of names) {
         await waitTests.test(`${name}: ${loss} while actually blocked`, async () => {
+          const clientId = `all-contexts-integration-${uuid()}`;
           let membership;
           if (loss === 'membership-revoke') {
             const invite = await native('clued_project_access_v13', { op: 'invite_create', project_id: foreignProject, environment: 'test',
@@ -613,11 +619,11 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
             membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
               base_version: invite.version, idempotency_key: uuid() });
           }
-          const binding = await authorize([context(loss === 'membership-revoke' ? foreignContext : testContext, ['read', 'write'])]);
+          const binding = await authorize([context(loss === 'membership-revoke' ? foreignContext : testContext, ['read', 'write'])], undefined, human, clientId);
           const tenant = { status: 'VALUE', value: uuid(), evidence_kind: 'TEST_TENANT_ID' };
           let id;
           if (name === 'clued_integration_reconcile_request_v1') {
-            const holding = await authorize([scope('global', ['read'])], ['context:read']);
+            const holding = await authorize([scope('global', ['read'])], ['context:read'], human, clientId);
             await installIntegration(holding, { host: 'source.wait.tenant', host_surface: 'default', tenant });
             id = await installIntegration(binding, { host: 'source.wait.tenant', host_surface: 'default' });
             const base = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
@@ -705,6 +711,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
 
     await t.test('partial permission loss while waiting retains real read but rolls back the entered operation instead of committing an old authority snapshot', async () => {
       for (const loss of ['membership-read-only', 'independent-write-expiry']) {
+        const clientId = `all-contexts-integration-${uuid()}`;
         let membership;
         let binding;
         if (loss === 'membership-read-only') {
@@ -712,8 +719,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
             target_email: 'all-contexts@example.invalid', role: 'editor', actions: ['read', 'write'], expires_at: future(), idempotency_key: uuid() }, foreignHuman);
           membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
             base_version: invite.version, idempotency_key: uuid() });
-          binding = await authorize([context(foreignContext, ['read', 'write'])]);
-        } else binding = await authorize([scope('global', ['read']), context(testContext, ['write'])]);
+          binding = await authorize([context(foreignContext, ['read', 'write'])], undefined, human, clientId);
+        } else binding = await authorize([scope('global', ['read']), context(testContext, ['write'])], undefined, human, clientId);
         const id = await installIntegration(binding);
         const version = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
         const holder = await connect();
@@ -908,15 +915,16 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('an invited Context is separate from the macro and keeps its exact original qualification', async () => {
+      const clientId = `all-contexts-integration-${uuid()}`;
       const invite = await native('clued_project_access_v13', { op: 'invite_create', project_id: foreignProject, environment: 'test',
         target_email: 'all-contexts@example.invalid', role: 'editor', actions: ['read', 'write'], expires_at: future(), idempotency_key: uuid() }, foreignHuman);
       const membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
         base_version: invite.version, idempotency_key: uuid() });
-      const request = await prepare();
+      const request = await prepare(undefined, human, clientId);
       const eligible = request.eligible.find((r) => r.resource_id === foreignContext);
       assert.equal(eligible.qualification_id, membership.membership_id);
       assert.equal(eligible.ownership, 'membership');
-      const macroBinding = await authorize([macro(['read', 'write'])]);
+      const macroBinding = await authorize([macro(['read', 'write'])], undefined, human, clientId);
       await denied(write(macroBinding, foreignContext, 'Shared is not part of all-owned'));
       const explicit = await approve(request, [{ ...context(foreignContext, ['read', 'write']), qualification_id: uuid() }]);
       const invitedIntegration = await installIntegration(explicit);
@@ -956,7 +964,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       const next = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: newInvite.invite_token, base_version: newInvite.version, idempotency_key: uuid() });
       assert.notEqual(next.membership_id, membership.membership_id);
       await denied(write(explicit, foreignContext, 'New membership must not replace original qualification'));
-      const current = await authorize([context(foreignContext, ['read', 'write'])]);
+      const current = await authorize([context(foreignContext, ['read', 'write'])], undefined, human, clientId);
       assert.equal((await write(current, foreignContext, 'New explicit consent')).status, 'committed');
     });
 
