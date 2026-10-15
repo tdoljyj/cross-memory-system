@@ -83,8 +83,9 @@ def run_captured_stdio_bootstrap(reader, writer):
             or bootstrap["schema"] != BOOTSTRAP_SCHEMA):
         raise ValueError("FIXED_HOST_BOOTSTRAP_FIELDS")
     remaining = bootstrap["remaining_seconds"]
+    policy = observed.legacy.development_budget_policy(bootstrap.get("plan", {}))
     control = bootstrap.get("plan", {}).get("budget", {}).get("control_wall_seconds", 120)
-    if (type(control) not in (int, float) or not math.isfinite(control) or not 0 < control <= 225
+    if (type(control) not in (int, float) or not math.isfinite(control) or not 0 < control <= policy["control_seconds"]
             or type(remaining) not in (int, float) or not math.isfinite(remaining) or not 0 < remaining <= control):
         raise ValueError("FIXED_HOST_BOOTSTRAP_DEADLINE")
     identity, plan = bootstrap["identity"], bootstrap["plan"]
@@ -201,11 +202,12 @@ class FixedDevelopmentEntry:
             raise ValueError("ADMITTED_BUDGET_REQUIRED")
         wall = budget.get("wall_seconds")
         control = budget.get("control_wall_seconds", wall)
+        policy = observed.legacy.development_budget_policy(plan)
         if (type(deadline) not in (int, float) or not math.isfinite(deadline)
                 or type(wall) not in (int, float) or not math.isfinite(wall)
-                or not 0 < wall <= 120
+                or not 0 < wall <= policy["model_seconds"]
                 or type(control) not in (int, float) or not math.isfinite(control)
-                or not 0 < control <= 225):
+                or not 0 < control <= policy["control_seconds"]):
             raise ValueError("ADMITTED_DEADLINE_REQUIRED")
         deadline = min(deadline, observed.legacy.time.monotonic() + control)
         deadline -= observed.legacy.CLEANUP_RESERVE_SECONDS

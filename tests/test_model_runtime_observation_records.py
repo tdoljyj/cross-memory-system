@@ -49,6 +49,31 @@ def caller_fixture_callback(value, limits, binding):
 
 
 class RuntimeObservationRecordsTests(unittest.TestCase):
+    def test_four_b_1024_samples_need_explicit_class_and_bound_format(self):
+        cls=MODULE.FOUR_B_BUDGET_CLASS
+        limits={"input_tokens":4096,"output_tokens":1024,"total_tokens":5120}
+        first={**input_frame(),"input_tokens":4096,"input_limit":4096,"predict_limit":1024,"total_limit":5120}
+        frames=[first]+[sample(i,-2147483648,i==1024) for i in range(1,1025)]+[terminal(4096,1024)]
+        for frame in frames:frame["monotonic_ms"]=MODULE.UINT64_MAX
+        value=raw(frames)
+        bound={**BINDING,"development_budget_class":cls}
+        answer=parse(value,expected_limits=limits,binding=bound,verify_binding=caller_fixture_callback,
+                     development_budget_class=cls)
+        self.assertTrue(answer["complete"],answer["errors"])
+        self.assertEqual(answer["usage"],{"input_tokens":4096,"output_tokens":1024,"total_tokens":5120})
+        self.assertLessEqual(len(value),147456)
+        self.assertEqual(answer["raw"],value);self.assertEqual(answer["authority_effect"],"NONE")
+        for selected,binding_value in ((None,BINDING),(cls,BINDING),("unknown",bound)):
+            bad=parse(value,expected_limits=limits,binding=binding_value,verify_binding=caller_fixture_callback,
+                      development_budget_class=selected)
+            self.assertFalse(bad["complete"]);self.assertIsNone(bad["usage"])
+        truncated=parse(value[:-1],expected_limits=limits,binding=bound,verify_binding=caller_fixture_callback,
+                        development_budget_class=cls)
+        self.assertFalse(truncated["complete"]);self.assertIsNone(truncated["usage"])
+        oversized=parse(b"x"*147457,expected_limits=limits,binding=bound,verify_binding=caller_fixture_callback,
+                        development_budget_class=cls)
+        self.assertIn("RAW_BYTE_LIMIT",oversized["errors"])
+
     def parse(self, value, limits=None, verifier=caller_fixture_callback, binding=None):
         return parse(value, expected_limits=copy.deepcopy(LIMITS if limits is None else limits),
                      binding=copy.deepcopy(BINDING if binding is None else binding), verify_binding=verifier)

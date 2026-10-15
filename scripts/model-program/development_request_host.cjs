@@ -13,6 +13,7 @@ const TASK = '1502fd80-8ff8-4adc-b4f5-da6d462f4f8a';
 const SCHEMA = 'clued.fixed-development-request-authorization-payload/1';
 const SHA = /^[0-9a-f]{64}$/;
 const MAX_SAVED = 1048576;
+const FOUR_B_BUDGET_CLASS = 'm1_shortlist_4b_bf16_cpu8_v1';
 const need = (ok, code) => { if (!ok) throw new Error('DEVELOPMENT_REQUEST_HOST_' + code); };
 const stable = value => {
   if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']';
@@ -57,13 +58,16 @@ function validatePayload(p) {
   const b = p.budget;
   need(b?.attempts === 1 && b.model_calls === 1 && b.concurrency === 1 && b.training_steps === 0
     && b.paid_cost === 0 && b.downloads === 0 && b.model_external_network_bytes === 0, 'SINGLE_NONLEARNING_BUDGET');
-  need(b.control_total_seconds === 240, 'CONTROL_TOTAL_BUDGET');
+  const selected = b?.development_budget_class;
+  need(!Object.hasOwn(b,'development_budget_class') || selected === FOUR_B_BUDGET_CLASS, 'DEVELOPMENT_BUDGET_CLASS');
+  const large = selected === FOUR_B_BUDGET_CLASS;
+  need(b.control_total_seconds === (large ? 600 : 240), 'CONTROL_TOTAL_BUDGET');
   const control = b.control_wall_seconds ?? b.wall_seconds;
-  need(Number.isSafeInteger(control) && control > 0 && control <= 225,
+  need(Number.isSafeInteger(control) && control > 0 && control <= (large ? 585 : 225),
     'CONTROL_CHILD_BUDGET');
-  for (const [name, ceiling] of Object.entries({input_tokens:4096,output_tokens:512,total_tokens:4608,
-    context_tokens:8192,stdout_bytes:131072,stderr_bytes:131072,observation_bytes:65536,
-    wall_seconds:120,max_output_storage_bytes:MAX_SAVED,other_result_profile_ledger_and_receipts_max_bytes:262144}))
+  for (const [name, ceiling] of Object.entries({input_tokens:4096,output_tokens:large?1024:512,total_tokens:large?5120:4608,
+    context_tokens:8192,stdout_bytes:131072,stderr_bytes:131072,observation_bytes:large?147456:65536,
+    wall_seconds:large?480:120,max_output_storage_bytes:MAX_SAVED,other_result_profile_ledger_and_receipts_max_bytes:262144}))
     need(Number.isSafeInteger(b[name]) && b[name] > 0 && b[name] <= ceiling, 'BUDGET_' + name.toUpperCase());
   need(b.output_tokens < b.total_tokens && b.input_tokens + b.output_tokens <= b.total_tokens, 'TOKEN_TOTAL');
   const encoded = [b.stdout_bytes,b.stderr_bytes,b.observation_bytes]
@@ -73,16 +77,20 @@ function validatePayload(p) {
   need(Number.isSafeInteger(p.device?.cpu_threads) && [2,8].includes(p.device.cpu_threads)
     && p.device.gpu_layers === 0 && p.device.substitution_allowed === false,
     'EXACT_DEVICE');
+  need(!large || p.device.cpu_threads === 8, 'CLASS_CPU_THREADS');
   need(/^[0-9a-f]{40}$/.test(p.source?.head) && Array.isArray(p.source.files) && p.source.files.length > 0,
     'SOURCE'); p.source.files.forEach(pin);
   need(new Set(p.source.files.map(row => row.path)).size === p.source.files.length, 'SOURCE_DUPLICATE');
   pin({path:p.model?.absolute_path,bytes:p.model?.bytes,sha256:p.model?.sha256});
+  need(!large || p.model.bytes <= 10 * 1024**3, 'CLASS_MODEL_SIZE');
   pin(p.input?.prompt); pin(p.input?.schema);
   need(p.input?.root_count === 1 && p.input.gold === false && p.input.holdout === false, 'DEVELOPMENT_INPUT');
   const f = p.fixed_startup, plan = f?.execution_plan_without_runtime_monotonic_deadline;
   need(f && plan && !Object.hasOwn(plan, 'deadline_monotonic')
     && objectDigest(plan) === f.execution_plan_sha256 && objectDigest(f.startup) === f.startup_sha256,
     'FIXED_PLAN_OR_STARTUP_DIGEST');
+  need((large && plan.development_budget_class === selected) ||
+    (!large && !Object.hasOwn(plan,'development_budget_class')), 'PLAN_BUDGET_CLASS');
   const threads = Object.hasOwn(plan, 'cpu_threads') ? plan.cpu_threads : 2;
   need(Number.isSafeInteger(threads) && [2,8].includes(threads) && threads === p.device.cpu_threads,
     'PLAN_CPU_THREADS');
@@ -186,11 +194,11 @@ function base64Capture(value, cap) {
   const bytes = Buffer.from(value.data,'base64');
   need(bytes.length <= cap && bytes.toString('base64') === value.data, 'CAPTURE_SIZE_OR_ENCODING'); return bytes;
 }
-function deadlineOperations(deadlineMonotonic) {
+function deadlineOperations(deadlineMonotonic, totalSeconds) {
   // Root captures this one same-process performance.now() cutoff before the
   // whole operation. A caller-supplied clock value does not supply permission.
   need(typeof deadlineMonotonic === 'number' && Number.isFinite(deadlineMonotonic)
-    && deadlineMonotonic > performance.now() && deadlineMonotonic <= performance.now() + 240000,
+    && deadlineMonotonic > performance.now() && deadlineMonotonic <= performance.now() + totalSeconds * 1000,
     'SAVE_SHARED_DEADLINE');
   const active = () => need(performance.now() < deadlineMonotonic, 'SAVE_DEADLINE');
   async function within(operation, lateCleanup) {
@@ -235,8 +243,8 @@ async function saveFixedDevelopmentResult({requestBytes,expectedRequestSha256,te
   // before and after saving. Metadata checks below do not qualify that Host.
   // Only this single encoded terminal and a small fixed metadata record are
   // created. No raw capture, observation copy, tool log or ledger reset exists.
-  const {active,within} = deadlineOperations(deadlineMonotonic);
   const p = parseRequest(requestBytes,expectedRequestSha256), f = p.fixed_startup, b = p.budget;
+  const {active,within} = deadlineOperations(deadlineMonotonic,b.control_total_seconds);
   const root = path.resolve(p.namespace.root), ledger = path.resolve(f.ledger_directory), out = path.resolve(f.output_directory);
   need(path.isAbsolute(p.namespace.root) && !p.namespace.root.startsWith('\\\\')
     && path.resolve(p.namespace.root) === path.normalize(p.namespace.root).replace(/[\\/]+$/,''), 'SAVE_CANONICAL_ROOT');
@@ -323,4 +331,4 @@ async function saveFixedDevelopmentResult({requestBytes,expectedRequestSha256,te
 }
 
 module.exports = Object.freeze({makeDevelopmentRequestPayload,prepareFixedDevelopmentOwnerBinding,
-  saveFixedDevelopmentResult,SCHEMA});
+  saveFixedDevelopmentResult,SCHEMA,FOUR_B_BUDGET_CLASS});
