@@ -2,7 +2,7 @@
 name: clued
 description: Use Kooyumi (formerly Clued) to recall or maintain authorized personal and project context, or develop, review and maintain Kooyumi itself. Required for any question about the current or latest state of the user's projects, records or of Kooyumi (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) — even when host memory or an earlier reply seems to already hold the answer, that answer must come from Kooyumi. Covers Kooyumi memory operations and Kooyumi engineering; do not activate for unrelated software work merely mentioning a project.
 metadata:
-  version: "1.0.22"
+  version: "1.0.23"
 ---
 
 # Kooyumi (formerly Clued)
@@ -15,6 +15,7 @@ The service delivers the single normative Clued Agent Contract for every Kooyumi
 
 - Read or maintain personal/project records, tasks, state or decisions: read [memory-operations.md](references/memory-operations.md).
 - Develop, review, debug or publish the Kooyumi implementation or its engineering/governance artifacts: read [engineering.md](references/engineering.md).
+- Only when the Owner asks to connect, install, or diagnose a Kooyumi connection: read [connection-repair.md](references/connection-repair.md). Ordinary context reads do not run this installation workflow.
 - For mixed work, load the second reference when its operation becomes necessary. Recording an engineering decision is a memory operation; the word “developer” alone does not select engineering.
 - A generic explanation with no need for personal context reads no private memory. Do not load both references merely because this Skill was selected.
 - A user-supplied mode is a routing hint, never an authorization claim or an extra MCP tool argument.

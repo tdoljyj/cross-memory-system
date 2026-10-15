@@ -1,0 +1,19 @@
+{
+  "apps": "./.app.json",
+  "author": {
+    "name": "App developer"
+  },
+  "description": "Kooyumi：授权的个人与项目上下文服务",
+  "interface": {
+    "capabilities": [],
+    "category": "Other",
+    "defaultPrompt": null,
+    "developerName": "App developer",
+    "displayName": "Kooyumi",
+    "longDescription": "Kooyumi：授权的个人与项目上下文服务",
+    "shortDescription": "Kooyumi：授权的个人与项目上下文服务"
+  },
+  "name": "dev-6ad0cb1db0c48191a97bd2bd158836e3",
+  "version": "1.0.1",
+  "skills": "./skills/"
+}
