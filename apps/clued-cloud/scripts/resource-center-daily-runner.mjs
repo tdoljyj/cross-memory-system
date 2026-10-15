@@ -159,6 +159,17 @@ export async function main(configPath, expectedHash, mode) {
     finally { await store?.close(); }
   });
 }
+// Host-bootstrap composition only; neither factory is an Agent tool or accepts
+// an endpoint from a job. Fixed endpoints override any caller-owned options.
+export function createDailyNativeWriterToolHost(options) {
+  return createResourceCenterGoogleDriveNativeWriterToolHost({ ...options,
+    authority_endpoint: "https://kooyumi.pixelgrav.com/v1/resource-center/authority",
+    writer_endpoint: "https://kooyumi.pixelgrav.com/v1/resource-center/write" });
+}
+export function createDailySettlementInspector(writer, fetchImpl = globalThis.fetch) {
+  return createResourceCenterWriteClient({ endpoint: "https://kooyumi.pixelgrav.com/v1/resource-center/write", binding_token: writer, fetch: fetchImpl,
+    resolve_provider_identity: () => fail("DAILY_SETTLEMENT_READ_ONLY"), verify_postcondition: () => fail("DAILY_SETTLEMENT_READ_ONLY"), persist_recovery: () => fail("DAILY_SETTLEMENT_READ_ONLY") });
+}
 async function runWithCredentials(c, mode, secrets) {
   const chunks = []; let length = 0;
   for await (const chunk of process.stdin) {
@@ -176,8 +187,7 @@ async function runWithCredentials(c, mode, secrets) {
     if (ticket.mutation?.artifact_role !== "clued_resource") fail("DAILY_SETTLEMENT_JOB_MISMATCH");
     const { artifact_role: _role, ...originalArguments } = ticket.mutation;
     const originalJob = validateDailyJob({ job_id: ticket.job_id, tool: "clued_resource_center_mutate", arguments: originalArguments });
-    const inspector = createResourceCenterWriteClient({ endpoint: "https://clued.pixelgrav.com/v1/resource-center/write", binding_token: secrets.writer,
-      resolve_provider_identity: () => fail("DAILY_SETTLEMENT_READ_ONLY"), verify_postcondition: () => fail("DAILY_SETTLEMENT_READ_ONLY"), persist_recovery: () => fail("DAILY_SETTLEMENT_READ_ONLY") });
+    const inspector = createDailySettlementInspector(secrets.writer);
     const result = await settleDailyJob({ state_directory: c.state_directory, job_id: originalJob.job_id, trusted_profile: c.profile,
       inspect_committed_job: async prior => {
         if (hash(JSON.stringify(originalJob)) !== prior.request_sha256) fail("DAILY_SETTLEMENT_JOB_MISMATCH");
@@ -196,11 +206,10 @@ async function runWithCredentials(c, mode, secrets) {
     load_tokens: async () => decrypt(await safeFile(c.google_tokens_path)) });
   const recovery = createResourceCenterRecoveryStore(c.recovery_path);
   const attempts = createResourceCenterProviderAttemptStore(c.attempt_path);
-  const host = createResourceCenterGoogleDriveNativeWriterToolHost({ trusted_profile: c.profile,
+  const host = createDailyNativeWriterToolHost({ trusted_profile: c.profile,
     drive_fetch: guardedResourceCenterFetch(c.state_directory), authority_fetch: guardedResourceCenterFetch(c.state_directory),
     root_folder_id: c.root_folder_id, root_parent_id: c.root_parent_id, get_drive_credential: getCredential,
-    authority_endpoint: "https://clued.pixelgrav.com/v1/resource-center/authority", authority_binding_token: secrets.reader,
-    writer_endpoint: "https://clued.pixelgrav.com/v1/resource-center/write", writer_binding_token: secrets.writer,
+    authority_binding_token: secrets.reader, writer_binding_token: secrets.writer,
     persist_recovery: ticket => recovery.persist_recovery({ ...ticket, job_id: job.job_id }),
     persist_provider_attempt: attempt => attempts.persist_provider_attempt({ ...attempt, job_id: job.job_id }) });
   const result = await runDailyJob({ job, state_directory: c.state_directory, trusted_profile: c.profile, host,
