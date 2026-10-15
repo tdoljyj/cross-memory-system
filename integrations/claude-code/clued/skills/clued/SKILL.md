@@ -2,14 +2,14 @@
 name: clued
 description: Use Kooyumi (formerly Clued) to recall or maintain authorized personal and project context, or develop, review and maintain Kooyumi itself. Required for any question about the current or latest state of the user's projects, records or of Kooyumi (latest version, what is frozen/fixed/accepted, current task, latest decision, what changed) — even when host memory or an earlier reply seems to already hold the answer, that answer must come from Kooyumi. Covers Kooyumi memory operations and Kooyumi engineering; do not activate for unrelated software work merely mentioning a project.
 metadata:
-  version: "1.0.21"
+  version: "1.0.22"
 ---
 
 # Kooyumi (formerly Clued)
 
 Use one entry point and load only the workflow needed for the requested operation. A Skill, its selected workflow, and an optional mode hint never establish identity, grant permissions, or isolate the privileges of a shared MCP connection.
 
-The service delivers the single normative Clued Agent Contract for every Kooyumi call: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. Obtain its full text through `clued_agent_bootstrap`, reading all parts in order; when the Host cannot pass `part`, read [the served contract](https://clued.pixelgrav.com/clued-agent.md). Every part must identify the same version and SHA-256; restart from part 1 if either changes. Read it whenever this Skill touches Kooyumi context, whichever workflow you select. The served contract wins over this Skill and its workflows. If neither path delivers the full text, tell the Owner and stop.
+The service delivers the single normative Clued Agent Contract for every Kooyumi call: start, read order, capture of material outcomes, write discipline, error handling and checkpoint. Obtain its full text through `clued_agent_bootstrap`, reading all parts in order; when the Host cannot pass `part`, read [the served contract](https://kooyumi.pixelgrav.com/clued-agent.md). Every part must identify the same version and SHA-256; restart from part 1 if either changes. Read it whenever this Skill touches Kooyumi context, whichever workflow you select. The served contract wins over this Skill and its workflows. If neither path delivers the full text, tell the Owner and stop.
 
 ## Choose the operation
 
@@ -21,7 +21,9 @@ The service delivers the single normative Clued Agent Contract for every Kooyumi
 
 ## Connection and authority
 
-The authenticated Kooyumi service is the online source of truth. The compatible Skill ID remains `clued`, and the MCP tools, connection addresses and registered connection names retain their existing identifiers. Use the existing connected MCP at `https://clued.pixelgrav.com/mcp`, or a supported authenticated API. Public connection metadata is available through `clued_agent_bootstrap` and `https://clued.pixelgrav.com/.well-known/clued-continuity`. Its advertised OAuth login is not proof that this client can read or write protected data.
+The authenticated Kooyumi service is the online source of truth. The compatible Skill ID remains `clued`; MCP tool names, canonical IDs and existing registered connection names retain their identifiers. New clients use `https://kooyumi.pixelgrav.com/mcp`, or a supported authenticated API. Public connection metadata is available through `clued_agent_bootstrap` and `https://kooyumi.pixelgrav.com/.well-known/clued-continuity`. Its advertised OAuth login is not proof that this client can read or write protected data.
+
+An existing authorized connection to the legacy origin can continue using its own resource, issuer and Binding. Moving a client to the new origin requires that client's normal Host OAuth flow; never copy a legacy token or assume it authorizes the new resource. A domain change does not migrate accounts or canonical records.
 
 Keep the actual subject, client Binding, canonical resource IDs and operation scopes distinct. Reuse a working connection; ask for reconnection only when it is actually required. Each independent client/authorization uses its own revocable least-privilege Binding. Sharing a connection shares its granted capabilities; selecting another workflow does not enlarge or narrow them.
 

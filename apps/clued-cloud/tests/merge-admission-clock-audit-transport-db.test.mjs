@@ -52,9 +52,10 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // Bind this current transport regression to the independently reviewed Worker.
   // The prior 2002e9ec...1142 binding remains in commit 28d57989; R9 registry
   // and epoch pins are separate and are not changed by this fixture update.
-  // Main dbb82ab includes c2227c54/c90fb46a Kooyumi brand-copy changes from
-  // prior 331d23cd...833e; all C1 behavior/permission assertions remain exact.
-  assert.equal(hash(workerSource),'0b22d181814840c623c446d500db322cb1898af682fad7a0fe6434eaa746256a');
+  // Reviewed edcc35f2 adds OAuth-authenticated profile metadata, tools/list and
+  // profile calls to prior 0b22d181...256a; it leaves C1 audit paths unchanged.
+  // All C1 behavior/permission assertions below remain exact.
+  assert.equal(hash(workerSource),'23236e5f70711860ee1207c3dbc5e0d5366e36dd7e450b01ef5c4cd574e324cf');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

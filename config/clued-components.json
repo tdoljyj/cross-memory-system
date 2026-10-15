@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.21",
+      "version": "1.0.22",
       "description": "The Kooyumi Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "66491f8608008b0d9eee4fe4ad705f3b95164c578099a78fde03a2b9e1015764",
+      "content_sha256": "7619a3be79349471d203d29dd05891e52eee439b9ded03bff801c67a698d40ef",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -50,7 +50,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "description": "Kooyumi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {

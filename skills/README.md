@@ -19,6 +19,8 @@ python scripts/update_clued_skills.py --check
 
 Skill 迁移不创建账户、不修改 MCP Binding、不增加权限，也不替代真实客户端 OAuth 与读写验收。工程流程遵守根 `AGENTS.md` 的统一 `-AlignAndVerify`／`-Pull` 入口，已经内置 doctor 的同一请求不得再单独运行 doctor。正式受治理合同、历史冻结文件与发布主体不因合并 Skill 而改变。
 
+Skill 1.0.22 的新客户端默认入口为 `https://kooyumi.pixelgrav.com/mcp`，合同与公开元数据也从该域读取；Skill ID `clued`、工具名和 Canonical ID 保持兼容。既有旧域授权连接继续使用自身的 resource、issuer 和 Binding；切换新域走该客户端正常 OAuth，不复制旧 token。更新 Skill 本身不改变任何连接授权。
+
 ## 组件版本
 
 Skill、Agent 合同、Claude Code hooks、本地脚本和 MCP 服务的版本统一登记在 `config/clued-components.json`（规则见 `development/contracts/components/ComponentVersioning.v0.2.md`）。每个组件的文件内容有摘要；内容变了版本必须升，CI 的 `clued-components` 检查会拒绝没升版本的改动。
