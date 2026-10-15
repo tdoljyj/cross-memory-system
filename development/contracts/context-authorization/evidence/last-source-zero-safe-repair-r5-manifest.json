@@ -1,0 +1,68 @@
+{
+  "schema": "clued.last-source-zero-safe-repair-artifacts.v1",
+  "files": [
+    {
+      "path": "supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "c5fafc46416bd8da81d73501c636de1affad1e6d5eebc6024fd6c1848c55311e"
+    },
+    {
+      "path": "tests/all-contexts-authorization-db.test.mjs",
+      "sha256": "130984cd3a66b4d24978bbeda3afbb8b7128bfcd751d4ef13ad60fe34bdb5dc6"
+    },
+    {
+      "path": "tests/authorization-roles-db.test.mjs",
+      "sha256": "3398b5f558e7bc3f8b7d76dafa02a3f76af76450fe0384558ccc69aeaa60e2e7"
+    },
+    {
+      "path": "tests/connection-permission-request-db.test.mjs",
+      "sha256": "14b90bf8de5c70d8e14bd84043aa2568ff117b0df438eb6318eac9fe5e8ee179"
+    },
+    {
+      "path": "tests/authorization-closeout.test.mjs",
+      "sha256": "85c4f3d1ef6dcc859ba0ec17c1b9111d016c561ed19dc578bcd23ddd1fdb2641"
+    },
+    {
+      "path": "tests/k-cont-db.test.mjs",
+      "sha256": "bab4cd3d18899366558c99f07783c04d9c2143d19bd7455bbbcfe0ff4759cc51"
+    },
+    {
+      "path": "tests/owner-grants-db.test.mjs",
+      "sha256": "7d12316b8b336577e5d43dca00b7c64e54e110a9007b97c4d3ffed303938573d"
+    },
+    {
+      "path": "tests/owner-grants-admission-door-db.case.mjs",
+      "sha256": "2d54d24cabf5022998536829b0365d97f6cdb67c56d840f5418f4fc907102c7c"
+    },
+    {
+      "path": "tests/owner-grants-release-door-db.test.mjs",
+      "sha256": "dd9b8ac390636f99818d82d6617ec44ad381f633260693bda4c3f3a3591a283c"
+    },
+    {
+      "path": "tests/owner-grants-scope-db.test.mjs",
+      "sha256": "b3cc5c13586744e9b8fa07a08dd31f0b19906bb94999f4f84f27035702cbd8db"
+    },
+    {
+      "path": "tests/owner-request-bundles-db.test.mjs",
+      "sha256": "5c2335949eb4a8c81b3eb6d796abb8985152c0338e39f4b5c6dbae83548ae9ce"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-safe-repair-r5.json",
+      "sha256": "a366ec376a295f7e7528c53c3fbe04494cfce0998d82146339be0ad050126f41"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r5-source.sql",
+      "sha256": "c5fafc46416bd8da81d73501c636de1affad1e6d5eebc6024fd6c1848c55311e",
+      "kind": "immutable_review_snapshot_not_a_standalone_runner"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r5-test.mjs",
+      "sha256": "130984cd3a66b4d24978bbeda3afbb8b7128bfcd751d4ef13ad60fe34bdb5dc6",
+      "kind": "immutable_review_snapshot_not_a_standalone_runner"
+    }
+  ],
+  "readonly_serialization": {
+    "path": "supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+    "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+    "unchanged": true
+  }
+}

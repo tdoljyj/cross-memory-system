@@ -1,0 +1,63 @@
+run_started_utc=2026-10-14T09:00:26.5975792Z
+▶ all-contexts real early writer barriers and preserved caller catalog
+  ✖ actual Native storage onboard activate creates a future Project and exact Context authorization (74.15ms)
+  ✔ real catalog preserves gateway 80 / anon CI8 and private guards are unexposed (6.6474ms)
+  ✔ macro approval versus Native grant_upsert, both orderings (167.5855ms)
+  ✔ approval/create scan race in both orderings has complete exact grants (114.1027ms)
+  ✔ real MCP creator with highest Binding UUID and old/new policies uses one sorted Project/Context fan-out (112.1883ms)
+  ✔ Native permission approval waits before Binding/GrantLock while an actual request producer holds them (179.8338ms)
+  ✔ actual clued_owner_grant_door_consume_v1 B SHARE -> GrantLock consumption versus Native permission writer has no inverse lock (286.791ms)
+  ✔ actual clued_owner_grant_admission_door_v1 B SHARE -> GrantLock consumption versus Native permission writer has no inverse lock (194.9957ms)
+  ✔ headless rotation versus context creation preserves the source snapshot and grants the new Binding (146.3904ms)
+  ✔ revoke/create and expiry/create never re-grant a ended Binding (173.2835ms)
+  ✔ Native exact grant revoke and source reduction serialize; future creation retains the precise deny (155.1302ms)
+  ✔ Native list is diagnostic and does not wait on held authorization/context locks (76.5637ms)
+  ✔ ordinary Native upsert cannot widen a live precise expiry without new confirmation (2.6782ms)
+  ✔ fake GUC and absent real early lock cannot authorize a direct future-resource hook (8.1791ms)
+  ✔ Repeatable Read writer rejects before mutation, keeping ordinary reader availability (11.7112ms)
+✖ all-contexts real early writer barriers and preserved caller catalog (8685.4ms)
+ℹ {"migration":"20261014044323_all_contexts_authorization_v2.sql","sha256":"55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"}
+ℹ {"migration":"20261014045157_all_contexts_serialization_v2.sql","sha256":"ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad"}
+ℹ {"actual_storage_activate_error":"authorization_early_writer_guard_required","code":"42501","where":"PL/pgSQL function clued_private.authorization_writer_require_v2(uuid) line 5 at RAISE\nSQL statement \"SELECT clued_private.authorization_writer_require_v2(p_user_id)\"\nPL/pgSQL function clued_private.project_mutation_core_v2(uuid,uuid,jsonb,text) line 10 at PERFORM\nPL/pgSQL function clued_private.storage_onboard_activate_v1(uuid,clued_private.storage_onboard_attempts_v1,clued_private.storage_oauth_apps_v1,jsonb) line 16 at assignment\nPL/pgSQL function public.clued_storage_onboard_v1(text,jsonb) line 224 at assignment"}
+ℹ {"actual_function_catalog":[{"signature":"clued_authorization_manage_v12(jsonb)","acl":"{postgres=X/postgres,authenticated=X/postgres}","source_hash":"d5e957b5f1e6483f10caa92a477318eeaf66bd907fe6717e053791457e3fc020"},{"signature":"clued_development_owner_v14(jsonb)","acl":"{postgres=X/postgres,authenticated=X/postgres}","source_hash":"9f54378b974a99c9e167e0b27050f029c91044e65a5fb400c9915159d05dacab"},{"signature":"clued_headless_binding_issue_v1(jsonb)","acl":"{postgres=X/postgres,authenticated=X/postgres}","source_hash":"35922f56c45771ac6f1bb2c1a98fca254e8cc48fd3304ac9d8aaca39ca2cdd43"},{"signature":"clued_owner_grant_v1(jsonb)","acl":"{postgres=X/postgres,authenticated=X/postgres}","source_hash":"99eb1823f82f475fc9eadde6e648627928b70808cb994c4dc9bb0ee5ba390c31"},{"signature":"clued_owner_request_v1(text,jsonb)","acl":"{postgres=X/postgres,clued_worker_gateway=X/postgres}","source_hash":"7cf2df686f02fbeea20051a0737fd7a5438e1eb138bb82ccd9c423f106235004"},{"signature":"clued_private.binding_expiry_sweep_v1()","acl":"{postgres=X/postgres}","source_hash":"19142306d7423482855bbdeab89afadd764df42549570a49c7aa215e2d441a52"},{"signature":"clued_private.development_execute_before_authorization_v14(uuid,uuid,boolean,jsonb)","acl":"{postgres=X/postgres}","source_hash":"79a7779e7be904e783117920e48f0353621f048bc06c27a74b48dfc327d62e1e"},{"signature":"clued_private.development_execute_v14(uuid,uuid,boolean,jsonb)","acl":"{postgres=X/postgres}","source_hash":"8c614302d024c4bebd5c0833c0fa73a8d894ceee4188c70f4567e9cc49d1fc44"},{"signature":"clued_private.ii_pub_clued_authorization_approve_v12(text,uuid,bigint,jsonb,text,timestamp with time zone)","acl":"{postgres=X/postgres}","source_hash":"d8407e9aab42c131c6107bc726926f44a65d901868a120b1b10d143a0e9e72e5"},{"signature":"clued_project_mutate_v2(text,jsonb)","acl":"{postgres=X/postgres,clued_worker_gateway=X/postgres}","source_hash":"cbc974a2f3593a1e4a163e68bd575d4e540a93852734843d2060d19954801d87"}]}
+ℹ tests 16
+ℹ suites 0
+ℹ pass 14
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8776.6041
+
+✖ failing tests:
+
+test at tests\all-contexts-authorization-locks-db.test.mjs:164:13
+✖ actual Native storage onboard activate creates a future Project and exact Context authorization (74.15ms)
+  error: authorization_early_writer_guard_required
+      at C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\node_modules\pg\lib\client.js:694:17
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Object.call (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs:133:79)
+      at async TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs:168:22)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs:164:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    length: 625,
+    severity: 'ERROR',
+    code: '42501',
+    detail: undefined,
+    hint: undefined,
+    position: undefined,
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: 'PL/pgSQL function clued_private.authorization_writer_require_v2(uuid) line 5 at RAISE\nSQL statement "SELECT clued_private.authorization_writer_require_v2(p_user_id)"\nPL/pgSQL function clued_private.project_mutation_core_v2(uuid,uuid,jsonb,text) line 10 at PERFORM\nPL/pgSQL function clued_private.storage_onboard_activate_v1(uuid,clued_private.storage_onboard_attempts_v1,clued_private.storage_oauth_apps_v1,jsonb) line 16 at assignment\nPL/pgSQL function public.clued_storage_onboard_v1(text,jsonb) line 224 at assignment',
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'pl_exec.c',
+    line: '3923',
+    routine: 'exec_stmt_raise'
+  }
+run_finished_utc=2026-10-14T09:00:35.5084428Z exit_code=1

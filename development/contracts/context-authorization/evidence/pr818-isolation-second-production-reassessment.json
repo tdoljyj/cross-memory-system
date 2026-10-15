@@ -1,0 +1,104 @@
+{
+  "schema": "clued.pr818.isolation-production-reassessment.v1",
+  "generated_at": "2026-10-14T08:55:41Z",
+  "reviewer": "Codex independent read-only /root/pr818_stack_failure_diagnosis",
+  "subject_head": "3a4dbd2374fb955ac6d910ca327a37c26bd3d751",
+  "supersedes": {
+    "path": "pr818-isolation-second-diagnosis-and-inventory.json",
+    "sha256": "f2f43611593cea0b25af952e34418b86d18cfe313c1b6f2858ad5d47bfac11e7",
+    "only": "production_conclusion.retain_guard_recommendation and the proposal to edit all 38 patterns. The 63-file exact Git inventory, actual 86/190/82 CI counts and six actual failures remain valid."
+  },
+  "revised_conclusion": "Preserve the retired token alias body at its original sealed source SHA, remove only its serialization entrance patch, retain every real Native/GW entrance guard and both private project-core require checks. Repair six deliberately deferred-CLOSEOUT fixtures; other 32 late replays need not be rewritten just to accept changed alias bytes.",
+  "evidence": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "line": 780,
+      "fact": "Legacy token alias revokes PUBLIC/authenticated and grants anon; Native user_project_mutate is a separate authenticated wrapper."
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "line": 110,
+      "fact": "Sealed legacy alias source SHA is 64503257b828c3dcf1405fc378a9d297faf559cec29a373e77e5013e2eb76262."
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "line": 410,
+      "fact": "CLOSEOUT revokes PUBLIC/anon on legacy aliases and its postcondition forbids gateway EXECUTE."
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "line": 373,
+      "fact": "The actual legacy OAuth resolver is unconditional denial: legacy_oauth_requires_new_provider_reauthorization, SQLSTATE 42501."
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260924110000_mtpe_universal_intake_auto_priority.sql",
+      "line": 752,
+      "fact": "The only retained SQL router caller must execute the deny-only resolver before its old project alias dispatch."
+    },
+    {
+      "path": "apps/clued-cloud/worker/projects.ts",
+      "line": 54,
+      "fact": "Current bound-token project tool maps to clued_project_mutate_v2."
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 2896,
+      "fact": "Current Native project REST routes call clued_user_project_mutate_v2."
+    }
+  ],
+  "why_revised": "The alias is not intrinsically deny-only, but it is no longer reachable through an authorized production caller. Retaining a hypothetical superuser compatibility mutation path is not a reason to alter its sealed retired body. With private-core require retained, removing this inactive alias entrance does not remove the early guard from any current authorized writer. No executable current caller contradicting this conclusion was found.",
+  "delayed_closeout_files": [
+    {
+      "path": "apps/clued-cloud/tests/currentness-admission-db.test.mjs"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-retained-all.test.mjs"
+    },
+    {
+      "path": "apps/clued-cloud/tests/dataset-split-native-grant-binding-successor-db.test.mjs"
+    },
+    {
+      "path": "apps/clued-cloud/tests/dataset-split-native-grant-correction-db.test.mjs"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-authority-db.test.mjs"
+    },
+    {
+      "path": "apps/clued-cloud/tests/storage-file-version-denial-db.test.mjs"
+    }
+  ],
+  "six_fixture_phase_plan": [
+    "Keep both successors out of the original deliberately legacy phase while CLOSEOUT is deferred.",
+    "Run every original historical scenario and assertion, including role/failure tests and any definition restoration.",
+    "Install actual CLOSEOUT and prove its real replay and exact original catalog/ACL boundary.",
+    "Apply both revised reviewed successors and later real dependents in timestamp order.",
+    "Verify current Source/OID/Owner/SD/search_path/ACL/GW80/CI8, actual Native/GW early entry behavior and private caller denial."
+  ],
+  "separate_production_risk": {
+    "source_site": "apps/clued-cloud/supabase/migrations/20261001040000_storage_onboard_n0.sql:317",
+    "fact": "Exact-head repository call-site search independently finds a direct project_mutation_core_v2(u,null,input,...) call in storage onboarding, outside the project public entry wrappers.",
+    "status": "Root and the other independent reviewer identified its activate path as a real missing early-guard entrance; this agent did not run the PG reproducer or author its repair.",
+    "requirement": "Fix the actual authorized onboarding entrance early before existing nonce/operation/row locks, preserve Owner/authentication/confirmation semantics and sorted policy/caller Binding fanout. Validate real positive activation and negative authorization/rollback/concurrency cases. Do not add a late guard inside project core.",
+    "distinction": "This production blocker is separate from the six historical closeout assembly failures and must be resolved before release."
+  },
+  "possible_later_fixture_issue": {
+    "path": "apps/clued-cloud/tests/work-claims-handover-execution-db.test.mjs",
+    "line": 428,
+    "fact": "Static scan finds a raw current-chain project INSERT; alias preservation fixes only seal drift, so do not pre-claim all other full-chain tests pass."
+  },
+  "required_validation": [
+    "Actual complete chain preserves legacy alias prosrc SHA 64503257 and denies its PUBLIC/anon/authenticated/GW entry as appropriate; retained private core require still rejects unguarded writer use.",
+    "All real Native v1/v2 and Worker v2 project writers keep early guards; storage activate gains its missing early entrance and actual tests.",
+    "Update previous fixture assertions that incorrectly require a guard anchor in the now-preserved retired alias to check its original sealed SHA instead; keep current actual writer/ACL proofs.",
+    "The 32 unchanged late-replay tests must still run actual sealed replay; do not skip or weaken their assertions. Their unrelated business/setup failures remain possible.",
+    "Re-review changed Source/serialization and exact affected fixtures, then run the normal current-head required CI."
+  ],
+  "qualification": {
+    "diagnostic_only": true,
+    "code_edits": false,
+    "test_runs": false,
+    "ci_dispatch": false,
+    "canonical_writes": false,
+    "production_release_pass": false
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "schema": "clued.final-candidate-manifest-directory-preflight.v1",
+  "authority_effect": "NONE",
+  "status": "PASS_CANDIDATE_MANIFEST_DIRECTORY_PREFLIGHT",
+  "argv": [
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\gitleaks-8.30.1\\gitleaks.exe",
+    "dir",
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-493-candidate-manifests-directory-r1",
+    "--config",
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo\\.gitleaks.toml",
+    "--redact=100",
+    "--no-banner",
+    "--no-color",
+    "--log-level=error",
+    "--report-format=json",
+    "--report-path",
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-493-candidate-manifests-directory-r1-redacted.json"
+  ],
+  "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner",
+  "start_utc": "2026-10-14T19:06:29.661914+00:00",
+  "end_utc": "2026-10-14T19:06:29.987997+00:00",
+  "exit_code": 0,
+  "findings_count": 0,
+  "official_binary_sha256": "17157e2ee8b76fc8b1d8bee607a250e34b8a8023c8bc81822d4b5ee4d78fcb7c",
+  "full_config_sha256_before_and_after": "c5a31bde4b05c111d5fd9b779db689c7bea35d73c4e17f26b823729d7e52aaf7",
+  "redact": 100,
+  "exact_candidate_files": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-943eb9-scanner-result-bounded-manifest-r1.json",
+      "sha256": "de68269e308c1fa1394d7998765e0881b0322c87a4d6cbe97e168bff7f0f1c91",
+      "bytes": 2449,
+      "exact_copy": true
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-943eb9-bounded-manifest-directory-preflight-r1.json",
+      "sha256": "04fe6d550a753f1c623b76c1fdbe9a23295ef26010a2ddbcd9c9a8ec60ff4c4b",
+      "bytes": 2423,
+      "exact_copy": true
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-943eb9-reviewed-artifacts-independent-bounded-manifest-r1.json",
+      "sha256": "14862ccef1cc0ecec6c27b4be8f65ac284b8f87ded1e38fcd72cf579e2525d79",
+      "bytes": 2010,
+      "exact_copy": true
+    }
+  ],
+  "original_output": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-493-candidate-manifests-directory-r1-redacted.json",
+    "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "bytes": 3
+  },
+  "original_log": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-493-candidate-manifests-directory-r1.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "qualification": {
+    "three_candidate_manifest_files_only": true,
+    "is_Source_staged_scan": false,
+    "is_formal_full_Git_history_scan": false,
+    "is_CI_or_release_or_native_acceptance": false,
+    "no_repo_or_Git_mutation": true
+  }
+}

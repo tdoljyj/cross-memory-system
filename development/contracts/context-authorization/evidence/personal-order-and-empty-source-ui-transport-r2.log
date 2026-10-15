@@ -1,0 +1,94 @@
+✔ the three specified-scope examples submit only their exact selected identity, environment and operation (1.2318ms)
+✔ full policy is one real macro, presets cannot add an unselected resource, and both range switches clear precise choices (0.2612ms)
+✔ specified-scope display orders profile, personal records and projects without changing authorization payloads (0.2738ms)
+✔ verified Record display does not promote a candidate, retained history, legacy Record or Event (0.1613ms)
+✔ legacy project grants retain their operations while range no longer claims all contexts (25.3594ms)
+✔ role names follow the entries; unticking 我的全部项目 shows the projects again (1.2018ms)
+✔ sources_v1 reduction sends actual source identities and preserves legacy read when a new policy is removed (1.5453ms)
+✖ empty-source refusal explains that nothing was saved and requires rereading before explicit revoke (3.6789ms)
+✔ connection display puts profile before personal records while precise source payload stays unchanged (0.9021ms)
+✔ stored macro with restricted coverage never displays complete authorization and exact reduction uses real override CAS (1.3075ms)
+✔ malformed source identity/version or contribution cannot produce an actionable management card (1.4559ms)
+✔ precise restriction widening previews real old/new identities first and only independent confirmation consumes its exact token (2.7384ms)
+✔ stale grant/override snapshot or another resource in precise preview cannot produce a confirmation button (3.9391ms)
+✔ unsupported or incomplete precise metadata cannot clear a denial through the macro or manufacture grant identity (1.5559ms)
+✔ canonical scope denial uses its actual override CAS and four-field proposal, without a fabricated context grant (1.5482ms)
+✔ uncertain precise commit recovers with the same nonce/digest and never opens a replacement preview (1.3943ms)
+✔ account change discards a late precise preview and no old-account grant confirmation becomes actionable (1.0978ms)
+✔ signed-out page sends no requests and offers sign-in (3.1674ms)
+✔ preview then accept sends the exact Native bodies with the session bearer (12.6134ms)
+✔ a stale sign-in is reported as a reauthentication requirement and no accept is sent (1.4446ms)
+✔ an uncertain accept keeps the same request for a retry (1.7327ms)
+CIMD (Client ID Metadata Document) is disabled: add '"compatibility_flags": ["global_fetch_strictly_public"]' to your wrangler.jsonc to enable. See: https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public
+✔ Native exact limit confirmation forwards Owner credentials and CAS without bypassing Origin, operation or size gates (20.0287ms)
+✔ last-permission reduction exposes only its controlled business code and keeps private diagnostics redacted (1.0699ms)
+✔ real OAuth MCP storage tools retain live Binding and separate storage grant gates (26.7531ms)
+✔ real OAuth MCP clued_storage_browse reaches the read evaluator with any memory scope (11.7776ms)
+✔ real OAuth discovery challenges unauthenticated MCP and advertises the new issuer (0.4968ms)
+✔ PKCE and target are validated before consent or storage (0.5934ms)
+✔ consent requires the matching browser cookie and rejects cross-origin POST (1.7365ms)
+✔ two consent instances for the same client issue independent simultaneously usable grants (14.3665ms)
+✔ refresh token lifetime follows the chosen authorization lifetime, up to 365 days (23.2772ms)
+✔ OAuth MCP forwards the Worker execution context to the independent projection Builder (7.1823ms)
+✔ refresh downscoping cannot retain write capability in encrypted application props (11.7208ms)
+✔ a connection the Owner widened uses its live scopes without reconnecting; a reduced one loses them (10.726ms)
+✔ a read-only connection can ask for a connection permission (4.4347ms)
+✔ database revocation denies existing access and refresh even when provider KV remains unchanged (4.4312ms)
+✔ context write requires an explicit write scope and unknown tools fail closed (0.1441ms)
+✔ real provider access_token revocation commits DB denial before success despite stale KV copies (5.1071ms)
+✔ real provider refresh_token revocation commits DB denial before success despite stale KV copies (4.1216ms)
+✔ wrong-client revocation cannot reach the issuer revoke RPC (3.2559ms)
+✔ denial is committed through request CAS before redirecting access_denied (1.2815ms)
+✔ failed database revoke keeps provider tokens and never reports success (3.7066ms)
+✔ streamed oversized requests without Content-Length are stopped before OAuth storage (0.3679ms)
+✔ transient authorization outage during refresh preserves the usable refresh token (4.32ms)
+✔ a missing Worker gateway denies OAuth refresh before storage and preserves its token (3.5901ms)
+✔ a rejected Worker JWT leaves the OAuth refresh token usable after gateway recovery (6.4431ms)
+✔ signed out: renders nothing and makes no call (3.1296ms)
+✔ issuing is two steps and the token is shown once (15.1864ms)
+✔ rotating the legacy CI Binding names it and shows the moving role (2.7662ms)
+✔ rotating a headless Binding starts from its current grants; revoking uses the connection management RPC (1.8839ms)
+✔ a replaced Binding shows when it retires, cannot be rotated again, and can be revoked early (1.2141ms)
+✔ revoking a legacy Binding uses its own RPC and warns about its roles (1.4375ms)
+✔ a legacy revoke that Clued refuses is shown in plain words (1.4128ms)
+✔ declining the revoke dialog makes no call (1.1396ms)
+✔ a refusal is shown in plain words (1.5556ms)
+✔ a role Binding names its GitHub secret, and a rotation says which secret to update (1.6989ms)
+✔ new issuance with all-context capability preselects only the macro and a range change clears exact choices (1.389ms)
+✔ source-aware rotation binds real source/override versions, sends no derived direct selections and rejects a missing snapshot (1.7723ms)
+✔ raw legacy read scope is displayed without inferring full permission or all-context resource coverage (1.1283ms)
+✔ retired legacy Binding displays the actual retirement time and cannot be rotated again (1.196ms)
+✔ missing or malformed raw scopes stay unknown; expired legacy Binding has no actionable rotation (3.9613ms)
+ℹ tests 60
+ℹ suites 0
+ℹ pass 59
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 368.3315
+
+✖ failing tests:
+
+test at tests\authorization-roles-ui.test.mjs:146:1
+✖ empty-source refusal explains that nothing was saved and requires rereading before explicit revoke (3.6789ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+  +   undefined,
+      'reduce',
+  +   undefined,
+      'revoke'
+    ]
+  
+      at TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/authorization-roles-ui.test.mjs:171:10)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ undefined, 'reduce', undefined, 'revoke' ],
+    expected: [ 'reduce', 'revoke' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

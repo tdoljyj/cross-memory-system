@@ -60,8 +60,14 @@ test('Owner record detail: Native tenancy, typed links, exact currentness and re
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values
       ($1,'detail-owner@example.invalid',now()),($2,'detail-stranger@example.invalid',now())`, [owner, stranger]);
     for (const [id, user] of [[project, owner], [foreignProject, stranger]]) {
-      await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
-        values($1,$2,$3,$3,$4)`, [id, user, `project-${id}`, `project:${id}`]);
+      await admin.query('begin');
+      try {
+        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [user]);
+        assert.equal((await admin.query('select clued_private.authorization_writer_guard_held_v2($1) held', [user])).rows[0].held, true);
+        await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
+          values($1,$2,$3,$3,$4)`, [id, user, `project-${id}`, `project:${id}`]);
+        await admin.query('commit');
+      } catch (error) { await admin.query('rollback'); throw error; }
     }
     // raw-binding-grants: these inert Bindings only provide claim-holder foreign keys and labels.
     // Every detail call uses a direct Native human session; no call resolves or authenticates a Binding.
@@ -74,6 +80,10 @@ test('Owner record detail: Native tenancy, typed links, exact currentness and re
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Other owner fixture',$2,array['context:read'],array['*']) returning id`,
     [stranger, hash()])).rows[0].id;
+    assert.equal(Number((await admin.query('select count(*) n from clued_private.authorizations_v12 where binding_id=any($1::uuid[])',
+      [[binding, foreignBinding]])).rows[0].n), 0, 'FK-only claim holders have no authenticated authorization');
+    assert.equal(Number((await admin.query('select count(*) n from clued_private.development_grants_v14 where binding_id=any($1::uuid[])',
+      [[binding, foreignBinding]])).rows[0].n), 0, 'FK-only claim holders have no development grants');
     const put = async ({ id = uuid(), user = owner, kind = 'task', scope = 'global',
       title = 'Owner detail fixture', content = 'Task full text', lifecycle = 'active',
       status = 'active', typeFields = {}, relations = {}, schema = 1, closure = null }) => {

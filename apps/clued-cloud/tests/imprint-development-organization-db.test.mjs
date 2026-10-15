@@ -42,11 +42,21 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     const owner = uuid(), other = uuid(), project = uuid(), otherProject = uuid(), secondProject = uuid();
+    const withOwnerWriter = async (user, write) => {
+      await admin.query('begin');
+      try {
+        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [user]);
+        assert.equal((await admin.query('select clued_private.authorization_writer_guard_held_v2($1) held', [user])).rows[0].held, true);
+        const result = await write();
+        await admin.query('commit');
+        return result;
+      } catch (error) { await admin.query('rollback'); throw error; }
+    };
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values
       ($1,'development-owner@example.invalid',now()),($2,'development-other@example.invalid',now())`, [owner, other]);
     for (const [id, user] of [[project, owner], [secondProject, owner], [otherProject, other]]) {
-      await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
-        values($1,$2,$3,$3,$4)`, [id, user, `project-${id}`, `project:${id}`]);
+      await withOwnerWriter(user, () => admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
+        values($1,$2,$3,$3,$4)`, [id, user, `project-${id}`, `project:${id}`]));
     }
     // raw-binding-grants: inert synthetic Bindings provide source actor FKs and
     // a direct admin call to the existing field/version filter. No Binding is
@@ -55,8 +65,13 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       (user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'synthetic','Development fixture',$2,array['context:read'],array['project:'||$3::text]) returning id`,
     [owner, hash(uuid()), project])).rows[0].id;
-    const space = async (user = owner, projectId = project, environment = 'preview') => (await admin.query(`insert into clued_private.development_spaces_v14
-      (owner_id,project_id,name,environment,cursor) values($1,$2,'Synthetic owned space',$3,2) returning id`, [user, projectId, environment])).rows[0].id;
+    assert.equal(Number((await admin.query('select count(*) n from clued_private.authorizations_v12 where binding_id=$1', [binding])).rows[0].n), 0,
+      'FK-only actor fixture has no authenticated authorization');
+    assert.equal(Number((await admin.query('select count(*) n from clued_private.development_grants_v14 where binding_id=$1', [binding])).rows[0].n), 0,
+      'FK-only actor fixture has no development grant');
+    const space = async (user = owner, projectId = project, environment = 'preview') => withOwnerWriter(user, async () =>
+      (await admin.query(`insert into clued_private.development_spaces_v14
+        (owner_id,project_id,name,environment,cursor) values($1,$2,'Synthetic owned space',$3,2) returning id`, [user, projectId, environment])).rows[0].id);
     const context = await space(), production = await space(owner, project, 'production');
     const foreignContext = await space(other, otherProject), invalidProjectContext = await space(owner, otherProject);
     const put = async ({ id = uuid(), contextId = context, kind = 'note', version = 1, lifecycle = 'ACTIVE',

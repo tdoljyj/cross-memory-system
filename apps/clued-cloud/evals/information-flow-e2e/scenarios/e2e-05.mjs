@@ -3,7 +3,6 @@
 // clued_authorization_manage_v12 over PostgREST with the owner's real JWT:
 // no Worker route exposes reduce outside the delegated-OAuth consent API.
 import { acceptPolicy, checkPack, ids, nativeNote, packExtract, packRest, policyDoc } from './common.mjs';
-import { scopeEntry } from '../principals.mjs';
 
 export const id = 'E2E-05';
 
@@ -24,13 +23,33 @@ export async function run(ctx, r) {
   const m5 = r.alias('M5', first?.manifest?.id);
 
   const listed = await r.postgrest('owner_jwt', 'clued_authorization_manage_v12', { p_input: { op: 'list' } },
-    { extract: (b) => ({ count: b?.bindings?.length }) });
+    { extract: (b) => ({ count: b?.bindings?.length, code: b?.code, message: b?.message }) });
   const current = listed.body?.bindings?.find((row) => row.binding_id === B.bindingId);
+  r.check('05.source_protocol', 'the current Native DTO uses source-aware authorization', [200, 'sources_v1'],
+    [listed.status, current?.selection_format]);
+  const exactSource = (scope) => (current?.sources ?? []).filter((source) => source.kind === 'direct'
+    && source.contributions?.length === 1 && source.contributions[0].resource_kind === 'scope'
+    && source.contributions[0].resource_id === scope && source.contributions[0].environment === 'canonical');
+  const sourcesA = exactSource(pa), sourcesB = exactSource(pb);
+  r.check('05.source_targets', 'the Native DTO has one independent direct source for each granted scope', [1, 1],
+    [sourcesA.length, sourcesB.length]);
+  if (listed.status !== 200 || current?.selection_format !== 'sources_v1' || sourcesA.length !== 1 || sourcesB.length !== 1) {
+    throw new Error(`E2E-05 cannot identify exact source consent: ${listed.status} ${listed.body?.code ?? 'source_selection_unavailable'}`);
+  }
+  const [sourceA] = sourcesA, [sourceB] = sourcesB;
+  // Omitted sources retain consent. Revoke the exact B source, rather than
+  // treating the projected A row as a complete replacement of all provenance.
   const reduced = await r.postgrest('owner_jwt', 'clued_authorization_manage_v12', { p_input: { op: 'reduce',
-    binding_id: B.bindingId, base_version: current?.version, selected: [scopeEntry(pa)] } },
-  { extract: (b) => ({ version: b?.version, selected: b?.selected?.map((row) => row.resource_id) }) });
+    binding_id: B.bindingId, base_version: current.version, selection_format: 'sources_v1',
+    sources: [{ source_id: sourceB.source_id, base_version: sourceB.version, action_cap: [] }], exceptions: [] } },
+  { extract: (b) => ({ version: b?.version, selected: b?.selected?.map((row) => row.resource_id),
+    selection_format: b?.selection_format, code: b?.code, message: b?.message }) });
   r.check('05.reduce', 'the owner reduces the Binding to scope A', [200, [pa]],
     [reduced.status, (reduced.body?.selected ?? []).map((row) => row.resource_id)]);
+  r.check('05.untargeted_source', 'the unsubmitted A source keeps its original identity, version and consent', sourceA,
+    reduced.body?.sources?.find((source) => source.source_id === sourceA.source_id));
+  r.check('05.revoked_source', 'the submitted B source is no longer live', false,
+    reduced.body?.sources?.some((source) => source.source_id === sourceB.source_id));
 
   const next = (await r.tool(B, 'clued_context_pack', { scope: pa, task_class: 'e05.check' }, { extract: packExtract }))
     .structured;

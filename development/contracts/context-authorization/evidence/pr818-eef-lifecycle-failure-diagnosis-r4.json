@@ -1,0 +1,189 @@
+{
+  "schema": "clued.pr818-lifecycle-failure-readonly-diagnosis.r4",
+  "status": "READONLY_DIAGNOSIS_NO_REPAIR_OR_POSTFIX_PG",
+  "reviewed_head": "eefcf51262b07ebcd90eb32deaa7d6644922a9e7",
+  "recorded_at_utc": "2026-10-14T11:21:59Z",
+  "inputs": {
+    "lifecycle_test": {
+      "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+      "sha256": "5359db687b3f3e01e1cbe03e784b0e4691cc134c057011dbfb8f53a743d15ca7"
+    },
+    "source": {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    "serialization": {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+    },
+    "returned_log": {
+      "path": "work/eight_implementation/ui-acceptance/pr818-eef-isolation-failed-log-returned.txt",
+      "sha256": "2eac00ea2c074ff8eff641e99deb1a1f518cd12e6ee31a6f463e39db2e9308c2",
+      "logTruncated": true,
+      "limitation": "工具返回日志尾部；不是完整 CI 日志。只对包含的三个错误、相关计数和精确源码作结论。"
+    }
+  },
+  "reported_isolation_summary": {
+    "tests": 175,
+    "pass": 171,
+    "fail": 4,
+    "skip": 0,
+    "duration_ms": 199437.5091,
+    "parent_failures": 1,
+    "child_failures": 3,
+    "gate": "G-A11 FAIL",
+    "runtime_version": "Not established from the returned tail; no local Node/PG run in this task."
+  },
+  "fixture_assembly": [
+    {
+      "anchor": "lifecycle:210-218",
+      "fact": "完整历史 migration 顺序安装，再安装 Source55ba/serialization ce8，检查实际 GW80/CI8 边界，随后仅在测试 DB 装 allowRawTestBindings。"
+    },
+    {
+      "anchor": "lifecycle:231-259; raw-binding-grants-fixture:34-62",
+      "fact": "oauthBinding(db=c2) 在该 backend 插入 Binding/Auth/entries。Owner guard 来自 authorization_entries BEFORE INSERT 的真实测试协议；不是 Binding BEFORE trigger。session_user=postgres 且实际 role=none 才触发，不会给 Native/Gateway SECDEFINER 实际调用偷偷补锁。"
+    },
+    {
+      "anchor": "lifecycle:286-328,826-855",
+      "fact": "requestRole 保留原 backend、事务和 PID；asUser 使用 admin 的 Native 事务；revokeOn(c3) 异步整事务。waitLocked 只看到一般 Lock，不证明旧 L5。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "L10",
+      "test": "T-A11-10 revoke vs create_or_bind: set change aborts and retries, reverse order refuses, invariant holds",
+      "classification": "OLD_CONCURRENCY_PRECONDITION_SUPERSEDED_BY_EARLY_OWNER_GUARD",
+      "confidence": "High: precise returned assertion plus source/fixture lock ordering; no new PG run.",
+      "observed": {
+        "anchor": "returned_log:1079-1100; lifecycle:860-882",
+        "actual": "committed",
+        "expected": "rejected/integration_revoke_connection_set_changed",
+        "assertion_line": 879,
+        "sqlstate": "ERR_ASSERTION"
+      },
+      "causal_chain": [
+        "c2 BEGIN -> oauthBinding(c2) 插入 entries，测试 BEFORE trigger 获得 Owner advisory xact guard，并把它持有到 c2 COMMIT。",
+        "c2 同一事务完成真实 gateway REAUTHORIZATION，持有 L5。c3 的 Native revoke 现在在 serialization:309-312 前置 Owner guard 处等候，还未进入 revoke core 的 S0/L1/L2/L5。",
+        "waitLocked(pid3) 的一般 Lock 满足，但实际等待位置已从旧 L5 提前到 Owner guard。",
+        "c2 COMMIT 后 c3 才进入 integration_revoke_core_v1 的 S0 发现；此时已能看到新 consent/连接，S0 包含完整集合，因此正常 committed 并撤销两条 Binding。",
+        "返回日志确实含 committed/REVOKED 和两个 revoked_binding_ids，未显示集合遗漏；旧必须 rejected 的预期不能证明当前实现有撤销缺陷。"
+      ],
+      "source_anchors": [
+        "serialization:309-312",
+        "revocation_lifecycle:276-296",
+        "raw-binding-grants-fixture:38-62"
+      ],
+      "recommended_fixture_change": [
+        "保留真实两 backend 事务。将旧一般等待断言细化为 Owner key 上未授予的 Exclusive advisory lock，同时证明 waiter 尚无 B/Auth/Context/Project 的晚行锁。",
+        "c2 commit 后断言正常 revoke 包含 b1/b2、Rev(I)=空、Binding 失效和目标 open revocation；不要只把 rejected 字符串换成 committed 而删业务安全断言。",
+        "原 reverse-order、50轮并发、管理 revoke 收缩集合子场景必须完整保留并跑父测试；这些子场景在本次 first assertion 后尚未执行，不能引用 parent fail 当作它们已验过。",
+        "保留 core 原 connection-set-change 拒绝分支。若还需测试该分支，应设计在现行允许入口仍可产生的真实集合变化，不绕 Owner guard 复活已退役时序。"
+      ],
+      "production_change_indicated": false
+    },
+    {
+      "id": "L13",
+      "test": "T-A11-13 a v12 reduce lowers the ceiling used for the next link",
+      "classification": "PSEUDO_RESOURCE_FIXTURE_REACHES_UNHANDLED_EMPTY_PROJECTION; VALID_RESOURCE_COMPATIBILITY_NOT_PROVEN_FAILED",
+      "confidence": "High for exact pseudo-resource path; insufficient to claim all legal legacy flat reduce is broken.",
+      "observed": {
+        "anchor": "returned_log:1101-1130; lifecycle:1047",
+        "sqlstate": "23514",
+        "constraint": "clued_agent_bindings_scopes_check",
+        "failing_scope_array": "{}",
+        "stack": [
+          "authorization_rebuild_projection_v2",
+          "authorization_add_selection_v2",
+          "authorization_replace_entries_v12",
+          "clued_authorization_manage_v12"
+        ]
+      },
+      "legal_input_layers": {
+        "flat_format": "旧 validator 只要求 selection 非空、精确三元组已在 existing entries 中、actions 是子集，所以由此夹具自己 seed 的 tuple 能过 subset validator；保留 flat 协议是正确方向。",
+        "actual_resource": "lifecycle:1039 PROJECT 为 resource_kind=context、resource_id=project:<随机UUID>、environment=canonical，没有任何真实 Development Context UUID/Owner/Grant；同一 tuple 又用于 u2/u3。Native eligible 不可能发出这个 Context，不能把它称为当前合法真实上下文。",
+        "passed_prefix": "返回失败位置1047在第二段 HISTORICAL h0 reduce，表明此前 global READ reduce、窄同 client重连、fresh consent扩权断言已继续到该点；真实 global READ 并非本次23514触发输入。"
+      },
+      "causal_chain": [
+        "旧 raw auth seed 包含 DEFAULT global 和伪 PROJECT；reduce selected=[PROJECT] 删去 global。",
+        "Source effective_no_lock:367-369 按 c.id::text 匹配真实 Context。project:<UUID> 不可能命中 UUID文本且未创建对象，正确返回空权限。",
+        "project_resource/rebuild 不生成该资源的有效 entries；selection=[]。",
+        "rebuild:542-543 把有效 selection 的 scope union 写成{}，违反既有 scopes 非空CHECK。该保护不能通过保留伪资源权限或放宽CHECK修掉。"
+      ],
+      "source_anchors": [
+        "lifecycle:1039-1060",
+        "connection_authorization_v12:93-133",
+        "source:214-232,367-369,456-482,520-543,812-819",
+        "clued_p5_tenant_isolation_concurrent_writes:69-74"
+      ],
+      "recommended_fixture_change": [
+        "最小改动候选：把此第二资源改为真实 Owner 自有 scope/profile、canonical、read；它与 DEFAULT global 是不同资源，各 Owner 独立解释，无需发明 Context或授权。代码注释/断言要求资源差异与 HISTORICAL/CURRENT 时段，并未消费该伪Context。",
+        "如果治理契约确实要求跨 Context 用例，则为 u2/u3 分别创建真实自有 Project/Context和明确 read grant，保留旧 action/history/expiry/fields 上限；不得复用同一人的资源授给第二 Owner。",
+        "保留全部 legacy flat selected 表达、HISTORICAL reduce不影响C_eff、CURRENT reduce改变C_eff、旧宽consent拒绝和fresh consent允许扩权断言，不改为sources_v1。",
+        "正规 widen 后先完整跑此父测试证明有效真实资源的旧flat路径；本只读任务没有该证明。"
+      ],
+      "production_change_indicated": "Observed pseudo-resource filtering is correct. Separate Source zero-effective-boundary validation risk is retained below; do not classify that risk as fixture-only."
+    },
+    {
+      "id": "L23",
+      "test": "T-A11-23 a concurrent consent (known boundary 1) is caught by O7 and by the next revoke or restore",
+      "classification": "FIXTURE_CONTROLLER_AWAITS_BLOCKED_REVOKE_BEFORE_RELEASING_HOLDER",
+      "confidence": "High: actual 55P03 Owner guard stack and deterministic await ordering.",
+      "observed": {
+        "anchor": "returned_log:1131-1155; lifecycle:1545-1557",
+        "sqlstate": "55P03",
+        "error": "canceling statement due to lock timeout",
+        "stack": "clued_user_integration_v1 -> authorization_writer_guard_v2 -> pg_advisory_xact_lock"
+      },
+      "causal_chain": [
+        "c2 BEGIN -> oauthBinding(c2) 的 entries BEFORE INSERT 取得同 Owner真实guard；c2仍未提交。",
+        "控制程序同步 await revoke(user,id)；Native admin事务在同Owner guard等候。",
+        "释放 holder 的 c2 COMMIT 写在 await revoke 之后，因此程序无法到达COMMIT，只能等已有 lock_timeout 报55P03。",
+        "这是测试控制程序制造的提交依赖环，不是已证明的数据库锁图死锁；增加 timeout 只会延后相同失败。",
+        "旧 known-boundary-1 要求 consent 在 revoke 之后才提交且仍遗漏，但现行授权 writer 序列化要求 revoke在 holder提交后才扫描。不能绕guard或让普通admin伪造无锁consent来恢复旧窗口。"
+      ],
+      "recommended_fixture_change": [
+        "用现有异步 revokeOn(c3) 启动 pending revoke，由 admin只读观察实际Owner advisory等待；c2先COMMIT再await pending。",
+        "更新用例为现行guard的完整consent/revoke两顺序证明：consent先提交则首次revoke即覆盖late；revoke先线性化则真正后发consent遵守当前created_at/O7规则。",
+        "保留 next revoke/restore安全性及O7覆盖。若必须保留旧历史边界回放，拆成显式 historical stored-state 夹具，与当前实时writer协议分开；仍须真实guard、旧scope/action/expiry上限和实际O7负断言，不可使用生产admin bypass/假GUC。",
+        "每个持有事务放finally rollback/commit，避免 first failure 残留c2事务影响后续case；不要增timeout或跳过此用例。"
+      ],
+      "production_change_indicated": false
+    }
+  ],
+  "separate_source_boundary_candidate": {
+    "id": "SRC-ZERO",
+    "status": "STATIC_REACHABILITY_CANDIDATE_NEEDS_AUTHORIZED_REAL_PG_REPRO",
+    "priority": "Must not be dismissed with the pseudo-resource fixture.",
+    "anchors": [
+      "source:719-724,733-736,779-780",
+      "source:532-535,542-543",
+      "clued_p5_tenant_isolation_concurrent_writes:69-74"
+    ],
+    "input": "对最后所有 live Source提交合法 sources_v1 action_cap=[] 或所有有效资源被精确deny到空。",
+    "reason": "reduce_sources 接受空 action_cap 并撤销source；全部source结束时，rebuild第一步live scope_ceiling union={}就违反同一CHECK。即使source还live，全部真实有效投影为空也可能在最终scope union触发{}。这是独立于伪Context的实际Source逻辑边界。",
+    "not_yet_proven": "本任务没有执行新PG；不能把静态可达性称为实际已复现，不能据此宣称已有数据损坏或授权扩大。",
+    "required_next_probe": [
+      "正规写集/执行授权后，从真实Native批准的有效Source创建最小Binding，经真实Native reduce请求清空最后action cap，保存before失败/transaction rollback/no widening证据。",
+      "另核真正已批准、后续撤销/失效资源上的legacy flat合法收窄，而不是用伪Context代替；区分声明授权边界与当前有效投影。",
+      "若契约要求至少一个有效Source，应在业务层受控拒绝并指导revoke；若允许全收窄，定义明确的全拒绝/撤销状态，不用非空CHECK的23514作为API语义。",
+      "不得允许scopes={}、 invent read/write fallback、保留伪有效resource或静默转sources_v1；Source改变必须绑定新增bytes、独审与受影响真实回归。"
+    ]
+  },
+  "independent_readonly_crosscheck": {
+    "agent": "/root/pr818_stack_failure_diagnosis",
+    "scope": "Source55ba/ce8、旧validator和scopes CHECK、T-A11-13伪Context链；另静态识别SRC-ZERO。",
+    "result": "Agrees pseudo resource has no real eligible Context; recommends minimal valid profile scope; flagged separate legal sources_v1 clear-all edge.",
+    "not_claimed": "No peer PG run, no formal final independent acceptance."
+  },
+  "recommended_order": [
+    "先按正规claim widen声明lifecycle fixture写集；Source仍55ba/ce8冻结，先修真实并发控制和伪资源fixture。",
+    "syntax/diff后一次完整lifecycle父测试及相关真实Source组，保留原timeout/所有子场景，不用test-name筛选或skip。",
+    "独立登记并实际复现SRC-ZERO再决定Source最小修复；不能因这些夹具已解释就宣布生产Source全边界通过。",
+    "更新源码SHA与正式审查/准入证据后才继续PR合并发布和页面验收。"
+  ],
+  "limitations": [
+    "报告仅解释工具返回尾部明确包含的3 child failures+parent及exact eef源码，不是完整CI日志摘要。",
+    "未修改lifecycle、Source、helper或任何测试文件；未运行PG/新修补，也未执行Canon/CP/Git写/CI/生产。",
+    "所有修复方向是待授权实施和实测的建议；不能以本报告替代修复完成、全仓库通过或发布验收。"
+  ]
+}

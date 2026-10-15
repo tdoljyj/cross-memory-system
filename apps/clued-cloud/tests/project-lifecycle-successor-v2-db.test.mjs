@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, CLOSEOUT_MIGRATION, assertAuthorizationSuccessorBoundary,
+  assertGatewayCloseoutBoundary, snapshotAuthorizationCallerBoundary, snapshotCallerCatalog, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migration = '20260924120000_project_lifecycle_successor_v2.sql';
@@ -77,7 +78,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name))) {
+      !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -472,6 +473,16 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
         assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,signature])).rows[0].allowed,false,role);
       for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
         assert.equal((await admin.query("select has_function_privilege($1,'clued_private.work_claim_execution_activate_v1(text)','EXECUTE') as allowed",[role])).rows[0].allowed,false,role);
+    });
+    await t.test('authorization successors follow every deferred prerequisite and qualify the actual current caller catalog',async()=>{
+      const before=await snapshotAuthorizationCallerBoundary(admin);
+      for (const name of AUTHORIZATION_SUCCESSOR_MIGRATIONS)
+        await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));
+      await assertAuthorizationSuccessorBoundary(admin,before);
+      const gateway=server.getPgClient();clients.push(gateway);await gateway.connect();
+      const listed=await workerGatewayRpc(gateway,'clued_project_list_v2',tokenHash,{limit:200});
+      assert.ok(listed.projects.some(p=>p.id===compatId),'recognized history remains readable through the actual current gateway');
+      await assert.rejects(rpc('clued_project_list_v2',{limit:200}),e=>e.code==='42501');
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

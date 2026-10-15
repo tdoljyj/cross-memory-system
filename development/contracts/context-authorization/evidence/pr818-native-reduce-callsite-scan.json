@@ -1,0 +1,252 @@
+{
+  "schema": "clued.native-authorization-reduce-callsite-scan.v1",
+  "generated_at": "2026-10-14T10:09:43Z",
+  "reviewer": "Codex read-only scoped diagnosis /root/pr818_stack_failure_diagnosis",
+  "base_head": "c9158c9046af7cd14e1a6d03ec2c4d8843ffc4ea",
+  "source_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+  "serialization_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+  "scope": "apps/clued-cloud/tests/*.mjs, their relevant mjs fixture modules, and evals mjs Native authorization management callers. Diagnostic inventory; not a new formal review.",
+  "capabilities": {
+    "source_or_test_edits": false,
+    "test_execution": false,
+    "ci_rerun": false,
+    "canonical_resume_or_mutation_or_checkpoint": false,
+    "new_task_or_claim": false
+  },
+  "governing_distinction": "Full migration chain alone does not imply sources_v1. Source-mode is activated by new actual approve/Headless issuance or an explicit policy upgrade. Deliberately seeded existing legacy authorizations/entries retain flat_v12 compatibility. Branch on actual Native DTO and setup provenance; never synthesize source IDs or switch old negative tests to a successful call.",
+  "callsites": [
+    {
+      "path": "apps/clued-cloud/tests/information-flow-context-db.test.mjs",
+      "base_head_lines": [
+        1092
+      ],
+      "current_observed_lines": [
+        1107,
+        1114
+      ],
+      "migration_range": "Full timestamp chain including Source and serialization; normal prepare/approve after full-chain installation.",
+      "classification": "CURRENT_SOURCE_MODE_POSITIVE_UNDER_REPAIR_AND_NEW_NEGATIVE",
+      "binding_provenance": "New actual approval of two canonical project sources.",
+      "action": "Author is already replacing the positive A-only flat selection with Native-list B source_id/version empty action_cap, Binding CAS and sources_v1; preserve newly added actual rejected-flat 22023 and unchanged DTO control. Do not review the moving candidate as frozen here."
+    },
+    {
+      "path": "apps/clued-cloud/tests/information-flow-invalidation-db.test.mjs",
+      "lines": [
+        884,
+        904,
+        911
+      ],
+      "migration_load_lines": [
+        101,
+        114,
+        203,
+        204
+      ],
+      "migration_range": "Install pre-S5 slice, S5 20260924220000, then every later migration including current pair; these three reductions occur afterward.",
+      "classification": "CURRENT_SOURCE_MODE_POSITIVES_NEED_REPAIR",
+      "binding_provenance": "authorize(): Native prepare+approve creates new Binding after full chain.",
+      "action": "Use actual Native list DTO and exact direct canonical contribution source IDs/versions; latest Binding version for every operation. First revoke B source leaving A unchanged. Second Binding first revoke C source (outside effective pack scopes), then revoke B source while manifest row remains locked; preserve source A and all original proactive invalidation/SKIP LOCKED/backstop assertions.",
+      "occupancy": "Outside Root's four named currently claimed fixture files; coordinate and widen before editing."
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "lines": [
+        1366
+      ],
+      "migration_load_lines": [
+        89,
+        95,
+        182,
+        187,
+        253,
+        270
+      ],
+      "migration_range": "Historical target stages through 20261005090000 and GRANTS 20261005163000, then every later migration in order including current pair before this case.",
+      "classification": "FULL_CHAIN_LEGACY_SEEDED_FLAT_COMPATIBILITY_KEEP",
+      "binding_provenance": "oauthBinding() at121 directly inserts authorization_requests, authorizations and authorization_entries through a raw fixture Binding; it never invokes new authorization approve/replace_entries. This is an existing legacy boundary even when seeded in an ephemeral full current database.",
+      "action": "Keep flat global read reduction and old authorization ceiling/C_eff assertions. Optional explicit Native list selection_format=flat_v12 assertion can clarify intent, but no protocol conversion is required by this scan."
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+      "lines": [
+        1024,
+        1047,
+        1055
+      ],
+      "migration_load_lines": [
+        82,
+        88,
+        117,
+        122,
+        173,
+        208
+      ],
+      "migration_range": "Target 20261005150000 plus GRANTS 20261005163000 staged checks, then every later migration in order before cases.",
+      "classification": "FULL_CHAIN_LEGACY_SEEDED_FLAT_COMPATIBILITY_KEEP",
+      "binding_provenance": "oauthBinding() at241 directly seeds requests/authorizations/entries, no new actual approval. Cases deliberately distinguish CURRENT vs HISTORICAL Integration lineage; that is separate from source protocol.",
+      "action": "Keep existing flat v12 reductions and exact current/historical C_eff semantics. Do not replace synthetic legacy entries with guessed Source consent identities."
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+      "lines": [
+        69
+      ],
+      "migration_load_lines": [
+        28
+      ],
+      "migration_range": "Explicit subset: all names before 20260826000000, selected development/authorization migrations 20260907123955, 131834, 172309, 17303*, and target 20260908073933_clued_project_list_authorized_scope.sql. Current Source/serialization absent.",
+      "classification": "BOUNDED_HISTORICAL_FLAT_KEEP",
+      "binding_provenance": "Actual prepare/approve executes the historical v12 implementation in its bounded database.",
+      "action": "Preserve flat reduction and its CAS/list filtering assertions. Changing to sources_v1 would test a protocol this historical database does not have."
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-authorization-db.test.mjs",
+      "lines": [
+        106,
+        107,
+        108,
+        240
+      ],
+      "migration_load_lines": [
+        30
+      ],
+      "migration_range": "Explicit pre-20260826000000 plus selected 20260907 development/authorization migrations; no current pair.",
+      "classification": "BOUNDED_HISTORICAL_FLAT_KEEP",
+      "binding_provenance": "Historical actual prepare/approve; existing v12 permission reduction matrix.",
+      "action": "Keep positive flat reductions and the growth/CAS negative cases with their original expected errors."
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-account-db.fixture.mjs",
+      "lines": [
+        215
+      ],
+      "parent_path": "apps/clued-cloud/tests/resource-center-authority-db.test.mjs",
+      "parent_call_line": 1119,
+      "migration_range": "Only caller found is the Resource Center parent. The parent excludes both successors until qualifyCurrentCallers after all imported historical scenes (end at1228).",
+      "classification": "BOUNDED_PARENT_HISTORICAL_FLAT_KEEP",
+      "binding_provenance": "Actual prepare/approve is historical because Source pair has not yet installed at the helper call.",
+      "action": "Keep flat write-only reduce and revoke tests in the historical storage account phase; parent separately installs and qualifies the actual current pair and callers later."
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+      "lines": [
+        177
+      ],
+      "migration_load_lines": [
+        61
+      ],
+      "migration_range": "Full current chain; explicitly seeded pre-source Binding in connect() at100, with real guarded legacy project expansion.",
+      "classification": "FULL_CHAIN_LEGACY_SEEDED_FLAT_COMPATIBILITY_KEEP",
+      "binding_provenance": "Raw headless authorization/entry seeds; guarded authorization_all_projects_expand_v1 initializes sources with activate=false. Existing comment explicitly marks pre-source Binding.",
+      "action": "Preserve flat project:* read ceiling reduction and materialized own-project checks."
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "lines": [
+        184,
+        247
+      ],
+      "migration_range": "Full actual current chain plus legacy-before-upgrade fixture controls.",
+      "classification": "SOURCE_AWARE_POSITIVE_AND_INTENTIONAL_FLAT_NEGATIVE_KEEP",
+      "binding_provenance": "sourcesReduce at184 submits sources_v1; flat247 is assert.rejects after explicit upgrade.",
+      "action": "Keep exact source-aware positive and old-flat rejection control. Do not turn the negative into success."
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs",
+      "lines": [
+        448
+      ],
+      "migration_range": "Full current chain.",
+      "classification": "SOURCE_AWARE_POSITIVE_ALREADY_CORRECT",
+      "binding_provenance": "Current Source policy Binding; Native view supplies versions.",
+      "action": "Keep real two-client reduce race and exact sources_v1 request."
+    },
+    {
+      "path": "apps/clued-cloud/tests/headless-binding-issuance-db.test.mjs",
+      "lines": [
+        219
+      ],
+      "migration_range": "Full current chain.",
+      "classification": "SOURCE_AWARE_POSITIVE_ALREADY_CORRECT",
+      "binding_provenance": "New real Native Headless issuance; management list supplies source states.",
+      "action": "Already sends selection_format=sources_v1 and exact source selection; preserve."
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-db.test.mjs",
+      "lines": [
+        537,
+        540
+      ],
+      "migration_range": "Bounded old G6 tests then full current successors before source-protocol test.",
+      "classification": "INTENTIONAL_FLAT_NEGATIVE_AND_SOURCE_AWARE_POSITIVE_KEEP",
+      "binding_provenance": "New actual prepare/approve in current-stage case.",
+      "action": "Preserve exact 22023 flat refusal/no change, Binding CAS and Source CAS controls, source-aware B removal, A unchanged and final revoke."
+    },
+    {
+      "path": "apps/clued-cloud/evals/information-flow-e2e/scenarios/e2e-05.mjs",
+      "lines": [
+        42
+      ],
+      "migration_range": "Real Worker/Supabase HTTP E2E full reset chain.",
+      "classification": "SOURCE_AWARE_POSITIVE_ALREADY_CORRECT",
+      "binding_provenance": "mintBinding uses actual current Native prepare/approve; scenario reads exact sources from Native list.",
+      "action": "Already submits only B empty cap with actual source ID/version and Binding CAS; A full DTO unchanged checks remain. No edit indicated."
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+      "lines": [
+        99
+      ],
+      "migration_range": "Mocked UI test; no PostgreSQL migration chain.",
+      "classification": "UI_LEGACY_FLAT_PAYLOAD_CONTROL_KEEP",
+      "binding_provenance": "Fixture row lacks sources_v1 and explicitly exercises legacy project grants.",
+      "action": "Keep legacy flat UI payload assertion; it is not a current new Binding database caller."
+    }
+  ],
+  "non_reduce_references": {
+    "description": "The remaining authorization_manage_v12 references in this scan are list/revoke/precise confirmation/catalog fixtures or transport mocks, not Native flat reduce positives.",
+    "examples": [
+      "project-invitations-db.test.mjs defines a management helper but its reduce operations are member_reduce on clued_project_access_v13, a different protocol.",
+      "headless-binding-ui.test.mjs management RPC assertion is revoke.",
+      "delegated-oauth-transport.test.mjs references management transport/precise confirmation; live-scope-reduction tests mock connection scopes, not a Native flat reduction."
+    ]
+  },
+  "independently_confirmed_fixture_setup_risks": [
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "line": 1426,
+      "migration_state": "Pair already installed by270.",
+      "kind": "UNGUARDED_RAW_PROJECT_INSERT",
+      "basis": "project() directly INSERTs public.clued_projects in autocommit with no Owner guard; current authorization_future_project_v2 requires an actual held writer guard.",
+      "recommendation": "If this current fixture remains, use BEGIN -> actual Owner guard before INSERT -> COMMIT/rollback, preserving fixture identity and domain semantics. This is setup adaptation, not a reason to switch flat reduce protocol."
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "lines": [
+        1431,
+        1434
+      ],
+      "kind": "RETIRED_PROJECT_POLICY_ENTRY_TRIGGER_EXPECTATION",
+      "basis": "oauthBinding manually inserts project:* entry but still expects an existing project materialized immediately. Source explicitly drops authorization_all_projects_entry_v1; raw insert no longer runs that legacy deferred expansion.",
+      "recommendation": "For this synthetic legacy policy fixture, invoke the real legacy expander under early Owner transaction guard, as authorization-roles fixture already does. Do not activate new all-contexts consent or invent grants."
+    }
+  ],
+  "recommendation_summary": {
+    "needs_new_sources_positive_repair": [
+      "information-flow-context-db.test.mjs (already being repaired)",
+      "information-flow-invalidation-db.test.mjs (3 omitted current-source positives)"
+    ],
+    "do_not_protocol_convert": [
+      "integration-runtime-identity-db.test.mjs legacy seeded reductions",
+      "integration-runtime-lifecycle-db.test.mjs legacy seeded reductions",
+      "project-list-authorization-db.test.mjs bounded historical chain",
+      "resource-center-account-db.fixture.mjs historical parent phase",
+      "connection-authorization-db.test.mjs bounded historical chain",
+      "authorization-roles-db.test.mjs explicitly seeded legacy protocol"
+    ],
+    "source_production_change_indicated": false,
+    "claim_budget_reset": false,
+    "public_three_file_handoff": "Respect Root's actual domain coordination and wait for PR816 main before constructing an admitted new head; this diagnostic grants no write authority."
+  },
+  "limits": "Only static actual code/migration/setup provenance was inspected. No new runtime pass/fail, CI verdict or formal review approval is minted by this scan."
+}

@@ -1,0 +1,185 @@
+{
+  "head": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+  "base": "3853c449f291b04c86740ae220834f0aad72d48a",
+  "log_opts": "3853c449f291b04c86740ae220834f0aad72d48a..df69831166fcb43ee0dee982fb7158b770bf54a6",
+  "helper_start_utc": "2026-10-14T18:17:57.1035558Z",
+  "helper_end_utc": "2026-10-14T18:18:04.5411368Z",
+  "helper_exit_code": 0,
+  "helper": {
+    "exact_historical_fingerprints": 484,
+    "default_rules_unchanged": true,
+    "global_fingerprints": 0,
+    "ignore_sha256": "63c9f05e82bbe4493525a00644c22f4c39797c962598361c333ef97d47becf96",
+    "commits": 69,
+    "files_at_commits": 124,
+    "verified_git_objects": 130
+  },
+  "scans": [
+    {
+      "policy": "literal_repository_ignore",
+      "start_utc": "2026-10-14T18:17:56.2016969Z",
+      "end_utc": "2026-10-14T18:17:57.0894241Z",
+      "exit_code": 1,
+      "findings_count": 10,
+      "findings": [
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json",
+          "StartLine": 30,
+          "EndLine": 30,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json:generic-api-key:30"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json",
+          "StartLine": 49,
+          "EndLine": 49,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json:generic-api-key:49"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json",
+          "StartLine": 230,
+          "EndLine": 230,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json:generic-api-key:230"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json",
+          "StartLine": 15,
+          "EndLine": 15,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json:generic-api-key:15"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json",
+          "StartLine": 35,
+          "EndLine": 35,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json:generic-api-key:35"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json",
+          "StartLine": 150,
+          "EndLine": 150,
+          "RuleID": "generic-api-key",
+          "Commit": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+          "Fingerprint": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:150"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json",
+          "StartLine": 152,
+          "EndLine": 152,
+          "RuleID": "generic-api-key",
+          "Commit": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+          "Fingerprint": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:152"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json",
+          "StartLine": 184,
+          "EndLine": 184,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:184"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json",
+          "StartLine": 184,
+          "EndLine": 184,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:184"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json",
+          "StartLine": 192,
+          "EndLine": 192,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:192"
+        }
+      ]
+    },
+    {
+      "policy": "actual_ci_verified_registry",
+      "start_utc": "2026-10-14T18:18:04.5445476Z",
+      "end_utc": "2026-10-14T18:18:05.4027258Z",
+      "exit_code": 1,
+      "findings_count": 8,
+      "findings": [
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json",
+          "StartLine": 30,
+          "EndLine": 30,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json:generic-api-key:30"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json",
+          "StartLine": 49,
+          "EndLine": 49,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json:generic-api-key:49"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json",
+          "StartLine": 15,
+          "EndLine": 15,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json:generic-api-key:15"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json",
+          "StartLine": 35,
+          "EndLine": 35,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json:generic-api-key:35"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json",
+          "StartLine": 230,
+          "EndLine": 230,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json:generic-api-key:230"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json",
+          "StartLine": 184,
+          "EndLine": 184,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:184"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json",
+          "StartLine": 184,
+          "EndLine": 184,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:184"
+        },
+        {
+          "File": "development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json",
+          "StartLine": 192,
+          "EndLine": 192,
+          "RuleID": "generic-api-key",
+          "Commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+          "Fingerprint": "df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:192"
+        }
+      ]
+    }
+  ],
+  "head_after": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+  "config_sha256": "0c3be2d80cf17a03ceda74dde3228cc8d03dc932f503214c983a40e3e1781f35",
+  "literal_ignore_sha256": "1caa1e9b97c4cae00d0d148e52770f4def734cbbdff60b67faf5f86707c37bae",
+  "helper_sha256": "6d54e0dab3d5c53769f41f3dbf740cdaa8cfa74e2b88b9527a036f326c99d6fa"
+}

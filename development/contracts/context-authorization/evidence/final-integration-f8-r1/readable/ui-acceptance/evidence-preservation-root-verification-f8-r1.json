@@ -1,0 +1,93 @@
+{
+  "schema": "clued.evidence-preservation-root-verification/1",
+  "authority_effect": "NONE",
+  "head": "6c35e3e8ca5fdf6cb6108a765de16a47fdf4faa5",
+  "prior_head": "7ce980e6428c9794e084c3bac684f9ed1b829ab8",
+  "claim_id": "2c722a48-1fe3-42d9-974a-c5516e553f7a",
+  "fence": 8,
+  "decoded_packet_entries": [
+    {
+      "path": "ui-acceptance/native-main-name-merge-independent-review-r1.json",
+      "sha256": "7ca93dd1237fcab84f36e4e375895bd6306cf38f5aeb10c73acaf32b2eea6720",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/native-main-name-merge-local-check-r1.json",
+      "sha256": "5de6272a9d06965f1993fe4d8c172dde3f11d0fd723277e97d67329293a3294c",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/native-main539-name-merge-subject-r1.json",
+      "sha256": "f13bdb96838bfaad986914fc5786ff9eb0bd57217e960a4346a7d0a2809cfdfd",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/native-main539-name-merge-delta-r1.patch",
+      "sha256": "072ff583f281848824b1f858ebe0aacc33570065f83a1c6e4d0e223a54037a16",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/native-main539-page.tsx",
+      "sha256": "658a2f8eedee73856a2a967b1d36f40567876ec11284f36b7143cd3fe0a5f82f",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/native-main539-ImprintPanel.tsx",
+      "sha256": "06458b2443b32868ad83beb2356093816fa0764f95b288ea8a34e858b0c37293",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/native-main-name-merge-ui-r1.log",
+      "sha256": "a30e33b4885b21abe3946d01d388877cdff826137c1a438617adc46fa08790f9",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/native-main-name-merge-typecheck-r1.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "repo/apps/clued-cloud/app/page.tsx",
+      "sha256": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "repo/apps/clued-cloud/app/imprints/ImprintPanel.tsx",
+      "sha256": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "repo/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "sha256": "7846563d670ea58423eed2c70e1b285de1d6766d8fe6d037884eca60d3168c29",
+      "matching_original_on_disk": true
+    },
+    {
+      "path": "ui-acceptance/eight-view-remaining-native-run-checklist-r5.json",
+      "sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43",
+      "matching_original_on_disk": true
+    }
+  ],
+  "new_machine_files": 65,
+  "modified_contract_and_ledger": [
+    "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+    "development/contracts/context-authorization/ReviewLedger.md"
+  ],
+  "protected_before": {
+    "config/clued-components.json": "2ff5c768b2a3b0af2610447b94aefb9f65822c6276bc6dca9e756368667f8f18",
+    "apps/clued-cloud/worker/generated/components.ts": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+    "apps/clued-cloud/app/page.tsx": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+    "apps/clued-cloud/app/imprints/ImprintPanel.tsx": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+    "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+    "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+  },
+  "protected_after": {
+    "config/clued-components.json": "2ff5c768b2a3b0af2610447b94aefb9f65822c6276bc6dca9e756368667f8f18",
+    "apps/clued-cloud/worker/generated/components.ts": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+    "apps/clued-cloud/app/page.tsx": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+    "apps/clued-cloud/app/imprints/ImprintPanel.tsx": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+    "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+    "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+  },
+  "protected_unchanged": true,
+  "qualification": "Root byte/inventory verification and normal local preservation only, no push/CI/production/business permission or eight-view/archive acceptance."
+}

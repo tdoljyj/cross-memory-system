@@ -23,6 +23,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATION = '20261005150000_integration_runtime_revocation_lifecycle.sql';
 // the stage C §5.13 grant migration: held back until T-S-2 has checked the S2c-only database (§13.0)
 const GRANTS = '20261005163000_integration_runtime_grants.sql';
+const SOURCE_MIGRATIONS = ['20261014044323_all_contexts_authorization_v2.sql', '20261014045157_all_contexts_serialization_v2.sql'];
 const EARLIER_RPCS = ['clued_integration_request_open_v1', 'clued_integration_create_or_bind_v1',
   'clued_integration_identity_update_v1', 'clued_integration_reconcile_request_v1', 'clued_integration_status_v1',
   'clued_integration_declare_v1', 'clued_integration_report_v1', 'clued_integration_verify_v1'];
@@ -204,8 +205,182 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       }
     });
 
-    // every later migration, in production order
-    for (const name of migrations.filter((name) => name > GRANTS)) await apply(name);
+    async function historicalWriterBoundaries() {
+      await t.test('Historical pre-Source stage preserves the original connection-set and known-boundary proofs', async (history) => {
+        assert.equal((await admin.query("select to_regprocedure('clued_private.authorization_writer_guard_v2(uuid)') is null absent")).rows[0].absent, true);
+        await assertGatewayCloseoutBoundary(admin);
+        await allowRawTestBindings(admin); await allowTestIssuerCredentials(admin);
+        const gw = await connect(), held = await connect(), waiting = await connect();
+        await setWorkerGatewayCaller(gw);
+        const issuer = sha(uid());
+        await admin.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,'https://history.test/mcp','Historical lifecycle proof')", [issuer]);
+        await admin.query(`insert into clued_private.integration_hosts_v1(host,tenant_dimension,account_dimension,
+          tenant_evidence_kinds,account_evidence_kinds,first_authorization_required,registry_version,capability_snapshot_ref)
+          values('history.complete','NOT_APPLICABLE','NOT_APPLICABLE','{}','{}',true,1,'historical proof')`);
+        await admin.query(`insert into clued_private.integration_host_surfaces_v1(host,surface,capability_ceiling,host_features,registry_version)
+          values('history.complete','default',$1,'{"mcp_tools":true,"oauth":true}',1)`, [FULL]);
+        const newUser = async () => {
+          const id = uid(); await admin.query('insert into auth.users(id,email) values($1,$2)', [id, `${id}@history.invalid`]); return id;
+        };
+        const seed = async (user, client, db = admin) => {
+          const token = sha(uid());
+          const id = (await db.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes)
+            values($1,'synthetic','Historical flat consent',$2,'{context:read,context:write}') returning id`, [user, token])).rows[0].id;
+          const request = (await db.query(`insert into clued_private.authorization_requests_v12(owner_id,issuer_hash,
+            request_digest,client_id,client_name,redirect_uri,resource,requested_scopes,eligible,status,binding_id)
+            values($1,$2,$3,$4,$4,'https://history.test/cb','https://history.test/mcp','{context:read,context:write}','[]','approved',$5) returning id`,
+          [user, issuer, sha(uid()), client, id])).rows[0].id;
+          await db.query(`insert into clued_private.authorizations_v12(binding_id,request_id,owner_id,client_id,client_name,resource,expires_at,issuance)
+            values($1,$2,$3,$4,$4,'https://history.test/mcp',now()+interval '20 days','oauth')`, [id, request, user, client]);
+          await db.query(`insert into clued_private.authorization_entries_v12(binding_id,resource_kind,resource_id,environment,actions)
+            values($1,'scope','global','canonical','{read,write}')`, [id]);
+          return { id, hash: token, user, client };
+        };
+        const gwCall = async (db, name, binding, input) => {
+          if (db === admin) return workerGatewayRpc(gw, name, binding.hash, input);
+          const prior = (await db.query("select current_setting('role') role,current_setting('request.jwt.claims',true) claims")).rows[0];
+          await db.query("select set_config('role','clued_worker_gateway',false),set_config('request.jwt.claims','{\"role\":\"clued_worker_gateway\"}',false)");
+          try { return (await db.query(`select public.${name}($1,$2::jsonb) r`, [binding.hash, JSON.stringify(input)])).rows[0].r; }
+          finally { await db.query("select set_config('role',$1,false),set_config('request.jwt.claims',$2,false)", [prior.role, prior.claims ?? '']); }
+        };
+        const bind = async (binding, id = null, db = admin) => {
+          const i = id ? (await admin.query('select host from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0] : null;
+          const req = await gwCall(db, 'clued_integration_request_open_v1', binding, { request_key: key('history-request'),
+            intent: id ? 'reauthorization' : 'create_or_bind', target_integration_id: id, host: i?.host ?? 'history.complete',
+            host_surface: i?.host === 'anthropic.claude' ? 'chat' : 'default', adapter_family: 'test-adapter', adapter_version: '1.0.0', installation_phase: 'COMPLETED' });
+          return gwCall(db, 'clued_integration_create_or_bind_v1', binding, { idempotency_key: key('history-bind'),
+            request_id: req.request_id, binding_intent: id ? 'REAUTHORIZATION' : 'CREATE_OR_BIND' });
+        };
+        const claude = async (binding) => {
+          const req = await gwCall(admin, 'clued_integration_request_open_v1', binding, { request_key: key('history-request'), intent: 'create_or_bind',
+            host: 'anthropic.claude', host_surface: 'chat', adapter_family: 'test-adapter', adapter_version: '1.0.0', installation_phase: 'COMPLETED' });
+          const result = await gwCall(admin, 'clued_integration_create_or_bind_v1', binding,
+            { idempotency_key: key('history-bind'), request_id: req.request_id, binding_intent: 'CREATE_OR_BIND' });
+          assert.equal(result.status, 'committed', JSON.stringify(result)); return result.supplemental.integration_id;
+        };
+        const nativeCall = async (db, user, input, name = 'clued_user_integration_v1') => {
+          await db.query('begin');
+          try {
+            await db.query('set local role authenticated');
+            await db.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims','{}',true)", [user]);
+            const result = (await db.query(`select public.${name}($1::jsonb) r`, [JSON.stringify(input)])).rows[0].r;
+            await db.query('commit'); return result;
+          } catch (error) { await db.query('rollback'); throw error; }
+        };
+        const revoke = (db, user, id) => nativeCall(db, user, { op: 'revoke', integration_id: id, idempotency_key: key('history-revoke'), reason: 'owner revoke' });
+        const tool = async (binding) => {
+          try { await admin.query("select clued_private.resolve_binding($1,'context:read','global')", [binding.hash]); return 'ok'; }
+          catch (error) { return error.message; }
+        };
+        const waitingPid = Number((await waiting.query('select pg_backend_pid() p')).rows[0].p);
+        const heldPid = Number((await held.query('select pg_backend_pid() p')).rows[0].p);
+        await history.test('original T-A11-10 pre-Source S0 change rejects, has no revoke write, then retries', async () => {
+          const user = await newUser(), client = `history-${uid()}`;
+          const firstBinding = await seed(user, client);
+          const installed = await bind(firstBinding);
+          assert.equal(installed.status, 'committed');
+          const id = installed.supplemental.integration_id;
+          await held.query('begin');
+          let pending;
+          try {
+            const secondBinding = await seed(user, client, held);
+            assert.equal((await bind(secondBinding, id, held)).status, 'committed');
+            pending = revoke(waiting, user, id);
+            let blocked = false;
+            for (let n = 0; n < 400; n += 1) {
+              blocked = (await admin.query('select $2::int=any(pg_blocking_pids($1)) blocked', [waitingPid, heldPid])).rows[0].blocked;
+              if (blocked) break;
+              await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+            assert.equal(blocked, true, 'the qualified historical revoke waits behind the old L5 holder');
+            const versionBeforeCommit = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
+            await held.query('commit');
+            const first = await pending;
+            assert.equal(first.status, 'rejected', JSON.stringify(first));
+            assert.equal(first.error_code, 'integration_revoke_connection_set_changed');
+            assert.ok(Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version) > versionBeforeCommit,
+              'the historical holder reauthorization really committed its Integration version');
+            assert.equal(Number((await admin.query('select count(*) n from clued_private.integration_revocations_v1 where integration_id=$1', [id])).rows[0].n), 0, 'historical failed discovery has no revoke business row');
+            const retry = await revoke(admin, user, id);
+            assert.equal(retry.status, 'committed');
+            assert.deepEqual([...retry.supplemental.revoked_binding_ids].sort(), [firstBinding.id, secondBinding.id].sort());
+            const actual = (await admin.query(`select b.id,b.revoked_at binding_revoked_at,a.revoked_at authorization_revoked_at
+              from public.clued_agent_bindings b join clued_private.authorizations_v12 a on a.binding_id=b.id
+              where b.id=any($1::uuid[]) order by b.id`, [[firstBinding.id, secondBinding.id]])).rows;
+            assert.deepEqual(actual.map((row) => row.id), [firstBinding.id, secondBinding.id].sort());
+            for (const row of actual) {
+              assert.ok(row.binding_revoked_at, 'historical retry actually revokes the Binding row');
+              assert.ok(row.authorization_revoked_at, 'historical retry actually revokes the Authorization row');
+            }
+            assert.equal(await tool(firstBinding), 'binding_not_authorized');
+            assert.equal(await tool(secondBinding), 'binding_not_authorized');
+          } finally { await held.query('rollback'); if (pending) await pending; }
+        });
+        await history.test('original T-A11-23 pre-Source late consent survives then O7/revoke/restore closes it', async () => {
+          const operator = await newUser();
+          assert.equal(Number((await admin.query('select count(*) n from clued_private.platform_admin_v13')).rows[0].n), 0);
+          await admin.query('insert into clued_private.platform_admin_v13(subject_id,version) values($1,1)', [operator]);
+          try {
+          for (const followUp of ['revoke', 'restore']) {
+            const user = await newUser(), client = `history-${uid()}`;
+            const b = await seed(user, client), id = await claude(b);
+            const sibling = await claude(await seed(user, client));
+            await held.query('begin');
+            let late;
+            try {
+              late = await seed(user, client, held);
+              const result = await revoke(admin, user, id);
+              assert.equal(result.status, 'committed');
+              await held.query('commit');
+            } finally { await held.query('rollback'); }
+            assert.equal(await tool(late), 'ok', 'original known boundary 1, explicitly historical');
+            const request = await gwCall(admin, 'clued_integration_request_open_v1', late, { request_key: key('history-request'), intent: 'create_or_bind',
+              host: 'anthropic.claude', host_surface: 'chat', adapter_family: 'test-adapter', adapter_version: '1.0.0', installation_phase: 'COMPLETED' });
+            const refused = await gwCall(admin, 'clued_integration_create_or_bind_v1', late,
+              { idempotency_key: key('history-bind'), request_id: request.request_id, binding_intent: 'CREATE_OR_BIND' });
+            assert.equal(refused.error_code, 'binding_predates_revocation');
+            const rebindReq = await gwCall(admin, 'clued_integration_request_open_v1', late, { request_key: key('history-request'), intent: 'rebind',
+              target_integration_id: sibling, host: 'anthropic.claude', host_surface: 'chat', adapter_family: 'test-adapter', adapter_version: '1.0.0', installation_phase: 'COMPLETED' });
+            const refusedRebind = await gwCall(admin, 'clued_integration_create_or_bind_v1', late,
+              { idempotency_key: key('history-bind'), request_id: rebindReq.request_id, binding_intent: 'REBIND' });
+            assert.equal(refusedRebind.error_code, 'binding_predates_revocation');
+            let follow;
+            if (followUp === 'revoke') {
+              follow = await nativeCall(admin, operator, { op: 'revoke', integration_id: id, idempotency_key: key('history-op-revoke'),
+                reason: 'operator revoke', revoked_by: 'SECURITY' }, 'clued_admin_integration_v1');
+            } else {
+              const fresh = await seed(user, client);
+              const version = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
+              follow = await nativeCall(admin, user, { op: 'restore', integration_id: id, idempotency_key: key('history-restore'),
+                base_version: version, new_binding_id: fresh.id });
+            }
+            assert.equal(follow.status, 'committed', JSON.stringify(follow));
+            assert.ok(follow.supplemental.revoked_binding_ids.includes(late.id));
+            assert.equal(await tool(late), 'binding_not_authorized', followUp);
+          }
+          } finally {
+            // This is the historical synthetic administrator singleton, not
+            // the later full-chain fixture's administrator or a production row.
+            await admin.query('delete from clued_private.platform_admin_v13 where subject_id=$1', [operator]);
+          }
+        });
+        history.diagnostic(JSON.stringify({ phase: 'qualified historical before Source migration', source_guard_installed: false,
+          next_migration: SOURCE_MIGRATIONS[0], original_assertions_preserved: ['S0-change rejected/retry', 'known boundary 1', 'O7', 'next revoke', 'restore'] }));
+      });
+    }
+
+    const sourceBytes = async () => Promise.all(SOURCE_MIGRATIONS.map(async (name) => ({
+      migration: name, sha256: sha(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')),
+    })));
+    const sourceBefore = await sourceBytes();
+    t.diagnostic(JSON.stringify({ source_before: sourceBefore }));
+    // The two old race proofs belong to the fully qualified historical stage,
+    // before the new Owner serialization contract. Keep their original
+    // assertions there, then install both successors and prove current races.
+    for (const name of migrations.filter((name) => name > GRANTS)) {
+      if (name === SOURCE_MIGRATIONS[0]) await historicalWriterBoundaries();
+      await apply(name);
+    }
     const gateway=await connect();
     await gateway.query('set session authorization authenticator');
     await setWorkerGatewayCaller(gateway);
@@ -833,6 +1008,23 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       }
       throw new Error(`backend ${pid} is not waiting on a lock`);
     };
+    const waitOwnerGuard = async (pid, owner, holder) => {
+      let observed = false;
+      for (let n = 0; n < 400; n += 1) {
+        observed = (await admin.query(`select exists(select 1 from pg_locks
+          where pid=$1 and locktype='advisory' and mode='ExclusiveLock' and not granted and objsubid=1
+            and classid::bigint=((clued_private.authorization_writer_key_v2($2)>>32)&4294967295::bigint)
+            and objid::bigint=(clued_private.authorization_writer_key_v2($2)&4294967295::bigint)) waiting`, [pid, owner])).rows[0].waiting;
+        if (observed) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.equal(observed, true, 'the real Native revoke waits at the exact Owner mutex');
+      assert.ok((await admin.query('select pg_blocking_pids($1) blockers', [pid])).rows[0].blockers.includes(holder));
+      assert.deepEqual((await admin.query(`select relation::regclass::text relation,mode from pg_locks where pid=$1
+        and relation in ('public.clued_agent_bindings'::regclass,'clued_private.authorizations_v12'::regclass,
+          'clued_private.development_spaces_v14'::regclass,'public.clued_projects'::regclass)
+        and mode in ('RowShareLock','RowExclusiveLock')`, [pid])).rows, [], 'waiting happens before Binding/Authorization/Context/Project row locks');
+    };
     // one call inside an already open transaction of db, as the Native / Operator session of user
     const sessionIn = async (db, fn, user, input) => requestRole(db,'authenticated',async()=>{
       await db.query(`select set_config('request.jwt.claim.sub', $1, true)`,[user]);
@@ -857,31 +1049,37 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     const revEmpty = async (id) => (await admin.query(`select cardinality(clued_private.integration_rev_set_v1($1,
       clued_private.integration_rev_at_v1($1, clock_timestamp()))) n`, [id])).rows[0].n === 0;
 
-    await t.test('T-A11-10 revoke vs create_or_bind: set change aborts and retries, reverse order refuses, invariant holds', async () => {
-      // (a) a same-client reauthorization holds L5 (uncommitted); the revoke has S0 = {B1} locked and waits on L5
+    await t.test('T-A11-10 current Owner serialization: full revoke set, reverse refusal and 50 interleavings (old S0 retry proved historically)', async () => {
+      // (a) the current early Owner protocol serializes before S0 discovery.
+      // The old S0-change rejection is still proved in the historical stage.
       const client = `c-${uid()}`;
       const user = await newUser();
       const b1 = await oauthBinding(user, { client });
       const id = await install(b1);
       await c2.query('begin');
-      const b2 = await oauthBinding(user, { client, db: c2 });
-      const opened = await rpc(c2, 'clued_integration_request_open_v1', b2, { request_key: key('request'), intent: 'reauthorization',
-        target_integration_id: id, host: 'test.complete', host_surface: 'default', adapter_family: 'test-adapter',
-        adapter_version: '1.0.0', installation_phase: 'COMPLETED' });
-      const rebind = await rpc(c2, 'clued_integration_create_or_bind_v1', b2, { idempotency_key: key('bind'),
-        request_id: opened.request_id, binding_intent: 'REAUTHORIZATION' });
-      assert.equal(rebind.status, 'committed', JSON.stringify(rebind));
-      const pending = revokeOn(c3, user, id);
-      await waitLocked(pid3);
-      const v0 = await version(id);
-      await c2.query('commit');
-      const first = await pending;
-      assert.equal(first.status, 'rejected', JSON.stringify(first));
-      assert.equal(first.error_code, 'integration_revoke_connection_set_changed');
-      assert.ok(await version(id) > v0, 'the reauthorization committed');
-      assert.equal(await openRow(id), null, 'no business write');
+      let b2, pending;
+      try {
+        b2 = await oauthBinding(user, { client, db: c2 });
+        const opened = await rpc(c2, 'clued_integration_request_open_v1', b2, { request_key: key('request'), intent: 'reauthorization',
+          target_integration_id: id, host: 'test.complete', host_surface: 'default', adapter_family: 'test-adapter',
+          adapter_version: '1.0.0', installation_phase: 'COMPLETED' });
+        const rebind = await rpc(c2, 'clued_integration_create_or_bind_v1', b2, { idempotency_key: key('bind'),
+          request_id: opened.request_id, binding_intent: 'REAUTHORIZATION' });
+        assert.equal(rebind.status, 'committed', JSON.stringify(rebind));
+        pending = revokeOn(c3, user, id);
+        await waitOwnerGuard(pid3, user, await pidOf(c2));
+        const v0 = await version(id);
+        await c2.query('commit');
+        const first = await pending;
+        assert.equal(first.status, 'committed', JSON.stringify(first));
+        assert.deepEqual(sorted(first.supplemental.revoked_binding_ids), sorted([b1.id, b2.id]), 'post-wait discovery sees the complete committed connection set');
+        assert.ok(await version(id) > v0, 'the reauthorization committed');
+        assert.notEqual(await openRow(id), null);
+        assert.ok(await revEmpty(id));
+      } finally { await c2.query('rollback'); if (pending) await pending; }
       const retry = await revoke(user, id);
       assert.equal(retry.status, 'committed', JSON.stringify(retry));
+      assert.equal(retry.supplemental.outcome, 'ALREADY_REVOKED');
       assert.ok(await revoked(b1));
       assert.ok(await revoked(b2));
       // (b) reverse order: the revoke commits first, the reauthorization is refused
@@ -923,14 +1121,17 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       const id3 = await install(m1);
       const m2 = await oauthBinding(user3, { client: cl });            // unowned lineage, in S0
       await c2.query('begin');
-      await sessionIn(c2, 'clued_authorization_manage_v12', user3, { op: 'revoke', binding_id: m2.id, base_version: await authVersion(m2) });
-      const racing = revokeOn(c3, user3, id3);
-      await waitLocked(pid3);
-      await c2.query('commit');
-      const done = await racing;
-      assert.equal(done.status, 'committed', JSON.stringify(done));
-      assert.deepEqual(done.supplemental.revoked_binding_ids, [m1.id]);
-      assert.ok(await revEmpty(id3));
+      let racing;
+      try {
+        await sessionIn(c2, 'clued_authorization_manage_v12', user3, { op: 'revoke', binding_id: m2.id, base_version: await authVersion(m2) });
+        racing = revokeOn(c3, user3, id3);
+        await waitOwnerGuard(pid3, user3, await pidOf(c2));
+        await c2.query('commit');
+        const done = await racing;
+        assert.equal(done.status, 'committed', JSON.stringify(done));
+        assert.deepEqual(done.supplemental.revoked_binding_ids, [m1.id]);
+        assert.ok(await revEmpty(id3));
+      } finally { await c2.query('rollback'); if (racing) await racing; }
     });
 
     await t.test('T-A11-11 derived REVOKED with a live HISTORICAL Binding: explicit revoke materializes and extends', async () => {
@@ -1036,7 +1237,9 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal(c.status, 'committed', JSON.stringify(c));
       assert.ok(c.supplemental.outcome_flags.includes('AUTHORITY_EXPANDED_BY_CONSENT'));
       // v0.1.3 MINOR-N11: a reduce on a HISTORICAL Binding does not count; the same reduce while it was CURRENT does
-      const PROJECT = { resource_kind: 'context', resource_id: `project:${uid()}`, environment: 'canonical', actions: ['read'] };
+      // A real second Owner resource, separate from global. The old pseudo
+      // Context project:<UUID> was never a Native-eligible Development Context.
+      const PROJECT = { resource_kind: 'scope', resource_id: 'profile', environment: 'canonical', actions: ['read'] };
       const eff = async (x) => (await admin.query('select clued_private.integration_ceiling_eff_v1($1) e', [x])).rows[0].e;
       const u2 = await newUser();
       const h0 = await oauthBinding(u2, { client, entries: [...DEFAULT_ENTRIES, PROJECT] });
@@ -1542,7 +1745,7 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
       assert.equal(await revoked(b3), false);
     });
 
-    await t.test('T-A11-23 a concurrent consent (known boundary 1) is caught by O7 and by the next revoke or restore', async () => {
+    await t.test('T-A11-23 current Owner serialization closes the late-consent window; revoke/restore stay safe (old O7 window proved historically)', async () => {
       for (const followUp of ['revoke', 'restore']) {
         const client = `c-${uid()}`;
         const user = await newUser();
@@ -1550,25 +1753,35 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
         const id = await claude(b);
         const sibling = await claude(await oauthBinding(user, { client }));
         await c2.query('begin');
-        const late = await oauthBinding(user, { client, db: c2 });                // created_at ≤ t_rev, committed after the revoke
-        const r = await revoke(user, id);
-        assert.equal(r.status, 'committed');
-        await c2.query('commit');
-        assert.equal(await tool(late), 'ok', 'known boundary 1');
-        assert.equal((await bindAs(late, 'CREATE_OR_BIND', { host: 'anthropic.claude', host_surface: 'chat' })).error_code,
-          'binding_predates_revocation');
-        assert.equal((await bindTo(late, sibling, 'REBIND')).error_code, 'binding_predates_revocation');
+        let late, pending;
+        try {
+          late = await oauthBinding(user, { client, db: c2 });
+          pending = revokeOn(c3, user, id);
+          await waitOwnerGuard(pid3, user, await pidOf(c2));
+          await c2.query('commit');
+          const r = await pending;
+          assert.equal(r.status, 'committed', JSON.stringify(r));
+          assert.ok(r.supplemental.revoked_binding_ids.includes(b.id));
+          assert.ok(r.supplemental.revoked_binding_ids.includes(late.id), 'the current writer guard closes the old uncommitted-consent window');
+        } finally { await c2.query('rollback'); if (pending) await pending; }
+        assert.ok(await revEmpty(id));
+        assert.equal(await tool(late), 'binding_not_authorized');
+        assert.equal((await bindAs(late, 'CREATE_OR_BIND', { host: 'anthropic.claude', host_surface: 'chat' })).thrown,
+          'binding_not_authorized');
+        assert.equal((await bindTo(late, sibling, 'REBIND')).thrown, 'binding_not_authorized');
+        assert.equal(await state(sibling), 'VERIFYING', 'another Integration remains outside this revoke');
         if (followUp === 'revoke') {
           const again = await opRevoke(id);
           assert.equal(again.status, 'committed', JSON.stringify(again));
-          assert.ok(again.supplemental.revoked_binding_ids.includes(late.id));
+          assert.equal(again.supplemental.outcome, 'ALREADY_REVOKED');
         } else {
           const fresh = await oauthBinding(user, { client });
           const rr = await restore(user, id, fresh);
           assert.equal(rr.status, 'committed', JSON.stringify(rr));
-          assert.ok(rr.supplemental.revoked_binding_ids.includes(late.id));
+          assert.equal(await tool(fresh), 'ok', 'fresh restore does not resurrect the old consent');
         }
         assert.equal(await tool(late), 'binding_not_authorized', followUp);
+        assert.ok(await revoked(late), followUp);
       }
     });
 
@@ -2019,6 +2232,9 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
     await apply(closeout);
     assert.deepEqual(await snapshotCallerCatalog(admin),callerCatalog,'G6 replay preserves current Native/Binding definitions and ACL');
     await assertGatewayCloseoutBoundary(admin);
+    const sourceAfter = await sourceBytes();
+    assert.deepEqual(sourceAfter, sourceBefore, 'production Source bytes remain unchanged throughout historical and current proofs');
+    t.diagnostic(JSON.stringify({ source_after: sourceAfter }));
   } finally {
     for (const client of clients) await client.end().catch(() => {});
     await server.stop().catch(() => {});

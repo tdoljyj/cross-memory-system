@@ -1,0 +1,457 @@
+{
+  "schema": "clued.independent-ui-code-review.v1",
+  "revision": "r3",
+  "created_at": "2026-10-14T06:20:00Z",
+  "reviewer": {
+    "task": "/root/all_contexts_product_plan_review",
+    "non_author": true,
+    "review_only": true
+  },
+  "subject": {
+    "primary_manifest_path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/all-contexts-ui-implementation.json",
+    "primary_manifest_sha256": "98a3b1c9c26466a6c619d8d84faf0bd7649f019ec99cb812c78bdd3684e470bf",
+    "primary_aggregate_sha256": "d24b1f8836d5c4b67ae9681fe339907289c9dadb2dd40c40ecf1d58b1609e141",
+    "primary_file_count": 17,
+    "primary_files": [
+      {
+        "path": "apps/clued-cloud/app/confirm/[id]/page.tsx",
+        "sha256": "645245e7244ee2c552f5fb522a311a323edba2cf04752f8ef39521fe2732247b"
+      },
+      {
+        "path": "apps/clued-cloud/app/contexts/page.tsx",
+        "sha256": "899ce5c63a994a27c04f428ff0248d47e4e35d89f1047b78ef1d324bbf0dfc09"
+      },
+      {
+        "path": "apps/clued-cloud/app/imprints/ImprintPanel.tsx",
+        "sha256": "d7e004f38e4012c8b60f97ef206225efc9b8350fe9bb9cb4f82ab4ebc014128a"
+      },
+      {
+        "path": "apps/clued-cloud/app/imprints/imprint-model.ts",
+        "sha256": "cd7a47848d0c8f53fd0510afd8d851af33089b5058552a2223a69d85613a4786"
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/connections/headless.tsx",
+        "sha256": "04b7efea6801db5e70c00ac6c577e06d11f34a4cedae9f6a3a3a2956158ecb05"
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/connections/page.tsx",
+        "sha256": "571357c2b6151ba709cdaaba0a2b4f6012bae24835a58317c9e59a4ccadf759c"
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/consent/delegated-consent.tsx",
+        "sha256": "774c2bfaf46dddc21d2d94d4ba52dd4b3fea4274ad096e5eb78f216dd6a835be"
+      },
+      {
+        "path": "apps/clued-cloud/lib/context-authorization-controls.tsx",
+        "sha256": "3d8a9e450e41437585818e0b276d4b0ec77ecdb2dc8d324fe00cd43302272de5"
+      },
+      {
+        "path": "apps/clued-cloud/lib/context-authorization.ts",
+        "sha256": "cc066e18dab99c1f386a92423fead8b70d528cd31077b5de3962b77380687d4d"
+      },
+      {
+        "path": "apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs",
+        "sha256": "376752563dae90b32b5075fdcbb93e5dcb7bcb89aa6ab5743cee5957d676b3d3"
+      },
+      {
+        "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+        "sha256": "7993215902248a957c4e33474dc0b47628c69833c07e65ec86c38e50f317a922"
+      },
+      {
+        "path": "apps/clued-cloud/tests/consent-account-race.test.mjs",
+        "sha256": "87f68f537343be348510805ccefa5a683dadc1500c193bda34abad4fd3876028"
+      },
+      {
+        "path": "apps/clued-cloud/tests/development-contexts-ui.test.mjs",
+        "sha256": "ca23e01cecf8a7daac671a0010b945a54bf81e2de1746297d98fccf941255c0d"
+      },
+      {
+        "path": "apps/clued-cloud/tests/headless-binding-ui.test.mjs",
+        "sha256": "0f0b096fd33dcfa706dfa723b5c9d8e5f3817f012bf8fb6d206031b55bb762f7"
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprints-context-directory.test.mjs",
+        "sha256": "2b22a14301c054abe5d5d2d4cc32f5228785fb541c37984a5fbb16950eba50c2"
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprints-panel.test.mjs",
+        "sha256": "9f875bfd08c959f193f081a09937b99e7830740d7fc5c04fa3b2134da10f0df2"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-grants-ui.test.mjs",
+        "sha256": "e2a08d93934fcc30e2bd1308c8cc98206adddbb32ac95efe3bba2cc74bc11c64"
+      }
+    ],
+    "supplemental_files": [
+      {
+        "path": "apps/clued-cloud/app/policies/page.tsx",
+        "sha256": "4f78f8dadc2750ef05dc85bcc57fc7e7b27d47a8f6dd7af8da6753413428a4a8"
+      }
+    ],
+    "reviewed_total_file_count": 18,
+    "review_bundle_sha256": "3dd3e73ac3f50504cfc76ebd298dfd08c5fa5fa03528ec276f75fc5149622617",
+    "aggregate_definition": "SHA256 of compact JSON ordered path/sha256 array. Primary aggregate covers only its 17 manifest files; review bundle adds the policy page as the eighteenth entry.",
+    "all_file_hashes_verified": true,
+    "closing_hash_mismatches": [],
+    "base_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "approved_plan_sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3"
+  },
+  "authorization": {
+    "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "task_id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+    "task_version_read": 49,
+    "task_currentness": "CURRENT",
+    "owner_decision_id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+    "owner_decision_version_read": 4,
+    "owner_decision_currentness": "CURRENT",
+    "global_priority_state": {
+      "id": "72166b09-0fc6-4a28-8551-8e4334280a73",
+      "version": 4955,
+      "currentness": "CURRENT",
+      "authority": "Priority is separate from execution authorization"
+    },
+    "root_claim_id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+    "root_claim_fence": 6,
+    "root_claim_lease_version": 7,
+    "root_claim_status_read": "ACTIVE",
+    "root_claim_expires_at": "2026-10-14T07:39:32.220755+00:00",
+    "global": {
+      "context_key": "global",
+      "resume_version": 1373,
+      "resume_receipt_id": "acce11c3-7d3f-4a40-8963-b13d4f5cb5b1",
+      "independent_review": true,
+      "contract_version": 49,
+      "agent_contract_sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+      "initial_currentness_receipt_id": "845236c4-d7ef-45d0-81a9-b26e116f5125",
+      "closing_currentness_receipt_id": "be769684-80cd-49de-b238-f2b4a12b2cbc",
+      "closing_currentness": "CURRENT",
+      "checkpoint": {
+        "status": "committed",
+        "version": 1374,
+        "receipt_id": "8bfd76df-a31f-495c-a7fd-9f0ee321d5d2",
+        "absorbed_event_count": 0,
+        "coverage": {
+          "mode": "explicit",
+          "tracks": [
+            "independent_review"
+          ],
+          "contexts": [
+            "global"
+          ],
+          "event_ids": []
+        }
+      }
+    },
+    "project": {
+      "context_key": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "resume_version": 2459,
+      "resume_receipt_id": "49967960-5e2b-4325-b07b-f311f6cf1f15",
+      "independent_review": true,
+      "contract_version": 49,
+      "agent_contract_sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+      "initial_currentness_receipt_id": "2a231af7-37c0-4d48-ab0c-5c7de34b1828",
+      "closing_currentness_receipt_id": "dd7c5b44-1269-4df5-955d-8a6e4746be4d",
+      "closing_currentness": "CURRENT",
+      "checkpoint": {
+        "status": "committed",
+        "version": 2460,
+        "receipt_id": "8d92d8eb-5e8b-4865-9368-6c8264fa5358",
+        "absorbed_event_count": 0,
+        "coverage": {
+          "mode": "explicit",
+          "tracks": [
+            "independent_review"
+          ],
+          "contexts": [
+            "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+          ],
+          "event_ids": []
+        }
+      }
+    },
+    "relevant_resident_constraints_revalidated": [
+      {
+        "id": "d4663fa2-1d4b-4cc7-b4c8-91508b1e9849",
+        "version": 1,
+        "full_text_read": true,
+        "application": "Default independent read-only review enabled; no individual permission prompt needed."
+      },
+      {
+        "id": "34e35019-36b9-40a5-ab8a-989f755cac3b",
+        "version": 1,
+        "full_text_read": true,
+        "application": "Explicitly concerns Console prototype feedback first; current exact OwnerDecision4 independently authorizes this plan/implementation review sequence."
+      },
+      {
+        "id": "9940c3e3-7086-45ce-9c57-8ecb74cb528c",
+        "version": 1,
+        "full_text_read": true,
+        "application": "No beige introduced; existing primary button styling retained."
+      }
+    ],
+    "shared_inbox": {
+      "mark_read": false,
+      "acted_on_other_sessions_or_claims": false
+    },
+    "new_claim_or_task_created": false,
+    "canonical_review_result_written": false
+  },
+  "version_boundary": {
+    "independent_remote_main": "af22e8c5d8c70f86d17abb32996a63414a1d5c94",
+    "local_head": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "remote_difference_independently_rechecked": [
+      "scripts/model-program/development_host_bridge.cjs",
+      "scripts/model-program/local_completion_execution.py",
+      "tests/test_model_development_host_bridge.cjs",
+      "tests/test_model_local_completion_execution.py"
+    ],
+    "reviewed_paths_changed_by_remote_difference": false,
+    "qualification": "Review is of the exact dirty f890-based UI subject, not of a current merged main or deployed artifact. No merge or other Git mutation performed during authorship. Final combined candidate must align with then-current main and receive exact-commit qualification.",
+    "known_deployed_commit": "8f960b5541e29ad279d4976f5c366ea4e1297ad4"
+  },
+  "verdict": "PASS",
+  "verdict_scope": "UI_CODE_ONLY_18_EXACT_FILES",
+  "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 0,
+    "MINOR": 0
+  },
+  "findings": [],
+  "ui_code_gate_pass": true,
+  "combined_gate_status": "NOT_READY",
+  "overall_backend_ci_native_production_acceptance": false,
+  "prior_review": {
+    "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/all-contexts-ui-code-review.json",
+    "sha256": "e30936d6d373b49ff7f28789fa7384d671c37e02c403af64eeb564da0c91553a",
+    "subject_sha256": "b8be154d65bc82c337b437b7d1d76231cdb5716d5863e75139ba7064c0bfa9a2",
+    "verdict": "FAIL",
+    "preserved": true,
+    "findings_resolved": [
+      {
+        "id": "UI-M01",
+        "prior_severity": "MAJOR",
+        "status": "RESOLVED_IN_REVIEWED_UI_SNAPSHOT",
+        "canonical_bug_closure_claim": false,
+        "evidence": [
+          "headless Row/parser retain actual string-array scopes; absent/malformed scopes remain null.",
+          "Legacy creation type no longer asserts full rights or indefinite validity.",
+          "Actual active status and finite expiry/retirement are displayed; missing expiry remains unconfirmed and grants=null resource coverage is explicitly qualified.",
+          "Read-only raw scope, retired raw and missing/malformed scope cases added; expiry/replacement disables rotation. Opening legacy rotation still starts with no resources and issues no grant.",
+          "Existing original false-label test now asserts the misleading full/no-expiry phrase is absent."
+        ]
+      }
+    ]
+  },
+  "review_coverage": {
+    "reread_full_actual_files": [
+      "apps/clued-cloud/app/oauth/connections/headless.tsx",
+      "apps/clued-cloud/app/oauth/connections/page.tsx",
+      "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+      "apps/clued-cloud/tests/headless-binding-ui.test.mjs",
+      "apps/clued-cloud/app/policies/page.tsx"
+    ],
+    "reread_full_diff_against_f890": [
+      "apps/clued-cloud/app/oauth/connections/headless.tsx",
+      "apps/clued-cloud/app/oauth/connections/page.tsx",
+      "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+      "apps/clued-cloud/tests/headless-binding-ui.test.mjs",
+      "apps/clued-cloud/app/policies/page.tsx"
+    ],
+    "reused_unchanged_full_source_and_diff_review": {
+      "basis": "Prior non-author initial report bound to b8; all thirteen current path/SHA pairs independently match that exact review. Previous original full-file/diff review reused only for unchanged bytes.",
+      "files": [
+        {
+          "path": "apps/clued-cloud/app/confirm/[id]/page.tsx",
+          "sha256": "645245e7244ee2c552f5fb522a311a323edba2cf04752f8ef39521fe2732247b"
+        },
+        {
+          "path": "apps/clued-cloud/app/contexts/page.tsx",
+          "sha256": "899ce5c63a994a27c04f428ff0248d47e4e35d89f1047b78ef1d324bbf0dfc09"
+        },
+        {
+          "path": "apps/clued-cloud/app/imprints/ImprintPanel.tsx",
+          "sha256": "d7e004f38e4012c8b60f97ef206225efc9b8350fe9bb9cb4f82ab4ebc014128a"
+        },
+        {
+          "path": "apps/clued-cloud/app/imprints/imprint-model.ts",
+          "sha256": "cd7a47848d0c8f53fd0510afd8d851af33089b5058552a2223a69d85613a4786"
+        },
+        {
+          "path": "apps/clued-cloud/app/oauth/consent/delegated-consent.tsx",
+          "sha256": "774c2bfaf46dddc21d2d94d4ba52dd4b3fea4274ad096e5eb78f216dd6a835be"
+        },
+        {
+          "path": "apps/clued-cloud/lib/context-authorization-controls.tsx",
+          "sha256": "3d8a9e450e41437585818e0b276d4b0ec77ecdb2dc8d324fe00cd43302272de5"
+        },
+        {
+          "path": "apps/clued-cloud/lib/context-authorization.ts",
+          "sha256": "cc066e18dab99c1f386a92423fead8b70d528cd31077b5de3962b77380687d4d"
+        },
+        {
+          "path": "apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs",
+          "sha256": "376752563dae90b32b5075fdcbb93e5dcb7bcb89aa6ab5743cee5957d676b3d3"
+        },
+        {
+          "path": "apps/clued-cloud/tests/consent-account-race.test.mjs",
+          "sha256": "87f68f537343be348510805ccefa5a683dadc1500c193bda34abad4fd3876028"
+        },
+        {
+          "path": "apps/clued-cloud/tests/development-contexts-ui.test.mjs",
+          "sha256": "ca23e01cecf8a7daac671a0010b945a54bf81e2de1746297d98fccf941255c0d"
+        },
+        {
+          "path": "apps/clued-cloud/tests/imprints-context-directory.test.mjs",
+          "sha256": "2b22a14301c054abe5d5d2d4cc32f5228785fb541c37984a5fbb16950eba50c2"
+        },
+        {
+          "path": "apps/clued-cloud/tests/imprints-panel.test.mjs",
+          "sha256": "9f875bfd08c959f193f081a09937b99e7830740d7fc5c04fa3b2134da10f0df2"
+        },
+        {
+          "path": "apps/clued-cloud/tests/owner-grants-ui.test.mjs",
+          "sha256": "e2a08d93934fcc30e2bd1308c8cc98206adddbb32ac95efe3bba2cc74bc11c64"
+        }
+      ]
+    },
+    "policy_page": {
+      "sha256": "4f78f8dadc2750ef05dc85bcc57fc7e7b27d47a8f6dd7af8da6753413428a4a8",
+      "change": "One navigation label at line180: 开发上下文 -> 上下文; destination and behavior unchanged.",
+      "assessment": "PASS"
+    },
+    "remaining_unchanged_behavior": "Previously reviewed specific-scope examples, future ownership macro, requested action bounds, source-aware reductions, Native macro coverage guards, Record/Event/history qualification and exactly eight views remain applicable to unchanged bytes. No browser or realtime-push assertion."
+  },
+  "precise_native_flow": {
+    "assessment": "PASS_AS_UI_SOURCE_AND_COMPONENT_INTERFACE",
+    "target_and_identity": "Context requires actual grant ID/version plus optional override ID/version; exact canonical global/profile/project scope uses actual override ID/version and null grant identity. Auth version must match the listed Binding version. Kind/id/environment and all identity versions are checked again against the service preview.",
+    "proposal": "Available actions and current expiry come from the service DTO. Canonical scope sends only actions, denied_actions, allowed_ceiling, expires_at. Context additionally carries actual history/version/cursors/explicit-record IDs/field limits. No synthetic grant identity, no default macro request clears precise restrictions.",
+    "independent_confirmation": "Opening the editor sends no mutation. Preview uses POST limit_confirmation_issue with B/Auth/resource/grant/override CAS and proposed values. It checks preview kind/target/version/identity, old grant shape, original binding scopes, source snapshot and each proposed new value. Commit is a separate Owner click and sends only op=limit_confirm plus the returned confirmation token and view digest.",
+    "recovery": "Unknown commit or post-commit readback keeps the same token/digest actionable as 核对原精确限制确认; it does not issue a replacement preview automatically. Definite rejection requires fresh reading. Account change aborts/reset state and ignores late responses; request headers are pinned to the clicked account.",
+    "post_commit": "Reports confirmation only after a committed receipt on the exact Binding with a higher version and subsequent list read at or above that receipt version. The actual server is responsible for snapshot integrity, single-use semantics, live qualification, lock/CAS atomicity and receipt truth.",
+    "limits_of_review": "This verifies UI logic and currently read DTO shapes. It does not prove server authorization or actual Native execution. Final backend privacy corrections may change diagnostic DTOs and must be checked jointly."
+  },
+  "sources_read": {
+    "clued_skill": "Installed Clued Skill and engineering reference from prior review context; same active entry retained, no retired memory workflow used.",
+    "additional_skill": "Supabase Skill already read for auth/DTO code review; no database mutation or runtime probe.",
+    "service_contract": {
+      "version": 49,
+      "parts_independently_read": [
+        1,
+        2
+      ],
+      "sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+      "fresh_resumes_same_hash": true
+    },
+    "repository_instructions": "Current repository and child AGENTS from initial review retained; no memory/ reads.",
+    "canonical_sources": [
+      "Fresh own Global/Project resume and CURRENT admission",
+      "Global current Priority State v4955",
+      "Full exact Task v49 and OwnerDecision v4",
+      "Full current relevant independent-review/Console-feedback/color constraints; no rule change inferred from summaries",
+      "Read-only shared inbox without replying to another exact session or claim"
+    ],
+    "supporting_backend_excerpts": [
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "scope": "Evolving uncommitted precise-capability/source-view/old-new preview DTO excerpts only; not a SQL review subject."
+      },
+      {
+        "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+        "scope": "/oauth/connections/api whitelist and Origin/Auth/content-type/size/RPC passthrough excerpt only; Worker is not part of the 18-file UI aggregate."
+      }
+    ],
+    "runtime_evidence": "No current screenshot, browser/service/permission write or production execution by this reviewer. Historical acceptance evidence not promoted."
+  },
+  "validation": {
+    "independent": [
+      "17-file actual SHA checks at intake and closing; ordered primary aggregate independently recomputed as d24b",
+      "Supplemental policy actual SHA and full one-line diff checked",
+      "Ordered 18-file review bundle aggregate independently computed",
+      "Four changed UI/test full bodies and diffs read; thirteen unchanged hash-bound prior reviews reused",
+      "Remote path difference rechecked read-only",
+      "Fresh admissions and explicit zero-event checkpoints"
+    ],
+    "reviewer_executed_tests": [],
+    "reason_no_test_repeat": "The author's affected-file runs already pass; no unresolved UI concern required repeating those or the full suite.",
+    "author_latest_targeted_component_evidence": {
+      "authorization_roles_ui_cases": 11,
+      "headless_binding_ui_cases": 15,
+      "total": 26,
+      "status": "PASS",
+      "origin": "Root/manifest reported; not independently rerun",
+      "qualification": "Controlled component cases, not browser or server acceptance."
+    },
+    "component_inventory": {
+      "files": 8,
+      "registered_cases": 139,
+      "latest_all_139_run_claimed": false,
+      "other_unchanged_case_evidence": "113 unchanged component cases retain prior evidence; not rerun in this r3 review."
+    },
+    "typecheck": {
+      "status": "PASS",
+      "origin": "Root/author reported current r3 primary UI; not independently rerun"
+    },
+    "scoped_lint": {
+      "status": "PASS",
+      "diagnostics": 0,
+      "files": [
+        "apps/clued-cloud/app/oauth/connections/page.tsx",
+        "apps/clued-cloud/app/oauth/connections/headless.tsx"
+      ],
+      "origin": "Root/author reported; prior unused environmentLabels removed",
+      "qualification": "Two-file result; no all-repository zero-warning claim."
+    },
+    "worker_transport_tests": {
+      "status": "PASS",
+      "cases": 23,
+      "origin": "Root reported; not independently executed or covered by the UI aggregate"
+    }
+  },
+  "combined_gate_prerequisites": [
+    {
+      "id": "CG01",
+      "status": "UNQUALIFIED",
+      "required": "Resolve and independently re-review the Source diagnostic metadata privacy MAJOR: revoked shared qualifications must not expose live private project/context names or renames. Root reported this finding and ongoing author correction; this UI-only PASS cannot clear it or supply SQL/DB acceptance."
+    },
+    {
+      "id": "CG02",
+      "status": "UNQUALIFIED",
+      "required": "Freeze final backend source/serialization and diagnostic DTO; jointly verify actual SQL -> RPC -> HTTP -> UI, active/expiry, authorized names, coverage/effective actions, precise capabilities, old/new preview and source snapshot. Requalify this UI report if final transport/interface changes invalidate any assumptions."
+    },
+    {
+      "id": "CG03",
+      "status": "UNQUALIFIED",
+      "required": "Non-author backend source/provenance, independently valid source expiry/scope, source reductions/precise denials, Native precise limits, roles/rotation and all writer/advisory barrier locks review; real DB tests including revoked-shared privacy and controlled concurrency."
+    },
+    {
+      "id": "CG04",
+      "status": "UNQUALIFIED",
+      "required": "Align with then-current main through authorized normal merge and freeze the exact combined commit; required build/typecheck/appropriate tests/code review/CI apply to that exact commit, not this dirty UI snapshot."
+    },
+    {
+      "id": "CG05",
+      "status": "UNQUALIFIED",
+      "required": "Actual signed-in Native old/new precise approval and rejected/stale/account-race/replay paths; actual OAuth/Headless new/old coverage and rotation; no synthetic Owner approval or borrowed Binding."
+    },
+    {
+      "id": "CG06",
+      "status": "UNQUALIFIED",
+      "required": "Complete approved V01–V24 acceptance at exact deployed commit and namespace, with explicit reused/rerun/NV boundaries and Stage3 separation. Development revision history and readable source-body positive cases remain later actual acceptance work."
+    },
+    {
+      "id": "CG07",
+      "status": "UNQUALIFIED",
+      "required": "Production migration/deployment/permission changes and overall Owner acceptance remain separate current gates and receipts; none was run, approved or declared complete here."
+    }
+  ],
+  "boundaries": {
+    "subject_or_business_code_edited": false,
+    "permission_or_business_changed": false,
+    "new_claim_or_task_created": false,
+    "memory_read": false,
+    "ci_or_production_run": false,
+    "secrets_in_report": false,
+    "checkpoint_absorbed_events": 0,
+    "root_m1_result_capture_required": true
+  }
+}

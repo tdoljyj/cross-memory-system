@@ -1,0 +1,297 @@
+{
+  "schema": "clued.components/1",
+  "about": "Every self-developed Clued component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
+  "components": [
+    {
+      "id": "product",
+      "kind": "product",
+      "version": "1.6",
+      "description": "Clued product version (root VERSION).",
+      "root": ".",
+      "files": [
+        "VERSION"
+      ],
+      "content_sha256": "3ea30a4ec5707eb188f3f050470c524649cf19d73a080d6e0ee7f3fe8c58eea7",
+      "version_marker": {
+        "file": "VERSION",
+        "pattern": "Clued-v{version}"
+      }
+    },
+    {
+      "id": "skill.clued",
+      "kind": "skill",
+      "version": "1.0.20",
+      "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
+      "root": "skills/clued",
+      "files": [
+        "**/*"
+      ],
+      "content_sha256": "645400187ff54c7652383b28d9b0b3ec476a3222d046968ea3e655dfb30a99d1",
+      "version_marker": {
+        "file": "SKILL.md",
+        "pattern": "  version: \"{version}\""
+      }
+    },
+    {
+      "id": "agent-contract",
+      "kind": "contract",
+      "version": "49",
+      "description": "Clued Agent Contract, served at /clued-agent.md.",
+      "root": "protocol/agent",
+      "files": [
+        "agent-contract.md"
+      ],
+      "content_sha256": "49a387a32f8b52eb362c57ef8a9df1c339fc7fc6708dbd58dbd2dbd51f557cad",
+      "version_marker": {
+        "file": "agent-contract.md",
+        "pattern": "Contract version: {version}"
+      }
+    },
+    {
+      "id": "mcp.server",
+      "kind": "service",
+      "version": "0.6.5",
+      "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+    },
+    {
+      "id": "hook.runner-job-started",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Immutable runner job-started successor source; the canonical distribution copy requires exact-byte equality before qualification.",
+      "root": "scripts/runner",
+      "files": [
+        "clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs"
+      ],
+      "content_sha256": "5a6c58d516e3f6ef65b178c5aa72c1b91436af5d6039e4386a46927633a0c7db",
+      "version_marker": {
+        "file": "clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "hook.capture-guard",
+      "kind": "hook",
+      "version": "1.0.1",
+      "description": "Claude Code Stop hook enforcing Clued capture.",
+      "root": "scripts/hooks",
+      "files": [
+        "clued_capture_guard.py"
+      ],
+      "content_sha256": "9bc24c569f67b64ba5b7047745a8c3b89a3b6f96a56918389c62a3cf80322bbe",
+      "version_marker": {
+        "file": "clued_capture_guard.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "hook.work-claim-guard",
+      "kind": "hook",
+      "version": "1.1.4",
+      "description": "Claude Code work-claim hooks.",
+      "root": "scripts/hooks",
+      "files": [
+        "clued_work_claim_guard.py"
+      ],
+      "content_sha256": "2cd752247e9aa9d9707e5cc16d5edf193ea020bdb2dd82b42b6ba83d4890ee78",
+      "version_marker": {
+        "file": "clued_work_claim_guard.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "hook.version-check",
+      "kind": "hook",
+      "version": "1.0.1",
+      "description": "Claude Code hook comparing component versions with the service.",
+      "root": "scripts/hooks",
+      "files": [
+        "clued_version_check.py"
+      ],
+      "content_sha256": "58138bd1000b02b9c95a49140634ebab92d73d09c24e7ae5d1aab515dc100c19",
+      "version_marker": {
+        "file": "clued_version_check.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "hook.run-python",
+      "kind": "hook",
+      "version": "1.0.0",
+      "description": "Python launcher used by every Claude Code hook.",
+      "root": "scripts/hooks",
+      "files": [
+        "run_python.sh"
+      ],
+      "content_sha256": "9d6af1f74aa5b92e5da04af0a86ae0df39c440bc28bb0ae87646e32845134c9d",
+      "version_marker": {
+        "file": "run_python.sh",
+        "pattern": "# Version: {version}"
+      }
+    },
+    {
+      "id": "hook.settings",
+      "kind": "hook",
+      "version": "1.1.1",
+      "description": "Claude Code hook registration (.claude/settings.json).",
+      "root": ".claude",
+      "files": [
+        "settings.json"
+      ],
+      "content_sha256": "0dc40be75363da599b8996202efd58733214546f481580f57e71350a3b10b5fe"
+    },
+    {
+      "id": "script.runner-handover-qualifier",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Runner handover qualifier with frozen exact Source identities and separate actual Git-object provenance validation.",
+      "root": "scripts/runner",
+      "files": [
+        "qualify-work-handover.mjs"
+      ],
+      "content_sha256": "becfaac789374d15858f5b0205f1661b2fc955aba0603ca4c8842b9589b7842c",
+      "version_marker": {
+        "file": "qualify-work-handover.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.components",
+      "kind": "script",
+      "version": "1.0.1",
+      "description": "Component manifest tool (this manifest's checker).",
+      "root": "scripts",
+      "files": [
+        "clued_components.py"
+      ],
+      "content_sha256": "d50a82a6915f840b533d6549a0790d22c533430e0943e23f673fced575b3147b",
+      "version_marker": {
+        "file": "clued_components.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "script.update-clued-skills",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Installer for the Clued Skill on Codex endpoints.",
+      "root": "scripts",
+      "files": [
+        "update_clued_skills.py"
+      ],
+      "content_sha256": "604c10131081a75431713561c42a01a07483ca8b265b47e329d0766271b0c824",
+      "version_marker": {
+        "file": "update_clued_skills.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "script.memory-sync",
+      "kind": "script",
+      "version": "1.0.1",
+      "description": "Read-only memory snapshot mirror and doctor (sync-memory, memory.py).",
+      "root": ".",
+      "files": [
+        "sync-memory.py",
+        "sync-memory.ps1",
+        "memory.py",
+        "scripts/sync-memory.py",
+        "scripts/memory.py",
+        "scripts/verification_context.py"
+      ],
+      "content_sha256": "554b5be11cd146343bca3d7df68ca3622e5b0ee70994af4a53d71df757ea7e03"
+    },
+    {
+      "id": "script.gated-proof-runtime",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
+      "root": ".",
+      "files": [
+        "apps/clued-cloud/tests/ci-proof-profiles.test.mjs",
+        "scripts/ci/clued-gated-proof-runtime.mjs",
+        "scripts/ci/clued-reader-budget-cache.test.mjs"
+      ],
+      "content_sha256": "7b84491a02edccc1e8de0a257a8f6b51428c8308410977423f210a8737b33d72",
+      "version_marker": {
+        "file": "scripts/ci/clued-gated-proof-runtime.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.handover-external-driver",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-driver.late-idle-source3-v1.mjs"
+      ],
+      "content_sha256": "15b97ddf636c6b469486f7058883df9bc80a8e5c1204b9e1bccfddb10f07c3a3",
+      "version_marker": {
+        "file": "clued-handover-external-driver.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.handover-external-source-check",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-source-check.late-idle-source3-v1.mjs"
+      ],
+      "content_sha256": "bb309d2c49e1cb6742756f6a196bb3ba946e34f4d43fe261e271a2a335d95c4e",
+      "version_marker": {
+        "file": "clued-handover-external-source-check.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.handover-external-journal",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-journal.late-idle-source3-v1.mjs"
+      ],
+      "content_sha256": "861bc80d12a473cb3701df29439f9527682e74793aeeb15435169c07181ec444",
+      "version_marker": {
+        "file": "clued-handover-external-journal.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.handover-external-register",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-handover-external-register.late-idle-source3-v1.mjs",
+        "fixtures/clued-handover-operator-registration.late-idle-source3-v1.sql"
+      ],
+      "content_sha256": "a996f2c20ae988dccd296c8ac59ef931bf2d7ea50e232102cdd2714a56764752",
+      "version_marker": {
+        "file": "clued-handover-external-register.late-idle-source3-v1.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.workflow-source-profile",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "root": "scripts/ci",
+      "files": [
+        "clued-workflow-profile.mjs"
+      ],
+      "content_sha256": "42ac7ebfdf7f0d2cb3b94af67c6da2c7234fda462da6b70bc70ddc2a137623b9",
+      "version_marker": {
+        "file": "clued-workflow-profile.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    }
+  ]
+}

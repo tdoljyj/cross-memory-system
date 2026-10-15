@@ -1,0 +1,22 @@
+{
+  "schema": "clued.final-package-local-execution.v1",
+  "source_sql_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+  "serialization_sql_sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad",
+  "head": "1c1b5f36996ac662cbcbfc9bbb3bae3c3e3c0a78",
+  "runtime": "Node v24.19.0 on Windows",
+  "start_utc": "2026-10-14T07:08:43.8510047Z",
+  "end_utc": "2026-10-14T07:09:47.4227329Z",
+  "exit_code": 0,
+  "temporary_root": "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-final-auth-be8e2fbbe8ca4bd3bff6f06ddad7e0e4",
+  "files": [
+    "tests/all-contexts-authorization-db.test.mjs",
+    "tests/all-contexts-authorization-locks-db.test.mjs",
+    "tests/authorization-roles-db.test.mjs",
+    "tests/connection-permission-request-db.test.mjs",
+    "tests/headless-binding-issuance-db.test.mjs",
+    "tests/authorization-expiry-db.test.mjs",
+    "tests/context-ownership-db.test.mjs"
+  ],
+  "log_sha256": "e50f74de88a84fe4d5de6ce756671649f142d247efce4afcab586eefe667a74d",
+  "qualification": "Actual scoped combined PostgreSQL execution; not full Linux CI/production/Native acceptance"
+}

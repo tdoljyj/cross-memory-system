@@ -1,0 +1,44 @@
+✖ all-contexts sources, exact permission inheritance and real transaction barriers (6481.8109ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6573.3565
+
+✖ failing tests:
+
+test at tests\all-contexts-authorization-db.test.mjs:36:1
+✖ all-contexts sources, exact permission inheritance and real transaction barriers (6481.8109ms)
+  Error: Migration 20261014044323_all_contexts_authorization_v2.sql: integration_source_request_result_anchor_changed
+      at TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs:71:29)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    [cause]: error: integration_source_request_result_anchor_changed
+        at C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\repo\apps\clued-cloud\node_modules\pg\lib\client.js:694:17
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs:70:13)
+        at async Test.run (node:internal/test_runner/test:1389:7)
+        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+      length: 164,
+      severity: 'ERROR',
+      code: 'P0001',
+      detail: undefined,
+      hint: undefined,
+      position: undefined,
+      internalPosition: undefined,
+      internalQuery: undefined,
+      where: 'PL/pgSQL function inline_code_block line 62 at RAISE',
+      schema: undefined,
+      table: undefined,
+      column: undefined,
+      dataType: undefined,
+      constraint: undefined,
+      file: 'pl_exec.c',
+      line: '3923',
+      routine: 'exec_stmt_raise'
+    }
+  }

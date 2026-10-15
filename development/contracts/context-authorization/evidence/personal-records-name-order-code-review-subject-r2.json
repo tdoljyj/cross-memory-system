@@ -1,0 +1,57 @@
+{
+  "schema": "clued.naming-order-code-review-subject/2",
+  "base_head": "eefcf51262b07ebcd90eb32deaa7d6644922a9e7",
+  "owner_decision": {
+    "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+    "version": 6
+  },
+  "files": [
+    {
+      "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+      "sha256": "3e917be778bd8877ee779a57fe548dbe61a0adda9d861c25cfabf69ec14b433a"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/connections/page.tsx",
+      "sha256": "3288be602ffa09bb7db94fa7346bb569c147d7961a054ab52e500cf91dec10af"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/connections/headless.tsx",
+      "sha256": "7823381eecdc23f38709c28134bdfdc0451b668af8fcca444e0b1ccbbe59e73e"
+    },
+    {
+      "path": "apps/clued-cloud/app/policies/page.tsx",
+      "sha256": "9c4423fbefb7ea3d6561d25e866019d36a2c722ce93316d59075d5bc7e2c4670"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+      "sha256": "4cd97a6920549da20edf78f38b2d2453f5b74807708f6734aff45c5ce049cc5d"
+    },
+    {
+      "path": "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+      "sha256": "ca214b3bdd28b273dfb2f4c605fe09902e3370716f35ce98fa4d60c52ab465d0"
+    },
+    {
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "sha256": "c9ddae11bcf6bd864e8a9378d53d836840f59c227a52c7cbc8069945236150a7"
+    }
+  ],
+  "patch": {
+    "path": "personal-records-name-order-eef-frozen-delta-r2.patch",
+    "sha256": "27c27c2dc41f8cdaa0c99399f47effd64b49395f6fae8a8b8965686e5e25e107",
+    "bytes": 29240
+  },
+  "local_validation": {
+    "passed": 60,
+    "failed": 0,
+    "skipped": 0,
+    "log_path": "personal-order-and-empty-source-ui-transport-r3.log",
+    "log_sha256": "5178bbaa85580f6fadcfae0a86e7af82e151f44d631b12ce049d4693aa8f9b29",
+    "typecheck_exit": 0
+  },
+  "remaining_r1_major": {
+    "path": "apps/clued-cloud/app/page.tsx",
+    "status": "NOT_FIXED_PATH_TEMPORARILY_RELEASED",
+    "scope_global_is_not_level_global": true
+  },
+  "excluded": "Other naming files, SQL, released shared paths, production and overall eight-view acceptance are outside this bounded review."
+}

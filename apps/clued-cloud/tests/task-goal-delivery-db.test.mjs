@@ -123,9 +123,20 @@ test('Task goal/file completion uses exact M1 admission, persisted Storage proof
         user_confirmed: true, confidence_reason: 'Isolated recognized Project fixture', source_refs: [],
         source_unavailable_reason: 'Synthetic disposable Project', idempotency_key: uuid(),
         mutation: { name: 'goal-project-' + id, progress_status: 'active', aliases: [] } };
-      const recognized = (await admin.query('select clued_private.project_mutation_core_v2($1,null,$2,clued_private.m1_sha256($2)) v',
-        [user, create])).rows[0].v;
-      assert.equal(recognized.status, 'committed', JSON.stringify(recognized));
+      // The current private core requires the same early Owner/fanout lock
+      // order as the Native entrance, including disposable admin seed data.
+      await admin.query('begin');
+      try {
+        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [user]);
+        await admin.query('select clued_private.authorization_writer_lock_fanout_v2($1)', [user]);
+        const recognized = (await admin.query('select clued_private.project_mutation_core_v2($1,null,$2,clued_private.m1_sha256($2)) v',
+          [user, create])).rows[0].v;
+        assert.equal(recognized.status, 'committed', JSON.stringify(recognized));
+        await admin.query('commit');
+      } catch (error) {
+        await admin.query('rollback');
+        throw error;
+      }
     }
     const connect = async (role) => {
       const c = server.getPgClient(); clients.push(c); await c.connect();

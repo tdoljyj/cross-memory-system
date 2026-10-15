@@ -1,0 +1,29 @@
+▶ Connection authorization v1.2: real PostgreSQL permission and transaction boundaries
+  ✔ trusted issuer and direct subject required; no forged client request (12.3218ms)
+  ✔ selected permissions intersect requested scopes and current ownership (23.3767ms)
+  ✔ same client creates independent bindings; partial consent never forms Cartesian product (51.9399ms)
+  ✔ approval retries preserve exact binding and cannot reuse request for broader consent (2.1938ms)
+  ✔ legacy JWT, tables, private helpers and whole-account exports cannot bypass selection (8.5343ms)
+  ✔ global aggregation filters actual source scopes (11.2384ms)
+  ✔ reduce is CAS protected and cannot grow; other same-client binding remains valid (7.2153ms)
+  ✔ business commit before revocation is ordered; all operations after revocation commit fail (91.8133ms)
+  ✔ revocation commit first blocks a queued business operation before side effect (181.3555ms)
+  ✔ status/self-revoke are minimal and idempotent; expiry is live (9.7781ms)
+  ✔ deny and approve serialize on the same request; denied/approved state cannot be reversed (82.9546ms)
+  ✔ issuer callback is revoke-only, bound to exact issuing authority, and idempotent (7.4518ms)
+  ✔ reclassification requires source and destination, not only target write permission (3.2877ms)
+  ✔ private helper privileges stay closed and profile consent is independent (4.0241ms)
+  ✔ account suspension is checked live and serialized against the business transaction (80.2258ms)
+  ✔ current project qualification is locked, with no stale owner grant after commit (73.9212ms)
+  ✔ decision replacement cannot smuggle project sources through missing or forged global scope (22.0541ms)
+  ✔ canonical close/archive and restore are explicit permissions independent of write (20.8918ms)
+  ✔ context record revocation needs close; it never follows from write (12.3047ms)
+✔ Connection authorization v1.2: real PostgreSQL permission and transaction boundaries (6462.231ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7010.464

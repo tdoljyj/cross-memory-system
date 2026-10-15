@@ -1,0 +1,864 @@
+{
+  "schema": "clued.pr818.isolation-second-diagnosis.v1",
+  "generated_at": "2026-10-14T08:46:45Z",
+  "reviewer": "Codex independent read-only /root/pr818_stack_failure_diagnosis",
+  "subject": {
+    "pull_request": "https://github.com/tdoljyj/cross-memory-system/pull/818",
+    "head_revision": "3a4dbd2374fb955ac6d910ca327a37c26bd3d751",
+    "source_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+    "serialization_sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad",
+    "sealed_closeout_sha256": "e3d6f9066eb09d27d58393d5e5c756d0632c64e1124692a489faec2357f67e38"
+  },
+  "acquisition": {
+    "ci_tool": "mcp__code_review__pull_requests_checks",
+    "all_followups_preserved_head": true,
+    "run_id": 38534026392,
+    "job_id": 115752815748,
+    "job_name": "isolated-candidate",
+    "job_conclusion": "failure",
+    "log_truncated": false,
+    "no_github_log_cli_fallback": true,
+    "no_ci_dispatch_or_rerun": true,
+    "no_source_or_test_edits": true,
+    "no_canonical_session_read_write_or_checkpoint": true,
+    "inventory_source": "Exact tracked Git tree and git grep at 3a4dbd; SHA256 of exact Git blob bytes via git cat-file --batch, not untracked files or working-tree guesses."
+  },
+  "actual_ci_steps": [
+    {
+      "step": "test:authorization:transport",
+      "tests": 86,
+      "pass": 86,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "step": "test:authorization:database",
+      "tests": 190,
+      "pass": 190,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "step": "test:context:v2",
+      "tests": 82,
+      "pass": 76,
+      "fail": 6,
+      "skipped": 0,
+      "scope": "Six PostgreSQL fixtures fail; other 76 test cases pass. This is not the complete generic test suite."
+    }
+  ],
+  "actual_failures": [
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs",
+      "entry_line": 25,
+      "failure_line": 202,
+      "error_code": "42501",
+      "error": "worker_gateway_closeout_boundary_unqualified",
+      "diagnostic_kind": "legacy_alias_source_drift"
+    },
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs",
+      "entry_line": 25,
+      "failure_line": 319,
+      "error_code": "42501",
+      "error": "worker_gateway_closeout_boundary_unqualified",
+      "diagnostic_kind": "legacy_alias_source_drift"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-v2-terminal-restore-db.test.mjs",
+      "entry_line": 25,
+      "failure_line": 230,
+      "error_code": "42501",
+      "error": "worker_gateway_closeout_boundary_unqualified",
+      "diagnostic_kind": "legacy_alias_source_drift"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resume-constraint-index-db.test.mjs",
+      "entry_line": 25,
+      "failure_line": 157,
+      "error_code": "42501",
+      "error": "worker_gateway_closeout_boundary_unqualified",
+      "diagnostic_kind": "legacy_alias_source_drift"
+    },
+    {
+      "path": "apps/clued-cloud/tests/session-context-from-token-db.test.mjs",
+      "entry_line": 28,
+      "failure_line": 209,
+      "error_code": "42501",
+      "error": "worker_gateway_closeout_boundary_unqualified",
+      "diagnostic_kind": "legacy_alias_source_drift"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-retained-all.test.mjs",
+      "entry_line": 25,
+      "error_code": "P0001",
+      "error": "authorization_serialization_gateway_boundary_changed",
+      "migration": "20261014045157_all_contexts_serialization_v2.sql",
+      "assembly": "Initial unbounded migration loop deliberately omits CLOSEOUT but includes serialization; its new GW/anon qualification runs before required production CLOSEOUT."
+    }
+  ],
+  "five_failure_shared_diagnostic": {
+    "violation_count": 1,
+    "truncated": false,
+    "object": "public.clued_project_mutate(text,jsonb)",
+    "source_sha256": "e1ef1b49c22dc320471da046f2c59647b87c9fcf63c5adcc0622c710a94baa08",
+    "historical_expected_source_sha256": "64503257b828c3dcf1405fc378a9d297faf559cec29a373e77e5013e2eb76262",
+    "meaning": "The five fixtures apply all current migrations and then replay old sealed CLOSEOUT against a body intentionally changed by serialization."
+  },
+  "production_conclusion": {
+    "finding": "NO_CURRENT_PRODUCTION_DEFECT_CONFIRMED_BY_THESE_SIX_FAILURES",
+    "legacy_alias_is_deny_only": false,
+    "legacy_alias_body": "public.clued_project_mutate is a real legacy mutation wrapper: resolve_binding(context:write,system:projects) then project_mutation_core. The base SQL source is not an unconditional denial.",
+    "actual_deny_only_entry": "clued_private.resolve_oauth_binding() raises legacy_oauth_requires_new_provider_reauthorization since 20260907173031; the obsolete clued_oauth_call must execute it before its alias dispatch.",
+    "public_reachability": "Current bound-token Worker maps clued_project_mutate to clued_project_mutate_v2; Native REST creates/updates call clued_user_project_mutate_v2. CLOSEOUT revokes PUBLIC/anon on the legacy alias and grants it no Worker privilege. Its only repository SQL callee found is the retired OAuth router, which rejects first.",
+    "retain_guard_recommendation": "Retain the reviewed serialization Source. Do not remove only the legacy alias hint merely to restore historical seal hashes: serialization also adds early-writer require to project_mutation_core, and removing its entrance would disconnect that retained privileged compatibility wrapper from the required early protocol. Its current externally unavailable path is not evidence that the body is deny-only.",
+    "historical_replay_contract": "The historical CLOSEOUT is an inline migration DO block, not a business RPC. The exact source fingerprint qualifies its historical installation/replay stage. After authorized successors change a body, blindly replaying that old seal is expected to refuse. Production migration order applies CLOSEOUT before this pair; repository production call-site search did not find a business runtime that executes the CLOSEOUT script.",
+    "source_change_gate": "Changing Source would invalidate its independent review and frozen hashes and require new current-core/alias/concurrency qualification. These logs do not establish that such a production change is necessary."
+  },
+  "production_call_graph": [
+    {
+      "entry": "Current MCP clued_project_mutate",
+      "route": "worker/projects.ts:54 projectRpcByTool -> public.clued_project_mutate_v2 -> early gateway/project hint -> real Binding resolver -> project_mutation_core_v2",
+      "qualification": "Current production path"
+    },
+    {
+      "entry": "Native /v1/projects POST/PATCH",
+      "route": "worker/continuity.ts handleProjectApi -> public.clued_user_project_mutate_v2 -> Owner guard/fanout -> project_mutation_core_v2",
+      "qualification": "Current production path"
+    },
+    {
+      "entry": "Legacy Native user_project_mutate",
+      "route": "public.clued_user_project_mutate -> Owner guard/fanout -> project_mutation_core",
+      "qualification": "Retained Native wrapper; different function from the legacy token alias; guard remains relevant"
+    },
+    {
+      "entry": "Legacy SQL token alias",
+      "route": "public.clued_project_mutate -> early binding/project hint -> resolve_binding -> project_mutation_core",
+      "qualification": "Retained privileged wrapper; direct PUBLIC/anon/GW denied by closeout"
+    },
+    {
+      "entry": "Old non-Clued-token Worker fallback",
+      "route": "worker/continuity.ts -> clued_oauth_call -> resolve_oauth_binding raises before old clued_project_mutate branch",
+      "qualification": "Retired OAuth fallback fails closed; not a current mutation path"
+    }
+  ],
+  "fixture_inventory": {
+    "scanned_count": 63,
+    "classifications": {
+      "unphased_late_replay": 32,
+      "unphased_deferred_closeout": 6,
+      "already_phased": 11,
+      "no_direct_replay": 14
+    },
+    "files": [
+      {
+        "path": "apps/clued-cloud/tests/agent-messages-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          56
+        ],
+        "closeout_call_lines": [
+          278
+        ],
+        "sha256": "9dcfeadbb936ad0140950e0d4b81c09f34a5f0aae75de80891e70c61cf63da37"
+      },
+      {
+        "path": "apps/clued-cloud/tests/authorization-closeout.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          102
+        ],
+        "closeout_call_lines": [
+          33
+        ],
+        "sha256": "ac12ec2846ddc52fd857007e375c39257b3e3656f4b62727b5602bf9a6ac6bfc"
+      },
+      {
+        "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          61
+        ],
+        "closeout_call_lines": [
+          66
+        ],
+        "sha256": "7934ff3c7a54e48dfc27bf6bcfcde9ca2a0ff82212bfceb0ebd32798c8ada845"
+      },
+      {
+        "path": "apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          202
+        ],
+        "sha256": "3d6220993d6c2fd93c1d390af89fb4840500921e004b2379601f3e735177c60c"
+      },
+      {
+        "path": "apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          319
+        ],
+        "sha256": "783be3d7b1d15b9190b2b0e10107859bada25712dc9ea0e8077f8b96f40f04a5"
+      },
+      {
+        "path": "apps/clued-cloud/tests/connection-permission-request-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          60
+        ],
+        "closeout_call_lines": [
+          68
+        ],
+        "sha256": "40344709ebf1f8818162b2a7b37f4d424452f493c953b66a7c93833ee480bec9"
+      },
+      {
+        "path": "apps/clued-cloud/tests/context-v2-terminal-restore-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          230
+        ],
+        "sha256": "2ac21ef9def147eafc69c318dbd8ad1c08a8a526ce172206e3bdf983fc67a76c"
+      },
+      {
+        "path": "apps/clued-cloud/tests/currentness-admission-db.test.mjs",
+        "category": "UNPHASED_DEFERRED_CLOSEOUT",
+        "load_lines": [
+          52
+        ],
+        "closeout_call_lines": [
+          542
+        ],
+        "sha256": "d59df38ab65131323a27e38c5aaf6f0221f4340043a1767ec2396e739feec0cd"
+      },
+      {
+        "path": "apps/clued-cloud/tests/currentness-record-fence-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          46
+        ],
+        "closeout_call_lines": [],
+        "sha256": "f90b52879d2d568408d231508a0a8af81c64a19b4c85daad0fe6398c1e8793f8"
+      },
+      {
+        "path": "apps/clued-cloud/tests/currentness-retained-all.test.mjs",
+        "category": "UNPHASED_DEFERRED_CLOSEOUT",
+        "load_lines": [
+          50
+        ],
+        "closeout_call_lines": [
+          1441,
+          1443
+        ],
+        "sha256": "f4e2fa9d64a6ee9523104feda4f31d3767f0b9a414d2bfe8327f09136575c2bc"
+      },
+      {
+        "path": "apps/clued-cloud/tests/currentness-work-claims-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          55
+        ],
+        "closeout_call_lines": [
+          451
+        ],
+        "sha256": "0f1c30f96f462ced9135c4a1a2621607620aaf6d802cd7bca4203ade493d796b"
+      },
+      {
+        "path": "apps/clued-cloud/tests/dataset-split-native-grant-binding-successor-db.test.mjs",
+        "category": "UNPHASED_DEFERRED_CLOSEOUT",
+        "load_lines": [
+          61
+        ],
+        "closeout_call_lines": [],
+        "sha256": "6014c7d5441dda6ca37684ede8b0c4b9078080509f28ad1f3e2f88a3819d3e03"
+      },
+      {
+        "path": "apps/clued-cloud/tests/dataset-split-native-grant-correction-db.test.mjs",
+        "category": "UNPHASED_DEFERRED_CLOSEOUT",
+        "load_lines": [
+          60
+        ],
+        "closeout_call_lines": [],
+        "sha256": "7c38538a84c7a583c7d37f35254a76932f9ec18b917d1bb6b11daff88741e170"
+      },
+      {
+        "path": "apps/clued-cloud/tests/decision-supersede-schema-guard-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          55
+        ],
+        "closeout_call_lines": [],
+        "sha256": "aeee61d3c28c51905ccf10da7cb589d7549755d240dfdff89a16994df8c7fe65"
+      },
+      {
+        "path": "apps/clued-cloud/tests/event-carrier-block-reasons-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          48
+        ],
+        "closeout_call_lines": [],
+        "sha256": "6108420c6e95d239bec0ea0f9b9f04078da0fb0d56a0eb7208f3b13bd18a05e1"
+      },
+      {
+        "path": "apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [],
+        "sha256": "d79fd0480cb471fc697541902992e3a377341b3bb99878ecb22ddfd5eb8e4fbd"
+      },
+      {
+        "path": "apps/clued-cloud/tests/global-scope-projection-invalidation-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          215
+        ],
+        "sha256": "83c9141e57c979dcb5e5e9a18df8c6a7aa936066c66b294282035acb6d29be80"
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-candidate-store-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          98
+        ],
+        "closeout_call_lines": [
+          396
+        ],
+        "sha256": "9c1c62d6de9e98857c30e4f2cd9cc946423a7b88a5d2482dfc41e34f87e774c5"
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-context-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          98
+        ],
+        "closeout_call_lines": [
+          1294
+        ],
+        "sha256": "0456bb4bdf3212bd42a3c2a04c8e4c095277a35f50ace49c13076732c8e7c316"
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-intake-transport-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          45,
+          86
+        ],
+        "closeout_call_lines": [
+          669
+        ],
+        "sha256": "0f9c188f228a32b1616f8346e4a2b0d5af1684541bda31146dad43bfb6cc50f3"
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-invalidation-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          101
+        ],
+        "closeout_call_lines": [
+          1029
+        ],
+        "sha256": "3d6c054646a5153536ab3b138ed713d30dfdc6890ffb9e08866dac8a6106c34d"
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-promotion-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          92
+        ],
+        "closeout_call_lines": [
+          1056
+        ],
+        "sha256": "14cb404db4c478227e2aff6a2cdcfe50b9c5fdf1efe9f7d7c89d5b653115a5e4"
+      },
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          89,
+          1684
+        ],
+        "closeout_call_lines": [],
+        "sha256": "ed8b02b4d9ed933492658e1d87e685f03eb4aeb515bd5b575f4bef74ae3b919e"
+      },
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          82
+        ],
+        "closeout_call_lines": [],
+        "sha256": "5359db687b3f3e01e1cbe03e784b0e4691cc134c057011dbfb8f53a743d15ca7"
+      },
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-transport.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          109
+        ],
+        "closeout_call_lines": [],
+        "sha256": "043d0b58e9be1e4cb29df3da94c6f52b77ab6e7aa103ca1cb2ed41a8c6f4207c"
+      },
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          87
+        ],
+        "closeout_call_lines": [],
+        "sha256": "0be9f3888f488566c40dce96f95898460249be021be807379160f095da5ac8a3"
+      },
+      {
+        "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          117
+        ],
+        "closeout_call_lines": [
+          34
+        ],
+        "sha256": "232f0b1f0e3cbf4b396bcfde8992ba374e31954e1434f6ae1954076e6d2b91da"
+      },
+      {
+        "path": "apps/clued-cloud/tests/model-domain-bootstrap-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          31,
+          35
+        ],
+        "closeout_call_lines": [
+          349
+        ],
+        "sha256": "052ff3a7f5994c159e6cf128a2ba11008e1eb90ba7bc3789112784dda8eea150"
+      },
+      {
+        "path": "apps/clued-cloud/tests/mtpe-frontier-eligibility-v2-1-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          266
+        ],
+        "sha256": "03d249089e1e39dbca8047ca63a050c5caa3bf1347d644deae60e5a682a504eb"
+      },
+      {
+        "path": "apps/clued-cloud/tests/mtpe-frontier-eligibility-v2-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          310
+        ],
+        "sha256": "0deb2c7024bdd1c6ec15574f90e3b719899a11c12160d0a17180acbf8e4221fd"
+      },
+      {
+        "path": "apps/clued-cloud/tests/mtpe-owner-pin-consistency-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          204
+        ],
+        "sha256": "49e09e8ec216422e6863ee65e9c0ee43c4d8e190eb18091c91835b77f7e8d812"
+      },
+      {
+        "path": "apps/clued-cloud/tests/mtpe-universal-intake-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          52
+        ],
+        "closeout_call_lines": [
+          549
+        ],
+        "sha256": "3eea40b081d5196f28736e10dae2479fcb22607020f00222367aa5cc3a188743"
+      },
+      {
+        "path": "apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          54
+        ],
+        "closeout_call_lines": [],
+        "sha256": "0ed130957636ed9e12ea659475999b29b1a2ebf85ec75d1dfee3a3657422578f"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          112
+        ],
+        "closeout_call_lines": [
+          40
+        ],
+        "sha256": "359d38231b77524f4d6b28ee2e6d4dedad5ffeb7a07599a874e853f18a400d9e"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-grants-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          111
+        ],
+        "closeout_call_lines": [
+          39
+        ],
+        "sha256": "ab8ac00bd8ee76903c1e8b55e86e4b7d222cafa962c8c1e0396e71080edc8c90"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-grants-release-door-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          115
+        ],
+        "closeout_call_lines": [
+          43
+        ],
+        "sha256": "de51e2ba36643a035cc24f18a3dc6a4413653c88a04850c0d38cc92594bcb15f"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-grants-scope-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          111
+        ],
+        "closeout_call_lines": [
+          39
+        ],
+        "sha256": "61fc52269883328770abacea090f773244eab1d6b5d9bda09a6c0bd8813e6a58"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-request-bundles-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          113
+        ],
+        "closeout_call_lines": [
+          41
+        ],
+        "sha256": "6f049be19f413c7c25255fd09fe232d66e734914e0a8d68f1616c4e59f9b32ef"
+      },
+      {
+        "path": "apps/clued-cloud/tests/project-lifecycle-successor-v2-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          77
+        ],
+        "closeout_call_lines": [
+          424
+        ],
+        "sha256": "c25fc51a706c85976bd5aa7d27b470ed2c583fd9d39798b2926ed53dfcf7c946"
+      },
+      {
+        "path": "apps/clued-cloud/tests/projection-refresh-pipeline-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          450
+        ],
+        "sha256": "0e97a63d086275980297b23324689df9843f60af9508a2bc1bf29b95a11dc761"
+      },
+      {
+        "path": "apps/clued-cloud/tests/record-update-field-merge-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [],
+        "sha256": "5055459a0eba14c821f30835db98b1c1043526d4cb9805d8499428eec1f8b938"
+      },
+      {
+        "path": "apps/clued-cloud/tests/resource-center-authority-db.test.mjs",
+        "category": "UNPHASED_DEFERRED_CLOSEOUT",
+        "load_lines": [
+          184
+        ],
+        "closeout_call_lines": [],
+        "sha256": "5d417527e6cdbf0823e26786e44279b56f207c50fb2f5bf3d1f530dbba721a4c"
+      },
+      {
+        "path": "apps/clued-cloud/tests/resume-constraint-index-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [
+          157
+        ],
+        "sha256": "d058912e3b58825c65fc5e8f24a41118bc5b1f580d742e07ed725c9cefac398a"
+      },
+      {
+        "path": "apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          53
+        ],
+        "closeout_call_lines": [],
+        "sha256": "b222f414472ab02625a5dfafa45bebfd2ed72cb33d69495f5f54099de85a1509"
+      },
+      {
+        "path": "apps/clued-cloud/tests/search-context-rereview-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          52
+        ],
+        "closeout_call_lines": [],
+        "sha256": "8bf5c537afa18ec06f672b959e4911b186054bc6fce674aaa7472fc835fed5b9"
+      },
+      {
+        "path": "apps/clued-cloud/tests/session-context-from-token-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          55
+        ],
+        "closeout_call_lines": [
+          209
+        ],
+        "sha256": "dcbd874947a01cf240d0c79195cccf17f0b47248cc2bc4117858e1d2abed96b9"
+      },
+      {
+        "path": "apps/clued-cloud/tests/storage-file-version-denial-db.test.mjs",
+        "category": "UNPHASED_DEFERRED_CLOSEOUT",
+        "load_lines": [
+          36
+        ],
+        "closeout_call_lines": [],
+        "sha256": "c5de735178cd1ff30eef1a2d1f6975741734e6a986ecbefd9a6d997bfd516a88"
+      },
+      {
+        "path": "apps/clued-cloud/tests/storage-owner-lifecycle-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          42
+        ],
+        "closeout_call_lines": [],
+        "sha256": "2d289028d2b178eae110f173c008544c1eb805103dc08da11523da60ee416bf4"
+      },
+      {
+        "path": "apps/clued-cloud/tests/task-dependency-guard-db.test.mjs",
+        "category": "NO_DIRECT_REPLAY",
+        "load_lines": [
+          51
+        ],
+        "closeout_call_lines": [],
+        "sha256": "2c2da4f168e9f43326fd00c9ac705f8dd243ed3f1b5ec6aa0286eac598c5d28a"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-acceptance-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          57
+        ],
+        "closeout_call_lines": [
+          305
+        ],
+        "sha256": "0f87e880bce6b255ebc5bcfbb9a8471d3e67922688594c461dba44fa9457aa3f"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-binding-roles-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          61
+        ],
+        "closeout_call_lines": [
+          292
+        ],
+        "sha256": "13ecc56255f379250df88d23c8f1a9b5d51ee5f0ca43536a3301fa2e45baef8e"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-ci-metering-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          59
+        ],
+        "closeout_call_lines": [
+          229
+        ],
+        "sha256": "848ac61001b33688445bc740c5166c8c2e74d57cb4c96bb80b1c9f069a7fe80b"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-continuation-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          61
+        ],
+        "closeout_call_lines": [
+          413
+        ],
+        "sha256": "51a3212bc397900057a511c22ac7adcefb47baff9df859752124e6fbf8ebfd08"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-hardening-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          59
+        ],
+        "closeout_call_lines": [
+          369
+        ],
+        "sha256": "81609cc3efdb90efb646c41c34de7359d065c5cd259de421819cdc53917f928d"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-lease-key-db.case.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          60
+        ],
+        "closeout_call_lines": [
+          284
+        ],
+        "sha256": "33136c65d94356d70142e375252354e33f25c6aa86c03ec9a646f7f973e428b1"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-merge-slot-db.case.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          68
+        ],
+        "closeout_call_lines": [
+          600
+        ],
+        "sha256": "1053effecc8fa0c7aa4be9889312697595c22d32a34a374da77a18ce29595cb2"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-multi-copy-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          60
+        ],
+        "closeout_call_lines": [
+          292
+        ],
+        "sha256": "0043f4813e25b2d87cf0b71ef2b71d884fc1108f84238ceb36d838b57ae4c6cd"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-owner-grants-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          62
+        ],
+        "closeout_call_lines": [
+          255
+        ],
+        "sha256": "7db013274c30470132287559eebd1125dedec4c1fc41a7a654819fe0d5703254"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-owner-handover-db.case.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          62
+        ],
+        "closeout_call_lines": [
+          315
+        ],
+        "sha256": "03478d8b365cbf98856ff1a47a2305f692a6be31183aa26acdf99ccdbd5e099e"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-rate-buckets-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          69
+        ],
+        "closeout_call_lines": [
+          276
+        ],
+        "sha256": "f40184908c658dfb74eb8d155317e26928fe48e018d1d031b62a19353b2f599f"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-reject-receipts-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          64
+        ],
+        "closeout_call_lines": [
+          264
+        ],
+        "sha256": "b62fac7b5ca43ad50960625fb0929dfbb66fb5ebdc9c207d289dbb1191b70096"
+      },
+      {
+        "path": "apps/clued-cloud/tests/work-claims-resource-kinds-db.test.mjs",
+        "category": "UNPHASED_LATE_REPLAY",
+        "load_lines": [
+          56
+        ],
+        "closeout_call_lines": [
+          214
+        ],
+        "sha256": "afeb1d561652dd25f20dbc5336a545fcf29a36c5102bd2c5bcfadda68782a44f"
+      },
+      {
+        "path": "apps/clued-cloud/tests/worker-gateway-db.test.mjs",
+        "category": "ALREADY_PHASED",
+        "load_lines": [
+          145
+        ],
+        "closeout_call_lines": [
+          428,
+          469
+        ],
+        "sha256": "bd4bde9815003f44c3fe59db03fe5cff16c34a74abcc6382d9b83326f80211d3"
+      }
+    ],
+    "interpretation": "38 exact-head fixture files have the specific unphased closeout/successor pattern. Only six were observed failing in this CI step; other 32 are static predicted candidates, not falsely reported as executed failures.",
+    "ownership_note": "The model-domain and two dataset-split files may overlap other holder domains. Root must coordinate exact ownership before adding or editing them. The shared worker-gateway-caller-fixture helper is already part of reviewed scope and can host a bounded helper if authorized."
+  },
+  "staged_repair_recommendations": [
+    {
+      "group": "32 full-chain plus late CLOSEOUT replays",
+      "steps": [
+        "Run migrations in real timestamp order.",
+        "Immediately before Source 20261014044323, perform the actual sealed CLOSEOUT replay with full caller catalog equality and GW80/CI8 in the old bounded stage.",
+        "Apply both successors unchanged in order; preserve false readiness after Source and true readiness after serialization.",
+        "Run existing behavioral scenarios against the full current chain; replace only invalid late historical replay with current catalog/OID/Owner/SD/search_path/ACL, real early entrances and private caller-denial proof.",
+        "Guard raw current-chain project/context fixture setup with actual Owner transaction locks before INSERT; never fake a GUC or acquire the lock after an existing row lock."
+      ]
+    },
+    {
+      "group": "currentness-retained-all and other intentionally legacy/deferred-CLOSEOUT fixtures",
+      "steps": [
+        "Exclude both new successors from the initial historical phase together with deferred CLOSEOUT.",
+        "Run every original old-entry/legacy/transition scenario and restore every altered fixture definition; preserve their assertions.",
+        "Install actual CLOSEOUT and perform its exact idempotent replay at that historical boundary, proving full catalog and GW80/CI8.",
+        "Then apply the exact two new successors and any actual later dependents in order.",
+        "Add current-chain assertions for Source/catalog identity/Owners/definer config/ACL and real guarded public paths. Do not make historical matrix cases run under successors whose semantics they intentionally predate."
+      ]
+    },
+    {
+      "group": "atomic claim enlargement",
+      "steps": [
+        "Use all 38 inventory paths in one reviewable scope expansion, plus the existing shared helper if used.",
+        "Coordinate model/dataset holder overlaps first; a scope request grants no authority over other holders.",
+        "Do not change sealed CLOSEOUT, SQL guard, admission gates or old error expectations to manufacture passing tests."
+      ]
+    }
+  ],
+  "concrete_verification": [
+    "Reproduce the exact six failed PostgreSQL fixtures and verify all old cases actually run, no skip.",
+    "Run each additional repaired fixture group locally once with actual embedded PostgreSQL; archive count/log/source hashes.",
+    "Use real assertions: historical seal actual replay before pair, complete current caller catalog identity/metadata/ACL, GW80/CI8, Native-only/private-denied callers, guard held in pg_locks, current operations and rejected old caller access.",
+    "Push one reviewed candidate after the complete static pattern inventory is addressed; inspect its exact-head required CI through Code Review.",
+    "Preserve both prior-head failure reports and prior PASS scopes; do not retroactively call all stages accepted."
+  ],
+  "limits": {
+    "new_tests_run_by_reviewer": false,
+    "fixture_repair_done_by_reviewer": false,
+    "pr_ready": false,
+    "production_release_accepted": false,
+    "eight_view_real_page_acceptance_complete": false
+  }
+}

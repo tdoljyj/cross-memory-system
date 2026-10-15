@@ -1,0 +1,56 @@
+{
+  "schema": "clued.reviewed-artifact-tests-run.v1",
+  "authority_effect": "NONE",
+  "started_utc": "2026-10-14T18:35:06.797710+00:00",
+  "finished_utc": "2026-10-14T18:35:07.889565+00:00",
+  "runtime": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "python_version": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "cwd": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo",
+  "args": [
+    "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-p",
+    "test_reviewed_gitleaks_artifacts.py",
+    "-v"
+  ],
+  "exit_code": 0,
+  "log": "final-df698-reviewed-artifacts-tests-r1.log",
+  "log_sha256": "aedbf5caf0f5ee0ba51366e43a1b31ecf3cebaec0d4cec8ca5f958db4c20f091",
+  "log_bytes": 4854,
+  "files_before": [
+    {
+      "path": ".gitleaks.toml",
+      "sha256": "c8d78643a3e5fb112e20448305a825a1bcaa23bf14c9f57fb69ae271ece0fa2a"
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "sha256": "3cff545f0d26610de0097165cf9dc6d32421707357cf960a9f38af22b4d0e32f"
+    },
+    {
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "sha256": "a9ba72b3d96fea883ad2bcc6ef9450cf2051d139fdb78a8b1ed786d0548eedb0"
+    }
+  ],
+  "files_after": [
+    {
+      "path": ".gitleaks.toml",
+      "sha256": "c8d78643a3e5fb112e20448305a825a1bcaa23bf14c9f57fb69ae271ece0fa2a"
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "sha256": "3cff545f0d26610de0097165cf9dc6d32421707357cf960a9f38af22b4d0e32f"
+    },
+    {
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "sha256": "a9ba72b3d96fea883ad2bcc6ef9450cf2051d139fdb78a8b1ed786d0548eedb0"
+    }
+  ],
+  "files_unchanged": true,
+  "self_test_docker": false,
+  "classification_does_not_replace_scan": true
+}

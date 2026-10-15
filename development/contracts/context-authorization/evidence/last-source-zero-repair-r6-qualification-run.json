@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-14T13:20:52.6629268Z",
+  "ended_at": "2026-10-14T13:21:20.2249754Z",
+  "exit_code": 0,
+  "node_version": "v24.19.0",
+  "command": "C:/Program Files/nodejs/node.exe scripts/run-tests.mjs --test --test-force-exit --test-reporter=spec --test-concurrency=1 tests/all-contexts-authorization-db.test.mjs",
+  "source_before_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+  "source_after_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+  "serialization_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+  "test_sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+  "log_sha256": "ebb4b4c76dd122d615149a48fb5a4086e40cb194a1baf5a0b2e09eb18483fbdf"
+}

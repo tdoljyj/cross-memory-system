@@ -1,0 +1,476 @@
+{
+  "schema": "clued.independent-security-plan-review/1",
+  "reviewer": {
+    "task_name": "/root/all_contexts_security_plan_review",
+    "non_author": true,
+    "subject_read_only": true,
+    "subject_or_business_modified": false
+  },
+  "observed_at": "2026-10-14T04:35:35Z",
+  "subject": {
+    "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+    "version": "v0.1-r2",
+    "sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+    "state": "PROPOSAL"
+  },
+  "verdict": "PASS",
+  "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 0,
+    "MINOR": 0
+  },
+  "conclusion": "r1两项MAJOR在最终精确r2中已得到可执行的方案级修正。来源、精确拒绝、旧限制及生命周期合成有明确协议；早Owner writer屏障、完整入口顺序、跨Binding/Context排序与只读诊断边界明确。未发现未解决的BLOCKER/MAJOR/MINOR，可按Owner Decision v4的已有条件进入实施。此结论仅为独立方案审核，不是Owner接受、代码审核、Runtime/CI/迁移/生产或八视图验收。",
+  "admission": {
+    "contract": {
+      "version": 49,
+      "sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+      "full_parts_read_in_this_reviewer_conversation": [
+        1,
+        2
+      ],
+      "fresh_resumes_match": true
+    },
+    "skill": {
+      "path": "C:/Users/Windows/.codex/skills/clued/SKILL.md",
+      "version": "1.0.20",
+      "workflows_read": [
+        "engineering",
+        "memory-operations"
+      ]
+    },
+    "global": {
+      "resume_receipt": "0519df80-82aa-4d7e-bc4a-87082263f87e",
+      "session_version": 1355,
+      "reconcile_receipt": "a8825ef8-26e1-40d4-bb1f-ab39036de651",
+      "state": "CURRENT",
+      "admission": "CURRENTNESS_ADMISSION",
+      "priority_record": {
+        "id": "72166b09-0fc6-4a28-8551-8e4334280a73",
+        "version": 4905
+      }
+    },
+    "project": {
+      "context_key": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "resume_receipt": "ac500c16-50fa-4ff7-9748-c7b57605da5a",
+      "session_version": 2437,
+      "reconcile_receipt": "3bb2d205-acc2-4615-9c67-af527f9e22c3",
+      "state": "CURRENT",
+      "admission": "CURRENTNESS_ADMISSION"
+    },
+    "independent_review": {
+      "enabled": true,
+      "policy_version": 1,
+      "version": 0,
+      "authority_effect": "independent_read_only_review",
+      "execution_authority": false,
+      "owner_preconditions_apply": true
+    },
+    "owner_decision": {
+      "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+      "version": 4,
+      "authoritative": true,
+      "record_currentness": "CURRENT",
+      "authority_effect": "conditional_existing_execution_scope_only"
+    },
+    "task": {
+      "id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+      "version": 44,
+      "authoritative": true,
+      "record_currentness": "CURRENT",
+      "r1_fail_capture_receipt_as_reported_by_root": "3c8dc743-c956-461f-bf4e-ace4a965a2ef"
+    },
+    "parent_claim": {
+      "claim_id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+      "fence": 6,
+      "lease_version": 2,
+      "status": "ACTIVE",
+      "expires_at": "2026-10-14T06:16:24.48484+00:00",
+      "output_coverage": "work/eight_implementation/**"
+    },
+    "constraint_currentness": "Fresh full indices matched the relevant full constraint texts and versions already read in this same reviewer conversation; no stale constraint summary was used as authority.",
+    "inbox": {
+      "fresh_read": true,
+      "mark_read": false,
+      "review_related_request_found": false,
+      "other_holders_requests_not_answered_on_their_behalf": true
+    },
+    "authority_capture_completeness": "unknown; CURRENT covers writes reaching Clued only",
+    "scope": "only authorized Global priority/constraints, exact Project State/Task/Decision, reviewed subject and exact engineering Git objects; no profile body or repository memory/ snapshots"
+  },
+  "prior_review": {
+    "report_path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/all-contexts-security-plan-review.json",
+    "report_sha256": "2fbe16a8f349d1f20b63445df947819471357c529032af4d94b922b03874218c",
+    "original_subject_sha256": "9bcc661dccca9a4af1bf0c118168fb779138e59593027aee8fe2e2ad3df5fa0d",
+    "preserved": true,
+    "resolutions": [
+      {
+        "finding_id": "SEC-PLAN-M01",
+        "previous_severity": "MAJOR",
+        "status": "RESOLVED_AT_PLAN_LEVEL",
+        "sections": [
+          "§4.1",
+          "§5"
+        ],
+        "lines": [
+          71,
+          73,
+          75,
+          77,
+          79,
+          83,
+          85,
+          87,
+          123,
+          125
+        ],
+        "resolution": "明确来源层与有效投影分离、首次legacy_effective_baseline不猜旧union provenance、新macro/direct/legacy未来贡献单独来源、全部writer统一刷新、不倒灌baseline；持久精确deny/ceiling优先于来源并保留qualification关联。sources_v1 reduce、精确Native override+CAS、轮换保留来源/例外/限制版本均已具体。逐源scope/期限先过滤，独立长来源不受短来源到期误伤；旧grant硬限制共同保留，运行时核活来源使陈旧物化行不能继续授过期动作。"
+      },
+      {
+        "finding_id": "SEC-PLAN-M02",
+        "previous_severity": "MAJOR",
+        "status": "RESOLVED_AT_PLAN_LEVEL",
+        "sections": [
+          "§4.2"
+        ],
+        "lines": [
+          95,
+          97,
+          99,
+          103,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          115
+        ],
+        "resolution": "明确私有服务Owner派生advisory transaction mutex、真实pg_locks证明、mutex前不得先持B/C/P锁；等待后READ COMMITTED新statement重读解决批准/创建相互漏看。Native upsert/revoke先服务器定位B、B/Auth再C/grant CAS；permission审批先B/Auth再GrantLock/token/Request，闭合与consume门的反序；Headless保存choices、全部可调用创建链catalog、联合future fan-out与稳定排序、单新资源扫描、无锁诊断、业务Context列表统一排序及失败阻断发布均已写明。"
+      }
+    ]
+  },
+  "findings": [],
+  "review_checks": [
+    {
+      "name": "Owner scope and minimal authority",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§2",
+        "§5",
+        "§7"
+      ],
+      "detail": "覆盖通用内容、个人资料、自有项目和自有Context及未来新建；只有同Owner双重所有权自动继承，他人共享/邀请需现行独立资格。策略/审核不授发布、模型、预算、成员管理或网盘权限。"
+    },
+    {
+      "name": "exact action matrix",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§1",
+        "§3"
+      ],
+      "matrix": {
+        "canonical": {
+          "reader": [
+            "read"
+          ],
+          "editable": [
+            "read",
+            "write"
+          ],
+          "full_supported_maximum": [
+            "read",
+            "write",
+            "close",
+            "restore",
+            "audit"
+          ]
+        },
+        "context": {
+          "reader": [
+            "read"
+          ],
+          "editable": [
+            "read",
+            "write"
+          ],
+          "full_supported_maximum": [
+            "read",
+            "write",
+            "close",
+            "feedback_submit"
+          ]
+        }
+      },
+      "detail": "与现行authorization eligible和Context operation映射兼容；每资源支持动作、同意scope及运行时较小token scope取交集。Context close内部由write背书不代替外部精确close检查。"
+    },
+    {
+      "name": "selected resources and environment specificity",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§1",
+        "§2",
+        "§6.8"
+      ],
+      "detail": "profile-only、project formal-only和exact test Context-only三个输入例子无隐式其他scope/env/future授权；空选择、账号/版本变化、preset和例外处理明确。"
+    },
+    {
+      "name": "old consent, revocation and restriction preservation",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§4.1",
+        "§5"
+      ],
+      "detail": "不把旧project:*或旧developer重解释；baseline与贡献分开，deny和旧精确限制持久。宏批准不能顺带复活旧grant或覆盖字段/历史/版本/期限。真实同Binding NativeOwner确认及CAS单独处理精确放宽。"
+    },
+    {
+      "name": "source expiry and stale projection",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§4.1"
+      ],
+      "detail": "来源各自过期/撤销/scope先过滤，再按共用硬上限合成；逐次业务核活来源，读取不补权。"
+    },
+    {
+      "name": "creation inheritance, admission and concurrency",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§4.2"
+      ],
+      "detail": "新策略及新资源创建有共同早mutex和新statement；真实私有锁证明不接受caller key/GUC，普通业务不取writer mutex。原入口/目录权限和Worker gateway catalog不得扩张。"
+    },
+    {
+      "name": "current truth and active Events",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§1",
+        "§6.9",
+        "§6.1 V18-V19"
+      ],
+      "detail": "按类型化Authority/Currentness标识即时权威子集；UNKNOWN/候选/历史不转当前，active Event不按Record字段误过滤或因checkpoint吸收退役，不虚构全部真值已收齐或跨Host推送。"
+    },
+    {
+      "name": "eight-view continuation and completion boundaries",
+      "status": "PASS_AT_PLAN_LEVEL",
+      "sections": [
+        "§6.1",
+        "§7"
+      ],
+      "detail": "V01-V24逐项区分首版/Stage3及已验有限证据，保留待补Context历史和来源全文；授权修复、首版八视图、整体原Task三门分开，不能只凭本方案PASS关闭原Task。"
+    }
+  ],
+  "implementation_verification_obligations": [
+    "按§4.1落地后，审代码时核original legacy grant ceilings来源独立保存；物化出来的临时投影期限不得倒灌成为新的旧硬限制。",
+    "每个业务调用除v12精确条目外必须核当前活来源/deny/限制；expired source仍留投影行的负样本须拒绝该动作，同时保留其他活来源支持的动作。",
+    "按§4.2获取最终可调用catalog/ACL和实际锁图，包含真实Native/Worker/Headless/旧入口，保持当前gateway与verifier；覆盖Parent Project SHARE与既存Project writer的相互关系，不能仅按新trigger推断全图安全。",
+    "真实双客户端屏障测试须覆盖批准/创建两种交错、Native grant/permission审批、GrantLock consume、旧/新fan-out、多Binding/Context、轮换、撤销/到期及diagnostic list；验证事务全有或全无，拒绝hook无guard的普通创建路径。",
+    "用超过100个派生资源、foreign/unselected/member资格/env与OAuth scope缺项验证完整覆盖和数据/数量隔离。",
+    "Root按原Task及现行门禁完成精确提交代码独审/CI、正常PR/FIFO、备份/SQL授权/迁移/发布/postflight、同Binding真实升级及八视图补验；任何未跑用例保持NOT_VERIFIED。"
+  ],
+  "sources_read": [
+    {
+      "kind": "skill",
+      "path": "C:/Users/Windows/.codex/skills/clued/SKILL.md",
+      "version": "1.0.20"
+    },
+    {
+      "kind": "skill_workflows",
+      "paths": [
+        "C:/Users/Windows/.codex/skills/clued/references/engineering.md",
+        "C:/Users/Windows/.codex/skills/clued/references/memory-operations.md"
+      ]
+    },
+    {
+      "kind": "served_contract",
+      "source": "clued_agent_bootstrap",
+      "parts": [
+        1,
+        2
+      ],
+      "version": 49,
+      "sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+      "held_full_text_and_revalidated_by_fresh_resumes": true
+    },
+    {
+      "kind": "fresh_canonical",
+      "scope": "global",
+      "operations": [
+        "resume",
+        "inbox mark_read=false",
+        "reconcile",
+        "State list",
+        "priority search"
+      ],
+      "record": {
+        "id": "72166b09-0fc6-4a28-8551-8e4334280a73",
+        "version": 4905
+      }
+    },
+    {
+      "kind": "fresh_canonical",
+      "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "operations": [
+        "resume",
+        "reconcile",
+        "State/Task/Decision list"
+      ],
+      "records": [
+        {
+          "id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+          "version": 44
+        },
+        {
+          "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+          "version": 4
+        },
+        {
+          "id": "9e037a44-1de2-4b75-9e45-2ca0cb2a2daa",
+          "version": 2
+        }
+      ]
+    },
+    {
+      "kind": "resident_constraints",
+      "full_texts_held_with_matching_fresh_versions": [
+        "7b8c1cee-d40d-4184-a9ba-7651888e5c03@1",
+        "8ba27d66-c72f-4ed1-86ef-b16e273d203a@1",
+        "f1dbabc4-a329-43e1-bb45-62c72772cf8b@2",
+        "5c852d8c-f14a-4080-bf22-adf45859ba21@1",
+        "5fea509f-4613-4fd5-a36f-46b4bb4a2f6e@1",
+        "ded75f02-2993-4ad9-b006-76e5b8c9d026@1",
+        "5bed3d00-cd0d-4551-96fa-ece5f41ffa73@1",
+        "d4663fa2-1d4b-4cc7-b4c8-91508b1e9849@1",
+        "34e35019-36b9-40a5-ab8a-989f755cac3b@1"
+      ]
+    },
+    {
+      "kind": "governance",
+      "paths": [
+        "AGENTS.md",
+        "apps/clued-cloud/AGENTS.md"
+      ],
+      "commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf"
+    },
+    {
+      "kind": "review_subject",
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+      "full_text_read": true
+    },
+    {
+      "kind": "exact_git_objects",
+      "commit": "8f960b5541e29ad279d4976f5c366ea4e1297ad4",
+      "paths": [
+        "development/contracts/connection-authorization/PermissionSimplification.v0.1.md",
+        "apps/clued-cloud/supabase/migrations/20260907173030_clued_development_context_runtime_v14.sql",
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+        "apps/clued-cloud/supabase/migrations/20260907173032_clued_project_invitations_v13.sql",
+        "apps/clued-cloud/supabase/migrations/20261004150000_connection_permission_requests.sql",
+        "apps/clued-cloud/supabase/migrations/20261004210000_authorization_roles.sql",
+        "apps/clued-cloud/supabase/migrations/20261006060000_binding_scopes_evaluated_once.sql",
+        "apps/clued-cloud/supabase/migrations/20261009050000_close_v12_raw_binding_fallback_v1.sql"
+      ],
+      "sections": "relevant schema, complete selected functions and migration-reference search held from original independent review; same source identities rechecked"
+    },
+    {
+      "kind": "exact_git_objects",
+      "commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "paths": [
+        "apps/clued-cloud/supabase/migrations/202608240003_project_lifecycle_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+        "apps/clued-cloud/supabase/migrations/20260924120000_project_lifecycle_successor_v2.sql",
+        "apps/clued-cloud/supabase/migrations/20261002220000_owner_grants_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261003170000_owner_grants_release_door.sql",
+        "apps/clued-cloud/supabase/migrations/20261003200000_work_claims_binding_roles.sql",
+        "apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql",
+        "apps/clued-cloud/supabase/migrations/20261004150000_connection_permission_requests.sql",
+        "apps/clued-cloud/supabase/migrations/20261004200000_owner_request_bundles.sql",
+        "apps/clued-cloud/supabase/migrations/20261005120000_owner_grants_admission_door.sql",
+        "apps/clued-cloud/supabase/migrations/20261009020000_owner_request_answers_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261009070001_issuer_identity_credentials_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261009070002_worker_gateway_transition_v1.sql",
+        "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+        "apps/clued-cloud/worker/delegated-oauth.ts"
+      ],
+      "sections": "selected actual source-entry bodies, lock statements, function-reference searches, gateway signature/ACL lists and closure semantics from read-only protocol advisory"
+    },
+    {
+      "kind": "git_identity",
+      "own_ls_remote_main": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "checkout_head_observed": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "deployed_source_returned_by_live_resumes": "8f960b5541e29ad279d4976f5c366ea4e1297ad4"
+    }
+  ],
+  "process_notes": [
+    "Intermediate ccc852515d61cf313123dca9c842d57159e9b3cedef2149f245222b8661e2c08 was read but final verdict paused on Root's reported technical correction; no report/PASS was issued for it.",
+    "Fresh policy and admissions were obtained again after final 8f828102 subject arrived; final exact full bytes were read.",
+    "The reviewer supplied read-only findings/advice and did not author or modify reviewed subject bytes.",
+    "Original historical evidence E1 and V01-V24 results were not re-executed; the table's staged boundaries were reviewed, not certified as runtime results."
+  ],
+  "effects": {
+    "only_new_report_written": true,
+    "subject_or_code_modified": false,
+    "tests_or_ci_started": false,
+    "permissions_changed": false,
+    "business_records_mutated": false,
+    "production_mutated": false,
+    "new_task_or_claim_created": false,
+    "canonical_review_capture_by_reviewer": false,
+    "root_to_capture": true,
+    "repository_memory_read": false
+  },
+  "maturity": {
+    "plan": "PASS",
+    "implementation": "NOT_REVIEWED",
+    "runtime": "NOT_RUN",
+    "ci": "NOT_RUN",
+    "migration": "NOT_RUN",
+    "production": "NOT_RUN",
+    "eight_views": "NOT_RUN",
+    "owner_acceptance": "NOT_CREATED_BY_REVIEW"
+  },
+  "checkpoints": [
+    {
+      "context": "global",
+      "status": "committed",
+      "receipt_id": "2142bf35-667a-4493-b103-aad48f414e75",
+      "checkpoint_id": "858ca056-4b95-4745-ad8e-6f67b5e4893b",
+      "version": 1357,
+      "checkpoint_coverage": {
+        "mode": "explicit",
+        "tracks": [
+          "engineering"
+        ],
+        "contexts": [
+          "global"
+        ],
+        "event_ids": []
+      },
+      "binding_event_count": 0,
+      "absorbed_event_count": 0,
+      "currentness_admission_status": "CURRENT"
+    },
+    {
+      "context": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "status": "committed",
+      "receipt_id": "694db442-d03f-47f9-82d4-62e92b818606",
+      "checkpoint_id": "4fe5f187-fe41-479f-90a7-65ff63da98e7",
+      "version": 2439,
+      "checkpoint_coverage": {
+        "mode": "explicit",
+        "tracks": [
+          "engineering"
+        ],
+        "contexts": [
+          "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+        ],
+        "event_ids": []
+      },
+      "binding_event_count": 0,
+      "absorbed_event_count": 0,
+      "currentness_admission_status": "CURRENT"
+    }
+  ]
+}

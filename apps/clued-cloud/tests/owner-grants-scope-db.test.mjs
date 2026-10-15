@@ -17,6 +17,59 @@ import { CI_SIGNATURES, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snaps
 // Nothing else is accepted, and "approve once" keeps the requested resources.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// The sealed G6 closeout qualifies its original sources, before these two
+// authorized successors. Keep its real replay and separately prove the current
+// catalog rather than asking the historical seal to accept a changed body.
+async function applyQualifiedMigrations(admin, names) {
+  const targets = ['public.clued_project_mutate(text,jsonb)',
+    'public.clued_development_owner_v14(jsonb)', 'public.clued_authorization_manage_v12(jsonb)'];
+  const catalog = async () => (await admin.query(`select p.oid, p.oid::regprocedure::text signature,
+    pg_get_userbyid(p.proowner) owner,p.prosecdef,p.proconfig,p.proacl::text acl
+    from pg_proc p where p.oid=any($1::regprocedure[]) order by p.oid`, [targets])).rows;
+  let originalTargets;
+  const successors = new Map([
+    ['20261014044323_all_contexts_authorization_v2.sql', 'b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8'],
+    ['20261014045157_all_contexts_serialization_v2.sql', 'ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58'],
+  ]);
+  for (const name of names) {
+    if (name === '20261014044323_all_contexts_authorization_v2.sql') {
+      await assertGatewayCloseoutBoundary(admin);
+      const closedCatalog = await snapshotCallerCatalog(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
+      await assertGatewayCloseoutBoundary(admin);
+      assert.deepEqual(await snapshotCallerCatalog(admin), closedCatalog,
+        'actual sealed G6 replay preserves original definitions and ACL at its bounded stage');
+      originalTargets = await catalog();
+      assert.equal(originalTargets.length, targets.length);
+    }
+    const sql = await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8');
+    if (successors.has(name)) assert.equal(crypto.createHash('sha256').update(sql).digest('hex'), successors.get(name));
+    try { await admin.query(sql); }
+    catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+    if (name === '20261014044323_all_contexts_authorization_v2.sql') {
+      assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, false);
+    }
+  }
+  assert.ok(originalTargets, 'both successors run only after the bounded closeout proof');
+  assert.deepEqual(await catalog(), originalTargets, 'successors preserve existing OIDs, owners, security metadata and ACL');
+  await assertGatewayCloseoutBoundary(admin);
+  assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
+  assert.equal((await admin.query("select encode(sha256(convert_to(prosrc,'UTF8')),'hex') source_hash from pg_proc where oid='public.clued_project_mutate(text,jsonb)'::regprocedure")).rows[0].source_hash,
+    '64503257b828c3dcf1405fc378a9d297faf559cec29a373e77e5013e2eb76262', 'retired alias keeps its sealed business body');
+  for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+    assert.equal((await admin.query("select has_function_privilege($1,'public.clued_project_mutate(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed,
+      false, role + ' cannot execute the retired alias');
+  }
+  for (const signature of ['clued_private.authorization_writer_guard_v2(uuid)',
+    'clued_private.authorization_writer_require_v2(uuid)', 'clued_private.authorization_sources_view_v2(uuid)']) {
+    for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+      assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') allowed", [role, signature])).rows[0].allowed,
+        false, `${role} cannot directly call private successor helper ${signature}`);
+    }
+  }
+}
+
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
 const nowEpoch = () => Math.floor(Date.now() / 1000);
@@ -59,11 +112,8 @@ test('owner grants: the confirmation page narrows or widens a request\'s resourc
         $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
-      .filter((name) => name.endsWith('.sql')).sort()) {
-      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
-      catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
-    }
+    await applyQualifiedMigrations(admin, (await fs.readdir(path.join(root, 'supabase/migrations')))
+      .filter((name) => name.endsWith('.sql')).sort());
     await allowRawTestBindings(admin);
     await enableManualOwnerApprovalFixture(admin);
 
@@ -193,12 +243,10 @@ test('owner grants: the confirmation page narrows or widens a request\'s resourc
     // Only the latest view can be approved: the earlier widened token is revoked.
     assert.equal((await grant(spelled)).error_code, 'confirmation_token_revoked');
     assert.deepEqual(committed(await grant(kept)).grant.resources, [commit]);
-    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    // Current-chain behavior above is qualified independently of the bounded
+    // historical closeout replay performed before applying the successors.
     await assertGatewayCloseoutBoundary(admin);
-    const closedCatalog=await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
-    await assertGatewayCloseoutBoundary(admin);
-    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
+    assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

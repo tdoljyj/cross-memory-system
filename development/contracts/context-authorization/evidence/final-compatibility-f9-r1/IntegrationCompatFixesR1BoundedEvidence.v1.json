@@ -1,0 +1,120 @@
+{
+  "schema": "clued.final-compatibility-bounded-evidence.v1",
+  "authority_effect": "NONE",
+  "status": "PASS_TWO_BOUNDED_FIXTURE_REPAIRS_AND_THEIR_INDEPENDENT_REVIEWS",
+  "base_head": "cecc05350cfb694fd0877c6942986dcc1f84f989",
+  "claim_id": "21f96e42-5a4c-4ae8-b439-2e71e8c20469",
+  "fence": 9,
+  "lease": 5,
+  "actual_fixtures": [
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-db.test.mjs",
+      "sha256": "46e16121107d37ab841533727e0571fe5398d995aeb95a8b3690824a4b1f7f62"
+    },
+    {
+      "path": "apps/clued-cloud/tests/merge-admission-clock-audit-transport-db.test.mjs",
+      "sha256": "d357214524f9ea66be483f05f5bdfb1f32f9f28d817b0bd20d0e020559dfed31"
+    }
+  ],
+  "gateway_parent": {
+    "counts": {
+      "tests": 14,
+      "suites": 0,
+      "pass": 14,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "child_exit": 0,
+    "outer_exit": 1,
+    "outer_error": "UnicodeEncodeError while printing already-saved successful test log tail to GBK stdout, after report was written; no test failure and no retry performed",
+    "executed_fixture_sha256": "eb0911fb61397d8d326cc21655c7dc4b026d0e151c9826f9f6db57c082bf8400",
+    "later_title_only_change": "Only t.test human-readable title clarified; assertions/control flow identical to executed bytes. Executed fixture SHA retained above. No rerun justified for this title change."
+  },
+  "clock_parent": {
+    "counts": {
+      "tests": 11,
+      "suites": 0,
+      "pass": 11,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "child_exit": 0,
+    "outer_exit": 0,
+    "source_before_after_equal": true
+  },
+  "independent_reviews": [
+    {
+      "path": "worker-gateway-successor-ci-fix-r1-independent-review.json",
+      "verdict": "PASS",
+      "findings": 0
+    },
+    {
+      "path": "merge-admission-clock-audit-pin-ci-fix-r1-independent-review.json",
+      "verdict": "PASS",
+      "findings": 0
+    }
+  ],
+  "preserved_boundaries": [
+    "Full RPC OID/owner/definer/config/ACL equality",
+    "Gateway80/anon8 and private-denial checks",
+    "Exact unchanged Worker runtime and SQL",
+    "C1/C2 epoch/scope/rollback/Native denial checks",
+    "Original cecc official failures and unchanged nine-parent140 result"
+  ],
+  "original_artifacts": [
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\worker-gateway-successor-ci-fix-r1-receipt.json",
+      "sha256": "b93315e7c3dcc507332aa9ef77f47820a5dafc477d1ee664ee5ee93385bc7115",
+      "bytes": 3999,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\worker-gateway-successor-ci-fix-r1.log",
+      "sha256": "adffb7ad9053064959a7eb0b70374e65d570f028d8cd922df6b8f30690dd9a1e",
+      "bytes": 1691,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\worker-gateway-successor-ci-fix-r1-independent-review.json",
+      "sha256": "32b2aef0df364c7db56d191a8946fc32a40e7b713f3ee00b194b110870a8470a",
+      "bytes": 4467,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\merge-admission-clock-audit-pin-ci-fix-r1.json",
+      "sha256": "864ae79641a9d1fd6b977e6f0d3f1e1301d39578b96a8ae1ffd4d2459bf96e21",
+      "bytes": 3652,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\merge-admission-clock-audit-pin-ci-fix-r1.log",
+      "sha256": "2fd5cf3b50e8dd69e6fe18beb295376d478b924795c00120394cf218caeb92bd",
+      "bytes": 2120,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\merge-admission-clock-audit-pin-ci-fix-r1-independent-review.json",
+      "sha256": "5f6c8dd9c6bc96c867611b08fb79eeee75ba7031996c9f2482ff0605e824528e",
+      "bytes": 4058,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-cecc-isolated-failure-official.log",
+      "sha256": "eeecdaea502fbbcce0508587562f830748a5e9fa762fd20c1dd9ef8ba0759010",
+      "bytes": 115466,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-cecc-g4-failure-official.log",
+      "sha256": "67d9195f65c2d3d229f1b09e4c58e7712025e2039de6741c28c10eefba979fb6",
+      "bytes": 102146,
+      "preserved": true
+    }
+  ],
+  "raw_payloads_republished": false,
+  "qualification": "Each affected parent was actually run separately. Counts are not combined into a full-stack or current-head CI verdict. Gateway title-only final bytes inherit the executed assertions; exact tested bytes are preserved. New-head CI, main merge, production, Native and archive are still pending."
+}

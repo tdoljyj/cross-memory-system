@@ -1,0 +1,17 @@
+{
+  "schema": "clued.last-source-reproduction-run.v1",
+  "started_at": "2026-10-14T11:31:33.0822201Z",
+  "ended_at": "2026-10-14T11:31:39.8320284Z",
+  "runtime": "Node.js v24.19.0",
+  "exit_code": 0,
+  "command": "C:/Program Files/nodejs/node.exe work/eight_implementation/ui-acceptance/last-source-zero-reproduction-r4.mjs",
+  "script_before_sha256": "f5a7d7b58eb054fd3bf4ef18570f89e55f778991c567e6e8b67afd14484ec334",
+  "script_after_sha256": "f5a7d7b58eb054fd3bf4ef18570f89e55f778991c567e6e8b67afd14484ec334",
+  "log_sha256": "363d662eaa9f69520913b50edb4bc628c37e3e0ba7dbcf52c6ed0955ac9cb51e",
+  "qualification": "standalone boundary reproduction; exit0 means confirmed observed behavior, not successful Source fix",
+  "historical_harness_cleanup_failure": "last-source-zero-reproduction-r4-harness-first-run.json",
+  "report_path": "last-source-zero-reproduction-r4.json",
+  "report_sha256": "43c7092175f20a8ae62241dfa7d89791088082ee9a4fa7b2f085fb7dcaca589a",
+  "first_run_manifest_sha256": "5d9aa1b7c6b7614264cd963dcddaf1f6d38d902aa9d96edfb8cf249c1a6ad5e8",
+  "first_run_log_sha256": "b3a66b41eaabdd77f68dac8d8cdd0d68920173990bfeb5b9ed5ef67cfbe8692a"
+}

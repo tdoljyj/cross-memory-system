@@ -1,0 +1,62 @@
+{
+  "schema": "clued.bounded-independent-scanner-policy-review.v1",
+  "authority_effect": "NONE",
+  "status": "PASS_NARROW_POLICY_CODE_REVIEW",
+  "git_snapshot": "943eb9f7e579ed5f9decc15196fbd79876cce497",
+  "source_files": [
+    {
+      "path": ".gitleaks.toml",
+      "sha256": "c5a31bde4b05c111d5fd9b779db689c7bea35d73c4e17f26b823729d7e52aaf7",
+      "bytes": 127861
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "sha256": "b8ac87d4f8c0191fe56d5c42fafb268f6d334fd9b367502edd540b317c95396e",
+      "bytes": 22333
+    },
+    {
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "sha256": "960b1a228dfa1db78949d90043d379a5a79c71bcbd2a5f6f0b4bd147b27c5d54",
+      "bytes": 20262
+    }
+  ],
+  "actual_hunks_reviewed": 13,
+  "old_records_preserved": 491,
+  "new_exact_verified_object_metadata_records": 2,
+  "total_records": 493,
+  "default_policy_unchanged": true,
+  "actual_ancestor_commit_objects_verified": 2,
+  "actual_tests": {
+    "exit_code": 0,
+    "pass": 39,
+    "fail": 0,
+    "skip": 0
+  },
+  "actual_helper": {
+    "exit_code": 0,
+    "records": 493,
+    "commits": 71,
+    "files_at_commits": 129,
+    "verified_git_objects": 130,
+    "global_fingerprints": 0,
+    "ignore_sha256": "c4eef9862353da5036bbea3911288578780e100e39ab80fd5f9ecfcebf8d3bd4"
+  },
+  "finding_counts": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0,
+    "items": []
+  },
+  "full_original_review_preserved": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-943eb9-reviewed-artifacts-independent-review-r1.json",
+    "sha256": "1436380ed10deb001be18465276ac7b973fd771cf0f019fa79a3a04fa53262c8",
+    "bytes": 5545
+  },
+  "qualification": {
+    "review_scope": "LOCAL_SCANNER_POLICY_CODE_ONLY",
+    "original943_scanner_exit_code": 1,
+    "classification_does_not_change_original_failure": true,
+    "new_head_actual_scanner_result": "PENDING_ROOT_EXACT_COMMIT",
+    "is_CI_or_release_or_native_acceptance": false
+  }
+}

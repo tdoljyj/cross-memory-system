@@ -1,0 +1,1358 @@
+{
+  "schema_version": 1,
+  "kind": "read_only_scoped_fixture_callsite_diagnostic",
+  "created_at_utc": "2026-10-14 10:21:00 UTC",
+  "subject": {
+    "revision": "c9158c9046af7cd14e1a6d03ec2c4d8843ffc4ea",
+    "repo": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo",
+    "qualification": "Static baseline callsite/migration-order diagnosis. Five setup files were handed to another author; report is not independent acceptance of those moving repairs."
+  },
+  "sources": [
+    {
+      "path": "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs",
+      "sha256": "e44218a813629219bd290d343e43154510f7dca4df7bf584a6c78a5e83bdbeef"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+    }
+  ],
+  "scope": {
+    "roots": [
+      "apps/clued-cloud/tests/**/*.mjs",
+      "evals/**/*.mjs"
+    ],
+    "queries": [
+      "case-insensitive multiline literal INSERT INTO [public.]clued_projects",
+      "raw authorization_entries_v12 / development_spaces_v14 INSERT",
+      "project:* literals and authorization_all_projects_expand_v1 callers",
+      "Native authorization_manage_v12 reduce plus parent migration stages"
+    ],
+    "project_insert_files": 42,
+    "project_insert_sites": 48,
+    "secondary_raw_entry_context_files": 13,
+    "limitation": "Literal SQL scan plus inspected import/call stages. It does not establish runtime or production acceptance and does not claim all dynamically constructed SQL paths are globally proved."
+  },
+  "outcomes": {
+    "required_raw_setup_files": [
+      {
+        "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+        "lines": [
+          50
+        ]
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprint-development-organization-db.test.mjs",
+        "lines": [
+          48
+        ]
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprint-organization-db.test.mjs",
+        "lines": [
+          54
+        ]
+      },
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+        "lines": [
+          1426
+        ]
+      },
+      {
+        "path": "apps/clued-cloud/tests/task-owner-detail-db.test.mjs",
+        "lines": [
+          63
+        ]
+      }
+    ],
+    "counts": {
+      "current_explicit_guard": 3,
+      "current_adapter_and_intentional_negative": 1,
+      "current_setup_missing_guard": 5,
+      "current_adapter": 16,
+      "bounded_historical": 7,
+      "staged_historical_then_successor": 6,
+      "inherited_staged_historical": 3,
+      "staged_before_pair": 1
+    },
+    "required_legacy_expander_files": [
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+        "line": 1431
+      }
+    ],
+    "production_source_change_required_by_this_diagnostic": false,
+    "production_conclusion": "These five raw setup failures follow current Source require guards after actual fullchain installation. Do not weaken Source or serialization guards. Legacy entry-trigger retirement makes manual project:* setup explicitly materialize under Owner guard; this is a fixture adjustment.",
+    "runtime_tests_run": 0,
+    "ci_runs_read_or_triggered": 0,
+    "formal_review_performed": false
+  },
+  "guard_evidence": {
+    "source_project_trigger": {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "lines": [
+        251,
+        255,
+        266,
+        267
+      ],
+      "description": "AFTER INSERT requires Owner guard even when no eligible Binding exists."
+    },
+    "source_context_trigger": {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "lines": [
+        268,
+        272,
+        273,
+        282,
+        283
+      ],
+      "description": "Requires Owner guard before foreign-project ownership check; negative fixture rows also need actual Owner mutex."
+    },
+    "explicit_protocol": "BEGIN; SELECT clued_private.authorization_writer_guard_v2(actual_owner_uuid); actual INSERT; COMMIT; rollback on exception. Guard and INSERT must share the transaction; no fake advisory mutex or late post-INSERT guard.",
+    "adapter": {
+      "path": "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs",
+      "sha256": "e44218a813629219bd290d343e43154510f7dca4df7bf584a6c78a5e83bdbeef",
+      "description": "allowRawTestBindings installs test-only BEFORE INSERT guard on projects, development spaces, authorization entries only when current guard exists. It only applies when session_user=postgres and effective role setting=none. SET ROLE authenticated/GW does not gain this bypass.",
+      "inert_binding_warning": "Adapter also grants all raw Binding actions. Do not add it to imprint-development or task-owner-detail merely for Owner lock: their synthetic Bindings must remain ungranted FK-only rows."
+    },
+    "raw_entry_qualification": "Source drops the old deferred entry trigger at237; migration scan finds only its old CREATE and this DROP. Ordinary identity raw entries137/1445 alone are not proven 42501 failures. Maintain deliberate entries-only expansion1445; explicit expander itself requires real Owner guard."
+  },
+  "legacy_project_policy": [
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "lines": [
+        121,
+        137,
+        1431,
+        1434,
+        1438,
+        1445
+      ],
+      "status": "needs_actual_legacy_materialization",
+      "advice": "After project:* manual seed, call clued_private.authorization_all_projects_expand_v1(binding_id) within same actual Owner writer-guard transaction. Source238-248 initializes sources(binding,false), materializes real owned projects and rebuilds projection. Do not activate sources_v1 or broaden consent.",
+      "preserve": [
+        "existing project:* actions",
+        "original authorization expiry",
+        "history/version/allowed-field limits",
+        "existing materialization and future-project assertions",
+        "named-only expansion reauthorization refusal",
+        "historical pre-Source snapshot/setup stage"
+      ]
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+      "lines": [
+        107,
+        113,
+        114,
+        115
+      ],
+      "status": "already_actual_guard_and_expander",
+      "advice": "Keep actual guarded expander and legacy flat reduce."
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "lines": [
+        319
+      ],
+      "status": "current_native_approval",
+      "advice": "Actual Native approve creates source-selected Binding; preserve current protocol."
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs",
+      "lines": [
+        361
+      ],
+      "status": "current_native_approval",
+      "advice": "Actual Native approve, not raw policy seed; preserve."
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+      "lines": [
+        72,
+        77,
+        99,
+        101
+      ],
+      "status": "ui_legacy_mock",
+      "advice": "Keep explicit legacy mock flat payload."
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "lines": [
+        1399,
+        1420
+      ],
+      "status": "pure_ceiling_math",
+      "advice": "project:* shape/intersection examples are not seed/writer callers; preserve."
+    }
+  ],
+  "secondary_raw_entry_context_inventory": [
+    {
+      "path": "apps/clued-cloud/tests/connection-permission-request-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 99
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 107
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": true,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 143
+        },
+        {
+          "table": "development_spaces_v14",
+          "line": 702
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": true,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-development-organization-db.test.mjs",
+      "refs": [
+        {
+          "table": "development_spaces_v14",
+          "line": 58
+        }
+      ],
+      "has_adapter": false,
+      "has_guard": false,
+      "qualification": "Fullchain raw context58 missing earlyguard; included among the five repair files."
+    },
+    {
+      "path": "apps/clued-cloud/tests/dataset-split-native-grant-binding-successor-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 146
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Pair excluded from initial legacy stage and only installed at462; historical raw146 preserved."
+    },
+    {
+      "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 350
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": true,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-verification-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 228
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 252
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 137
+        },
+        {
+          "table": "authorization_entries_v12",
+          "line": 1445
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Primary DB adapter absent; only explicit project:* expander needs required guard. Do not treat entries-only INSERT alone as demonstrated failure."
+    },
+    {
+      "path": "apps/clued-cloud/tests/independent-review-db.test.mjs",
+      "refs": [
+        {
+          "table": "development_spaces_v14",
+          "line": 87
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/mtpe-universal-intake-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 497
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/model-domain-bootstrap-claim-currentness-scope-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 118
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    },
+    {
+      "path": "apps/clued-cloud/tests/merge-admission-clock-audit-transport-db.test.mjs",
+      "refs": [
+        {
+          "table": "authorization_entries_v12",
+          "line": 76
+        },
+        {
+          "table": "authorization_entries_v12",
+          "line": 201
+        }
+      ],
+      "has_adapter": true,
+      "has_guard": false,
+      "qualification": "Inspected setup supplies same-DB adapter after fullchain, or deliberate existing guarded negative probe; no additional repair scope."
+    }
+  ],
+  "native_reduce_scan": {
+    "path": "pr818-native-reduce-callsite-scan.json",
+    "sha256": "8ea0227ffb79b06bfc004eec0c3dd8243a661e550791559dc9383bfe978dac41",
+    "entries": 14,
+    "current_source_positive_repairs": [
+      {
+        "path": "apps/clued-cloud/tests/information-flow-context-db.test.mjs",
+        "baseline_line": 1092,
+        "reason": "New Native approved Binding after fullchain => sources_v1 from actual Native list, preserve old22023 negative.",
+        "owner_status": "Author already assigned."
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-invalidation-db.test.mjs",
+        "baseline_lines": [
+          884,
+          904,
+          911
+        ],
+        "reason": "Actual authorize Native prepare/approve runs after later Source installation204; exact source IDs/versions and updated Binding CAS needed, retaining stale-marking/locked-row scenarios.",
+        "owner_status": "Parent claims S5; author already assigned."
+      }
+    ],
+    "preserve_flat": [
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+        "lines": [
+          1366
+        ],
+        "reason": "Raw seeded existing authorizations/entries remain legacy, not new approval."
+      },
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+        "lines": [
+          1024,
+          1047,
+          1055
+        ],
+        "reason": "Raw seeded legacy Binding; CURRENT/HISTORICAL labels refer Integration lineage, not source mode. Fullchain208 and correct same-DB adapter214."
+      },
+      {
+        "path": "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+        "lines": [
+          69
+        ],
+        "reason": "Bounded old chain through20260908073933, no Source pair."
+      },
+      {
+        "path": "apps/clued-cloud/tests/resource-center-account-db.fixture.mjs",
+        "lines": [
+          215
+        ],
+        "reason": "Only actual parent resource-center-authority calls1119 before current pair qualification at end."
+      }
+    ]
+  },
+  "superseded_tentative_warning": {
+    "path": "apps/clued-cloud/tests/work-claims-handover-execution-db.test.mjs",
+    "line": 428,
+    "reason": "Same DB applies full chain423 and installs early adapter425. Original tentative missing-guard warning withdrawn."
+  },
+  "inventory": [
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "insert_lines": [
+        120
+      ],
+      "allow_raw_lines": [
+        73
+      ],
+      "guard_lines": [
+        119,
+        139,
+        710
+      ],
+      "migration_read_lines": [
+        67
+      ],
+      "pair_excluded": false,
+      "classification": "current_explicit_guard",
+      "migration_phase": "All SQL installed at 67; explicit transaction Owner guard at 119 before INSERT120; adapter also at73.",
+      "recommendation": "No change; retain explicit positives and role-denial probes.",
+      "sha256_at_subject": "e037a8511aa2982723ee5aa2ac1877cfe4f291680da1569b0c4b8d37ab56ac86"
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs",
+      "insert_lines": [
+        76,
+        486
+      ],
+      "allow_raw_lines": [
+        65,
+        488
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        52
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter_and_intentional_negative",
+      "migration_phase": "All SQL installed at52; adapter65 covers setup76. INSERT486 follows explicit adapter-trigger removal and intentionally rejects; adapter restored488.",
+      "recommendation": "No change; retain actual missing/late/fake guard failures.",
+      "sha256_at_subject": "883c044404255eb15e83d3457f09e8dd92275276fe03492c29608c441f57aae2"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-closeout.test.mjs",
+      "insert_lines": [
+        134
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [
+        58,
+        72,
+        75,
+        134
+      ],
+      "migration_read_lines": [
+        106
+      ],
+      "pair_excluded": false,
+      "classification": "current_explicit_guard",
+      "migration_phase": "Full chain106; guardedProjectInsert helper72/75 wraps raw INSERT134.",
+      "recommendation": "No change; retained historical replay and successor boundary evidence.",
+      "sha256_at_subject": "91fc9e37cbacdcbf1cd05006d4ba406ec6e98434c19b7549fdd2fdd3f888fe3f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+      "insert_lines": [
+        50
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        48
+      ],
+      "pair_excluded": false,
+      "classification": "current_setup_missing_guard",
+      "migration_phase": "All SQL48, then admin raw project50; no early Owner guard or test adapter.",
+      "recommendation": "Wrap actual Owner U transaction before project INSERT; preserve real Native consent/gateway calls.",
+      "sha256_at_subject": "c3123669e1855147f8398a95dbaa85c06ab5543e922dfbb9c50d1635d505e9d4"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+      "insert_lines": [
+        81
+      ],
+      "allow_raw_lines": [
+        73
+      ],
+      "guard_lines": [
+        114
+      ],
+      "migration_read_lines": [
+        61
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain61 then adapter73 before raw project81. Legacy project:* helper113 uses explicit Owner guard114 and expander115.",
+      "recommendation": "No change; keep legacy flat protocol and guarded legacy expander.",
+      "sha256_at_subject": "7934ff3c7a54e48dfc27bf6bcfcde9ca2a0ff82212bfceb0ebd32798c8ada845"
+    },
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs",
+      "insert_lines": [
+        61
+      ],
+      "allow_raw_lines": [
+        54
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        51
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain51 then adapter54 before project61.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "3d6220993d6c2fd93c1d390af89fb4840500921e004b2379601f3e735177c60c"
+    },
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs",
+      "insert_lines": [
+        61
+      ],
+      "allow_raw_lines": [
+        54
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        51
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain51 then adapter54 before project61.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "783be3d7b1d15b9190b2b0e10107859bada25712dc9ea0e8077f8b96f40f04a5"
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-authorization-db.test.mjs",
+      "insert_lines": [
+        35
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        30
+      ],
+      "pair_excluded": false,
+      "classification": "bounded_historical",
+      "migration_phase": "Explicit pre-20260826000000 and selected 20260907 migration chain at30; Source pair absent.",
+      "recommendation": "Keep historical INSERT/flat positive protocol unchanged.",
+      "sha256_at_subject": "4c9030c4328550615d4417cde0cb85058f9dbc5f046d4c4dd6879ed40799b96a"
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-permission-request-db.test.mjs",
+      "insert_lines": [
+        85
+      ],
+      "allow_raw_lines": [
+        75
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        60
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain60 then adapter75 before project85 and entries99.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "40344709ebf1f8818162b2a7b37f4d424452f493c953b66a7c93833ee480bec9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-db.test.mjs",
+      "insert_lines": [
+        62
+      ],
+      "allow_raw_lines": [
+        60
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        53
+      ],
+      "pair_excluded": false,
+      "classification": "bounded_historical",
+      "migration_phase": "Both profiles filter names < retirementMigration20260907172309 at53-55; all-repository-migrations label is bounded by that condition.",
+      "recommendation": "Keep historical fixture unchanged.",
+      "sha256_at_subject": "3117191570eb91c4ee9a61b37c54af68eef176725395a9adbf404e8420f34c8c"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-independent.test.mjs",
+      "insert_lines": [
+        77,
+        92
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [],
+      "pair_excluded": false,
+      "classification": "bounded_historical",
+      "migration_phase": "At69 only names<20260826000000 or exact20260907123955_clued_context_ownership_publication_v11.sql; raw projects77,92 precede any Source pair.",
+      "recommendation": "Keep historical fixture unchanged.",
+      "sha256_at_subject": "0c105e1626ea266d82d97b7a6bc7375d0e18282119cb63ac6bf4de4e28e91a66"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-admission-db.test.mjs",
+      "insert_lines": [
+        469
+      ],
+      "allow_raw_lines": [
+        56
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        52
+      ],
+      "pair_excluded": true,
+      "classification": "staged_historical_then_successor",
+      "migration_phase": "Initial52 excludes authorization successor pair. Raw469 is in historical business stage; pair installed only final qualification.",
+      "recommendation": "No change; preserve actual historical business/replay then current qualification.",
+      "sha256_at_subject": "dce7b5351a0ead51a5dd16f0cee2676429813f00895da7350c4e0d8f207cf4e5"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-legacy-inventory.test.mjs",
+      "insert_lines": [
+        64,
+        67,
+        70
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        55
+      ],
+      "pair_excluded": false,
+      "classification": "bounded_historical",
+      "migration_phase": "At55 names<coreName20260922092355_bug_20260922_002_currentness_core.sql; raw64,67,70 then selected inventory/currentness migrations.",
+      "recommendation": "Keep historical fixture unchanged.",
+      "sha256_at_subject": "1c0c1b5d825f897cc52b842708f63414930879be14c1b708f17f7913c406ec5b"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-record-fence-db.test.mjs",
+      "insert_lines": [
+        303
+      ],
+      "allow_raw_lines": [
+        53
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        46
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain46 then adapter53 before raw303.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "f90b52879d2d568408d231508a0a8af81c64a19b4c85daad0fe6398c1e8793f8"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-retained-all.test.mjs",
+      "insert_lines": [
+        85
+      ],
+      "allow_raw_lines": [
+        57
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        50
+      ],
+      "pair_excluded": true,
+      "classification": "staged_historical_then_successor",
+      "migration_phase": "Initial50 excludes successor pair; raw85 occurs during all real legacy scenarios. Current pair installed only after sealed final replay.",
+      "recommendation": "No change; preserve legacy scenarios.",
+      "sha256_at_subject": "259d673827e886023d7b84f115e36a429f4b74dabe353b8901998dcf9753c163"
+    },
+    {
+      "path": "apps/clued-cloud/tests/event-carrier-block-reasons-db.test.mjs",
+      "insert_lines": [
+        63
+      ],
+      "allow_raw_lines": [
+        55
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        48
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain48 then adapter55 before raw63.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "6108420c6e95d239bec0ea0f9b9f04078da0fb0d56a0eb7208f3b13bd18a05e1"
+    },
+    {
+      "path": "apps/clued-cloud/tests/headless-binding-issuance-db.test.mjs",
+      "insert_lines": [
+        74
+      ],
+      "allow_raw_lines": [
+        65
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        60
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain60 then adapter65 before raw74.",
+      "recommendation": "No change; new-source reduce already uses sources_v1.",
+      "sha256_at_subject": "3be17ba6646e481c0964cb9581a605abf1db871aa0fb47286316b2892b9eb169"
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-development-organization-db.test.mjs",
+      "insert_lines": [
+        48
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        40
+      ],
+      "pair_excluded": false,
+      "classification": "current_setup_missing_guard",
+      "migration_phase": "All SQL40-43 then raw projects48 and raw development_spaces_v14 in space helper58-59. No guard or adapter.",
+      "recommendation": "Explicit per-Owner guard transaction before each project/context INSERT; keep inert FK-only Bindings and foreign-project negative fixture.",
+      "sha256_at_subject": "4150835035aad5d07431c5a6eca026af9e01470e0ef444b0ed41d029f4a5639a"
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-organization-db.test.mjs",
+      "insert_lines": [
+        54
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        45
+      ],
+      "pair_excluded": false,
+      "classification": "current_setup_missing_guard",
+      "migration_phase": "All SQL45-49 then raw projects54 for two Owners. No guard or adapter.",
+      "recommendation": "Explicit actual per-Owner guard transaction before INSERT; preserve Native Imprint assertions.",
+      "sha256_at_subject": "791d8d9ff8f374b00dab0e3c5df58d52aa732ab3dfc544c9fe11c65e99aa59a7"
+    },
+    {
+      "path": "apps/clued-cloud/tests/independent-review-db.test.mjs",
+      "insert_lines": [
+        85
+      ],
+      "allow_raw_lines": [
+        49
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        43
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain43 (variant omits only P5) then adapter49 before project85 and context87.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "df7f41e0d9a7f92e3af62940ba0440b7c33a4b1b10203df277767e2df493bb48"
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "insert_lines": [
+        1426
+      ],
+      "allow_raw_lines": [
+        1694
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        89,
+        1684
+      ],
+      "pair_excluded": false,
+      "classification": "current_setup_missing_guard",
+      "migration_phase": "Primary DB stages pre20261005090000 then GRANTS20261005163000 then all later270; raw project1426. Adapter1694 is only a separate second DB, not primary.",
+      "recommendation": "Guard actual user before primary raw project. Manual project:*1431 needs actual guarded legacy expander after seed; preserve named-only expansion1445.",
+      "sha256_at_subject": "ed8b02b4d9ed933492658e1d87e685f03eb4aeb515bd5b575f4bef74ae3b919e"
+    },
+    {
+      "path": "apps/clued-cloud/tests/issuer-credentials-db.test.mjs",
+      "insert_lines": [
+        60
+      ],
+      "allow_raw_lines": [
+        57,
+        122
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        51
+      ],
+      "pair_excluded": false,
+      "classification": "bounded_historical",
+      "migration_phase": "Raw project60 after names<MIGRATION20261009070001_issuer_identity_credentials_v1.sql at53. Selected target installed121; no Source pair installed.",
+      "recommendation": "Keep historical fixture unchanged.",
+      "sha256_at_subject": "e94f701869634290b5cb9eff205f9c9afed5a9e8654fe8e3b8367bea85835c89"
+    },
+    {
+      "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+      "insert_lines": [
+        130,
+        314
+      ],
+      "allow_raw_lines": [
+        123
+      ],
+      "guard_lines": [
+        59,
+        72,
+        75,
+        130,
+        314
+      ],
+      "migration_read_lines": [
+        121
+      ],
+      "pair_excluded": false,
+      "classification": "current_explicit_guard",
+      "migration_phase": "Full chain121 then adapter123; guardedProjectInsert helper72/75 covers130,314.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "f36db9313f9aad2cfa60f33d4346872789e33bc627f8bf54e575ddbb253ae909"
+    },
+    {
+      "path": "apps/clued-cloud/tests/merge-admission-clock-audit-transport-db.test.mjs",
+      "insert_lines": [
+        199
+      ],
+      "allow_raw_lines": [
+        35
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        32
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "All SQL32 except transport candidate, then adapter35; same direct postgres/role-none setup project199 and entries201.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "60d044bfa30cd9b58bc9b3c0b1628aea07c211c978aaf49e23e6020bad01e236"
+    },
+    {
+      "path": "apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs",
+      "insert_lines": [
+        69
+      ],
+      "allow_raw_lines": [
+        60
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        54
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain54 then adapter60 before raw69.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "0ed130957636ed9e12ea659475999b29b1a2ebf85ec75d1dfee3a3657422578f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/p5-real-postgres.test.mjs",
+      "insert_lines": [
+        283
+      ],
+      "allow_raw_lines": [
+        200
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "loadSchema applies all SQL; adapter200 on same postgres client before seedData raw283(two rows).",
+      "recommendation": "No change.",
+      "sha256_at_subject": "72f7c9cbc68b22b6ec6bd200ab5105af016e019580c452dbc3e4e4c41c348463"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-invitations-db.test.mjs",
+      "insert_lines": [
+        35
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        30
+      ],
+      "pair_excluded": false,
+      "classification": "bounded_historical",
+      "migration_phase": "Explicit pre20260826000000 + selected20260907123955/131834/172309/17303* at30; target20260907173032.",
+      "recommendation": "Keep historical fixture unchanged.",
+      "sha256_at_subject": "4316fc63d1aa6777470b06e648d13fc1e12f5e100c4f4d38d207060ac597ab1c"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-lifecycle-successor-v2-db.test.mjs",
+      "insert_lines": [
+        92
+      ],
+      "allow_raw_lines": [
+        85
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        77
+      ],
+      "pair_excluded": true,
+      "classification": "staged_historical_then_successor",
+      "migration_phase": "Initial77 excludes authorization successor pair, raw92 in historical project-lifecycle stage, pair installed at final qualification.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "c25fc51a706c85976bd5aa7d27b470ed2c583fd9d39798b2926ed53dfcf7c946"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+      "insert_lines": [
+        34
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        28
+      ],
+      "pair_excluded": false,
+      "classification": "bounded_historical",
+      "migration_phase": "At28 pre20260826000000 + selected20260907 + target20260908073933_clued_project_list_authorized_scope.sql; Source absent.",
+      "recommendation": "Keep historical raw project and flat reduce69 unchanged.",
+      "sha256_at_subject": "56fd487d5a57e2aa73c02297eabab4aa1827089e4afbbdb733b08ba8945a6d87"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-authority-db.test.mjs",
+      "insert_lines": [
+        233
+      ],
+      "allow_raw_lines": [
+        222
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        191
+      ],
+      "pair_excluded": true,
+      "classification": "staged_historical_then_successor",
+      "migration_phase": "Initial191 excludes pair; raw233 and imported business fixtures precede qualifyCurrentCallers1228. Pair installed within qualifyCurrentCallers70.",
+      "recommendation": "No change; preserve current fullchain qualification only after actual sealed replay.",
+      "sha256_at_subject": "04e285007d4ca804b425bae024c928fa4f39f3da3eca8167debd11ab0d85279f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-refresh-upgrade-db.fixture.mjs",
+      "insert_lines": [
+        11
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [],
+      "pair_excluded": false,
+      "classification": "inherited_staged_historical",
+      "migration_phase": "Only actual parent resource-center-authority imports/calls near193 while Source pair excluded.",
+      "recommendation": "Keep raw11 unchanged; do not infer fullchain from helper alone.",
+      "sha256_at_subject": "c29308066d4863043c4b77cdba5e56e8fe7bf41cd10689dae6327157fb15cc52"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-storage-budget-db.fixture.mjs",
+      "insert_lines": [
+        28
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [],
+      "pair_excluded": false,
+      "classification": "inherited_staged_historical",
+      "migration_phase": "Only actual parent resource-center-authority calls264(focused) or1141 before qualifyCurrentCallers at end.",
+      "recommendation": "Keep raw28 unchanged.",
+      "sha256_at_subject": "5bb8dee0e191c4d2447c3fdd2ade89700a8c537f4750b3646383c22fca3bd8f8"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-storage-connections-db.fixture.mjs",
+      "insert_lines": [
+        19
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [],
+      "pair_excluded": false,
+      "classification": "inherited_staged_historical",
+      "migration_phase": "Only actual parent resource-center-authority calls266/284(focused) or1143 before qualifyCurrentCallers at end.",
+      "recommendation": "Keep raw19 unchanged.",
+      "sha256_at_subject": "3cfe1b432afe7fdba920d16a7f0a79ec8496644eb48b43981ec78fc0e8c1ec65"
+    },
+    {
+      "path": "apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs",
+      "insert_lines": [
+        97
+      ],
+      "allow_raw_lines": [
+        61
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        53
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain53 then adapter61 before raw97.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "b222f414472ab02625a5dfafa45bebfd2ed72cb33d69495f5f54099de85a1509"
+    },
+    {
+      "path": "apps/clued-cloud/tests/search-context-rereview-db.test.mjs",
+      "insert_lines": [
+        79
+      ],
+      "allow_raw_lines": [
+        60
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        52
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain52 then adapter60 before raw79.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "8bf5c537afa18ec06f672b959e4911b186054bc6fce674aaa7472fc835fed5b9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/search-context-text-cache-db.test.mjs",
+      "insert_lines": [
+        73
+      ],
+      "allow_raw_lines": [
+        66
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        56
+      ],
+      "pair_excluded": false,
+      "classification": "staged_before_pair",
+      "migration_phase": "Before comparison installs names<MIGRATION20261010030000 at65, adapter66, raw73. All >=MIGRATION installed138 after seed; no later raw project site.",
+      "recommendation": "Keep original staged cache upgrade fixture.",
+      "sha256_at_subject": "7230e25aa1f41fdc1c9f50b746e331ad5f8e80a5b28d9a34545692efb5880f64"
+    },
+    {
+      "path": "apps/clued-cloud/tests/session-context-from-token-db.test.mjs",
+      "insert_lines": [
+        65
+      ],
+      "allow_raw_lines": [
+        58
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        55
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain55 then adapter58 before raw65.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "dcbd874947a01cf240d0c79195cccf17f0b47248cc2bc4117858e1d2abed96b9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/storage-file-version-denial-db.test.mjs",
+      "insert_lines": [
+        48
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        36
+      ],
+      "pair_excluded": true,
+      "classification": "staged_historical_then_successor",
+      "migration_phase": "Initial36 excludes pair; raw48 precedes all legacy cases and final sealed replay, then current pair qualification.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "bbc1bc5aa2a8075f2234a7568d0e224018b11749ef3e473eb39b5f383b1ee1e9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/task-dependency-guard-db.test.mjs",
+      "insert_lines": [
+        68
+      ],
+      "allow_raw_lines": [
+        57
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        51
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Full chain51 then adapter57 before raw68.",
+      "recommendation": "No change.",
+      "sha256_at_subject": "2c2da4f168e9f43326fd00c9ac705f8dd243ed3f1b5ec6aa0286eac598c5d28a"
+    },
+    {
+      "path": "apps/clued-cloud/tests/task-owner-detail-db.test.mjs",
+      "insert_lines": [
+        63
+      ],
+      "allow_raw_lines": [],
+      "guard_lines": [],
+      "migration_read_lines": [
+        50
+      ],
+      "pair_excluded": false,
+      "classification": "current_setup_missing_guard",
+      "migration_phase": "All SQL50-54 then raw projects63 for two Owners. No guard/adapter. Inert Binding constraints66-68.",
+      "recommendation": "Explicit per-Owner guard transaction before project INSERT. Keep FK-only Bindings ungranted.",
+      "sha256_at_subject": "e11a77e76c37cc3ddb421cb9c1d5398ced7331281b39eadca54fc6f4a2c75519"
+    },
+    {
+      "path": "apps/clued-cloud/tests/work-claims-handover-execution-db.test.mjs",
+      "insert_lines": [
+        428
+      ],
+      "allow_raw_lines": [
+        46,
+        265,
+        425
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        42,
+        263,
+        423
+      ],
+      "pair_excluded": false,
+      "classification": "current_adapter",
+      "migration_phase": "Exact relevant DB full chain423 then adapter425, raw428; earlier separate DBs have adapters46/265 too.",
+      "recommendation": "No change. Supersedes earlier tentative raw428 warning: actual adapter covers same DB.",
+      "sha256_at_subject": "1834d1a3b3e4e9148e5be8916bc0bf0adcd79ca5ffccce877e094abd78216bd2"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-db.test.mjs",
+      "insert_lines": [
+        445,
+        447
+      ],
+      "allow_raw_lines": [
+        163
+      ],
+      "guard_lines": [],
+      "migration_read_lines": [
+        145
+      ],
+      "pair_excluded": false,
+      "classification": "staged_historical_then_successor",
+      "migration_phase": "Projects445/447 in proved bounded G6 phase before all migrations>CLOSEOUT installed495.",
+      "recommendation": "No change; retain actual historical closeout probes and later source-aware validation.",
+      "sha256_at_subject": "bd4bde9815003f44c3fe59db03fe5cff16c34a74abcc6382d9b83326f80211d3"
+    }
+  ],
+  "files": [
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "sha256": "e037a8511aa2982723ee5aa2ac1877cfe4f291680da1569b0c4b8d37ab56ac86"
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs",
+      "sha256": "883c044404255eb15e83d3457f09e8dd92275276fe03492c29608c441f57aae2"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-closeout.test.mjs",
+      "sha256": "91fc9e37cbacdcbf1cd05006d4ba406ec6e98434c19b7549fdd2fdd3f888fe3f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+      "sha256": "c3123669e1855147f8398a95dbaa85c06ab5543e922dfbb9c50d1635d505e9d4"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+      "sha256": "7934ff3c7a54e48dfc27bf6bcfcde9ca2a0ff82212bfceb0ebd32798c8ada845"
+    },
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-backlog-controls-db.test.mjs",
+      "sha256": "3d6220993d6c2fd93c1d390af89fb4840500921e004b2379601f3e735177c60c"
+    },
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-session-renewal-db.test.mjs",
+      "sha256": "783be3d7b1d15b9190b2b0e10107859bada25712dc9ea0e8077f8b96f40f04a5"
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-authorization-db.test.mjs",
+      "sha256": "4c9030c4328550615d4417cde0cb85058f9dbc5f046d4c4dd6879ed40799b96a"
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-permission-request-db.test.mjs",
+      "sha256": "40344709ebf1f8818162b2a7b37f4d424452f493c953b66a7c93833ee480bec9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-db.test.mjs",
+      "sha256": "3117191570eb91c4ee9a61b37c54af68eef176725395a9adbf404e8420f34c8c"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-independent.test.mjs",
+      "sha256": "0c105e1626ea266d82d97b7a6bc7375d0e18282119cb63ac6bf4de4e28e91a66"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-admission-db.test.mjs",
+      "sha256": "dce7b5351a0ead51a5dd16f0cee2676429813f00895da7350c4e0d8f207cf4e5"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-legacy-inventory.test.mjs",
+      "sha256": "1c0c1b5d825f897cc52b842708f63414930879be14c1b708f17f7913c406ec5b"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-record-fence-db.test.mjs",
+      "sha256": "f90b52879d2d568408d231508a0a8af81c64a19b4c85daad0fe6398c1e8793f8"
+    },
+    {
+      "path": "apps/clued-cloud/tests/currentness-retained-all.test.mjs",
+      "sha256": "259d673827e886023d7b84f115e36a429f4b74dabe353b8901998dcf9753c163"
+    },
+    {
+      "path": "apps/clued-cloud/tests/event-carrier-block-reasons-db.test.mjs",
+      "sha256": "6108420c6e95d239bec0ea0f9b9f04078da0fb0d56a0eb7208f3b13bd18a05e1"
+    },
+    {
+      "path": "apps/clued-cloud/tests/headless-binding-issuance-db.test.mjs",
+      "sha256": "3be17ba6646e481c0964cb9581a605abf1db871aa0fb47286316b2892b9eb169"
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-development-organization-db.test.mjs",
+      "sha256": "4150835035aad5d07431c5a6eca026af9e01470e0ef444b0ed41d029f4a5639a"
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-organization-db.test.mjs",
+      "sha256": "791d8d9ff8f374b00dab0e3c5df58d52aa732ab3dfc544c9fe11c65e99aa59a7"
+    },
+    {
+      "path": "apps/clued-cloud/tests/independent-review-db.test.mjs",
+      "sha256": "df7f41e0d9a7f92e3af62940ba0440b7c33a4b1b10203df277767e2df493bb48"
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "sha256": "ed8b02b4d9ed933492658e1d87e685f03eb4aeb515bd5b575f4bef74ae3b919e"
+    },
+    {
+      "path": "apps/clued-cloud/tests/issuer-credentials-db.test.mjs",
+      "sha256": "e94f701869634290b5cb9eff205f9c9afed5a9e8654fe8e3b8367bea85835c89"
+    },
+    {
+      "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+      "sha256": "f36db9313f9aad2cfa60f33d4346872789e33bc627f8bf54e575ddbb253ae909"
+    },
+    {
+      "path": "apps/clued-cloud/tests/merge-admission-clock-audit-transport-db.test.mjs",
+      "sha256": "60d044bfa30cd9b58bc9b3c0b1628aea07c211c978aaf49e23e6020bad01e236"
+    },
+    {
+      "path": "apps/clued-cloud/tests/now-conflict-null-project-db.test.mjs",
+      "sha256": "0ed130957636ed9e12ea659475999b29b1a2ebf85ec75d1dfee3a3657422578f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/p5-real-postgres.test.mjs",
+      "sha256": "72f7c9cbc68b22b6ec6bd200ab5105af016e019580c452dbc3e4e4c41c348463"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-invitations-db.test.mjs",
+      "sha256": "4316fc63d1aa6777470b06e648d13fc1e12f5e100c4f4d38d207060ac597ab1c"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-lifecycle-successor-v2-db.test.mjs",
+      "sha256": "c25fc51a706c85976bd5aa7d27b470ed2c583fd9d39798b2926ed53dfcf7c946"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+      "sha256": "56fd487d5a57e2aa73c02297eabab4aa1827089e4afbbdb733b08ba8945a6d87"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-authority-db.test.mjs",
+      "sha256": "04e285007d4ca804b425bae024c928fa4f39f3da3eca8167debd11ab0d85279f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-refresh-upgrade-db.fixture.mjs",
+      "sha256": "c29308066d4863043c4b77cdba5e56e8fe7bf41cd10689dae6327157fb15cc52"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-storage-budget-db.fixture.mjs",
+      "sha256": "5bb8dee0e191c4d2447c3fdd2ade89700a8c537f4750b3646383c22fca3bd8f8"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resource-center-storage-connections-db.fixture.mjs",
+      "sha256": "3cfe1b432afe7fdba920d16a7f0a79ec8496644eb48b43981ec78fc0e8c1ec65"
+    },
+    {
+      "path": "apps/clued-cloud/tests/search-context-cross-scope-db.test.mjs",
+      "sha256": "b222f414472ab02625a5dfafa45bebfd2ed72cb33d69495f5f54099de85a1509"
+    },
+    {
+      "path": "apps/clued-cloud/tests/search-context-rereview-db.test.mjs",
+      "sha256": "8bf5c537afa18ec06f672b959e4911b186054bc6fce674aaa7472fc835fed5b9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/search-context-text-cache-db.test.mjs",
+      "sha256": "7230e25aa1f41fdc1c9f50b746e331ad5f8e80a5b28d9a34545692efb5880f64"
+    },
+    {
+      "path": "apps/clued-cloud/tests/session-context-from-token-db.test.mjs",
+      "sha256": "dcbd874947a01cf240d0c79195cccf17f0b47248cc2bc4117858e1d2abed96b9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/storage-file-version-denial-db.test.mjs",
+      "sha256": "bbc1bc5aa2a8075f2234a7568d0e224018b11749ef3e473eb39b5f383b1ee1e9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/task-dependency-guard-db.test.mjs",
+      "sha256": "2c2da4f168e9f43326fd00c9ac705f8dd243ed3f1b5ec6aa0286eac598c5d28a"
+    },
+    {
+      "path": "apps/clued-cloud/tests/task-owner-detail-db.test.mjs",
+      "sha256": "e11a77e76c37cc3ddb421cb9c1d5398ced7331281b39eadca54fc6f4a2c75519"
+    },
+    {
+      "path": "apps/clued-cloud/tests/work-claims-handover-execution-db.test.mjs",
+      "sha256": "1834d1a3b3e4e9148e5be8916bc0bf0adcd79ca5ffccce877e094abd78216bd2"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-db.test.mjs",
+      "sha256": "bd4bde9815003f44c3fe59db03fe5cff16c34a74abcc6382d9b83326f80211d3"
+    },
+    {
+      "path": "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs",
+      "sha256": "e44218a813629219bd290d343e43154510f7dca4df7bf584a6c78a5e83bdbeef"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+    }
+  ]
+}

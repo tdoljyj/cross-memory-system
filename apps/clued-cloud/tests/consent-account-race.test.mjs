@@ -5,6 +5,18 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import ts from 'typescript';
+const AUTH_SOURCE = ts.transpileModule(readFileSync(new URL('../lib/context-authorization.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+const CONTROLS_SOURCE = ts.transpileModule(readFileSync(new URL('../lib/context-authorization-controls.tsx', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText;
+const authExports = {}; vm.runInNewContext(AUTH_SOURCE, { exports: authExports });
+function authorizationImport(name) {
+  if (name.endsWith('/context-authorization')) return authExports;
+  if (name.endsWith('/context-authorization-controls')) { const exports = {};
+    vm.runInNewContext(CONTROLS_SOURCE, { exports, require(id) { if (id === './context-authorization') return authExports;
+      if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }; throw Error(id); } }); return exports;
+  }
+  return null;
+}
+
 
 function compile(relative) {
   return ts.transpileModule(readFileSync(new URL(relative, import.meta.url), 'utf8'), {
@@ -24,9 +36,9 @@ function fixture(compiled = consentSource, extraAuth = {}) {
  };
  const auth={onAuthStateChange(cb){authCallback=cb;return {data:{subscription:{unsubscribe(){authCallback=null;}}}};},signInWithPassword:async()=>({error:null}), ...extraAuth,signOut:async()=>{authCallback?.('SIGNED_OUT',null);return {error:null};}};
  const exports={};
- vm.runInNewContext(compiled,{exports,require(name){
+ vm.runInNewContext(compiled,{exports,require(name){const shared=authorizationImport(name);if(shared)return shared;
   if(name==='react')return React;
-  if(name==='react/jsx-runtime')return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props}),Fragment:'fragment'};
+  if(name==='react/jsx-runtime')return {jsx:(type,props)=>typeof type==='function'?type(props):({type,props}),jsxs:(type,props)=>typeof type==='function'?type(props):({type,props}),Fragment:'fragment'};
   if(name.endsWith('/supabase-browser'))return {supabase:{auth},restoreBrowserSession:async()=>({session:null,error:null,authType:null})};
   if(name==='next/link')return {__esModule:true,default:'a'};throw Error(name);
  },AbortController,Error,TypeError,encodeURIComponent,URL,window:{setTimeout(cb){const id=++seq;timers.set(id,cb);return id;},clearTimeout(id){timers.delete(id);},location:{origin:'https://clued.example.test',assign(url){navigations.push(url);}}},
@@ -53,15 +65,16 @@ async function ready(t, id = 'A') {
   checkbox(f).props.onChange({ target: { checked: true } }); f.render(); return f;
 }
 
-test('consent defaults to every eligible permission and a 30-day lifetime of up to 365 days', async t => {
+test('without an all-context policy consent starts empty and preserves lifetime choices', async t => {
   const f = fixture(); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', session('A')); f.runTimers();
-  f.respond(0, { ...details('A'), eligible: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write', 'close'] }] }); await f.settle();
-  const boxes = f.nodes('input').filter(node => node.props.type === 'checkbox' && node.props.className !== 'oauth-group-checkbox');
-  assert.deepEqual(boxes.map(node => node.props.checked), [true, true, true]);
+  f.respond(0, { ...details('A'), requested_scopes: ['context:read','context:write'], eligible: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write', 'close'] }] }); await f.settle();
+  const boxes = f.nodes('input', f.nodes('details')[0]).filter(node => node.props.type === 'checkbox' && node.props.className !== 'oauth-group-checkbox');
+  assert.deepEqual(boxes.map(node => node.props.checked), [false, false, false]);
+  assert.equal(f.button('允许所选权限').props.disabled, true);
   // Re-ticking an already selected action must not duplicate it.
   boxes[0].props.onChange({ target: { checked: true } }); f.render();
-  assert.ok(f.text().replaceAll(' ', '').includes('已选3/3'));
+  assert.ok(f.text().replaceAll(' ', '').includes('已选1/3'));
   const select = f.nodes('select')[0];
   assert.equal(select.props.value, 30);
   assert.deepEqual(f.nodes('option', select).map(node => node.props.value), [1, 7, 30, 90, 365]);
@@ -69,7 +82,7 @@ test('consent defaults to every eligible permission and a 30-day lifetime of up 
   f.button('允许所选权限').props.onClick(); await f.settle();
   const decision = JSON.parse(f.requests[1].options.body);
   assert.equal(decision.days, 365);
-  assert.deepEqual(decision.selected, [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write', 'close'] }]);
+  assert.deepEqual(decision.selected, [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }]);
 });
 
 test('late account A GET cannot overwrite B identity or selected permissions', async t => {
@@ -207,11 +220,10 @@ test('tri-state group checkbox isolates exact resources/environments and preserv
     input.props.onChange({ target: { checked: !input.props.checked } }); f.render();
   };
   for (const row of eligible) {
-    assert.deepEqual(choice(row.name), row.actions.map(() => true), 'every eligible action starts selected'); checkState(row.name, 'all');
-    assert.ok(f.text(group(row.name)).replaceAll(' ', '').includes(`已选${row.actions.length}/${row.actions.length}`));
+    assert.deepEqual(choice(row.name), row.actions.map(() => false), 'specific selection starts empty'); checkState(row.name, 'none');
+    assert.ok(f.text(group(row.name)).replaceAll(' ', '').includes(`已选0/${row.actions.length}`));
   }
-  assert.equal(f.button('允许所选权限').props.disabled, false);
-  for (const row of eligible) { clickMaster(row.name); checkState(row.name, 'none'); }
+  assert.equal(f.button('允许所选权限').props.disabled, true);
   assert.equal(f.button('允许所选权限').props.disabled, true);
   boxes('Test workspace')[1].props.onChange({ target: { checked: true } }); f.render();
   assert.deepEqual(choice('Test workspace'), [false, true, false], 'manual write does not silently add read');
@@ -249,109 +261,31 @@ test('tri-state group checkbox isolates exact resources/environments and preserv
   }
 });
 
-// Preset roles and "我的全部项目（含以后新建的）" (PermissionSimplification.v0.1 §3.1, Task 0756c748).
-test('roles: 全部 over 我的全部项目 by default; 指定项目 and 项目开发者 package the same rows', async t => {
+test('new all-context policy defaults to one macro; specified clears selection and presets change only selected resources', async t => {
   const f = fixture(); t.after(() => f.unmount());
-  const all5 = ['read', 'write', 'close', 'restore', 'audit'];
-  const A = 'project:11111111-1111-4111-8111-111111111111';
-  const B = 'project:22222222-2222-4222-8222-222222222222';
-  const eligible = [
-    { resource_kind: 'scope', resource_id: 'global', environment: 'canonical', name: 'Personal memory', actions: all5 },
-    { resource_kind: 'scope', resource_id: 'profile', environment: 'canonical', name: 'Personal profile', actions: all5 },
-    { resource_kind: 'scope', resource_id: 'project:*', environment: 'canonical', name: '我的全部项目（含以后新建的）', actions: all5 },
-    { resource_kind: 'scope', resource_id: A, environment: 'canonical', name: 'M2', actions: all5 },
-    { resource_kind: 'scope', resource_id: B, environment: 'canonical', name: 'Other', actions: all5 },
-  ];
-  f.emit('INITIAL_SESSION', session('A')); f.runTimers();
-  f.respond(0, { ...details('A'), requested_scopes: ['context:read', 'context:write', 'audit:read'], eligible }); await f.settle();
-  const pressed = () => f.nodes('button').filter(n => n.props['aria-pressed'] === true).map(n => f.text(n.props.children[0]));
-  assert.deepEqual(pressed(), ['全部']);
-  // Each send is answered with a refusal so the next one can go out.
-  const send = async () => {
-    f.button('允许所选权限').props.onClick(); await f.settle();
-    const index = f.requests.length - 1;
-    const body = JSON.parse(f.requests[index].options.body);
-    f.respond(index, { error: 'not this time' }); await f.settle();
-    return Object.fromEntries(body.selected.map(row => [row.resource_id, row.actions]));
-  };
-  const role = title => f.nodes('button').find(n => n.props['aria-pressed'] !== undefined && f.text(n).startsWith(title));
-  const radios = () => f.nodes('input').filter(n => n.props.type === 'radio');
-  const rangeNote = '这一组只在“项目范围”选“我的全部项目（含以后新建的）”时才勾选';
-  // Default (Decision d4c06a24): 全部 over 我的全部项目, one project:* row instead of each project.
-  assert.equal(radios().length, 2);
-  assert.equal(radios()[1].props.checked, true);
-  assert.ok(f.text().includes('以后新建的项目也自动包含在内'));
-  assert.ok(!f.text().includes(rangeNote));
-  // 高级 shows each project project:* covers as ticked and locked.
-  const coveredNote = '由“我的全部项目（含以后新建的）”覆盖';
-  const advancedRow = name => f.nodes('fieldset', f.nodes('details')[0]).find(n => f.text(f.nodes('legend', n)[0]).startsWith(name));
-  const boxes = name => f.nodes('input', advancedRow(name)).filter(n => n.props.type === 'checkbox' && n.props.className !== 'oauth-group-checkbox');
-  for (const name of ['M2', 'Other']) {
-    assert.deepEqual(boxes(name).map(n => [n.props.checked, n.props.disabled]), all5.map(() => [true, true]), name);
-    assert.ok(f.text(advancedRow(name)).includes(coveredNote));
-    assert.ok(f.text(advancedRow(name)).includes('已选 5/5 项'));
-  }
-  assert.ok(!f.text(advancedRow('Personal memory')).includes(coveredNote));
-  let sent = await send();
-  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': all5 }, 'covered projects are not sent on their own');
-  // Narrowing project:* in 高级 narrows what each covered project shows, and frees that action.
-  boxes('我的全部项目')[4].props.onChange({ target: { checked: false } }); f.render();
-  assert.deepEqual(boxes('M2').map(n => [n.props.checked, n.props.disabled]), [[true, true], [true, true], [true, true], [true, true], [false, false]]);
-  boxes('M2')[4].props.onChange({ target: { checked: true } }); f.render();
-  sent = await send();
-  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': ['read', 'write', 'close', 'restore'], [A]: ['audit'] });
-  role('全部').props.onClick(); f.render();
-  // 指定项目: everything on the current projects, nothing on project:*.
-  radios()[0].props.onChange(); f.render();
-  sent = await send();
-  assert.deepEqual(sent, { global: all5, profile: all5, [A]: all5, [B]: all5 });
-  // The empty project:* group in 高级 says why it is empty; projects are editable again.
-  assert.ok(f.text().includes(rangeNote));
-  assert.ok(!f.text().includes(coveredNote));
-  assert.ok(boxes('M2').every(n => n.props.checked && !n.props.disabled));
-  // 项目开发者: the projects get read/write/close/restore, Global read, profile nothing.
-  role('项目开发者').props.onClick(); f.render();
-  assert.deepEqual(pressed(), ['项目开发者']);
-  // Narrow to one project.
-  const projectBox = name => f.nodes('label').filter(n => n.props.className === 'oauth-project-choice')
-    .find(n => f.text(n).includes(name));
-  f.nodes('input', projectBox('Other'))[0].props.onChange({ target: { checked: false } }); f.render();
-  sent = await send();
-  assert.deepEqual(sent, { global: ['read'], [A]: ['read', 'write', 'close', 'restore'] });
-  // 我的全部项目（含以后新建的）: one project:* row instead of each project.
-  radios()[1].props.onChange(); f.render();
-  assert.ok(!f.text().includes(rangeNote), 'the note goes once project:* is selected');
-  sent = await send();
-  assert.deepEqual(sent, { global: ['read'], 'project:*': ['read', 'write', 'close', 'restore'] });
-  // 只读 keeps the range.
-  role('只读').props.onClick(); f.render();
-  sent = await send();
-  assert.deepEqual(sent, { global: ['read'], profile: ['read'], 'project:*': ['read'] });
-  // 全部 from 指定项目 moves the range to 我的全部项目.
-  radios()[0].props.onChange(); f.render();
-  role('全部').props.onClick(); f.render();
-  assert.equal(radios()[1].props.checked, true);
-  sent = await send();
-  assert.deepEqual(sent, { global: all5, profile: all5, 'project:*': all5 });
-  // A change in 高级 makes the role 自定义 and hides the range.
-  const advanced = f.nodes('details')[0];
-  assert.ok(advanced, '高级 holds the per-row checkboxes');
-  const firstBox = f.nodes('input', advanced).find(n => n.props.type === 'checkbox' && n.props.className !== 'oauth-group-checkbox');
-  firstBox.props.onChange({ target: { checked: false } }); f.render();
-  assert.deepEqual(pressed(), []);
-  assert.ok(f.text().includes('自定义'));
-  assert.equal(f.nodes('input').filter(n => n.props.type === 'radio').length, 0);
+  const full = ['read','write','close','restore','audit','feedback_submit'];
+  const eligible = [{resource_kind:'scope',resource_id:'contexts:*',environment:'canonical',actions:full},
+    {resource_kind:'scope',resource_id:'profile',environment:'canonical',actions:full.slice(0,5)},
+    {resource_kind:'scope',resource_id:'global',environment:'canonical',actions:full.slice(0,5)}];
+  f.emit('INITIAL_SESSION',session('A'));f.runTimers();f.respond(0,{...details('A'),requested_scopes:['context:read','context:write','audit:read'],eligible});await f.settle();
+  assert.ok(f.nodes('button').some(n=>n.props['aria-pressed']===true&&f.text(n).startsWith('全部操作')));
+  assert.equal(f.requests.length,1,'default is not consent');
+  f.button('允许所选权限').props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[1].options.body).selected,[{resource_kind:'scope',resource_id:'contexts:*',environment:'canonical',actions:full}]);
+  f.respond(1,{error:'review again'});await f.settle();
+  f.nodes('input').find(n=>n.props.type==='radio'&&!n.props.checked).props.onChange();f.render();
+  assert.equal(f.button('允许所选权限').props.disabled,true);
+  const personal=f.nodes('label').find(n=>n.props.className==='oauth-project-choice'&&f.text(n)==='个人资料');
+  f.nodes('input',personal)[0].props.onChange({target:{checked:true}});f.render();
+  f.nodes('button').find(n=>n.props['aria-pressed']!==undefined&&f.text(n).startsWith('只读')).props.onClick();f.render();
+  f.button('允许所选权限').props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[2].options.body).selected,[{resource_kind:'scope',resource_id:'profile',environment:'canonical',actions:['read']}]);
 });
 
-test('roles: no project:* row on offer means no 我的全部项目 choice', async t => {
-  const f = fixture(); t.after(() => f.unmount());
-  const A = 'project:11111111-1111-4111-8111-111111111111';
-  f.emit('INITIAL_SESSION', session('A')); f.runTimers();
-  f.respond(0, { ...details('A'), eligible: [
-    { resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] },
-    { resource_kind: 'scope', resource_id: A, environment: 'canonical', name: 'M2', actions: ['read'] }] }); await f.settle();
-  assert.equal(f.nodes('input').filter(n => n.props.type === 'radio').length, 1);
-  assert.ok(!f.text().includes('我的全部项目（含以后新建的）'));
+test('without write capability simple controls offer only read; no policy means empty specified selection',async t=>{
+ const f=fixture();t.after(()=>f.unmount());f.emit('INITIAL_SESSION',session('A'));f.runTimers();f.respond(0,details('A'));await f.settle();
+ assert.equal(f.nodes('input').filter(n=>n.props.type==='radio').length,1);assert.equal(f.button('允许所选权限').props.disabled,true);
+ assert.ok(!f.nodes('button').some(n=>n.props['aria-pressed']!==undefined&&/可编辑|全部操作/.test(f.text(n))));
 });
 
 test('roles and project range are styled: role cards show the chosen one, radios are not text inputs', () => {

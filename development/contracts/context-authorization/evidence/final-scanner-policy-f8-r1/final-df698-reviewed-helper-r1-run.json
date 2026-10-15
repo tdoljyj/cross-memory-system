@@ -1,0 +1,38 @@
+{
+  "schema": "clued.reviewed-artifact-helper-run.v1",
+  "authority_effect": "NONE",
+  "started_utc": "2026-10-14T18:35:49.376715+00:00",
+  "finished_utc": "2026-10-14T18:35:57.493171+00:00",
+  "runtime": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+  "python_version": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "args": [
+    "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "-B",
+    "scripts/ci/reviewed_gitleaks.py",
+    "--config",
+    ".gitleaks.toml",
+    "--output",
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-df698-491-reviewed.ignore"
+  ],
+  "cwd": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo",
+  "exit_code": 0,
+  "log": "final-df698-reviewed-helper-r1.log",
+  "log_sha256": "27edf584cd50e0425aad39ba38c6edcee238ae55375434fe874f67dfe893a6b8",
+  "log_bytes": 253,
+  "helper_result": {
+    "exact_historical_fingerprints": 491,
+    "default_rules_unchanged": true,
+    "global_fingerprints": 0,
+    "ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a",
+    "commits": 70,
+    "files_at_commits": 128,
+    "verified_git_objects": 130
+  },
+  "required_commits": 70,
+  "preflight_missing_commits": 0,
+  "git_fetch_not_needed": true,
+  "docker_self_test": false,
+  "generated_ignore_path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/scanner/pr818-final-df698-491-reviewed.ignore",
+  "generated_ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a",
+  "qualification": "Real local helper validation only, not scanner, CI, production or new-head acceptance."
+}

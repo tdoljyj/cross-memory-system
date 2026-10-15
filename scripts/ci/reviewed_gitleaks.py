@@ -1,5 +1,6 @@
 """Materialize reviewed, commit-specific findings; never suppress a global rule."""
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -12,13 +13,56 @@ import tomllib
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
-EXPECTED_COUNT = 484
+EXPECTED_COUNT = 493
 REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
 REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
 REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
 REVIEW_DOCUMENT_DIGEST_LINES = {
     150: "apps/clued-cloud/worker/delegated-oauth.ts",
     152: "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+}
+FINAL_EVIDENCE_COMMIT = "df69831166fcb43ee0dee982fb7158b770bf54a6"
+FINAL_EVIDENCE_ROOT = "development/contracts/context-authorization/evidence/final-integration-f8-r1"
+FINAL_SOURCE_PATH = "apps/clued-cloud/worker/delegated-oauth.ts"
+FINAL_ENVELOPE_PATH = FINAL_EVIDENCE_ROOT + "/FinalIntegrationExactEvidenceF8R1.v1.json"
+FINAL_DB_REPORT_PATH = FINAL_EVIDENCE_ROOT + "/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json"
+FINAL_LOCAL_REPORT_PATH = FINAL_EVIDENCE_ROOT + "/readable/ui-acceptance/final-integration-local-check-f8-r1.json"
+FINAL_SUBJECT_PATH = FINAL_EVIDENCE_ROOT + "/readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json"
+FINAL_EVIDENCE_DOCUMENTS = {
+    FINAL_DB_REPORT_PATH: {
+        "sha256": "a18e3e28f4c1ef9acf6079c2bfde0f6612a98fb4b28f093fcd1e848f3ce0682c",
+        "lines": {30: {"parent": "/source_before"}, 49: {"parent": "/source_after"}},
+    },
+    FINAL_LOCAL_REPORT_PATH: {
+        "sha256": "a92829ffc664ef81026078e3aa7e1c9eeb7901e9e314fff9f1563591d274ed2b",
+        "lines": {15: {"parent": "/source_before"}, 35: {"parent": "/source_after"}},
+    },
+    FINAL_SUBJECT_PATH: {
+        "sha256": "f11d35391b0b8877118d473a1917565ee53e8b7511ed999eeb889eb7f4bdfafa",
+        "lines": {230: {"parent": "/source"}},
+    },
+    FINAL_ENVELOPE_PATH: {
+        "sha256": "612941c58af479abc203c7c64ad3caeb6465f0851b8bcb6eb273c7eac2b68b39",
+        "lines": {
+            184: {"entry_index": 1, "entry_path": "ui-acceptance/final-integration-db-local-check-f8-r2.json",
+                  "original_sha256": "1b16fc3a1d3e1bbc725243da0e5479a2e4c779fab4a404fa800716af00523ed3",
+                  "original_bytes": 6231, "readable_path": FINAL_DB_REPORT_PATH,
+                  "parents": ["/source_before", "/source_after"]},
+            192: {"entry_index": 2, "entry_path": "ui-acceptance/final-three-path-integration-review-subject-f8-r1.json",
+                  "original_sha256": "e5fbe30d680ea41a00cb1117397ac5e40483a8312a251a4b67d7856d6a9b7459",
+                  "original_bytes": 20152, "readable_path": FINAL_SUBJECT_PATH,
+                  "parents": ["/source"]},
+        },
+    },
+}
+PATCH_DOCUMENT_COMMIT = "943eb9f7e579ed5f9decc15196fbd79876cce497"
+PATCH_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/final-scanner-policy-f8-r1/final-df698-reviewed-artifacts-delta-r1.patch"
+PATCH_DOCUMENT_SHA256 = "2a0703306eec7a2c7d35343823a5b8f3bfc2a2822a72882c478c5e17e21f4a68"
+PATCH_HELPER_PATH = "scripts/ci/reviewed_gitleaks.py"
+PATCH_HELPER_SHA256 = "3cff545f0d26610de0097165cf9dc6d32421707357cf960a9f38af22b4d0e32f"
+PATCH_METADATA_LINES = {
+    46: {"prefix": " ", "constant": "REVIEW_DOCUMENT_COMMIT", "object": REVIEW_DOCUMENT_COMMIT, "helper_line": 18},
+    52: {"prefix": "+", "constant": "FINAL_EVIDENCE_COMMIT", "object": FINAL_EVIDENCE_COMMIT, "helper_line": 24},
 }
 IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 KINDS = {
@@ -67,7 +111,7 @@ def parse_records(text):
         # The A03 register is admitted by exact path only (reviewed 2026-09-24, PR #330).
         if (not (path.startswith(("artifacts/", "scripts/", "work/", "apps/clued-cloud/tests/"))
                  or path == "development/contracts/information-flow/known-limitations.m0d.v0.1.json"
-                 or path == REVIEW_DOCUMENT_PATH)
+                 or path == REVIEW_DOCUMENT_PATH or path in FINAL_EVIDENCE_DOCUMENTS or path == PATCH_DOCUMENT_PATH)
                 or any(p in ("", ".", "..") for p in path.split("/"))
                 or any(c in path for c in "\\*?[]\r\n")
                 or not re.fullmatch(r"[1-9][0-9]*", line)):
@@ -83,9 +127,32 @@ def parse_records(text):
                 or int(line) not in REVIEW_DOCUMENT_DIGEST_LINES
                 or record["kinds"] != ["ARTIFACT_DIGEST"]):
             raise ValueError("Authorization review exception identity changed")
+        if path in FINAL_EVIDENCE_DOCUMENTS and (
+                commit != FINAL_EVIDENCE_COMMIT or rule != "generic-api-key"
+                or int(line) not in FINAL_EVIDENCE_DOCUMENTS[path]["lines"]
+                or record["kinds"] != ["ARTIFACT_DIGEST"]):
+            raise ValueError("Final evidence exception identity changed")
+        if path == PATCH_DOCUMENT_PATH and (
+                commit != PATCH_DOCUMENT_COMMIT or rule != "sourcegraph-access-token"
+                or int(line) not in PATCH_METADATA_LINES or record["kinds"] != ["GIT_OBJECT_METADATA"]):
+            raise ValueError("Patch metadata exception identity changed")
         fingerprints.append(record["fingerprint"])
     if len(set(fingerprints)) != len(fingerprints):
         raise ValueError("Duplicate reviewed fingerprint")
+    expected_final = {
+        f"{FINAL_EVIDENCE_COMMIT}:{path}:generic-api-key:{line}"
+        for path, document in FINAL_EVIDENCE_DOCUMENTS.items() for line in document["lines"]
+    }
+    actual_final = {record["fingerprint"] for record in records
+                    if record["fingerprint"].split(":")[1] in FINAL_EVIDENCE_DOCUMENTS}
+    if actual_final != expected_final:
+        raise ValueError("Final evidence exception set changed")
+    expected_patch = {f"{PATCH_DOCUMENT_COMMIT}:{PATCH_DOCUMENT_PATH}:sourcegraph-access-token:{line}"
+                      for line in PATCH_METADATA_LINES}
+    actual_patch = {record["fingerprint"] for record in records
+                    if record["fingerprint"].split(":")[1] == PATCH_DOCUMENT_PATH}
+    if actual_patch != expected_patch:
+        raise ValueError("Patch metadata exception set changed")
     return records
 
 
@@ -131,6 +198,88 @@ def verify_auth_review_digest(repo, text, line_number):
         raise ValueError("Authorization digest differs from immutable artifact")
 
 
+def _final_pointer(document, pointer):
+    value = document
+    for part in pointer.strip("/").split("/"):
+        value = value[part]
+    return value
+
+
+def _final_source_digest(repo, digest):
+    blob = run(["git", "cat-file", "blob", f"{FINAL_EVIDENCE_COMMIT}:{FINAL_SOURCE_PATH}"], cwd=repo)
+    if not isinstance(digest, str) or hashlib.sha256(blob).hexdigest() != digest:
+        raise ValueError("Final evidence digest differs from immutable artifact")
+
+
+def verify_final_evidence_digest(repo, path, text, line_number):
+    """Admit only the seven classified locations and their immutable artifact proof."""
+    pinned = FINAL_EVIDENCE_DOCUMENTS.get(path)
+    if pinned is None or line_number not in pinned["lines"]:
+        raise ValueError("Unreviewed final evidence location")
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != pinned["sha256"]:
+        raise ValueError("Final evidence document bytes changed")
+    spec = pinned["lines"][line_number]
+    document = json.loads(text)
+    line = text.splitlines()[line_number - 1].strip().rstrip(",")
+    location = json.loads("{" + line + "}")
+    if "parent" in spec:
+        digest = _final_pointer(document, spec["parent"])[FINAL_SOURCE_PATH]
+        if location != {FINAL_SOURCE_PATH: digest}:
+            raise ValueError("Final evidence digest location changed")
+        _final_source_digest(repo, digest)
+        return
+    entry = document["entries"][spec["entry_index"]]
+    if (set(entry) != {"path", "original_sha256", "original_bytes", "original_base64", "git_text_sha256", "git_text_transform"}
+            or entry["path"] != spec["entry_path"]
+            or location != {"original_base64": entry["original_base64"]}):
+        raise ValueError("Final evidence encoded location changed")
+    if entry["original_sha256"] != spec["original_sha256"]:
+        raise ValueError("Final evidence original digest changed")
+    if type(entry["original_bytes"]) is not int or entry["original_bytes"] != spec["original_bytes"]:
+        raise ValueError("Final evidence original size changed")
+    try:
+        original = base64.b64decode(entry["original_base64"], validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("Final evidence Base64 invalid") from None
+    if (len(original) != entry["original_bytes"]
+            or hashlib.sha256(original).hexdigest() != entry["original_sha256"]):
+        raise ValueError("Final evidence decoded original bytes changed")
+    if entry["git_text_transform"] != "CRLF_to_LF":
+        raise ValueError("Final evidence transform changed")
+    normalized = original.replace(b"\r\n", b"\n")
+    readable = run(["git", "cat-file", "blob", f"{FINAL_EVIDENCE_COMMIT}:{spec['readable_path']}"], cwd=repo)
+    readable_pin = FINAL_EVIDENCE_DOCUMENTS[spec["readable_path"]]["sha256"]
+    if (entry["git_text_sha256"] != readable_pin or hashlib.sha256(readable).hexdigest() != readable_pin
+            or normalized != readable):
+        raise ValueError("Final evidence readable artifact changed")
+    decoded = json.loads(original.decode("utf-8"))
+    for parent in spec["parents"]:
+        _final_source_digest(repo, _final_pointer(decoded, parent)[FINAL_SOURCE_PATH])
+
+
+def verify_patch_git_metadata(repo, text, line_number):
+    """Prove both diff occurrences are the exact pinned helper's ancestor commits."""
+    if line_number not in PATCH_METADATA_LINES:
+        raise ValueError("Unreviewed patch metadata line")
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != PATCH_DOCUMENT_SHA256:
+        raise ValueError("Patch document bytes changed")
+    spec = PATCH_METADATA_LINES[line_number]
+    assignment = f'{spec["constant"]} = "{spec["object"]}"'
+    if text.splitlines()[line_number - 1] != spec["prefix"] + assignment:
+        raise ValueError("Patch metadata prefix or assignment changed")
+    helper = run(["git", "cat-file", "blob", f"{PATCH_DOCUMENT_COMMIT}:{PATCH_HELPER_PATH}"], cwd=repo)
+    if hashlib.sha256(helper).hexdigest() != PATCH_HELPER_SHA256:
+        raise ValueError("Patch helper bytes changed")
+    if helper.decode("utf-8").splitlines()[spec["helper_line"] - 1] != assignment:
+        raise ValueError("Patch helper constant identity changed")
+    if run(["git", "cat-file", "-t", spec["object"]], cwd=repo).strip() != b"commit":
+        raise ValueError("Patch metadata object is not a commit")
+    ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", spec["object"], PATCH_DOCUMENT_COMMIT],
+                              cwd=repo, capture_output=True, check=False)
+    if ancestor.returncode:
+        raise ValueError("Patch metadata object is not an ancestor")
+
+
 def verify_history(repo, records):
     commits = _ensure_reviewed_commits(repo, records)
     blobs = {}
@@ -144,7 +293,11 @@ def verify_history(repo, records):
             raise ValueError("Reviewed location no longer resolves")
         if path == REVIEW_DOCUMENT_PATH:
             verify_auth_review_digest(repo, text, int(line))
-        if rule == "sourcegraph-access-token":
+        if path in FINAL_EVIDENCE_DOCUMENTS:
+            verify_final_evidence_digest(repo, path, text, int(line))
+        if path == PATCH_DOCUMENT_PATH:
+            verify_patch_git_metadata(repo, text, int(line))
+        elif rule == "sourcegraph-access-token":
             if not path.endswith("/IndependentEnvOrderSourcePublicationAcceptance.json") or "sgp_" in text:
                 raise ValueError("Unexpected historical object subject")
     # Verify all bare object identifiers in both reviewed document versions.

@@ -24,7 +24,7 @@ function contextOf(args: Json, toolName: string): string | null {
   const replacement = args.replacement && typeof args.replacement === 'object' ? (args.replacement as Json).scope : undefined;
   const named = [scope, args.context_key, args.event_scope, replacement].find(value => value !== undefined && value !== null);
   if (named !== undefined) return typeof named === 'string' && CONTEXT.test(named.toLowerCase()) ? named.toLowerCase() : null;
-  // The database reads such calls as Global; a call naming a project in some
+  // The database reads such calls as personal records (global); a call naming a project in some
   // other way is not guessed.
   return projectId ? null : 'global';
 }
