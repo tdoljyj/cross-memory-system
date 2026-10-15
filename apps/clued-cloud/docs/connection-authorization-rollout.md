@@ -139,7 +139,8 @@ configure these on the same reviewed Worker version:
 | `SUPABASE_PUBLISHABLE_KEY` | Publishable key for that same environment; never a service-role key |
 | `OAUTH_KV` | Dedicated OAuth provider namespace for that environment |
 | `CLUED_AUTHORIZATION_ISSUER_TOKEN` | Fresh server-only random credential, generated and stored through the approved secret channel; never commit it or paste it into chat |
-| Private issuer row | SHA256 of that credential, exact `{origin}/mcp` resource, descriptive name, active status |
+| Private issuer identity | Independent nonsecret 64-hex identity key in `authorization_issuers_v12.token_hash`, exact `{origin}/mcp` resource, descriptive name and active status; never store a new credential proof as its identity |
+| Issuer credential generation | After the identity/credential successor is installed, stage and activate only `cv1:` + SHA256(`clued.credential-verifier.v1:` + SHA256(secret)); use the offline database operator, never an API-role bypass. See [Kooyumi provisioning](kooyumi-issuer-provision.md) |
 | `CLUED_DEVELOPMENT_CONTEXT_V14` | Explicitly enable the new development tools; the retired `CONTEXT_OWNERSHIP_V11` flag does not enable them |
 | Auth redirect allowlist | Include the exact approved origin `/?type=recovery` and the reviewed account/invitation verification callbacks |
 

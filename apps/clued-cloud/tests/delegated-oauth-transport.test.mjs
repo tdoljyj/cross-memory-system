@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
 import { build, stop } from 'esbuild';
+import { selectOAuthOrigin } from '../worker/oauth-origin.mjs';
 
 // Real pinned OAuth provider and application transport; fake DB is deliberately
 // limited to HTTP wiring. SQL authorization is tested separately on PostgreSQL.
@@ -25,10 +26,12 @@ class MemoryKV {
   async list({ prefix = '' } = {}) { return { keys: [...this.rows.keys()].filter(k => k.startsWith(prefix)).map(name => ({ name })), list_complete: true, cursor: '' }; }
 }
 const origin = 'https://clued.example';
+const newOrigin = 'https://kooyumi.example';
 const resource = `${origin}/mcp`;
 const originalFetch = globalThis.fetch;
-function fixture() {
+function fixture({ dualOrigin = false } = {}) {
   const bindings = new Map(); const prepared = new Map(); const calls = []; const background = [];
+  const authorizationRequests = new Map(), bindingIssuers = new Map(), fallbackCalls = [];
   const users = new Map([
     ['human-session-test', { id: '10000000-0000-4000-8000-000000000001', email: 'test@example.invalid' }],
     ['other-human-session-test', { id: '10000000-0000-4000-8000-000000000002', email: 'other@example.invalid' }],
@@ -38,7 +41,18 @@ function fixture() {
   const grantScopes = ['context:read', 'context:write'];
   const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
     CLUED_AUTHORIZATION_ISSUER_TOKEN: 'isolated-issuer-test-value', SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'test-public-key', PROJECT_VIEWS_V2: 'true' };
-  const run = (route, options = {}) => handle(new Request(`${origin}${route}`, options), env, { waitUntil(promise) { background.push(promise); }, passThroughOnException() {}, props: {} }, async () => new Response('fallback', { status: 404 }));
+  if (dualOrigin) Object.assign(env, { KOOYUMI_OAUTH_ORIGIN: newOrigin,
+    KOOYUMI_AUTHORIZATION_ISSUER_TOKEN: 'independent-new-issuer-test-value', KOOYUMI_OAUTH_KV: new MemoryKV() });
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const resourceIssuers = new Map([[resource, hash(env.CLUED_AUTHORIZATION_ISSUER_TOKEN)]]);
+  if (dualOrigin) resourceIssuers.set(newOrigin + '/mcp', hash(env.KOOYUMI_AUTHORIZATION_ISSUER_TOKEN));
+  const run = (route, options = {}, requestOrigin = origin) => {
+    const request = new Request(`${requestOrigin}${route}`, options), selected = selectOAuthOrigin(request, env);
+    return handle(request, selected, { waitUntil(promise) { background.push(promise); }, passThroughOnException() {}, props: {} }, async next => {
+      fallbackCalls.push({ request: next, origin: selected.CLUED_OAUTH_ORIGIN, storage: selected.OAUTH_KV });
+      return new Response('fallback', { status: 404, headers: { 'x-fixture-oauth-origin': selected.CLUED_OAUTH_ORIGIN } });
+    });
+  };
   globalThis.fetch = async (url, options = {}) => {
     const name = new URL(url).pathname.split('/').at(-1); const body = options.body ? JSON.parse(options.body) : {};
     calls.push({ name, body, headers: options.headers });
@@ -51,24 +65,33 @@ function fixture() {
       return users.has(token) ? Response.json(users.get(token)) : Response.json({ error: 'invalid_session' }, { status: 401 });
     }
     if (name === 'clued_authorization_prepare_v12') {
-      if (!prepared.has(body.p_request.request_digest)) prepared.set(body.p_request.request_digest, { request_id: crypto.randomUUID(), version: 1,
-        eligible: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', name: 'My memory', actions: ['read', 'write'] }] });
+      const expectedIssuer = resourceIssuers.get(body.p_request.resource);
+      if (!expectedIssuer || body.p_issuer_hash !== expectedIssuer) return Response.json({ error: 'issuer_resource_mismatch' }, { status: 403 });
+      if (!prepared.has(body.p_request.request_digest)) {
+        const entry = { request_id: crypto.randomUUID(), version: 1,
+          eligible: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', name: 'My memory', actions: ['read', 'write'] }] };
+        prepared.set(body.p_request.request_digest, entry);
+        authorizationRequests.set(entry.request_id, { resource: body.p_request.resource, issuerHash: expectedIssuer });
+      }
       return Response.json(prepared.get(body.p_request.request_digest));
     }
     if (name === 'clued_authorization_approve_v12') {
       const entry = [...prepared.values()].find(p => p.request_id === body.p_request_id);
+      if (authorizationRequests.get(body.p_request_id)?.issuerHash !== body.p_issuer_hash) return Response.json({ error: 'issuer_request_mismatch' }, { status: 403 });
       if (!entry || entry.version !== body.p_base_version) return Response.json({ error: 'conflict' }, { status: 409 });
       entry.version++;
       const binding = { binding_id: crypto.randomUUID(), active: true, version: 1, expires_at: body.p_expires_at, granted_scopes: [...grantScopes] };
+      bindingIssuers.set(binding.binding_id, authorizationRequests.get(entry.request_id));
       bindings.set(body.p_binding_hash, binding); return Response.json(binding);
     }
     if (name === 'clued_authorization_revoke_issuer_v12') {
       const binding = [...bindings.values()].find(row => row.binding_id === body.p_binding_id);
-      if (!binding || body.p_issuer_hash !== createHash('sha256').update(env.CLUED_AUTHORIZATION_ISSUER_TOKEN).digest('hex')) return Response.json({ error: 'denied' }, { status: 403 });
+      if (!binding || body.p_issuer_hash !== bindingIssuers.get(binding.binding_id)?.issuerHash) return Response.json({ error: 'denied' }, { status: 403 });
       binding.active = false; return Response.json({ status: 'revoked' });
     }
     if (name === 'clued_authorization_deny_v12') {
       const entry = [...prepared.values()].find(p => p.request_id === body.p_request_id);
+      if (authorizationRequests.get(body.p_request_id)?.issuerHash !== body.p_issuer_hash) return Response.json({ error: 'issuer_request_mismatch' }, { status: 403 });
       if (!entry || entry.version !== body.p_base_version) return Response.json({ error: 'conflict' }, { status: 409 });
       entry.version++; return Response.json({ status: 'denied' });
     }
@@ -93,34 +116,35 @@ function fixture() {
     if (name === 'clued_mcp_projection_refresh_claim') return Response.json({ status: 'idle' });
     throw new Error(`Unexpected storage route: ${name}`);
   };
-  return { env, run, bindings, calls, background, storageGrants, grantScopes, nativeManagement, users };
+  return { env, run, bindings, calls, background, storageGrants, grantScopes, nativeManagement, users, authorizationRequests, bindingIssuers, fallbackCalls };
 }
-async function client(f) {
-  const response = await f.run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Isolated client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
+async function client(f, requestOrigin = origin) {
+  const response = await f.run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Isolated client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) }, requestOrigin);
   assert.equal(response.status, 201); return (await response.json()).client_id;
 }
-async function begin(f, clientId, humanToken = 'human-session-test') {
+async function begin(f, clientId, humanToken = 'human-session-test', requestOrigin = origin) {
   const verifier = randomBytes(32).toString('base64url');
-  const query = new URLSearchParams({ client_id: clientId, redirect_uri: 'https://client.example/callback', response_type: 'code', scope: 'context:read context:write', state: 'test-state', resource,
+  const query = new URLSearchParams({ client_id: clientId, redirect_uri: 'https://client.example/callback', response_type: 'code', scope: 'context:read context:write', state: 'test-state', resource: requestOrigin + '/mcp',
     code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' });
-  const response = await f.run(`/oauth/authorize?${query}`);
+  const response = await f.run(`/oauth/authorize?${query}`, {}, requestOrigin);
   assert.equal(response.status, 302, await response.clone().text());
   const id = new URL(response.headers.get('Location')).searchParams.get('request_id');
   const cookie = response.headers.get('Set-Cookie').split(';')[0];
   const headers = { Authorization: `Bearer ${humanToken}`, Cookie: cookie };
-  const read = await f.run(`/oauth/request?request_id=${id}`, { headers });
+  const read = await f.run(`/oauth/request?request_id=${id}`, { headers }, requestOrigin);
   assert.equal(read.status, 200, await read.clone().text());
-  return { id, cookie, headers, verifier, prepared: await read.json() };
+  return { id, cookie, headers, verifier, prepared: await read.json(), authorizationLocation: response.headers.get('Location') };
 }
-async function approve(f, clientId, flow, days = 1) {
-  const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST', headers: { ...flow.headers, Origin: origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) });
+async function approve(f, clientId, flow, days = 1, requestOrigin = origin) {
+  const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST', headers: { ...flow.headers, Origin: requestOrigin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) }, requestOrigin);
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(JSON.stringify(body).includes('clued_bnd_'), false);
   assert.equal(JSON.stringify(body).includes('human-session-test'), false);
+  flow.authorizationRedirect = body.redirect_url;
   const code = new URL(body.redirect_url).searchParams.get('code');
-  const token = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: 'https://client.example/callback', code_verifier: flow.verifier, resource }) });
+  const token = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', code, client_id: clientId, redirect_uri: 'https://client.example/callback', code_verifier: flow.verifier, resource: requestOrigin + '/mcp' }) }, requestOrigin);
   assert.equal(token.status, 200, await token.clone().text());
   return await token.json();
 }
@@ -134,8 +158,8 @@ const profileRpc = args => ({ jsonrpc: '2.0', id: 'profile-fixture', method: 'to
 const mcpRequest = (token, payload, headers = {}) => ({ method: 'POST', headers: {
   Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers,
 }, body: JSON.stringify(payload) });
-async function profile(f, access, args = {}) {
-  const response = await f.run('/mcp', mcpRequest(access, profileRpc(args)));
+async function profile(f, access, args = {}, requestOrigin = origin) {
+  const response = await f.run('/mcp', mcpRequest(access, profileRpc(args)), requestOrigin);
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal(response.headers.get('cache-control'), 'no-store');
   const envelope = await response.json();
@@ -144,6 +168,127 @@ async function profile(f, access, args = {}) {
   assert.deepEqual(JSON.parse(envelope.result.content[0].text), envelope.result.structuredContent);
   return envelope.result;
 }
+
+async function independentOriginGrants(f) {
+  assert.notEqual(f.env.OAUTH_KV, f.env.KOOYUMI_OAUTH_KV);
+  const old = { origin, clientId: await client(f) };
+  old.flow = await begin(f, old.clientId);
+  old.token = await approve(f, old.clientId, old.flow);
+  const oldBeforeNewAuthorization = new Map(f.env.OAUTH_KV.rows);
+  const current = { origin: newOrigin, clientId: await client(f, newOrigin) };
+  current.flow = await begin(f, current.clientId, 'human-session-test', newOrigin);
+  current.token = await approve(f, current.clientId, current.flow, 1, newOrigin);
+  assert.deepEqual(f.env.OAUTH_KV.rows, oldBeforeNewAuthorization, 'a new issuer authorization must not revoke or rewrite old grants');
+  return { old, current };
+}
+const refreshOn = (f, target, refreshToken = target.token.refresh_token) => f.run('/oauth/token', { method: 'POST',
+  headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({
+    grant_type: 'refresh_token', refresh_token: refreshToken, client_id: target.clientId, resource: target.origin + '/mcp',
+  }) }, target.origin);
+
+test('independent real OAuth issuers publish matching discovery, consent and profile identity without moving old grants', async () => {
+  const f = fixture({ dualOrigin: true });
+  try {
+    const { old, current } = await independentOriginGrants(f);
+    assert.notEqual(old.clientId, current.clientId);
+    assert.notEqual(old.token.access_token, current.token.access_token);
+    assert.equal(f.bindings.size, 2);
+    for (const grant of [old, current]) {
+      const protectedResponse = await f.run('/.well-known/oauth-protected-resource/mcp', {}, grant.origin);
+      assert.equal(protectedResponse.status, 200);
+      const protectedMetadata = await protectedResponse.json();
+      assert.equal(protectedMetadata.resource, grant.origin + '/mcp');
+      assert.deepEqual(protectedMetadata.authorization_servers, [grant.origin]);
+      const issuerResponse = await f.run('/.well-known/oauth-authorization-server', {}, grant.origin);
+      assert.equal(issuerResponse.status, 200);
+      const issuer = await issuerResponse.json();
+      assert.equal(issuer.issuer, grant.origin);
+      assert.equal(issuer.authorization_endpoint, grant.origin + '/oauth/authorize');
+      assert.equal(issuer.token_endpoint, grant.origin + '/oauth/token');
+      assert.equal(new URL(grant.flow.authorizationLocation).origin, grant.origin);
+      assert.equal(new URL(grant.flow.authorizationRedirect).searchParams.get('iss'), grant.origin);
+      assert.deepEqual((await profile(f, grant.token.access_token, {}, grant.origin)).structuredContent, { id: profileUserId });
+      const fallback = await f.run('/oauth/consent', {}, grant.origin);
+      assert.equal(fallback.status, 404, 'the fixture retains the Native-page fallback boundary');
+      assert.equal(fallback.headers.get('x-fixture-oauth-origin'), grant.origin);
+      assert.equal(f.fallbackCalls.at(-1).origin, grant.origin);
+      assert.equal(f.fallbackCalls.at(-1).storage, grant.origin === origin ? f.env.OAUTH_KV : f.env.KOOYUMI_OAUTH_KV);
+    }
+    const hashes = f.calls.filter(row => row.name === 'clued_authorization_prepare_v12')
+      .map(row => [row.body.p_request.resource, row.body.p_issuer_hash]);
+    const expected = new Map([[resource, createHash('sha256').update(f.env.CLUED_AUTHORIZATION_ISSUER_TOKEN).digest('hex')],
+      [newOrigin + '/mcp', createHash('sha256').update(f.env.KOOYUMI_AUTHORIZATION_ISSUER_TOKEN).digest('hex')]]);
+    assert.deepEqual(new Set(hashes.map(([resource]) => resource)), new Set(expected.keys()));
+    for (const [resource, issuerHash] of hashes) assert.equal(issuerHash, expected.get(resource));
+    assert.ok([...f.bindings.values()].every(binding => binding.active));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('access and refresh tokens cannot cross issuer KV namespaces and correct refresh remains usable in both directions', async () => {
+  const f = fixture({ dualOrigin: true });
+  try {
+    const { old, current } = await independentOriginGrants(f);
+    for (const [source, target] of [[old, current], [current, old]]) {
+      const oldRows = new Map(f.env.OAUTH_KV.rows), newRows = new Map(f.env.KOOYUMI_OAUTH_KV.rows), before = f.calls.length;
+      const access = await f.run('/mcp', mcpRequest(source.token.access_token, profileRpc({})), target.origin);
+      assert.ok(access.status >= 400);
+      assert.equal((await access.text()).includes(profileUserId), false);
+      // Use the target's valid client and resource so an invalid-client check cannot mask KV isolation.
+      const refresh = await refreshOn(f, target, source.token.refresh_token);
+      assert.ok(refresh.status >= 400);
+      assert.equal((await refresh.text()).includes(profileUserId), false);
+      assert.deepEqual(f.env.OAUTH_KV.rows, oldRows);
+      assert.deepEqual(f.env.KOOYUMI_OAUTH_KV.rows, newRows);
+      assert.equal(f.calls.length, before, 'cross-issuer tokens never reach Binding or business RPCs');
+    }
+    for (const grant of [old, current]) {
+      const response = await refreshOn(f, grant);
+      assert.equal(response.status, 200, await response.clone().text());
+      grant.token = await response.json();
+      assert.deepEqual((await profile(f, grant.token.access_token, {}, grant.origin)).structuredContent, { id: profileUserId });
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+for (const revokeOrigin of [origin, newOrigin]) {
+  test(`revocation at ${revokeOrigin} affects only its own issuer grant`, async () => {
+    const f = fixture({ dualOrigin: true });
+    try {
+      const { old, current } = await independentOriginGrants(f);
+      const source = revokeOrigin === origin ? old : current, other = source === old ? current : old;
+      const otherStorage = other.origin === origin ? f.env.OAUTH_KV : f.env.KOOYUMI_OAUTH_KV;
+      const otherRows = new Map(otherStorage.rows);
+      const response = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: source.token.refresh_token, token_type_hint: 'refresh_token', client_id: source.clientId }) }, source.origin);
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.deepEqual(otherStorage.rows, otherRows);
+      const revoke = f.calls.filter(row => row.name === 'clued_authorization_revoke_issuer_v12').at(-1);
+      const expectedToken = source.origin === origin ? f.env.CLUED_AUTHORIZATION_ISSUER_TOKEN : f.env.KOOYUMI_AUTHORIZATION_ISSUER_TOKEN;
+      assert.equal(revoke.body.p_issuer_hash, createHash('sha256').update(expectedToken).digest('hex'));
+      assert.equal(f.bindingIssuers.get(revoke.body.p_binding_id).resource, source.origin + '/mcp');
+      assert.ok((await f.run('/mcp', mcpRequest(source.token.access_token, profileRpc({})), source.origin)).status >= 400);
+      assert.ok((await refreshOn(f, source)).status >= 400);
+      assert.deepEqual((await profile(f, other.token.access_token, {}, other.origin)).structuredContent, { id: profileUserId });
+      const refreshed = await refreshOn(f, other);
+      assert.equal(refreshed.status, 200, await refreshed.clone().text());
+      assert.equal([...f.bindings.values()].filter(binding => binding.active).length, 1);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+}
+
+test('the fake authorization boundary rejects an issuer secret that does not own the requested resource', async () => {
+  const f = fixture({ dualOrigin: true });
+  try {
+    const id = await client(f, newOrigin);
+    f.env.KOOYUMI_AUTHORIZATION_ISSUER_TOKEN = 'unregistered-independent-issuer';
+    await assert.rejects(begin(f, id, 'human-session-test', newOrigin), error => error.actual === 403 && error.expected === 200);
+    assert.equal(f.authorizationRequests.size, 0);
+    assert.equal(f.bindings.size, 0);
+    const request = f.calls.filter(row => row.name === 'clued_authorization_prepare_v12').at(-1);
+    assert.equal(request.body.p_request.resource, newOrigin + '/mcp');
+    assert.equal(request.body.p_issuer_hash, createHash('sha256').update('unregistered-independent-issuer').digest('hex'));
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('real OAuth profile publishes its exclusive identity schema and account marker without changing ordinary tools', async () => {
   const f = fixture();
