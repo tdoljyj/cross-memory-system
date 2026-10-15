@@ -151,6 +151,32 @@ async function approve(f, clientId, flow, days = 1, requestOrigin = origin, extr
 const call = (token, name) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { record_type: 'state' } } }) });
 
+test('consent forwards independent future policies and exact current environment actions without rewriting the selection', async () => {
+  // The controlled DB only checks HTTP wiring here; the PostgreSQL suite proves eligibility and enforcement.
+  const f = fixture();
+  try {
+    const id = await client(f), flow = await begin(f, id);
+    const selected = [
+      { resource_kind: 'scope', resource_id: 'owned-project-records:future', environment: 'canonical', actions: ['read'] },
+      { resource_kind: 'scope', resource_id: 'owned-project-contexts:future', environment: 'canonical', actions: ['write', 'feedback_submit'] },
+      { resource_kind: 'context', resource_id: '20000000-0000-4000-8000-000000000002', environment: 'test', actions: ['read'] },
+      { resource_kind: 'context', resource_id: '20000000-0000-4000-8000-000000000002', environment: 'preview', actions: ['write'] },
+    ];
+    const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST',
+      headers: { ...flow.headers, Origin: origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days: 30, selected }) });
+    assert.equal(response.status, 200);
+    const approved = f.calls.filter(row => row.name === 'clued_authorization_approve_v12');
+    assert.equal(approved.length, 1);
+    assert.deepEqual(approved[0].body.p_selected, selected);
+    assert.equal(approved[0].body.p_base_version, flow.prepared.version);
+    const body = await response.json();
+    assert.ok(new URL(body.redirect_url).searchParams.get('code'));
+    assert.equal(JSON.stringify(body).includes('clued_bnd_'), false);
+    assert.equal(JSON.stringify(body).includes('human-session-test'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 const profileUserId = '10000000-0000-4000-8000-000000000001';
 const profileOtherUserId = '10000000-0000-4000-8000-000000000002';
 const profileRpc = args => ({ jsonrpc: '2.0', id: 'profile-fixture', method: 'tools/call',

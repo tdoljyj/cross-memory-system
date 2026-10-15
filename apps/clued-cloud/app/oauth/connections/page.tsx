@@ -5,7 +5,7 @@ import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabase-browser";
 import Link from "next/link";
 import HeadlessBindings from "./headless";
-import { ALL_CONTEXTS, authorizationDisplayOrder, operationSummary, resourceTitle, type Resource } from '../../../lib/context-authorization';
+import { ALL_CONTEXTS, FUTURE_PROJECT_CONTEXTS, authorizationDisplayOrder, isFuturePolicy, isMacro, operationSummary, resourceTitle, type Resource } from '../../../lib/context-authorization';
 
 const API = "/oauth/connections/api";
 // Headless Bindings share the v12 authorization table; they are listed and
@@ -155,22 +155,24 @@ function coveredByAll(binding: Binding, selection: Selection, grant: Grant) {
     && chosenActions(binding, selection, all).length > 0;
 }
 function selectedGrants(binding: Binding, selection: Selection): Grant[] {
-  return binding.grants.filter(grant => binding.selection_format === "sources_v1" ? ![ALL_CONTEXTS, ALL_PROJECTS].includes(grant.resource_id) : !coveredByAll(binding, selection, grant)).map(grant => ({
+  return binding.grants.filter(grant => !isFuturePolicy(grant) && (binding.selection_format === "sources_v1" ? !isMacro(grant) : !coveredByAll(binding, selection, grant))).map(grant => ({
     resource_kind: grant.resource_kind, resource_id: grant.resource_id, environment: grant.environment,
     actions: chosenActions(binding, selection, grant),
   })).filter(grant => grant.actions.length > 0);
 }
 function rangeName(binding: Binding): string {
   const all = binding.grants.some(grant => grant.resource_kind === 'scope' && grant.resource_id === ALL_CONTEXTS);
-  if (all) return binding.coverage?.status === 'complete' ? '全部上下文（含以后新建的）' : '全部上下文策略 · 自定义／受限';
+  if (all) return binding.coverage?.status === 'complete' ? '全部权限（含以后新建的自有内容）' : '全部权限策略 · 自定义／受限';
   return authorizationDisplayOrder(binding.grants.filter(grant => !(grant.resource_kind === 'scope' && grant.resource_id.startsWith('project:') && grant.resource_id !== ALL_PROJECTS && allProjectsGrant(binding))))
     .map(resourceTitle).join('、') || '无业务范围';
 }
 const grantTitle = resourceTitle;
-const sourceTitle = (source: Source) => source.kind === 'contexts_policy' ? '全部上下文策略（已有和未来）'
+const sourceTitle = (source: Source) => source.kind === 'contexts_policy' ? '全部权限策略（已有和未来）'
+  : source.kind === 'future_owned_project_policy' ? '未来项目记录'
+  : source.kind === 'future_owned_context_policy' ? '未来项目上下文'
   : source.kind === 'legacy_project_policy' ? '原自有项目正式记录策略' : source.kind === 'legacy_effective_baseline' ? '原授权保全' : '独立明确授权';
 function exceptionsFor(binding: Binding, selection: Selection) {
-  return binding.grants.filter(grant => grant.resource_id !== ALL_CONTEXTS && grant.resource_id !== ALL_PROJECTS).flatMap(grant => {
+  return binding.grants.filter(grant => !isMacro(grant)).flatMap(grant => {
     const before = grant.effective_actions ?? grant.actions;
     const kept = chosenActions(binding, selection, grant);
     const removed = before.filter(action => !kept.includes(action));
@@ -595,9 +597,9 @@ export default function OAuthConnectionsPage() {
                 <div><dt>有效期至</dt><dd><time dateTime={binding.expires_at}>{new Date(binding.expires_at).toLocaleString("zh-CN")}</time></dd></div>
                 <div><dt>连接编号</dt><dd>{binding.binding_id}</dd></div>
                 <div><dt>范围</dt><dd>{rangeName(binding)}</dd></div>
-                <div><dt>操作权限</dt><dd>{binding.coverage?.status === 'restricted' || binding.coverage?.status === 'unknown' ? '自定义／受限' : operationSummary(binding.grants.filter(grant => ![ALL_CONTEXTS, ALL_PROJECTS].includes(grant.resource_id)), binding.selection_format !== 'sources_v1')}</dd></div>
+                <div><dt>操作权限</dt><dd>{binding.coverage?.status === 'restricted' || binding.coverage?.status === 'unknown' ? '自定义／受限' : operationSummary(binding.grants.filter(grant => !isMacro(grant)), binding.selection_format !== 'sources_v1')}</dd></div>
               </dl>
-              {!binding.grants.some(grant => grant.resource_kind === 'context' || grant.resource_id === ALL_CONTEXTS) && <p className="oauth-copy">原授权尚不包含项目用途上下文。需要扩大时，请让当前客户端申请“全部上下文”权限，并在 Kooyumi 确认页核对新增范围与限制。</p>}
+              {!binding.grants.some(grant => grant.resource_kind === 'context' || grant.resource_id === ALL_CONTEXTS || grant.resource_id === FUTURE_PROJECT_CONTEXTS) && <p className="oauth-copy">原授权尚不包含项目上下文。需要扩大时，请让当前客户端重新申请授权，并在 Kooyumi 确认页核对新增范围与限制。</p>}
               {binding.coverage && binding.coverage.status !== 'complete' && binding.coverage.differences.length > 0 && <details><summary>实际权限差异／限制</summary><pre>{JSON.stringify(binding.coverage.differences, null, 2)}</pre></details>}
               {binding.selection_format === 'sources_v1' && <section aria-label="授权来源"><h3>逐项收窄授权来源</h3><p>只修改勾选来源；派生资源不是另一次独立授权。原授权不会因删掉新策略而被误删。</p>
                 {(binding.sources ?? []).map(source => <fieldset key={source.source_id} disabled={busy || unavailable || needsReload}>
@@ -609,8 +611,8 @@ export default function OAuthConnectionsPage() {
                       <ul>{source.contributions.map(grant => <li key={rowKey(grant)}>{resourceTitle(grant)}：{grant.actions.map(action => actionLabels[action] || action).join('、')}</li>)}</ul></details>
                 </fieldset>)}
               </section>}
-              {binding.grants.length === 0 && <p className="oauth-copy">此连接没有业务访问权限。</p>}
-              {authorizationDisplayOrder(binding.grants.filter(grant => binding.selection_format === "sources_v1" ? ![ALL_CONTEXTS, ALL_PROJECTS].includes(grant.resource_id) : !coveredByAll(binding, selection, grant))).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
+              {binding.grants.filter(grant => !isMacro(grant)).length === 0 && <p className="oauth-copy">此连接当前没有可访问的内容范围。</p>}
+              {authorizationDisplayOrder(binding.grants.filter(grant => !isFuturePolicy(grant) && (binding.selection_format === "sources_v1" ? !isMacro(grant) : !coveredByAll(binding, selection, grant)))).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
                 style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
                 <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>
                   {grantTitle(grant)}

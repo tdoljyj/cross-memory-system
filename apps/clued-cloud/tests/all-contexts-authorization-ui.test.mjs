@@ -68,3 +68,15 @@ test('verified Record display does not promote a candidate, retained history, le
     {source_semantics:'legacy_compatibility'},{record_type:'event'}]) assert.equal(model.immediateAuthoritativeRecord({...current,...extra}),false);
   assert.equal(model.VIEW_KEYS.length,8);
 });
+
+test('future markers use their own action vocabulary and stay outside precise resource groups', () => {
+  const futureRecords = scope('owned-project-records:future');
+  const futureContexts = { ...scope('owned-project-contexts:future'), actions: ['read', 'write', 'close', 'feedback_submit', 'restore', 'audit'] };
+  const rows = [futureRecords, futureContexts, scope('profile'), context('test')];
+  assert.equal(auth.isFuturePolicy(futureRecords), true);
+  assert.equal(auth.isMacro(futureContexts), true);
+  assert.equal(auth.resourceTitle(futureRecords), '未来项目记录');
+  assert.equal(auth.resourceTitle(futureContexts), '未来项目上下文');
+  assert.deepEqual(plain(auth.requestedResources(rows, ['context:read', 'context:write', 'audit:read'])[1].actions), ['read', 'write', 'close', 'feedback_submit']);
+  assert.deepEqual(plain(auth.resourceGroups(rows).flatMap(group => group.rows).map(row => row.resource_id)), ['profile', rows[3].resource_id]);
+});

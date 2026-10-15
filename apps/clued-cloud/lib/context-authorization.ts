@@ -1,29 +1,34 @@
 export type Resource = {
   resource_kind: "scope" | "context"; resource_id: string; environment: string; actions: string[];
   name?: string; project_id?: string | null; project_name?: string | null; context_name?: string | null;
-  effective_actions?: string[]; qualification_id?: string | null;
+  effective_actions?: string[]; qualification_id?: string | null; ownership?: "self" | "membership";
 };
 export type OperationPreset = "reader" | "developer" | "full";
 export type Selection = Record<string, string[]>;
 export const ALL_CONTEXTS = "contexts:*";
 export const ALL_PROJECTS = "project:*";
+export const FUTURE_PROJECT_RECORDS = "owned-project-records:future";
+export const FUTURE_PROJECT_CONTEXTS = "owned-project-contexts:future";
 export const ACTION_LABELS: Record<string, string> = { read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复", audit: "查看审计回执", feedback_submit: "提交反馈" };
 export const ENVIRONMENT_LABELS: Record<string, string> = { test: "测试环境", preview: "预览环境", production: "生产环境" };
 export const OPERATION_LABELS: Record<OperationPreset, string> = { reader: "只读", developer: "可编辑", full: "全部操作" };
 export const resourceKey = (row: Resource) => JSON.stringify([row.resource_kind, row.resource_id, row.environment]);
 export const isAllContexts = (row: Resource) => row.resource_kind === "scope" && row.resource_id === ALL_CONTEXTS && row.environment === "canonical";
-export const isMacro = (row: Resource) => row.resource_kind === "scope" && [ALL_CONTEXTS, ALL_PROJECTS].includes(row.resource_id);
+export const isFuturePolicy = (row: Resource) => row.resource_kind === "scope" && [FUTURE_PROJECT_RECORDS, FUTURE_PROJECT_CONTEXTS].includes(row.resource_id);
+export const isMacro = (row: Resource) => row.resource_kind === "scope" && [ALL_CONTEXTS, ALL_PROJECTS, FUTURE_PROJECT_RECORDS, FUTURE_PROJECT_CONTEXTS].includes(row.resource_id);
 export function resourceTitle(row: Resource): string {
   if (row.resource_kind === "context") return `${row.context_name || row.name || "未命名上下文"} · ${ENVIRONMENT_LABELS[row.environment] || row.environment}`;
   if (row.resource_id === "global") return "个人记录";
   if (row.resource_id === "profile") return "个人资料";
-  if (row.resource_id === ALL_CONTEXTS) return "全部上下文（含以后新建的）";
+  if (row.resource_id === ALL_CONTEXTS) return "全部权限（含以后新建的自有内容）";
   if (row.resource_id === ALL_PROJECTS) return "自有项目正式记录（含未来项目）";
+  if (row.resource_id === FUTURE_PROJECT_RECORDS) return "未来项目记录";
+  if (row.resource_id === FUTURE_PROJECT_CONTEXTS) return "未来项目上下文";
   return row.project_name || row.name || "项目正式记录";
 }
 export function supportedActions(row: Resource): string[] {
   return isAllContexts(row) ? ["read", "write", "close", "restore", "audit", "feedback_submit"]
-    : row.resource_kind === "context" ? ["read", "write", "close", "feedback_submit"]
+    : row.resource_kind === "context" || row.resource_id === FUTURE_PROJECT_CONTEXTS ? ["read", "write", "close", "feedback_submit"]
     : ["read", "write", "close", "restore", "audit"];
 }
 export function presetActions(row: Resource, preset: OperationPreset): string[] {
