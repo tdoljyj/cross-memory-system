@@ -3,9 +3,9 @@
   "status": "accepted",
   "repository": "tdoljyj/cross-memory-system",
   "task_id": "6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8",
-  "source_commit": "2b27c8a067c5af85a04c25a7dd188b1f0f858191",
-  "independent_acceptance_receipt": "be18b610-c225-43f6-bc05-88773ce6b788",
-  "independent_acceptance_record": "4e470654-c94d-44e8-a6ca-f8effde4f19e@120",
+  "source_commit": "5d4b37b02b529aa3a553b7e5724d11177a2da959",
+  "independent_acceptance_receipt": "fe3533dc-7460-4c07-81a8-5d3408b50c44",
+  "independent_acceptance_record": "4e470654-c94d-44e8-a6ca-f8effde4f19e@127",
   "valid_until": "2026-10-15T11:30:44.117696Z",
   "files": {
     ".gitattributes": "f5d4cd7068a0988adfa3599636916ca5de02e631d07a06e10cb33b7bc001fd72",
@@ -378,7 +378,7 @@
     "scripts/ci/public-mcp-supabase-isolation.mjs": "0ceada873b00347bfbad03bb02f2e363a48f636f155f654d20a8551d9902a8f1",
     "scripts/ci/public-mcp-supabase-isolation.test.mjs": "fa369e2ce4778a8edeac05c063d22a9cee2b5968f5629d30ca69a6113cc02b56",
     "scripts/ci/resources/supabase-official-prod-ca-2021.crt": "700723581420dd1ac98fd7e9ac529f0ef210eadcaf87fc868a3ad7d114c2f3b7",
-    "scripts/ci/reviewed_gitleaks.py": "b8ac87d4f8c0191fe56d5c42fafb268f6d334fd9b367502edd540b317c95396e",
+    "scripts/ci/reviewed_gitleaks.py": "f0c56394d95bde01631e77e8e23eedf62aad1cd1c422f1e271e295aa000d7a21",
     "scripts/ci/self-hosted/README.md": "97dcff5e83a2ec2d5f1e0df4bb3f9d10fe5d43dacc3289de12a2f953f94edb68",
     "scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1": "1bbf85dac7f8eb70a3d70448add424681fe681ed7b2a4e951ccf9e87fbeedff5",
     "scripts/ci/self-hosted/bootstrap-linux-runner.sh": "9ab960ebcdf95099a3c60d863ea6c1db6e70aad9a6e51b83c7622e5a37172e28",
@@ -1555,7 +1555,7 @@
     "tests/test_model_observed_completion_execution.py": "0e9f87a3d4eafcd535d28f1aea21ace4989539908d6656ac322dc41eefa7540f"
   },
   "profile_sha256": "084b5dda155835e95173abf34f6fc9cb5260d71d3a195732dd29975a0e400e7b",
-  "source_subject_set_sha256": "783be7f50b0764c120000497cbcac20b331dcf72b792a1a47b86c3814dc6736a",
+  "source_subject_set_sha256": "54ea39a3a06a1a5036979e22d70a4a3458a8c4b6706388c636290706f13316ff",
   "independent_review_kind": "ACCEPT_A_EXECUTABLE_BYTES",
   "scope": "Exact complete immutable executable Source A only. Native protected-head admission, complete CI/FIFO/publisher, main ancestry, Host and actual External/ACT qualification remain required."
 }
