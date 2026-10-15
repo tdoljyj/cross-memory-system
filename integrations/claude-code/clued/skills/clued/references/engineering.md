@@ -41,7 +41,7 @@ Map each change to its affected acceptance requirements. Reuse reliable evidence
 
 Only the configured publisher may publish an accepted subject with actual authorization for that publication. Where the installed contract uses `publish --attestation-commit ... --publication-pr ... --expected-current ...`, pass real selectors through the trusted entry. Preserve Naming and the four Phase2 gates, BASE_CORE and applicable conditional checks, signed artifact binding, semantic comparison, typed scope, transaction and receipt requirements.
 
-Kooyumi MCP developer permissions do not supply GitHub, deployment or database administrator credentials. Keep production `clued.pixelgrav.com` / Worker `clued-cloud` distinct from a ChatGPT Sites deployment. A read, preview or local test never grants production publication, paid activation or access to other users' data.
+Kooyumi MCP developer permissions do not supply GitHub, deployment or database administrator credentials. Keep production `kooyumi.pixelgrav.com` / Worker `clued-cloud` distinct from a ChatGPT Sites deployment. A read, preview or local test never grants production publication, paid activation or access to other users' data.
 
 Changed publishers, machine, code, policy, runtime or expired evidence may invalidate prior qualification under the actual acceptance contract. Preserve failures and continue independent authorized work. Roll back only with real prior state, current-state checks and appropriate authority; never restore revoked access.
 

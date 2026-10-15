@@ -1,3 +1,6 @@
+// issuer-credentials: disposable embedded PostgreSQL with extracted issuer tables/functions only.
+// Synthetic verifiers use real stage/activate paths; expired/staged/retired cases test refusal.
+// This fixture never enables test credential grants or accesses a live service.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
