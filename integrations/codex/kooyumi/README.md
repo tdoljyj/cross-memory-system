@@ -50,6 +50,13 @@ perform an authorized protected call using the intended account. Package parsing
 installation and discovery alone do not establish a working connection. Enable
 the separate Skill only after that verification succeeds.
 
+New OAuth authorizations on service 0.8.1 can include the authenticated account's
+email for connection display. It is captured from the normal identity response
+at approval, kept in provider-encrypted properties, and returned only after the
+live Binding check. It is a display snapshot: refresh does not update a changed
+email. Existing tokens without it remain valid and return the stable account ID;
+they do not require another sign-in. A new authorization can capture a new email.
+
 ## Domain migration
 
 Version 1.0.4 targets `https://kooyumi.pixelgrav.com/mcp`. Install it after the

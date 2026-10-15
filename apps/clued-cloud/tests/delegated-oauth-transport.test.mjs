@@ -135,9 +135,9 @@ async function begin(f, clientId, humanToken = 'human-session-test', requestOrig
   assert.equal(read.status, 200, await read.clone().text());
   return { id, cookie, headers, verifier, prepared: await read.json(), authorizationLocation: response.headers.get('Location') };
 }
-async function approve(f, clientId, flow, days = 1, requestOrigin = origin) {
+async function approve(f, clientId, flow, days = 1, requestOrigin = origin, extraInput = {}) {
   const response = await f.run(`/oauth/decision?request_id=${flow.id}`, { method: 'POST', headers: { ...flow.headers, Origin: requestOrigin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) }, requestOrigin);
+    body: JSON.stringify({ ...extraInput, action: 'approve', version: flow.prepared.version, days, selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read', 'write'] }] }) }, requestOrigin);
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(JSON.stringify(body).includes('clued_bnd_'), false);
@@ -207,7 +207,7 @@ test('independent real OAuth issuers publish matching discovery, consent and pro
       assert.equal(issuer.token_endpoint, grant.origin + '/oauth/token');
       assert.equal(new URL(grant.flow.authorizationLocation).origin, grant.origin);
       assert.equal(new URL(grant.flow.authorizationRedirect).searchParams.get('iss'), grant.origin);
-      assert.deepEqual((await profile(f, grant.token.access_token, {}, grant.origin)).structuredContent, { id: profileUserId });
+      assert.deepEqual((await profile(f, grant.token.access_token, {}, grant.origin)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
       const fallback = await f.run('/oauth/consent', {}, grant.origin);
       assert.equal(fallback.status, 404, 'the fixture retains the Native-page fallback boundary');
       assert.equal(fallback.headers.get('x-fixture-oauth-origin'), grant.origin);
@@ -245,7 +245,7 @@ test('access and refresh tokens cannot cross issuer KV namespaces and correct re
       const response = await refreshOn(f, grant);
       assert.equal(response.status, 200, await response.clone().text());
       grant.token = await response.json();
-      assert.deepEqual((await profile(f, grant.token.access_token, {}, grant.origin)).structuredContent, { id: profileUserId });
+      assert.deepEqual((await profile(f, grant.token.access_token, {}, grant.origin)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
     }
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -268,7 +268,7 @@ for (const revokeOrigin of [origin, newOrigin]) {
       assert.equal(f.bindingIssuers.get(revoke.body.p_binding_id).resource, source.origin + '/mcp');
       assert.ok((await f.run('/mcp', mcpRequest(source.token.access_token, profileRpc({})), source.origin)).status >= 400);
       assert.ok((await refreshOn(f, source)).status >= 400);
-      assert.deepEqual((await profile(f, other.token.access_token, {}, other.origin)).structuredContent, { id: profileUserId });
+      assert.deepEqual((await profile(f, other.token.access_token, {}, other.origin)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
       const refreshed = await refreshOn(f, other);
       assert.equal(refreshed.status, 200, await refreshed.clone().text());
       assert.equal([...f.bindings.values()].filter(binding => binding.active).length, 1);
@@ -330,16 +330,80 @@ test('real provider grants identify two accounts and keep one stable account id 
     assert.equal(f.bindings.size, 3);
     assert.notEqual(first.access_token, second.access_token);
     const before = f.calls.length;
-    assert.deepEqual((await profile(f, first.access_token)).structuredContent, { id: profileUserId });
-    assert.deepEqual((await profile(f, second.access_token)).structuredContent, { id: profileUserId });
-    assert.deepEqual((await profile(f, other.access_token)).structuredContent, { id: profileOtherUserId });
+    assert.deepEqual((await profile(f, first.access_token)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
+    assert.deepEqual((await profile(f, second.access_token)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
+    assert.deepEqual((await profile(f, other.access_token)).structuredContent, { id: profileOtherUserId, email: 'other@example.invalid' });
     assert.deepEqual(f.calls.slice(before).map(row => row.name), Array(3).fill('clued_authorization_status_v12'));
     const refreshed = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: first.refresh_token, client_id: id, scope: 'context:read', resource }) });
     assert.equal(refreshed.status, 200);
     const rotated = await refreshed.json();
     assert.notEqual(rotated.access_token, first.access_token);
-    assert.deepEqual((await profile(f, rotated.access_token)).structuredContent, { id: profileUserId });
+    assert.deepEqual((await profile(f, rotated.access_token)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('new OAuth snapshots only the same verified account email and ignores supplied profile fields', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f), flow = await begin(f, id);
+    const token = await approve(f, id, flow, 1, origin, {
+      user_id: profileOtherUserId, email: 'forged@example.invalid',
+      profileSnapshot: { id: profileOtherUserId, email: 'forged@example.invalid' },
+    });
+    const response = await f.run('/mcp', mcpRequest(token.access_token, profileRpc({}), {
+      'X-Profile-Email': 'forged@example.invalid', 'X-User-Id': profileOtherUserId,
+    }));
+    assert.equal(response.status, 200);
+    const result = (await response.json()).result;
+    assert.deepEqual(result.structuredContent, { id: profileUserId, email: 'test@example.invalid' });
+    assert.equal(JSON.stringify(result).includes('forged@example.invalid'), false);
+    assert.equal(JSON.stringify(result).includes(profileOtherUserId), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('tokens without an email snapshot keep the old props shape and remain id-only through refresh', async () => {
+  const f = fixture();
+  try {
+    f.users.set('human-session-test', { id: profileUserId });
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId });
+    f.users.set('human-session-test', { id: profileUserId, email: 'new@example.invalid' });
+    const response = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
+    assert.equal(response.status, 200);
+    const refreshed = await response.json();
+    assert.deepEqual((await profile(f, refreshed.access_token)).structuredContent, { id: profileUserId });
+    const next = await approve(f, id, await begin(f, id));
+    assert.deepEqual((await profile(f, next.access_token)).structuredContent, { id: profileUserId, email: 'new@example.invalid' });
+    assert.deepEqual((await profile(f, refreshed.access_token)).structuredContent, { id: profileUserId });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('email display is an authorization-time snapshot rather than a live account lookup', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    f.users.set('human-session-test', { id: profileUserId, email: 'changed@example.invalid' });
+    const before = f.calls.length;
+    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
+    const response = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: token.refresh_token, client_id: id, resource }) });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await profile(f, (await response.json()).access_token)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
+    assert.equal(f.calls.slice(before).some(call => call.name === 'user'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('missing and invalid verified email values are omitted without blocking OAuth', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f);
+    for (const email of [undefined, null, '', 'not-an-email', ' person@example.invalid', 'x'.repeat(321) + '@example.invalid']) {
+      f.users.set('human-session-test', { id: profileUserId, ...(email === undefined ? {} : { email }) });
+      const token = await approve(f, id, await begin(f, id));
+      assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId });
+    }
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -353,16 +417,17 @@ test('authenticated profile needs no business scope, accepts only empty argument
       assert.equal(response.status, 200);
       const result = (await response.json()).result;
       assert.equal(result.isError, false);
-      assert.deepEqual(result.structuredContent, { id: profileUserId });
+      assert.deepEqual(result.structuredContent, { id: profileUserId, email: 'test@example.invalid' });
       assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
       const serialized = JSON.stringify(result);
       for (const forbidden of [token.access_token, token.refresh_token, 'human-session-test', 'test-worker-gateway',
-        'isolated-issuer-test-value', 'test@example.invalid', 'binding_id', 'bindingToken', 'scopes', 'clued_bnd_']) {
+        'isolated-issuer-test-value', 'other@example.invalid', 'binding_id', 'bindingToken', 'scopes', 'clued_bnd_']) {
         assert.equal(serialized.includes(forbidden), false, forbidden);
       }
       for (const binding of f.bindings.values()) assert.equal(serialized.includes(binding.binding_id), false);
     }
-    for (const args of [null, [], false, '', { id: profileOtherUserId }, { user_id: profileOtherUserId }, { binding_id: 'other' }, { token: 'other' }, { _meta: {} }]) {
+    for (const args of [null, [], false, '', { id: profileOtherUserId }, { user_id: profileOtherUserId }, { email: 'forged@example.invalid' },
+      { profileSnapshot: { id: profileUserId, email: 'forged@example.invalid' } }, { binding_id: 'other' }, { token: 'other' }, { _meta: {} }]) {
       const response = await f.run('/mcp', mcpRequest(token.access_token, profileRpc(args)));
       assert.equal(response.status, 200);
       const result = (await response.json()).result;
@@ -384,6 +449,7 @@ test('profile refuses unauthenticated, revoked and live-expired grants without r
       assert.ok(response.status >= 400);
       const body = await response.text();
       assert.equal(body.includes(profileUserId), false);
+      assert.equal(body.includes('test@example.invalid'), false);
       assert.equal(body.includes(token.access_token), false);
       assert.equal(body.includes(binding.binding_id), false);
     };
@@ -393,7 +459,7 @@ test('profile refuses unauthenticated, revoked and live-expired grants without r
     binding.active = true; binding.expires_at = '2000-01-01T00:00:00.000Z';
     await refusal(mcpRequest(token.access_token, profileRpc({})));
     binding.expires_at = expiry;
-    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId });
+    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -415,7 +481,7 @@ test('profile never returns cached identity when live authorization status is un
   const f = fixture();
   try {
     const id = await client(f), token = await approve(f, id, await begin(f, id));
-    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId });
+    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId, email: 'test@example.invalid' });
     const wire = globalThis.fetch;
     globalThis.fetch = async (url, options) => String(url).endsWith('/clued_authorization_status_v12')
       ? Response.json({ message: 'private provider and SQL diagnostics' }, { status: 503 }) : wire(url, options);
@@ -423,6 +489,7 @@ test('profile never returns cached identity when live authorization status is un
     assert.equal(response.status, 503);
     const body = await response.text();
     assert.equal(body.includes(profileUserId), false);
+    assert.equal(body.includes('test@example.invalid'), false);
     assert.equal(body.includes('private provider'), false);
     assert.equal(body.includes(token.access_token), false);
   } finally { globalThis.fetch = originalFetch; }

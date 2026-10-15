@@ -11,7 +11,7 @@ const source = await readFile(new URL("../worker/mcp-profile.ts", import.meta.ur
 const javascript = stripTypeScriptTypes(source, { mode: "transform" });
 const {
   McpProfileError, mcpProfileTool, mcpProfileInput, mcpProfileIdentity,
-  mcpProfileResult, handleMcpProfile,
+  mcpProfileResult, handleMcpProfile, mcpProfileEmailSnapshot,
 } = await import("data:text/javascript;base64," + Buffer.from(javascript).toString("base64"));
 
 const userId = "10000000-0000-4000-8000-000000000001";
@@ -193,4 +193,64 @@ test("the supplied stable ID survives fixture credential changes and display-nam
   assert.equal(results[1].structuredContent.id, userId);
   assert.notEqual(results[0].structuredContent.name, results[1].structuredContent.name);
   assert.doesNotMatch(JSON.stringify(results), /old-binding|new-binding|old-token|rotated-token/);
+});
+
+test("email snapshots retain the same stable account ID and only a valid own email", () => {
+  const identity = Object.freeze({
+    id: userId, email: "person@example.invalid", name: "Example", nickname: "Personal",
+    binding_id: "internal-binding", user_metadata: { private: "account-internal" },
+  });
+  const expected = { id: userId, email: "person@example.invalid" };
+  assert.deepEqual(mcpProfileEmailSnapshot(identity), expected);
+  const snapshot = mcpProfileEmailSnapshot(identity, userId);
+  assert.deepEqual(snapshot, expected);
+  assert.notStrictEqual(snapshot, identity);
+  assert.doesNotMatch(JSON.stringify(snapshot), /Example|Personal|internal-binding|account-internal/);
+  assert.deepEqual(mcpProfileEmailSnapshot(Object.assign(Object.create(null), expected), userId), expected);
+});
+
+test("email snapshots omit unavailable or invalid email without losing the stable ID", () => {
+  assert.deepEqual(mcpProfileEmailSnapshot({ id: userId }, userId), { id: userId });
+  for (const email of [
+    undefined, null, 42, {}, [], "", " ", "person@example.invalid ", " person@example.invalid",
+    "not-an-email", "@example.invalid", "person@", "a@@example.invalid", "person @example.invalid",
+    "person@example.invalid\n", "person\u007f@example.invalid", "a".repeat(319) + "@b",
+  ]) {
+    assert.deepEqual(mcpProfileEmailSnapshot({ id: userId, email }, userId), { id: userId });
+  }
+  const maximumLengthEmail = "a".repeat(318) + "@b";
+  assert.equal(maximumLengthEmail.length, 320);
+  assert.deepEqual(mcpProfileEmailSnapshot({ id: userId, email: maximumLengthEmail }, userId), {
+    id: userId, email: maximumLengthEmail,
+  });
+});
+
+test("email snapshots reject a missing, invalid or different account ID", () => {
+  for (const value of [
+    undefined, null, [], {}, { id: undefined }, { id: null }, { id: 1 }, { id: "" },
+    { id: "person@example.invalid" }, { id: "binding-123" },
+    { id: "00000000-0000-0000-0000-000000000000" }, { id: " " + userId },
+    Object.create({ id: userId }),
+  ]) {
+    assert.throws(() => mcpProfileEmailSnapshot(value), unavailable);
+  }
+  for (const expectedId of [otherUserId, "", " " + userId]) {
+    assert.throws(() => mcpProfileEmailSnapshot({ id: userId, email: "person@example.invalid" }, expectedId), unavailable);
+  }
+});
+
+test("email snapshots never execute getters or copy unrelated account fields", () => {
+  let reads = 0;
+  const identity = { id: userId };
+  for (const field of ["email", "name", "nickname", "user_metadata", "credentials"]) {
+    Object.defineProperty(identity, field, {
+      enumerable: true, get() { reads++; throw new Error("private-provider-diagnostic"); },
+    });
+  }
+  assert.deepEqual(mcpProfileEmailSnapshot(identity, userId), { id: userId });
+  const getterId = Object.defineProperty({}, "id", {
+    enumerable: true, get() { reads++; throw new Error("private-provider-diagnostic"); },
+  });
+  assert.throws(() => mcpProfileEmailSnapshot(getterId, userId), unavailable);
+  assert.equal(reads, 0);
 });

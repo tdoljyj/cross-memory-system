@@ -60,7 +60,7 @@ export function mcpProfileInput(args: unknown): void {
 
 /** Parse only a self-identity already resolved by authenticated server code.
  * Unknown internal fields are deliberately not read or copied. No fallback identity,
- * token decoding, caller selector, environment variable or cached account is used. */
+ * token decoding, caller selector or environment-derived identity is used. */
 export function mcpProfileIdentity(value: unknown): McpProfile {
   if (!object(value)) throw new McpProfileError("mcp_profile_unavailable");
   const fields = Object.getOwnPropertyDescriptors(value);
@@ -78,6 +78,27 @@ export function mcpProfileIdentity(value: unknown): McpProfile {
       throw new McpProfileError("mcp_profile_unavailable");
     }
     profile[key] = field.value;
+  }
+  return profile;
+}
+
+/** Email is display metadata captured from the normal authenticated identity
+ * response at OAuth approval. It is not a live email lookup or an auth claim.
+ * The transport calls this again only after its live Binding check, matching
+ * the encrypted snapshot's ID to the same provider-issued account ID. */
+export function mcpProfileEmailSnapshot(value: unknown, expectedId?: string): Pick<McpProfile, "id" | "email"> {
+  if (!object(value)) throw new McpProfileError("mcp_profile_unavailable");
+  const fields = Object.getOwnPropertyDescriptors(value);
+  const id = fields.id;
+  const profile = mcpProfileIdentity({ id: id && "value" in id ? id.value : undefined });
+  if (expectedId !== undefined && profile.id !== expectedId) {
+    throw new McpProfileError("mcp_profile_unavailable");
+  }
+  const field = fields.email;
+  if (field && "value" in field && typeof field.value === "string" &&
+    field.value.length > 0 && field.value.length <= 320 && field.value === field.value.trim() &&
+    !controls.test(field.value) && email.test(field.value)) {
+    profile.email = field.value;
   }
   return profile;
 }

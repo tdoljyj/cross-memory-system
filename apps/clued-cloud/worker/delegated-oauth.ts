@@ -7,7 +7,7 @@ import { storageReadTool, storageContentTool } from './storage-read-agent';
 import { storageConnectionsTool } from './storage-connections';
 import { OWNER_REQUEST_TOOL } from './owner-requests';
 import { permissionDenial, permissionDenialResult } from './permission-guidance';
-import { mcpProfileTool } from './mcp-profile';
+import { mcpProfileEmailSnapshot, mcpProfileTool, type McpProfile } from './mcp-profile';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
@@ -25,7 +25,12 @@ export interface DelegatedOAuthEnv extends ContinuityEnv {
 }
 // narrowed: false only on an access token whose scopes are the whole grant's
 // (no refresh downscoping); absent on tokens issued before it existed.
-interface AuthProps { userId: string; bindingId: string; bindingToken: string; scopes: string[]; expiresAt: string; narrowed?: boolean }
+interface AuthProps {
+  userId: string; bindingId: string; bindingToken: string; scopes: string[]; expiresAt: string; narrowed?: boolean;
+  // Optional for old tokens; new approvals may carry a verified display snapshot.
+  // Refresh preserves it. Email changes are reflected only by a new authorization.
+  profileSnapshot?: Pick<McpProfile, 'id' | 'email'>;
+}
 interface Pending { auth: AuthRequest; clientName: string; cookieHash: string; createdAt: number }
 type Json = Record<string, unknown>;
 class AuthorizationFailure extends Error {
@@ -255,10 +260,12 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
   // The provider encrypts props. Neither the human identity token nor this internal
   // binding secret is included in the browser response or sent to the MCP client.
   try {
+    const profileSnapshot = mcpProfileEmailSnapshot(user);
     const result = await env.OAUTH_PROVIDER!.completeAuthorization({
       request: pending.auth, userId: user.id, metadata: { bindingId: approved.binding_id, clientName: pending.clientName },
       scope: approved.granted_scopes as string[], revokeExistingGrants: false,
-      props: { userId: user.id, bindingId: approved.binding_id, bindingToken, scopes: approved.granted_scopes, expiresAt } satisfies AuthProps,
+      props: { userId: user.id, bindingId: approved.binding_id, bindingToken, scopes: approved.granted_scopes, expiresAt,
+        ...(profileSnapshot.email ? { profileSnapshot } : {}) } satisfies AuthProps,
     });
     await env.OAUTH_KV!.delete(`clued:pending:${id}`);
     return json({ redirect_url: result.redirectTo });
@@ -314,13 +321,16 @@ async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthPr
       }
     }
   }
+  const account = mcpProfileEmailSnapshot({ id: props.userId });
+  const authenticatedMcpAccount = props.profileSnapshot === undefined ? account
+    : mcpProfileEmailSnapshot(props.profileSnapshot, account.id);
   const headers = new Headers(request.headers);
   headers.set('Authorization', `Bearer ${props.bindingToken}`);
   const response = await handleContinuityRequest(new Request(request, { headers }), env, {
     waitUntil: promise => ctx.waitUntil(promise),
     // The provider encrypted this Auth user ID when consent was approved.
     // checkBinding above revalidates that same grant on every MCP request.
-    authenticatedMcpAccount: { id: props.userId },
+    authenticatedMcpAccount,
   });
   return response || json({ error: 'not_found' }, 404);
 }
