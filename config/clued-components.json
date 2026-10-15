@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.22",
+      "version": "1.0.23",
       "description": "The Kooyumi Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "7619a3be79349471d203d29dd05891e52eee439b9ded03bff801c67a698d40ef",
+      "content_sha256": "fdd64227219308aa2f627d8ed15b827a3f3874d3c6cdb5353b5a2b495965eda2",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -50,7 +50,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.8.1",
+      "version": "0.8.2",
       "description": "Kooyumi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
@@ -309,6 +309,21 @@
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.kooyumi-plugin-bundle",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Build and verify the private registered Kooyumi App plugin with the canonical Skill; no direct MCP or new account connection.",
+      "root": "plugins/kooyumi",
+      "files": [
+        "**/*"
+      ],
+      "content_sha256": "f47affa8d7ef82a104627067110c136c652022256bca5a91dd5db7fcee16ae9f",
+      "version_marker": {
+        "file": "build_bundle.py",
+        "pattern": "__version__ = \"{version}\""
       }
     }
   ]
