@@ -1,12 +1,12 @@
 {
   "schema": "clued.components/1",
-  "about": "Every self-developed Clued component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
+  "about": "Every self-developed Kooyumi component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
   "components": [
     {
       "id": "product",
       "kind": "product",
       "version": "1.6",
-      "description": "Clued product version (root VERSION).",
+      "description": "Kooyumi product version (root VERSION).",
       "root": ".",
       "files": [
         "VERSION"
@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.20",
-      "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
+      "version": "1.0.21",
+      "description": "The Kooyumi Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "645400187ff54c7652383b28d9b0b3ec476a3222d046968ea3e655dfb30a99d1",
+      "content_sha256": "66491f8608008b0d9eee4fe4ad705f3b95164c578099a78fde03a2b9e1015764",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -50,8 +50,8 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.6.6",
-      "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+      "version": "0.6.7",
+      "description": "Kooyumi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
       "id": "hook.runner-job-started",
@@ -71,13 +71,13 @@
     {
       "id": "hook.capture-guard",
       "kind": "hook",
-      "version": "1.0.1",
-      "description": "Claude Code Stop hook enforcing Clued capture.",
+      "version": "1.0.2",
+      "description": "Claude Code Stop hook enforcing Kooyumi capture.",
       "root": "scripts/hooks",
       "files": [
         "clued_capture_guard.py"
       ],
-      "content_sha256": "9bc24c569f67b64ba5b7047745a8c3b89a3b6f96a56918389c62a3cf80322bbe",
+      "content_sha256": "e004bf11ed4719e4422f99b4ef3aabfd523222ffd535ee09508ec1938a2d6e08",
       "version_marker": {
         "file": "clued_capture_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -116,13 +116,13 @@
     {
       "id": "hook.run-python",
       "kind": "hook",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Python launcher used by every Claude Code hook.",
       "root": "scripts/hooks",
       "files": [
         "run_python.sh"
       ],
-      "content_sha256": "9d6af1f74aa5b92e5da04af0a86ae0df39c440bc28bb0ae87646e32845134c9d",
+      "content_sha256": "717793c543dfaf4cac8170cf339d6e2926cf886571c5aa01cee7b554555ec58e",
       "version_marker": {
         "file": "run_python.sh",
         "pattern": "# Version: {version}"
@@ -173,7 +173,7 @@
       "id": "script.update-clued-skills",
       "kind": "script",
       "version": "1.0.0",
-      "description": "Installer for the Clued Skill on Codex endpoints.",
+      "description": "Installer for the Kooyumi Skill on Codex endpoints.",
       "root": "scripts",
       "files": [
         "update_clued_skills.py"
