@@ -1,0 +1,94 @@
+{
+  "schema": "clued.goal-owner-guard-final-bounded-evidence.v1",
+  "authority_effect": "NONE",
+  "status": "PASS_BOUNDED_FIXTURE_AND_ACTUAL_NINE_PARENT_DB_EVIDENCE",
+  "base_main": "3d11fd6cd7d4402f8aba3ac1428a4012541c1024",
+  "tested_git_head": "d64529284565a28fc2318ebd1f640cfc85dadb16",
+  "fixture": {
+    "path": "apps/clued-cloud/tests/task-goal-delivery-production-schema-db.test.mjs",
+    "sha256": "8b93dd1abfd915a04f0ca2a7a95f4bb5645606f7e4df86cc5d398f6e3863ac48"
+  },
+  "actual_claim": {
+    "id": "21f96e42-5a4c-4ae8-b439-2e71e8c20469",
+    "fence": 9,
+    "lease": 2,
+    "scope_receipt": "cc8347b2-acd9-4fb9-b0f0-e99f5a063106"
+  },
+  "actual_counts": {
+    "tests": 140,
+    "suites": 0,
+    "pass": 140,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "child_exit": 0,
+  "outer_exit": 0,
+  "source_before_after_equal": true,
+  "all_nine_actual_entry_points": [
+    "tests/all-contexts-authorization-db.test.mjs",
+    "tests/all-contexts-authorization-locks-db.test.mjs",
+    "tests/authorization-roles-db.test.mjs",
+    "tests/connection-permission-request-db.test.mjs",
+    "tests/authorization-closeout.test.mjs",
+    "tests/k-cont-db.test.mjs",
+    "tests/integration-runtime-lifecycle-db.test.mjs",
+    "tests/task-goal-delivery-db.test.mjs",
+    "tests/task-goal-delivery-production-schema-db.test.mjs"
+  ],
+  "review_status": "PASS_BOUNDED_FIXTURE_AND_ACTUAL_NINE_PARENT_DB_EVIDENCE",
+  "review_findings": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0
+  },
+  "review_correction": "r1 retained; r2 corrects its wording to disclose actual read-only Git inspection. No changed finding, Source, count or rerun.",
+  "original_artifacts": [
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-integration-db-local-check-f8-r3.json",
+      "sha256": "56f65315852f1cac7b7ef52639e9aa1d2ffb396a806f46e82f2a1a34d42352d4",
+      "bytes": 6948,
+      "preserved_original": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-integration-db-local-check-f8-r4.json",
+      "sha256": "0d444a2aaac2af2253fdff7777cfc2996ef479f14d0fa4667f7569ea9c885010",
+      "bytes": 10853,
+      "preserved_original": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-integration-database-f8-r4.log",
+      "sha256": "5c54ce16035a4ef488610a93796e8a6ddeedc5945581f851853c6bcdebe69a1c",
+      "bytes": 23348,
+      "preserved_original": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\task-goal-production-schema-owner-guard-r4-independent-review-r1.json",
+      "sha256": "0aced1e2c30fae9ff3d5541c8adf11503d631d920dcd88f35c15d2080d416be7",
+      "bytes": 4300,
+      "preserved_original": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\task-goal-production-schema-owner-guard-r4-independent-review-r2.json",
+      "sha256": "2eb6dc9d936c74524136b1a3f238e7d81a1eda6ee8662b5b064e7518c8ddbf83",
+      "bytes": 4904,
+      "preserved_original": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\task-goal-production-schema-owner-guard-r4-independent-review-r3-supplement.json",
+      "sha256": "6448d6e732cbb438b7866be63943e292581a7f6227882440dbc305a664dc7d4b",
+      "bytes": 3141,
+      "preserved_original": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\f9-claim-receipt-clarification-r1.json",
+      "sha256": "379d50c48538f5227ce73ec710907d2498e1e3bd521e94bc352964ffa793a2d4",
+      "bytes": 1385,
+      "preserved_original": true
+    }
+  ],
+  "raw_artifacts_not_republished": true,
+  "qualification": "Only the exact fixture seed and actual local nine-parent database evidence. Original r3 failure retained. Prior Source/UI scope is inherited only for unchanged bytes. No current-head CI, production, Native permission, eight-view acceptance or archive PASS.",
+  "review_receipt_clarification": "r3 supplement corrects the r1/r2 admission receipt transcription. The manifest original scope_receipt is the actual authenticated work_claim_renew receipt; Root verified the separate initial claim and renewal in service audit. Original reports and all code/test results remain unchanged."
+}
