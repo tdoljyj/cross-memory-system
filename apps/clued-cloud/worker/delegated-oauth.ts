@@ -7,6 +7,7 @@ import { storageReadTool, storageContentTool } from './storage-read-agent';
 import { storageConnectionsTool } from './storage-connections';
 import { OWNER_REQUEST_TOOL } from './owner-requests';
 import { permissionDenial, permissionDenialResult } from './permission-guidance';
+import { mcpProfileTool } from './mcp-profile';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
@@ -266,6 +267,8 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
   }
 }
 export function requiredToolScopes(name: string, args: Json = {}): readonly string[] | null {
+  // Identity display requires the live OAuth Binding, not business-memory scope.
+  if (name === mcpProfileTool.name) return [];
   // Storage authority is a separate native-Owner grant, not context:write.
   // scopedApi still checks the live v12 Binding before the storage RPC performs
   // its exact connection/action grant check. This does not issue any grant.
@@ -292,9 +295,11 @@ export function requiredToolScopes(name: string, args: Json = {}): readonly stri
 async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthProps, ctx: ExecutionContext): Promise<Response> {
   const scopes = await checkBinding(env, props);
   if (request.method === 'POST') {
-    const payload = await request.clone().json() as Json;
+    let payload: Json | null = null;
+    try { payload = await request.clone().json() as Json; }
+    catch { /* Let the MCP transport return its standard parse-error response. */ }
     if (Array.isArray(payload)) return json({ error: 'batch_not_supported' }, 400);
-    if (payload.method === 'tools/call') {
+    if (payload && typeof payload === 'object' && payload.jsonrpc === '2.0' && payload.method === 'tools/call') {
       const params = payload.params as Json | undefined;
       const required = requiredToolScopes(String(params?.name), (params?.arguments || {}) as Json);
       // A tool error, not an HTTP 403: Hosts drop the body of a 403, and the
@@ -308,7 +313,12 @@ async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthPr
   }
   const headers = new Headers(request.headers);
   headers.set('Authorization', `Bearer ${props.bindingToken}`);
-  const response = await handleContinuityRequest(new Request(request, { headers }), env, ctx);
+  const response = await handleContinuityRequest(new Request(request, { headers }), env, {
+    waitUntil: promise => ctx.waitUntil(promise),
+    // The provider encrypted this Auth user ID when consent was approved.
+    // checkBinding above revalidates that same grant on every MCP request.
+    authenticatedMcpAccount: { id: props.userId },
+  });
   return response || json({ error: 'not_found' }, 404);
 }
 /** The feature remains disabled until its database migration and issuer are configured. */

@@ -29,6 +29,10 @@ const resource = `${origin}/mcp`;
 const originalFetch = globalThis.fetch;
 function fixture() {
   const bindings = new Map(); const prepared = new Map(); const calls = []; const background = [];
+  const users = new Map([
+    ['human-session-test', { id: '10000000-0000-4000-8000-000000000001', email: 'test@example.invalid' }],
+    ['other-human-session-test', { id: '10000000-0000-4000-8000-000000000002', email: 'other@example.invalid' }],
+  ]);
   const storageGrants = new Set();
   const nativeManagement = { response: { status: 'ok' }, status: 200 };
   const grantScopes = ['context:read', 'context:write'];
@@ -42,7 +46,10 @@ function fixture() {
       assert.equal(new Headers(options.headers).get('authorization'), 'Bearer test-worker-gateway');
       assert.equal(new Headers(options.headers).get('apikey'), env.SUPABASE_PUBLISHABLE_KEY);
     }
-    if (name === 'user') return Response.json({ id: '10000000-0000-4000-8000-000000000001', email: 'test@example.invalid' });
+    if (name === 'user') {
+      const token = new Headers(options.headers).get('Authorization')?.replace(/^Bearer /, '');
+      return users.has(token) ? Response.json(users.get(token)) : Response.json({ error: 'invalid_session' }, { status: 401 });
+    }
     if (name === 'clued_authorization_prepare_v12') {
       if (!prepared.has(body.p_request.request_digest)) prepared.set(body.p_request.request_digest, { request_id: crypto.randomUUID(), version: 1,
         eligible: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', name: 'My memory', actions: ['read', 'write'] }] });
@@ -65,7 +72,10 @@ function fixture() {
       if (!entry || entry.version !== body.p_base_version) return Response.json({ error: 'conflict' }, { status: 409 });
       entry.version++; return Response.json({ status: 'denied' });
     }
-    if (name === 'clued_authorization_status_v12') return Response.json(bindings.get(body.p_token_hash) || { active: false });
+    if (name === 'clued_authorization_status_v12') {
+      const binding = bindings.get(body.p_token_hash);
+      return Response.json(binding ? { ...binding, active: binding.active && Date.parse(binding.expires_at) > Date.now() } : { active: false });
+    }
     if (name === 'clued_record_list') return Response.json({ status: 'ok', records: [] });
     if (name === 'clued_authorization_manage_v12') return Response.json(nativeManagement.response, { status: nativeManagement.status });
     if (name === 'clued_storage_jobs_v1') {
@@ -83,13 +93,13 @@ function fixture() {
     if (name === 'clued_mcp_projection_refresh_claim') return Response.json({ status: 'idle' });
     throw new Error(`Unexpected storage route: ${name}`);
   };
-  return { env, run, bindings, calls, background, storageGrants, grantScopes, nativeManagement };
+  return { env, run, bindings, calls, background, storageGrants, grantScopes, nativeManagement, users };
 }
 async function client(f) {
   const response = await f.run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Isolated client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
   assert.equal(response.status, 201); return (await response.json()).client_id;
 }
-async function begin(f, clientId) {
+async function begin(f, clientId, humanToken = 'human-session-test') {
   const verifier = randomBytes(32).toString('base64url');
   const query = new URLSearchParams({ client_id: clientId, redirect_uri: 'https://client.example/callback', response_type: 'code', scope: 'context:read context:write', state: 'test-state', resource,
     code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' });
@@ -97,7 +107,7 @@ async function begin(f, clientId) {
   assert.equal(response.status, 302, await response.clone().text());
   const id = new URL(response.headers.get('Location')).searchParams.get('request_id');
   const cookie = response.headers.get('Set-Cookie').split(';')[0];
-  const headers = { Authorization: 'Bearer human-session-test', Cookie: cookie };
+  const headers = { Authorization: `Bearer ${humanToken}`, Cookie: cookie };
   const read = await f.run(`/oauth/request?request_id=${id}`, { headers });
   assert.equal(read.status, 200, await read.clone().text());
   return { id, cookie, headers, verifier, prepared: await read.json() };
@@ -116,6 +126,189 @@ async function approve(f, clientId, flow, days = 1) {
 }
 const call = (token, name) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { record_type: 'state' } } }) });
+
+const profileUserId = '10000000-0000-4000-8000-000000000001';
+const profileOtherUserId = '10000000-0000-4000-8000-000000000002';
+const profileRpc = args => ({ jsonrpc: '2.0', id: 'profile-fixture', method: 'tools/call',
+  params: { name: 'clued_account_profile', ...(args === undefined ? {} : { arguments: args }) } });
+const mcpRequest = (token, payload, headers = {}) => ({ method: 'POST', headers: {
+  Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers,
+}, body: JSON.stringify(payload) });
+async function profile(f, access, args = {}) {
+  const response = await f.run('/mcp', mcpRequest(access, profileRpc(args)));
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const envelope = await response.json();
+  assert.equal(envelope.id, 'profile-fixture');
+  assert.equal(envelope.result.isError, false);
+  assert.deepEqual(JSON.parse(envelope.result.content[0].text), envelope.result.structuredContent);
+  return envelope.result;
+}
+
+test('real OAuth profile publishes its exclusive identity schema and account marker without changing ordinary tools', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    const before = f.calls.length;
+    const response = await f.run('/mcp', mcpRequest(token.access_token, { jsonrpc: '2.0', id: 2, method: 'tools/list' }));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const tools = (await response.json()).result.tools;
+    const descriptors = tools.filter(tool => tool.name === 'clued_account_profile');
+    assert.equal(descriptors.length, 1);
+    const descriptor = descriptors[0];
+    assert.deepEqual(descriptor.inputSchema, { type: 'object', properties: {}, additionalProperties: false });
+    assert.deepEqual(descriptor.outputSchema.required, ['id']);
+    assert.deepEqual(Object.keys(descriptor.outputSchema.properties), ['id', 'name', 'email', 'nickname']);
+    assert.equal(descriptor.outputSchema.additionalProperties, false);
+    assert.equal(descriptor.outputSchema.properties.id.format, 'uuid');
+    assert.equal(descriptor._meta['openai/profile'], true);
+    assert.deepEqual(descriptor._meta['clued/requiredScopes'], []);
+    assert.equal(descriptor._meta['clued/scopeEnforcement'], 'server-side');
+    assert.deepEqual(descriptor.securitySchemes, [{ type: 'oauth2', scopes: [] }]);
+    assert.deepEqual(descriptor.annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    assert.equal(tools.filter(tool => tool._meta?.['openai/profile'] === true).length, 1);
+    assert.ok(tools.some(tool => tool.name === 'clued_session_resume'));
+    assert.ok(tools.some(tool => tool.name === 'clued_record_list'));
+    assert.deepEqual(f.calls.slice(before).map(row => row.name), ['clued_authorization_status_v12']);
+    assert.deepEqual(requiredToolScopes('clued_account_profile'), []);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('real provider grants identify two accounts and keep one stable account id across independent connections and refresh', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f);
+    const first = await approve(f, id, await begin(f, id));
+    const second = await approve(f, id, await begin(f, id));
+    const other = await approve(f, id, await begin(f, id, 'other-human-session-test'));
+    assert.equal(f.bindings.size, 3);
+    assert.notEqual(first.access_token, second.access_token);
+    const before = f.calls.length;
+    assert.deepEqual((await profile(f, first.access_token)).structuredContent, { id: profileUserId });
+    assert.deepEqual((await profile(f, second.access_token)).structuredContent, { id: profileUserId });
+    assert.deepEqual((await profile(f, other.access_token)).structuredContent, { id: profileOtherUserId });
+    assert.deepEqual(f.calls.slice(before).map(row => row.name), Array(3).fill('clued_authorization_status_v12'));
+    const refreshed = await f.run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: first.refresh_token, client_id: id, scope: 'context:read', resource }) });
+    assert.equal(refreshed.status, 200);
+    const rotated = await refreshed.json();
+    assert.notEqual(rotated.access_token, first.access_token);
+    assert.deepEqual((await profile(f, rotated.access_token)).structuredContent, { id: profileUserId });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('authenticated profile needs no business scope, accepts only empty arguments and never leaks connection internals', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    for (const binding of f.bindings.values()) binding.scopes = [];
+    for (const args of [{}, undefined]) {
+      const response = await f.run('/mcp', mcpRequest(token.access_token, profileRpc(args)));
+      assert.equal(response.status, 200);
+      const result = (await response.json()).result;
+      assert.equal(result.isError, false);
+      assert.deepEqual(result.structuredContent, { id: profileUserId });
+      assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+      const serialized = JSON.stringify(result);
+      for (const forbidden of [token.access_token, token.refresh_token, 'human-session-test', 'test-worker-gateway',
+        'isolated-issuer-test-value', 'test@example.invalid', 'binding_id', 'bindingToken', 'scopes', 'clued_bnd_']) {
+        assert.equal(serialized.includes(forbidden), false, forbidden);
+      }
+      for (const binding of f.bindings.values()) assert.equal(serialized.includes(binding.binding_id), false);
+    }
+    for (const args of [null, [], false, '', { id: profileOtherUserId }, { user_id: profileOtherUserId }, { binding_id: 'other' }, { token: 'other' }, { _meta: {} }]) {
+      const response = await f.run('/mcp', mcpRequest(token.access_token, profileRpc(args)));
+      assert.equal(response.status, 200);
+      const result = (await response.json()).result;
+      assert.equal(result.isError, true);
+      assert.match(JSON.stringify(result), /mcp_profile_input_invalid/);
+      assert.equal(JSON.stringify(result).includes(profileUserId), false);
+      assert.equal(JSON.stringify(result).includes(profileOtherUserId), false);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('profile refuses unauthenticated, revoked and live-expired grants without returning an identity', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    const binding = [...f.bindings.values()][0], expiry = binding.expires_at;
+    const refusal = async options => {
+      const response = await f.run('/mcp', options);
+      assert.ok(response.status >= 400);
+      const body = await response.text();
+      assert.equal(body.includes(profileUserId), false);
+      assert.equal(body.includes(token.access_token), false);
+      assert.equal(body.includes(binding.binding_id), false);
+    };
+    await refusal({ ...mcpRequest(token.access_token, profileRpc({})), headers: { 'Content-Type': 'application/json' } });
+    binding.active = false;
+    await refusal(mcpRequest(token.access_token, profileRpc({})));
+    binding.active = true; binding.expires_at = '2000-01-01T00:00:00.000Z';
+    await refusal(mcpRequest(token.access_token, profileRpc({})));
+    binding.expires_at = expiry;
+    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('profile rejects expired provider access tokens before any database or identity read', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = fixture();
+  try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    t.mock.timers.tick(16 * 60 * 1000);
+    const before = f.calls.length;
+    const response = await f.run('/mcp', mcpRequest(token.access_token, profileRpc({})));
+    assert.ok(response.status >= 400);
+    assert.equal((await response.text()).includes(profileUserId), false);
+    assert.equal(f.calls.length, before);
+  } finally { globalThis.fetch = originalFetch; t.mock.timers.reset(); }
+});
+
+test('profile never returns cached identity when live authorization status is unavailable', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    assert.deepEqual((await profile(f, token.access_token)).structuredContent, { id: profileUserId });
+    const wire = globalThis.fetch;
+    globalThis.fetch = async (url, options) => String(url).endsWith('/clued_authorization_status_v12')
+      ? Response.json({ message: 'private provider and SQL diagnostics' }, { status: 503 }) : wire(url, options);
+    const response = await f.run('/mcp', mcpRequest(token.access_token, profileRpc({})));
+    assert.equal(response.status, 503);
+    const body = await response.text();
+    assert.equal(body.includes(profileUserId), false);
+    assert.equal(body.includes('private provider'), false);
+    assert.equal(body.includes(token.access_token), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('profile transport preserves Origin and JSON-RPC validation and refuses every batch without partial results', async () => {
+  const f = fixture();
+  try {
+    const id = await client(f), token = await approve(f, id, await begin(f, id));
+    const cases = [
+      [profileRpc({}), { Origin: 'https://attacker.example' }, 403],
+      [{ ...profileRpc({}), jsonrpc: '1.0' }, {}, 400],
+      [{ jsonrpc: '2.0', id: 1, params: { name: 'clued_account_profile' } }, {}, 400],
+      [[profileRpc({})], {}, 400],
+      [[profileRpc({}), { jsonrpc: '2.0', id: 2, method: 'tools/list' }], {}, 400],
+    ];
+    for (const [payload, headers, status] of cases) {
+      const before = f.calls.length;
+      const response = await f.run('/mcp', mcpRequest(token.access_token, payload, headers));
+      assert.equal(response.status, status);
+      const body = await response.text();
+      assert.equal(body.includes(profileUserId), false);
+      assert.equal(body.includes('structuredContent'), false);
+      assert.equal(body.includes(token.access_token), false);
+      assert.deepEqual(f.calls.slice(before).map(row => row.name), ['clued_authorization_status_v12']);
+    }
+    const invalidJson = await f.run('/mcp', { ...mcpRequest(token.access_token, profileRpc({})), body: '{"jsonrpc":' });
+    assert.equal(invalidJson.status, 400);
+    assert.equal((await invalidJson.text()).includes(profileUserId), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('Native exact limit confirmation forwards Owner credentials and CAS without bypassing Origin, operation or size gates', async () => {
   const f = fixture();
