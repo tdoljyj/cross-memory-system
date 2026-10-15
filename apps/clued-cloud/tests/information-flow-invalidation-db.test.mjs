@@ -875,14 +875,53 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
         await as(fresh(userId));
         return (await human.query('select public.clued_authorization_manage_v12($1) v', [input])).rows[0].v;
       };
+      const removeSource = async (bindingId, removedScope, proveFlatRefusal = false) => {
+        const view = async () => (await manage({ op: 'list' })).bindings.find((binding) => binding.binding_id === bindingId);
+        const current = await view();
+        assert.equal(current.selection_format, 'sources_v1');
+        const targets = current.sources.filter((source) => source.kind === 'direct' && source.contributions.length === 1
+          && source.contributions[0].resource_kind === 'scope' && source.contributions[0].resource_id === removedScope
+          && source.contributions[0].environment === 'canonical');
+        assert.equal(targets.length, 1, 'the Native DTO identifies one exact direct consent for the removed scope');
+        const [target] = targets;
+        if (proveFlatRefusal) {
+          const bindingAndAuthorization = async () => (await admin.query(`select to_jsonb(b) binding,to_jsonb(a) authorization
+            from public.clued_agent_bindings b join clued_private.authorizations_v12 a on a.binding_id=b.id
+            where b.id=$1`, [bindingId])).rows[0];
+          const beforeFlat = await bindingAndAuthorization();
+          await assert.rejects(manage({ op: 'reduce', binding_id: bindingId, base_version: current.version,
+            selected: [scopeEntry(p5a)] }),
+          (error) => error.code === '22023' && error.message === 'authorization_source_selection_required_sources_v1');
+          assert.deepEqual(await bindingAndAuthorization(), beforeFlat, 'refused flat selection changes no Binding or Authorization body/version');
+          assert.deepEqual(await view(), current, 'refused flat selection changes no source, grant or limit DTO');
+        }
+        const reduced = await manage({ op: 'reduce', binding_id: bindingId, base_version: current.version,
+          selection_format: 'sources_v1', sources: [{ source_id: target.source_id, base_version: target.version, action_cap: [] }],
+          exceptions: [] });
+        assert.equal(reduced.binding_id, bindingId);
+        assert.equal(Number(reduced.version), Number(current.version) + 1);
+        const after = await view();
+        assert.equal(after.selection_format, 'sources_v1');
+        assert.deepEqual(after.sources.map((source) => source.source_id).sort(),
+          current.sources.filter((source) => source.source_id !== target.source_id).map((source) => source.source_id).sort(),
+          'only the submitted source is removed and no replacement consent is invented');
+        for (const source of current.sources.filter((source) => source.source_id !== target.source_id)) {
+          assert.deepEqual(after.sources.find((kept) => kept.source_id === source.source_id), source,
+            'an unsubmitted source retains its complete identity, version and consent DTO');
+        }
+        const keptScopes = current.grants.filter((grant) => grant.resource_id !== removedScope).map((grant) => grant.resource_id).sort();
+        assert.deepEqual(after.grants.map((grant) => grant.resource_id).sort(), keptScopes);
+        assert.deepEqual(reduced.selected.map((entry) => entry.resource_id).sort(), keptScopes);
+        assert.deepEqual(after.overrides, current.overrides, 'source reduction does not invent precise exceptions');
+        return reduced;
+      };
       const approved = await authorize(rawAuthorized, [p5a, p5b], 's5-client');
       await accept(policyDoc('e05.check', [p5a, p5b], { allowed_record_types: ['note'] }));
       const e05First = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawAuthorized),
         'E2E-05 before');
       const me = e05First.manifest.id;
       assert.deepEqual((await manifest(me)).effective_scopes, [p5a, p5b].sort());
-      const reduced = await manage({ op: 'reduce', binding_id: approved.binding_id, base_version: approved.version,
-        selected: [scopeEntry(p5a)] });
+      const reduced = await removeSource(approved.binding_id, p5b, true);
       const meRow = await manifest(me);
       assert.deepEqual([meRow.stale, meRow.stale_reason, meRow.version], [true, 'binding_scope_reduced', 2],
         'stale immediately, before any recompile or revalidation');
@@ -901,15 +940,13 @@ test('Information Flow S5: lineage, Evidence withdrawal and invalidation fan-out
       const approved2 = await authorize(rawAuthorized2, [p5a, p5b, p5c], 's5-client-two');
       const me2 = packOk(await call('clued_context_pack', { scope: p5a, task_class: 'e05.check' }, rawAuthorized2),
         'E2E-05 second').manifest.id;
-      const outside = await manage({ op: 'reduce', binding_id: approved2.binding_id, base_version: approved2.version,
-        selected: [scopeEntry(p5a), scopeEntry(p5b)] });
+      const outside = await removeSource(approved2.binding_id, p5c);
       assert.equal((await manifest(me2)).stale, false, 'removing a scope outside effective_scopes does not stale');
       await admin.query('begin');
       await admin.query('select 1 from clued_private.context_pack_manifests where id=$1 for update', [me2]);
       await human.query("set lock_timeout='2s'");
       try {
-        const probed = await manage({ op: 'reduce', binding_id: approved2.binding_id, base_version: outside.version,
-          selected: [scopeEntry(p5a)] });
+        const probed = await removeSource(approved2.binding_id, p5b);
         assert.equal(probed.version, outside.version + 1, 'the reduction does not wait on a locked manifest');
       } finally {
         await human.query('reset lock_timeout');

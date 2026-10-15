@@ -51,8 +51,14 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values
       ($1,'imprint-owner@example.invalid',now()),($2,'imprint-other@example.invalid',now())`, [owner, other]);
     for (const [id, user] of [[project, owner], [foreignProject, other]]) {
-      await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
-        values($1,$2,$3,$3,$4)`, [id, user, `project-${id}`, `project:${id}`]);
+      await admin.query('begin');
+      try {
+        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [user]);
+        assert.equal((await admin.query('select clued_private.authorization_writer_guard_held_v2($1) held', [user])).rows[0].held, true);
+        await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key)
+          values($1,$2,$3,$3,$4)`, [id, user, `project-${id}`, `project:${id}`]);
+        await admin.query('commit');
+      } catch (error) { await admin.query('rollback'); throw error; }
     }
     const actor = async (jwt = claims(owner)) => {
       const client = server.getPgClient(); clients.push(client); await client.connect();

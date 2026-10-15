@@ -1,0 +1,168 @@
+{
+  "schema": "clued.final-reviewed-artifacts-independent-review.v1",
+  "reviewer": "all_contexts_final_security",
+  "author": false,
+  "authority_effect": "NONE",
+  "status": "PASS_NARROW_SCANNER_POLICY_CODE_REVIEW",
+  "closed_at_utc": "2026-10-14T18:45:46.456065+00:00",
+  "subject": {
+    "source_git_snapshot": "2bb44dd58f9390db0ef944d1cf6748af62513101",
+    "immutable_exception_commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+    "patch_sha256": "2a0703306eec7a2c7d35343823a5b8f3bfc2a2822a72882c478c5e17e21f4a68",
+    "hunks_reviewed": 11,
+    "paths_reviewed": 3,
+    "files": [
+      {
+        "path": ".gitleaks.toml",
+        "sha256": "c8d78643a3e5fb112e20448305a825a1bcaa23bf14c9f57fb69ae271ece0fa2a"
+      },
+      {
+        "path": "scripts/ci/reviewed_gitleaks.py",
+        "sha256": "3cff545f0d26610de0097165cf9dc6d32421707357cf960a9f38af22b4d0e32f"
+      },
+      {
+        "path": "tests/test_reviewed_gitleaks_artifacts.py",
+        "sha256": "a9ba72b3d96fea883ad2bcc6ef9450cf2051d139fdb78a8b1ed786d0548eedb0"
+      }
+    ],
+    "before_after_file_hashes_identical": true
+  },
+  "findings": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0,
+    "items": []
+  },
+  "checks": {
+    "old484_records_and_order_identical": true,
+    "old_two_review_document_proof_unchanged": true,
+    "default_toml_policy_identical": true,
+    "only_preexisting_fixture_secret_regex": true,
+    "literal_repository_ignore_unchanged": true,
+    "new_exact_fp_set_equals_independent_classification": true,
+    "new_fp_count": 7,
+    "reported_matches_requiring_proof": 8,
+    "exact_commit_paths_lines_rule_reason_enforced": true,
+    "exact_whole_container_git_sha256_and_line_json_pointer": true,
+    "same_commit_source_git_blob_sha256_verified": true,
+    "strict_base64_original_bytes_size_sha256": true,
+    "base64_entry_identity_and_actual_exact_encoded_line": true,
+    "crlf_to_lf_only_transform_equals_same_commit_readable_blob": true,
+    "readable_metadata_and_real_blob_hash_equal_pin": true,
+    "all_three_decoded_source_occurrences_compared_to_real_source": true,
+    "source_UI_and_workflow_unchanged_in_base_to_review_git_snapshot": true,
+    "source_git_snapshot_changed_paths": [
+      "apps/clued-cloud/supabase/ledger/production-history.json"
+    ],
+    "only_inherited_ledger_metadata_change_in_git_snapshot": true,
+    "no_repository_file_or_git_ref_mutation_by_reviewer": true
+  },
+  "test_evidence": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-df698-independent-delta-verification-r1.json",
+    "sha256": "e3e90b67dae96c4dbcf26eedf77822b3fbcf44ea4ec7bfb63e43e679308a20bb",
+    "unit_actual": {
+      "argv": [
+        "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_reviewed_gitleaks_artifacts.py",
+        "-v"
+      ],
+      "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo",
+      "started_utc": "2026-10-14T18:43:48.256183+00:00",
+      "finished_utc": "2026-10-14T18:43:49.359627+00:00",
+      "exit_code": 0,
+      "log_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-df698-independent-tests-r1.log",
+      "log_sha256": "b76f5a6c17e2d1de6c7e2a9ca2a10d47d8e2e33385624b6569d37e378ec1c5f5",
+      "pass": 28,
+      "fail": 0,
+      "skip": 0
+    },
+    "fresh_helper_actual": {
+      "argv": [
+        "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "scripts/ci/reviewed_gitleaks.py",
+        "--config",
+        ".gitleaks.toml",
+        "--output",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-df698-independent-491-reviewed.ignore"
+      ],
+      "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo",
+      "started_utc": "2026-10-14T18:43:48.256183+00:00",
+      "finished_utc": "2026-10-14T18:43:56.385401+00:00",
+      "exit_code": 0,
+      "log_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-df698-independent-helper-r1.log",
+      "log_sha256": "27edf584cd50e0425aad39ba38c6edcee238ae55375434fe874f67dfe893a6b8",
+      "actual_result": {
+        "exact_historical_fingerprints": 491,
+        "default_rules_unchanged": true,
+        "global_fingerprints": 0,
+        "ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a",
+        "commits": 70,
+        "files_at_commits": 128,
+        "verified_git_objects": 130
+      },
+      "generated_ignore_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-df698-independent-491-reviewed.ignore",
+      "generated_ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a",
+      "no_fetch_required": true,
+      "self_test_not_requested": true
+    },
+    "extra_actual_bad_decoded_values": [
+      {
+        "encoded_line": 184,
+        "changed_decoded_parent": "/source_before",
+        "real_source_git_blob_kept": true,
+        "expected_error": "Final evidence digest differs from immutable artifact",
+        "source_comparisons_executed": 1,
+        "rejected": true,
+        "in_memory_only_pins_and_readable_route_fault_injection": true
+      },
+      {
+        "encoded_line": 184,
+        "changed_decoded_parent": "/source_after",
+        "real_source_git_blob_kept": true,
+        "expected_error": "Final evidence digest differs from immutable artifact",
+        "source_comparisons_executed": 2,
+        "rejected": true,
+        "in_memory_only_pins_and_readable_route_fault_injection": true
+      },
+      {
+        "encoded_line": 192,
+        "changed_decoded_parent": "/source",
+        "real_source_git_blob_kept": true,
+        "expected_error": "Final evidence digest differs from immutable artifact",
+        "source_comparisons_executed": 1,
+        "rejected": true,
+        "in_memory_only_pins_and_readable_route_fault_injection": true
+      }
+    ]
+  },
+  "review_reasoning": [
+    "The registry adds only seven full immutable-commit fingerprints and requires the complete admitted set; another commit, path, line, rule, or reason cannot inherit admission.",
+    "Whole immutable document pins prevent unrelated same-line data from borrowing the Base64 fingerprint; strict decoding and immutable readable/source proofs classify all three decoded matches.",
+    "Independent negative fault injection changed each decoded Source metadata value while leaving the actual immutable Source bytes live. The second value in line184 was rejected after two Source comparisons.",
+    "The original484 records are exactly retained in their original order; default detector configuration, legacy verification, image pin and global rule behavior remain unchanged."
+  ],
+  "remaining": [
+    {
+      "kind": "EXECUTION_QUALIFICATION",
+      "required": "Official pinned scanner on Root final exact new commit with a freshly verified registry; original df698 literal10/CI8 failure retained."
+    }
+  ],
+  "qualification": {
+    "classification_is_not_scanner_pass": true,
+    "original_df698_scan": "FAIL_PRESERVED",
+    "new_head_actual_gitleaks_scan": "PENDING_ROOT_EXACT_COMMIT",
+    "CI_result": false,
+    "native_eight_view_acceptance": false,
+    "production_or_release_authority": false,
+    "whole_product_or_task_complete": false
+  },
+  "report_assembly_note": "An initial guard rejected any apps/ path; that attempt wrote no report. Inspection confirmed the sole inherited change is the allowed production-history.json ledger metadata. Final guard checks that exact path."
+}

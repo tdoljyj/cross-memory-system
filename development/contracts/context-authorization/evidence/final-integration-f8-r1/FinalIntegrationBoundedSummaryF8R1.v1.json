@@ -1,0 +1,362 @@
+{
+  "schema": "clued.final-integration-bounded-evidence-summary.v1",
+  "authority_effect": "NONE",
+  "status": "WORK_CANDIDATE_ONLY_NOT_REPO_ADOPTED",
+  "scope": {
+    "fixed_final_head": "b98991c2fad338b40845ff7f63c9bee2879901dd",
+    "fixed_main": "3853c449f291b04c86740ae220834f0aad72d48a",
+    "d01_main": "9231cb10ea70b43dd741dc4debd9a874d24cf853",
+    "root_claim": {
+      "id": "2c722a48-1fe3-42d9-974a-c5516e553f7a",
+      "fence": 8,
+      "lease": 3
+    },
+    "graph_basis": "Root handoff and exact subject metadata; no Git inspection by package author.",
+    "local_run_heads_preserved": {
+      "r1": "2bc619b9d709cfb3156ff3867a8555699b4f4e4d",
+      "r2": "2bc619b9d709cfb3156ff3867a8555699b4f4e4d"
+    },
+    "main3853_inheritance": "Root subject reports six unrelated model-program source/test paths; no new affected-test rerun claimed.",
+    "raw_code_included": "Only requested three fixed snapshots and their three D01 exports; no raw SQL Source added.",
+    "does_not_establish": [
+      "FUTURE_HEAD_CI",
+      "MCP_POINT6_PRODUCTION_DEPLOYMENT",
+      "SAME_BINDING_OWNER_PERMISSION",
+      "NATIVE_EIGHT_VIEW_ACCEPTANCE",
+      "ARCHIVE_ACCEPTANCE",
+      "FULL_PRODUCT_ACCEPTANCE"
+    ]
+  },
+  "qualification": {
+    "r1_original_failure": {
+      "report_sha256": "b0e923437d3140c609acc5fda93fd3c886fe79a871f7c8a62f79a71e834f5a7c",
+      "counts": {
+        "tests": 119,
+        "pass": 118,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "exit_code": 1,
+      "preserved": true
+    },
+    "r1_other_local_checks": [
+      {
+        "label": "typecheck",
+        "exit_code": 0,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "started_utc": "2026-10-14T17:36:50.295537+00:00",
+        "finished_utc": "2026-10-14T17:36:56.282963+00:00"
+      },
+      {
+        "label": "build",
+        "exit_code": 0,
+        "log_sha256": "5ac68261e01415a6340d7d9a2fc3c65bc9b28685d184e80c5977d4d2d29ac9ab",
+        "started_utc": "2026-10-14T17:36:50.297050+00:00",
+        "finished_utc": "2026-10-14T17:37:08.967780+00:00"
+      },
+      {
+        "label": "pdf",
+        "exit_code": 0,
+        "log_sha256": "1cd9b4b73484af6bb358903fbb1e8c7f6c8f669825f161b71d2d5221725c3b40",
+        "started_utc": "2026-10-14T17:37:08.978152+00:00",
+        "finished_utc": "2026-10-14T17:37:09.570133+00:00"
+      },
+      {
+        "label": "rendered",
+        "exit_code": 0,
+        "log_sha256": "3531cdd94725a5595149969ee2f6cd70b3042f0f0efbddb6b359d718278fa658",
+        "started_utc": "2026-10-14T17:37:09.577013+00:00",
+        "finished_utc": "2026-10-14T17:37:09.748513+00:00"
+      }
+    ],
+    "r1_render_counts": {
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "r1_typecheck_exit_basis": "Actual run manifest exit0. Empty retained log alone is not exit proof.",
+    "r2_local_database": {
+      "report_sha256": "1b16fc3a1d3e1bbc725243da0e5479a2e4c779fab4a404fa800716af00523ed3",
+      "counts": {
+        "tests": 133,
+        "pass": 133,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "exit_code": 0,
+      "started_utc": "2026-10-14T17:49:03.257213+00:00",
+      "finished_utc": "2026-10-14T17:49:33.890046+00:00",
+      "fix": "Disposable Goal private project seed obtains real early Owner and fanout locks in the same transaction; core and assertions unchanged. No Source guard weakening.",
+      "rerun_by_package_author": false
+    },
+    "final_three_path_review": {
+      "original_sha256": "e5627bc28ef17e4ef5871937d675b9786bbc7fe17ec157383fb8c4f485014e02",
+      "verdict": "PASS",
+      "findings": [
+        0,
+        0,
+        0
+      ],
+      "scope": "Complete fixed three-path delta, its Goal fixture dependency on the actual unchanged Owner guard, and the retained local combined-run evidence. This is not a fresh review of all 191 PR paths.",
+      "package_author_repeated_review": false
+    },
+    "prior6c_secret_review": {
+      "original_sha256": "74958af6808978f6d2d538d9aaaf9989596853ecaebac94a326c7c921ff97736",
+      "exact_history_subject": {
+        "head": "6c35e3e8ca5fdf6cb6108a765de16a47fdf4faa5",
+        "base": "539c6d9eea7a004691b13da38756b06403853b1c",
+        "log_opts": "539c6d9eea7a004691b13da38756b06403853b1c..6c35e3e8ca5fdf6cb6108a765de16a47fdf4faa5",
+        "origin_main_read": "539c6d9eea7a004691b13da38756b06403853b1c",
+        "base_is_ancestor_exit_code": 0,
+        "head_unchanged_at_end": true,
+        "last_commit_changed_files": 67,
+        "last_commit_machine_evidence_files": 65,
+        "last_commit_other_files": [
+          "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+          "development/contracts/context-authorization/ReviewLedger.md"
+        ],
+        "qualification": "Exact local branch history only, including every reachable feature commit absent from the specified main base. This is not the checked-out future candidate head, an executed GitHub CI run, all remote branches/tags, production, D01 returned/accepted changes, or eight-view acceptance."
+      },
+      "literal_ignore": {
+        "rows": 194,
+        "scanner_exit": 1,
+        "old_artifact_digest_detections": 2
+      },
+      "actual_ci_helper_run_locally": {
+        "fingerprints": 484,
+        "helper_exit": 0,
+        "scanner_exit": 0,
+        "detections": 0
+      },
+      "future_head_ci": false,
+      "package_author_reran_scanner": false
+    },
+    "r5_plan": {
+      "status": "NOT_EXECUTED",
+      "review": "CHANGES_REQUIRED",
+      "findings": [
+        0,
+        1,
+        0
+      ],
+      "preserved": true
+    },
+    "r6_plan": {
+      "status": "NOT_EXECUTED",
+      "review": "BOUNDED_PASS",
+      "findings": [
+        0,
+        0,
+        0
+      ],
+      "scope": "Static successor checklist review only; fourteen steps still NOT_EXECUTED."
+    },
+    "root65_byte_verification": {
+      "original_sha256": "e64ac4713a2deb4fdb29dc3725a632dc5ad1ba1aa1c97520cfdaa522144bed22",
+      "head": "6c35e3e8ca5fdf6cb6108a765de16a47fdf4faa5",
+      "count": 65,
+      "authority_effect": "NONE"
+    },
+    "count_rule": "Separate original failures, successor run and rendered tests; do not add historical UI/Source/lifecycle counts.",
+    "carrier_independent_review": "PENDING_ROOT_INDEPENDENT_BYTE_REVIEW"
+  },
+  "envelope": {
+    "path": "FinalIntegrationExactEvidenceF8R1.v1.json",
+    "sha256": "612941c58af479abc203c7c64ad3caeb6465f0851b8bcb6eb273c7eac2b68b39",
+    "bytes": 646660
+  },
+  "originals": [
+    {
+      "path": "ui-acceptance/final-integration-local-check-f8-r1.json",
+      "original_sha256": "b0e923437d3140c609acc5fda93fd3c886fe79a871f7c8a62f79a71e834f5a7c",
+      "original_bytes": 10177,
+      "role": "HISTORICAL_COMBINED_RUN_WITH_DB_FAILURE",
+      "git_text_sha256": "a92829ffc664ef81026078e3aa7e1c9eeb7901e9e314fff9f1563591d274ed2b",
+      "git_text_transform": "CRLF_to_LF"
+    },
+    {
+      "path": "ui-acceptance/final-integration-db-local-check-f8-r2.json",
+      "original_sha256": "1b16fc3a1d3e1bbc725243da0e5479a2e4c779fab4a404fa800716af00523ed3",
+      "original_bytes": 6231,
+      "role": "SUCCESSOR_ACTUAL_DB_RUN",
+      "git_text_sha256": "a18e3e28f4c1ef9acf6079c2bfde0f6612a98fb4b28f093fcd1e848f3ce0682c",
+      "git_text_transform": "CRLF_to_LF"
+    },
+    {
+      "path": "ui-acceptance/final-three-path-integration-review-subject-f8-r1.json",
+      "original_sha256": "e5fbe30d680ea41a00cb1117397ac5e40483a8312a251a4b67d7856d6a9b7459",
+      "original_bytes": 20152,
+      "role": "FIXED_FINAL_THREE_PATH_SUBJECT",
+      "git_text_sha256": "f11d35391b0b8877118d473a1917565ee53e8b7511ed999eeb889eb7f4bdfafa",
+      "git_text_transform": "CRLF_to_LF"
+    },
+    {
+      "path": "ui-acceptance/final-three-path-integration-delta-f8-r1.patch",
+      "original_sha256": "4bb23bc6a51eeb98e17cc8b638fa85b7f263f07d17c60d0b32583f83898196ba",
+      "original_bytes": 3188,
+      "role": "FIXED_D01_MAIN_DELTA",
+      "git_text_sha256": "4bb23bc6a51eeb98e17cc8b638fa85b7f263f07d17c60d0b32583f83898196ba",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/pr818-local-6c35-secret-scan-review-r1.json",
+      "original_sha256": "74958af6808978f6d2d538d9aaaf9989596853ecaebac94a326c7c921ff97736",
+      "original_bytes": 10662,
+      "role": "BOUNDED_PRIOR_6C_HISTORY_LOCAL_SECRET_REVIEW",
+      "git_text_sha256": "74958af6808978f6d2d538d9aaaf9989596853ecaebac94a326c7c921ff97736",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/evidence-preservation-root-verification-f8-r1.json",
+      "original_sha256": "e64ac4713a2deb4fdb29dc3725a632dc5ad1ba1aa1c97520cfdaa522144bed22",
+      "original_bytes": 4926,
+      "role": "ROOT_PRIOR_65_FILES_BYTE_PRESERVATION",
+      "git_text_sha256": "56dacbfe10f02f9ba032763f072e7a85b779598cd08b22407233c8a98388a6d7",
+      "git_text_transform": "CRLF_to_LF"
+    },
+    {
+      "path": "ui-acceptance/eight-view-remaining-native-run-checklist-r5.json",
+      "original_sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43",
+      "original_bytes": 82238,
+      "role": "HISTORICAL_NOT_EXECUTED_NOT_READY_PLAN",
+      "git_text_sha256": "ed5a239659ddaab46908416534bc9ea5c32be3e3055536e962fabea909204a43",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/eight-view-native-run-checklist-independent-review-r5.json",
+      "original_sha256": "c5be7bf6032fba65fd6f4343f2cb2d6e22a40e5e99749062a18132196e43bcc7",
+      "original_bytes": 5913,
+      "role": "STATIC_R5_CHANGES_REQUIRED",
+      "git_text_sha256": "c5be7bf6032fba65fd6f4343f2cb2d6e22a40e5e99749062a18132196e43bcc7",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/eight-view-remaining-native-run-checklist-r6.json",
+      "original_sha256": "661a973e548e15a8f9e555312f47c666c42030499b565de417e5e0a7c1e7d870",
+      "original_bytes": 96918,
+      "role": "SUCCESSOR_NOT_EXECUTED_PLAN",
+      "git_text_sha256": "661a973e548e15a8f9e555312f47c666c42030499b565de417e5e0a7c1e7d870",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/eight-view-native-run-checklist-independent-review-r6.json",
+      "original_sha256": "89ddbfd4a70d5dd9dc48100e82679fb17ad3ea1dfa1e959553b2cf2afa5b0f3e",
+      "original_bytes": 9601,
+      "role": "STATIC_R6_BOUNDED_PASS",
+      "git_text_sha256": "89ddbfd4a70d5dd9dc48100e82679fb17ad3ea1dfa1e959553b2cf2afa5b0f3e",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/final-integration-database-f8-r1.log",
+      "original_sha256": "d0fc0d787b56ee205a1bb08840c67c645615f765c78c713b6584797ce849da8b",
+      "original_bytes": 22501,
+      "role": "ACTUAL_R1_DATABASE_LOG",
+      "git_text_sha256": "d0fc0d787b56ee205a1bb08840c67c645615f765c78c713b6584797ce849da8b",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/final-integration-typecheck-f8-r1.log",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_bytes": 0,
+      "role": "ACTUAL_R1_TYPECHECK_LOG",
+      "git_text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/final-integration-build-f8-r1.log",
+      "original_sha256": "5ac68261e01415a6340d7d9a2fc3c65bc9b28685d184e80c5977d4d2d29ac9ab",
+      "original_bytes": 3004,
+      "role": "ACTUAL_R1_BUILD_LOG",
+      "git_text_sha256": "5ac68261e01415a6340d7d9a2fc3c65bc9b28685d184e80c5977d4d2d29ac9ab",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/final-integration-pdf-f8-r1.log",
+      "original_sha256": "1cd9b4b73484af6bb358903fbb1e8c7f6c8f669825f161b71d2d5221725c3b40",
+      "original_bytes": 118,
+      "role": "ACTUAL_R1_PDF_LOG",
+      "git_text_sha256": "1cd9b4b73484af6bb358903fbb1e8c7f6c8f669825f161b71d2d5221725c3b40",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/final-integration-rendered-f8-r1.log",
+      "original_sha256": "3531cdd94725a5595149969ee2f6cd70b3042f0f0efbddb6b359d718278fa658",
+      "original_bytes": 252,
+      "role": "ACTUAL_R1_RENDERED_LOG",
+      "git_text_sha256": "3531cdd94725a5595149969ee2f6cd70b3042f0f0efbddb6b359d718278fa658",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/final-integration-database-f8-r2.log",
+      "original_sha256": "cc7678cfa4d830ccfa363b9a79cfc10c87704765520725c513c413918c130a1f",
+      "original_bytes": 22473,
+      "role": "ACTUAL_SUCCESSOR_DB_LOG",
+      "git_text_sha256": "cc7678cfa4d830ccfa363b9a79cfc10c87704765520725c513c413918c130a1f",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/d01-main9231-task-goal-delivery-db.test.mjs",
+      "original_sha256": "732c6827734ddd18c273ebe4be937df56a082b498b8df7db068de8de592a22c5",
+      "original_bytes": 65538,
+      "role": "EXACT_D01_MAIN9231_EXPORT",
+      "git_text_sha256": "732c6827734ddd18c273ebe4be937df56a082b498b8df7db068de8de592a22c5",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "repo/apps/clued-cloud/tests/task-goal-delivery-db.test.mjs",
+      "original_sha256": "4f053ce009804a16563df2f63c47e9bcefc75524d813d2210526b487489d63ee",
+      "original_bytes": 66064,
+      "role": "EXACT_FINAL_THREE_PATH_SNAPSHOT",
+      "git_text_sha256": "4f053ce009804a16563df2f63c47e9bcefc75524d813d2210526b487489d63ee",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/d01-main9231-clued-components.json",
+      "original_sha256": "d98aac58d111d986df4f09684cce0dfd2a803871ab8b5278b9e2a7ab0cc8f872",
+      "original_bytes": 10767,
+      "role": "EXACT_D01_MAIN9231_EXPORT",
+      "git_text_sha256": "d98aac58d111d986df4f09684cce0dfd2a803871ab8b5278b9e2a7ab0cc8f872",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "repo/config/clued-components.json",
+      "original_sha256": "7d9ace9fb38ea95fe1db80d7d823fbcc91d69bacbc367294e8305e06dea9abad",
+      "original_bytes": 11064,
+      "role": "EXACT_FINAL_THREE_PATH_SNAPSHOT",
+      "git_text_sha256": "270dbd9432b29946a2bfeade98c01fddd5176f18e36c09871e13ab54656f59ec",
+      "git_text_transform": "CRLF_to_LF"
+    },
+    {
+      "path": "ui-acceptance/d01-main9231-components.ts",
+      "original_sha256": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+      "original_bytes": 1021,
+      "role": "EXACT_D01_MAIN9231_EXPORT",
+      "git_text_sha256": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "repo/apps/clued-cloud/worker/generated/components.ts",
+      "original_sha256": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+      "original_bytes": 1021,
+      "role": "EXACT_FINAL_THREE_PATH_SNAPSHOT",
+      "git_text_sha256": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+      "git_text_transform": "identity"
+    },
+    {
+      "path": "ui-acceptance/final-integration-delta-independent-review-f8-r1.json",
+      "original_sha256": "e5627bc28ef17e4ef5871937d675b9786bbc7fe17ec157383fb8c4f485014e02",
+      "original_bytes": 17415,
+      "role": "INDEPENDENT_FINAL_THREE_PATH_DELTA_REVIEW",
+      "git_text_sha256": "e5627bc28ef17e4ef5871937d675b9786bbc7fe17ec157383fb8c4f485014e02",
+      "git_text_transform": "identity"
+    }
+  ],
+  "no_credentials": "No credential or lease/session token was intentionally included; limited literal screen passed; Root scan remains required."
+}

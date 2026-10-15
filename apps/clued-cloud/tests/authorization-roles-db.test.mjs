@@ -60,6 +60,13 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort()) {
+      if (name === '20261014044323_all_contexts_authorization_v2.sql') {
+        await assertGatewayCloseoutBoundary(admin);
+        const originalCatalog = await snapshotCallerCatalog(admin);
+        await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', CLOSEOUT_MIGRATION), 'utf8'));
+        await assertGatewayCloseoutBoundary(admin);
+        assert.deepEqual(await snapshotCallerCatalog(admin), originalCatalog, 'original source closeout replay keeps OIDs and ACL');
+      }
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -99,6 +106,13 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
       for (const [resourceId, actions] of entries) {
         await admin.query(`insert into clued_private.authorization_entries_v12(binding_id,resource_kind,resource_id,environment,actions)
           values($1,'scope',$2,'canonical',$3)`, [id, resourceId, actions]);
+      }
+      // This is an explicitly seeded pre-source Binding. The old deferred
+      // projection-entry trigger is retired; fixtures call the source-aware
+      // legacy expander under the real early Owner writer guard.
+      if (entries.some(([resourceId]) => resourceId === 'project:*')) {
+        await admin.query('select clued_private.authorization_writer_guard_v2($1)', [owner]);
+        await admin.query('select clued_private.authorization_all_projects_expand_v1($1)', [id]);
       }
       await admin.query('commit');
       return id;
@@ -141,7 +155,7 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
     assert.equal((await entries(dev))[P(otherLater)], undefined);
     const audit = (await admin.query(`select operation from clued_private.authorization_audit_v12
       where binding_id=$1 order by recorded_at`, [dev])).rows.map((r) => r.operation);
-    assert.deepEqual(audit, ['all_projects_expand', 'all_projects_expand']);
+    assert.ok(audit.includes('sources_projection'), 'legacy project policy uses the same source projection');
 
     // --- A revoked connection gets nothing new. ---
     const gone = await connect('gone', ['context:read'], ['project:*'], [['project:*', ['read']]]);
@@ -186,7 +200,7 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
     const issued = await native('clued_owner_grant_confirmation_issue_v1', { request_id: asked.request.request_id, choice: 'once' });
     assert.equal(issued.status, 'issued', JSON.stringify(issued));
     assert.deepEqual(issued.confirmation_view.permissions.map((p) => [p.context, p.context_name, p.action, p.role]), [
-      ['global', '个人记忆', 'read', 'reader'],
+      ['global', '个人记录', 'read', 'reader'],
       ['project:*', '我的全部项目（含以后新建的）', 'read', 'developer'],
       ['project:*', '我的全部项目（含以后新建的）', 'write', 'developer'],
       ['project:*', '我的全部项目（含以后新建的）', 'close', 'developer'],
@@ -206,12 +220,10 @@ test('authorization roles: project:* covers the Owner\'s projects, including lat
     // The materializer is not callable from the API roles.
     await assert.rejects(() => anon.query('select clued_private.authorization_all_projects_expand_v1($1,null)', [dev]),
       /permission denied/);
-    // The entire current chain was applied above; reapply the real closeout and compare catalog metadata.
+    // The old closeout source replay was qualified before the successors;
+    // new early writers keep the same actual gateway/CI privilege boundary.
     await assertGatewayCloseoutBoundary(admin);
-    const closedCatalog=await snapshotCallerCatalog(admin);
-    await admin.query(await fs.readFile(path.join(root,'supabase/migrations',CLOSEOUT_MIGRATION),'utf8'));
-    await assertGatewayCloseoutBoundary(admin);
-    assert.deepEqual(await snapshotCallerCatalog(admin),closedCatalog,'actual G6 replay preserves definitions and ACL');
+    assert.equal((await admin.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready, true);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

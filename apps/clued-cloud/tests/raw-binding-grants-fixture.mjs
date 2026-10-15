@@ -28,4 +28,33 @@ export async function allowRawTestBindings(client) {
       from public.clued_agent_bindings b
      where not exists (select 1 from clued_private.authorizations_v12 a where a.binding_id = b.id)
     on conflict (binding_id) do nothing;`);
+  // Only a direct test administrator INSERT gets the early writer protocol.
+  // current_user is postgres inside SECURITY DEFINER Native RPCs too, so it is
+  // intentionally not used. SET ROLE authenticated/gateway remains untouched;
+  // negative late/fake-guard tests explicitly remove these fixture triggers.
+  if ((await client.query(`select to_regprocedure('clued_private.authorization_writer_guard_v2(uuid)') is not null as ready`)).rows[0].ready) {
+    await client.query(`
+      create or replace function clued_private.test_authorization_early_writer_v2() returns trigger
+      language plpgsql security definer set search_path='' as $$
+      declare test_owner uuid;
+      begin
+        if session_user <> 'postgres' or coalesce(current_setting('role',true),'none') <> 'none' then return new; end if;
+        if tg_table_name='clued_projects' then test_owner:=new.user_id;
+        elsif tg_table_name='development_spaces_v14' then test_owner:=new.owner_id;
+        else select b.user_id into test_owner from public.clued_agent_bindings b where b.id=new.binding_id;
+        end if;
+        perform clued_private.authorization_writer_guard_v2(test_owner);
+        return new;
+      end $$;
+      revoke all on function clued_private.test_authorization_early_writer_v2() from public,anon,authenticated,service_role;
+      drop trigger if exists test_authorization_early_writer_v2 on public.clued_projects;
+      create trigger test_authorization_early_writer_v2 before insert on public.clued_projects
+        for each row execute function clued_private.test_authorization_early_writer_v2();
+      drop trigger if exists test_authorization_early_writer_v2 on clued_private.development_spaces_v14;
+      create trigger test_authorization_early_writer_v2 before insert on clued_private.development_spaces_v14
+        for each row execute function clued_private.test_authorization_early_writer_v2();
+      drop trigger if exists test_authorization_early_writer_v2 on clued_private.authorization_entries_v12;
+      create trigger test_authorization_early_writer_v2 before insert on clued_private.authorization_entries_v12
+        for each row execute function clued_private.test_authorization_early_writer_v2();`);
+  }
 }

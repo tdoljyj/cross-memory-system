@@ -1,0 +1,343 @@
+{
+  "schema": "clued.naming-order-independent-code-review/2",
+  "reviewer": "/root/pr818_stack_failure_diagnosis",
+  "reviewed_at_utc": "2026-10-14T13:52:13Z",
+  "verdict": "PASS",
+  "verdict_scope": "Frozen seven-file EEF-to-r2 delta only; controlled empty-projection HTTP/UI handling and display-only order changes.",
+  "overall_naming_verdict": "CHANGES_REQUIRED",
+  "new_findings": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0,
+    "items": []
+  },
+  "carried_findings": [
+    {
+      "id": "R1-Major-01",
+      "severity": "Major",
+      "path": "apps/clued-cloud/app/page.tsx",
+      "status": "NOT_FIXED_PATH_TEMPORARILY_RELEASED",
+      "basis": "Prior R1 independent review and r2 subject remaining_r1_major; this released path was not reopened or edited in r2.",
+      "prior_review_sha256": "aebf2e8d45f893b456a23d857696a161c256e91ea0ffff0cd8f55410c0938d24",
+      "anchors": [
+        136,
+        260,
+        526,
+        1128
+      ],
+      "description": "Original level=global Standard Work Projection spans project registry and priorities. Its label must not be renamed to the non-project scope=global personal-records content range.",
+      "required_followup": "Coordinate the released home path with its owner, correct the work-projection label, then bind and review its actual successor bytes. This report does not close that Major."
+    }
+  ],
+  "closed_prior_items": [
+    {
+      "id": "R1-Minor-01",
+      "path": "apps/clued-cloud/app/policies/page.tsx",
+      "lines": [
+        188,
+        189,
+        190
+      ],
+      "status": "CLOSED_IN_THIS_SCOPE",
+      "reason": "Checkbox rendering now orders profile, global, then the original project map. Existing scope values, callbacks and request construction are unchanged."
+    },
+    {
+      "id": "R1-contract-global-qualification",
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "line": 9,
+      "status": "CLOSED_IN_THIS_SCOPE",
+      "reason": "Content resource scope/global/canonical and query/save scope=global are expressly separated from work projection level=global. The latter retains its cross-project meaning and protocol."
+    }
+  ],
+  "subject": {
+    "base_head": "eefcf51262b07ebcd90eb32deaa7d6644922a9e7",
+    "owner_decision": {
+      "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+      "version": 6
+    },
+    "manifest": {
+      "path": "personal-records-name-order-code-review-subject-r2.json",
+      "sha256": "95d7439c7a65f3ee533576daa8f91a76e9fef14ecbcc29f577b0741aa036ffc6"
+    },
+    "patch": {
+      "path": "personal-records-name-order-eef-frozen-delta-r2.patch",
+      "sha256": "27c27c2dc41f8cdaa0c99399f47effd64b49395f6fae8a8b8965686e5e25e107",
+      "bytes": 29240
+    },
+    "files": [
+      {
+        "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+        "opening_sha256": "3e917be778bd8877ee779a57fe548dbe61a0adda9d861c25cfabf69ec14b433a",
+        "closing_sha256": "3e917be778bd8877ee779a57fe548dbe61a0adda9d861c25cfabf69ec14b433a",
+        "bytes": 25421,
+        "subject_match": true,
+        "stable_during_review": true
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/connections/page.tsx",
+        "opening_sha256": "3288be602ffa09bb7db94fa7346bb569c147d7961a054ab52e500cf91dec10af",
+        "closing_sha256": "3288be602ffa09bb7db94fa7346bb569c147d7961a054ab52e500cf91dec10af",
+        "bytes": 53778,
+        "subject_match": true,
+        "stable_during_review": true
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/connections/headless.tsx",
+        "opening_sha256": "7823381eecdc23f38709c28134bdfdc0451b668af8fcca444e0b1ccbbe59e73e",
+        "closing_sha256": "7823381eecdc23f38709c28134bdfdc0451b668af8fcca444e0b1ccbbe59e73e",
+        "bytes": 27625,
+        "subject_match": true,
+        "stable_during_review": true
+      },
+      {
+        "path": "apps/clued-cloud/app/policies/page.tsx",
+        "opening_sha256": "9c4423fbefb7ea3d6561d25e866019d36a2c722ce93316d59075d5bc7e2c4670",
+        "closing_sha256": "9c4423fbefb7ea3d6561d25e866019d36a2c722ce93316d59075d5bc7e2c4670",
+        "bytes": 14812,
+        "subject_match": true,
+        "stable_during_review": true
+      },
+      {
+        "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+        "opening_sha256": "4cd97a6920549da20edf78f38b2d2453f5b74807708f6734aff45c5ce049cc5d",
+        "closing_sha256": "4cd97a6920549da20edf78f38b2d2453f5b74807708f6734aff45c5ce049cc5d",
+        "bytes": 29900,
+        "subject_match": true,
+        "stable_during_review": true
+      },
+      {
+        "path": "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+        "opening_sha256": "ca214b3bdd28b273dfb2f4c605fe09902e3370716f35ce98fa4d60c52ab465d0",
+        "closing_sha256": "ca214b3bdd28b273dfb2f4c605fe09902e3370716f35ce98fa4d60c52ab465d0",
+        "bytes": 39777,
+        "subject_match": true,
+        "stable_during_review": true
+      },
+      {
+        "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+        "opening_sha256": "c9ddae11bcf6bd864e8a9378d53d836840f59c227a52c7cbc8069945236150a7",
+        "closing_sha256": "c9ddae11bcf6bd864e8a9378d53d836840f59c227a52c7cbc8069945236150a7",
+        "bytes": 31896,
+        "subject_match": true,
+        "stable_during_review": true
+      }
+    ],
+    "patch_verification": {
+      "files": 7,
+      "hunks": 22,
+      "new_side_lines_checked": 234,
+      "all_new_side_hunks_match_current_files": true,
+      "all_file_hashes_match_subject": true
+    }
+  },
+  "review_results": [
+    {
+      "topic": "Exact controlled business refusal",
+      "status": "PASS",
+      "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+      "lines": [
+        27,
+        71,
+        72,
+        73,
+        74,
+        78,
+        345,
+        347
+      ],
+      "evidence": "The special response requires HTTP 400, RPC clued_authorization_manage_v12, p_input.op reduce, string SQLSTATE 22023, and the exact authorization_empty_projection_requires_binding_revoke message. It emits only a fixed business code and fixed public wording. Database details, hints, identifiers and arbitrary messages are never copied. Malformed JSON falls through to the existing redacted refusal.",
+      "qualification": "Only these exact Worker bytes and this code portion are qualified for coordinated handoff; successor brand edits or a later main object require byte-level inheritance/review."
+    },
+    {
+      "topic": "Existing HTTP security and refusal routes",
+      "status": "PASS",
+      "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+      "lines": [
+        65,
+        66,
+        70,
+        78,
+        194,
+        195,
+        202,
+        204
+      ],
+      "evidence": "Origin, Owner bearer, operation and size gates are unchanged in the complete EEF delta. The RPC still forwards the actual Owner bearer with the publishable key; no gateway credential is substituted. Transient refusals retain 503; 401 and 409 retain their existing safe paths; other database refusals remain redacted 403."
+    },
+    {
+      "topic": "Client refusal and explicit revoke",
+      "status": "PASS",
+      "path": "apps/clued-cloud/app/oauth/connections/page.tsx",
+      "lines": [
+        121,
+        123,
+        125,
+        126,
+        379,
+        396,
+        403,
+        404,
+        428,
+        430,
+        680,
+        681
+      ],
+      "evidence": "The UI matches the controlled code only on HTTP 400, ignores server message/details, and renders fixed wording that the change was not saved. Rejection happens before submitted becomes true, so no success notice is emitted. The existing catch requires rereading and disables further writes. Reload and subsequent explicit revoke remain separate user actions. The delta adds no automatic revoke, repeated write, speculative grant change or implicit success."
+    },
+    {
+      "topic": "Copy-only order and signed selection preservation",
+      "status": "PASS",
+      "paths": [
+        "apps/clued-cloud/app/oauth/connections/page.tsx",
+        "apps/clued-cloud/app/oauth/connections/headless.tsx"
+      ],
+      "lines": {
+        "connections": [
+          166,
+          613
+        ],
+        "headless": [
+          180,
+          213,
+          215,
+          234,
+          310,
+          363
+        ]
+      },
+      "evidence": "Only human-facing range/grant and preview/grant maps wrap authorizationDisplayOrder. Selection creation, source/override identities and versions, environment, original signed view.selected, confirmation token/digest and payload functions are unchanged in the patch. The imported helper sorts a copied array; profile precedes global, while all project/context rows share the same rank and retain original order.",
+      "inherited_dependency": {
+        "path": "apps/clued-cloud/lib/context-authorization.ts",
+        "sha256": "f9691a0115c26ea6abff449408cad1f4c113a4ecae3e1b1a7f2b49d8509e38df",
+        "lines": [
+          59,
+          61,
+          63,
+          65
+        ],
+        "basis": "Same exact helper bytes previously audited in R1, observed unchanged; not an expansion of the seven-file formal delta."
+      }
+    },
+    {
+      "topic": "Tests exercise actual implementation boundaries",
+      "status": "PASS",
+      "paths": [
+        "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+        "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs"
+      ],
+      "lines": {
+        "ui": [
+          9,
+          22,
+          42,
+          51,
+          52,
+          146,
+          152,
+          162,
+          166,
+          167,
+          168,
+          169,
+          171,
+          179,
+          181
+        ],
+        "transport": [
+          13,
+          19,
+          130,
+          135,
+          137,
+          145,
+          153,
+          157,
+          164,
+          170,
+          177,
+          180
+        ]
+      },
+      "evidence": "The UI test compiles and renders the actual page/shared module, passing through an actual Response for the refusal. It checks fixed wording, no diagnostics/no success, unchanged active binding/version, disabled revoke before reload, then exactly reduce and explicit revoke writes. The transport test bundles the actual Worker and maintained OAuth provider, with a deliberately limited HTTP database double; it checks the controlled refusal, private diagnostics redaction, wrong operation and wrong message. Existing actual transport cases preserve Owner bearer, Origin, CAS, size and safe 409 behavior.",
+      "qualification": "The five-way predicate is completely checked statically; this new transport case does not independently execute every status/RPC/code/malformed-body mismatch. SQL authorization, whole browser E2E, and production are outside these HTTP/component proofs."
+    },
+    {
+      "topic": "Owner terminology and immutable history",
+      "status": "PASS",
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "lines": [
+        3,
+        5,
+        9,
+        22,
+        43,
+        44,
+        56,
+        121,
+        135
+      ],
+      "evidence": "Decision v6 remains the source for personal records and profile-first display order. global/profile/project and precise context identities retain their compatibility meaning. The contract delta changes wording/order and adds scope-versus-level qualification; it does not change grants, operation ceilings, consent semantics or the historical accepted-r2 archive. No unadopted personal-space/notes/plans name is introduced."
+    }
+  ],
+  "validation": {
+    "reviewer_reran_tests": false,
+    "reviewer_ran_git": false,
+    "reviewer_ran_pg": false,
+    "current_local_evidence": {
+      "path": "personal-order-and-empty-source-ui-transport-r3.log",
+      "sha256": "5178bbaa85580f6fadcfae0a86e7af82e151f44d631b12ce049d4693aa8f9b29",
+      "actual_log_counts": {
+        "tests": 60,
+        "passed": 60,
+        "failed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "duration_ms": 385.4964,
+      "five_file_suite_count_basis": "Root execution description; actual terminal log confirms sixty test outcomes.",
+      "typecheck": {
+        "path": "personal-order-and-empty-source-typecheck-r2.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0,
+        "exit_code": 0,
+        "exit_code_basis": "Root execution and frozen subject; an empty log alone is not proof of successful typecheck."
+      }
+    },
+    "retained_failed_attempts": [
+      {
+        "path": "personal-order-and-empty-source-ui-transport-r1.log",
+        "sha256": "818e9faa498103857fa7ce79dc882e0239ac15249608ef4589018275cb2b8f23",
+        "actual_counts": {
+          "tests": 60,
+          "passed": 58,
+          "failed": 2,
+          "skipped": 0
+        },
+        "observed_failures": [
+          "Undefined props in refusal test selector",
+          "Displayed project label expected as UUID instead of actual readable title"
+        ]
+      },
+      {
+        "path": "personal-order-and-empty-source-ui-transport-r2.log",
+        "sha256": "719393014ae02ed1bb75fbf5a96373afcd612bbf2702ef254303062154fc4f9f",
+        "actual_counts": {
+          "tests": 60,
+          "passed": 59,
+          "failed": 1,
+          "skipped": 0
+        },
+        "observed_failure": "Write sequence assertion included unrelated POST operations with undefined op; final test filters the actual authorization endpoint."
+      }
+    ],
+    "excluded_counts": "Do not add the earlier R1 130 cases, separate Source R6 or compatibility cases, or lifecycle 46 cases to these sixty current tests."
+  },
+  "limits": [
+    "PASS is for the frozen seven-file delta only. The carried home work-projection Major keeps overall naming CHANGES_REQUIRED.",
+    "No Source SQL, fixtures, grant changes, business memory, Git, PG, builds or CI were changed or run by this reviewer.",
+    "Five Native and two shared component paths released to another owner were not requalified by this review.",
+    "This is not production, latest-main, deployment, full browser E2E, complete authorization repair or overall eight-view acceptance.",
+    "Later edits to any reviewed file invalidate that file's exact-byte qualification until separately reconciled/reviewed."
+  ]
+}

@@ -47,7 +47,14 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     for (const name of (await fs.readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort()) await db.query(await fs.readFile(path.join('supabase/migrations', name), 'utf8'));
     await db.query("insert into auth.users values($1,'fixture@example.invalid',now()),($2,'developer@example.invalid',now())", [U, V]);
-    await db.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Integration project','integration project',$3)", [P, U, 'project:' + P]);
+    // Raw fixture creation follows the production early Owner writer protocol.
+    await db.query('begin');
+    try {
+      await db.query('select clued_private.authorization_writer_guard_v2($1)', [U]);
+      assert.equal((await db.query('select clued_private.authorization_writer_guard_held_v2($1) held', [U])).rows[0].held, true);
+      await db.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Integration project','integration project',$3)", [P, U, 'project:' + P]);
+      await db.query('commit');
+    } catch (error) { await db.query('rollback'); throw error; }
     const issuer = crypto.randomBytes(32).toString('hex');
     await allowTestIssuerCredentials(db);
     await db.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'Integration fixture')", [hash(issuer), resource]);

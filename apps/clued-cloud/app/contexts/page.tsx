@@ -33,7 +33,7 @@ async function request(who: Session, signal: AbortSignal, input: Json): Promise<
   let value: unknown;
   try { value = await response.json(); } catch { throw new RequestFailure("服务返回了不完整的结果，请核对原操作。", true); }
   if (!response.ok) throw new RequestFailure(response.status === 401 ? "登录已失效，请重新登录。"
-    : response.status === 403 ? "当前账户无权管理此开发上下文。" : "请求未完成，请重新读取后重试。", response.status >= 500);
+    : response.status === 403 ? "当前账户无权管理此上下文。" : "请求未完成，请重新读取后重试。", response.status >= 500);
   return value;
 }
 const pendingKey = (subject: string) => "clued.pending-development-context:" + subject;
@@ -80,7 +80,7 @@ export default function ContextsPage() {
     setLoading(true); setError("");
     try {
       const value = await request(who, controller.signal, { op: "owner_list" });
-      if (!validListing(value)) throw new RequestFailure("服务返回了不完整的开发上下文列表。", true);
+      if (!validListing(value)) throw new RequestFailure("服务返回了不完整的上下文列表。", true);
       if (epoch.current !== generation || controller.signal.aborted) return null;
       setListing(value);
       setListingOwner(JSON.stringify([who.user.id, who.access_token]));
@@ -88,7 +88,7 @@ export default function ContextsPage() {
       setProjectId(previous => value.projects.some(project => project.id === previous) ? previous : "");
       return value;
     } catch (failure) {
-      if (epoch.current === generation && !controller.signal.aborted) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取开发上下文。");
+      if (epoch.current === generation && !controller.signal.aborted) setError(failure instanceof RequestFailure ? failure.message : "暂时无法读取上下文。");
       return null;
     } finally { if (epoch.current === generation && !controller.signal.aborted) setLoading(false); }
   }, []);
@@ -138,7 +138,7 @@ export default function ContextsPage() {
       if (epoch.current !== generation || controller.signal.aborted) return;
       if (!refreshed?.contexts.some(row => row.id === (result.result as Context).id && row.project_id === input.project_id
         && row.name === input.name && row.environment === input.environment)) throw new RequestFailure("尚未从最新列表确认创建结果，请核对原操作。", true);
-      forgetCreation(who.user.id); pending.current = null; setHasPending(false); setName(""); setNotice("已创建开发上下文。");
+      forgetCreation(who.user.id); pending.current = null; setHasPending(false); setName(""); setNotice("已创建上下文。");
     } catch (failure) {
       if (epoch.current !== generation || controller.signal.aborted) return;
       if (failure instanceof RequestFailure && !failure.uncertain && !recovering) {
@@ -163,16 +163,16 @@ export default function ContextsPage() {
   const selectedContext = visibleListing?.contexts.find(context => context.id === selectedContextId);
   return <main className="context-page">
     <header><Link href="/">Kooyumi / 账号</Link><Link href="/oauth/connections">客户端连接</Link></header>
-    <h1>项目开发上下文</h1>
-    <p className="context-muted">为已有项目建立独立的开发记录空间，再通过已授权的 AI 客户端读取、保存或反馈开发记录。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Kooyumi</Link> 后查看和创建自己的开发上下文。</p> : <>
+    <h1>上下文</h1>
+    <p className="context-muted">为已有项目建立独立的记录空间，再通过已授权的 AI 客户端读取、保存或反馈上下文记录。</p>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Kooyumi</Link> 后查看和创建自己的上下文。</p> : <>
       <p>已登录 {session.user.email || session.user.id} <button type="button" onClick={() => void signOut()}>退出</button></p>
       <button type="button" disabled={busy} onClick={() => currentSession.current && void read(currentSession.current, epoch.current)}>刷新上下文</button>
-      {loading && <p role="status">正在读取开发上下文…</p>}
+      {loading && <p role="status">正在读取上下文…</p>}
       {hasPending && <section aria-label="待确认创建"><p>有一次创建尚未确认，请先核对原操作。</p><button type="button" disabled={busy} onClick={() => void create()}>核对原操作</button></section>}
       {visibleListing && <>
-        <section aria-label="已有开发上下文"><h2>我的开发上下文</h2>
-          {!visibleListing.contexts.length ? <p>尚未创建开发上下文。</p> : visibleListing.contexts.map(context => <article key={context.id}>
+        <section aria-label="已有上下文"><h2>我的上下文</h2>
+          {!visibleListing.contexts.length ? <p>尚未创建上下文。</p> : visibleListing.contexts.map(context => <article key={context.id}>
             <h3>{context.name}</h3><p>{visibleListing.projects.find(project => project.id === context.project_id)?.name || "已有项目"} · {environments[context.environment]}</p>
             <button type="button" onClick={() => setSelectedContextId(context.id)} aria-pressed={selectedContextId === context.id}>浏览此上下文印记</button>
           </article>)}
@@ -180,7 +180,7 @@ export default function ContextsPage() {
         {selectedContext && session && <ImprintPanel key={`${session.user.id}:${selectedContext.id}`}
           session={session} locale="zh-CN" developmentContextId={selectedContext.id} developmentContextName={selectedContext.name}
           projects={visibleListing.projects.filter(project => project.id === selectedContext.project_id)} />}
-        <section aria-label="创建开发上下文"><h2>创建开发上下文</h2>
+        <section aria-label="创建上下文"><h2>创建上下文</h2>
           {!visibleListing.projects.length ? <p>当前账户尚无自己拥有的项目，请先在 Kooyumi 中创建项目。</p> : <form onSubmit={create}>
             <label>所属项目<select required disabled={busy || hasPending} value={projectId} onChange={event => setProjectId(event.target.value)}><option value="">选择已有项目</option>{visibleListing.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
             <label>上下文名称<input required maxLength={120} disabled={busy || hasPending} value={name} onChange={event => setName(event.target.value)} /></label>

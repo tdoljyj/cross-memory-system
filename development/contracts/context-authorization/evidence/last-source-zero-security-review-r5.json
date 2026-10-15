@@ -1,0 +1,49 @@
+{
+  "schema": "clued.last-source-zero-independent-security-review/1",
+  "reviewer": "/root/last_source_zero_security_review_r5",
+  "verdict": "CHANGES_REQUIRED",
+  "counts": {
+    "blocker": 0,
+    "major": 2,
+    "minor": 0
+  },
+  "subject": {
+    "sql1": "c5fafc46416bd8da81d73501c636de1affad1e6d5eebc6024fd6c1848c55311e",
+    "sql2": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+    "baseline_sql1": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+    "report": "a366ec376a295f7e7528c53c3fbe04494cfce0998d82146339be0ad050126f41",
+    "test": "130984cd3a66b4d24978bbeda3afbb8b7128bfcd751d4ef13ad60fe34bdb5dc6"
+  },
+  "method": "Exact-byte static source and report/log review. No PG, Git, CI, Source/fixture or business writes.",
+  "findings": [
+    {
+      "id": "LAST-SOURCE-R5-01",
+      "severity": "Major",
+      "sql1_line": 1593,
+      "issue": "Empty Source sets authorization_state NOT_GRANTED while authentication_state remains USABLE; existing C10 requires NONE iff NOT_GRANTED. Legitimate expiry/revoke is misclassified as DERIVATION_INPUT_INVALID and status/evaluate can add diagnostics/first invalid Receipt.",
+      "missing_test": "Existing test only checks normalized scopes/caps and status.integration; it does not assert evaluation.valid/reasons or absence of new diagnostic business writes.",
+      "required": "Keep true authentication; express lost Source authority with an existing consistent authorization state, or obtain an accepted successor if none exists. Test valid evaluation and empty capability/no artificial diagnostic after expiry and final Context/member revoke."
+    },
+    {
+      "id": "LAST-SOURCE-R5-02",
+      "severity": "Major",
+      "sql1_line": 1624,
+      "issue": "Source check occurs only after Binding authentication. A report can pass it then wait for Integration I FOR UPDATE while independent membership revoke commits or Source expires. After waking write_open/report has no Source recheck; e0/e1 equal invalid/empty reasons can allow business commit.",
+      "basis": "Statically proved call path; not PG-reproduced by reviewer.",
+      "required": "Recheck effective authority after actual waits and before business mutation, or use the applicable qualification locking protocol. Cover all seven business callers; leave diagnostic observers read-only. Add revoke/expiry-during-wait rollback tests."
+    }
+  ],
+  "verified": [
+    "Both central empty-scope cases are controlled22023; NONEMPTY CHECK unchanged.",
+    "No coarse fake-permission fallback.",
+    "Zero-project future project policy retained.",
+    "Private ACL/global identifiers/UUIDOwner locking and covers-intersect environment contract remain.",
+    "Four human labels use个人记录."
+  ],
+  "limits": [
+    "Only exact frozen r5 Source, not current r6 editing.",
+    "Author local29+12 and lifecycle46 do not grant independent PASS or online/fullStack acceptance.",
+    "UI/API error presentation is separate."
+  ],
+  "next": "Source author started r6 repair; preserve r5 exact artifacts."
+}

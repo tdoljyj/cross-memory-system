@@ -1,0 +1,76 @@
+
+  vinext build  (Vite 8.2.2)
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./app/supabase-public-config" without a file extension (vite.config.ts:4:45). Add the file extension
+  - JSON import "./.openai/hosting.json" without import attributes (vite.config.ts:5:27). Add `with { type: 'json' }`
+  - import "./build/sites-vite-plugin" without a file extension (vite.config.ts:6:23). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mProxy environment variables detected. We'll use your proxy for fetch requests.[0m
+
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./app/supabase-public-config" without a file extension (vite.config.ts:4:45). Add the file extension
+  - JSON import "./.openai/hosting.json" without import attributes (vite.config.ts:5:27). Add `with { type: 'json' }`
+  - import "./build/sites-vite-plugin" without a file extension (vite.config.ts:6:23). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+[1/5] analyze client references...
+transforming...
+✓ 364 modules transformed.
+rendering chunks...
+✓ built in 2.06s
+[2/5] analyze server references...
+transforming...
+✓ 220 modules transformed.
+rendering chunks...
+✓ built in 347ms
+[3/5] build rsc environment...
+transforming...
+✓ 356 modules transformed.
+rendering chunks...
+computing gzip size...
+✓ built in 696ms
+[4/5] build client environment...
+transforming...
+✓ 226 modules transformed.
+rendering chunks...
+computing gzip size...
+✓ built in 449ms
+[5/5] build ssr environment...
+transforming...
+✓ 219 modules transformed.
+rendering chunks...
+computing gzip size...
+✓ built in 368ms
+[0m
+  Route (app)
+  ┌ ? /                       
+  ├ ? /agent-messages         
+  ├ ? /bindings               
+  ├ ƒ /confirm/:id            
+  ├ ? /contexts               
+  ├ ? /grants                 
+  ├ ? /independent-review     
+  ├ ? /oauth/account          
+  ├ ? /oauth/connections      
+  ├ ? /oauth/consent          
+  ├ ? /oauth/projects         
+  ├ ? /policies               
+  ├ ? /storage/admin          
+  ├ ? /storage/connections    
+  ├ ? /storage/google/callback
+  ├ ? /storage/onboard        
+  ├ ? /storage/transition     
+  ├ ? /tasks                  
+  ├ ? /work-claims            
+  ├ ? /work-claims/exemption  
+  └ ? /work-claims/race       
+
+  ƒ Dynamic  ? Unknown
+
+  ? Some routes could not be classified. vinext currently uses static analysis
+    and cannot detect dynamic API usage (headers(), cookies(), etc.) at build time.
+    Automatic classification will be improved in a future release.
+
+  Build complete. Run `vinext start` to start the production server.
+

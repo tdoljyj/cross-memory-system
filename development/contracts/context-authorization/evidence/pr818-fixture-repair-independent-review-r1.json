@@ -1,0 +1,188 @@
+{
+  "schema": "clued.pr818.fixture-repair-independent-review.v1",
+  "reviewer": "Codex independent non-author /root/pr818_stack_failure_diagnosis",
+  "generated_at": "2026-10-14T08:08:52Z",
+  "verdict": "PASS",
+  "finding_counts": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0
+  },
+  "scope": "11 authorized fixture/scenario files in the stable uncommitted candidate over exact PR 818 head 4d05eb04d64fb8655cbe522a3dfcecf0d3c74904; source/serialization SQL and historical CLOSEOUT unchanged.",
+  "base_head": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+  "files": [
+    {
+      "path": "apps/clued-cloud/tests/authorization-closeout.test.mjs",
+      "sha256": "ac12ec2846ddc52fd857007e375c39257b3e3656f4b62727b5602bf9a6ac6bfc"
+    },
+    {
+      "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+      "sha256": "232f0b1f0e3cbf4b396bcfde8992ba374e31954e1434f6ae1954076e6d2b91da"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-db.test.mjs",
+      "sha256": "ab8ac00bd8ee76903c1e8b55e86e4b7d222cafa962c8c1e0396e71080edc8c90"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs",
+      "sha256": "359d38231b77524f4d6b28ee2e6d4dedad5ffeb7a07599a874e853f18a400d9e"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-release-door-db.test.mjs",
+      "sha256": "de51e2ba36643a035cc24f18a3dc6a4413653c88a04850c0d38cc92594bcb15f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-scope-db.test.mjs",
+      "sha256": "61fc52269883328770abacea090f773244eab1d6b5d9bda09a6c0bd8813e6a58"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-request-bundles-db.test.mjs",
+      "sha256": "6f049be19f413c7c25255fd09fe232d66e734914e0a8d68f1616c4e59f9b32ef"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-db.test.mjs",
+      "sha256": "bd4bde9815003f44c3fe59db03fe5cff16c34a74abcc6382d9b83326f80211d3"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-lifecycle-successor-v2-db.test.mjs",
+      "sha256": "c25fc51a706c85976bd5aa7d27b470ed2c583fd9d39798b2926ed53dfcf7c946"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs",
+      "sha256": "be9bc28c94ee2003ba3d48767ea5a9093fb73b17e8f1d21f764afa18c69f283a"
+    },
+    {
+      "path": "apps/clued-cloud/evals/information-flow-e2e/scenarios/e2e-05.mjs",
+      "sha256": "975d21f7ca7147e22158e71cb63f7286556833b4e5e14dd8301bbf270cbb67ba"
+    }
+  ],
+  "unchanged_subject": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "sha256": "e3d6f9066eb09d27d58393d5e5c756d0632c64e1124692a489faec2357f67e38"
+    }
+  ],
+  "independence": {
+    "reviewer_authored_none_of_11_files": true,
+    "read_full_diffs": true,
+    "read_actual_complete_local_logs": true,
+    "closing_hashes_match_author_manifests": true,
+    "no_tests_repeated": true,
+    "no_source_or_test_mutation": true,
+    "no_ci_dispatch": true,
+    "no_canonical_write_or_checkpoint": true,
+    "no_shared_tokens_read": true
+  },
+  "evidence": [
+    {
+      "path": "pr818-stack-failures.json",
+      "sha256": "159974afd86365a2730d7f44a0f0e3d44ad6fb8819bf06ba43b8453b28e6ccc9",
+      "qualification": "Original exact-head CI failures and evidence/inference distinction retained; not overwritten."
+    },
+    {
+      "path": "auth-fixture-closeout-repair.json",
+      "sha256": "0624ad121c971edf1812effe18c07df339f9697ef1d9609ab5302bfe567047e6"
+    },
+    {
+      "path": "auth-fixture-closeout-test-manifest.json",
+      "sha256": "e92f1141b4842249736779b68acf80913bfe57654a842082d9fb05855efec37e"
+    },
+    {
+      "path": "auth-fixture-closeout-test.log",
+      "sha256": "bc75e20b02f8e1d553d86241a4a018fa42cacd486257202e919322e192c30f7d",
+      "actual_counts": {
+        "tests": 9,
+        "pass": 9,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "runtime": "Node.js v24.19.0",
+      "qualification": "Actual embedded PostgreSQL, six entry files plus imported admission case; 7 modified auth fixtures only."
+    },
+    {
+      "path": "pr818-stack-fixtures-handoff.json",
+      "sha256": "6025d02ecf15a84a5aa69667c20f697fc13cdbe6ee3255cd327985db0baa9bdd"
+    },
+    {
+      "path": "pr818-stack-fixtures-test-manifest.json",
+      "sha256": "b221196a51972f6871829d9f7aa903d08e0b1f93dd68659ea7258ad998c37179"
+    },
+    {
+      "path": "pr818-stack-fixtures-test.log",
+      "sha256": "f8e0f8bc5bdefac41d6a986ac0f1a7583cc87edaac0607ad3544b1b0a9a69d6d",
+      "actual_counts": {
+        "tests": 30,
+        "pass": 30,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0
+      },
+      "runtime": "Node.js v24.19.0",
+      "qualification": "Actual embedded PostgreSQL project-lifecycle and worker-gateway suites; includes sources protocol/CAS tests. HTTP E2E scenario was not executed by this run."
+    }
+  ],
+  "checks": [
+    {
+      "id": "historical-sealed-boundary",
+      "result": "PASS",
+      "basis": "Historical CLOSEOUT SQL bytes and the original worker fixture's closeout definitions, Native/P5 protections, idempotent replay, invalid caller and unexpected-ACL refusal assertions remain. Six late replays move to the bounded pre-Source stage and execute the actual sealed SQL with complete before/after catalog equality and GW80/CI8. The new authorization-closeout proof does the same."
+    },
+    {
+      "id": "full-ordered-successors",
+      "result": "PASS",
+      "basis": "Seven auth helpers preserve sorted full-chain loading, bind exact Source55ba/serializationea3 bytes, assert false readiness after Source and true readiness after serialization. Gateway fixture applies transition-through-closeout first, keeps old-stage behavior and malicious ACL tests, then applies every remaining migration in actual order. Lifecycle fixture defers the ordered two successors until all prior issuer/gateway/closeout/storage/work-claim dependencies and historical assertions complete; it then proves current Worker reads and denies the old anon path."
+    },
+    {
+      "id": "current-catalog-and-callers",
+      "result": "PASS",
+      "basis": "Actual catalog queries preserve all public Clued RPC OIDs, owners, security-definer metadata, configuration and ACL in the shared successor helper. Actual prosrc qualification covers Native Context management, authorization management, Native project mutate, Worker project mutate and private issuer approval entrances. Relevant entrances explicitly require postgres owner, security definer and empty search_path. GW remains exactly 80 and anon definer surface exactly CI8. Current Native-only entry privileges and private guard/fanout/reduction helper EXECUTE denial are checked for all four callers; seven auth fixtures additionally qualify relevant old OIDs and private guard/require/source-view denial."
+    },
+    {
+      "id": "raw-fixture-insert-lock",
+      "result": "PASS",
+      "basis": "Three current-chain raw project inserts in authorization-closeout and K-CONT run BEGIN, actual authorization_writer_guard_v2, pg_locks-backed held assertion, INSERT, then COMMIT or ROLLBACK. No guard is acquired inside an already-held project row operation and no fabricated GUC is accepted. Worker gateway raw project setup remains before Source installation in the bounded old stage."
+    },
+    {
+      "id": "e2e-target-provenance",
+      "result": "PASS_CODE_REVIEW_ONLY",
+      "basis": "E2E-05 reads the actual Native list DTO, requires sources_v1 and exactly one direct canonical contribution for A and B, and uses B's current source_id/version plus Binding CAS. Only B is submitted with empty action_cap; exceptions remain empty, A is omitted and its complete returned consent DTO is checked by the unchanged harness's isDeepStrictEqual. B disappears from live sources. Original next-pack scope/items and old-manifest STALE/binding_scope_reduced assertions remain intact."
+    },
+    {
+      "id": "source-protocol-negative-controls",
+      "result": "PASS",
+      "basis": "Actual worker-gateway DB test creates two sources through prepare+approve, reads both through the real gateway role, proves rejected old flat selected yields exact 22023 and unchanged full DTO, rejects Binding CAS and Source CAS with exact 40001 and no DTO change, commits B-only reduction once, preserves full A source/overrides, permits A and denies B, rejects stale replay, and finally revokes Binding so A is also denied. Its passing test is present in the actual 30-test log."
+    },
+    {
+      "id": "original-failure-retained",
+      "result": "PASS",
+      "basis": "First CI failure report remains at its original SHA; no old failures are relabeled PASS. Its E2E 22023 remains an inference about the previous HTTP run. The new embedded PostgreSQL counterexample observes that refusal independently and does not retroactively replace missing HTTP response evidence."
+    }
+  ],
+  "findings": [],
+  "qualification": {
+    "decision": "FIXTURE_REPAIR_CODE_REVIEW_PASS_WITH_SCOPED_LOCAL_POSTGRES_EVIDENCE",
+    "http_information_flow_e2e": "NOT_RUN_ON_THIS_CANDIDATE",
+    "linux_required_ci": "PENDING_EXACT_NEW_HEAD",
+    "production_migration_or_deploy": "NOT_RUN",
+    "native_real_page_eight_views": "PENDING",
+    "entire_original_task_completion": "NOT_CLAIMED",
+    "source_security_reapproval": "Outside this fixture-only review; frozen Source and serialization unchanged."
+  },
+  "required_next_gates": [
+    "Push the reviewed concrete candidate and run the normal exact-head required CI.",
+    "Require actual complete test:authorization:database and G4/lifecycle checks to pass on that head.",
+    "Run full Worker+Supabase HTTP Information Flow E2E and its evidence seals verifier; local 30-test results cannot substitute for it.",
+    "Continue existing production and real-page acceptance sequence under the Root claim and actual Native approval gates."
+  ]
+}

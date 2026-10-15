@@ -1,0 +1,156 @@
+{
+  "schema": "clued.lifecycle-source-compatibility-fixture-repair.r4",
+  "status": "COMPLETE_LOCAL_PARENT_PASS_FORMAL_REVIEW_PENDING",
+  "base_reviewed_head": "eefcf51262b07ebcd90eb32deaa7d6644922a9e7",
+  "claim": {
+    "id": "1ac9f59d-b242-47e6-accf-693b20aa3629",
+    "fence": 7,
+    "lease_version": 4
+  },
+  "changed_code": {
+    "path": "apps/clued-cloud/tests/integration-runtime-lifecycle-db.test.mjs",
+    "before_edit_sha256": "5359db687b3f3e01e1cbe03e784b0e4691cc134c057011dbfb8f53a743d15ca7",
+    "tested_sha256": "bde79fdc409b061111e5c522de2bcc8e9aea64e66105a6f15d2cc165614c326e"
+  },
+  "source_before_after": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "before_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+      "after_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "before_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "after_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+    }
+  ],
+  "source_measurement": "Test command logs all three actual file hashes before Node. The fixture records Source file hashes before migration/proofs and after the completed historical+current parent and asserts equality.",
+  "repair": [
+    {
+      "id": "T-A11-10",
+      "historical": "Same full migration chain reaches the fully qualified pre-Source stage. Original S0 changed -> rejected/integration_revoke_connection_set_changed -> no revocation business row -> retry revokes both Bindings is actually proved before Source installation.",
+      "current": "The actual Native revoke waits on the exact Owner advisory key held by c2, with pg_blocking_pids identifying the holder and no late B/Auth/C/P row-lock relation. After c2 commit it discovers the full set and revokes b1+b2, has an open revoke row, Rev(I)=empty, and retry is ALREADY_REVOKED. Original reverse-order refusal, 50 interleavings and concurrent management-revoke shrinking set remain and passed."
+    },
+    {
+      "id": "T-A11-13",
+      "repair": "Only the second pseudo Context project:<random UUID> is replaced by the existing Owner scope/profile/canonical/read resource, distinct from global.",
+      "preserved": "Legacy flat selected format, actual global READ reduction, HISTORICAL reduce not affecting current C_eff, CURRENT reduce narrowing C_eff, old wide consent refusal and fresh-consent expansion all remain and passed. No sources_v1 substitution, macro grant or invented resource/permission."
+    },
+    {
+      "id": "T-A11-23",
+      "historical": "Before Source, the original late uncommitted consent remains usable after revoke, both actual O7 bind attempts refuse binding_predates_revocation, and next Operator revoke or actual Native restore sweeps that late Binding. Both old followUp branches and exact assertions are retained and passed.",
+      "current": "Native revoke starts asynchronously on c3. Exact Owner waiting/holder/no late B/Auth/C/P locks are observed, c2 commits before awaiting pending revoke, and first revoke covers both current and late consent. Old consent remains revoked/unauthorized through both followUp revoke and fresh restore; sibling Integration remains VERIFYING; fresh restore credential is usable. Holder and waiter transactions are finalized even after assertion failure."
+    }
+  ],
+  "historical_boundary": {
+    "same_database": true,
+    "migration_cut": "20261014044323_all_contexts_authorization_v2.sql",
+    "guard_absence_asserted": true,
+    "gateway_closeout_boundary_checked": true,
+    "normal_successor_installation_follows": true,
+    "scope": "History is a separately labeled subtest at its genuine predecessor schema stage. No current guard/trigger/ACL is removed or disabled to recreate old races.",
+    "original_tests": [
+      {
+        "name": "original T-A11-10 pre-Source S0 change rejects, has no revoke write, then retries",
+        "duration_ms": 204.1992,
+        "status": "PASS"
+      },
+      {
+        "name": "original T-A11-23 pre-Source late consent survives then O7/revoke/restore closes it",
+        "duration_ms": 114.4874,
+        "status": "PASS"
+      }
+    ],
+    "cleanup": "The historical synthetic platform administrator singleton is deleted by exact synthetic subject_id in finally. It does not replace the later full-chain fixture administrator."
+  },
+  "final_run": {
+    "command": "C:/Program Files/nodejs/node.exe --test --test-reporter=tap tests/integration-runtime-lifecycle-db.test.mjs",
+    "cwd": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/apps/clued-cloud",
+    "node": "v24.19.0",
+    "started_utc": "2026-10-14T11:47:47.6510043Z",
+    "finished_utc": "2026-10-14T11:48:01.3285475Z",
+    "exit_code": 0,
+    "duration_ms": 13570.0076,
+    "parent": {
+      "name": "S2c PR-4: revocation, restore, reauth marks, capability expansion and lifecycle",
+      "duration_ms": 13460.6887,
+      "direct_children": 43,
+      "grandchildren": 2
+    },
+    "counts": {
+      "tests": 46,
+      "pass": 46,
+      "fail": 0,
+      "skip": 0,
+      "cancelled": 0
+    },
+    "targeted_current_tests": [
+      {
+        "name": "T-A11-10 revoke vs create_or_bind: set change aborts and retries, reverse order refuses, invariant holds",
+        "duration_ms": 1242.3771,
+        "status": "PASS",
+        "rounds": 50
+      },
+      {
+        "name": "T-A11-13 a v12 reduce lowers the ceiling used for the next link",
+        "duration_ms": 98.9049,
+        "status": "PASS"
+      },
+      {
+        "name": "T-A11-23 a concurrent consent (known boundary 1) is caught by O7 and by the next revoke or restore",
+        "duration_ms": 139.1235,
+        "status": "PASS",
+        "followUps": [
+          "revoke",
+          "restore"
+        ]
+      }
+    ],
+    "log": {
+      "path": "work/eight_implementation/ui-acceptance/lifecycle-source-compatibility-second-test-r4.log",
+      "sha256": "4e5e4244983ae2b4cecc7724a1da6a4bb36aa65d69df16ce1be0d90e2fd8d340"
+    },
+    "warning": "Existing pg client-query concurrency DeprecationWarning is preserved in the raw log; no warning suppression or pg upgrade was used."
+  },
+  "preserved_first_run": {
+    "started_utc": "2026-10-14T11:46:17.0611186Z",
+    "finished_utc": "2026-10-14T11:46:24.7564307Z",
+    "exit_code": 1,
+    "tested_sha256": "fbcb19f9cc58ca69129c8e270eb5d00a739edaca684851b2aa49447d7a2ce3a8",
+    "counts": {
+      "tests": 9,
+      "pass": 8,
+      "fail": 1,
+      "skip": 0
+    },
+    "error": {
+      "sqlstate": "23505",
+      "constraint": "platform_admin_v13_pkey",
+      "cause": "Historical proof left its synthetic administrator singleton before the original current fixture inserts its own singleton.",
+      "repair": "Exact subject cleanup in historical finally; no production Source/constraint/API change."
+    },
+    "historical_proofs": "Both old proof subtests passed; the current full parent had not reached its three targeted cases when setup failed.",
+    "log": {
+      "path": "work/eight_implementation/ui-acceptance/lifecycle-source-compatibility-first-test-r4.log",
+      "sha256": "383a1906953fe6e1110a9a80be302ef18eb6ea7adc2be9bd83929b91a54dacc3"
+    }
+  },
+  "validation": {
+    "syntax_and_scoped_diff_check": "PASS before both attempts and after final run",
+    "full_parent": true,
+    "test_name_filter": false,
+    "skip_or_focus": false,
+    "timeout_changed": false,
+    "source_changed": false,
+    "helpers_changed": false,
+    "current_guard_or_acl_disabled": false,
+    "background_pg_after_run": false
+  },
+  "independent_review": "Readonly peer review requested; peer is occupied with the separate SRC-ZERO plan. No final peer PASS is claimed in this report.",
+  "separate_source_issue": "Root delegated actual SRC-ZERO reproduction/repair to another author. This local pass validates profile legacy compatibility and all lifecycle cases against unchanged Source55ba/ce8; it neither fixes nor accepts that separate Source boundary.",
+  "limits": [
+    "One full lifecycle fixture parent is passed, including original historical assertions and all current subtests. This is not the entire repository/CI or production acceptance.",
+    "Source files and helper files unchanged; no Canon/CP/new claim/Git writes/CI/provider/production actions.",
+    "Fixture file is frozen at the tested SHA pending parent integration and independent review."
+  ]
+}

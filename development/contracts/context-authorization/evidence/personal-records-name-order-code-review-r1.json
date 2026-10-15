@@ -1,0 +1,132 @@
+{
+  "schema": "clued.personal-records-name-order-independent-code-review/1",
+  "reviewer": "/root/pr818_stack_failure_diagnosis",
+  "verdict": "CHANGES_REQUIRED",
+  "counts": {
+    "blocker": 0,
+    "major": 1,
+    "minor": 1
+  },
+  "subject": {
+    "schema": "clued.naming-order-code-review-subject/1",
+    "base_head": "eefcf51262b07ebcd90eb32deaa7d6644922a9e7",
+    "owner_decision": {
+      "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+      "version": 6
+    },
+    "files": [
+      {
+        "path": "apps/clued-cloud/lib/context-authorization.ts",
+        "sha256": "f9691a0115c26ea6abff449408cad1f4c113a4ecae3e1b1a7f2b49d8509e38df"
+      },
+      {
+        "path": "apps/clued-cloud/lib/context-authorization-controls.tsx",
+        "sha256": "64ac6505e000c84e14fe96b8110bc29eb8e9a95e0bc37ba8ca13dd78e439e3e0"
+      },
+      {
+        "path": "apps/clued-cloud/app/confirm/[id]/page.tsx",
+        "sha256": "bdbdcc02893f435d04cd029380ce9fa1a29164327cba92fe4e5fdbb65be48730"
+      },
+      {
+        "path": "apps/clued-cloud/app/imprints/ImprintPanel.tsx",
+        "sha256": "00a339c6d2bbc3b9691897fd70aac1e203014cd46a2a39b911d77cedfe4dd0a7"
+      },
+      {
+        "path": "apps/clued-cloud/app/page.tsx",
+        "sha256": "aebf2e8d45f893b456a23d857696a161c256e91ea0ffff0cd8f55410c0938d24"
+      },
+      {
+        "path": "apps/clued-cloud/app/policies/page.tsx",
+        "sha256": "4bc8c2d2956328470016165eed8f694dcd8455aa5e0958feacc537314347a761"
+      },
+      {
+        "path": "apps/clued-cloud/worker/owner-requests.ts",
+        "sha256": "e2d7eae81f14e82010ce1c923a24a66f15d4162f3881b9b9ed4b0008cea7e1b6"
+      },
+      {
+        "path": "apps/clued-cloud/worker/permission-guidance.ts",
+        "sha256": "7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c"
+      },
+      {
+        "path": "apps/clued-cloud/tests/all-contexts-authorization-ui.test.mjs",
+        "sha256": "107752c61c299e082d560e482a413d5f8dc251049c45b9b4df320eb7ff8fc06d"
+      },
+      {
+        "path": "apps/clued-cloud/tests/authorization-roles-ui.test.mjs",
+        "sha256": "1e181f4d4db219166775946a4bbd84a5b0921e70c91626bf707a7150e1d4a857"
+      },
+      {
+        "path": "apps/clued-cloud/tests/headless-binding-ui.test.mjs",
+        "sha256": "beabcd3002aaf333145f3ce2052201fc6b07a6cdc9ebdf43bc1d4547cfcb4376"
+      },
+      {
+        "path": "apps/clued-cloud/tests/owner-grants-ui.test.mjs",
+        "sha256": "4de95ef2fad00bb3cf4fb3c3c472f647755d1a592bbfcabfb0d08554b8fbd1af"
+      },
+      {
+        "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+        "sha256": "bb5a2567eda9ba66b19d3f99a717c801cbbbdaebd33120458d7dd46f80a1ee51"
+      }
+    ],
+    "local_validation": {
+      "seven_tests_passed": 130,
+      "failed": 0,
+      "skipped": 0,
+      "log_path": "personal-records-order-seven-test-r2.log",
+      "log_sha256": "dd007b774569dc382f531816ef55a6634e7effca46aafd2173ae6e0c62de57cf",
+      "typecheck_exit": 0
+    },
+    "released_paths_read_only": [
+      "apps/clued-cloud/app/page.tsx",
+      "apps/clued-cloud/app/imprints/ImprintPanel.tsx"
+    ],
+    "excluded": "SQL under editing and all other Source/functions/production; no Owner new naming decision."
+  },
+  "frozen_delta": {
+    "file": "personal-records-name-order-eef-frozen-delta-r1.patch",
+    "sha256": "ffebc6711c29f5ce90587c26b2ec410029069f925811981f30d0f492ecb84ea2"
+  },
+  "files_opening_and_closing_exact": true,
+  "findings": [
+    {
+      "id": "NAME-ORDER-R1-01",
+      "severity": "Major",
+      "path": "apps/clued-cloud/app/page.tsx",
+      "lines": [
+        136,
+        260,
+        1128
+      ],
+      "issue": "Legacy standard work projection level=global (global_registry_and_priority, cross-project priorities) was renamed个人记录/Personal records, conflating it with scope=global non-project content. Root must fix after reacquiring the released page.",
+      "required": "Keep separate standard work-layer label and protocol; limit compatibility naming explanation to content scope."
+    },
+    {
+      "id": "NAME-ORDER-R1-02",
+      "severity": "Minor",
+      "path": "apps/clued-cloud/app/policies/page.tsx",
+      "lines": [
+        188,
+        189,
+        191
+      ],
+      "issue": "Checkboxes still global/personal records before profile, contrary to Decision6.",
+      "required": "Swap profile/global labels only; leave toggles, defaults, project order and payload."
+    }
+  ],
+  "verified": [
+    "Only copies are sorted; canonical resource IDs, operations, selectedResources and payload remain unchanged.",
+    "Confirm read-only lists use display sorting, while signed view, options/data-index and grant submit paths retain exact identities/order.",
+    "Worker modifications are descriptions/comments only; contract keeps permissions and accepted historical r2 bytes.",
+    "Owner-grants test loads actual TypeScript helper, not a hand-written sorting stub.",
+    "130/130 log read, no skip; no reviewer tests/PG/Git/Source or business writes."
+  ],
+  "limits": [
+    "Not Source SQL review or online acceptance.",
+    "Does not cover later connections/headless/API business error, policy correction or new roles-ui bytes.",
+    "Released shared paths stay read-only."
+  ],
+  "historical_plan_integrity": {
+    "decoded_r2_sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+    "matches": true
+  }
+}

@@ -1,0 +1,1005 @@
+✔ T-CUR-16/17/29: session vector, checkpoint guard, and exact reconcile (10424.1922ms)
+▶ Retained T-CUR currentness contracts: supplemental database matrix
+  ✔ M-LIVE-01: resume constraints/conflicts share the Event fence and work logs never revive checkpoint actions (235.1203ms)
+  ✔ M-LIVE-01: concurrent Event commit cannot split resume constraints from its admitted vector (159.5562ms)
+  ✔ T-CUR-01/02/09: Task and State changes stale both read views (75.4131ms)
+  ✔ T-CUR-03/06/39: Decision conflict and Global authority mid-session impact (45.5928ms)
+  ✔ T-CUR-04/05/08/15/25: Project closeout invalidates pre-deploy Global checkpoint and projection (50.5612ms)
+  ✔ T-CUR-07: only explicit cross-project dependents invalidate (55.9208ms)
+  ✔ T-CUR-10/11/19/60: hidden Event equivalence and revoked admission (44.8257ms)
+  ✔ T-CUR-12/13/14/40/55: legacy Event continuation, current search, cursor and CAS (89.3322ms)
+  ✔ T-CUR-16/17/22/24/29/31/34: mid-session admission and free-text authority (47.3421ms)
+  ✔ T-CUR-20/21/33: projection CAS and source-invalidation rollback (46.5137ms)
+  ✔ T-CUR-33: every production projection dependency rule advances its target (22.5063ms)
+  ✔ T-CUR-23/26/27/28/30/57: legacy checkpoint and stale Global source read (57.0275ms)
+  ✔ T-CUR-32: ambiguous now Tasks expose sources and never pick a winner (43.7091ms)
+  ✔ T-CUR-18: account HTTP and Binding core parity; retired OAuth fails closed (67.6934ms)
+  ✔ T-CUR-36/65: observation and absorption cannot clear LEGACY_UNBOUND (26.9205ms)
+  ✔ T-CUR-37: source digest is JSON canonical and client claims are ignored (10.233ms)
+  ✔ T-CUR-41/42/43: direct material Events advance only their visible dimensions (37.9187ms)
+  ✔ T-CUR-58: a note cannot claim action authority; unknown action stays scoped (48.3491ms)
+  ✔ T-CUR-44: malformed dependency is unknown, typed A→B is scoped (45.8104ms)
+  ✔ T-CUR-56: materialization rejects wrong owner/scope/version/state and replays once (46.3635ms)
+  ✔ T-CUR-62: two Bindings see the same atomic carrier fence (25.7121ms)
+  ✔ T-CUR-64: missing inventoried candidate invalidates receipt and G6 (46.3309ms)
+  ✔ Context v2: stable execution intents deduplicate across Bindings and retain merge identity (161.3035ms)
+  ✔ Context v2: cross-scope intent source invalidation fences list, search and session (48.6575ms)
+  ✔ Context v2: Frontier validates Task version, source scope, renderer and Binding (74.773ms)
+  ✔ Context v2 synthetic ADR-06 playback: a fresh Binding does not revive pending review (43.1582ms)
+  ✔ Context v2: forward repair reconnects legacy read entrypoints to Currentness Core (148.5256ms)
+✔ Retained T-CUR currentness contracts: supplemental database matrix (14069.2054ms)
+▶ Native Binding successor (boundaries): isolated real Native token/writer/revoke/receipt
+  ✔ complete predecessor hashes reject incompatible context and link (4.9773ms)
+  ✔ patch preserves writer, all caller/private ACLs and every other function (34.2326ms)
+  ✔ view and fresh issue produce no permission or revocation (17.5528ms)
+  ✔ only the exact original request and input shape are allowed (11.3326ms)
+  ✔ spent/revoked, foreign scope, inactive task/binding and forged Native chain cannot be corrected (39.7292ms)
+  ✔ a changed source burns the fresh token and leaves the old grant intact (17.2732ms)
+  ✔ wrong session/digest and expired/revoked tokens cannot revoke or create permissions (48.5447ms)
+  ✔ a failure after old revoke rolls back the successor, old revoke and current pointer together (21.7399ms)
+  ✔ same Binding remains an eligible explicit Native correction when it is the actual claim holder (9.7412ms)
+  ✔ missing, ambiguous, race, expired, foreign and uncovered claims deny without grant side effects (48.5745ms)
+  ✔ actual authorization and Global currentness are required without extending scopes (31.6586ms)
+  ✔ Task content/version, fence/lease and actual permission revision drift burn confirmation (77.7117ms)
+  ✔ contended real work/currentness advisory lock and CI-style row lock reject promptly without deadlock (159.7904ms)
+  ✔ fresh Native confirmation atomically replaces the grant and preserves original evidence; replay is single-result (58.3499ms)
+✔ Native Binding successor (boundaries): isolated real Native token/writer/revoke/receipt (12266.2853ms)
+▶ Native Binding successor (consume-race): isolated real Native token/writer/revoke/receipt
+  ✔ complete predecessor hashes reject incompatible context and link (4.0068ms)
+  ✔ patch preserves writer, all caller/private ACLs and every other function (25.8308ms)
+  ✔ a competing real grant consumption wins its lock and the correction cannot revoke a spent grant (81.9982ms)
+✔ Native Binding successor (consume-race): isolated real Native token/writer/revoke/receipt (10505.9192ms)
+▶ Native correction (boundaries): isolated real token/receipt transaction
+  ✔ view and fresh issue produce no permission or revocation (14.6717ms)
+  ✔ only the exact original request and input shape are allowed (16.7462ms)
+  ✔ spent/revoked, foreign scope, inactive task/binding and forged Native chain cannot be corrected (43.1565ms)
+  ✔ a changed source burns the fresh token and leaves the old grant intact (27.229ms)
+  ✔ wrong session/digest and expired/revoked tokens cannot revoke or create permissions (75.3245ms)
+  ✔ a failure after old revoke rolls back the successor, old revoke and current pointer together (23.5789ms)
+  ✔ fresh Native confirmation atomically replaces the grant and preserves original evidence; replay is single-result (61.4368ms)
+✔ Native correction (boundaries): isolated real token/receipt transaction (11979.9638ms)
+▶ Native correction (consume-race): isolated real token/receipt transaction
+  ✔ a competing real grant consumption wins its lock and the correction cannot revoke a spent grant (99.4393ms)
+✔ Native correction (consume-race): isolated real token/receipt transaction (19342.3911ms)
+▶ Canonical Resource Center registration and exact read-only authority (legacy-expiry)
+  ✔ Binding schema explicitly covers deployed missing-column and optional legacy shapes (5.7409ms)
+  ✔ actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop (130.8926ms)
+  ✔ durable journal fences restart, start replay and uncertain effects (151.694ms)
+  ✔ expired unstarted journal can cancel but cannot execute (12.6074ms)
+  ✔ a second profile cannot bypass the fence for the same provider root (3.8606ms)
+  ✔ writer revocation wins a waiting start and exact fenced recovery releases no-effect intent (136.3651ms)
+  ✔ new Owner authority can cancel prepared intent after original profile and Decision revocation (23.164ms)
+  ✔ file registration and CAS update bind current provider version (14.8736ms)
+  ✔ registration is receipt-backed, idempotent and rejects ambiguous paths (7.9345ms)
+  ✔ Canonical Decision version changes the returned Currentness identity (10.847ms)
+  ✔ unregistered paths, wrong IDs/versions and profile fail closed (3.9076ms)
+  ✔ a generic Clued hash cannot substitute for the dedicated Binding (0.8932ms)
+  ✔ administrative writes and tables are inaccessible to anon (0.8316ms)
+  ✔ directory metadata can refresh without permitting a subtree move (8.9023ms)
+  ✔ temporary Host/Worker/DB chain denies read-only then atomically finalizes qualified create (446.5217ms)
+  ✔ renewal opt-in forbids public bootstrap, role confusion and supplied profile (73.4357ms)
+  ✔ rotation is blocked by durable unresolved intent and preserves original bindings (14.095ms)
+  ✔ same-generation competing rotations produce one generation; exact replay is metadata only (113.3485ms)
+  ✔ Decision version drift denies enrolled credentials without legacy fallback (4.4436ms)
+  ✔ Decision close winning a real row-lock wait denies the waiting status (91.8621ms)
+  ✔ expiry after waiting for profile lock denies renewal (58.8599ms)
+  ✔ stop is available after expiry and uncertain delivery; historical receipt cannot resurrect (8.7348ms)
+  ✔ account register is native-session only, idempotent and awaiting provider (68.5717ms)
+  ✔ empty native grant readback works without a mandatory legacy Binding expiry (4.1094ms)
+  ✔ context write and account ownership do not grant storage; provider must be qualified (30.9987ms)
+  ✔ v12 expiry is mandatory and an optional earlier legacy fence never extends it (33.6648ms)
+  ✔ v12 expiry during an actual connection lock wait rejects grant and rolls back receipts (1032.7631ms)
+  ✔ native client-grant readback is exact, owner-scoped, metadata-only and has no write effects (8.2548ms)
+  ✔ readback rechecks native session expiry after a connection lock wait (1046.9246ms)
+  ✔ one account job has a durable receipt and concurrent cross-client submits cannot duplicate it (140.1855ms)
+  ✔ jobs reject caller authority, non-create operations and unbounded payloads (13.0472ms)
+  ✔ well-shaped non-create operations cannot create a durable account job (7.243ms)
+  ✔ account begin binds complete content and atomically consumes exactly one original journal start (91.1099ms)
+  ✔ provider attempt is exact, receipt-backed and single-recorded across database clients (40.3262ms)
+  ✔ revocation wins a genuinely waiting begin and preserves original pending fences (30.1087ms)
+  ✔ expiry while waiting for provider-root lock rolls back without a new intent (1035.6474ms)
+  ✔ status follows original Canonical finalization, never fabricates completion from a cached job (18.764ms)
+  ✔ formal revoke and regrant cannot revive a queued job from the previous grant generation (27.8893ms)
+  ✔ connection replacement cannot evade account-wide job identity (12.7611ms)
+  ✔ cloud issuer and immutable registered layout are separate mandatory gates (19.7035ms)
+{"event":"storage_cloud_denied","error_code":"DURABLE_WRITE_RESERVATION_FAILED"}
+  ✔ real Canonical RPC plus server vault plus native provider effect commit once across two executors (125.6678ms)
+{"event":"storage_cloud_unavailable","error_code":"STORAGE_CREDENTIAL_OPEN_FAILED"}
+{"event":"storage_cloud_unavailable","error_code":"STORAGE_JOB_LOAD_REFUSED"}
+  ✔ vault account/revision substitution and revoked issuer deny before provider POST (22.5007ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ▶ lost provider reply retains original DB fence across worker restart, never re-dispatches
+    ✔ native recovery is inaccessible without live native Owner plus exact issuer and original job (26.8497ms)
+    ✔ reauthorization-required settlement commits only the original effect without writer activation or credential refresh (56.7655ms)
+    ✔ native recovery rechecks credential, full attempt, connection, profile and session CAS before any settlement (91.8838ms)
+    ✔ existing automatic recovery still rejects inactive connection and new private helpers have no API grants (3.5412ms)
+    ✔ native recovery session expiry during a real provider-root lock wait returns no descriptor or settlement (1048.6568ms)
+    ✔ connection revocation winning the real root lock denies a waiting native recovery (31.7218ms)
+    ✔ server-selected legacy recovery start retains the exact original job contract (51.5815ms)
+    ✔ fresh human recovery changes only encrypted credential generation, preserving original file fence and stopped permissions (37.0086ms)
+    ✔ ordinary and recovery attempts share one unique state namespace and reject purpose/default consent injection (30.3101ms)
+    ✔ recovery requests the sealed scope profile and can neither upgrade nor downgrade it (37.6208ms)
+    ✔ each recovery step rechecks original job, credential, pending refresh and native session CAS (133.4154ms)
+    ✔ lost claim or exchange is never replayed; lost credential commit returns the original receipt without Google (25.2908ms)
+    ✔ real background due polling does not invalidate credential-only human consent (45.7574ms)
+    ✔ recovery inspection never exposes another native session, Owner or issuer or returns vault data (35.1645ms)
+    ✔ two independently claimed recovery consents can replace one credential generation only once (231.9189ms)
+    ✔ real root-lock waits recheck connection revocation and OAuth/native expiry with no credential or receipt commit (2166.3739ms)
+{"event":"storage_cloud_unavailable","error_code":"STORAGE_JOB_LOAD_REFUSED"}
+  ✔ lost provider reply retains original DB fence across worker restart, never re-dispatches (4397.5573ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ two native settlements racing across independent database connections commit the original job only once (360.1235ms)
+  ✔ session expiry during a real connection lock wait rolls back grant and receipt (3032.8056ms)
+  ✔ Decision revocation winning the lock prevents new registration (15.936ms)
+  ✔ OAuth reduce/revoke, connection revoke, expiry and policy drift fail closed (15.8875ms)
+  ✔ logged-out native JWT cannot manage storage while independent grants are not session clones (3.3151ms)
+  ✔ private storage rows and internal authorization are unavailable to public clients (26.9977ms)
+  ✔ OAuth issuer and originating live native session are both mandatory (80.189ms)
+  ✔ revocation and policy drift prohibit a pending OAuth activation (38.3096ms)
+  ✔ scope profile: complete records the Worker-computed profile with the credential revision (37.34ms)
+  ✔ expired OAuth attempt and logged-out session cannot activate or expose credentials (16.3772ms)
+  ✔ first native consent atomically enrolls refresh with its own receipt; legacy and false do not (156.0058ms)
+  ✔ disable without delegation leaves a tombstone and defeats a late first OAuth callback (23.7483ms)
+  ✔ same-root replacement cannot default-enable after disable, revoke, or credential history (95.4603ms)
+  ✔ first enrollment and another device's disable or revoke serialize in both real lock orders (231.1122ms)
+  ✔ consent is strict and prepare-bound; failed enrollment rolls back activation and both receipts (22.7108ms)
+  ✔ refresh is explicit account delegation, not a device session or context write grant (38.329ms)
+  ✔ disable rejects in-flight refresh commit; re-enable cannot erase uncertain attempt; new consent can recover (44.1915ms)
+  ✔ same provider-root journal and refresh block one another without erasing either fence (31.4479ms)
+  ✔ provider failures use bounded retry; invalid grant requires consent; private rows inaccessible (62.4202ms)
+  ✔ connection revoke winning a real lock wait prevents the waiting refresh claim (36.5974ms)
+  ✔ fresh native consent on a replacement connection resolves only old credential attempts for the exact root (51.7513ms)
+  ✔ credential refresh invalidates a pending OAuth completion before stale AAD can be stored (33.7656ms)
+  ✔ OAuth expiry while waiting on a final delegation lock rolls back credentials, supersede and receipt (4536.5137ms)
+  ✔ fair polling skips ten blocked roots and serves an eleventh healthy connection at once (372.1014ms)
+  ✔ directory probe requires native Owner plus issuer; no caller layout or raw table access (19.6175ms)
+  ✔ directory observation is exact, single-commit and cannot activate or alter storage (18.4494ms)
+  ✔ directory observation may carry each directory's sharing digest (16.6377ms)
+  ✔ storage step 2: directory observation may carry each directory's access digest (16.2779ms)
+  ✔ browser-editable or incomplete observations cannot become evidence (15.8293ms)
+  ✔ credential/connection/Decision drift, new directory and revoked issuer invalidate a probe (43.5677ms)
+  ✔ attempt expiry and native session expiry after actual lock waits roll back evidence (2191.3411ms)
+  ✔ probe is bound to exact native session and expires without writes (11.1158ms)
+  ✔ account-policy foundation is private, RLS-protected and grants no API role table or function access (12.3325ms)
+  ✔ context identity and reviewed qualification alone cannot authorize a legacy connection (20.8694ms)
+  ✔ native Owner management separates storage-only client revoke from whole-connection disconnect (100.1276ms)
+  ✔ one account policy admits two qualified clients without per-Binding storage grants or new OAuth scopes (15.9183ms)
+  ✔ fixed base actions reject destructive operations, invalid shapes and unknown clients without effects (6.9902ms)
+  ✔ account policy lasts beyond one hour and is independent of credential or ordinary connection versions (6.6597ms)
+  ✔ new topic and metadata versions preserve scope, but track identity or root drift does not (18.0138ms)
+  ✔ wrong owner, registration metadata drift, unlinked re-registration and revoked issuer are denied (18.33ms)
+  ✔ registration snapshots, policy identity and policy lifecycle cannot be silently rewritten (4.1359ms)
+  ✔ database constraints prevent dual authority, partial cutover and rollback to legacy (2.5427ms)
+  ✔ root deny is exact while policy, capability, Decision and Binding revocation refuse new evaluation (26.4439ms)
+  ✔ requalified capability uses a fresh identity and monotonic generation without reviving its revoked predecessor (4.7731ms)
+  ✔ nonlegacy policy cannot be bypassed through old client grant, revoke or job RPCs (4.6613ms)
+  ✔ all old cloud execution and provider recovery branches reject account-policy mode before disclosing credentials or mutating jobs (12.4132ms)
+  ✔ an old native grant waiting at the root rechecks a winning account-policy cutover (31.866ms)
+  ✔ explicit account-policy expiry also uses the wall clock after a root lock wait (1235.7438ms)
+  ✔ Binding expiry is rechecked after a real provider-root lock wait (1039.2487ms)
+  ✔ global deny wins an absent-row insertion race and survives new Binding and connection IDs (26.5556ms)
+  ✔ evaluator-winning lineage guard serializes later storage-only revoke until transaction completion (151.9097ms)
+  ✔ ordinary account refresh rotates only credentials and cannot revive storage deny or change policy authority (59.114ms)
+  ✔ storage administration is private invoker-only; even the designated account cannot call it through native or service roles (21.8879ms)
+  ✔ designation CAS and exact latest Receipt replay cannot reactivate revoked authority or reuse an approval (21.6669ms)
+  ✔ approval must be current, explicit, exact subject/action/version and bound to its immutable committed Receipt (15.9291ms)
+  ✔ approval requires the exact authenticated Owner M1 Receipt, not an unbound or unrelated receipt (14.6551ms)
+  ✔ anonymous, deleted and banned subjects cannot activate; an unavailable subject can still be revoked (28.1507ms)
+  ✔ unverified activation and audit failure leave no designation or successful Receipt (15.1442ms)
+  ✔ capability administration is invoker-only, private and denied to native, Agent, service-role and Google issuer callers (74.1719ms)
+  ✔ missing storage designation fails closed without bootstrapping it (3.1205ms)
+  ✔ reviewed raw UTF-8 source registers exact server request identity with one qualification receipt (8.0329ms)
+  ✔ registration replay is exact, changed payload conflicts, and admin CAS is checked before replay (5.5628ms)
+  ✔ malformed or stale source and nonmatching Evidence cannot create registration authority (255.4708ms)
+  ✔ qualification has one receipt but creates no account policy, grant, job or file admission (16.2622ms)
+  ✔ withdrawn review Evidence and withdrawn original source cannot grant qualification (166.4769ms)
+  ✔ source withdrawal blocks future qualification use while explicit capability revoke ends existing account-policy access (69.5677ms)
+  ✔ only an exact reviewed request link qualifies new Bindings; client ID reuse is not inheritance (84.9223ms)
+  ✔ request-link rejects each request metadata, lineage, generation and capability mismatch (182.5492ms)
+  ✔ stale capability CAS rejects and two concurrent qualifications cannot both win (123.4495ms)
+  ✔ simultaneous same-key registration replays one committed receipt (85.1108ms)
+  ✔ different idempotency keys cannot concurrently register two lineages for the same exact source request (47.3098ms)
+  ✔ new requests for the same client identity cannot race into separate lineages or bypass an existing deny (121.0554ms)
+  ✔ registration successors cannot change issuer, resource or client identity or recycle an exact source request (105.4868ms)
+  ✔ revocation is immutable and replay cannot reactivate old capabilities or erase storage denies (127.1077ms)
+  ✔ capability revoke wins against a waiting link without reviving or partially linking a request (98.5444ms)
+  ✔ a link that commits first remains immutable history but does not prevent subsequent capability revoke (155.04ms)
+  ✔ registration generations do not silently reuse old qualification or overwrite immutable snapshots (99.8135ms)
+  ✔ storage maintenance rejects foreign request ownership and audits global technical effects (53.3318ms)
+  ✔ storage designation revocation and qualification serialize in both orders (265.3237ms)
+  ✔ issuer revoked while a request waits is rechecked before qualification effects (42.4261ms)
+  ✔ the real Evidence-withdrawal exclusive guard wins against a waiting source registration (52.7732ms)
+  ✔ Event and final Receipt failures roll back registration effects rather than leaving partial authority (55.9954ms)
+  ✔ storage source reader is a non-login, exact-function-only capability (2.1464ms)
+  ✔ storage source reader resolves only an exact live request and cannot read base tables (2.5116ms)
+  ✔ transition manifests are offline-operator only and native cutover requires both the live Owner and fixed issuer (570.8546ms)
+  ✔ reviewed transition commits one sustained policy and reads back two exact receipts without new Google consent (727.9122ms)
+  ✔ account-policy jobs need no legacy client grant and pin one immutable authority snapshot with exact job replay (366.9508ms)
+  ✔ manifest proofs require every exact historical payload and reject substitutions without changing account authority (131.8003ms)
+  ✔ transition CAS covers inventories and rejects caller-supplied Owner, paths, actions or policy authority (115.6578ms)
+  ✔ the active-root uniqueness constraint and revoked-profile fences prevent a second live legacy route without blocking quiet historical cutover (128.1577ms)
+  ✔ another live issuer for the same Google client prevents cutover even while the selected executor is disabled (260.0263ms)
+  ✔ partial grants and even rowless legacy revokes retain a root-lineage deny instead of inheriting broader actions (161.9572ms)
+  ✔ natural grant expiry does not create a permanent deny or shorten policy lifetime, but expired Binding still denies (89.1591ms)
+  ✔ preexisting account-wide and root-lineage denies remain byte-for-byte after transition (114.2081ms)
+  ✔ an exact queued job requires explicit receipt-backed cancellation and its old identity cannot be revived (718.6659ms)
+  ✔ quiet includes queued jobs and prepared, started or uncertain intents on historical profiles for the same provider root (429.7746ms)
+  ✔ queued cancellation takes job then root and rolls back if a concurrent start has already attached its original intent (131.8793ms)
+  ✔ connection revocation winning the root lock blocks waiting cutover, while cutover winning closes the old revoke path (395.7335ms)
+  ✔ global deny insertion serializes with cutover's lineage guard and cannot be lost on either side (334.2694ms)
+  ✔ native-session and manifest expiry while waiting at the root roll back cutover and both receipts (4160.9378ms)
+  ✔ failure finishing either policy or transition receipt rolls back all mode, deny and policy effects (211.9462ms)
+  ✔ cloud and job routers have exact mode/snapshot quadrants and no API access to private cores (233.3893ms)
+  ✔ dispatch report stores a strict optional reason in the Owner's job, receipt and event; inspect sees its code only (96.4713ms)
+  ✔ root revoke and cloud load serialize in both winning orders without issuing post-revoke writers (111.9759ms)
+{"event":"storage_cloud_denied","error_code":"DURABLE_WRITE_RESERVATION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"DURABLE_WRITE_RESERVATION_FAILED"}
+  ✔ exact begin and root revoke serialize in both orders and never grant a second start (143.1658ms)
+  ✔ two independent V2 executors share one exact start, provider attempt and file effect (121.6127ms)
+  ✔ a root-relative text create is stored with the full path and commits (production relative-path denial) (72.3906ms)
+  ✔ descriptors name the owner's other active roots under the same Drive parent, never revoked or elsewhere (Decision b18eff80) (203.6248ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ lost V2 provider reply retains original attempt and root fence across replay, conflicts and restart (127.9456ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ an unsettled attempted create stays due with backoff, gets a job-bound refresh and is released only when proven absent (BUG-20261007-005) (385.6461ms)
+{"event":"storage_cloud_postwrite_failed","stage":"finalize_rpc","error_code":"FINALIZE_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ a complete persisted verification settles after root revocation with one original result and no provider I/O (80.7421ms)
+{"event":"storage_cloud_postwrite_failed","stage":"finalize_rpc","error_code":"FINALIZE_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ root revocation winning before verification storage rejects recording and retains the exact unknown-effect fence (79.4117ms)
+{"event":"storage_cloud_postwrite_failed","stage":"finalize_rpc","error_code":"FINALIZE_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ POST identity alone, incomplete proof and exact content, parent, version, attempt, writer or start-receipt mismatches never become settled evidence (87.9181ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+(node:5392) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+  ✔ a queued job whose dispatch never started is dispatched again on a quiet root, refused on a stuck root and settled after 2 hours (BUG-20261008-001) (238.5837ms)
+  ✔ read surface ACL: Worker RPC is anon-only, Owner control is native-only, tables are private (0.8499ms)
+  ✔ closed by default: no read switch, then no read access, means no receipt and no descriptor (46.6727ms)
+  ✔ Owner enables read without touching the write policy; read_content stays unavailable in P1 (18.5245ms)
+  ✔ demand prepare applies body/search permissions without read receipts; two shared-root claimers never deadlock (347.0724ms)
+  ✔ admit commits an intent receipt before returning the sealed descriptor; finalize is exact and idempotent (15.6003ms)
+  ✔ input is closed: unknown keys, caller class, bad IDs and half HMAC pairs fail before any lock (4.1957ms)
+  ✔ content read is a separate class and is denied while only read is granted (3.2391ms)
+  ✔ per-class deny removes read for one client only, and whole-storage revoke also stops reads (37.4843ms)
+  ✔ revocation serializes with admission at the admit commit (linearization point) (71.9085ms)
+  ✔ a revoked v12 Binding stops admission even with read access active (31.7634ms)
+  ✔ read switch and disconnect each stop admission; read access never revives on its own (17.0029ms)
+  ✔ redirect eligibility: only https on a public DNS host (2.1599ms)
+  ✔ a reconnect with a fresh DCR client ID inherits the reviewed lineage (71.7214ms)
+  ✔ a different redirect URI or scope set does not inherit (27.0292ms)
+  ✔ loopback clients never inherit, even from a reviewed loopback lineage (22.8062ms)
+  ✔ a reviewed link keeps its exact client-ID contract and is never replaced by inheritance (8.5342ms)
+  ✔ lineage deny, read-class deny and the Owner client list apply to inherited clients (50.392ms)
+  ✔ capability revocation and ambiguous anchors inherit nothing (32.861ms)
+  ✔ read_content has its own disclosure; the Owner can now enable it (129.4036ms)
+  ✔ a content read names exactly one object and records the read_content class (20.8426ms)
+  ✔ the per-class deny removes bodies for one client and keeps its read level (22.5229ms)
+  ✔ each Binding has a 256 MiB hourly content budget; unfinalized reads count their reservation (323.0926ms)
+  ✔ reserve extends only a fresh intent of the caller's own read_content receipt, and never shrinks it (34.0563ms)
+  ✔ finalize never settles more than the receipt reserved; a revoked Binding cannot reserve (24.5748ms)
+  ✔ settle releases the unused reservation (213.7229ms)
+  ✔ concurrent reservations and admissions serialize on the Binding lock and cannot exceed the window (430.4473ms)
+  ✔ turning read_content off stops bodies but not the read level (18.1512ms)
+  ✔ existing policies keep the /2 contract and cannot evaluate modify (6.3434ms)
+  ✔ enabling modify replaces the policy, bumps auth_generation and moves read access untouched (137.295ms)
+  ✔ submit still accepts only create: modify grants nothing executable yet (10.7858ms)
+  ✔ disabling modify replaces the policy again and is idempotent per key (20.3858ms)
+  ✔ the switch cancels queued jobs of this connection; they keep their original policy (14.2063ms)
+  ✔ an unresolved intent blocks the switch and keeps the policy (7.8379ms)
+  ✔ a switch serializes with a concurrent read admission on the root lock (70.3174ms)
+  ✔ scope drift, a revoked connection or a missing native session refuses the switch (11.2294ms)
+  ✔ rename then move a Clued-created file; the registry follows by CAS and keeps the Artifact (386.5756ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+{"event":"storage_cloud_postwrite_failed","stage":"settle_verified_rpc","error_code":"SETTLE_VERIFIED_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ storage step 3: a sibling change during a create no longer fails it; a changed role on the track does (316.5992ms)
+  ✔ storage step 3: a Worker from before step 3 keeps working against the new database (177.6332ms)
+{"event":"storage_cloud_postcondition_failed","stage":"verify","error_code":"DRIVE_POSTCONDITION_CONTENT_CHANGED"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ a content edit racing the update is never settled into the registry (104.9932ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"PROVIDER_DESTINATION_EXISTS"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"STATUS_SEMANTIC_DIRECTORY_FORBIDDEN"}
+  ✔ a stale source version, a name conflict or a status-directory destination is refused with zero provider updates (159.3608ms)
+  ✔ without the modify level, or in another shape, submit is refused (52.4431ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost update reply leaves the intent fenced and the registry unchanged (132.15ms)
+  ✔ replace keeps the previous revision forever, uploads the new text and settles the same Artifact (309.1352ms)
+  ✔ revert restores the kept content through a checked download, and keeps the replaced content too (183.1389ms)
+  ✔ at most 10 Clued pins stay; the oldest is released on Drive and in the registry (665.6285ms)
+  ✔ a failed release does not fence the replace; the pin stays and is released by the next replace (702.3006ms)
+  ✔ a head the Owner already kept is recorded owner_kept, never released, and still restorable (647.5404ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"DESTINATION_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_unavailable","error_code":"CLOUD_MUTATION_SHAPE_INVALID"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"REVISION_KEEP_LIMIT"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"REPLACE_TARGET_UNSUPPORTED"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ refusals with zero provider writes: stale version, keep limit, unknown restore, no overwrite level, bad shapes (148.9005ms)
+  ✔ a binary replace uploads the staged bytes in place under the same Drive ID and Artifact, and revert restores them (196.3667ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"REPLACE_TARGET_UNSUPPORTED"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"STORAGE_CONTENT_STAGING_MISMATCH"}
+  ✔ binary replace refusals: no normal use, no overwrite level, another type, too large, bad shapes (227.8979ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost upload reply stays fenced, then recovery settles it by reads only (112.0755ms)
+  ✔ the destructive level has its own disclosure and replaces the policy like modify and overwrite (73.8046ms)
+  ✔ trash then untrash a Clued-created file by its Drive ID; the Artifact follows by CAS and nothing is ever deleted (307.6009ms)
+  ✔ untrash names the item by Drive ID: trash A, a new B at the same path, trash B, then untrash A (325.198ms)
+{"event":"storage_cloud_denied","error_code":"RESTORE_NAME_CONFLICT"}
+  ✔ untrash after a name conflict: only the user's explicit folder or numbered-name option, both settle the same Artifact (339.391ms)
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_NOT_EMPTY"}
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_NOT_EMPTY"}
+  ✔ an empty registered directory is trashed and untrashed; non-empty ones, tracks and the root are refused (141.3871ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"delete_authority_required"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"PROVIDER_OWNER_REQUIRED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_ID_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ a governance file without delete authority, another owner's file, a stale version or another item's ID is refused with zero updates (271.4596ms)
+  ✔ artifact_trash settles only by CAS on the Artifact version (86.2115ms)
+  ✔ without the destructive level, or in another shape, submit is refused (48.0324ms)
+{"event":"storage_cloud_denied","error_code":"PROVIDER_OWNER_REQUIRED"}
+  ✔ beyond 5 trash jobs the Agent registers one batch and the Owner confirms it once; each item covers one job (543.6811ms)
+  ✔ a confirmed batch expires after 24 hours and is voided by a policy replacement (485.667ms)
+  ✔ the confirmation RPC is native-session only and owner-scoped (160.7069ms)
+  ✔ a revoked Binding learns nothing about the registry: every destructive submit is storage_policy_denied (169.0768ms)
+  ✔ at most 5 batches wait for the Owner per client registration and connection (97.9679ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost update reply leaves the intent fenced; recovery re-verifies by GET and settles once (129.5685ms)
+  ✔ the modify_subtree level has its own disclosure, a canonical action order and replaces the policy (83.5289ms)
+  ✔ a directory move needs the modify_subtree level; modify alone is not enough (65.3238ms)
+  ✔ a directory moves with its whole subtree: one PATCH, the registry rewritten in the settlement (492.8668ms)
+{"event":"storage_subtree_refresh_partial","phase":"before","total":3,"matched":2}
+  ✔ P6.1: an item changed outside Clued before the move keeps its registered version; the rest follow Drive (195.8246ms)
+  ✔ P6.2: a directory Clued creates is registered with its sharing digest when it equals its folder's (178.6848ms)
+  ✔ P6.2: a directory move gives both folders without a digest the one the authority recorded (306.0605ms)
+  ✔ storage step 2: a folder that already has a sharing digest gets only its access digest from a move, once (206.8192ms)
+  ✔ P6.2: a folder whose Drive version moved on since it was registered gets no digest from a move (197.9998ms)
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ P6.2: the verified record refuses a sharing digest on a file or one that is not the folder's (355.748ms)
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ storage step 2: the verified record refuses an access digest on a file, without a sharing digest, or malformed (331.795ms)
+  ✔ storage step 2: the backfill records an access digest only at the registered version, once (61.4491ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ fix d9d6db4c: a started move that never recorded its attempt is released once its admission expired (278.0612ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ fix d9d6db4c: a started job that recorded its attempt is never released, however old (174.1854ms)
+  ✔ submit refuses a track, a rename, a move into itself and any other shape before a job exists (128.2884ms)
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_SHARING_DIFFERS"}
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_SHARING_DIFFERS"}
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_ACCESS_UNAVAILABLE"}
+{"event":"storage_cloud_denied","error_code":"SUBTREE_DRIFT"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"destination_exists"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ different sharing, a stale version or a registered destination is refused with no provider effect (229.3858ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"subtree_too_large"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ more than 500 registered items under the directory is refused by the authority (337.6427ms)
+  ✔ a registry change between the descriptor and the durable start uses the start's sample (226.9459ms)
+  ✔ a trashed item under the directory moves with it and is untrashed at its new path (316.0198ms)
+  ✔ the registry path rewrite is refused outside the verified settlement of a directory move (161.0228ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+{"event":"storage_cloud_unavailable","error_code":"UNSPECIFIED"}
+  ✔ a lost reply stays fenced; scheduled recovery never settles it, the Owner's native recovery does, once (299.9836ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ P6.1: a verified refresh list cannot be swapped for another (654.7179ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ P6.1: an attempt stored before P6.1 settles and reads back exactly as before, with no refresh (746.9882ms)
+  ✔ P6.1: the refresh functions refuse a lower, unknown, repeated or mistyped version (3.8095ms)
+  ✔ adopt registers a file the Owner uploaded by hand, writes nothing, and the file can then be renamed and trashed (738.6923ms)
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_SHARING_DIFFERS"}
+  ✔ a directory is adopted with its sharing digest only when shared like its folder, and Clued then writes into it (493.1614ms)
+  ✔ submit refuses before any job: a registered path or Drive ID, a track, a non-full credential, no modify level, a bad shape (197.211ms)
+{"event":"storage_cloud_denied","error_code":"PROVIDER_OWNER_REQUIRED"}
+{"event":"storage_cloud_denied","error_code":"ADOPT_TARGET_UNSUPPORTED"}
+{"event":"storage_cloud_denied","error_code":"ADOPT_SCOPE_UPGRADE_REQUIRED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"parent_unregistered"}
+{"event":"storage_cloud_denied","error_code":"PARENT_UNREGISTERED"}
+{"event":"storage_cloud_unavailable","error_code":"UNSPECIFIED"}
+  ✔ execution refuses with no reservation: another owner, a shortcut, an unregistered folder, a non-full credential or a downgrade (742.9886ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"governance_forbidden"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"already_registered"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ an item the Owner revoked, an item under a governance folder or one registered after submit is never adopted (160.801ms)
+{"event":"storage_cloud_denied","error_code":"SCOPE_UPGRADE_REQUIRED"}
+  ✔ without the full credential, changing an item Clued did not create is refused before it could fence the root (210.7777ms)
+{"event":"storage_cloud_postcondition_failed","stage":"verify","error_code":"DRIVE_POSTCONDITION_VERSION_CHANGED"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ an adopt that never settles is released after its admission expired: nothing registered, the root writable again (125.7055ms)
+  ✔ Work Claim storage door: the storage kind names this door (0.3207ms)
+  ✔ Work Claim storage door: resources of each operation, relative to the registered root (2.2629ms)
+  ✔ Work Claim storage door: without claims, and with unrelated ones, writes are admitted as before (111.4432ms)
+  ✔ Work Claim storage door: another live claim on the path refuses the write before anything exists (62.6516ms)
+  ✔ Work Claim storage door: a replay of an existing job is answered, not refused (17.1698ms)
+  ✔ Work Claim storage door: a presented claim must be the writer's, live, at its fence and cover every path (53.7327ms)
+  ✔ Work Claim storage door: a trash batch with a held item is refused before the batch exists (31.7304ms)
+  ✔ Work Claim storage door: work_claim must be exactly {claim_id, fence} and only on submit (3.9243ms)
+  ✔ normal use needs a normal credential: a legacy connection answers reconsent_required and writes nothing (5.3024ms)
+  ✔ re-consent prepare validates normal use and refuses while the root is busy (19.1145ms)
+  ✔ the granted profile must be the requested one or legacy; any failure keeps the old credential (15.7241ms)
+  ✔ partial grant: normal requested, legacy granted -> credential replaced, profile legacy, normal use stays off, delegation carried (12.2889ms)
+  ✔ carry needs all four conditions: a disabled delegation or a changed prepare snapshot stays disabled (17.1949ms)
+  ✔ full re-consent: normal granted -> normal profile, normal/1 read access in the same transaction, carry, and no residue of old envelopes (1732.289ms)
+  ✔ clued_storage_normal_use_v1: disable keeps browsing, enable restores normal/1, CAS and replay (10.1686ms)
+  ✔ set_classes never silently rewrites normal/1 as text/1; status reports both profiles (36.2138ms)
+  ✔ content search admission: normal/1 and a normal credential are required, with a condition HMAC (105.6985ms)
+  ✔ full scope: an upgrade binds the full-scope disclosure, records what Google granted, and full counts as normal (53.8016ms)
+  ✔ refresh-token count per account x client: warning at 50, new re-consent refused at 90 (24.8937ms)
+  ✔ production callback path: clued_storage_oauth_callback_v2 reaches the N1a wrapper for a partial grant and for normal-use enable with carry (31.4153ms)
+  ✔ binary gate at begin: create_file + read access normal/1 + provider_scope_profile normal; types bound to extension (149.0545ms)
+  ✔ signed-URL claim: exact claims, single use, expiry and the gate re-evaluated for the row's Binding (36.8503ms)
+  ✔ upload budget is reserved at URL issue per Binding; unused URLs release it, received bytes do not (95.957ms)
+  ✔ submit consumes one ready row of the same Binding; stored job carries content_ref; replay and reuse (92.8584ms)
+  ✔ root-relative paths: canonicalized before the digest, relative == full, bad paths refused before any row (148.9654ms)
+  ✔ multipart binary create commits with a create-verified/3 proof and a deletable staging object (94.6716ms)
+  ✔ N4: an Owner upload budget change applies to the next upload_begin; policy, read access and a queued job are untouched (89.9471ms)
+  ✔ above 5 MiB: one resumable session and one PUT, verified /3 (98.1922ms)
+{"event":"storage_cloud_denied","error_code":"STORAGE_CONTENT_STAGING_MISMATCH"}
+{"event":"storage_cloud_unavailable","error_code":"UNSPECIFIED"}
+  ✔ refusals with zero provider writes: staged bytes mismatch, gate off after submit, 12 h cancel (63.7534ms)
+{"event":"storage_cloud_postcondition_failed","stage":"verify","error_code":"DRIVE_POSTCONDITION_CONTENT_MISMATCH"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ Drive checksum differing from the declared sha256 is never settled (76.8082ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost resumable reply stays fenced; recovery settles it by reads only and never re-uploads (107.4283ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a create-verified/2 proof cannot settle a binary job (62.4213ms)
+  ✔ staging rows are immutable except their lifecycle; stalled uploads are rejected by the sweep (26.7383ms)
+  ✔ inline begin is retry-safe: the job_id derives one row per Binding, replay never re-reserves (50.66ms)
+  ✔ inline staging_id is never staged twice: after the row is purged a retry of the job is refused; key_salt is per row (30.2956ms)
+  ✔ staging rows per rolling hour are capped per Binding, released rows included (148.8228ms)
+  ✔ retention: terminal rows whose object is gone are purged after 7 days; nothing else can be deleted (57.1319ms)
+  ✔ the sweep skips staging rows a concurrent transaction holds instead of waiting on them (63.1176ms)
+  ✔ no live size / sha256 derivation reads mutation.content without a content_ref guard (1.703ms)
+  ✔ status reports the §7.1 defaults, bounds and generation 0 before any change (5.4836ms)
+  ✔ only the owner's native session can read or change a budget (82.3101ms)
+  ✔ hard upper and lower bounds and exact input shapes are refused before any receipt (13.3359ms)
+  ✔ set is CAS on budget_generation; each change revokes and inserts under one Receipt and one Event (12.5135ms)
+  ✔ a read budget change applies to the next admission and reservation, and never rewrites receipts (101.3618ms)
+  ✔ the account read total covers every Binding of the owner and is adjustable (26.7309ms)
+  ✔ upload reservations use the configured per-Binding and account upload budgets at once (13.1398ms)
+  ✔ N0 gate: an owner who is not on the allowlist (and no verified opening) is refused before any row (11.3024ms)
+  ✔ helper eligibility equals the 145426 describe answer (verbatim predicate) (0.3626ms)
+  ✔ Host profile_register refuses the /clued-cloud/ prefix (2.3232ms)
+  ✔ begin writes no canonical row; the OAuth attempt is purpose onboard with no connection (8.4849ms)
+  ✔ begin validates its input, disclosure and digest (6.0624ms)
+  ✔ onboard claim is one-shot, counted before exchange, and dispatched by the outermost wrapper only (18.8068ms)
+  ✔ directory effects are idempotent: replayed intents and results never create a second record (28.2254ms)
+  ✔ activation failing at its last step rolls back every step: zero canonical rows; the failure records orphans (72.3743ms)
+  ✔ resume reuses the staged credential and effects; activation creates the whole object graph once (38.1329ms)
+  ✔ the activated connection is usable: page list name, write admission, read admission and refresh claim (122.7429ms)
+  ✔ legacy granted although normal use was requested -> text/1 {read}; no refresh delegation when unticked (34.516ms)
+  ✔ normal use unticked -> legacy request; a normal grant for a legacy request is refused (3.536ms)
+  ✔ picked root: an observed (not created) root; overlap with an active root and a reused root are refused (32.5046ms)
+  ✔ expiry drops the staged credential and keeps orphans; a failure keeps a 30-minute retry (161.0021ms)
+  ✔ a failure no resume can fix drops the staged credential at once; a retryable one keeps it for resume (8.7254ms)
+  ✔ one run at a time: the run token and its lease serialise the callback, resume and a stopped Worker (52.7527ms)
+  ✔ the token limit is re-checked at claim under the per-owner lock (381.2225ms)
+  ✔ nested roots: a parent and its child activating concurrently are serialised; the second sees the overlap (463.4478ms)
+  ✔ activation re-checks the allowlist / verified-opening gate (42.5528ms)
+  ✔ gate v2: onboarding needs read_enabled only; the executor switch execution_enabled does not gate it (44.0953ms)
+  ✔ the token-count limit refuses a new onboarding at 90 (unknown Google account counts every claim) (5.6231ms)
+  ✔ the Owner's existing connections are unchanged: policy, read access, delegation, auth_generation, credential (3.3476ms)
+  ✔ an unverified-open app still refuses a removed owner; the verified opening admits without the allowlist (4.5299ms)
+  ✔ connections surface ACL: Worker RPC is anon-only (0.3023ms)
+  ✔ a malformed hash is refused, an unknown or revoked Binding is denied (13.0266ms)
+  ✔ a Binding that is no storage client lists nothing (17.808ms)
+  ✔ an active connection is listed with its root, project, tracks and write levels, and nothing is written (38.344ms)
+  ✔ read classes follow the Owner's read access (18.4844ms)
+  ✔ write levels follow the Owner's write access; normal use needs read_content, normal/1 and a normal grant (41.2552ms)
+  ✔ a root registered by Drive ID is named by its display name and has no managed_root (Decision 8d05e50a) (33.5061ms)
+  ✔ a denied client and a disconnected connection are not listed (25.6542ms)
+  ✔ a directory with a recorded sharing digest is matched by sharing, not Drive version (25.4492ms)
+  ✔ a new-shape request matches its ancestors by identity and digest, not by Drive version (55.0195ms)
+  ✔ historical resource setup closes with actual G6 apply/replay and exact GW80/CI8 (161.5482ms)
+  ✔ current authorization successors preserve actual OIDs, caller ACLs and early entrances (76.5686ms)
+  ✔ current gateway resolves real registered authority while invalid proof and old callers remain denied (23.9362ms)
+  ✔ current Native account list and scoped anon CI holders are legal without gateway impersonation (30.6694ms)
+  ✔ retired jobs_v2 and project aliases stay inaccessible to every API role after closeout (4.1872ms)
+✔ Canonical Resource Center registration and exact read-only authority (legacy-expiry) (78994.0492ms)
+▶ Canonical Resource Center registration and exact read-only authority (production-no-legacy-expiry)
+  ✔ deployed missing-column readback reproduces before the exact successor (5.861ms)
+  ✔ the same native readback succeeds after the successor without a receipt or schema expansion (9.2409ms)
+  ✔ Binding schema explicitly covers deployed missing-column and optional legacy shapes (2.6865ms)
+  ✔ actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop (125.937ms)
+  ✔ durable journal fences restart, start replay and uncertain effects (102.5083ms)
+  ✔ expired unstarted journal can cancel but cannot execute (8.9325ms)
+  ✔ a second profile cannot bypass the fence for the same provider root (1.9798ms)
+  ✔ writer revocation wins a waiting start and exact fenced recovery releases no-effect intent (245.1038ms)
+  ✔ new Owner authority can cancel prepared intent after original profile and Decision revocation (19.4379ms)
+  ✔ file registration and CAS update bind current provider version (12.2506ms)
+  ✔ registration is receipt-backed, idempotent and rejects ambiguous paths (7.6476ms)
+  ✔ Canonical Decision version changes the returned Currentness identity (9.2813ms)
+  ✔ unregistered paths, wrong IDs/versions and profile fail closed (5.364ms)
+  ✔ a generic Clued hash cannot substitute for the dedicated Binding (0.4057ms)
+  ✔ administrative writes and tables are inaccessible to anon (1.28ms)
+  ✔ directory metadata can refresh without permitting a subtree move (5.7836ms)
+  ✔ temporary Host/Worker/DB chain denies read-only then atomically finalizes qualified create (283.3525ms)
+  ✔ renewal opt-in forbids public bootstrap, role confusion and supplied profile (50.0549ms)
+  ✔ rotation is blocked by durable unresolved intent and preserves original bindings (10.1935ms)
+  ✔ same-generation competing rotations produce one generation; exact replay is metadata only (81.7361ms)
+  ✔ Decision version drift denies enrolled credentials without legacy fallback (2.9547ms)
+  ✔ Decision close winning a real row-lock wait denies the waiting status (66.0672ms)
+  ✔ expiry after waiting for profile lock denies renewal (37.1322ms)
+  ✔ stop is available after expiry and uncertain delivery; historical receipt cannot resurrect (7.0262ms)
+  ✔ account register is native-session only, idempotent and awaiting provider (31.6012ms)
+  ✔ empty native grant readback works without a mandatory legacy Binding expiry (2.1046ms)
+  ✔ context write and account ownership do not grant storage; provider must be qualified (42.8204ms)
+  ✔ v12 expiry is mandatory and an optional earlier legacy fence never extends it (14.0665ms)
+  ✔ v12 expiry during an actual connection lock wait rejects grant and rolls back receipts (1032.0553ms)
+  ✔ native client-grant readback is exact, owner-scoped, metadata-only and has no write effects (14.7781ms)
+  ✔ readback rechecks native session expiry after a connection lock wait (1037.6294ms)
+  ✔ one account job has a durable receipt and concurrent cross-client submits cannot duplicate it (86.7434ms)
+  ✔ jobs reject caller authority, non-create operations and unbounded payloads (13.4866ms)
+  ✔ well-shaped non-create operations cannot create a durable account job (6.5778ms)
+  ✔ account begin binds complete content and atomically consumes exactly one original journal start (76.5026ms)
+  ✔ provider attempt is exact, receipt-backed and single-recorded across database clients (42.9075ms)
+  ✔ revocation wins a genuinely waiting begin and preserves original pending fences (23.9401ms)
+  ✔ expiry while waiting for provider-root lock rolls back without a new intent (1029.5712ms)
+  ✔ status follows original Canonical finalization, never fabricates completion from a cached job (16.0687ms)
+  ✔ formal revoke and regrant cannot revive a queued job from the previous grant generation (21.4411ms)
+  ✔ connection replacement cannot evade account-wide job identity (7.8308ms)
+  ✔ cloud issuer and immutable registered layout are separate mandatory gates (21.8401ms)
+{"event":"storage_cloud_denied","error_code":"DURABLE_WRITE_RESERVATION_FAILED"}
+  ✔ real Canonical RPC plus server vault plus native provider effect commit once across two executors (155.8028ms)
+{"event":"storage_cloud_unavailable","error_code":"STORAGE_CREDENTIAL_OPEN_FAILED"}
+{"event":"storage_cloud_unavailable","error_code":"STORAGE_JOB_LOAD_REFUSED"}
+  ✔ vault account/revision substitution and revoked issuer deny before provider POST (28.0929ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ▶ lost provider reply retains original DB fence across worker restart, never re-dispatches
+    ✔ native recovery is inaccessible without live native Owner plus exact issuer and original job (38.4396ms)
+    ✔ reauthorization-required settlement commits only the original effect without writer activation or credential refresh (81.1646ms)
+    ✔ native recovery rechecks credential, full attempt, connection, profile and session CAS before any settlement (104.619ms)
+    ✔ existing automatic recovery still rejects inactive connection and new private helpers have no API grants (3.7304ms)
+    ✔ native recovery session expiry during a real provider-root lock wait returns no descriptor or settlement (1049.6065ms)
+    ✔ connection revocation winning the real root lock denies a waiting native recovery (26.3192ms)
+    ✔ server-selected legacy recovery start retains the exact original job contract (47.4559ms)
+    ✔ fresh human recovery changes only encrypted credential generation, preserving original file fence and stopped permissions (28.0755ms)
+    ✔ ordinary and recovery attempts share one unique state namespace and reject purpose/default consent injection (27.5971ms)
+    ✔ recovery requests the sealed scope profile and can neither upgrade nor downgrade it (37.0651ms)
+    ✔ each recovery step rechecks original job, credential, pending refresh and native session CAS (141.538ms)
+    ✔ lost claim or exchange is never replayed; lost credential commit returns the original receipt without Google (23.4408ms)
+    ✔ real background due polling does not invalidate credential-only human consent (11.2045ms)
+    ✔ recovery inspection never exposes another native session, Owner or issuer or returns vault data (37.9945ms)
+    ✔ two independently claimed recovery consents can replace one credential generation only once (125.8333ms)
+    ✔ real root-lock waits recheck connection revocation and OAuth/native expiry with no credential or receipt commit (2171.4116ms)
+{"event":"storage_cloud_unavailable","error_code":"STORAGE_JOB_LOAD_REFUSED"}
+  ✔ lost provider reply retains original DB fence across worker restart, never re-dispatches (4315.2433ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ two native settlements racing across independent database connections commit the original job only once (152.5911ms)
+  ✔ session expiry during a real connection lock wait rolls back grant and receipt (3036.9604ms)
+  ✔ Decision revocation winning the lock prevents new registration (16.6443ms)
+  ✔ OAuth reduce/revoke, connection revoke, expiry and policy drift fail closed (16.3525ms)
+  ✔ logged-out native JWT cannot manage storage while independent grants are not session clones (0.9525ms)
+  ✔ private storage rows and internal authorization are unavailable to public clients (138.1627ms)
+  ✔ OAuth issuer and originating live native session are both mandatory (67.9458ms)
+  ✔ revocation and policy drift prohibit a pending OAuth activation (23.5367ms)
+  ✔ scope profile: complete records the Worker-computed profile with the credential revision (28.0406ms)
+  ✔ expired OAuth attempt and logged-out session cannot activate or expose credentials (11.2438ms)
+  ✔ first native consent atomically enrolls refresh with its own receipt; legacy and false do not (134.7553ms)
+  ✔ disable without delegation leaves a tombstone and defeats a late first OAuth callback (18.2687ms)
+  ✔ same-root replacement cannot default-enable after disable, revoke, or credential history (71.7117ms)
+  ✔ first enrollment and another device's disable or revoke serialize in both real lock orders (296.2558ms)
+  ✔ consent is strict and prepare-bound; failed enrollment rolls back activation and both receipts (15.9122ms)
+  ✔ refresh is explicit account delegation, not a device session or context write grant (23.5755ms)
+  ✔ disable rejects in-flight refresh commit; re-enable cannot erase uncertain attempt; new consent can recover (33.0245ms)
+  ✔ same provider-root journal and refresh block one another without erasing either fence (17.706ms)
+  ✔ provider failures use bounded retry; invalid grant requires consent; private rows inaccessible (30.9451ms)
+  ✔ connection revoke winning a real lock wait prevents the waiting refresh claim (28.6816ms)
+  ✔ fresh native consent on a replacement connection resolves only old credential attempts for the exact root (25.0124ms)
+  ✔ credential refresh invalidates a pending OAuth completion before stale AAD can be stored (22.5503ms)
+  ✔ OAuth expiry while waiting on a final delegation lock rolls back credentials, supersede and receipt (4483.4232ms)
+  ✔ fair polling skips ten blocked roots and serves an eleventh healthy connection at once (281.6824ms)
+  ✔ directory probe requires native Owner plus issuer; no caller layout or raw table access (26.7859ms)
+  ✔ directory observation is exact, single-commit and cannot activate or alter storage (18.8375ms)
+  ✔ directory observation may carry each directory's sharing digest (15.144ms)
+  ✔ storage step 2: directory observation may carry each directory's access digest (15.1302ms)
+  ✔ browser-editable or incomplete observations cannot become evidence (13.3767ms)
+  ✔ credential/connection/Decision drift, new directory and revoked issuer invalidate a probe (37.5829ms)
+  ✔ attempt expiry and native session expiry after actual lock waits roll back evidence (2185.7046ms)
+  ✔ probe is bound to exact native session and expires without writes (6.1942ms)
+  ✔ account-policy foundation is private, RLS-protected and grants no API role table or function access (16.2332ms)
+  ✔ context identity and reviewed qualification alone cannot authorize a legacy connection (22.5649ms)
+  ✔ native Owner management separates storage-only client revoke from whole-connection disconnect (98.0544ms)
+  ✔ one account policy admits two qualified clients without per-Binding storage grants or new OAuth scopes (13.9204ms)
+  ✔ fixed base actions reject destructive operations, invalid shapes and unknown clients without effects (8.5293ms)
+  ✔ account policy lasts beyond one hour and is independent of credential or ordinary connection versions (7.4571ms)
+  ✔ new topic and metadata versions preserve scope, but track identity or root drift does not (36.9548ms)
+  ✔ wrong owner, registration metadata drift, unlinked re-registration and revoked issuer are denied (25.8249ms)
+  ✔ registration snapshots, policy identity and policy lifecycle cannot be silently rewritten (11.8776ms)
+  ✔ database constraints prevent dual authority, partial cutover and rollback to legacy (4.6009ms)
+  ✔ root deny is exact while policy, capability, Decision and Binding revocation refuse new evaluation (25.7321ms)
+  ✔ requalified capability uses a fresh identity and monotonic generation without reviving its revoked predecessor (8.5672ms)
+  ✔ nonlegacy policy cannot be bypassed through old client grant, revoke or job RPCs (6.9607ms)
+  ✔ all old cloud execution and provider recovery branches reject account-policy mode before disclosing credentials or mutating jobs (17.1358ms)
+  ✔ an old native grant waiting at the root rechecks a winning account-policy cutover (35.677ms)
+  ✔ explicit account-policy expiry also uses the wall clock after a root lock wait (1239.4688ms)
+  ✔ Binding expiry is rechecked after a real provider-root lock wait (1032.3959ms)
+  ✔ global deny wins an absent-row insertion race and survives new Binding and connection IDs (25.1856ms)
+  ✔ evaluator-winning lineage guard serializes later storage-only revoke until transaction completion (153.8829ms)
+  ✔ ordinary account refresh rotates only credentials and cannot revive storage deny or change policy authority (21.9421ms)
+  ✔ storage administration is private invoker-only; even the designated account cannot call it through native or service roles (31.3467ms)
+  ✔ designation CAS and exact latest Receipt replay cannot reactivate revoked authority or reuse an approval (46.3101ms)
+  ✔ approval must be current, explicit, exact subject/action/version and bound to its immutable committed Receipt (31.58ms)
+  ✔ approval requires the exact authenticated Owner M1 Receipt, not an unbound or unrelated receipt (26.13ms)
+  ✔ anonymous, deleted and banned subjects cannot activate; an unavailable subject can still be revoked (55.8533ms)
+  ✔ unverified activation and audit failure leave no designation or successful Receipt (33.1786ms)
+  ✔ capability administration is invoker-only, private and denied to native, Agent, service-role and Google issuer callers (301.2038ms)
+  ✔ missing storage designation fails closed without bootstrapping it (4.8935ms)
+  ✔ reviewed raw UTF-8 source registers exact server request identity with one qualification receipt (11.5617ms)
+  ✔ registration replay is exact, changed payload conflicts, and admin CAS is checked before replay (9.6548ms)
+  ✔ malformed or stale source and nonmatching Evidence cannot create registration authority (168.6731ms)
+  ✔ qualification has one receipt but creates no account policy, grant, job or file admission (20.666ms)
+  ✔ withdrawn review Evidence and withdrawn original source cannot grant qualification (100.3037ms)
+  ✔ source withdrawal blocks future qualification use while explicit capability revoke ends existing account-policy access (52.0904ms)
+  ✔ only an exact reviewed request link qualifies new Bindings; client ID reuse is not inheritance (24.1112ms)
+  ✔ request-link rejects each request metadata, lineage, generation and capability mismatch (97.5008ms)
+  ✔ stale capability CAS rejects and two concurrent qualifications cannot both win (74.3975ms)
+  ✔ simultaneous same-key registration replays one committed receipt (44.491ms)
+  ✔ different idempotency keys cannot concurrently register two lineages for the same exact source request (31.7108ms)
+  ✔ new requests for the same client identity cannot race into separate lineages or bypass an existing deny (48.2409ms)
+  ✔ registration successors cannot change issuer, resource or client identity or recycle an exact source request (51.6852ms)
+  ✔ revocation is immutable and replay cannot reactivate old capabilities or erase storage denies (52.2048ms)
+  ✔ capability revoke wins against a waiting link without reviving or partially linking a request (49.6587ms)
+  ✔ a link that commits first remains immutable history but does not prevent subsequent capability revoke (51.0733ms)
+  ✔ registration generations do not silently reuse old qualification or overwrite immutable snapshots (106.5676ms)
+  ✔ storage maintenance rejects foreign request ownership and audits global technical effects (28.4692ms)
+  ✔ storage designation revocation and qualification serialize in both orders (153.864ms)
+  ✔ issuer revoked while a request waits is rechecked before qualification effects (27.2982ms)
+  ✔ the real Evidence-withdrawal exclusive guard wins against a waiting source registration (45.8831ms)
+  ✔ Event and final Receipt failures roll back registration effects rather than leaving partial authority (45.589ms)
+  ✔ storage source reader is a non-login, exact-function-only capability (3.9318ms)
+  ✔ storage source reader resolves only an exact live request and cannot read base tables (3.7972ms)
+  ✔ transition manifests are offline-operator only and native cutover requires both the live Owner and fixed issuer (629.3206ms)
+  ✔ reviewed transition commits one sustained policy and reads back two exact receipts without new Google consent (803.2698ms)
+  ✔ account-policy jobs need no legacy client grant and pin one immutable authority snapshot with exact job replay (400.8239ms)
+  ✔ manifest proofs require every exact historical payload and reject substitutions without changing account authority (158.5199ms)
+  ✔ transition CAS covers inventories and rejects caller-supplied Owner, paths, actions or policy authority (155.6668ms)
+  ✔ the active-root uniqueness constraint and revoked-profile fences prevent a second live legacy route without blocking quiet historical cutover (180.3792ms)
+  ✔ another live issuer for the same Google client prevents cutover even while the selected executor is disabled (321.3762ms)
+  ✔ partial grants and even rowless legacy revokes retain a root-lineage deny instead of inheriting broader actions (243.844ms)
+  ✔ natural grant expiry does not create a permanent deny or shorten policy lifetime, but expired Binding still denies (127.9783ms)
+  ✔ preexisting account-wide and root-lineage denies remain byte-for-byte after transition (127.4713ms)
+  ✔ an exact queued job requires explicit receipt-backed cancellation and its old identity cannot be revived (1068.8742ms)
+  ✔ quiet includes queued jobs and prepared, started or uncertain intents on historical profiles for the same provider root (679.7493ms)
+  ✔ queued cancellation takes job then root and rolls back if a concurrent start has already attached its original intent (362.138ms)
+  ✔ connection revocation winning the root lock blocks waiting cutover, while cutover winning closes the old revoke path (279.1562ms)
+  ✔ global deny insertion serializes with cutover's lineage guard and cannot be lost on either side (436.8599ms)
+  ✔ native-session and manifest expiry while waiting at the root roll back cutover and both receipts (4213.8792ms)
+  ✔ failure finishing either policy or transition receipt rolls back all mode, deny and policy effects (372.7813ms)
+  ✔ cloud and job routers have exact mode/snapshot quadrants and no API access to private cores (278.0337ms)
+  ✔ dispatch report stores a strict optional reason in the Owner's job, receipt and event; inspect sees its code only (102.7696ms)
+  ✔ root revoke and cloud load serialize in both winning orders without issuing post-revoke writers (111.7918ms)
+{"event":"storage_cloud_denied","error_code":"DURABLE_WRITE_RESERVATION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"DURABLE_WRITE_RESERVATION_FAILED"}
+  ✔ exact begin and root revoke serialize in both orders and never grant a second start (150.8099ms)
+  ✔ two independent V2 executors share one exact start, provider attempt and file effect (145.1085ms)
+  ✔ a root-relative text create is stored with the full path and commits (production relative-path denial) (93.0045ms)
+  ✔ descriptors name the owner's other active roots under the same Drive parent, never revoked or elsewhere (Decision b18eff80) (438.8028ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ lost V2 provider reply retains original attempt and root fence across replay, conflicts and restart (169.9534ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ an unsettled attempted create stays due with backoff, gets a job-bound refresh and is released only when proven absent (BUG-20261007-005) (202.012ms)
+{"event":"storage_cloud_postwrite_failed","stage":"finalize_rpc","error_code":"FINALIZE_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ a complete persisted verification settles after root revocation with one original result and no provider I/O (93.8304ms)
+{"event":"storage_cloud_postwrite_failed","stage":"finalize_rpc","error_code":"FINALIZE_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ root revocation winning before verification storage rejects recording and retains the exact unknown-effect fence (105.8955ms)
+{"event":"storage_cloud_postwrite_failed","stage":"finalize_rpc","error_code":"FINALIZE_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ POST identity alone, incomplete proof and exact content, parent, version, attempt, writer or start-receipt mismatches never become settled evidence (134.4678ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a queued job whose dispatch never started is dispatched again on a quiet root, refused on a stuck root and settled after 2 hours (BUG-20261008-001) (335.0343ms)
+  ✔ read surface ACL: Worker RPC is anon-only, Owner control is native-only, tables are private (1.3209ms)
+  ✔ closed by default: no read switch, then no read access, means no receipt and no descriptor (42.6341ms)
+  ✔ Owner enables read without touching the write policy; read_content stays unavailable in P1 (17.4133ms)
+  ✔ demand prepare applies body/search permissions without read receipts; two shared-root claimers never deadlock (230.5804ms)
+  ✔ admit commits an intent receipt before returning the sealed descriptor; finalize is exact and idempotent (17.2679ms)
+  ✔ input is closed: unknown keys, caller class, bad IDs and half HMAC pairs fail before any lock (4.3371ms)
+  ✔ content read is a separate class and is denied while only read is granted (4.1601ms)
+  ✔ per-class deny removes read for one client only, and whole-storage revoke also stops reads (31.9102ms)
+  ✔ revocation serializes with admission at the admit commit (linearization point) (78.7746ms)
+  ✔ a revoked v12 Binding stops admission even with read access active (32.2624ms)
+  ✔ read switch and disconnect each stop admission; read access never revives on its own (17.2565ms)
+  ✔ redirect eligibility: only https on a public DNS host (4.6326ms)
+  ✔ a reconnect with a fresh DCR client ID inherits the reviewed lineage (87.5537ms)
+  ✔ a different redirect URI or scope set does not inherit (38.6404ms)
+  ✔ loopback clients never inherit, even from a reviewed loopback lineage (20.0056ms)
+  ✔ a reviewed link keeps its exact client-ID contract and is never replaced by inheritance (8.4237ms)
+  ✔ lineage deny, read-class deny and the Owner client list apply to inherited clients (68.6984ms)
+  ✔ capability revocation and ambiguous anchors inherit nothing (44.785ms)
+  ✔ read_content has its own disclosure; the Owner can now enable it (180.2278ms)
+  ✔ a content read names exactly one object and records the read_content class (27.0851ms)
+  ✔ the per-class deny removes bodies for one client and keeps its read level (32.5457ms)
+  ✔ each Binding has a 256 MiB hourly content budget; unfinalized reads count their reservation (367.2609ms)
+  ✔ reserve extends only a fresh intent of the caller's own read_content receipt, and never shrinks it (43.1352ms)
+  ✔ finalize never settles more than the receipt reserved; a revoked Binding cannot reserve (26.7344ms)
+  ✔ settle releases the unused reservation (289.0273ms)
+  ✔ concurrent reservations and admissions serialize on the Binding lock and cannot exceed the window (314.1911ms)
+  ✔ turning read_content off stops bodies but not the read level (15.7569ms)
+  ✔ existing policies keep the /2 contract and cannot evaluate modify (6.0404ms)
+  ✔ enabling modify replaces the policy, bumps auth_generation and moves read access untouched (125.0934ms)
+  ✔ submit still accepts only create: modify grants nothing executable yet (7.2619ms)
+  ✔ disabling modify replaces the policy again and is idempotent per key (17.8532ms)
+  ✔ the switch cancels queued jobs of this connection; they keep their original policy (14.4438ms)
+  ✔ an unresolved intent blocks the switch and keeps the policy (12.4949ms)
+  ✔ a switch serializes with a concurrent read admission on the root lock (62.6296ms)
+  ✔ scope drift, a revoked connection or a missing native session refuses the switch (20.715ms)
+  ✔ rename then move a Clued-created file; the registry follows by CAS and keeps the Artifact (386.7936ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+{"event":"storage_cloud_postwrite_failed","stage":"settle_verified_rpc","error_code":"SETTLE_VERIFIED_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ storage step 3: a sibling change during a create no longer fails it; a changed role on the track does (375.3288ms)
+  ✔ storage step 3: a Worker from before step 3 keeps working against the new database (253.8104ms)
+{"event":"storage_cloud_postcondition_failed","stage":"verify","error_code":"DRIVE_POSTCONDITION_CONTENT_CHANGED"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ a content edit racing the update is never settled into the registry (117.3915ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"PROVIDER_DESTINATION_EXISTS"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"STATUS_SEMANTIC_DIRECTORY_FORBIDDEN"}
+  ✔ a stale source version, a name conflict or a status-directory destination is refused with zero provider updates (217.1188ms)
+  ✔ without the modify level, or in another shape, submit is refused (62.5444ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost update reply leaves the intent fenced and the registry unchanged (178.9012ms)
+  ✔ replace keeps the previous revision forever, uploads the new text and settles the same Artifact (403.4868ms)
+  ✔ revert restores the kept content through a checked download, and keeps the replaced content too (230.2971ms)
+  ✔ at most 10 Clued pins stay; the oldest is released on Drive and in the registry (800.6095ms)
+  ✔ a failed release does not fence the replace; the pin stays and is released by the next replace (778.9497ms)
+  ✔ a head the Owner already kept is recorded owner_kept, never released, and still restorable (969.3507ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"DESTINATION_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_unavailable","error_code":"CLOUD_MUTATION_SHAPE_INVALID"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"REVISION_KEEP_LIMIT"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"REPLACE_TARGET_UNSUPPORTED"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ refusals with zero provider writes: stale version, keep limit, unknown restore, no overwrite level, bad shapes (272.316ms)
+  ✔ a binary replace uploads the staged bytes in place under the same Drive ID and Artifact, and revert restores them (330.3255ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"REPLACE_TARGET_UNSUPPORTED"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"STORAGE_CONTENT_STAGING_MISMATCH"}
+  ✔ binary replace refusals: no normal use, no overwrite level, another type, too large, bad shapes (351.3377ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost upload reply stays fenced, then recovery settles it by reads only (219.7461ms)
+  ✔ the destructive level has its own disclosure and replaces the policy like modify and overwrite (87.3862ms)
+  ✔ trash then untrash a Clued-created file by its Drive ID; the Artifact follows by CAS and nothing is ever deleted (374.6982ms)
+  ✔ untrash names the item by Drive ID: trash A, a new B at the same path, trash B, then untrash A (359.7178ms)
+{"event":"storage_cloud_denied","error_code":"RESTORE_NAME_CONFLICT"}
+  ✔ untrash after a name conflict: only the user's explicit folder or numbered-name option, both settle the same Artifact (401.8821ms)
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_NOT_EMPTY"}
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_NOT_EMPTY"}
+  ✔ an empty registered directory is trashed and untrashed; non-empty ones, tracks and the root are refused (201.4002ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"delete_authority_required"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_denied","error_code":"PROVIDER_OWNER_REQUIRED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_ID_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ a governance file without delete authority, another owner's file, a stale version or another item's ID is refused with zero updates (592.7561ms)
+  ✔ artifact_trash settles only by CAS on the Artifact version (82.9018ms)
+  ✔ without the destructive level, or in another shape, submit is refused (47.991ms)
+{"event":"storage_cloud_denied","error_code":"PROVIDER_OWNER_REQUIRED"}
+  ✔ beyond 5 trash jobs the Agent registers one batch and the Owner confirms it once; each item covers one job (702.5812ms)
+  ✔ a confirmed batch expires after 24 hours and is voided by a policy replacement (837.4865ms)
+  ✔ the confirmation RPC is native-session only and owner-scoped (199.4369ms)
+  ✔ a revoked Binding learns nothing about the registry: every destructive submit is storage_policy_denied (298.7105ms)
+  ✔ at most 5 batches wait for the Owner per client registration and connection (173.9005ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost update reply leaves the intent fenced; recovery re-verifies by GET and settles once (230.9015ms)
+  ✔ the modify_subtree level has its own disclosure, a canonical action order and replaces the policy (98.3519ms)
+  ✔ a directory move needs the modify_subtree level; modify alone is not enough (91.2654ms)
+  ✔ a directory moves with its whole subtree: one PATCH, the registry rewritten in the settlement (616.6555ms)
+{"event":"storage_subtree_refresh_partial","phase":"before","total":3,"matched":2}
+  ✔ P6.1: an item changed outside Clued before the move keeps its registered version; the rest follow Drive (341.2496ms)
+  ✔ P6.2: a directory Clued creates is registered with its sharing digest when it equals its folder's (274.3708ms)
+  ✔ P6.2: a directory move gives both folders without a digest the one the authority recorded (430.7772ms)
+  ✔ storage step 2: a folder that already has a sharing digest gets only its access digest from a move, once (275.3562ms)
+  ✔ P6.2: a folder whose Drive version moved on since it was registered gets no digest from a move (255.7196ms)
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ P6.2: the verified record refuses a sharing digest on a file or one that is not the folder's (406.4382ms)
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+{"event":"storage_cloud_postwrite_failed","stage":"verified_record_rpc","error_code":"VERIFIED_RECORD_RPC_UNAVAILABLE"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ storage step 2: the verified record refuses an access digest on a file, without a sharing digest, or malformed (428.2114ms)
+  ✔ storage step 2: the backfill records an access digest only at the registered version, once (78.5451ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ fix d9d6db4c: a started move that never recorded its attempt is released once its admission expired (425.8038ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ fix d9d6db4c: a started job that recorded its attempt is never released, however old (339.1026ms)
+  ✔ submit refuses a track, a rename, a move into itself and any other shape before a job exists (271.35ms)
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_SHARING_DIFFERS"}
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_SHARING_DIFFERS"}
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_ACCESS_UNAVAILABLE"}
+{"event":"storage_cloud_denied","error_code":"SUBTREE_DRIFT"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"provider_identity","error_code":"SOURCE_VERSION_MISMATCH"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"destination_exists"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ different sharing, a stale version or a registered destination is refused with no provider effect (808.2504ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"subtree_too_large"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ more than 500 registered items under the directory is refused by the authority (348.535ms)
+  ✔ a registry change between the descriptor and the durable start uses the start's sample (363.3175ms)
+  ✔ a trashed item under the directory moves with it and is untrashed at its new path (621.6946ms)
+  ✔ the registry path rewrite is refused outside the verified settlement of a directory move (226.233ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+{"event":"storage_cloud_unavailable","error_code":"UNSPECIFIED"}
+  ✔ a lost reply stays fenced; scheduled recovery never settles it, the Owner's native recovery does, once (400.0412ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ P6.1: a verified refresh list cannot be swapped for another (362.9166ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ P6.1: an attempt stored before P6.1 settles and reads back exactly as before, with no refresh (406.0403ms)
+  ✔ P6.1: the refresh functions refuse a lower, unknown, repeated or mistyped version (3.7379ms)
+  ✔ adopt registers a file the Owner uploaded by hand, writes nothing, and the file can then be renamed and trashed (412.7944ms)
+{"event":"storage_cloud_denied","error_code":"DIRECTORY_SHARING_DIFFERS"}
+  ✔ a directory is adopted with its sharing digest only when shared like its folder, and Clued then writes into it (244.3447ms)
+  ✔ submit refuses before any job: a registered path or Drive ID, a track, a non-full credential, no modify level, a bad shape (80.0667ms)
+{"event":"storage_cloud_denied","error_code":"PROVIDER_OWNER_REQUIRED"}
+{"event":"storage_cloud_denied","error_code":"ADOPT_TARGET_UNSUPPORTED"}
+{"event":"storage_cloud_denied","error_code":"ADOPT_SCOPE_UPGRADE_REQUIRED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"parent_unregistered"}
+{"event":"storage_cloud_denied","error_code":"PARENT_UNREGISTERED"}
+{"event":"storage_cloud_unavailable","error_code":"UNSPECIFIED"}
+  ✔ execution refuses with no reservation: another owner, a shortcut, an unregistered folder, a non-full credential or a downgrade (121.5955ms)
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"governance_forbidden"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+{"event":"storage_cloud_authority_failed","phase":"initial","stage":"canonical_result","error_code":"AUTHORITY_RPC_DENIED","reason":"already_registered"}
+{"event":"storage_cloud_denied","error_code":"ARTIFACT_AUTHORITY_RESOLUTION_FAILED"}
+  ✔ an item the Owner revoked, an item under a governance folder or one registered after submit is never adopted (158.0869ms)
+{"event":"storage_cloud_denied","error_code":"SCOPE_UPGRADE_REQUIRED"}
+  ✔ without the full credential, changing an item Clued did not create is refused before it could fence the root (257.1697ms)
+{"event":"storage_cloud_postcondition_failed","stage":"verify","error_code":"DRIVE_POSTCONDITION_VERSION_CHANGED"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ an adopt that never settles is released after its admission expired: nothing registered, the root writable again (157.1564ms)
+  ✔ Work Claim storage door: the storage kind names this door (0.4857ms)
+  ✔ Work Claim storage door: resources of each operation, relative to the registered root (4.0412ms)
+  ✔ Work Claim storage door: without claims, and with unrelated ones, writes are admitted as before (137.1041ms)
+  ✔ Work Claim storage door: another live claim on the path refuses the write before anything exists (74.2508ms)
+  ✔ Work Claim storage door: a replay of an existing job is answered, not refused (20.7039ms)
+  ✔ Work Claim storage door: a presented claim must be the writer's, live, at its fence and cover every path (60.2023ms)
+  ✔ Work Claim storage door: a trash batch with a held item is refused before the batch exists (39.0778ms)
+  ✔ Work Claim storage door: work_claim must be exactly {claim_id, fence} and only on submit (7.0802ms)
+  ✔ normal use needs a normal credential: a legacy connection answers reconsent_required and writes nothing (6.6132ms)
+  ✔ re-consent prepare validates normal use and refuses while the root is busy (24.4058ms)
+  ✔ the granted profile must be the requested one or legacy; any failure keeps the old credential (19.3117ms)
+  ✔ partial grant: normal requested, legacy granted -> credential replaced, profile legacy, normal use stays off, delegation carried (12.4927ms)
+  ✔ carry needs all four conditions: a disabled delegation or a changed prepare snapshot stays disabled (26.3705ms)
+  ✔ full re-consent: normal granted -> normal profile, normal/1 read access in the same transaction, carry, and no residue of old envelopes (3502.0324ms)
+  ✔ clued_storage_normal_use_v1: disable keeps browsing, enable restores normal/1, CAS and replay (17.2639ms)
+  ✔ set_classes never silently rewrites normal/1 as text/1; status reports both profiles (87.4037ms)
+  ✔ content search admission: normal/1 and a normal credential are required, with a condition HMAC (216.1874ms)
+  ✔ full scope: an upgrade binds the full-scope disclosure, records what Google granted, and full counts as normal (82.327ms)
+  ✔ refresh-token count per account x client: warning at 50, new re-consent refused at 90 (48.2586ms)
+  ✔ production callback path: clued_storage_oauth_callback_v2 reaches the N1a wrapper for a partial grant and for normal-use enable with carry (61.1885ms)
+  ✔ binary gate at begin: create_file + read access normal/1 + provider_scope_profile normal; types bound to extension (153.2817ms)
+  ✔ signed-URL claim: exact claims, single use, expiry and the gate re-evaluated for the row's Binding (41.1496ms)
+  ✔ upload budget is reserved at URL issue per Binding; unused URLs release it, received bytes do not (100.0981ms)
+  ✔ submit consumes one ready row of the same Binding; stored job carries content_ref; replay and reuse (97.4594ms)
+  ✔ root-relative paths: canonicalized before the digest, relative == full, bad paths refused before any row (166.7401ms)
+  ✔ multipart binary create commits with a create-verified/3 proof and a deletable staging object (109.8419ms)
+  ✔ N4: an Owner upload budget change applies to the next upload_begin; policy, read access and a queued job are untouched (118.4762ms)
+  ✔ above 5 MiB: one resumable session and one PUT, verified /3 (144.7649ms)
+{"event":"storage_cloud_denied","error_code":"STORAGE_CONTENT_STAGING_MISMATCH"}
+{"event":"storage_cloud_unavailable","error_code":"UNSPECIFIED"}
+  ✔ refusals with zero provider writes: staged bytes mismatch, gate off after submit, 12 h cancel (81.4208ms)
+{"event":"storage_cloud_postcondition_failed","stage":"verify","error_code":"DRIVE_POSTCONDITION_CONTENT_MISMATCH"}
+{"event":"storage_cloud_unreconciled","error_code":"POST_WRITE_CANONICAL_RECONCILIATION_FAILED"}
+  ✔ Drive checksum differing from the declared sha256 is never settled (117.2247ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a lost resumable reply stays fenced; recovery settles it by reads only and never re-uploads (117.5073ms)
+{"event":"storage_cloud_unreconciled","error_code":"PROVIDER_MUTATION_OUTCOME_UNKNOWN"}
+  ✔ a create-verified/2 proof cannot settle a binary job (77.9119ms)
+  ✔ staging rows are immutable except their lifecycle; stalled uploads are rejected by the sweep (31.131ms)
+  ✔ inline begin is retry-safe: the job_id derives one row per Binding, replay never re-reserves (50.758ms)
+  ✔ inline staging_id is never staged twice: after the row is purged a retry of the job is refused; key_salt is per row (36.1739ms)
+  ✔ staging rows per rolling hour are capped per Binding, released rows included (169.9077ms)
+  ✔ retention: terminal rows whose object is gone are purged after 7 days; nothing else can be deleted (79.8043ms)
+  ✔ the sweep skips staging rows a concurrent transaction holds instead of waiting on them (74.8213ms)
+  ✔ no live size / sha256 derivation reads mutation.content without a content_ref guard (3.398ms)
+  ✔ status reports the §7.1 defaults, bounds and generation 0 before any change (3.9224ms)
+  ✔ only the owner's native session can read or change a budget (102.8428ms)
+  ✔ hard upper and lower bounds and exact input shapes are refused before any receipt (9.8501ms)
+  ✔ set is CAS on budget_generation; each change revokes and inserts under one Receipt and one Event (13.9673ms)
+  ✔ a read budget change applies to the next admission and reservation, and never rewrites receipts (105.985ms)
+  ✔ the account read total covers every Binding of the owner and is adjustable (43.4644ms)
+  ✔ upload reservations use the configured per-Binding and account upload budgets at once (15.783ms)
+  ✔ N0 gate: an owner who is not on the allowlist (and no verified opening) is refused before any row (18.2263ms)
+  ✔ helper eligibility equals the 145426 describe answer (verbatim predicate) (0.4898ms)
+  ✔ Host profile_register refuses the /clued-cloud/ prefix (3.9146ms)
+  ✔ begin writes no canonical row; the OAuth attempt is purpose onboard with no connection (13.0477ms)
+  ✔ begin validates its input, disclosure and digest (7.3648ms)
+  ✔ onboard claim is one-shot, counted before exchange, and dispatched by the outermost wrapper only (22.6503ms)
+  ✔ directory effects are idempotent: replayed intents and results never create a second record (40.8812ms)
+  ✔ activation failing at its last step rolls back every step: zero canonical rows; the failure records orphans (87.4516ms)
+  ✔ resume reuses the staged credential and effects; activation creates the whole object graph once (44.3988ms)
+  ✔ the activated connection is usable: page list name, write admission, read admission and refresh claim (119.1284ms)
+  ✔ legacy granted although normal use was requested -> text/1 {read}; no refresh delegation when unticked (35.932ms)
+  ✔ normal use unticked -> legacy request; a normal grant for a legacy request is refused (3.4282ms)
+  ✔ picked root: an observed (not created) root; overlap with an active root and a reused root are refused (30.7936ms)
+  ✔ expiry drops the staged credential and keeps orphans; a failure keeps a 30-minute retry (55.9927ms)
+  ✔ a failure no resume can fix drops the staged credential at once; a retryable one keeps it for resume (8.278ms)
+  ✔ one run at a time: the run token and its lease serialise the callback, resume and a stopped Worker (59.5705ms)
+  ✔ the token limit is re-checked at claim under the per-owner lock (411.9852ms)
+  ✔ nested roots: a parent and its child activating concurrently are serialised; the second sees the overlap (480.6285ms)
+  ✔ activation re-checks the allowlist / verified-opening gate (46.5832ms)
+  ✔ gate v2: onboarding needs read_enabled only; the executor switch execution_enabled does not gate it (56.1749ms)
+  ✔ the token-count limit refuses a new onboarding at 90 (unknown Google account counts every claim) (14.1541ms)
+  ✔ the Owner's existing connections are unchanged: policy, read access, delegation, auth_generation, credential (6.7928ms)
+  ✔ an unverified-open app still refuses a removed owner; the verified opening admits without the allowlist (4.1314ms)
+  ✔ connections surface ACL: Worker RPC is anon-only (0.5239ms)
+  ✔ a malformed hash is refused, an unknown or revoked Binding is denied (13.4624ms)
+  ✔ a Binding that is no storage client lists nothing (17.3524ms)
+  ✔ an active connection is listed with its root, project, tracks and write levels, and nothing is written (36.4634ms)
+  ✔ read classes follow the Owner's read access (16.0026ms)
+  ✔ write levels follow the Owner's write access; normal use needs read_content, normal/1 and a normal grant (33.2949ms)
+  ✔ a root registered by Drive ID is named by its display name and has no managed_root (Decision 8d05e50a) (39.5255ms)
+  ✔ a denied client and a disconnected connection are not listed (25.0961ms)
+  ✔ a directory with a recorded sharing digest is matched by sharing, not Drive version (44.1678ms)
+  ✔ a new-shape request matches its ancestors by identity and digest, not by Drive version (107.685ms)
+  ✔ historical resource setup closes with actual G6 apply/replay and exact GW80/CI8 (304.825ms)
+  ✔ current authorization successors preserve actual OIDs, caller ACLs and early entrances (123.7278ms)
+  ✔ current gateway resolves real registered authority while invalid proof and old callers remain denied (24.5285ms)
+  ✔ current Native account list and scoped anon CI holders are legal without gateway impersonation (30.2646ms)
+  ✔ retired jobs_v2 and project aliases stay inaccessible to every API role after closeout (6.5853ms)
+✔ Canonical Resource Center registration and exact read-only authority (production-no-legacy-expiry) (83404.0079ms)
+▶ file-version diagnosis on the current full migration chain remains read-only and fail-closed
+  ✔ same identity at another version is denied with only the fixed label (22.799ms)
+  ✔ matching version still resolves; other identity and shape failures are not misclassified (6.8289ms)
+  ✔ a revoked file Decision never exposes the file-version category (8.036ms)
+  ✔ historical diagnosis closes with sealed G6 replay before current authorization successors (170.0683ms)
+✔ file-version diagnosis on the current full migration chain remains read-only and fail-closed (10182.0311ms)
+ℹ tests 771
+ℹ suites 0
+ℹ pass 771
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 252059.3005

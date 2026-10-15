@@ -1,0 +1,359 @@
+{
+  "schema": "clued.final-integration-delta-independent-review/1",
+  "reviewer": "/root/pr818_stack_failure_diagnosis",
+  "closed_at_utc": "2026-10-14T18:06:25Z",
+  "verdict": "PASS",
+  "findings": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0,
+    "items": []
+  },
+  "review_scope": "Complete fixed three-path delta, its Goal fixture dependency on the actual unchanged Owner guard, and the retained local combined-run evidence. This is not a fresh review of all 191 PR paths.",
+  "declared_subject": {
+    "head": "b98991c2fad338b40845ff7f63c9bee2879901dd",
+    "main": "3853c449f291b04c86740ae220834f0aad72d48a",
+    "d01_main": "9231cb10ea70b43dd741dc4debd9a874d24cf853",
+    "fixture_and_version_commit": "db06583d",
+    "claim": {
+      "id": "2c722a48-1fe3-42d9-974a-c5516e553f7a",
+      "fence": 8,
+      "lease": 3
+    },
+    "basis": "Root handoff and actual hashed subject/local-run files. Reviewer executed no Git and makes no independent Git-graph/latest-main claim.",
+    "manifest": {
+      "path": "final-three-path-integration-review-subject-f8-r1.json",
+      "sha256": "e5fbe30d680ea41a00cb1117397ac5e40483a8312a251a4b67d7856d6a9b7459"
+    },
+    "patch": {
+      "path": "final-three-path-integration-delta-f8-r1.patch",
+      "sha256": "4bb23bc6a51eeb98e17cc8b638fa85b7f263f07d17c60d0b32583f83898196ba",
+      "bytes": 3188
+    },
+    "declared_whole_pr_changed_paths": 191
+  },
+  "files": [
+    {
+      "path": "apps/clued-cloud/tests/task-goal-delivery-db.test.mjs",
+      "baseline_export": "d01-main9231-task-goal-delivery-db.test.mjs",
+      "baseline_sha256": "732c6827734ddd18c273ebe4be937df56a082b498b8df7db068de8de592a22c5",
+      "opening_sha256": "4f053ce009804a16563df2f63c47e9bcefc75524d813d2210526b487489d63ee",
+      "closing_sha256": "4f053ce009804a16563df2f63c47e9bcefc75524d813d2210526b487489d63ee",
+      "bytes": 66064
+    },
+    {
+      "path": "config/clued-components.json",
+      "baseline_export": "d01-main9231-clued-components.json",
+      "baseline_sha256": "d98aac58d111d986df4f09684cce0dfd2a803871ab8b5278b9e2a7ab0cc8f872",
+      "opening_sha256": "7d9ace9fb38ea95fe1db80d7d823fbcc91d69bacbc367294e8305e06dea9abad",
+      "closing_sha256": "7d9ace9fb38ea95fe1db80d7d823fbcc91d69bacbc367294e8305e06dea9abad",
+      "bytes": 11064
+    },
+    {
+      "path": "apps/clued-cloud/worker/generated/components.ts",
+      "baseline_export": "d01-main9231-components.ts",
+      "baseline_sha256": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+      "opening_sha256": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+      "closing_sha256": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+      "bytes": 1021
+    }
+  ],
+  "patch_verification": [
+    {
+      "path": "apps/clued-cloud/tests/task-goal-delivery-db.test.mjs",
+      "hunks": 1,
+      "baseline_sha256": "732c6827734ddd18c273ebe4be937df56a082b498b8df7db068de8de592a22c5",
+      "opening_sha256": "4f053ce009804a16563df2f63c47e9bcefc75524d813d2210526b487489d63ee",
+      "old_and_new_normalized_hunks_match": true
+    },
+    {
+      "path": "apps/clued-cloud/worker/generated/components.ts",
+      "hunks": 2,
+      "baseline_sha256": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+      "opening_sha256": "063f5f2f0d264f8e146c5dab3f5c9b3c2bbfb7a5ef56329fddc80b11eff179a0",
+      "old_and_new_normalized_hunks_match": true
+    },
+    {
+      "path": "config/clued-components.json",
+      "hunks": 1,
+      "baseline_sha256": "d98aac58d111d986df4f09684cce0dfd2a803871ab8b5278b9e2a7ab0cc8f872",
+      "opening_sha256": "7d9ace9fb38ea95fe1db80d7d823fbcc91d69bacbc367294e8305e06dea9abad",
+      "old_and_new_normalized_hunks_match": true
+    }
+  ],
+  "goal_fixture_review": {
+    "status": "PASS",
+    "path": "apps/clued-cloud/tests/task-goal-delivery-db.test.mjs",
+    "lines": [
+      121,
+      122,
+      125,
+      128,
+      130,
+      131,
+      132,
+      134,
+      135,
+      137,
+      138
+    ],
+    "transaction_order": [
+      "BEGIN on the same connected disposable admin client",
+      "authorization_writer_guard_v2(actual seeded user)",
+      "authorization_writer_lock_fanout_v2(the same user)",
+      "original project_mutation_core_v2 call with original create payload and m1_sha256",
+      "original committed-status assertion",
+      "COMMIT, or ROLLBACK and rethrow the original error"
+    ],
+    "proof": {
+      "full_file_reverting_only_seed_wrapper_equals_main9231_baseline": true,
+      "original_core_call_and_committed_assertion_exact_after_indentation": true,
+      "all_prior_assert_occurrences_preserved": true,
+      "assert_occurrences": 138,
+      "suite_test_occurrences": 15,
+      "business_subtests_after_setup": 14,
+      "roles_and_privileges_changed": false,
+      "business_assertions_removed_or_weakened": false,
+      "sql_or_current_guard_changed": false
+    },
+    "description": "Only three disposable Project creations acquire the current guard/fanout protocol before the original private core. Owner and stranger cases retain their actual separate seed-user UUIDs. Original native claims, inert Storage FK Bindings, issuer flow, exact Task/admission/storage/acceptance/negative cases and cleanup remain outside the changed wrapper.",
+    "real_guard_dependency": {
+      "source_path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "source_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+      "guard_lines": [
+        74,
+        78,
+        81,
+        82,
+        84
+      ],
+      "held_check_lines": [
+        284,
+        286,
+        287,
+        288,
+        289,
+        290,
+        292,
+        295,
+        297
+      ],
+      "proof": "Guard takes pg_advisory_xact_lock using the service's Owner UUID key under READ COMMITTED. Require checks this backend's granted Exclusive advisory lock in the actual database via pg_locks. No fake GUC, late row lock or removed assertion substitutes for it.",
+      "serialization_path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "serialization_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "fanout_lines": [
+        46,
+        50,
+        51,
+        58,
+        59
+      ],
+      "private_core_requirement_lines": [
+        270,
+        273,
+        277,
+        278
+      ],
+      "native_equivalent_lines": [
+        342,
+        346,
+        347,
+        348
+      ],
+      "fanout_proof": "Fanout itself requires the held Owner guard, prelocks the eligible Binding union in UUID order, then Binding/Auth. The unchanged private Project core still requires the real early guard, exactly as the Native adapter already does."
+    },
+    "retained_actual_goal_cases": [
+      "legacy Task close unchanged; new loop has exact files and linked M1 receipts",
+      "owner review only actual Native acceptance; body/file changes invalidate it",
+      "sticky metadata and generic/direct-table completion cannot bypass the checks",
+      "inputs are version-bound; scope isolation, strict shape, Native identity and candidate cap",
+      "Agent uses existing authorized reads and M1 metadata; cannot forge Native acceptance",
+      "Storage read revocation and every deny mask Agent locators without blocking Task updates",
+      "Global Task cancellation/archive preserve historical refs after source access disappears",
+      "new private state and helpers have RLS/revokes; gateway fixed surface unchanged"
+    ]
+  },
+  "component_review": {
+    "status": "PASS",
+    "changed_component_id": "mcp.server",
+    "old_version": "0.6.5",
+    "new_version": "0.6.6",
+    "registry_semantic_diff": [
+      {
+        "path": "components.3.version",
+        "old": "0.6.5",
+        "new": "0.6.6"
+      }
+    ],
+    "registry_component_count": 20,
+    "all_other_component_fields_and_versions_equal": true,
+    "agent_contract_version": "49",
+    "generated_version_table_equals_all_registry_versions": true,
+    "MCP_SERVER_VERSION_equals_generated_mcp_and_registry": true,
+    "generated_agent_contract_sha256": "3c377f1bb4e15f11262d547154bc5e61e6af39c99bd59c9bc5759ad303a1ba7d",
+    "authority_effect": "Version advertisement changes only. It supplies no grant, Source activation, publication or execution authority.",
+    "raw_byte_boundary": {
+      "baseline_registry_line_endings": "LF",
+      "observed_worktree_registry_line_endings": "CRLF",
+      "line_breaks": 297,
+      "qualification": "The repository-normalized patch is one semantic version change. The exact worktree digest also reflects CRLF versus raw Git-object export LF; this report binds both actual digests and does not claim their raw byte difference is only the version characters."
+    }
+  },
+  "combined_local_evidence": {
+    "current_report": {
+      "path": "final-integration-db-local-check-f8-r2.json",
+      "sha256": "1b16fc3a1d3e1bbc725243da0e5479a2e4c779fab4a404fa800716af00523ed3"
+    },
+    "runtime_declared_head": "2bc619b9d709cfb3156ff3867a8555699b4f4e4d",
+    "current_head_byte_inheritance": "The runtime report predates the declared b989 head, so it is inherited only through actual matching Source/fixture/component file digests. No claim is made that this reviewer ran the b989 Git object or CI.",
+    "started_utc": "2026-10-14T17:49:03.257213+00:00",
+    "finished_utc": "2026-10-14T17:49:33.890046+00:00",
+    "exit_code": 0,
+    "log": {
+      "path": "final-integration-database-f8-r2.log",
+      "sha256": "cc7678cfa4d830ccfa363b9a79cfc10c87704765520725c513c413918c130a1f",
+      "bytes": 22473
+    },
+    "actual_counts": {
+      "tests": 133,
+      "passed": 133,
+      "failed": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "actual_complete_parent_count": 8,
+    "parents": [
+      "all-contexts sources, exact permission inheritance and real transaction barriers",
+      "all-contexts real early writer barriers and preserved caller catalog",
+      "Authorization closeout: new resources and interrupted multi-step work",
+      "authorization roles: project:* covers the Owner's projects, including later ones; roles in requests",
+      "connection permission requests: ask without the scope, Owner approves once, the same connection gains it",
+      "S2c PR-4: revocation, restore, reauth marks, capability expansion and lifecycle",
+      "K-CONT explicit coverage preserves unabsorbed continuity",
+      "Task goal/file completion uses exact M1 admission, persisted Storage proof and Native acceptance"
+    ],
+    "exact_parent_files": [
+      "tests/all-contexts-authorization-db.test.mjs",
+      "tests/all-contexts-authorization-locks-db.test.mjs",
+      "tests/authorization-roles-db.test.mjs",
+      "tests/connection-permission-request-db.test.mjs",
+      "tests/authorization-closeout.test.mjs",
+      "tests/k-cont-db.test.mjs",
+      "tests/integration-runtime-lifecycle-db.test.mjs",
+      "tests/task-goal-delivery-db.test.mjs"
+    ],
+    "duration_ms": 30553.1606,
+    "before_after_all_recorded_hashes_equal": true,
+    "only_file_changed_between_r1_and_r2": "apps/clued-cloud/tests/task-goal-delivery-db.test.mjs",
+    "current_three_subject_files_match_runtime_before_and_after": true,
+    "actual_current_source_ui_and_seven_other_parent_hashes_match_reports": true,
+    "limits": "Complete eight-parent local combined Source/fixture run. No D01 two-order17 proof or earlier 215/101/60/130 counts are added. The reviewer did not rerun PG/tests."
+  },
+  "original_failure_preservation": {
+    "report": {
+      "path": "final-integration-local-check-f8-r1.json",
+      "sha256": "b0e923437d3140c609acc5fda93fd3c886fe79a871f7c8a62f79a71e834f5a7c"
+    },
+    "log": {
+      "path": "final-integration-database-f8-r1.log",
+      "sha256": "d0fc0d787b56ee205a1bb08840c67c645615f765c78c713b6584797ce849da8b",
+      "bytes": 22501
+    },
+    "actual_counts": {
+      "tests": 119,
+      "passed": 118,
+      "failed": 1,
+      "skipped": 0
+    },
+    "original_database_exit_code": 1,
+    "failed_parent": "Task goal/file completion uses exact M1 admission, persisted Storage proof and Native acceptance",
+    "original_anchor": "tests/task-goal-delivery-db.test.mjs:126:27",
+    "actual_error": {
+      "code": "42501",
+      "message": "authorization_early_writer_guard_required",
+      "core": "project_mutation_core_v2",
+      "require": "authorization_writer_require_v2"
+    },
+    "cause": "The unmodified private core rejected the old seed call that lacked the real early Owner guard. The repair changes fixture entry order, not Source enforcement.",
+    "resolution": "The same complete eight-parent database command now exits0 and passes133 with the guarded fixture. The original failed report/log remain intact, retain their original119/118/1 counts and are not rewritten as PASS."
+  },
+  "earlier_bundle_evidence": {
+    "report": "final-integration-local-check-f8-r1.json",
+    "report_sha256": "b0e923437d3140c609acc5fda93fd3c886fe79a871f7c8a62f79a71e834f5a7c",
+    "runs": [
+      {
+        "label": "build",
+        "exit_code": 0,
+        "log": "final-integration-build-f8-r1.log",
+        "sha256": "5ac68261e01415a6340d7d9a2fc3c65bc9b28685d184e80c5977d4d2d29ac9ab"
+      },
+      {
+        "label": "pdf",
+        "exit_code": 0,
+        "log": "final-integration-pdf-f8-r1.log",
+        "sha256": "1cd9b4b73484af6bb358903fbb1e8c7f6c8f669825f161b71d2d5221725c3b40"
+      },
+      {
+        "label": "typecheck",
+        "exit_code": 0,
+        "log": "final-integration-typecheck-f8-r1.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exit_basis": "Actual run metadata; empty stdout alone is not exit proof."
+      },
+      {
+        "label": "rendered",
+        "exit_code": 0,
+        "log": "final-integration-rendered-f8-r1.log",
+        "sha256": "3531cdd94725a5595149969ee2f6cd70b3042f0f0efbddb6b359d718278fa658",
+        "actual_counts": {
+          "tests": 2,
+          "passed": 2,
+          "failed": 0,
+          "skipped": 0
+        }
+      }
+    ],
+    "inheritance": "These earlier runs bind the same Source/UI/components before the fixture-only seed repair. They are not rerun here; their original report continues to include the database failure.",
+    "observed_pdf_result": "PDF extractor bundle built separately; main Worker bundle contains no pdf.js.",
+    "qualification": "Local bundle/type/render evidence only, not production deployment."
+  },
+  "prior_review_bridges": {
+    "source_r6": {
+      "path": "last-source-zero-security-review-r6.json",
+      "sha256": "d880fcc2cdc702644609a02662cae17835ad3b1836552a513cf4893556a85591",
+      "verdict": "BOUNDED_PASS",
+      "source_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+      "serialization_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "current_frozen_source_matches": true,
+      "scope": "Prior exact r6 Source/test/report/manifest code/report qualification. It excludes later UI/API, lifecycle, production and online acceptance; this final delta does not create a new whole-Source security review."
+    },
+    "ui_native": {
+      "path": "native-main-name-merge-independent-review-r1.json",
+      "sha256": "7ca93dd1237fcab84f36e4e375895bd6306cf38f5aeb10c73acaf32b2eea6720",
+      "homepage_sha256": "7b02ffdc2da5672f581456c8f9d9e70bad25d102dcb97caa7bfa223b85e18c9b",
+      "panel_sha256": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099",
+      "current_frozen_ui_matches": true,
+      "scope": "Prior exact Native/home/Panel naming code closure and separately bounded local child evidence. It does not close production, same-Binding permission, full eight-view or archive acceptance."
+    },
+    "d01_sql": {
+      "path": "apps/clued-cloud/supabase/migrations/20261014132753_task_goal_delivery_v1.sql",
+      "sha256": "316fce6d3730d0ba795064f95ef314b27e3fdfe050dfc27c037a9a1d4a4beddf",
+      "current_hash_matches_r1_and_r2": true,
+      "scope": "Actual unchanged migration bytes participate in the combined Goal parent. Existing D01 acceptance and separate two-order17 proof are not recounted here."
+    },
+    "later_main": {
+      "head": "3853c449f291b04c86740ae220834f0aad72d48a",
+      "basis": "Root declares this main adds only six model-program source/test paths and no clued-cloud change. Reviewer performs no Git or extra tests; qualification relies on unchanged observed relevant bytes.",
+      "limit": "No independent full new-main review or repeated model-program tests is claimed."
+    }
+  },
+  "limits": [
+    "PASS covers the exact three-path delta and bounded local evidence seam only; all191 PR paths were not freshly reviewed.",
+    "Version0.6.6 is an engineering candidate advertisement, not deployed/live-service qualification.",
+    "No Source, fixture, registry, generated module, tests or business data were edited by this reviewer.",
+    "No Git, tests, build, PG, CI, CUA, Canonical or Drive operations were executed. Only this requested local review JSON was written.",
+    "Current official new-head scan/admission/CI, production/Owner scopes, full eight-view and archive acceptance remain separate required stages.",
+    "Later file/Source/main changes invalidate affected exact-byte inheritance until checked under the current subject."
+  ]
+}

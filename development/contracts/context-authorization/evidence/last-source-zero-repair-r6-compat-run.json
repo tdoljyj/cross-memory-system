@@ -1,0 +1,11 @@
+{
+  "started_at": "2026-10-14T13:15:52.5638185Z",
+  "ended_at": "2026-10-14T13:17:05.1084225Z",
+  "exit_code": 0,
+  "node_version": "v24.19.0",
+  "command": "C:/Program Files/nodejs/node.exe scripts/run-tests.mjs --test --test-force-exit --test-reporter=spec --test-concurrency=1 tests/authorization-closeout.test.mjs tests/k-cont-db.test.mjs tests/owner-grants-db.test.mjs tests/owner-grants-admission-door-db.case.mjs tests/owner-grants-release-door-db.test.mjs tests/owner-grants-scope-db.test.mjs tests/owner-request-bundles-db.test.mjs tests/authorization-roles-db.test.mjs tests/connection-permission-request-db.test.mjs",
+  "source_before_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+  "source_after_sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+  "serialization_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+  "log_sha256": "9c5d8294da67c00a7628b2f818f094fa955f4ef2f9927e179a7372a1bbe6f235"
+}

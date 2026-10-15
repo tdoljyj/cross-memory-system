@@ -1,0 +1,51 @@
+{
+  "schema": "clued.scanner-failure-bounded-evidence-reference.v1",
+  "authority_effect": "NONE",
+  "subject_head": "943eb9f7e579ed5f9decc15196fbd79876cce497",
+  "base_main": "0d25099b599259a8020d53c83e700828e0a66023",
+  "original_scanner_result": "FAIL_PRESERVED",
+  "actual_current_CI_policy_local_scanner_exit_code": 1,
+  "actual_current_CI_policy_findings": 2,
+  "literal_repository_scanner_exit_code": 1,
+  "literal_repository_findings": 12,
+  "fresh_helper_exit_code": 0,
+  "fresh_helper_historical_records": 491,
+  "classified_real_credentials_in_current_matches": 0,
+  "actual_git_object_metadata_proof_matches": 2,
+  "same_original_bytes_retained_outside_repo": true,
+  "direct_JSON_directory_preflight_exit_code": 1,
+  "direct_JSON_directory_metadata_findings": 24,
+  "direct_JSON_directory_real_credential_findings": 0,
+  "original_evidence": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-final-943eb9-secret-scan-review-r1.json",
+      "sha256": "088a246c3c08a33ec3ab13f3235756de30563cc4ccd70aed9bc224f85335509c",
+      "bytes": 16250,
+      "preserved_original": true
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-943eb9-new-two-classification-r1.json",
+      "sha256": "82c8ac680ec3f08b3e1dc6c6c62c93f4f71cfdaa92848453073a2381ab9e0138",
+      "bytes": 3331,
+      "preserved_original": true
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-943eb9-direct-json-noise-preflight-r1.json",
+      "sha256": "aa0b40d076f43631b33107484617e77ef1d07413268e7783e4318bb8f9555f35",
+      "bytes": 16445,
+      "preserved_original": true
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-943eb9-direct-json-noise-classification-r1.json",
+      "sha256": "b94087fa8b3cb1da63f83c6c896c3d7d78e1f8f037b2f283b7687a5d97b1d0e0",
+      "bytes": 11497,
+      "preserved_original": true
+    }
+  ],
+  "qualification": {
+    "classification_does_not_change_original_failure": true,
+    "new_source_policy_fix": "PENDING_SEPARATE_NON_AUTHOR_REVIEW_AND_EXACT_NEW_HEAD_SCAN",
+    "does_not_report_CI_or_release_or_eight_view_acceptance": true,
+    "raw_rule_findings_originals_are_referenced_without_duplicate_payload": true
+  }
+}

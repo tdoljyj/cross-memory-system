@@ -1,0 +1,106 @@
+{
+  "schema": "clued.eight-view.native-run-checklist.independent-review.v1",
+  "revision": "r6",
+  "reviewer": "/root/last_source_zero_security_review_r5",
+  "reviewed_at_utc": "2026-10-14T17:39:04Z",
+  "verdict": "BOUNDED_PASS",
+  "qualification": "STATIC_PLAN_REVIEW_ONLY_NOT_EXECUTED",
+  "subject": {
+    "path": "eight-view-remaining-native-run-checklist-r6.json",
+    "bytes": 96918,
+    "sha256": "661a973e548e15a8f9e555312f47c666c42030499b565de417e5e0a7c1e7d870"
+  },
+  "finding_counts": { "blocker": 0, "major": 0, "minor": 0 },
+  "findings": [],
+  "prior_finding_disposition": {
+    "report": "eight-view-native-run-checklist-independent-review-r5.json",
+    "sha256": "c5be7bf6032fba65fd6f4343f2cb2d6e22a40e5e99749062a18132196e43bcc7",
+    "prior_verdict": "CHANGES_REQUIRED",
+    "closed": [
+      {
+        "id": "NATIVE-R5-01",
+        "severity": "Major",
+        "status": "CLOSED_BY_STATIC_R6_REPAIR",
+        "pointers": [
+          "/tool_catalog/source_capture/args_template/candidates/items/0/candidate_local_id",
+          "/original_drive_source_option/candidate_local_id",
+          "/original_drive_source_option/N05_replacement_recipe/2",
+          "/steps/5/schema_repair_note"
+        ],
+        "evidence": "Both default and Drive recipes now preserve item_r5_source_reference, satisfying ^item_[A-Za-z0-9_-]+$. Actual SQL intake_validate_v1 lines 209-211 and complete vendored candidate schema were reread independently. No intake request was executed."
+      }
+    ]
+  },
+  "independent_observations": {
+    "method": "Read-only local bytes, hashes, parsed JSON, complete schema/semantic source reading, current advertised tool metadata and manual plan comparison; no candidate builder or validation/test process executed.",
+    "coverage": {
+      "steps": 14,
+      "templates": 23,
+      "tool_template_references": 52,
+      "distinct_clued_tools": 14,
+      "missing_template_references": 0,
+      "v_cases": 24,
+      "step_statuses": "All 14 remain NOT_EXECUTED; V10 remains NOT_IMPLEMENTED_STAGE3; other V cases remain NOT_EXECUTED."
+    },
+    "intake_schema": {
+      "sql": "apps/clued-cloud/supabase/migrations/20260924160000_information_flow_candidate_store.sql",
+      "sql_sha256": "308f1b9aa9d1af0669360721606a82e1679c2a09f77649572e3b8ebdaa272985",
+      "read_ranges": "Complete intake_schema_enums_v1, string/key/datetime helpers and intake_validate_v1 schema+semantic branches; intake_submit_core_v1 storage and rejection path inspected.",
+      "vendored_schemas": [
+        { "path": "development/contracts/information-flow/vendored/m0a/candidate-information.v1.schema.json", "sha256": "52b270b24458a76ae40257df4e9a3d220aad232ba9ee939b2fde96f33b9c7702", "complete_read": true },
+        { "path": "development/contracts/information-flow/vendored/m0a/segment-input.v1.schema.json", "sha256": "a4f174a56a3e53bad8c72ba0e888bd012164542920df293466c2e711aaece865", "complete_read": true }
+      ],
+      "literal_checks": "Exact segment/document/message/item/anchor keys, schema strings, enums, required arrays and cardinality match. fact/reference/tool/none and non-task priority=null are valid. Candidate local ID length 24, claim 23, summary 14, exact_quote 23 and uncertainty 23 codepoints fit actual bounds. Anchor message ID equals the actual template message ID, quote occurs verbatim in content, context_only=false, segment IDs match and single-message/local IDs are unique.",
+      "drive_recipe": "Preserves all required keys and the item_ prefix. Candidate claim/summary/quote use an actual exact 1-120-codepoint substring, while full Source content stays verbatim. Actual IDs/message refs, 1-20000-codepoint message size, complete request/key limits and real timestamps still require checking after substitution. Drive fetch arguments match advertised metadata; no Drive call or original-byte read was made by this reviewer.",
+      "source_ids": "Local segment evidence_id is a bounded anchor label, not a Canonical Evidence UUID. M1 source_refs use only the committed intake response Evidence ID. One reference candidate retains authority=none; ordinary observed Notes do not promote it. Own pending withdrawal uses current CAS and retains Evidence/Submission history. Empty items are still rejected before source storage."
+    },
+    "source_binding": {
+      "manifest_files": 16,
+      "bytes_and_sha_matches": 16,
+      "missing_or_drifted_files": 0,
+      "closing_rehash_matches": true,
+      "requested_four_complete_texts_independently_reread": [
+        { "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md", "bytes": 31999, "sha256": "7846563d670ea58423eed2c70e1b285de1d6766d8fe6d037884eca60d3168c29" },
+        { "path": "apps/clued-cloud/app/imprints/ImprintPanel.tsx", "bytes": 38697, "sha256": "9c75fdbedd15e63f000b1facf52a0261fd1f67349912b28af8b55b2e7bb72099" },
+        { "path": "apps/clued-cloud/app/imprints/imprint-client.ts", "bytes": 14681, "sha256": "7522240e01f454d3b63329cd902f5ca135da82bc6a21039ecc610ab56b2bf6ea" },
+        { "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql", "bytes": 3895, "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4" }
+      ],
+      "recorded_author_window": {
+        "opening_started_at_utc": "2026-10-14T17:20:39.349212+00:00",
+        "opening_finished_at_utc": "2026-10-14T17:20:39.353238+00:00",
+        "final_hash_read_started_at_utc": "2026-10-14T17:23:09.346723+00:00",
+        "final_hash_read_finished_at_utc": "2026-10-14T17:23:09.348859+00:00",
+        "qualification": "Internally chronological new r6 read records; four read hashes and closing bindings agree with independently read current local bytes. This reviewer did not observe the author's historical read action at those timestamps."
+      },
+      "old_r5_window": "Explicitly unrecorded, retained as historical observation; no fabricated opening/closing time. Three old hashes and path-only search migration are not represented as current r6 bindings.",
+      "scope": "As-of local engineering source only. Historical migration definitions are not attestation of deployed/latest SQL functions. No Git/main, production or online Canonical state was independently read."
+    },
+    "permissions_and_scope": "Human Owner decides the actual unmodified confirmation URL for the same Binding. Release, Owner confirmation, exact actions/environment/token/limits and restoration gates remain mandatory at execution. G_PROJECT_CREATE remains an independent actual lifecycle/recognition gate; allread/allcontexts does not grant create. Future Context and future Project+Context proofs are separate, use actual post-consent owned IDs and retain exact old limits; additional grants between creation/read invalidate inheritance proof.",
+    "native_and_restore": "Advertised MCP ops/argument types are used; placeholders must be substituted with real typed values. Raw/canonical namespace identity remains distinct. Retained history uses the Native UI, and raw Source does not borrow user Source APIs. Only named read RPCs use read recovery/current-selection guards; writes remain single-attempt. Task deadline edits require current eligibility, target occupancy, fresh snapshots/CAS and exact minute-representable restoration. No physical Context deletion, fabricated empty restoration, terminal lifecycle restoration or existing Task/Decision body mutation is planned.",
+    "acceptance_boundaries": "V01-V24 first-edition portions remain separated from automatic Stage3 classification/extraction/aggregation/dedup/association/index/history enhancements. Missing real foreign/shared/owner-mismatch, typed conflict/carrier, delay or Native response samples remain exact NOT_VERIFIED/BLOCKED gaps. Supporting DB/CI and old E1 evidence cannot replace current Native execution. Authorization repair, first-edition Native acceptance and entire original Task completion retain different gates.",
+    "historical_integrity": "R4, R5 and prior r5 independent report hashes were read and match their references. E1 native-ui-acceptance.json SHA 58c0923c8b187cf738ff001502fef6d7599dbedd76165c8c34c6545a8e8002c0 matches; its historical limited outcome is preserved. No old artifact was edited."
+  },
+  "authority_boundary": {
+    "source": "Root delegated handoff only, not an independent Canonical service call",
+    "root_claim_ref": "2c722a48/f8/l2",
+    "root_reported_fresh_resume": "2547 CURRENT; independent_review enabled, version 0, policy_version 1",
+    "execution_authority_from_review": false,
+    "task_or_budget_created_or_changed": false
+  },
+  "actual_execution": {
+    "protected_reads": 0,
+    "protected_writes": 0,
+    "source_writes": 0,
+    "git_pg_tests_build_ci_browser_drive_calls": 0,
+    "new_subagents": 0,
+    "native_acceptance_executed": false,
+    "only_new_output": "eight-view-native-run-checklist-independent-review-r6.json"
+  },
+  "does_not_establish": [
+    "Production release, .6 deployment/postflight, CI/main identity or current Canonical progress",
+    "Human same-Binding Owner approval or actual runtime capability",
+    "Any Native case PASS, full eight-view acceptance or original Task/Stage3 completion",
+    "Original Drive full-text Native proof or new business/financial/model authority"
+  ],
+  "invalidation_rule": "Rebind and review affected plan portions after material source/API/Binding/account/permission changes and before actual execution. The current absence of release/Owner evidence is an execution gate, not a finding that the prepared plan can never be used."
+}

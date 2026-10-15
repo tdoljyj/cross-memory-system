@@ -25,7 +25,7 @@ interface AuthProps { userId: string; bindingId: string; bindingToken: string; s
 interface Pending { auth: AuthRequest; clientName: string; cookieHash: string; createdAt: number }
 type Json = Record<string, unknown>;
 class AuthorizationFailure extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
+  constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
 }
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
 export const delegatedOAuthEnabled = (env: DelegatedOAuthEnv) => env.CLUED_DELEGATED_OAUTH_V12 === 'true';
@@ -68,6 +68,12 @@ async function rpc(env: DelegatedOAuthEnv, token: string, name: string, body: Js
   });
   if (!response.ok) {
     if (transient(response.status)) throw new AuthorizationFailure(503, '服务暂不可用，请稍后重试；现有授权没有因此失效。');
+    if (response.status === 400 && name === 'clued_authorization_manage_v12' && (body.p_input as Json | undefined)?.op === 'reduce') {
+      const problem = await response.json().catch(() => null) as { code?: unknown; message?: unknown } | null;
+      if (problem?.code === '22023' && problem.message === 'authorization_empty_projection_requires_binding_revoke') {
+        throw new AuthorizationFailure(400, '本次修改未保存。要取消此连接的全部权限，请使用“撤销此连接”。', 'authorization_empty_projection_requires_binding_revoke');
+      }
+    }
     // Provider/database diagnostics can contain internal SQL, identifiers or credentials.
     throw new AuthorizationFailure(response.status === 401 ? 401 : response.status === 409 ? 409 : 403,
       response.status === 409 ? '授权请求已处理或版本发生变化，请重新连接。' : '当前账户或授权请求不能执行此操作。');
@@ -193,7 +199,7 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
       const raw = await request.text();
       if (raw.length > 65536) return json({ error: '请求过大。' }, 413);
       input = JSON.parse(raw) as Json;
-      if (!(projects ? ['invite_inspect', 'invite_create', 'invite_accept', 'invite_revoke', 'member_reduce', 'member_revoke'] : ['revoke', 'reduce']).includes(String(input.op))) return json({ error: 'operation_not_allowed' }, 400);
+      if (!(projects ? ['invite_inspect', 'invite_create', 'invite_accept', 'invite_revoke', 'member_reduce', 'member_revoke'] : ['revoke', 'reduce', 'limit_confirmation_issue', 'limit_confirm']).includes(String(input.op))) return json({ error: 'operation_not_allowed' }, 400);
     }
     return json(await rpc(env, token, projects ? 'clued_project_access_v13' : 'clued_authorization_manage_v12', { p_input: input }));
   }
@@ -338,6 +344,7 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
     return await provider.fetch(request, requestEnv, ctx);
   } catch (error) {
     const status = error instanceof AuthorizationFailure ? error.status : error instanceof OAuthError ? error.statusCode : 503;
-    return json({ error: error instanceof AuthorizationFailure ? error.message : status >= 500 ? '授权服务暂不可用，请稍后重试。' : '授权无效或已撤销。' }, status);
+    return json({ error: error instanceof AuthorizationFailure ? error.code ?? error.message : status >= 500 ? '授权服务暂不可用，请稍后重试。' : '授权无效或已撤销。',
+      ...(error instanceof AuthorizationFailure && error.code ? { message: error.message } : {}) }, status);
   }
 }

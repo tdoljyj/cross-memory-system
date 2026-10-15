@@ -1,0 +1,14 @@
+node:internal/fs/promises:1241
+  return await PromisePrototypeThen(
+         ^
+
+Error: ENOENT: no such file or directory, realpath 'C:\Users\Windows\Documents\Codex\2026-10-13\c-l\work\eight_implementation\ui-acceptance\last-source-r4-test-tmp\clued-last-source-r4-3jJ8Jm'
+    at async Object.realpath (node:internal/fs/promises:1241:10)
+    at async file:///C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-reproduction-r4.mjs:166:18 {
+  errno: -4058,
+  code: 'ENOENT',
+  syscall: 'realpath',
+  path: 'C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\last-source-r4-test-tmp\\clued-last-source-r4-3jJ8Jm'
+}
+
+Node.js v24.19.0

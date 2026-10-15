@@ -1,0 +1,223 @@
+{
+  "schema": "clued.all-contexts-five-fixture-setup-evidence.v1",
+  "status": "LOCAL_COMPLETE_PARENT_PASS",
+  "head": "c9158c9046af7cd14e1a6d03ec2c4d8843ffc4ea",
+  "scope": "Five test fixtures only; production SQL, helpers and S4/S5 untouched.",
+  "claim": "1ac9f59d-b242-47e6-accf-693b20aa3629",
+  "fence": 7,
+  "lease_version": 3,
+  "tests": [
+    {
+      "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+      "before_edit_sha256": "c3123669e1855147f8398a95dbaa85c06ab5543e922dfbb9c50d1635d505e9d4",
+      "tested_sha256": "e8ce500ddcf0aed8df86025264695eae076bdd1f5701bce0d23e34bf8a022e6a"
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-organization-db.test.mjs",
+      "before_edit_sha256": "791d8d9ff8f374b00dab0e3c5df58d52aa732ab3dfc544c9fe11c65e99aa59a7",
+      "tested_sha256": "9560a84bdf5534fe91b36c2c4860b0b517a2192104c7aa664fc7f588e756a15b"
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-development-organization-db.test.mjs",
+      "before_edit_sha256": "4150835035aad5d07431c5a6eca026af9e01470e0ef444b0ed41d029f4a5639a",
+      "tested_sha256": "47de32b018653eed6bc9f6264e655e69b0b307fc486e9db8b6a11e849b568e5b"
+    },
+    {
+      "path": "apps/clued-cloud/tests/task-owner-detail-db.test.mjs",
+      "before_edit_sha256": "e11a77e76c37cc3ddb421cb9c1d5398ced7331281b39eadca54fc6f4a2c75519",
+      "tested_sha256": "449a91716394b918505b2e514dae1e18123024515305460bed0fb569808bac00"
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "before_edit_sha256": "ed8b02b4d9ed933492658e1d87e685f03eb4aeb515bd5b575f4bef74ae3b919e",
+      "tested_sha256": "fe9b8869d696a528a8ac5905256b70580f7c65fa32dd31e8dc1e38332aa116bd"
+    }
+  ],
+  "production_sources": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "before_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+      "after_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+      "unchanged": true
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "unchanged": true
+    }
+  ],
+  "source_measurement_boundary": "Hashes captured before edits/run and after the entire single serial command. Every parent is inside that unchanged-source boundary; no fabricated separate per-parent hash timestamps.",
+  "command": "C:/Program Files/nodejs/node.exe --test --test-reporter=tap --test-concurrency=1 tests/authorization-end-to-end.test.mjs tests/imprint-organization-db.test.mjs tests/imprint-development-organization-db.test.mjs tests/task-owner-detail-db.test.mjs tests/integration-runtime-identity-db.test.mjs",
+  "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo\\apps\\clued-cloud",
+  "environment": {
+    "CLUED_SYNTHETIC_SOURCE_APP": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo\\apps\\clued-cloud",
+    "CLUED_RESOURCE_CENTER_DB_FOCUS": "unset",
+    "node": "v24.19.0"
+  },
+  "started_utc": "2026-10-14T10:22:07.9391238Z",
+  "finished_utc": "2026-10-14T10:22:58.3696409Z",
+  "exit_code": 0,
+  "duration_ms": 50263.0083,
+  "counts": {
+    "files": 5,
+    "parents": 6,
+    "tests": 63,
+    "pass": 63,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0
+  },
+  "parents": [
+    {
+      "file": "authorization-end-to-end.test.mjs",
+      "name": "OAuth consent, MCP record receipt, replay and revoke use the real database together",
+      "tests_including_parent": 1,
+      "duration_ms": 7160.3135,
+      "status": "PASS",
+      "skipped": 0,
+      "source_before_after": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+          "before_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "after_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "unchanged": true
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+          "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "file": "imprint-development-organization-db.test.mjs",
+      "name": "Development Imprint: exact Owner namespace, shared Canonical tasks, immutable candidates and actual history",
+      "tests_including_parent": 8,
+      "duration_ms": 6358.1827,
+      "status": "PASS",
+      "skipped": 0,
+      "source_before_after": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+          "before_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "after_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "unchanged": true
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+          "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "file": "imprint-organization-db.test.mjs",
+      "name": "Native Imprint: one identity, terminal metadata, isolated CAS, source and currentness",
+      "tests_including_parent": 9,
+      "duration_ms": 7351.1607,
+      "status": "PASS",
+      "skipped": 0,
+      "source_before_after": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+          "before_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "after_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "unchanged": true
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+          "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "file": "integration-runtime-identity-db.test.mjs",
+      "name": "S2c PR-2: identity, Installation Requests, claims, connections and ownership",
+      "tests_including_parent": 43,
+      "duration_ms": 14803.5518,
+      "status": "PASS",
+      "skipped": 0,
+      "source_before_after": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+          "before_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "after_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "unchanged": true
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+          "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "file": "integration-runtime-identity-db.test.mjs",
+      "name": "S2c PR-2 runs on the production-installed shape (no P5 migrations)",
+      "tests_including_parent": 1,
+      "duration_ms": 6835.5446,
+      "status": "PASS",
+      "skipped": 0,
+      "source_before_after": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+          "before_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "after_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "unchanged": true
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+          "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "file": "task-owner-detail-db.test.mjs",
+      "name": "Owner record detail: Native tenancy, typed links, exact currentness and read-only claims",
+      "tests_including_parent": 1,
+      "duration_ms": 7274.0639,
+      "status": "PASS",
+      "skipped": 0,
+      "source_before_after": [
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+          "before_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "after_run_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+          "unchanged": true
+        },
+        {
+          "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+          "before_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "after_run_sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+          "unchanged": true
+        }
+      ]
+    }
+  ],
+  "log": {
+    "path": "work/eight_implementation/ui-acceptance/all-contexts-fixture-five-initial-test.log",
+    "sha256": "1b89fbf8db8a8be6ed5b69034e70f16df86d698abd4438d19ec84db0953f6080"
+  },
+  "validation": [
+    "All five Node syntax checks and scoped git diff --check passed before PostgreSQL.",
+    "Exactly one complete serial command, no name pattern, skip/focus or timeout edits.",
+    "Four raw Project setups and Development raw Context setup use BEGIN -> actual Owner guard -> real held proof -> INSERT -> COMMIT/rollback.",
+    "Inert FK-only Bindings start with no Authorization/development grant and no full-authority fixture adapter was added. Development Imprint retains its pre-existing restricted filter-only development grant (EXISTING_ONLY/FIXED_AT_GRANT/public/read/1h), with no new auth/raw/full grant and still no Authorization. Task-detail holder Bindings retain no grant.",
+    "Identity keeps historical pre-Source stage unchanged; current legacy consent seed gets actual guard and explicit project:* legacy expander with activate=false. Source protocol remains false, scopes/complete Authorization/actions unchanged.",
+    "Legacy flat-reduce/fresh-consent and deliberate named-project scope-expansion refusal assertions passed unchanged.",
+    "Independent readonly diagnosis peer reviewed all five diffs with no semantic finding; no independent PG rerun claimed."
+  ],
+  "limits": [
+    "Synthetic disposable PostgreSQL/application transport only; no live provider login.",
+    "No Canonical business write, claim creation, checkpoint, commit, push, CI or production actions.",
+    "This evidence covers these five complete parent files, not the entire repository suite or deployment acceptance."
+  ]
+}

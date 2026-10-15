@@ -87,12 +87,21 @@ test('D01 optional Binding expiry matches the production schema and retains actu
     await assertGatewayCloseoutBoundary(admin);
     const owner = uuid(), stranger = uuid(), project = uuid(), scope = 'project:' + project;
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'optional-owner@example.invalid',now()),($2,'optional-stranger@example.invalid',now())", [owner, stranger]);
-    const recognized = (await admin.query('select clued_private.project_mutation_core_v2($1,null,$2,clued_private.m1_sha256($2)) v', [owner, {
-      operation: 'create', canonical_project_id: project, project_schema_version: 2, authority: 'user_explicit', user_confirmed: true,
-      confidence_reason: 'Disposable recognized Project', source_refs: [], source_unavailable_reason: 'Synthetic fixture',
-      idempotency_key: uuid(), mutation: { name: 'Optional expiry fixture', progress_status: 'active', aliases: [] }
-    }])).rows[0].v;
-    assert.equal(recognized.status, 'committed', JSON.stringify(recognized));
+    await admin.query('begin');
+    try {
+      await admin.query('select clued_private.authorization_writer_guard_v2($1)', [owner]);
+      await admin.query('select clued_private.authorization_writer_lock_fanout_v2($1)', [owner]);
+      const recognized = (await admin.query('select clued_private.project_mutation_core_v2($1,null,$2,clued_private.m1_sha256($2)) v', [owner, {
+        operation: 'create', canonical_project_id: project, project_schema_version: 2, authority: 'user_explicit', user_confirmed: true,
+        confidence_reason: 'Disposable recognized Project', source_refs: [], source_unavailable_reason: 'Synthetic fixture',
+        idempotency_key: uuid(), mutation: { name: 'Optional expiry fixture', progress_status: 'active', aliases: [] }
+      }])).rows[0].v;
+      assert.equal(recognized.status, 'committed', JSON.stringify(recognized));
+      await admin.query('commit');
+    } catch (error) {
+      await admin.query('rollback');
+      throw error;
+    }
     const connect = async role => {
       const client = server.getPgClient(); clients.push(client); await client.connect();
       await client.query("set statement_timeout='8s'");

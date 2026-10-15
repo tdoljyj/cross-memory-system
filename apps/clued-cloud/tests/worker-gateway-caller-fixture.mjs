@@ -6,6 +6,10 @@ import {fileURLToPath} from 'node:url';
 
 export const GATEWAY_ROLE = 'clued_worker_gateway';
 export const CLOSEOUT_MIGRATION = '20261010161848_worker_gateway_closeout_v1.sql';
+export const AUTHORIZATION_SUCCESSOR_MIGRATIONS = [
+  '20261014044323_all_contexts_authorization_v2.sql',
+  '20261014045157_all_contexts_serialization_v2.sql',
+];
 export const CI_SIGNATURES = [
   'clued_owner_grant_admission_door_v1(text,jsonb)', 'clued_owner_grant_door_consume_v1(text,jsonb)',
   'clued_work_verify_v1(text,jsonb)', 'clued_work_claim_adopt_v1(text,jsonb)',
@@ -51,4 +55,48 @@ export async function assertGatewayCloseoutBoundary(db) {
     and ($2::boolean=false or p.prosecdef) and has_function_privilege($1,p.oid,'EXECUTE') order by 1`,[role,definersOnly])).rows.map(r=>r.signature.replace(/^public\./,''));
   assert.deepEqual(await signatures(GATEWAY_ROLE,false),WORKER_SIGNATURES,'GW remains exactly 80');
   assert.deepEqual(await signatures('anon',true),CI_SIGNATURES,'Clued anon definer surface is exactly CI8');
+}
+
+// The historical closeout is source-bound and must be proved before successors.
+// For the current authorization pair, observe actual catalog identity and ACLs
+// rather than replaying the old source fingerprint against deliberately changed bodies.
+export async function snapshotAuthorizationCallerBoundary(db) {
+  return (await db.query(`select p.oid::text oid,p.oid::regprocedure::text signature,
+    pg_get_userbyid(p.proowner) owner,p.prosecdef,p.proconfig,p.proacl::text acl
+    from pg_proc p where p.pronamespace='public'::regnamespace and p.proname like 'clued_%'
+    order by signature`)).rows;
+}
+export async function assertAuthorizationSuccessorBoundary(db, before) {
+  assert.deepEqual(await snapshotAuthorizationCallerBoundary(db),before,
+    'the authorization successors preserve every public RPC OID, owner, definer configuration and ACL');
+  await assertGatewayCloseoutBoundary(db);
+  assert.equal((await db.query('select clued_private.authorization_serialization_ready_v2() ready')).rows[0].ready,true);
+  const entrances = [
+    ['public.clued_development_owner_v14(jsonb)','authorization_writer_native_context_v2'],
+    ['public.clued_authorization_manage_v12(jsonb)','authorization_writer_guard_v2'],
+    ['public.clued_user_project_mutate_v2(jsonb,text)','authorization_writer_guard_v2'],
+    ['public.clued_project_mutate_v2(text,jsonb)','authorization_writer_project_hint_v2(p_token_hash,true)'],
+    ['clued_private.ii_pub_clued_authorization_approve_v12(text,uuid,bigint,jsonb,text,timestamptz)','authorization_writer_guard_v2'],
+  ];
+  for (const [signature,anchor] of entrances) {
+    const row=(await db.query(`select pg_get_userbyid(proowner) owner,prosecdef,proconfig,prosrc
+      from pg_proc where oid=$1::regprocedure`,[signature])).rows[0];
+    assert.equal(row.owner,'postgres',signature);
+    assert.equal(row.prosecdef,true,signature);
+    assert.deepEqual(row.proconfig,['search_path=""'],signature);
+    assert.ok(row.prosrc.includes(anchor),'actual qualified early entrance: '+signature);
+  }
+  for (const signature of ['public.clued_authorization_manage_v12(jsonb)',
+    'public.clued_development_owner_v14(jsonb)','public.clued_user_project_mutate_v2(jsonb,text)']) {
+    for (const role of ['anon','authenticated','service_role',GATEWAY_ROLE])
+      assert.equal((await db.query("select has_function_privilege($1,$2,'EXECUTE') allowed",[role,signature])).rows[0].allowed,
+        role==='authenticated',signature+' '+role);
+  }
+  for (const signature of ['clued_private.authorization_writer_guard_v2(uuid)',
+    'clued_private.authorization_writer_lock_fanout_v2(uuid,uuid[])',
+    'clued_private.authorization_reduce_sources_v2(uuid,uuid,jsonb,uuid)']) {
+    for (const role of ['anon','authenticated','service_role',GATEWAY_ROLE])
+      assert.equal((await db.query("select has_function_privilege($1,$2,'EXECUTE') allowed",[role,signature])).rows[0].allowed,false,
+        'private helper remains unreachable: '+signature+' '+role);
+  }
 }

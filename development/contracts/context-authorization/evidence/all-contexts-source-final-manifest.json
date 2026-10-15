@@ -1,0 +1,120 @@
+{
+  "schema": "clued.all-contexts-source-local-qualification.v1",
+  "authoring_repo_base": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+  "accepted_plan_sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3",
+  "subject_source_sha256": "ad2dd45c9e778f1365e3994ca2e065d4127309eedf11c366c220eec6020a778a",
+  "subject_frozen": true,
+  "qualification": "LOCAL_AFFECTED_GROUPS_PASSED_INDEPENDENT_REVIEW_AND_COMBINED_RELEASE_GATE_OPEN",
+  "utc_start": "2026-10-14T06:35:51.6020101Z",
+  "utc_end": "2026-10-14T06:36:46.9226056Z",
+  "runtime": "Node v24.19.0; real isolated EmbeddedPostgres; full repository chain except explicitly bounded historical compatibility branch",
+  "tests": {
+    "total": 42,
+    "passed": 42,
+    "failed": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "exit_code": 0
+  },
+  "groups": [
+    {
+      "file": "tests/all-contexts-authorization-db.test.mjs",
+      "count": 24,
+      "pass": 24,
+      "skip": 0,
+      "scope": "full current migrations; 23 actual source/Native/Headless/qualification/privacy/expiry/submission-limit/race subcases plus parent"
+    },
+    {
+      "file": "tests/authorization-roles-db.test.mjs",
+      "count": 1,
+      "pass": 1,
+      "skip": 0,
+      "scope": "full chain; actual old project role semantics; old immutable CLOSEOUT replay retained before successor byte changes"
+    },
+    {
+      "file": "tests/connection-permission-request-db.test.mjs",
+      "count": 1,
+      "pass": 1,
+      "skip": 0,
+      "scope": "full chain; Native request/confirmation/apply; exact original CLOSEOUT catalog/OID/ACL replay before successors, then current gateway surface"
+    },
+    {
+      "file": "tests/headless-binding-issuance-db.test.mjs",
+      "count": 1,
+      "pass": 1,
+      "skip": 0,
+      "scope": "full chain; source-aware reduce/rotation, one-use token, roles, expiry and legacy issuance"
+    },
+    {
+      "file": "tests/authorization-expiry-db.test.mjs",
+      "count": 1,
+      "pass": 1,
+      "skip": 0,
+      "scope": "full repository chain; real expiry cap"
+    },
+    {
+      "file": "tests/context-ownership-db.test.mjs",
+      "count": 14,
+      "pass": 14,
+      "skip": 0,
+      "scope": "historical Context v1.1 boundary in bounded production-m1 and all-repository assemblies, 6 subcases+parent each; not proof of new v1.4 execution beyond the separate source group"
+    }
+  ],
+  "files": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "ad2dd45c9e778f1365e3994ca2e065d4127309eedf11c366c220eec6020a778a"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad"
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "sha256": "e037a8511aa2982723ee5aa2ac1877cfe4f291680da1569b0c4b8d37ab56ac86"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-roles-db.test.mjs",
+      "sha256": "7934ff3c7a54e48dfc27bf6bcfcde9ca2a0ff82212bfceb0ebd32798c8ada845"
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-permission-request-db.test.mjs",
+      "sha256": "40344709ebf1f8818162b2a7b37f4d424452f493c953b66a7c93833ee480bec9"
+    },
+    {
+      "path": "apps/clued-cloud/tests/headless-binding-issuance-db.test.mjs",
+      "sha256": "3be17ba6646e481c0964cb9581a605abf1db871aa0fb47286316b2892b9eb169"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-expiry-db.test.mjs",
+      "sha256": "88fff70b99aefcf94ed6fbdc96aa459df84fda8677769b132e65d31da81ce30e"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-db.test.mjs",
+      "sha256": "3117191570eb91c4ee9a61b37c54af68eef176725395a9adbf404e8420f34c8c"
+    }
+  ],
+  "raw_log": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\all-contexts-source-final-test.log",
+    "sha256": "24f4a5ccb920d259a2aa50b44317b5e361f514e003d210a2c1911f5d562802af"
+  },
+  "history": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\all-contexts-source-test-history.json",
+    "sha256": "5feaed1504ec59caafde38a03f4c3831eea8428047fd4cb12377af61f267b09a"
+  },
+  "historical_pre_review_raw": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\all-contexts-source-before-action-ceiling-test.log",
+    "sha256": "a4dd5e9b40e3f7be428b87235a4413c023e67bb1cf0a768a0e823a90c9f305d3",
+    "qualification": "95c81 pre-review 58/58 invalidated by material independent finding; preserved byte exact"
+  },
+  "remaining": [
+    "Independent final security/code review of these exact Source bytes and combined serialization package",
+    "Dedicated serialization/locks regression at this same Source hash",
+    "Historical old bounded connection-authorization-db.test.mjs isolated retry/investigation by Root: prior parent failure then open worker, exact reason UNKNOWN; not counted here",
+    "Exact final candidate/remote alignment, applicable Linux CI, merge/production gates owned by Root",
+    "Real Owner consent and actual eight-view page acceptance after authorized release"
+  ],
+  "production_changes": false,
+  "canonical_mutations": false,
+  "ci_run": false
+}

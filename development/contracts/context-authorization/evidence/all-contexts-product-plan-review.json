@@ -1,0 +1,316 @@
+{
+  "schema": "clued.context-authorization.product-plan-independent-review/1",
+  "reviewed_at_utc": "2026-10-14T04:00:41Z",
+  "reviewer": {
+    "role": "non-author independent product-plan reviewer",
+    "subject_modified": false,
+    "independent_native_page_rerun": false,
+    "code_tests_or_ci_run": false,
+    "canonical_business_write": false
+  },
+  "subject": {
+    "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+    "version": "v0.1",
+    "sha256": "9bcc661dccca9a4af1bf0c118168fb779138e59593027aee8fe2e2ad3df5fa0d",
+    "status": "PROPOSAL",
+    "independently_observed_main": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "independently_observed_local_head": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "service_advertised_deployment_source": "8f960b5541e29ad279d4976f5c366ea4e1297ad4",
+    "hash_rechecked_unchanged_before_report": true
+  },
+  "authority": {
+    "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "task": {
+      "id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+      "version": 43
+    },
+    "owner_decision": {
+      "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+      "version": 4
+    },
+    "root_claim": {
+      "id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+      "fence": 6,
+      "status": "ACTIVE",
+      "coverage": "plan and review output; no duplicate Task or reviewer claim created"
+    },
+    "independent_review": {
+      "enabled": true,
+      "version": 0,
+      "policy_version": 1,
+      "observed_from_fresh_resume_receipt": "23bd53c6-bba1-405a-b799-b9d50e4e0e62"
+    },
+    "global_admission": {
+      "state": "CURRENT",
+      "receipt": "6f9dd47f-fe6f-47d2-a5ae-cea492e51bb3"
+    },
+    "project_admission": {
+      "state": "CURRENT",
+      "receipt": "64fa1fae-d6cb-4d17-827c-fa95e9c27f5b"
+    },
+    "capture": "Root consolidates review result under existing Task; reviewer makes no M1 review-result mutation."
+  },
+  "verdict": "FAIL",
+  "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 2,
+    "MINOR": 2
+  },
+  "pass_rule": "PASS requires no unresolved BLOCKER or MAJOR on the exact re-reviewed subject SHA. This finding is plan quality only, not Owner acceptance, implementation, permissions, CI or production qualification.",
+  "findings": [
+    {
+      "id": "P-M01",
+      "severity": "MAJOR",
+      "state": "OPEN",
+      "title": "简单“指定范围”没有定义可直接使用的选择流程",
+      "subject_lines": [
+        13,
+        18,
+        64,
+        75
+      ],
+      "evidence": "§1只列出“全部上下文／指定范围”，紧接着把通用内容、个人资料、具体项目、用途上下文与操作的独立调整全部放到高级。没有规定选“指定范围”后出现哪些控件、选一个项目是否同时选中它的正式记录与各环境上下文、未勾选个人资料是否仍隐式纳入，或从全部切换回指定时如何初始化。部署8f的现有简单模式只支持项目勾选，Context需要高级；其旧preset(full)对Context又直接取全部eligible动作，所以不能沿用旧布局就认为新简单模式已具体化。",
+      "impact": "同一“指定范围”选择可被实施成不同授权集合。只给个人资料、只给某个项目正式记录、只给某项目测试环境三个普通场景仍需理解底层分组；容易误给生产环境或把项目用途权限遗漏。",
+      "required_revision": [
+        "在方案补一段简单指定范围的展开结构：通用内容、个人资料为独立勾选；项目按可读名称分组，组内明确区分项目正式记录与具名上下文／测试、预览、生产环境；技术UUID留作详情。",
+        "明确项目勾选与环境勾选的作用范围，不能借同一项目名暗含所有环境；若提供项目内全选，文案说清包含哪些具体条目。",
+        "明确空选择、首次进入、全部→指定、指定→全部、重新套用操作预设及高级例外后的选择语义；保持未选资源不隐式授予，指定范围不默认继承未来资源。",
+        "列出三个完整例子并对应预览：仅个人资料只读；某项目正式记录可编辑；某项目一个测试上下文可编辑且不选其预览／生产环境。OAuth和Headless使用同一展开规则。",
+        "把这些场景加入§6验收，验证简单选择、最终精确条目及实际读写能力一致。"
+      ],
+      "acceptance_for_closure": "改后方案能从控件和选择步骤唯一推导上述三个场景的最终资源／环境／动作集合，且不依赖高级模式补救基础范围选择。"
+    },
+    {
+      "id": "P-M02",
+      "severity": "MAJOR",
+      "state": "OPEN",
+      "title": "原八视图验收缺少逐项承接，不能仅用四组样本决定收口",
+      "subject_lines": [
+        76,
+        79,
+        83
+      ],
+      "evidence": "原r2方案§10有V01–V24。受读native-ui-acceptance.json结论明确为CORE_FLOWS_PASSED_FULL_ACCEPTANCE_INCOMPLETE；来源完整正文正样本NOT_VERIFIED、开发修订历史BLOCKED_PERMISSION、历史开关仅PASS_LIMITED。新§6.12只列开发v1→v2／保留历史、同ID多标签隔离和来源正文正样本，没有把V01–V24逐项绑定复用证据、受本次变化影响的重跑或Stage3范围。授权和即时权威标签直接影响V16、V18、V19、V23，不能只复用旧核心GO。",
+      "impact": "“继续八视图真实页面验收→按实际完整范围收口”没有明确完成集合。实施者可能补两个旧缺口就宣布首版或整体通过，也无法解释其余用例属于未运行、有效复用还是阶段3。",
+      "required_revision": [
+        "在同一执行Task下补V01–V24的承接表，逐项列首版／Stage3适用阶段、当前证据身份及SHA或Receipt、复用理由、受本次改动影响的重跑、未验证项与完成门。保持原Task身份，不另建重复Task。",
+        "对V16授权与敏感数量隔离、V18 UNKNOWN／STALE／CONFLICT标识、V19 active Event被checkpoint吸收仍有效、V23来源与保留旧正文的检索明确加入本次受影响验证。",
+        "V01／V02／V03／V11／V12／V17／V20／V21等已有有限核心证据只按同对象／同namespace／同scope的已验范围复用；需要变更后回归的项明确标出。",
+        "V04–V10、V13、V15、V22、V24未由本次所读Native材料完整证明；先按已接受三阶段Decision9e037a44@2确定适用阶段，缺证据保持NOT_VERIFIED，不擅自称FAIL／已完成，也不把阶段3整体纳入本授权修复关闭。",
+        "分别规定授权修复完成、首版八视图验收完成及原三阶段整体Task完成的条件。"
+      ],
+      "acceptance_for_closure": "24项都有明确处置和来源边界；旧有限GO不会被放大；本次直接受影响的当前性／权限用例进入验收，Stage3原剩余明确保留。"
+    },
+    {
+      "id": "P-m01",
+      "severity": "MINOR",
+      "state": "OPEN",
+      "title": "旧连接需要给出范围与操作两轴的准确显示例",
+      "subject_lines": [
+        18,
+        40,
+        56,
+        60,
+        75
+      ],
+      "evidence": "旧current-connection.jpg卡片显示“角色 全部”，下面只有global／profile／project:* canonical条目。方案已正确禁止按这些旧条目猜出完整上下文，但“原范围／自定义”未给最终两轴文案；一次升级只说显示策略含义和动作，未给旧→新对照例。",
+      "requested_revision": [
+        "给旧连接写一个确定显示例：范围“通用内容、个人资料、自有项目正式记录（含未来项目）”；操作按实际能力显示；明确“尚不包含项目用途上下文”，不能继续单独显示“全部”。",
+        "给升级预览例：同一客户端／Binding、原范围与新增具名上下文及实际环境、未来继承范围、实际新增动作和缺项、有效期、已有版本／字段／历史限制的影响；变更明确限制须逐项看到后确认。",
+        "规定策略存在但有明确例外、失效资格或客户端scope缺项时如何呈现“自定义”或受限摘要，显示采用effective能力而非只看存储条目。"
+      ],
+      "closure_note": "方向与安全边界已正确；此项主要提升可审查性与文案一致性，不要求重推已接受命名。"
+    },
+    {
+      "id": "P-m02",
+      "severity": "MINOR",
+      "state": "OPEN",
+      "title": "即时权威标识的Record谓词需要限定适用类型并保留active Event语义",
+      "subject_lines": [
+        11,
+        76
+      ],
+      "evidence": "§1用authoritative=true且record_currentness=CURRENT定义标识，适合服务当前Record结果；服务Contract49 §2.1／§6.3及原八视图V19仍把active Event truth carrier作为独立当前来源。读取的currentness SQL中active Event结果使用carrier_state/source_semantics/structured_action_usable，不能默认把Record字段谓词当成所有来源统一格式。",
+      "requested_revision": [
+        "把该谓词明确为Record的显示条件；其他来源按当前服务的类型化当前性／Authority合同判断，缺能力保持UNKNOWN。",
+        "明确此标签只是已验证内容的标识，不代表当前权威来源全量收齐；active Event保持独立来源和原阻挡／对账规则，checkpoint吸收不退役。",
+        "继续保留Owner指定名称“即时权威上下文”，不新增默认tab，不承诺跨Host实时推送。"
+      ],
+      "closure_note": "这是语义补强，未据此宣称现有线上代码已错误或当前服务不存在有效来源。"
+    }
+  ],
+  "reviewed_dimensions": {
+    "all_contexts_scope": "PASS_CONCEPT: global + profile + own canonical project records + own contexts whose project is also own; existing and future; shared/invited excluded by default.",
+    "all_imprints_view": "PASS_CONCEPT: saved accessible content in the selected read namespace; current/history/candidate states remain distinguishable, external unsaved content not implied, no mandatory all-tag.",
+    "default_eight_views": [
+      "全部",
+      "任务",
+      "决策",
+      "日常",
+      "工作",
+      "学习",
+      "创作",
+      "兴趣"
+    ],
+    "type_domain_scope_currentness": "Separated in principle. Task/Decision are formal content uses; five domains are purpose metadata; project/environment are authorization scope; immediate authority is qualified currentness, never permission or a ninth category.",
+    "editable": "PASS_CONCEPT: read/write only, no close/restore/audit/feedback; legacy developer consent remains unchanged.",
+    "full_operations": "PASS_CONCEPT_WITH_COPY_DETAIL: intersection of requested client scope, actual resource-supported actions and current grant; never member administration, production, Secrets, model budget or storage grant.",
+    "legacy_binding_consent": "PASS_CONCEPT_WITH_MINOR: project:* not reinterpreted, no bulk upgrade, same Binding Native Owner confirmation, replay/version/expiry/revocation retained.",
+    "oauth_headless": "PASS_REQUIREMENT_ONLY: §6.8 requires same actual entries; no implementation equivalence has yet been proved, specify simple selected-range behavior and preview/rotation examples.",
+    "immediate_authority_and_sync": "PASS_NAME_AND_PUSH_BOUNDARY_WITH_MINOR: final Owner name retained; no real-time push completion claimed.",
+    "review_order": "PASS: plan review before implementation; exact code review and CI, normal PR/FIFO, current production gates, real new connection consent, then page acceptance. No phase PASS substitutes later phases."
+  },
+  "evidence_limits": [
+    "Only independent plan quality was reviewed. No source-code edits, installation, build, tests, CI dispatch, permission mutation, migration, release, provider call or Native data creation was performed.",
+    "Three saved screenshots and native-ui-acceptance.json are original-scope historical evidence of deployment8f, not independent reruns or current-page proof.",
+    "native-ui-acceptance.json SHA58c0923c... supports limited historical core flows and restoration; it explicitly leaves full acceptance incomplete.",
+    "Actual deployed UI source was read via git show of exact8f. Current mainf890 is independently located, not asserted to be deployed.",
+    "No repository memory/ files or private Host tokens were read; protected Clued sessions used reviewer-owned resume tokens and fresh admission. Shared inbox was read with mark_read=false; messages addressed to other exact sessions/claims were not answered or treated as Owner authority.",
+    "Clued currentness is qualified only for captured current sources; authority_capture_completeness remains unknown. Report does not assert all external decisions are captured."
+  ],
+  "sources_read": [
+    {
+      "type": "skill",
+      "path": "C:/Users/Windows/.codex/skills/clued/SKILL.md",
+      "version": "1.0.20"
+    },
+    {
+      "type": "skill_workflow",
+      "path": "C:/Users/Windows/.codex/skills/clued/references/engineering.md"
+    },
+    {
+      "type": "served_contract",
+      "tool": "clued_agent_bootstrap",
+      "parts_read": [
+        1,
+        2
+      ],
+      "version": 49,
+      "sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8"
+    },
+    {
+      "type": "service_admission",
+      "scope": "global",
+      "resume_receipt": "2331d442-ab58-4cce-b440-76ec39f0b4d7",
+      "reconcile_receipt": "6f9dd47f-fe6f-47d2-a5ae-cea492e51bb3",
+      "state": "CURRENT"
+    },
+    {
+      "type": "service_admission",
+      "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "resume_receipt": "23bd53c6-bba1-405a-b799-b9d50e4e0e62",
+      "reconcile_receipt": "64fa1fae-d6cb-4d17-827c-fa95e9c27f5b",
+      "state": "CURRENT"
+    },
+    {
+      "type": "canonical_record",
+      "id": "72166b09-0fc6-4a28-8551-8e4334280a73",
+      "version": 4897,
+      "scope": "global",
+      "title": "Global Priority Frontier"
+    },
+    {
+      "type": "canonical_record",
+      "id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+      "version": 4,
+      "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+    },
+    {
+      "type": "canonical_record",
+      "id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+      "version": 43,
+      "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f"
+    },
+    {
+      "type": "canonical_record",
+      "id": "8d738351-eb20-4e29-ae8b-821af07f0ee9",
+      "version": 3,
+      "title": "印记默认八视图与归类规则 v0.1：Owner已接受"
+    },
+    {
+      "type": "canonical_record",
+      "id": "9e037a44-1de2-4b75-9e45-2ca0cb2a2daa",
+      "version": 2,
+      "title": "按三阶段执行印记默认八视图：能力核对、首版闭环、增强"
+    },
+    {
+      "type": "resident_constraint_full_text",
+      "ids": [
+        "7b8c1cee-d40d-4184-a9ba-7651888e5c03",
+        "8ba27d66-c72f-4ed1-86ef-b16e273d203a",
+        "f1dbabc4-a329-43e1-bb45-62c72772cf8b",
+        "5fea509f-4613-4fd5-a36f-46b4bb4a2f6e",
+        "5bed3d00-cd0d-4551-96fa-ece5f41ffa73",
+        "ded75f02-2993-4ad9-b006-76e5b8c9d026",
+        "34e35019-36b9-40a5-ab8a-989f755cac3b",
+        "d4663fa2-1d4b-4cc7-b4c8-91508b1e9849",
+        "477a5812-f8e1-4cf6-819b-078ca30ac107"
+      ],
+      "note": "Read relevant full text; latest exact Owner instruction explicitly authorizes this plan review."
+    },
+    {
+      "type": "engineering_instruction",
+      "path": "work/eight_implementation/repo/AGENTS.md",
+      "source_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf"
+    },
+    {
+      "type": "predecessor_contract",
+      "path": "development/contracts/connection-authorization/PermissionSimplification.v0.1.md",
+      "source_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "qualification": "history of accepted semantics; no retroactive reinterpretation"
+    },
+    {
+      "type": "review_subject",
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "sha256": "9bcc661dccca9a4af1bf0c118168fb779138e59593027aee8fe2e2ad3df5fa0d"
+    },
+    {
+      "type": "product_requirement_document",
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/outputs/Clued_印记默认八视图完整方案_v0.1-r2_20261013.md",
+      "sha256": "7f061207e01d9369924b0bfca8bb8627eacde106aee4fffbfaadece647a00d66",
+      "qualification": "accepted principles, proposal implementation details; V01–V24 are requirements, not runtime PASS"
+    },
+    {
+      "type": "historical_native_evidence",
+      "path": "work/eight_implementation/ui-acceptance/native-ui-acceptance.json",
+      "sha256": "58c0923c8b187cf738ff001502fef6d7599dbedd76165c8c34c6545a8e8002c0",
+      "qualification": "CORE_FLOWS_PASSED_FULL_ACCEPTANCE_INCOMPLETE"
+    },
+    {
+      "type": "historical_screenshot",
+      "path": "work/eight_implementation/ui-acceptance/current-connection.jpg",
+      "sha256": "1df53d942bb84568b61b7d8636ede0550fd2864c9aa0955326846d5edacd84a5"
+    },
+    {
+      "type": "historical_screenshot",
+      "path": "work/eight_implementation/ui-acceptance/user-restored.jpg",
+      "sha256": "3ff9f7707709082b972ffe036ba7a8b43194a2e0df11890aa81986fc44988335"
+    },
+    {
+      "type": "historical_screenshot",
+      "path": "work/eight_implementation/ui-acceptance/developer-restored.jpg",
+      "sha256": "5c0fe2950ddc5bc9bae533b7e01817a90025e9749acada701f3b6c1043c10ee2"
+    },
+    {
+      "type": "exact_deployment_source",
+      "source_commit": "8f960b5541e29ad279d4976f5c366ea4e1297ad4",
+      "paths": [
+        "apps/clued-cloud/app/oauth/connections/page.tsx",
+        "apps/clued-cloud/app/oauth/connections/headless.tsx",
+        "apps/clued-cloud/app/oauth/consent/delegated-consent.tsx",
+        "apps/clued-cloud/app/imprints/imprint-model.ts",
+        "apps/clued-cloud/app/imprints/ImprintPanel.tsx"
+      ],
+      "qualification": "read-only source inspection, not runtime re-verification"
+    },
+    {
+      "type": "currentness_contract_implementation_excerpt",
+      "source_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "paths": [
+        "apps/clued-cloud/supabase/migrations/20260922092355_bug_20260922_002_currentness_core.sql",
+        "apps/clued-cloud/supabase/migrations/20261003100000_event_carrier_decision_guard.sql"
+      ],
+      "qualification": "typed active Event fields and resume blocking-carrier semantics; no SQL executed"
+    }
+  ]
+}

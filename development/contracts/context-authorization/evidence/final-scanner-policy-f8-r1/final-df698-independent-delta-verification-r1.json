@@ -1,0 +1,117 @@
+{
+  "schema": "independent-reviewed-artifact-delta-verification.v1",
+  "reviewer": "all_contexts_final_security_non_author",
+  "authority_effect": "NONE",
+  "preflight": {
+    "started_utc": "2026-10-14T18:43:48.253551+00:00",
+    "head": "2bb44dd58f9390db0ef944d1cf6748af62513101",
+    "files": [
+      {
+        "path": ".gitleaks.toml",
+        "sha256": "c8d78643a3e5fb112e20448305a825a1bcaa23bf14c9f57fb69ae271ece0fa2a"
+      },
+      {
+        "path": "scripts/ci/reviewed_gitleaks.py",
+        "sha256": "3cff545f0d26610de0097165cf9dc6d32421707357cf960a9f38af22b4d0e32f"
+      },
+      {
+        "path": "tests/test_reviewed_gitleaks_artifacts.py",
+        "sha256": "a9ba72b3d96fea883ad2bcc6ef9450cf2051d139fdb78a8b1ed786d0548eedb0"
+      }
+    ],
+    "old484_records_identical": true,
+    "default_toml_semantics_identical": true,
+    "exact_seven_fp_match_independent_input": true,
+    "actual_patch_exact_bytes_match": true,
+    "diff_hunks": 11,
+    "helper_missing_commits_preflight": 0,
+    "reviewed_commits": 70,
+    "source_unchanged": true,
+    "literal_ignore_sha256": "1caa1e9b97c4cae00d0d148e52770f4def734cbbdff60b67faf5f86707c37bae"
+  },
+  "independent_tests": {
+    "argv": [
+      "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-p",
+      "test_reviewed_gitleaks_artifacts.py",
+      "-v"
+    ],
+    "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo",
+    "started_utc": "2026-10-14T18:43:48.256183+00:00",
+    "finished_utc": "2026-10-14T18:43:49.359627+00:00",
+    "exit_code": 0,
+    "log_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-df698-independent-tests-r1.log",
+    "log_sha256": "b76f5a6c17e2d1de6c7e2a9ca2a10d47d8e2e33385624b6569d37e378ec1c5f5",
+    "pass": 28,
+    "fail": 0,
+    "skip": 0
+  },
+  "independent_helper": {
+    "argv": [
+      "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "scripts/ci/reviewed_gitleaks.py",
+      "--config",
+      ".gitleaks.toml",
+      "--output",
+      "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-df698-independent-491-reviewed.ignore"
+    ],
+    "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\repo",
+    "started_utc": "2026-10-14T18:43:48.256183+00:00",
+    "finished_utc": "2026-10-14T18:43:56.385401+00:00",
+    "exit_code": 0,
+    "log_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\final-df698-independent-helper-r1.log",
+    "log_sha256": "27edf584cd50e0425aad39ba38c6edcee238ae55375434fe874f67dfe893a6b8",
+    "actual_result": {
+      "exact_historical_fingerprints": 491,
+      "default_rules_unchanged": true,
+      "global_fingerprints": 0,
+      "ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a",
+      "commits": 70,
+      "files_at_commits": 128,
+      "verified_git_objects": 130
+    },
+    "generated_ignore_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-df698-independent-491-reviewed.ignore",
+    "generated_ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a",
+    "no_fetch_required": true,
+    "self_test_not_requested": true
+  },
+  "additional_semantic_bad_decoded_values": [
+    {
+      "encoded_line": 184,
+      "changed_decoded_parent": "/source_before",
+      "real_source_git_blob_kept": true,
+      "expected_error": "Final evidence digest differs from immutable artifact",
+      "source_comparisons_executed": 1,
+      "rejected": true,
+      "in_memory_only_pins_and_readable_route_fault_injection": true
+    },
+    {
+      "encoded_line": 184,
+      "changed_decoded_parent": "/source_after",
+      "real_source_git_blob_kept": true,
+      "expected_error": "Final evidence digest differs from immutable artifact",
+      "source_comparisons_executed": 2,
+      "rejected": true,
+      "in_memory_only_pins_and_readable_route_fault_injection": true
+    },
+    {
+      "encoded_line": 192,
+      "changed_decoded_parent": "/source",
+      "real_source_git_blob_kept": true,
+      "expected_error": "Final evidence digest differs from immutable artifact",
+      "source_comparisons_executed": 1,
+      "rejected": true,
+      "in_memory_only_pins_and_readable_route_fault_injection": true
+    }
+  ],
+  "finished_utc": "2026-10-14T18:43:56.665858+00:00",
+  "no_source_config_ignore_or_git_mutation": true,
+  "new_head_actual_gitleaks_scan": "PENDING_ROOT_EXACT_COMMIT"
+}

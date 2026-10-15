@@ -1,0 +1,307 @@
+diff --git a/apps/clued-cloud/app/oauth/connections/headless.tsx b/apps/clued-cloud/app/oauth/connections/headless.tsx
+index 89eb3a34..56f24a6c 100644
+--- a/apps/clued-cloud/app/oauth/connections/headless.tsx
++++ b/apps/clued-cloud/app/oauth/connections/headless.tsx
+@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
+ import { type Session } from "@supabase/supabase-js";
+ import { supabase } from "../../supabase-browser";
+ import ContextAuthorizationControls from '../../../lib/context-authorization-controls';
+-import { ACTION_LABELS as ACTIONS, applyPreset, changeRange, initialSelection, isAllContexts, operationSummary, presetActions,
++import { ACTION_LABELS as ACTIONS, applyPreset, authorizationDisplayOrder, changeRange, initialSelection, isAllContexts, operationSummary, presetActions,
+   resourceKey as grantKey, resourceTitle as resourceName, selectedResources, type Resource, type OperationPreset } from '../../../lib/context-authorization';
+ 
+ // Headless Binding issuance (Task 364212a1, Owner Decision 6e0371e3). A client
+@@ -307,7 +307,7 @@ export default function HeadlessBindings() {
+       <dl className="oauth-details">
+         <div><dt>名称</dt><dd>{String(view.label)}</dd></div>
+         <div><dt>有效期</dt><dd>{`签发后 ${String(view.days)} 天`}</dd></div>
+-        <div><dt>权限</dt><dd>{grants(view.selected).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
++        <div><dt>权限</dt><dd>{authorizationDisplayOrder(grants(view.selected)).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
+         {object(view.source_snapshot) && <div><dt>保留的来源与限制版本</dt><dd><pre>{JSON.stringify(view.source_snapshot, null, 2)}</pre></dd></div>}
+         {viewReplaces && <div><dt>替换</dt><dd>{`「${String(viewReplaces.agent_name)}」，签发后 ${String(viewReplaces.grace_minutes)} 分钟失效`}
+           {strings(viewReplaces.roles).length ? `；角色 ${strings(viewReplaces.roles).map(r => ROLES[r] ?? r).join("、")} 移到新令牌` : ""}</dd></div>}
+@@ -360,7 +360,7 @@ export default function HeadlessBindings() {
+               {!row.grants && <div><dt>具体资源范围</dt><dd>授权明细未提供，不能推断为全部上下文；需要核对实际资格和资源授权。</dd></div>}</>}
+             {row.roles.length > 0 && <div><dt>专用角色</dt><dd>{row.roles.map(r => ROLES[r] ?? r).join("、")}</dd></div>}
+             {secretsFor(row.roles).length > 0 && <div><dt>令牌存放在</dt><dd>{secretsFor(row.roles).join("；")}</dd></div>}
+-            {row.grants && <div><dt>权限</dt><dd>{row.grants.map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
++            {row.grants && <div><dt>权限</dt><dd>{authorizationDisplayOrder(row.grants).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
+             <div><dt>连接编号</dt><dd>{row.binding_id}</dd></div>
+           </dl>
+           <div className="oauth-actions">
+diff --git a/apps/clued-cloud/app/oauth/connections/page.tsx b/apps/clued-cloud/app/oauth/connections/page.tsx
+index 78e3145e..dcb2bb27 100644
+--- a/apps/clued-cloud/app/oauth/connections/page.tsx
++++ b/apps/clued-cloud/app/oauth/connections/page.tsx
+@@ -5,7 +5,7 @@ import { type Session } from "@supabase/supabase-js";
+ import { supabase } from "../../supabase-browser";
+ import Link from "next/link";
+ import HeadlessBindings from "./headless";
+-import { ALL_CONTEXTS, operationSummary, resourceTitle, type Resource } from '../../../lib/context-authorization';
++import { ALL_CONTEXTS, authorizationDisplayOrder, operationSummary, resourceTitle, type Resource } from '../../../lib/context-authorization';
+ 
+ const API = "/oauth/connections/api";
+ // Headless Bindings share the v12 authorization table; they are listed and
+@@ -120,6 +120,12 @@ function isBinding(value: unknown): value is Binding {
+ 
+ async function readResponse(response: Response, fallback: string): Promise<unknown> {
+   if (!response.ok) {
++    if (response.status === 400) {
++      const problem: unknown = await response.json().catch(() => null);
++      if (isObject(problem) && problem.error === 'authorization_empty_projection_requires_binding_revoke') {
++        throw new Error('本次修改未保存。要取消此连接的全部权限，请重新读取后使用“撤销此连接”。');
++      }
++    }
+     const messages: Record<number, string> = {
+       401: "登录已失效，请重新登录后再读取连接。",
+       403: "当前账户无权管理此连接。",
+@@ -157,7 +163,7 @@ function selectedGrants(binding: Binding, selection: Selection): Grant[] {
+ function rangeName(binding: Binding): string {
+   const all = binding.grants.some(grant => grant.resource_kind === 'scope' && grant.resource_id === ALL_CONTEXTS);
+   if (all) return binding.coverage?.status === 'complete' ? '全部上下文（含以后新建的）' : '全部上下文策略 · 自定义／受限';
+-  return binding.grants.filter(grant => !(grant.resource_kind === 'scope' && grant.resource_id.startsWith('project:') && grant.resource_id !== ALL_PROJECTS && allProjectsGrant(binding)))
++  return authorizationDisplayOrder(binding.grants.filter(grant => !(grant.resource_kind === 'scope' && grant.resource_id.startsWith('project:') && grant.resource_id !== ALL_PROJECTS && allProjectsGrant(binding))))
+     .map(resourceTitle).join('、') || '无业务范围';
+ }
+ const grantTitle = resourceTitle;
+@@ -604,7 +610,7 @@ export default function OAuthConnectionsPage() {
+                 </fieldset>)}
+               </section>}
+               {binding.grants.length === 0 && <p className="oauth-copy">此连接没有业务访问权限。</p>}
+-              {binding.grants.filter(grant => binding.selection_format === "sources_v1" ? ![ALL_CONTEXTS, ALL_PROJECTS].includes(grant.resource_id) : !coveredByAll(binding, selection, grant)).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
++              {authorizationDisplayOrder(binding.grants.filter(grant => binding.selection_format === "sources_v1" ? ![ALL_CONTEXTS, ALL_PROJECTS].includes(grant.resource_id) : !coveredByAll(binding, selection, grant))).map(grant => <fieldset key={rowKey(grant)} disabled={busy || unavailable || needsReload}
+                 style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
+                 <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>
+                   {grantTitle(grant)}
+diff --git a/apps/clued-cloud/app/policies/page.tsx b/apps/clued-cloud/app/policies/page.tsx
+index 81d950cc..231bba72 100644
+--- a/apps/clued-cloud/app/policies/page.tsx
++++ b/apps/clued-cloud/app/policies/page.tsx
+@@ -185,8 +185,8 @@ export default function PoliciesPage() {
+       {editing && <form onSubmit={preview} aria-label="策略内容">
+         <label>任务类<input required maxLength={120} disabled={working} value={taskClass} onChange={event => setTaskClass(event.target.value)} /></label>
+         <fieldset><legend>记录范围</legend>
+-          <label><input type="checkbox" disabled={working} checked={scopes.includes("global")} onChange={event => setScopes(toggle(scopes, "global", event.target.checked))} />全局</label>
+           <label><input type="checkbox" disabled={working} checked={scopes.includes("profile")} onChange={event => setScopes(toggle(scopes, "profile", event.target.checked))} />个人资料</label>
++          <label><input type="checkbox" disabled={working} checked={scopes.includes("global")} onChange={event => setScopes(toggle(scopes, "global", event.target.checked))} />个人记录</label>
+           {projects === null ? <p role="status">正在读取项目…</p> : projects.map(project => <label key={project.id}>
+             <input type="checkbox" disabled={working} checked={scopes.includes("project:" + project.id)} onChange={event => setScopes(toggle(scopes, "project:" + project.id, event.target.checked))} />项目：{project.name}</label>)}
+         </fieldset>
+diff --git a/apps/clued-cloud/tests/authorization-roles-ui.test.mjs b/apps/clued-cloud/tests/authorization-roles-ui.test.mjs
+index 6f4da41d..37a841a3 100644
+--- a/apps/clued-cloud/tests/authorization-roles-ui.test.mjs
++++ b/apps/clued-cloud/tests/authorization-roles-ui.test.mjs
+@@ -49,6 +49,7 @@ function fixture(respond) {
+   }, AbortController, Error, TypeError, JSON, Date, Number, String, Math, Array, Object,
+   window: { setTimeout(cb) { const id = ++seq; timers.set(id, cb); return id; }, clearTimeout(id) { timers.delete(id); }, confirm: () => true },
+   fetch: async (url, options = {}) => { requests.push({ url, options }); const body = respond(url, options);
++    if (body instanceof Response) return body;
+     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }; } });
+   function render() { cursor = 0; root = exports.default({}); while (effects.length) effects.shift()(); return root; }
+   function nodes(type, from = root) { const out = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit);
+@@ -87,7 +88,7 @@ test('legacy project grants retain their operations while range no longer claims
+   assert.ok(shown.includes('尚不包含项目用途上下文'));
+   assert.ok(shown.includes('自有项目正式记录（含未来项目）'));
+   const legends = f.nodes('legend', card).map(n => f.text(n));
+-  assert.deepEqual(legends, ['通用内容', '自有项目正式记录（含未来项目）'], 'covered projects are not listed');
++  assert.deepEqual(legends, ['个人记录', '自有项目正式记录（含未来项目）'], 'covered projects are not listed');
+   // Untick write on project:*: the reduction sends project:* narrowed and no covered project row.
+   const all = f.nodes('fieldset', card)[1];
+   const write = f.nodes('input', all).find((n, i) => i === 1);
+@@ -142,6 +143,44 @@ test('sources_v1 reduction sends actual source identities and preserves legacy r
+  assert.deepEqual(sent.exceptions,[]);assert.ok(f.text().includes('权限已减少'));assert.ok(f.text().includes('只读'));
+ });
+ 
++test('empty-source refusal explains that nothing was saved and requires rereading before explicit revoke', async () => {
++  const source = { source_id: '30000000-0000-4000-8000-000000000001', version: 2, kind: 'direct', actions: ['read'], contributions: [scope('global', ['read'])] };
++  let binding = { ...connection([scope('global', ['read'])]), selection_format: 'sources_v1', sources: [source], overrides: [], coverage: { status: 'complete', differences: [] } };
++  const f = fixture((url, options) => {
++    if (url === '/v1/storage/owner') return { clients: [] };
++    if (options.method === 'POST') {
++      if (JSON.parse(options.body).op === 'reduce') return Response.json({ error: 'authorization_empty_projection_requires_binding_revoke', message: 'private diagnostics must not be displayed' }, { status: 400 });
++      binding = { ...binding, version: 4, active: false }; return { version: 4 };
++    }
++    return { bindings: [binding] };
++  });
++  await f.open();
++  const field = f.nodes('fieldset').find(n => f.text(f.nodes('legend', n)[0]) === '独立明确授权');
++  assert.ok(field);
++  for (const box of f.nodes('input', field)) box.props.onChange({ target: { checked: false } });
++  f.render(); f.nodes('button').find(n => f.text(n) === '保存减少后的权限').props.onClick(); await f.settle();
++  assert.ok(f.text().includes('本次修改未保存'));
++  assert.ok(f.text().includes('重新读取后使用“撤销此连接”'));
++  assert.ok(!f.text().includes('private diagnostics'));
++  assert.ok(!f.text().includes('权限已减少'));
++  assert.equal(binding.version, 3); assert.equal(binding.active, true);
++  assert.equal(f.nodes('button').find(n => f.text(n) === '撤销此连接').props.disabled, true);
++  f.nodes('button').find(n => f.text(n) === '重新读取连接').props.onClick(); await f.settle();
++  f.nodes('button').find(n => f.text(n) === '撤销此连接').props.onClick(); await f.settle();
++  assert.ok(f.text().includes('连接已撤销'));
++  assert.deepEqual(f.requests.filter(r => r.url === '/oauth/connections/api' && r.options.method === 'POST').map(r => JSON.parse(r.options.body).op), ['reduce', 'revoke']);
++});
++
++test('connection display puts profile before personal records while precise source payload stays unchanged', async () => {
++  const rows = [scope(A, ['read']), scope('global', ['read']), scope('profile', ['read'])];
++  const f = fixture(url => url === '/v1/storage/owner' ? { clients: [] } : { bindings: [connection(rows)] });
++  await f.open();
++  const card = f.nodes('article')[0];
++  assert.deepEqual(f.nodes('legend', card).map(n => f.text(n)), ['个人资料', '个人记录', '项目正式记录']);
++  assert.ok(f.text(card).includes('个人资料、个人记录、项目正式记录'));
++  assert.deepEqual(rows.map(row => row.resource_id), [A, 'global', 'profile']);
++});
++
+ test('stored macro with restricted coverage never displays complete authorization and exact reduction uses real override CAS',async()=>{
+  const target={resource_kind:'context',resource_id:'c-test',environment:'test',name:'验收',actions:['read','write'],effective_actions:['read','write']};
+  const override={override_id:'override-1',version:5,...target,denied_actions:['close'],allowed_ceiling:['read','write'],limits:{allowed_fields:['content']}};
+diff --git a/apps/clued-cloud/tests/delegated-oauth-transport.test.mjs b/apps/clued-cloud/tests/delegated-oauth-transport.test.mjs
+index 847db35c..a9738de8 100644
+--- a/apps/clued-cloud/tests/delegated-oauth-transport.test.mjs
++++ b/apps/clued-cloud/tests/delegated-oauth-transport.test.mjs
+@@ -161,6 +161,29 @@ test('Native exact limit confirmation forwards Owner credentials and CAS without
+     assert.equal((await response.text()).includes('private SQL'), false);
+   } finally { globalThis.fetch = originalFetch; }
+ });
++test('last-permission reduction exposes only its controlled business code and keeps private diagnostics redacted', async () => {
++  const f = fixture();
++  try {
++    const headers = { Authorization: 'Bearer human-session-test', Origin: origin, 'Content-Type': 'application/json' };
++    const post = op => f.run('/oauth/connections/api', { method: 'POST', headers, body: JSON.stringify({ op, binding_id: '20000000-0000-4000-8000-000000000001', base_version: 4 }) });
++    f.nativeManagement.status = 400;
++    f.nativeManagement.response = { code: '22023', message: 'authorization_empty_projection_requires_binding_revoke', details: 'private SQL and context identity' };
++    let response = await post('reduce');
++    assert.equal(response.status, 400);
++    const result = await response.json();
++    assert.equal(result.error, 'authorization_empty_projection_requires_binding_revoke');
++    assert.ok(result.message.includes('本次修改未保存'));
++    assert.ok(!JSON.stringify(result).includes('private SQL'));
++    response = await post('revoke');
++    assert.equal(response.status, 403, 'the business-code exception is limited to reduction');
++    assert.ok(!(await response.text()).includes('authorization_empty_projection'));
++    f.nativeManagement.response = { code: '22023', message: 'private SQL and context identity' };
++    response = await post('reduce');
++    assert.equal(response.status, 403);
++    assert.ok(!(await response.text()).includes('private SQL'));
++  } finally { globalThis.fetch = originalFetch; }
++});
++
+ // A gateway scope refusal is a tool error (HTTP 200, isError) carrying what to request; Hosts drop 403 bodies.
+ async function scopeDenied(response) {
+   assert.equal(response.status, 200);
+diff --git a/apps/clued-cloud/worker/delegated-oauth.ts b/apps/clued-cloud/worker/delegated-oauth.ts
+index c3f1c843..6c978bba 100644
+--- a/apps/clued-cloud/worker/delegated-oauth.ts
++++ b/apps/clued-cloud/worker/delegated-oauth.ts
+@@ -25,7 +25,7 @@ interface AuthProps { userId: string; bindingId: string; bindingToken: string; s
+ interface Pending { auth: AuthRequest; clientName: string; cookieHash: string; createdAt: number }
+ type Json = Record<string, unknown>;
+ class AuthorizationFailure extends Error {
+-  constructor(readonly status: number, message: string) { super(message); }
++  constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
+ }
+ const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } });
+ export const delegatedOAuthEnabled = (env: DelegatedOAuthEnv) => env.CLUED_DELEGATED_OAUTH_V12 === 'true';
+@@ -68,6 +68,12 @@ async function rpc(env: DelegatedOAuthEnv, token: string, name: string, body: Js
+   });
+   if (!response.ok) {
+     if (transient(response.status)) throw new AuthorizationFailure(503, '服务暂不可用，请稍后重试；现有授权没有因此失效。');
++    if (response.status === 400 && name === 'clued_authorization_manage_v12' && (body.p_input as Json | undefined)?.op === 'reduce') {
++      const problem = await response.json().catch(() => null) as { code?: unknown; message?: unknown } | null;
++      if (problem?.code === '22023' && problem.message === 'authorization_empty_projection_requires_binding_revoke') {
++        throw new AuthorizationFailure(400, '本次修改未保存。要取消此连接的全部权限，请使用“撤销此连接”。', 'authorization_empty_projection_requires_binding_revoke');
++      }
++    }
+     // Provider/database diagnostics can contain internal SQL, identifiers or credentials.
+     throw new AuthorizationFailure(response.status === 401 ? 401 : response.status === 409 ? 409 : 403,
+       response.status === 409 ? '授权请求已处理或版本发生变化，请重新连接。' : '当前账户或授权请求不能执行此操作。');
+@@ -338,6 +344,7 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
+     return await provider.fetch(request, requestEnv, ctx);
+   } catch (error) {
+     const status = error instanceof AuthorizationFailure ? error.status : error instanceof OAuthError ? error.statusCode : 503;
+-    return json({ error: error instanceof AuthorizationFailure ? error.message : status >= 500 ? '授权服务暂不可用，请稍后重试。' : '授权无效或已撤销。' }, status);
++    return json({ error: error instanceof AuthorizationFailure ? error.code ?? error.message : status >= 500 ? '授权服务暂不可用，请稍后重试。' : '授权无效或已撤销。',
++      ...(error instanceof AuthorizationFailure && error.code ? { message: error.message } : {}) }, status);
+   }
+ }
+diff --git a/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md b/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md
+index 4651081d..a61b2915 100644
+--- a/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md
++++ b/development/contracts/context-authorization/AllContextsAuthorization.v0.1.md
+@@ -1,10 +1,12 @@
+-# 上下文授权统一合同 v0.1-r3
++# 上下文授权统一合同 v0.1-r4
+ 
+-状态：r2 已通过产品与安全独立审核；r3 仅补原 Task 引用，不改变范围或执行要求，须核对该元数据差异。r2 原字节及审核绑定保存在 evidence/AcceptedPlanR2.v1.json；尚未改变线上权限。
++状态：r2 已通过产品与安全独立审核；r3 仅补原 Task 引用；r4 按 Owner Decision v6 将原内容范围名称统一为“个人记录”，并按确认顺序展示个人资料、个人记录、各项目；不改变授权集合、操作或限制。原 r2 字节及审核绑定保存在 evidence/AcceptedPlanR2.v1.json；名称差异须独立核对，尚未发布本轮授权修复。
+ 
+-Owner 来源：Clued Decision `1b609e13-9b44-47fb-90a1-89a74bf9875e` v4；执行复用 Task `d5dee826-27d7-452b-8948-48fe8ae8a961`。工程基线 main `f890a19da620bcd60efa20d44a0a78f9099c95bf`，受查部署 `8f960b5541e29ad279d4976f5c366ea4e1297ad4`。本合同是 `PermissionSimplification.v0.1` 的限定后继，不改其历史同意，不改数据身份、命名完整性固定来源或 Canonical 资格。
++Owner 来源：Clued Decision `1b609e13-9b44-47fb-90a1-89a74bf9875e` v6；执行复用 Task `d5dee826-27d7-452b-8948-48fe8ae8a961`。工程基线 main `f890a19da620bcd60efa20d44a0a78f9099c95bf`，受查部署 `8f960b5541e29ad279d4976f5c366ea4e1297ad4`。本合同是 `PermissionSimplification.v0.1` 的限定后继，不改其历史同意，不改数据身份、命名完整性固定来源或 Canonical 资格。
+ 
+-## 1. 用户概念与界面
++## 1. 统一概念与界面
++
++“个人记录”是内容范围的统一概念名，适用于用户／开发目录、授权、接口说明与工程术语；原“通用内容／全局视图”作为历史别名。它容纳未纳入具体项目的待办、想法、心得、灵感和计划，也可包含工作、学习与创作。个人资料独立管理身份／偏好等事实；项目内容归对应项目。八视图的“日常”是生活事务分类，与范围分开。授权资源 `scope/global/canonical` 和查询／保存的 `scope=global` 保留兼容标识，指向个人记录，不包含项目正文，也不增加权限。原工作投影接口的 `level=global` 则表达跨项目登记与优先级；其工作层级、标准工作投影和协议保持独立，不得误称为个人记录内容范围。
+ 
+ 目录统一叫“上下文”。“用户/开发”是用途，项目和环境是所属范围；它们不形成不同的上下文概念。底层 `global` / `profile` / `project:<UUID>` / 精确 Context UUID 和 `development_history` 模式保留。
+ 
+@@ -15,11 +17,11 @@ Owner 来源：Clued Decision `1b609e13-9b44-47fb-90a1-89a74bf9875e` v4；执行
+ - 范围：全部上下文（含以后新建的）／指定范围。
+ - 操作权限：只读／可编辑／全部操作。
+ 
+-“全局视图”在授权页改为“通用内容”；个人资料是独立可限制的内容范围。“正式记忆”不作为每行重复后缀。简单指定范围直接展示下列选择树，不要求进入高级才能选择基本范围：
++“全局视图”在授权页改为“个人记录”；个人资料是独立可限制的内容范围。“正式记忆”不作为每行重复后缀。简单指定范围直接展示下列选择树，不要求进入高级才能选择基本范围：
+ 
+-- 通用内容、个人资料各有独立复选框。
++- 个人资料、个人记录各有独立复选框。
+ - 项目按可读名称分组。组内“项目正式记录”与每个具名上下文分别勾选；上下文同时显示测试／预览／生产环境。技术 UUID 只放详情，但提交身份仍是精确 UUID／环境／资格。
+-- 分组标题不授予权限；若提供“选择本组现有全部条目”，须显示明确条目数量和环境，不包含未来资源，也不暗含通用内容或个人资料。未选条目绝不隐式授予。
++- 分组标题不授予权限；若提供“选择本组现有全部条目”，须显示明确条目数量和环境，不包含未来资源，也不暗含个人记录或个人资料。未选条目绝不隐式授予。
+ - 高级只用于逐资源动作、现行支持的限制或明确例外；非预设动作组合、资源例外显示“自定义”。
+ 
+ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首次读取且提供 `contexts:*` 时显示“全部上下文＋全部操作（本次可用）”，只预选、不提交；没有策略能力则进入空的指定范围，至少选择一项才能继续。全部切为指定时清空所选精确资源并提示重新勾选，保留操作预设；指定切为全部时只选策略宏，预览重新列出实际覆盖与未来规则，取消精确例外须在提交前清楚显示。更换操作预设只改变已选资源的动作，不能加入未选资源；高级改动使操作显示自定义，重新套用预设会明确替换已选资源的自定义动作，例外仍须显示。账号切换、资源快照或版本变化使旧选择／预览失效，沿现行竞态防护重新读取。
+@@ -28,7 +30,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ | 简单选择 | 提交预览及精确结果 |
+ |---|---|
+-| 指定范围 → 只勾个人资料 → 只读 | `scope/profile/canonical/read`；通用内容、项目、上下文均无授权 |
++| 指定范围 → 只勾个人资料 → 只读 | `scope/profile/canonical/read`；个人记录、项目、上下文均无授权 |
+ | 指定范围 → Clued 项目只勾“项目正式记录” → 可编辑 | `scope/project:<Clued UUID>/canonical/{read,write}`；该项目用途上下文及以后新建资源均无授权 |
+ | 指定范围 → Clued 项目只勾“验收上下文 · 测试环境” → 可编辑 | `context/<精确 Context UUID>/test/{read,write}`；项目正式记录、预览和生产环境均无授权，未来新建同名测试上下文也无授权 |
+ 
+@@ -38,8 +40,8 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ 对实际授权主体 U，全部上下文包含：
+ 
+-1. U 的通用内容（现有 `global`）。
+-2. U 的个人资料（现有 `profile`）。
++1. U 的个人资料（现有 `profile`）。
++2. U 的个人记录（现有 `global`）。
+ 3. U 本人拥有的每个项目的正式记录范围。
+ 4. U 本人拥有、且所属项目也由 U 本人拥有的每个项目用途上下文，按其实际环境授权。
+ 
+@@ -51,7 +53,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ | 内容范围 | 只读 | 可编辑 | 全部操作的最大可选动作 |
+ |---|---|---|---|
+-| 通用内容、个人资料、自有项目正式记录 | read | read, write | read, write, close, restore, audit |
++| 个人资料、个人记录、自有项目正式记录 | read | read, write | read, write, close, restore, audit |
+ | 项目用途上下文 | read | read, write | read, write, close, feedback_submit |
+ 
+ 每一项只取本次客户端实际请求且该资源现行 API 支持的动作；不自动追加未申请的 OAuth scope。未请求或不支持的动作不会被虚构为已授予。页上显示实际动作和缺项：缺少写入请求时只提供只读预设；不可表示为可编辑或全部操作已具备所有动作。
+@@ -116,7 +118,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ ## 5. 旧连接与权限管理
+ 
+-旧 `project:*` 仍只表达其原来批准的自有项目正式记录；不得重解释成新策略。旧“全部”角色显示不再由几个 canonical 条目猜出完整上下文授权。当前旧连接的确定显示例：范围“通用内容、个人资料、自有项目正式记录（含未来项目）”，操作按 effective 动作显示“全部操作（原授权）”或“自定义”，并明示“尚不包含项目用途上下文”。不能继续只显示“全部”造成完整覆盖的错觉。缺新覆盖策略或对应能力时准确显示原范围／自定义，并提供一次明确的升级入口。
++旧 `project:*` 仍只表达其原来批准的自有项目正式记录；不得重解释成新策略。旧“全部”角色显示不再由几个 canonical 条目猜出完整上下文授权。当前旧连接的确定显示例：范围“个人资料、个人记录、自有项目正式记录（含未来项目）”，操作按 effective 动作显示“全部操作（原授权）”或“自定义”，并明示“尚不包含项目用途上下文”。不能继续只显示“全部”造成完整覆盖的错觉。缺新覆盖策略或对应能力时准确显示原范围／自定义，并提供一次明确的升级入口。
+ 
+ 新 OAuth 同意页选择“全部上下文＋全部操作”后同时批准已有与未来集合，不能只枚举当时的 Context。授权请求的范围快照、真实请求 scope、Owner 身份、版本、到期和同意回执继续绑定。
+ 
+@@ -130,7 +132,7 @@ OAuth 与 Headless 共用范围／动作计算模块和同一选择规则：首
+ 
+ ## 6. 必须通过的验收
+ 
+-1. 已有通用内容、个人资料、自有项目正式记录及自有项目用途上下文均按选择有真实 read/write 等能力，而非只有角色名。
++1. 已有个人资料、个人记录、自有项目正式记录及自有项目用途上下文均按选择有真实 read/write 等能力，而非只有角色名。
+ 2. 批准之后新建项目、同一旧项目下新建 Context、不同实际环境下新建 Context 均按新策略继承；无需再补权限。
+ 3. 只读不能写；可编辑不能关闭／恢复／审计／反馈；全部操作只给真实申请且支持的动作。未请求写权限的客户端不能被预设扩大。
+ 4. 他人项目、共享／邀请上下文、Context Owner 与项目 Owner 不一致、环境伪造均不自动纳入。
