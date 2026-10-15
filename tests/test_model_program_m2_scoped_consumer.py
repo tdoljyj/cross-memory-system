@@ -327,6 +327,11 @@ def load_tests(loader, tests, pattern):
     timing_module = importlib.util.module_from_spec(timing_spec)
     timing_spec.loader.exec_module(timing_module)
     tests.addTests(loader.loadTestsFromModule(timing_module, pattern=pattern))
+    materials_path = ROOT / "tests/test_model_reference_4b_preparation.py"
+    materials_spec = importlib.util.spec_from_file_location("m2_reference4b_materials_specifications", materials_path)
+    materials_module = importlib.util.module_from_spec(materials_spec)
+    materials_spec.loader.exec_module(materials_module)
+    tests.addTests(loader.loadTestsFromModule(materials_module, pattern=pattern))
     return tests
 
 
