@@ -28,13 +28,13 @@ import sys
 import urllib.request
 from pathlib import Path
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import clued_components as cc  # noqa: E402
 
-DEFAULT_ORIGIN = "https://clued.pixelgrav.com"
+DEFAULT_ORIGIN = "https://kooyumi.pixelgrav.com"
 SKILL_ID = "skill.clued"
 CONTRACT_ID = "agent-contract"
 TIMEOUT_SECONDS = 3

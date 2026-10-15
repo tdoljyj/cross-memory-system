@@ -335,13 +335,30 @@ test('runtime loader validates the current Source registry against actual bytes 
     assert.equal(d.workflow_blob,gitBlob(fs.readFileSync(path.join(repo,d.workflow_path))));
     assert.deepEqual(Object.keys(d.source_blobs).sort(),[...d.source_paths].sort());
     for(const p of d.source_paths)assert.equal(d.source_blobs[p],gitBlob(fs.readFileSync(path.join(repo,p))));
+    assert.equal(Object.hasOwn(d,'previous_source_blobs'),false);assert.equal(Object.hasOwn(d,'previous_job_name'),false);
+    assert.equal(d.previous_source_versions.length,4);
+    assert.deepEqual(d.previous_source_versions.map(v=>v.job_name),d.job_id==='clued-work-admission'
+      ?['clued-work-admission','clued-work-admission','clued-work-admission','kooyumi-work-admission']:Array(4).fill(d.job_name));
   }
+  // These regression-only digests come from immutable main 462f74c3, before
+  // this successor. They prove the 20 old expanded descriptors and untouched
+  // clock/epoch/receipts remain byte-identical; they grant no Source qualification.
+  const oldDescriptors=cfg.natural_producers.map(d=>{
+    const {previous_source_versions,...base}=d;
+    return previous_source_versions.map(v=>({...base,job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path],source_blobs:v.source_blobs}));
+  });
+  assert.equal(sha256(JSON.stringify(oldDescriptors)),'15e90b3554151f0daaeaa3f32a02e5d9dbf9038cca6dc8a6dd547693542a8d97');
+  assert.equal(sha256(JSON.stringify(cfg.previous_admission_sources.slice(0,-1))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
+  const unchanged=Object.fromEntries(Object.entries(cfg).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers'].includes(key)));
+  assert.equal(sha256(JSON.stringify(unchanged)),'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
+  assert.deepEqual(cfg.previous_admission_sources.at(-1),{...cfg.admission_source,
+    script_blob:'112b737c54893f78eedb1deacc678777e5f16138',source_checkout_sha:'462f74c34d74b7dea65a0120eabbd4feb1ebc0ce',default_branch:'main'});
   assert.equal(cfg.execution_source.profiles_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))));
   assert.equal(cfg.execution_source.role_specs_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'))));
   assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);
   const expected=JSON.parse(r.reviewed_expected_sources_raw);
   assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,cfg.previous_execution_sources);
-  assert.equal(cfg.previous_admission_sources.length,2);assert.equal(expected.admission_sources.length,3);
+  assert.equal(cfg.previous_admission_sources.length,3);assert.equal(expected.admission_sources.length,4);
   assert.deepEqual(expected.admission_sources[0],{...cfg.admission_source,source_checkout_sha:subject,default_branch:'main'});
   assert.deepEqual(expected.admission_sources.slice(1),cfg.previous_admission_sources);
   const old=expected.admission_sources.find(s=>s.source_checkout_sha==='ea7d09330583e3fc417997b621579de16fee239e');assert.ok(old);assert.equal(old.default_branch,'main');

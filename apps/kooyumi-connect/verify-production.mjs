@@ -8,12 +8,12 @@ export const ORIGIN = 'https://kooyumi.pixelgrav.com';
 export const LEGACY_ORIGIN = 'https://clued.pixelgrav.com';
 const ATTEMPTS = 6;
 
-export function verifyConnectRelease({ commit, revision, contract, page, legacyPage, smoke, resource, issuer, servedContract, bootstrap, notBefore }) {
+export function verifyConnectRelease({ commit, revision, contract, page, smoke, resource, issuer, servedContract, bootstrap, notBefore }) {
   const errors = [];
-  for (const [name, result] of Object.entries({ page, legacyPage, smoke, resource, issuer, servedContract, bootstrap })) {
+  for (const [name, result] of Object.entries({ page, smoke, resource, issuer, servedContract, bootstrap })) {
     if (result?.status !== 200) errors.push(`connect_${name}_http_${result?.status ?? 0}`);
   }
-  if (!/Kooyumi Connect/.test(page?.body ?? '') || !/Kooyumi Connect/.test(legacyPage?.body ?? '')) errors.push('connect_brand_mismatch');
+  if (!/Kooyumi Connect/.test(page?.body ?? '')) errors.push('connect_brand_mismatch');
   const body = smoke?.body;
   if (body?.ok !== true || body?.state_machine?.ok !== true || body?.connect_service !== 'clued-connect') errors.push('connect_smoke_failed');
   if (body?.revision !== revision) errors.push('connect_revision_mismatch');
@@ -43,12 +43,12 @@ export async function collectChecks(commit, fetchImpl = fetch) {
       return { status: response.status, body: accept === 'application/json' ? await response.json() : await response.text() };
     } catch { return { status: 0, body: null }; }
   };
-  const [page, legacyPage, smoke, resource, issuer, servedContract, bootstrap] = await Promise.all([
-    get(ORIGIN + '/connect', 'text/html'), get(LEGACY_ORIGIN + '/connect', 'text/html'), get(ORIGIN + '/connect/api/smoke'),
+  const [page, smoke, resource, issuer, servedContract, bootstrap] = await Promise.all([
+    get(ORIGIN + '/connect', 'text/html'), get(ORIGIN + '/connect/api/smoke'),
     get(ORIGIN + '/.well-known/oauth-protected-resource/mcp'), get(ORIGIN + '/.well-known/oauth-authorization-server'),
     get(ORIGIN + '/clued-agent.md', 'text/markdown'), get(ORIGIN + '/v1/continuity/bootstrap'),
   ]);
-  return { page, legacyPage, smoke, resource, issuer, servedContract, bootstrap };
+  return { page, smoke, resource, issuer, servedContract, bootstrap };
 }
 
 async function main() {

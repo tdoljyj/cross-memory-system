@@ -60,11 +60,14 @@ test("release grant: no grant fails when enforced and prints the confirmation li
     owner_request: { request_id: REQUEST, status: "pending", confirm_path: `/confirm/${REQUEST}` } } });
   let { r } = await run({}, pending);
   assert.deepEqual([r.consumed, admitted(r), r.request_id], [false, false, REQUEST]);
-  assert.equal(r.confirm_url, `https://clued.pixelgrav.com/confirm/${REQUEST}`);
+  assert.equal(r.confirm_url, `https://kooyumi.pixelgrav.com/confirm/${REQUEST}`);
   ({ r } = await run({ CLUED_RELEASE_GRANT_ENFORCE: "" }, pending));
   assert.equal(admitted(r), true, "advisory until the Owner turns enforcement on");
   ({ r } = await run({ CLUED_CONFIRM_ORIGIN: "https://example.test/" }, pending));
   assert.equal(r.confirm_url, `https://example.test/confirm/${REQUEST}`);
+  ({ r } = await run({ CLUED_CONFIRM_ORIGIN: "https://clued.pixelgrav.com/" }, pending));
+  assert.equal(r.confirm_url, `https://clued.pixelgrav.com/confirm/${REQUEST}`);
+  assert.equal(admitted(r), false, "an explicit legacy link still requires the Owner Grant");
   ({ r } = await run({}, () => ({ body: { status: "ok", consumed: false, owner_request: { confirm_path: "https://evil/x" } } })));
   assert.equal(r.confirm_url, null, "only a /confirm/<id> path becomes a link");
 });
@@ -77,7 +80,7 @@ test("release grant: migrate opens one bundle with the deploy; an older door is 
   let { r, calls } = await run({ MIGRATIONS: "20261003170000_a.sql" }, bundled, "migrate");
   assert.equal(calls.length, 1);
   assert.deepEqual(r.bundle, [{ action: "migration.production", request_id: REQUEST }, { action: "release.production", request_id: OTHER }]);
-  assert.equal(r.confirm_url, `https://clued.pixelgrav.com/confirm/${REQUEST}`);
+  assert.equal(r.confirm_url, `https://kooyumi.pixelgrav.com/confirm/${REQUEST}`);
   // A door that does not know `with` yet: one retry without it.
   let first = true;
   ({ r, calls } = await run({ MIGRATIONS: "20261003170000_a.sql" }, () => {
@@ -130,6 +133,6 @@ test("release grant: main exit codes and summary", async () => {
     assert.match(fs.readFileSync(summary, "utf8"), /Consumed grant `g-9`, use 1 of 1/);
     assert.equal(await main(["--mode", "migrate"], base, fakeFetch(() => ({ body: { status: "ok", consumed: false,
       owner_request: { request_id: REQUEST, confirm_path: `/confirm/${REQUEST}` } } })).fetchImpl), 1);
-    assert.match(fs.readFileSync(summary, "utf8"), new RegExp(`Ask the Owner to approve: https://clued.pixelgrav.com/confirm/${REQUEST}`));
+    assert.match(fs.readFileSync(summary, "utf8"), new RegExp(`Ask the Owner to approve: https://kooyumi.pixelgrav.com/confirm/${REQUEST}`));
   } finally { console.log = log; console.error = error; }
 });

@@ -11,9 +11,15 @@ import { buildSourceSnapshot, collectSource, fetchExactClient, oauthNamespace, p
 const requestId = '12345678-1234-4000-8000-123456789abc';
 const expectedRequestDigest = 'a'.repeat(64);
 const releaseSha = 'b'.repeat(40);
+const legacyResource = 'https://clued.pixelgrav.com/mcp';
+const kooyumiResource = 'https://kooyumi.pixelgrav.com/mcp';
+const legacyNamespace = 'd'.repeat(32);
+const kooyumiNamespace = 'e'.repeat(32);
+const oauthConfiguration = () => ({ name: 'clued-cloud', vars: { KOOYUMI_OAUTH_ORIGIN: 'https://kooyumi.pixelgrav.com' },
+  kv_namespaces: [{ binding: 'OAUTH_KV', id: legacyNamespace }, { binding: 'KOOYUMI_OAUTH_KV', id: kooyumiNamespace }] });
 const request = { id: requestId, request_digest: expectedRequestDigest, client_id: 'reviewed-client',
   client_name: '受审客户端', redirect_uri: 'http://127.0.0.1:3210/callback',
-  resource: 'https://clued.pixelgrav.com/mcp', status: 'approved', requested_scopes: ['context:read', 'context:write'] };
+  resource: legacyResource, status: 'approved', requested_scopes: ['context:read', 'context:write'] };
 const rawClient = { clientId: request.client_id, clientName: request.client_name,
   redirectUris: [request.redirect_uri], grantTypes: ['authorization_code', 'refresh_token'], responseTypes: ['code'],
   tokenEndpointAuthMethod: 'none', registrationDate: 1790550000, authMethodExplicit: true,
@@ -71,12 +77,41 @@ test('source binds exact request, client, resource, redirect and name without is
   assert.equal(JSON.parse(buildSourceSnapshot(nameless).text).client.clientName, undefined);
 });
 
-test('namespace is derived only from one committed production OAUTH_KV binding', () => {
-  assert.equal(oauthNamespace({ name: 'clued-cloud', kv_namespaces: [{ binding: 'OAUTH_KV', id: 'd'.repeat(29) }] }), 'd'.repeat(29));
-  for (const config of [{}, { name: 'attacker', kv_namespaces: [] }, { name: 'clued-cloud', kv_namespaces: [] },
-    { name: 'clued-cloud', kv_namespaces: [{ binding: 'OAUTH_KV', id: '../other' }] },
-    { name: 'clued-cloud', kv_namespaces: Array(2).fill({ binding: 'OAUTH_KV', id: 'd'.repeat(32) }) }]) {
-    assert.throws(() => oauthNamespace(config), /source_namespace_invalid/);
+test('namespace is derived from the exact resource and distinct committed issuer bindings', () => {
+  const config = oauthConfiguration();
+  assert.equal(oauthNamespace(config, legacyResource), legacyNamespace);
+  assert.equal(oauthNamespace(config, kooyumiResource), kooyumiNamespace);
+  for (const resource of [undefined, null, '__proto__', 'https://other.example/mcp',
+    'http://kooyumi.pixelgrav.com/mcp', kooyumiResource + '/', kooyumiResource + '?issuer=legacy',
+    'https://user@kooyumi.pixelgrav.com/mcp']) {
+    assert.throws(() => oauthNamespace(config, resource), /source_namespace_invalid/);
+  }
+});
+
+test('either issuer mapping missing, duplicated, malformed or shared rejects both resources', () => {
+  const invalid = [{}, { ...oauthConfiguration(), name: 'attacker' }, { ...oauthConfiguration(), kv_namespaces: [] }];
+  for (const origin of [undefined, 'https://clued.pixelgrav.com', 'http://kooyumi.pixelgrav.com',
+    'https://kooyumi.pixelgrav.com/', 'https://kooyumi.pixelgrav.com?issuer=legacy']) {
+    invalid.push({ ...oauthConfiguration(), vars: { KOOYUMI_OAUTH_ORIGIN: origin } });
+  }
+  for (const binding of ['OAUTH_KV', 'KOOYUMI_OAUTH_KV']) {
+    const missing = oauthConfiguration();
+    missing.kv_namespaces = missing.kv_namespaces.filter(item => item.binding !== binding);
+    invalid.push(missing);
+    const duplicate = oauthConfiguration();
+    duplicate.kv_namespaces.push({ ...duplicate.kv_namespaces.find(item => item.binding === binding) });
+    invalid.push(duplicate);
+    for (const id of ['../other', '', undefined, 1111111111111111]) {
+      const malformed = oauthConfiguration();
+      malformed.kv_namespaces.find(item => item.binding === binding).id = id;
+      invalid.push(malformed);
+    }
+  }
+  const shared = oauthConfiguration(); shared.kv_namespaces[1].id = legacyNamespace; invalid.push(shared);
+  for (const config of invalid) {
+    for (const resource of [legacyResource, kooyumiResource]) {
+      assert.throws(() => oauthNamespace(config, resource), /source_namespace_invalid/);
+    }
   }
 });
 
@@ -141,6 +176,74 @@ test('source collection verifies DB both before and after HTTP with no grant or 
   await assert.rejects(collectSource({ requestId, expectedRequestDigest, releaseSha,
     loadRequest: async () => ++reads === 1 ? request : { ...request, requested_scopes: ['context:read'] },
     loadClient: async () => rawClient }), /source_request_changed/);
+});
+
+test('approved resource selects only its exact KV for the same client ID and filters provider secrets', async () => {
+  const clients = {
+    [legacyNamespace]: { ...rawClient, logoUri: 'https://example.com/legacy.svg' },
+    [kooyumiNamespace]: { ...rawClient, logoUri: 'https://example.com/kooyumi.svg' },
+  };
+  for (const [resource, namespaceId] of [[legacyResource, legacyNamespace], [kooyumiResource, kooyumiNamespace]]) {
+    const calls = [];
+    const approved = { ...request, resource };
+    const evidence = await collectSource({ requestId, expectedRequestDigest, releaseSha, now: () => now,
+      loadRequest: async () => { calls.push('db'); return { ...approved }; },
+      loadClient: async (clientId, approvedResource) => {
+        assert.equal(approvedResource, resource);
+        return fetchExactClient({ ...providerInput(), clientId, namespaceId: oauthNamespace(oauthConfiguration(), approvedResource),
+          fetchImpl: async (url, options) => {
+            calls.push(url);
+            assert.equal(url, `https://api.cloudflare.com/client/v4/accounts/${'c'.repeat(32)}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent('client:' + request.client_id)}`);
+            assert.equal(options.method, 'GET'); assert.equal(options.redirect, 'error'); assert.equal(options.body, undefined);
+            return new Response(JSON.stringify(clients[new URL(url).pathname.split('/')[8]]));
+          } });
+      } });
+    assert.equal(calls.length, 3); assert.equal(calls[0], 'db'); assert.equal(calls[2], 'db');
+    const snapshot = JSON.parse(evidence.text);
+    assert.equal(snapshot.resource, resource);
+    assert.equal(snapshot.client.logoUri, clients[namespaceId].logoUri);
+    assert.doesNotMatch(evidence.text, /clientSecret|SECRET|NEVER-PUBLISH/);
+  }
+});
+
+test('unknown or missing request resource fails before provider lookup', async () => {
+  for (const resource of [undefined, null, 'https://other.example/mcp', kooyumiResource + '/', kooyumiResource + '?issuer=legacy']) {
+    let providerCalls = 0;
+    await assert.rejects(collectSource({ requestId, expectedRequestDigest, releaseSha,
+      loadRequest: async () => ({ ...request, resource }),
+      loadClient: async () => { providerCalls += 1; return rawClient; } }), /source_request_mismatch/);
+    assert.equal(providerCalls, 0);
+  }
+});
+
+test('a request changing between the two accepted resources cannot publish source evidence', async () => {
+  for (const [before, after] of [[legacyResource, kooyumiResource], [kooyumiResource, legacyResource]]) {
+    let reads = 0; let providerCalls = 0;
+    await assert.rejects(collectSource({ requestId, expectedRequestDigest, releaseSha,
+      loadRequest: async () => ({ ...request, resource: ++reads === 1 ? before : after }),
+      loadClient: async (clientId, resource) => {
+        providerCalls += 1; assert.equal(clientId, request.client_id); assert.equal(resource, before); return rawClient;
+      } }), /source_request_changed/);
+    assert.equal(reads, 2); assert.equal(providerCalls, 1);
+  }
+});
+
+test('provider failure or mismatched client never falls back to the other issuer KV', async () => {
+  for (const [resource, namespaceId] of [[legacyResource, legacyNamespace], [kooyumiResource, kooyumiNamespace]]) {
+    for (const mismatch of [false, true]) {
+      const urls = [];
+      await assert.rejects(collectSource({ requestId, expectedRequestDigest, releaseSha,
+        loadRequest: async () => ({ ...request, resource }),
+        loadClient: (clientId, approvedResource) => fetchExactClient({ ...providerInput(), clientId,
+          namespaceId: oauthNamespace(oauthConfiguration(), approvedResource), fetchImpl: async url => {
+            urls.push(url);
+            return mismatch ? new Response(JSON.stringify({ ...rawClient, clientId: 'other-client' }))
+              : new Response('SECRET-provider-error', { status: 404 });
+          } }) }), mismatch ? /source_client_request_mismatch/ : /source_provider_unconfirmed/);
+      assert.equal(urls.length, 1);
+      assert.ok(urls[0].includes(`/namespaces/${namespaceId}/values/`));
+    }
+  }
 });
 
 test('source output is new-file-only and never overwrites a prior evidence file or symlink', async () => {
