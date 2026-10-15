@@ -18,16 +18,39 @@ const deferred = () => { let resolve; const promise = new Promise(yes => { resol
 const results = events => events.filter(event => !["start", "lifecycle", "milestone"].includes(event.outcome));
 
 test("first interrupted request and body recover automatically on the same explicit read", async () => {
-  const events = [], start = Date.now(); let calls = 0;
-  const value = await runNativeRead("projects.list", async () => {
+  const events = [], delays = [], timers = new Set(), polls = new Set();
+  const scheduled = [deferred(), deferred()]; let calls = 0, completed = false;
+  const { runNativeRead, readNativeJson } = recovery({
+    setTimeout(callback, milliseconds) {
+      const timer = { callback, milliseconds }; timers.add(timer); delays.push(milliseconds);
+      scheduled[delays.length - 1]?.resolve(timer); return timer;
+    },
+    clearTimeout(timer) { timers.delete(timer); },
+    setInterval(callback, milliseconds) {
+      assert.equal(milliseconds, 50); const poll = { callback }; polls.add(poll); return poll;
+    },
+    clearInterval(poll) { polls.delete(poll); },
+  });
+  const work = runNativeRead("projects.list", async () => {
     if (++calls === 1) throw new TypeError("secret fixture bearer/body must not be retained");
     if (calls === 2) return readNativeJson(new Response(new ReadableStream({ start(stream) {
       stream.error(new DOMException("private fixture query must not be retained", "AbortError"));
     } }), { status: 200 }));
     return readNativeJson(Response.json({ projects: [{ id: "existing", name: "Fixture project" }] }));
   }, options(event => events.push(event)));
+  void work.then(() => { completed = true; }, () => { completed = true; });
+  for (const [index, milliseconds] of [250, 750].entries()) {
+    const timer = await scheduled[index].promise;
+    await Promise.resolve();
+    assert.equal(timer.milliseconds, milliseconds);
+    assert.equal(calls, index + 1, "the next read waits for its backoff callback");
+    assert.equal(completed, false); assert.equal(timers.size, 1); assert.equal(polls.size, 1);
+    assert.equal(timers.delete(timer), true); timer.callback();
+  }
+  const value = await work;
   assert.equal(calls, 3); assert.equal(value.projects.length, 1);
-  assert.ok(Date.now() - start >= 1000, "backoffs are 250ms then 750ms");
+  assert.deepEqual(delays, [250, 750]);
+  assert.equal(timers.size, 0); assert.equal(polls.size, 0, "all pending-read intervals are cleared");
   assert.deepEqual(results(events).map(event => [event.attempt, event.phase, event.outcome]), [[1, "request", "retry"], [2, "body", "retry"], [3, "complete", "success"]]);
   assert.equal(events.filter(event => event.outcome === "start").length, calls);
   assert.equal(new Set(events.map(event => event.readId)).size, 1);
