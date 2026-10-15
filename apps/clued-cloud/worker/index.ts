@@ -19,7 +19,8 @@ import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } f
 import { createPdfExtractorCheckGate, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
 import { runStorageQueuedSweepScheduled } from "./storage-queued-dispatch";
 import { runStorageAccessDigestBackfillScheduled } from "./storage-access-digest-backfill";
-import { routeWebOrigin } from "./web-origin-routing.mjs";
+import { routeStorageOrigin, routeWebOrigin } from "./web-origin-routing.mjs";
+import { selectOAuthOrigin, OAuthOriginConfigurationError } from "./oauth-origin.mjs";
 
 /** One per isolate: caches the last check result and allows one check in flight (StorageNormalUse §4.5). */
 const pdfExtractorCheck = createPdfExtractorCheckGate();
@@ -89,6 +90,15 @@ const legacyWorker = {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const storageResponse = routeStorageOrigin(request, env);
+    if (storageResponse) return storageResponse;
+    try {
+      env = selectOAuthOrigin(request, env);
+    } catch (error) {
+      if (!(error instanceof OAuthOriginConfigurationError)) throw error;
+      return Response.json({ error: error.code }, { status: 503,
+        headers: { "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+    }
     const webResponse = await routeWebOrigin(request, env, (next) => legacyWorker.fetch(next, env, ctx));
     if (webResponse) return webResponse;
     if (delegatedOAuthEnabled(env)) {

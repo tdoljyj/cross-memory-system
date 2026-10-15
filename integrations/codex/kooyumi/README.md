@@ -24,15 +24,14 @@ the separate Skill only after that verification succeeds.
 
 ## Domain migration
 
-The URL intentionally remains `https://clued.pixelgrav.com/mcp` during connection
-recovery. The deployed new origin currently rejects `/mcp` and redirects OAuth
-discovery to the old issuer. Switching only this URL cannot migrate the OAuth
-resource or issuer.
+Version 1.0.3 targets `https://kooyumi.pixelgrav.com/mcp`. Install it after the
+matching Worker release has activated the new resource and independent issuer.
+The old origin retains its existing issuer and OAuth storage for existing
+connections. Its credentials do not authenticate the new resource; complete the
+normal host OAuth flow and protected-call verification for the new origin.
 
-After the new resource, issuer, callbacks and Connect have passed end-to-end
-verification, update `.mcp.json`, raise the plugin version and repeat protected
-call verification. Retire the old domain only after its remaining consumers have
-completed that migration.
+Retire the old domain only after the cloud registered app, callbacks and all
+remaining consumers have completed their migration and passed verification.
 
 This local package does not rename the cloud registered app or publish a public
 directory plugin. Those changes require their own verified updates.

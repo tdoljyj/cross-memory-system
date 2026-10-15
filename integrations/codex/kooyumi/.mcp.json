@@ -2,7 +2,7 @@
   "mcpServers": {
     "kooyumi": {
       "type": "http",
-      "url": "https://clued.pixelgrav.com/mcp"
+      "url": "https://kooyumi.pixelgrav.com/mcp"
     }
   }
 }

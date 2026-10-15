@@ -18,6 +18,9 @@ export interface DelegatedOAuthEnv extends ContinuityEnv {
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_AUTHORIZATION_ISSUER_TOKEN?: string;
   OAUTH_KV?: KVNamespace;
+  KOOYUMI_OAUTH_ORIGIN?: string;
+  KOOYUMI_AUTHORIZATION_ISSUER_TOKEN?: string;
+  KOOYUMI_OAUTH_KV?: KVNamespace;
   OAUTH_PROVIDER?: OAuthHelpers;
 }
 // narrowed: false only on an access token whose scopes are the whole grant's

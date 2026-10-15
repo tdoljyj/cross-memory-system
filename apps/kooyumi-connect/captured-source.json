@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-10-15T10:15:30.543Z",
+  "source": {
+    "provider": "cloudflare-workers",
+    "account_id": "a55e803685ebe14666dfca2635cd9403",
+    "script_name": "clued-connect",
+    "download_endpoint": "/accounts/{account_id}/workers/scripts/{script_name}",
+    "version_id": "bfa41392-9890-45da-bb56-e49965edeb69",
+    "version_number": 23,
+    "revision": "0.2.13",
+    "deployment_id": "be4d748c-487c-4ce7-a76c-90c73db28c2b",
+    "script_etag": "163ecc72553ac275655ed7c9f3317e2048b8dbd471c795cb7a228077ff2f7abe",
+    "extracted_module_sha256": "fe2677bd4f9c34ad467aa47e121e78877487126ae97004d04bb0e1f9c2c581c3"
+  },
+  "candidate": {
+    "revision": "0.2.14",
+    "module_sha256": "5216046f1bcf7124d935a506238229086cde3423ee4ae4c5fb88696884076ed7"
+  },
+  "bindings": [
+    {
+      "type": "service",
+      "name": "CLUED_CLOUD_SERVICE",
+      "service": "clued-cloud",
+      "environment": "production"
+    },
+    {
+      "type": "kv_namespace",
+      "name": "CONNECT_KV",
+      "namespace_id": "8b09d570d5ee4825a986409bc638423b"
+    }
+  ]
+}

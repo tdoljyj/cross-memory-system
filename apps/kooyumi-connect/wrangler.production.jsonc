@@ -1,0 +1,20 @@
+{
+  "name": "clued-connect",
+  "main": "./worker.mjs",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": [],
+  "vars": {
+    "KOOYUMI_UPSTREAM_ORIGIN": "https://kooyumi.pixelgrav.com"
+  },
+  "kv_namespaces": [
+    { "binding": "CONNECT_KV", "id": "8b09d570d5ee4825a986409bc638423b" }
+  ],
+  "services": [
+    { "binding": "CLUED_CLOUD_SERVICE", "service": "clued-cloud", "environment": "production" }
+  ],
+  "routes": [
+    { "pattern": "kooyumi.pixelgrav.com/connect*", "zone_id": "34fb613386b90534b627f79a4c190bd3" },
+    { "pattern": "clued.pixelgrav.com/connect*", "zone_id": "34fb613386b90534b627f79a4c190bd3" },
+    { "pattern": "clued.pixelgrav.com/connect/*", "zone_id": "34fb613386b90534b627f79a4c190bd3" }
+  ]
+}
