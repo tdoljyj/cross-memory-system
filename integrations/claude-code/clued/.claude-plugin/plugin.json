@@ -1,12 +1,13 @@
 {
   "name": "clued",
-  "displayName": "Clued",
-  "description": "Clued for Claude Code (private trial): the Clued Skill and the Stop hook that reminds the agent to record outcomes in Clued and checkpoint. Uses your existing Clued connector; it does not add one.",
+  "displayName": "Kooyumi",
+  "description": "Kooyumi for Claude Code (private trial): the Kooyumi Skill and the Stop hook that reminds the agent to record outcomes in Kooyumi and checkpoint. Uses your existing Clued connector; it does not add one.",
   "author": {
-    "name": "Clued"
+    "name": "Kooyumi"
   },
   "repository": "https://github.com/tdoljyj/cross-memory-system",
   "keywords": [
+    "kooyumi",
     "clued",
     "memory",
     "continuity"
