@@ -1,5 +1,6 @@
 // Explicit independent Supabase project platform; no auth/role replacement.
 import assert from 'node:assert/strict';
+import {assertPgTransportProfile} from './clued-handover-external-pg-transport.mjs';
 
 export function platformDescriptor(p){
   assert.equal(p.platform_base,'supabase','UNSUPPORTED_PLATFORM_BASE');
@@ -8,13 +9,10 @@ export function platformDescriptor(p){
   assert.equal(p.supabase_project_name,'clued-handover-qualification');
   assert.equal(p.supabase_region,'ap-northeast-2');
   assert.equal(p.supabase_data_api_enabled,false);
-  assert.equal(p.database_transport,'direct-session-tls');
-  assert.equal(p.database_host,'db.'+p.supabase_project_ref+'.supabase.co');
-  assert.equal(p.database_name,'postgres');assert.equal(p.provisioner_role,'postgres');
-  assert.equal(p.database_port,5432);
+  assertPgTransportProfile(p);
   assert.equal(p.recovery_support,'UNSUPPORTED_STATE_CLOSURE_UNPROVEN');
   return {project_ref:p.supabase_project_ref,host:p.database_host,port:p.database_port,
-    database:p.database_name,transport:p.database_transport};
+    database:p.database_name,transport:p.database_transport,login:p.database_login,canonical_role:p.provisioner_role};
 }
 export function assertPlatformFacts(facts){
   assert.deepEqual(facts.roles,['anon','authenticated','authenticator','service_role']);
