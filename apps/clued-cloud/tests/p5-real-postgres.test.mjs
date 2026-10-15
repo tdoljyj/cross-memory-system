@@ -359,6 +359,31 @@ async function waitForDatabasePause(client, applicationName) {
   return false;
 }
 
+async function waitForDatabaseTimeAfter(client, timestamp) {
+  const deadline = performance.now() + 5000;
+  while (performance.now() < deadline) {
+    const passed = (await client.query(
+      'select clock_timestamp()>$1::timestamptz as passed', [timestamp])).rows[0].passed;
+    if (passed) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
+async function waitForDatabaseBlocker(client, waitingPid, blockingPid) {
+  const deadline = performance.now() + 5000;
+  while (performance.now() < deadline) {
+    const blocked = (await client.query(`select exists(
+      select 1 from pg_stat_activity
+       where pid=$1 and wait_event_type='Lock'
+         and $2::integer=any(pg_blocking_pids(pid))
+    ) as blocked`, [waitingPid, blockingPid])).rows[0].blocked;
+    if (blocked) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 async function treeDigest(root) {
   const entries = [];
   async function walk(dir) {
@@ -1544,33 +1569,64 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         idempotency_count: 1,
       });
 
-    // A Mutation may have locked the old row while it was still valid, then
-    // remain uncommitted until after expires_at. The retry's expiry UPDATE must
-    // wait; after commit it must re-evaluate the now-completed row and replay
-    // Idempotency instead of overwriting status or issuing another Attempt.
+    // Both RPCs use transaction time (now()) for expiry. Keep the Mutation's
+    // transaction time before expires_at and the new retry's after it, without
+    // a wall-clock TTL racing connection setup. The retry's expiry UPDATE must
+    // actually wait for the Mutation's row lock, then recheck the completed row
+    // and replay Idempotency instead of overwriting it or issuing an Attempt.
     const lockRaceInput = mutation(ownerCtx, IDS.recordAttemptExpiryLockRace, 1,
       'attempt-expiry-row-lock-race', 'lock-race-v2');
     const lockRaceAttempt = await rawRpc(owner, 'clued_p5_attempt_begin',
       [TOKENS.owner, lockRaceInput]);
-    await admin.query(`update public.clued_p5_gateway_attempts
-      set expires_at=now()+interval '200 milliseconds' where id=$1`, [lockRaceAttempt.attempt_id]);
     const lockingMutation = await clientFor(server, { faults: true });
     const lockRaceRetry = await clientFor(server, { faults: true });
     clients.push(lockingMutation, lockRaceRetry);
-    await lockingMutation.query('begin');
-    const uncommittedCanonicalResult = await rawRpc(lockingMutation, 'clued_p5_mutate',
-      [TOKENS.owner, lockRaceInput, lockRaceAttempt.attempt_id]);
-    equal(uncommittedCanonicalResult.status, 'committed');
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    const waitingRetryPromise = rawRpc(lockRaceRetry, 'clued_p5_attempt_begin',
-      [TOKENS.owner, lockRaceInput]);
-    const retryWaitedForLock = await Promise.race([
-      waitingRetryPromise.then(() => false),
-      new Promise((resolve) => setTimeout(() => resolve(true), 100)),
-    ]);
-    equal(retryWaitedForLock, true, 'expired transition waits for the Mutation row lock');
-    await lockingMutation.query('commit');
-    const lockRaceReplay = await waitingRetryPromise;
+    let mutationOpen = false;
+    let retryOpen = false;
+    let waitingRetryPromise;
+    let uncommittedCanonicalResult;
+    let lockRaceReplay;
+    let retryWaitedForLock;
+    try {
+      await lockingMutation.query('begin');
+      mutationOpen = true;
+      const mutationClock = (await lockingMutation.query(
+        'select now()::text as started_at,pg_backend_pid() as pid')).rows[0];
+      const expiry = (await admin.query(`update public.clued_p5_gateway_attempts
+        set expires_at=$2::timestamptz+interval '1 microsecond' where id=$1
+        returning expires_at::text as expires_at,expires_at>$2::timestamptz as valid_for_mutation`,
+      [lockRaceAttempt.attempt_id, mutationClock.started_at])).rows[0];
+      equal(expiry.valid_for_mutation, true);
+      uncommittedCanonicalResult = await rawRpc(lockingMutation, 'clued_p5_mutate',
+        [TOKENS.owner, lockRaceInput, lockRaceAttempt.attempt_id]);
+      equal(uncommittedCanonicalResult.status, 'committed',
+        JSON.stringify(uncommittedCanonicalResult));
+      equal(await waitForDatabaseTimeAfter(admin, expiry.expires_at), true,
+        'database wall clock has passed the Attempt expiry');
+
+      await lockRaceRetry.query('begin');
+      retryOpen = true;
+      const retryClock = (await lockRaceRetry.query(`select pg_backend_pid() as pid,
+        now()>$1::timestamptz as expired_for_retry`, [expiry.expires_at])).rows[0];
+      equal(retryClock.expired_for_retry, true,
+        'retry transaction time is after the Attempt expiry');
+      waitingRetryPromise = rawRpc(lockRaceRetry, 'clued_p5_attempt_begin',
+        [TOKENS.owner, lockRaceInput]);
+      // Observe rejection in cleanup too if the lock assertion fails first.
+      waitingRetryPromise.catch(() => {});
+      retryWaitedForLock = await waitForDatabaseBlocker(
+        admin, retryClock.pid, mutationClock.pid);
+      equal(retryWaitedForLock, true, 'expired transition waits for the Mutation row lock');
+      await lockingMutation.query('commit');
+      mutationOpen = false;
+      lockRaceReplay = await waitingRetryPromise;
+      await lockRaceRetry.query('commit');
+      retryOpen = false;
+    } finally {
+      if (mutationOpen) await lockingMutation.query('rollback');
+      if (waitingRetryPromise) await waitingRetryPromise.catch(() => {});
+      if (retryOpen) await lockRaceRetry.query('rollback');
+    }
     equal(lockRaceReplay.status, 'replayed');
     equal(lockRaceReplay.canonical_result, uncommittedCanonicalResult);
     const lockRaceAttemptRows = (await admin.query(`select id,status from public.clued_p5_gateway_attempts
