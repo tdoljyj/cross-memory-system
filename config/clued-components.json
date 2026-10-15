@@ -235,9 +235,10 @@
         "scripts/ci/clued-handover-external-pg-transport.mjs",
         "scripts/ci/clued-handover-external-pg-transport.test.mjs",
         "scripts/ci/clued-handover-external-provider.integration.test.mjs",
-        "scripts/ci/resources/supabase-official-prod-ca-2021.crt"
+        "scripts/ci/resources/supabase-official-prod-ca-2021.crt",
+        "apps/clued-cloud/tests/handover-external-ci.test.mjs"
       ],
-      "content_sha256": "2e9096f153b8f55f7eb8a5fdd5445dbcadc4f721c47f034acd16e919e81e3c3c",
+      "content_sha256": "5aababb5bf266153d8097ad60a553ddfbe3854ef500de8fedd18bd9c8e619ea6",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-driver.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -253,7 +254,7 @@
         "scripts/ci/clued-handover-external-source-check.mjs",
         "scripts/ci/clued-handover-external-source-pins.json"
       ],
-      "content_sha256": "e4e1f2003ea41020cf1e4bec125c8302c53ac3f8a877824dd7193686feebdf4c",
+      "content_sha256": "12f1a07fc577109ffa50ce9175a355027c3663334cef2e4f596a228790c18d7a",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-source-check.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"

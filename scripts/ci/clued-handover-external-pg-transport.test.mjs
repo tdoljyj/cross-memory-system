@@ -10,12 +10,18 @@ import {platformDescriptor} from './clued-handover-external-bootstrap.mjs';
 const sourceDir=path.dirname(fileURLToPath(import.meta.url));
 const uri='postgresql://postgres.qhddedibkuqoiiwlonwe:MOCK_ONLY_PASSWORD@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres';
 const row=database=>({rows:[{database,current_user:'postgres',session_user:'postgres'}]});
-test('composed public platform descriptor uses the new transport without granting qualification or early locator authority',()=>{
-  const profile=JSON.parse(fs.readFileSync(path.resolve(sourceDir,'../../config/clued-handover-external-profile.json'),'utf8'));
-  const descriptor=platformDescriptor(profile);assert.equal(descriptor.transport,'supabase-session-pooler-tls');
-  assert.equal(descriptor.login,'postgres.qhddedibkuqoiiwlonwe');assert.equal(descriptor.canonical_role,'postgres');
-  assert.equal(profile.qualified,false);for(const field of ['pr_number','head_sha','disposable_branch','idle_run_id'])assert.equal(profile[field],null);
-  assert.throws(()=>platformDescriptor({...profile,database_transport:'direct-session-tls'}));
+test('composed public platform descriptor preserves qualification and null early locators',()=>{
+  const current=JSON.parse(fs.readFileSync(path.resolve(sourceDir,'../../config/clued-handover-external-profile.json'),'utf8'));
+  const descriptors=[];
+  for(const profile of [{...current,qualified:false,runtime_authority:'none'},current]){
+    const before=structuredClone(profile),descriptor=platformDescriptor(profile);descriptors.push(descriptor);
+    assert.equal(descriptor.transport,'supabase-session-pooler-tls');
+    assert.equal(descriptor.login,'postgres.qhddedibkuqoiiwlonwe');assert.equal(descriptor.canonical_role,'postgres');
+    assert.deepEqual(profile,before);assert.equal(profile.qualified,before.qualified);
+    for(const field of ['pr_number','head_sha','disposable_branch','idle_run_id'])assert.equal(profile[field],null);
+    assert.throws(()=>platformDescriptor({...profile,database_transport:'direct-session-tls'}));
+  }
+  assert.deepEqual(descriptors[0],descriptors[1]);
 });
 test('fixed public profile separates alias login from canonical postgres role',()=>{
   assertPgTransportProfile({...FIXED_PG_TRANSPORT});

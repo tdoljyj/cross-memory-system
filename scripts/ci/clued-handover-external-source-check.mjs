@@ -33,6 +33,7 @@ export const REQUIRED_FILES=Object.freeze([
   'config/clued-handover-external-catalog.json',
   'scripts/ci/clued-handover-external-source-pins.json',
   'scripts/ci/fixtures/clued-handover-operator-registration.sql',
+  'apps/clued-cloud/tests/handover-external-ci.test.mjs',
   'apps/clued-cloud/package.json','apps/clued-cloud/package-lock.json',
   'apps/clued-cloud/tests/raw-binding-grants-fixture.mjs',
   'apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs',
