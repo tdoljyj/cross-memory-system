@@ -1,0 +1,44 @@
+{
+  "schema": "clued.bounded-manifest-directory-preflight.v1",
+  "authority_effect": "NONE",
+  "status": "PASS_DIRECTORY_NOISE_PREFLIGHT",
+  "actual_scanner_argv": [
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\gitleaks-8.30.1\\gitleaks.exe",
+    "dir",
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-943eb9-bounded-manifest-directory-preflight-r1",
+    "--config",
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-943eb9-config-snapshot.toml",
+    "--redact=100",
+    "--no-banner",
+    "--no-color",
+    "--log-level=error",
+    "--report-format=json",
+    "--report-path",
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-943eb9-bounded-manifest-directory-preflight-r1-redacted.json"
+  ],
+  "cwd": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner",
+  "start_utc": "2026-10-14T18:56:22.946214+00:00",
+  "end_utc": "2026-10-14T18:56:23.254579+00:00",
+  "exit_code": 0,
+  "findings_count": 0,
+  "candidate_manifest": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\pr818-943eb9-scanner-result-bounded-manifest-r1.json",
+    "sha256": "de68269e308c1fa1394d7998765e0881b0322c87a4d6cbe97e168bff7f0f1c91",
+    "scan_copy_exact_bytes": true
+  },
+  "official_scanner": {
+    "version": "8.30.1",
+    "sha256": "17157e2ee8b76fc8b1d8bee607a250e34b8a8023c8bc81822d4b5ee4d78fcb7c",
+    "redact": 100
+  },
+  "pinned_complete_config_sha256": "c8d78643a3e5fb112e20448305a825a1bcaa23bf14c9f57fb69ae271ece0fa2a",
+  "redacted_scan_report": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-943eb9-bounded-manifest-directory-preflight-r1-redacted.json",
+    "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+  },
+  "log": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-943eb9-bounded-manifest-directory-preflight-r1.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "qualification": "Candidate manifest bytes only; original full failure preserved; not final new-head or CI or policy code review; no Repo mutation"
+}

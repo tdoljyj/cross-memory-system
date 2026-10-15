@@ -1,0 +1,91 @@
+{
+  "schema": "clued.last-source-zero-safe-repair-artifacts.v1",
+  "revision": "r6",
+  "files": [
+    {
+      "path": "supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8"
+    },
+    {
+      "path": "tests/all-contexts-authorization-db.test.mjs",
+      "sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35"
+    },
+    {
+      "path": "tests/authorization-roles-db.test.mjs",
+      "sha256": "3398b5f558e7bc3f8b7d76dafa02a3f76af76450fe0384558ccc69aeaa60e2e7"
+    },
+    {
+      "path": "tests/connection-permission-request-db.test.mjs",
+      "sha256": "14b90bf8de5c70d8e14bd84043aa2568ff117b0df438eb6318eac9fe5e8ee179"
+    },
+    {
+      "path": "tests/authorization-closeout.test.mjs",
+      "sha256": "3485c6c437daade50ff774853588d4e8442efe9017c56f4f2ce4c03160a66f3c"
+    },
+    {
+      "path": "tests/k-cont-db.test.mjs",
+      "sha256": "ba3535f24c60d6dd2ac10950ac528f9e5031b808edf6c35c504c3de35c39d3b7"
+    },
+    {
+      "path": "tests/owner-grants-db.test.mjs",
+      "sha256": "b9300b0556e508fa4bb8ebf536c3d89e63a9d3ada382bfdc27f1564f44a46076"
+    },
+    {
+      "path": "tests/owner-grants-admission-door-db.case.mjs",
+      "sha256": "4c6e8d461da6ff8004400878d35bab040ae46e91639f1e0d8c1a07a5bb103e1c"
+    },
+    {
+      "path": "tests/owner-grants-release-door-db.test.mjs",
+      "sha256": "7f9189df6607de3b4374d15de0bafd8ce0e93f69a45a128ad6c8168bf869f92d"
+    },
+    {
+      "path": "tests/owner-grants-scope-db.test.mjs",
+      "sha256": "21a63381df4c53407d37cd00c1dbc70b8a5865c9e880c01586353a6c357309f2"
+    },
+    {
+      "path": "tests/owner-request-bundles-db.test.mjs",
+      "sha256": "f545d69ba2a35853b1af054a7132142c3915cbf016afc4959db5579e1e6d5c64"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-safe-repair-r6.json",
+      "sha256": "795803c9eb3492c04464543749a811fb5e4c63af2a8a44e3283841ff930b03a9"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r6-source.sql",
+      "sha256": "b78cb49134f2788c3f1fbc7438c4647a8e89cdcedf3519d540305d1105b845b8",
+      "kind": "frozen_review_bytes_not_a_standalone_runner"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r6-test.mjs",
+      "sha256": "3b010d988881658c35385fc196045641af3771191c4ca38016f8d615df98fc35",
+      "kind": "frozen_review_bytes_not_a_standalone_runner"
+    }
+  ],
+  "readonly_serialization": {
+    "path": "supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+    "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+    "unchanged": true
+  },
+  "runs": [
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r6-candidate-run.json",
+      "sha256": "1e581cac67f7559d8ddf0cbe8014baf27b433e63fd175eab953ff8addb680c63"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r6-candidate2-run.json",
+      "sha256": "59a98f448bb36529ce3a4918c394dbb4ad883e817d5d78d6f027af309010f6eb"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r6-candidate3-run.json",
+      "sha256": "b3ce48dd51c67dac710307dbaf349a356b2eee7a8a229fd1aa9f5eaf05f390b9"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r6-qualification-run.json",
+      "sha256": "c50448ea41c53239eaa1566aff9e77e968898dc3e2d2da6b1fcb9145926f744e"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/ui-acceptance/last-source-zero-repair-r6-compat-run.json",
+      "sha256": "b09f3c45e6eefa50401d3e3d2893f28472a18c45083ea539e3b20c0f03d550c4"
+    }
+  ]
+}

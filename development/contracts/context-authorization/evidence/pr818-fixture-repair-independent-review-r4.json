@@ -1,0 +1,130 @@
+{
+  "schema": "clued.pr818-fixture-repair-independent-review.v4",
+  "reviewer": "/root/authorization_alias_review",
+  "reviewer_independence": {
+    "fixture_author": false,
+    "source_author": false,
+    "source_or_test_edits": 0,
+    "postgres_runs": 0,
+    "ci_runs": 0,
+    "clued_writes": 0
+  },
+  "verdict": "PASS",
+  "severity_counts": {
+    "blocker": 0,
+    "major": 0,
+    "minor": 0
+  },
+  "review_scope": "Metadata-only closure of F3-E01, with independent re-hash of unchanged tested fixtures, Source and raw logs. The complete seven-file code/evidence review remains the preserved r3 subject; no tests were rerun or claimed newly executed.",
+  "previous_review": {
+    "path": "work/eight_implementation/ui-acceptance/pr818-fixture-repair-independent-review-r3.json",
+    "sha256": "f41d535c8e85b285ec0f9c7fab67f1998d3c80a9a07c570c3a35db02ce412b3d",
+    "verdict": "CHANGES_REQUIRED",
+    "finding": "F3-E01",
+    "preserved": true
+  },
+  "subject": {
+    "checkout_head": "c9158c9046af7cd14e1a6d03ec2c4d8843ffc4ea",
+    "qualification": "Exact uncommitted closing fixture bytes; not the current CI head or a production release.",
+    "files": [
+      {
+        "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+        "sha256": "e8ce500ddcf0aed8df86025264695eae076bdd1f5701bce0d23e34bf8a022e6a"
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprint-organization-db.test.mjs",
+        "sha256": "9560a84bdf5534fe91b36c2c4860b0b517a2192104c7aa664fc7f588e756a15b"
+      },
+      {
+        "path": "apps/clued-cloud/tests/imprint-development-organization-db.test.mjs",
+        "sha256": "47de32b018653eed6bc9f6264e655e69b0b307fc486e9db8b6a11e849b568e5b"
+      },
+      {
+        "path": "apps/clued-cloud/tests/task-owner-detail-db.test.mjs",
+        "sha256": "449a91716394b918505b2e514dae1e18123024515305460bed0fb569808bac00"
+      },
+      {
+        "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+        "sha256": "fe9b8869d696a528a8ac5905256b70580f7c65fa32dd31e8dc1e38332aa116bd"
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-context-db.test.mjs",
+        "sha256": "c76bbb253a67ebf519be02e6f94a641a1c1295e77ad4bb766f54579421cda2e2"
+      },
+      {
+        "path": "apps/clued-cloud/tests/information-flow-invalidation-db.test.mjs",
+        "sha256": "bd7a93cc99e4cdac3f4dfcfbf1c55ad1fafb4bad852613015ffd3e7a3480bfa2"
+      }
+    ],
+    "unchanged_source_files": [
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+      },
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+        "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+      },
+      {
+        "path": "apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs",
+        "sha256": "be9bc28c94ee2003ba3d48767ea5a9093fb73b17e8f1d21f764afa18c69f283a"
+      }
+    ]
+  },
+  "corrected_evidence": {
+    "path": "work/eight_implementation/ui-acceptance/all-contexts-fixture-five-final-manifest.json",
+    "sha256": "52ddf706549a5e43723aedfb34b074a1949a1e386673a3ab19a589983fe76ee5",
+    "before": {
+      "path": "work/eight_implementation/ui-acceptance/all-contexts-fixture-five-final-manifest-before-evidence-correction.json",
+      "sha256": "ff4c4c2cd6b9b280fe62385c6c3551d619d0aca77767c2b8b92ed29652b60b13",
+      "preserved": true
+    },
+    "change_boundary": "Exactly one validation-array statement changed. Parsed JSON outside the validation array is identical; all other validation statements are identical.",
+    "verified_statement": "Inert FK-only Bindings start with no Authorization/development grant and no full-authority fixture adapter was added. Development Imprint retains its pre-existing restricted filter-only development grant (EXISTING_ONLY/FIXED_AT_GRANT/public/read/1h), with no new auth/raw/full grant and still no Authorization. Task-detail holder Bindings retain no grant."
+  },
+  "unchanged_raw_logs": [
+    {
+      "path": "work/eight_implementation/ui-acceptance/s4-source-reduction-full-test.log",
+      "sha256": "f4445e4ca0d941e904fe84acfde5144a112dda76fb60e3d2faeb7bbf6c095b9c"
+    },
+    {
+      "path": "work/eight_implementation/ui-acceptance/s5-source-reduction-full-test.log",
+      "sha256": "8e8809ddc4466c1f6441426c303ef2d2e333a40e3515dd11b8982d011d7dee3e"
+    },
+    {
+      "path": "work/eight_implementation/ui-acceptance/all-contexts-fixture-five-initial-test.log",
+      "sha256": "1b89fbf8db8a8be6ed5b69034e70f16df86d698abd4438d19ec84db0953f6080"
+    }
+  ],
+  "prior_finding_closed": [
+    {
+      "id": "F3-E01",
+      "severity_before": "minor",
+      "status": "CLOSED",
+      "reason": "Corrected wording distinguishes initial zero-grant assertions from the preserved original constrained filter-only grant and from the continued absence of any authenticated Authorization/new broad fixture authority. It now matches the reviewed c915/current code and actual evidence.",
+      "code_or_test_change_required": false,
+      "retest_required": false
+    }
+  ],
+  "retained_qualification": {
+    "code_verdict": "PASS from exact r3 reviewed bytes, independently re-hashed unchanged here",
+    "actual_prior_results": {
+      "commands": 3,
+      "files": 7,
+      "parents": 8,
+      "tests": 65,
+      "pass": 65,
+      "fail": 0,
+      "skip": 0,
+      "cancelled": 0
+    },
+    "new_test_runs": 0,
+    "timestamp_boundary": "No per-parent absolute timestamps invented; previous manifests continue to bind the original execution windows."
+  },
+  "limits": [
+    "PASS covers this exact seven-fixture repair and its corrected local evidence only.",
+    "Original r3 failure and original manifest are preserved; neither was overwritten or re-labeled as PASS.",
+    "No CI admission/completion, merge, production release, same-Binding Native consent upgrade, real page eight-view acceptance or Stage 3 completion is claimed.",
+    "Any later fixture/Source/evidence byte change invalidates the affected qualification."
+  ]
+}

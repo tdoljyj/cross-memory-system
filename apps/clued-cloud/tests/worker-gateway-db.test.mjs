@@ -8,7 +8,10 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CLOSEOUT_MIGRATION, WORKER_SIGNATURES, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
+import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, CLOSEOUT_MIGRATION, WORKER_SIGNATURES,
+  assertAuthorizationSuccessorBoundary, assertGatewayCloseoutBoundary, snapshotAuthorizationCallerBoundary,
+  snapshotCallerCatalog, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 // C1 phase 1, Task 9a4d6d2c, Decision 818a9b05: an additive transport role.
 // Preserve the C1 historical assertions, then exercise the actual stage-2 migration.
@@ -411,9 +414,9 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         await assert.rejects(caller.query('select public.test_worker_gateway_role_probe()'), error => error.code === '42501');
       }
     });
-    await t.test('the full current migration chain closes anon RPCs and preserves Native/P5 definitions and ACL', async () => {
+    await t.test('the bounded transition chain closes anon RPCs and preserves Native/P5 definitions and ACL', async () => {
       await migrator.query('drop function public.test_worker_gateway_role_probe()');
-      for (const name of migrations.filter(n => n > MIGRATION && n !== CLOSEOUT_MIGRATION)) {
+      for (const name of migrations.filter(n => n > MIGRATION && n < CLOSEOUT_MIGRATION)) {
         try {
           const laterSql=await fs.readFile(path.join(root,'supabase/migrations',name),'utf8');
           if(name===CLOCK_MIGRATION) await applyClockFixtureCapability(admin,migrator,caller,laterSql);
@@ -438,9 +441,11 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
       await assertGatewayCloseoutBoundary(admin);
     });
 
-    const stage2Proof=hex(),stage2Project=crypto.randomUUID();
+    const stage2Proof=hex(),stage2Project=crypto.randomUUID(),stage2OtherProject=crypto.randomUUID();
     await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)
       values($1,$2,'Gateway stage 2','gateway stage 2',$3,'confirmed',now())`,[stage2Project,user,'project:'+stage2Project]);
+    await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)
+      values($1,$2,'Gateway stage 2 other','gateway stage 2 other',$3,'confirmed',now())`,[stage2OtherProject,user,'project:'+stage2OtherProject]);
     await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
       values($1,'test','stage-2 synthetic Binding',$2,array['context:read'],array['*'])`,[user,stage2Proof]);
     const gate=()=>caller.query('select public.clued_mcp_currentness_g6_gate($1,$2::jsonb) value',[stage2Proof,JSON.stringify({project_id:stage2Project})]);
@@ -483,6 +488,79 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         assert.deepEqual(await snapshotCallerCatalog(admin),before);
       } finally {await migrator.query('drop function public.clued_test_unknown_closeout()');}
       await migrator.query(closeout);
+      await assertGatewayCloseoutBoundary(admin);
+    });
+    await t.test('the authorization pair preserves exact caller identities and boundaries after all independent successors are installed',async()=>{
+      // Install accepted independent successors before measuring the authorization pair.
+      // Their Native RPC additions must be in the exact baseline, not ignored by it.
+      for (const name of migrations.filter(n=>n>CLOSEOUT_MIGRATION&&!AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(n))) {
+        try {
+          const laterSql=await fs.readFile(path.join(root,'supabase/migrations',name),'utf8');
+          if(name===CLOCK_MIGRATION) await applyClockFixtureCapability(admin,migrator,caller,laterSql);
+          else await migrator.query(laterSql);
+        } catch(error) { throw new Error(`Later migration ${name}: ${error.message}`,{cause:error}); }
+      }
+      const authorizationBefore=await snapshotAuthorizationCallerBoundary(admin);
+      for (const name of AUTHORIZATION_SUCCESSOR_MIGRATIONS) {
+        assert.ok(migrations.includes(name),'the exact authorization successor file is present: '+name);
+        await migrator.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));
+      }
+      await assertAuthorizationSuccessorBoundary(admin,authorizationBefore);
+    });
+    await t.test('Native sources_v1 reduction rejects the observed old flat protocol, enforces CAS and preserves untargeted consent',async()=>{
+      await allowTestIssuerCredentials(admin);
+      const human=server.getPgClient();clients.push(human);await human.connect();
+      await human.query('set role authenticated');
+      await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+        [user,JSON.stringify({sub:user,role:'authenticated',session_id:'gateway-source-db',aal:'aal1',
+          amr:[{method:'password',timestamp:Math.floor(Date.now()/1000)-30}]})]);
+      const issuer=hex(),resource='https://gateway-source.example.invalid/mcp';
+      await admin.query(`insert into clued_private.authorization_issuers_v12(token_hash,resource,name)
+        values($1,$2,'Gateway sources protocol fixture')`,[issuer,resource]);
+      const pa='project:'+stage2Project,pb='project:'+stage2OtherProject;
+      const selected=[pa,pb].map(resource_id=>({resource_kind:'scope',resource_id,environment:'canonical',actions:['read','write']}));
+      const prepared=(await human.query('select public.clued_authorization_prepare_v12($1,$2::jsonb) value',
+        [issuer,JSON.stringify({request_digest:hex(),client_id:'gateway-source',client_name:'Gateway source fixture',
+          redirect_uri:'https://gateway-source.example.invalid/cb',resource,requested_scopes:['context:read','context:write']})])).rows[0].value;
+      const proof=hex();
+      const approval=(await human.query('select public.clued_authorization_approve_v12($1,$2,$3,$4::jsonb,$5,$6) value',
+        [issuer,prepared.request_id,prepared.version,JSON.stringify(selected),proof,new Date(Date.now()+3600000).toISOString()])).rows[0].value;
+      const manage=async input=>(await human.query('select public.clued_authorization_manage_v12($1::jsonb) value',[JSON.stringify(input)])).rows[0].value;
+      const view=async()=> (await manage({op:'list'})).bindings.find(b=>b.binding_id===approval.binding_id);
+      const current=await view();
+      assert.equal(current.selection_format,'sources_v1');
+      const exactSource=resourceId=>current.sources.filter(s=>s.kind==='direct'&&s.contributions.length===1
+        &&s.contributions[0].resource_kind==='scope'&&s.contributions[0].resource_id===resourceId
+        &&s.contributions[0].environment==='canonical');
+      assert.equal(exactSource(pa).length,1);assert.equal(exactSource(pb).length,1);
+      const [sourceA]=exactSource(pa),[sourceB]=exactSource(pb);
+      const worker=server.getPgClient();clients.push(worker);await worker.connect();
+      const read=project_id=>workerGatewayRpc(worker,'clued_record_list',proof,{level:'project',project_id,record_type:'note'});
+      await read(stage2Project);await read(stage2OtherProject);
+      const before=await view();
+      await assert.rejects(manage({op:'reduce',binding_id:approval.binding_id,base_version:current.version,selected:[selected[0]]}),
+        e=>e.code==='22023'&&e.message==='authorization_source_selection_required_sources_v1');
+      assert.deepEqual(await view(),before,'rejected legacy protocol changes no authorization, source or grant DTO');
+      const reduction={op:'reduce',binding_id:approval.binding_id,base_version:current.version,selection_format:'sources_v1',
+        sources:[{source_id:sourceB.source_id,base_version:sourceB.version,action_cap:[]}],exceptions:[]};
+      await assert.rejects(manage({...reduction,base_version:Number(current.version)+1}),
+        e=>e.code==='40001'&&e.message==='authorization_version_conflict');
+      await assert.rejects(manage({...reduction,sources:[{...reduction.sources[0],base_version:Number(sourceB.version)+1}]}),
+        e=>e.code==='40001'&&e.message==='authorization_source_version_conflict');
+      assert.deepEqual(await view(),before,'both failed CAS attempts leave the full DTO unchanged');
+      const reduced=await manage(reduction);
+      assert.equal(reduced.binding_id,approval.binding_id);
+      assert.equal(Number(reduced.version),Number(current.version)+1);
+      assert.deepEqual(reduced.selected.map(r=>r.resource_id),[pa]);
+      const after=await view();
+      assert.deepEqual(after.sources.find(s=>s.source_id===sourceA.source_id),sourceA,'the unsubmitted source remains byte-for-byte unchanged');
+      assert.equal(after.sources.some(s=>s.source_id===sourceB.source_id),false,'the named source is revoked');
+      assert.deepEqual(after.overrides,current.overrides,'source reduction invents no resource override');
+      await read(stage2Project);
+      await assert.rejects(read(stage2OtherProject),e=>e.code==='42501'&&/binding_not_authorized|resource_action_not_authorized/.test(e.message));
+      await assert.rejects(manage(reduction),e=>e.code==='40001'&&e.message==='authorization_version_conflict');
+      await manage({op:'revoke',binding_id:approval.binding_id,base_version:after.version});
+      await assert.rejects(read(stage2Project),e=>e.code==='42501'&&e.message==='binding_not_authorized');
       await assertGatewayCloseoutBoundary(admin);
     });
   } catch (error) {

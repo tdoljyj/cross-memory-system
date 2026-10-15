@@ -1,0 +1,347 @@
+{
+  "schema": "clued.last-source-zero-reproduction.v1",
+  "started_at": "2026-10-14T11:31:33.230Z",
+  "ended_at": "2026-10-14T11:31:39.329Z",
+  "runtime": "v24.19.0",
+  "migrations": 251,
+  "subject_before": [
+    {
+      "path": "supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+    },
+    {
+      "path": "tests/worker-gateway-caller-fixture.mjs",
+      "sha256": "be9bc28c94ee2003ba3d48767ea5a9093fb73b17e8f1d21f764afa18c69f283a"
+    }
+  ],
+  "subject_after": [
+    {
+      "path": "supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+    },
+    {
+      "path": "tests/worker-gateway-caller-fixture.mjs",
+      "sha256": "be9bc28c94ee2003ba3d48767ea5a9093fb73b17e8f1d21f764afa18c69f283a"
+    }
+  ],
+  "selected_resource": [
+    {
+      "resource_kind": "scope",
+      "resource_id": "global",
+      "environment": "canonical",
+      "actions": [
+        "read"
+      ]
+    }
+  ],
+  "native_protocol": "sources_v1",
+  "original_authorization_version": 1,
+  "legitimate_request": {
+    "op": "reduce",
+    "binding_id": "b19ebd96-f5aa-4d05-a9a0-8cb8c5f754a5",
+    "base_version": 1,
+    "selection_format": "sources_v1",
+    "sources": [
+      {
+        "source_id": "a219bebe-b2ea-41a6-a763-421a80ce01f2",
+        "base_version": 1,
+        "action_cap": []
+      }
+    ],
+    "exceptions": []
+  },
+  "live_sources_before": [
+    {
+      "source_id": "a219bebe-b2ea-41a6-a763-421a80ce01f2",
+      "version": 1,
+      "kind": "direct",
+      "actions": [
+        "read"
+      ],
+      "contributions": [
+        {
+          "actions": [
+            "read"
+          ],
+          "environment": "canonical",
+          "resource_id": "global",
+          "resource_kind": "scope",
+          "qualification_id": null
+        }
+      ]
+    }
+  ],
+  "actual_response": null,
+  "actual_error": {
+    "code": "23514",
+    "message": "new row for relation \"clued_agent_bindings\" violates check constraint \"clued_agent_bindings_scopes_check\"",
+    "constraint": "clued_agent_bindings_scopes_check",
+    "schema": "public",
+    "table": "clued_agent_bindings"
+  },
+  "snapshot_before_sha256": "bd14ebc381b5795eac904be527931f5afee47095233ea2f22f1a58bde67f7e82",
+  "snapshot_after_sha256": "bd14ebc381b5795eac904be527931f5afee47095233ea2f22f1a58bde67f7e82",
+  "snapshot_tables": [
+    "binding",
+    "authorization",
+    "source_mode",
+    "sources",
+    "contributions",
+    "overrides",
+    "entries",
+    "grants",
+    "authorization_audit",
+    "receipts",
+    "events"
+  ],
+  "complete_rollback": true,
+  "native_full_dto_unchanged": true,
+  "constraints_before": [
+    {
+      "conname": "clued_agent_bindings_agent_name_check",
+      "convalidated": true,
+      "definition": "CHECK (((char_length(agent_name) >= 1) AND (char_length(agent_name) <= 80)))"
+    },
+    {
+      "conname": "clued_agent_bindings_agent_name_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL agent_name"
+    },
+    {
+      "conname": "clued_agent_bindings_context_keys_check",
+      "convalidated": true,
+      "definition": "CHECK ((((cardinality(context_keys) >= 1) AND (cardinality(context_keys) <= 20)) AND (array_position(context_keys, NULL::text) IS NULL)))"
+    },
+    {
+      "conname": "clued_agent_bindings_context_keys_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL context_keys"
+    },
+    {
+      "conname": "clued_agent_bindings_created_at_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "conname": "clued_agent_bindings_id_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL id"
+    },
+    {
+      "conname": "clued_agent_bindings_oauth_client_id_check",
+      "convalidated": true,
+      "definition": "CHECK (((oauth_client_id IS NULL) OR ((char_length(oauth_client_id) >= 1) AND (char_length(oauth_client_id) <= 255))))"
+    },
+    {
+      "conname": "clued_agent_bindings_organization_id_fkey",
+      "convalidated": true,
+      "definition": "FOREIGN KEY (organization_id) REFERENCES clued_organizations(id) ON DELETE RESTRICT"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_actor_check",
+      "convalidated": false,
+      "definition": "CHECK (((actor_kind IS NULL) OR (actor_kind = ANY (ARRAY['user'::text, 'agent_binding'::text, 'service_account'::text, 'automation'::text])))) NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_role_check",
+      "convalidated": false,
+      "definition": "CHECK (((role IS NULL) OR (role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text, 'reader'::text, 'denied'::text])))) NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_shape_check",
+      "convalidated": false,
+      "definition": "CHECK (((organization_id IS NULL) OR ((workspace_id IS NOT NULL) AND (active_context_key IS NOT NULL) AND (role IS NOT NULL) AND (purpose IS NOT NULL) AND (policy_version > 0) AND (revocation_epoch > 0) AND (expires_at IS NOT NULL) AND (actor_kind IS NOT NULL)))) NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_workspace_fkey",
+      "convalidated": false,
+      "definition": "FOREIGN KEY (organization_id, workspace_id) REFERENCES clued_workspaces(organization_id, id) ON DELETE RESTRICT NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_pkey",
+      "convalidated": true,
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "conname": "clued_agent_bindings_scopes_check",
+      "convalidated": true,
+      "definition": "CHECK (((scopes <@ ARRAY['context:read'::text, 'context:write'::text, 'audit:read'::text, 'canonical:read'::text, 'canonical:write'::text, 'project:read'::text, 'project:write'::text]) AND (cardinality(scopes) > 0)))"
+    },
+    {
+      "conname": "clued_agent_bindings_scopes_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL scopes"
+    },
+    {
+      "conname": "clued_agent_bindings_token_hash_check",
+      "convalidated": true,
+      "definition": "CHECK ((token_hash ~ '^cv1:[0-9a-f]{64}$'::text))"
+    },
+    {
+      "conname": "clued_agent_bindings_token_hash_key",
+      "convalidated": true,
+      "definition": "UNIQUE (token_hash)"
+    },
+    {
+      "conname": "clued_agent_bindings_token_hash_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL token_hash"
+    },
+    {
+      "conname": "clued_agent_bindings_user_id_fkey",
+      "convalidated": true,
+      "definition": "FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+    },
+    {
+      "conname": "clued_agent_bindings_user_id_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL user_id"
+    },
+    {
+      "conname": "clued_agent_bindings_vendor_check",
+      "convalidated": true,
+      "definition": "CHECK (((char_length(vendor) >= 1) AND (char_length(vendor) <= 40)))"
+    },
+    {
+      "conname": "clued_agent_bindings_vendor_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL vendor"
+    }
+  ],
+  "constraints_after": [
+    {
+      "conname": "clued_agent_bindings_agent_name_check",
+      "convalidated": true,
+      "definition": "CHECK (((char_length(agent_name) >= 1) AND (char_length(agent_name) <= 80)))"
+    },
+    {
+      "conname": "clued_agent_bindings_agent_name_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL agent_name"
+    },
+    {
+      "conname": "clued_agent_bindings_context_keys_check",
+      "convalidated": true,
+      "definition": "CHECK ((((cardinality(context_keys) >= 1) AND (cardinality(context_keys) <= 20)) AND (array_position(context_keys, NULL::text) IS NULL)))"
+    },
+    {
+      "conname": "clued_agent_bindings_context_keys_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL context_keys"
+    },
+    {
+      "conname": "clued_agent_bindings_created_at_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "conname": "clued_agent_bindings_id_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL id"
+    },
+    {
+      "conname": "clued_agent_bindings_oauth_client_id_check",
+      "convalidated": true,
+      "definition": "CHECK (((oauth_client_id IS NULL) OR ((char_length(oauth_client_id) >= 1) AND (char_length(oauth_client_id) <= 255))))"
+    },
+    {
+      "conname": "clued_agent_bindings_organization_id_fkey",
+      "convalidated": true,
+      "definition": "FOREIGN KEY (organization_id) REFERENCES clued_organizations(id) ON DELETE RESTRICT"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_actor_check",
+      "convalidated": false,
+      "definition": "CHECK (((actor_kind IS NULL) OR (actor_kind = ANY (ARRAY['user'::text, 'agent_binding'::text, 'service_account'::text, 'automation'::text])))) NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_role_check",
+      "convalidated": false,
+      "definition": "CHECK (((role IS NULL) OR (role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text, 'reader'::text, 'denied'::text])))) NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_shape_check",
+      "convalidated": false,
+      "definition": "CHECK (((organization_id IS NULL) OR ((workspace_id IS NOT NULL) AND (active_context_key IS NOT NULL) AND (role IS NOT NULL) AND (purpose IS NOT NULL) AND (policy_version > 0) AND (revocation_epoch > 0) AND (expires_at IS NOT NULL) AND (actor_kind IS NOT NULL)))) NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_p5_workspace_fkey",
+      "convalidated": false,
+      "definition": "FOREIGN KEY (organization_id, workspace_id) REFERENCES clued_workspaces(organization_id, id) ON DELETE RESTRICT NOT VALID"
+    },
+    {
+      "conname": "clued_agent_bindings_pkey",
+      "convalidated": true,
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "conname": "clued_agent_bindings_scopes_check",
+      "convalidated": true,
+      "definition": "CHECK (((scopes <@ ARRAY['context:read'::text, 'context:write'::text, 'audit:read'::text, 'canonical:read'::text, 'canonical:write'::text, 'project:read'::text, 'project:write'::text]) AND (cardinality(scopes) > 0)))"
+    },
+    {
+      "conname": "clued_agent_bindings_scopes_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL scopes"
+    },
+    {
+      "conname": "clued_agent_bindings_token_hash_check",
+      "convalidated": true,
+      "definition": "CHECK ((token_hash ~ '^cv1:[0-9a-f]{64}$'::text))"
+    },
+    {
+      "conname": "clued_agent_bindings_token_hash_key",
+      "convalidated": true,
+      "definition": "UNIQUE (token_hash)"
+    },
+    {
+      "conname": "clued_agent_bindings_token_hash_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL token_hash"
+    },
+    {
+      "conname": "clued_agent_bindings_user_id_fkey",
+      "convalidated": true,
+      "definition": "FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+    },
+    {
+      "conname": "clued_agent_bindings_user_id_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL user_id"
+    },
+    {
+      "conname": "clued_agent_bindings_vendor_check",
+      "convalidated": true,
+      "definition": "CHECK (((char_length(vendor) >= 1) AND (char_length(vendor) <= 40)))"
+    },
+    {
+      "conname": "clued_agent_bindings_vendor_not_null",
+      "convalidated": true,
+      "definition": "NOT NULL vendor"
+    }
+  ],
+  "constraints_unchanged": true,
+  "mcp_before": {
+    "read_admitted": true,
+    "record_count": 0
+  },
+  "mcp_after": {
+    "read_admitted": true,
+    "record_count": 0,
+    "error": null
+  },
+  "classification": "LEGAL_LAST_SOURCE_REDUCTION_REJECTED_BY_BINDING_CHECK_WITH_FULL_ROLLBACK_AND_ORIGINAL_ACCESS_RETAINED",
+  "qualification": "ONE_DISPOSABLE_REAL_POSTGRES_NATIVE_BOUNDARY_REPRODUCTION_ONLY",
+  "no_source_test_constraint_or_timeout_edits": true,
+  "no_live_canonical_ci_or_production": true,
+  "process_closeout": "own PostgreSQL stopped; verified owned temporary directory removed",
+  "harness_exit_code": 0
+}

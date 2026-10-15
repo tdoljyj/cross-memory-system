@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import EmbeddedPostgres from "embedded-postgres";
 import test from "node:test";
-import { findGatewayCloseoutMigration, setWorkerGatewayCaller, assertGatewayCloseoutBoundary } from "./worker-gateway-caller-fixture.mjs";
+import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, snapshotCallerCatalog, findGatewayCloseoutMigration, setWorkerGatewayCaller, assertGatewayCloseoutBoundary } from "./worker-gateway-caller-fixture.mjs";
 
 async function freePort() {
   const server = net.createServer();
@@ -33,7 +33,7 @@ test("file-version diagnosis on the current full migration chain remains read-on
       "grant usage on schema auth,extensions to anon,authenticated,service_role; grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
     const migrationDir = path.join(process.cwd(), "supabase", "migrations");
     const closeout = await findGatewayCloseoutMigration(process.cwd());
-    for (const name of (await fs.readdir(migrationDir)).filter(name => name.endsWith(".sql") && name !== closeout).sort()) {
+    for (const name of (await fs.readdir(migrationDir)).filter(name => name.endsWith(".sql") && name !== closeout && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
       try { await admin.query(await fs.readFile(path.join(migrationDir, name), "utf8")); }
       catch (error) { throw new Error("Migration " + name + ": " + error.message, { cause: error }); }
     }
@@ -83,6 +83,19 @@ test("file-version diagnosis on the current full migration chain remains read-on
       await admin.query("update public.clued_memories set lifecycle_status='revoked' where id=$1", [fileDecision]);
       assert.deepEqual(await resolve(), { status: "denied", reason: "destination_mismatch" });
     });
+    await t.test("historical diagnosis closes with sealed G6 replay before current authorization successors", async () => {
+      const historicalCatalog = await snapshotCallerCatalog(admin);
+      await admin.query(await fs.readFile(path.join(migrationDir, closeout), "utf8"));
+      assert.deepEqual(await snapshotCallerCatalog(admin), historicalCatalog,
+        "actual sealed closeout replay preserves historical definitions and caller ACLs");
+      await assertGatewayCloseoutBoundary(admin);
+      const authorizationBefore = await snapshotAuthorizationCallerBoundary(admin);
+      for (const name of AUTHORIZATION_SUCCESSOR_MIGRATIONS) {
+        await admin.query(await fs.readFile(path.join(migrationDir, name), "utf8"));
+      }
+      await assertAuthorizationSuccessorBoundary(admin, authorizationBefore);
+    });
+
   } finally {
     if (caller) await caller.end().catch(() => {});
     if (admin) await admin.end().catch(() => {});

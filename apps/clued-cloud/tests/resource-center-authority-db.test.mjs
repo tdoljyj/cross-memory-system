@@ -41,7 +41,7 @@ import { testStorageConnections } from "./resource-center-storage-connections-db
 import { seedRefreshUpgrade, verifyRefreshUpgrade } from "./resource-center-refresh-upgrade-db.fixture.mjs";
 import { allowRawTestBindings } from "./raw-binding-grants-fixture.mjs";
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
-import { findGatewayCloseoutMigration, setWorkerGatewayCaller, workerGatewayRpc,
+import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, findGatewayCloseoutMigration, setWorkerGatewayCaller, workerGatewayRpc,
   snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const USER = "10000000-0000-4000-8000-000000000071";
@@ -64,6 +64,13 @@ async function qualifyCurrentCallers(t, admin, server, closeoutSql) {
     await admin.query(closeoutSql);
     assert.deepEqual(await snapshotCallerCatalog(admin), catalog);
     await assertGatewayCloseoutBoundary(admin);
+  });
+  await t.test("current authorization successors preserve actual OIDs, caller ACLs and early entrances", async () => {
+    const authorizationBefore = await snapshotAuthorizationCallerBoundary(admin);
+    for (const name of AUTHORIZATION_SUCCESSOR_MIGRATIONS) {
+      await admin.query(await fs.readFile(path.join(process.cwd(), "supabase", "migrations", name), "utf8"));
+    }
+    await assertAuthorizationSuccessorBoundary(admin, authorizationBefore);
   });
   const gateway = server.getPgClient(), native = server.getPgClient(), ci = server.getPgClient();
   await gateway.connect(); await native.connect(); await ci.connect();
@@ -181,7 +188,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     const closeout = await findGatewayCloseoutMigration(process.cwd());
     const closeoutSql = await fs.readFile(path.join(migrationDir, closeout), "utf8");
     let refreshUpgrade;
-    for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout).sort()) {
+    for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
       try {
         if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
         if (name === "20260927232454_resource_center_binding_expiry_compat_v1.sql" && bindingSchema === "production-no-legacy-expiry") {

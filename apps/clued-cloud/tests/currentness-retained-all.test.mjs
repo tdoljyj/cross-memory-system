@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { setWorkerGatewayCaller, workerGatewayRpc, CLOSEOUT_MIGRATION, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
+import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, setWorkerGatewayCaller, workerGatewayRpc, CLOSEOUT_MIGRATION, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -48,7 +48,7 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations')))
-      .filter((name) => name.endsWith('.sql') && name !== CLOSEOUT_MIGRATION).sort()) {
+      .filter((name) => name.endsWith('.sql') && name !== CLOSEOUT_MIGRATION && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
       // This matrix deliberately replays historical entrypoints. Apply the
       // formal closeout after that historical phase, then verify its replay.
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
@@ -1443,6 +1443,13 @@ test('Retained T-CUR currentness contracts: supplemental database matrix', { tim
     await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', closeoutMigration), 'utf8'));
     assert.deepEqual(await snapshotCallerCatalog(admin), closeoutBefore, 'formal closeout replay preserves definitions and caller ACLs');
     await assertGatewayCloseoutBoundary(admin);
+    // The unchanged closeout above seals all actual historical scenarios.
+    // The current pair has its own identity, caller ACL and early-entry proof.
+    const authorizationBefore = await snapshotAuthorizationCallerBoundary(admin);
+    for (const name of AUTHORIZATION_SUCCESSOR_MIGRATIONS) {
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+    }
+    await assertAuthorizationSuccessorBoundary(admin, authorizationBefore);
 
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

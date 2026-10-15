@@ -1,0 +1,384 @@
+{
+  "schema_version": 1,
+  "schema": "clued.last-source-zero-safe-repair-proposal.v4",
+  "kind": "read_only_security_and_product_repair_proposal",
+  "created_at_utc": "2026-10-14 11:54:24 UTC",
+  "subject": {
+    "files": [
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+      },
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+        "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58"
+      }
+    ],
+    "qualification": "Read-only proposal against exact frozen55ba/ce8 bytes. No proposed change is implemented or accepted by this record."
+  },
+  "reproduction": {
+    "path": "last-source-zero-reproduction-r4.json",
+    "sha256": "43c7092175f20a8ae62241dfa7d89791088082ee9a4fa7b2f085fb7dcaca589a",
+    "qualification": "ONE_DISPOSABLE_REAL_POSTGRES_NATIVE_BOUNDARY_REPRODUCTION_ONLY",
+    "actual_error": {
+      "code": "23514",
+      "message": "new row for relation \"clued_agent_bindings\" violates check constraint \"clued_agent_bindings_scopes_check\"",
+      "constraint": "clued_agent_bindings_scopes_check",
+      "schema": "public",
+      "table": "clued_agent_bindings"
+    },
+    "complete_rollback": true,
+    "native_dto_unchanged": true,
+    "constraints_unchanged": true,
+    "original_mcp_read_retained": true,
+    "conclusion": "合法最后Source action_cap=[]产生23514；不是已成功撤权。全部状态回滚，原MCP仍可读。应显式说明失败，不把失败显示为零权限成功。"
+  },
+  "recommendation": {
+    "option": "UNIFORM_CONTROLLED_ZERO_PROJECTION_REJECTION_WITH_EXPLICIT_BINDING_REVOKE",
+    "product": "清除最后授权必须明确撤销连接。普通收窄只在最终投影仍有合法权限时提交；Source或实际资格已经失效时拒绝创建/扩权/轮换并要求重新授权。",
+    "native_reduce_copy": "该操作会移除连接的最后一项权限。请使用“撤销连接”。本次修改未保存。",
+    "unavailable_copy": "此连接已无有效授权，无法继续。请重新授权。",
+    "distinction": "无印记/无返回内容不等于无权限；有效contexts:*策略仍可授权以后合格资源，不应仅因当前eligible列表/记录数为空自动撤销。",
+    "minimum_safe_change": "在中央rebuild两次scopes赋值前计算并验证非空候选；所有调用均得到明确业务拒绝并事务回滚，禁止fallback原scopes/sentinel/放宽CHECK。Native明确revoke使用既有B+Auth+Sources撤销路径。",
+    "release_condition": "此是最小修复候选，不是发布结论。必须证实Sourceexpiry与单资源变更的所有Scope-only旁路也失败关闭；若发现它们允许业务执行，选项1的错误映射本身不足，须扩大到对应执行门或停止发布。"
+  },
+  "options": [
+    {
+      "id": "1",
+      "name": "受控拒绝最后清零，要求明确Binding revoke",
+      "recommended": true,
+      "advantages": [
+        "不默默扩大撤销范围或改变reduce语义",
+        "保留原scopes非空CHECK和既有ACL/角色",
+        "一个中央策略覆盖全部rebuild调用",
+        "没有创建承载读写scopes的无权限活Binding"
+      ],
+      "limitations": [
+        "错误必须准确说明完整回滚，旧权限可能仍在，不能显示已保存",
+        "不能只在Native payload预判最后Source；例外/过期/资格消失/clone也须中央保护",
+        "系统过期的拒绝不能代替实际执行侧过期/Source资格校验"
+      ],
+      "required_checks": [
+        "旧状态完整回滚",
+        "明确Binding revoke真实拒绝旧token所有业务操作",
+        "每条rebuild和单资源路径无23514/无部分提交",
+        "过期/失去资格时Project/Integration等业务执行无旧Scope旁路"
+      ]
+    },
+    {
+      "id": "2",
+      "name": "保留可管理但无执行权限的连接",
+      "recommended": false,
+      "safe_wording": "连接记录保留；执行权限已停用。只有身份核对与明确撤销/重新授权的控制操作可用。",
+      "minimum_requirements": [
+        "独立的server-derived execution-disabled状态或等效Source-aware执行门，所有业务入口一致消费",
+        "b.scopes仅为历史同意/路由元数据；不得向调用者或Integration表示可执行权限",
+        "中央resolver/binding liveness、Integration authority/identity、Project/Context/record/audit/feedback/permission/Owner Grant/claim/Storage桥必须统一拒绝零有效授权",
+        "管理控制面保持精确target/Binding/Source CAS，重新启用必须新的Native同意，不能从legacy/raw fallback补权",
+        "无新Node角色/ACL授权，无'context:read'或'canonical:read'占位权限，无CHECK放松"
+      ],
+      "why_not_minimal": "现有Integration直接采用b.scopes和Auth live；现有schema不支持空scopes。只保留旧coarse读写或换一个允许scope当占位不能证明安全，修改面和角色/读写回归面明显超过中央业务拒绝。",
+      "classification": "Future explicit product/authorization-state design; do not implement as a one-line cached-scope fallback."
+    },
+    {
+      "id": "3",
+      "name": "明确选择清零即撤销连接",
+      "recommended": false,
+      "safe_variant": "仅用户在Native明确确认的“撤销连接”或显式on-empty revoke语义才能把零投影转成B/Auth/Sources统一revoked。保持原非空scopes作历史快照，由revoked状态拒绝执行。",
+      "advantages": [
+        "不需要允许空scopes",
+        "既有撤销检查能防Scope-only旁路"
+      ],
+      "limitations": [
+        "默认reduce不能静默成为完整Binding撤销",
+        "不能在generic rebuild不分caller把有效未来策略或暂时不可用资源自动永久撤销",
+        "若采用新on-empty字段，需新协议/预览/Receipt/错误映射及独立审核"
+      ],
+      "system_expiry": "真正Binding/Auth expiry沿现有expiry sweep撤B/Auth；只因Source或resource失效是否停用整个Binding需明确策略。不得用未知状态/清理失败恢复权限。"
+    }
+  ],
+  "executable_delta": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "function": "clued_private.authorization_rebuild_projection_v2(uuid)",
+      "lines": [
+        522,
+        528,
+        532,
+        535,
+        542,
+        543
+      ],
+      "instruction": "新增局部source_scopes/projected_scopes变量。先计算现有live Source.scope_ceiling union；空时在第一次scopes UPDATE前抛受控业务异常。候选非空时沿原实际物化路径；然后计算authorization_scope_union_v12(actual selection)，空时在第二次UPDATE前抛同类受控异常。保持Writer require、B/Auth锁、Project/Context原锁序、现有函数OID/signature/Owner/SD/search_path/ACL。",
+      "error_design": "Native reduce/exception零投影可统一22023 authorization_empty_projection_requires_binding_revoke；expired/ineligible caller可用更具体的authorization_no_effective_permissions/reauthorization_required。最终选定错误码须由协议确认，不能直接转换23514或吞异常返回成功。",
+      "qualification": "第一个guard是无live source/ceiling空分支；第二个guard覆盖Sources存在但资源/例外/资格投影为空。两处都必须处理。",
+      "pseudocode": [
+        "source_scopes := original live Source scope_ceiling aggregation;",
+        "if cardinality(source_scopes)=0 then raise controlled_no_permission_error; end if;",
+        "perform existing nonempty coarse staging and real per-resource projection;",
+        "projected_scopes := coalesce(authorization_scope_union_v12(authorization_selection_v12(binding)), '{}');",
+        "if cardinality(projected_scopes)=0 then raise controlled_no_permission_error; end if;",
+        "update Binding scopes=projected_scopes; -- nonempty only"
+      ]
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "function": "public.clued_authorization_manage_v12(jsonb)",
+      "lines": [
+        800,
+        814,
+        819,
+        821,
+        825
+      ],
+      "instruction": "保留reduce的Source/Binding CAS和原revoke路径。受控零投影异常须穿透或在真正子事务中转为明确rejected；不能返回成功DTO或在Exception后继续version/Receipt/audit提交。明确revoke继续原B/Auth/Sources同事务撤销。"
+    },
+    {
+      "path": "apps/clued-cloud/lib/context-authorization-controls.tsx",
+      "instruction": "识别选定业务拒绝码并显示本次未保存及明确撤销入口；不能偷偷补选read、悄悄调用revoke或用空响应乐观更新。具体预览/用户确认根据现有Native UI设计实现；此提案未编辑UI。"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "function": "single-resource projection and expiry consumers",
+      "lines": [
+        251,
+        268,
+        450,
+        516,
+        862,
+        898,
+        1475
+      ],
+      "instruction": "这些不经过完整rebuild，不能在安全论证里漏掉。保持单资源revoke/限制/Source expiry真正拒绝该资源；核对剩余b.scopes不会被Project/Integration等当授权。若需要额外统一finalizer/执行门，要重新证明锁序与调用顺序，不在持C/P锁后才获取Owner/B。"
+    }
+  ],
+  "call_surface": [
+    {
+      "name": "Native ordinary approve/headless create/legacy flat replace",
+      "chain": [
+        "authorization_replace_entries_v12:232",
+        "authorization_add_selection_v2:209",
+        "rebuild_projection"
+      ],
+      "zero_causes": [
+        "直接资源失效/无资格",
+        "expired authorization/source",
+        "动作与scope_ceiling不相交"
+      ],
+      "handling": "中央两处guard，失败完整回滚；不把legacy flat改成sources_v1。"
+    },
+    {
+      "name": "Native sources_v1 reduce",
+      "chain": [
+        "authorization_manage_v12:814",
+        "authorization_reduce_sources_v2:735-736,780",
+        "rebuild_projection"
+      ],
+      "zero_causes": [
+        "最后全部Source空action cap"
+      ],
+      "handling": "明确requires Binding revoke；保持A/B Source独立CAS；部分收窄仍成功。"
+    },
+    {
+      "name": "Native precise exceptions",
+      "chain": [
+        "authorization_reduce_sources_v2:738-780",
+        "rebuild_projection"
+      ],
+      "zero_causes": [
+        "denied_actions覆盖全部当前direct权限",
+        "allowed_ceiling=[]使所有贡献无效"
+      ],
+      "handling": "同中央zero规则；不能只按live Source数量预测，不清旧限制或伪造新资格。"
+    },
+    {
+      "name": "Connection permission extension",
+      "chain": [
+        "connection_permission_apply_v1:956,980",
+        "authorization_add_selection_v2:209",
+        "rebuild_projection"
+      ],
+      "zero_causes": [
+        "旧来源过期，新增选择无可执行资格"
+      ],
+      "handling": "同中央拒绝；Owner Grant consume/Receipt/版本必须一起回滚，不能消费授权后投影失败。"
+    },
+    {
+      "name": "Old project:* explicit legacy materialization",
+      "chain": [
+        "authorization_all_projects_expand_v1:238-248",
+        "rebuild_projection"
+      ],
+      "zero_causes": [
+        "仅源失效/没有有效宏或实际贡献"
+      ],
+      "handling": "中央拒绝；activate=false、历史/动作/期限/fields不扩大。"
+    },
+    {
+      "name": "Headless rotation/adoption clone",
+      "chain": [
+        "authorization_clone_sources_v2:1140-1181",
+        "headless confirm patches:1255,1260",
+        "rebuild_projection(new Binding)"
+      ],
+      "zero_causes": [
+        "所有克隆Source已过期/撤销",
+        "完整保留exceptions后无有效资源"
+      ],
+      "handling": "不签发新token；新B/Auth/Sources及老Binding retirement/Grant消费全回滚，要求重新授权；不得用新Binding清限制。"
+    },
+    {
+      "name": "Future owned Project/Context fan-out",
+      "chain": [
+        "authorization_future_project_v2:251-267",
+        "authorization_future_context_v2:268-283",
+        "authorization_project_resource_v2"
+      ],
+      "zero_causes": [
+        "旧entries宏存在但Source已过期",
+        "新资源不具备Owner/qualification",
+        "全部精确deny"
+      ],
+      "handling": "本路径未直接full rebuild；不得补权，旧coarse不能授权此资源。父Native creation不应因无关过期Binding而伪造权限；确需跳过无效Binding须只跳fan-out、保留真实Owner guard与新资源创建证据。"
+    },
+    {
+      "name": "Native grant upsert/revoke and context-grant bridge",
+      "chain": [
+        "serialization development writer hooks:203-204",
+        "authorization_grant_changed_v2:829-862",
+        "authorization_context_grant_v13:879-898",
+        "authorization_project_resource_v2"
+      ],
+      "zero_causes": [
+        "最后grant revoke/expire",
+        "限制把allowed actions清空"
+      ],
+      "handling": "不是Native reduce全Source清零；该资源真实撤权仍应生效。不能套generic异常导致已请求的grant revoke回滚却宣称成功。核Execution门/Integration事实，若缺统一零权限状态则需独立设计或明确Binding revoke。"
+    },
+    {
+      "name": "Native precise confirmation",
+      "chain": [
+        "authorization_precise_confirmation_v2:1452-1475",
+        "authorization_project_resource_v2"
+      ],
+      "zero_causes": [
+        "期限/limits已失效",
+        "Source.available已变化"
+      ],
+      "handling": "保持confirmation source_snapshot及grant/override/B/Auth CAS重验；无新scope/限制清除旁路。"
+    },
+    {
+      "name": "Natural Source expiry / no eligible resource",
+      "chain": [
+        "authorization_effective_no_lock_v2:362-416",
+        "any later rebuild",
+        "binding_expiry_sweep_v1(serialization):353-374"
+      ],
+      "handling": "过期是时间事实，不应等待成功rebuild才撤权。MCP exact-resource helper已有live predicate；Scope-only/Integration须实际负例核验。现有sweep只负责headless Auth expiry或retirement，不是独立Source expiry sweep，不可声称它清理所有Source。"
+    }
+  ],
+  "scope_only_consumers": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005090000_integration_runtime_identity_claim.sql",
+      "function": "integration_binding_authority_v1",
+      "lines": [
+        600,
+        607,
+        612,
+        617,
+        621
+      ],
+      "risk": "Scopes直接来自b.scopes；entries直接来自缓存。不检查Source expiry/空Source状态。不能把保留旧coarse认作已无权限。"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005090000_integration_runtime_identity_claim.sql",
+      "function": "integration_binding_identity_v1",
+      "lines": [
+        653,
+        658,
+        660,
+        661
+      ],
+      "risk": "live/auth_usable检查Binding/Auth有效性，不独立检查Source/override可执行性。"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261005150000_integration_runtime_revocation_lifecycle.sql",
+      "function": "integration view facts",
+      "lines": [
+        1308,
+        1324,
+        1328
+      ],
+      "risk": "OAuth scope facts和capabilities取b.scopes/entries，必须区分诊断事实与执行授权；没有Source-aware完整证明前不能采用live-no-authority fallback。"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "function": "authorization_assert_entry_v12 / record_list",
+      "lines": [
+        555,
+        556,
+        571,
+        871,
+        872
+      ],
+      "existing_protection": "Source-aware exact-resource/broad-list拒绝现有失效来源。这些保护不能自动证明所有Project/Integration/claim/Storage入口。"
+    }
+  ],
+  "required_real_validation": [
+    {
+      "case": "最后Source空cap",
+      "expected": "受控业务拒绝；Sources/B/Auth/entries/limits/audit/Receipt/Event完整rollback，DTO不乐观变化；明确revoke后旧token无法任何业务读写。"
+    },
+    {
+      "case": "部分Source收窄",
+      "expected": "A保持、B撤权正常成功；Binding/Source CAS、精确拒绝与所有limits保持；无CHECK错误。"
+    },
+    {
+      "case": "所有exceptions清空当前direct权限",
+      "expected": "中央业务拒绝并完整rollback；无fallback read/wildcard、无23514。"
+    },
+    {
+      "case": "有Source但action×scope_ceiling为空",
+      "expected": "中央首次/最终候选捕获；不宽化ceiling或补scope。"
+    },
+    {
+      "case": "Sources live但direct资源不存在/Owner不符/qualification revoked或expire",
+      "expected": "有效资源投影为空时受控失败；外部资源不恢复，精确q拒绝保留。"
+    },
+    {
+      "case": "Source expiry先于Auth/B expiry",
+      "expected": "在没有rebuild/sweep之前，MCP读写、Project mutate、Context/business operations、Integration create/bind/report/verify等不得利用旧coarse/entries继续执行；正常Native owner管理身份仍可明确撤销。"
+    },
+    {
+      "case": "headless clone所有Source过期或override全部deny",
+      "expected": "没有新token/部分B/Auth/Grant consume/老retirement写入；限制/Source版本完整留存。"
+    },
+    {
+      "case": "无关过期Binding与Native新建Project/Context",
+      "expected": "父创建保持正常且真实早Owner锁；失效Binding不获得新贡献/Grant/额外actions。"
+    },
+    {
+      "case": "最后development grant revoke/expiry",
+      "expected": "该资源真的拒绝，不能回滚撤权并显示成功；检查cached coarse和Integration事实/执行路径。"
+    },
+    {
+      "case": "有效future policy当前没有内容",
+      "expected": "不要因record_count=0撤连接；保持合法macro scope及以后资源规则，不把资源数量当scope union。"
+    },
+    {
+      "case": "保留边界",
+      "expected": "原CHECK definition/validation、public caller ACL/roles、OID/Owner/SD/search_path、GW80CI8、early guard及privatecaller拒绝、所有旧limits/expiry/CAS证明实际保持。"
+    }
+  ],
+  "evidence_and_acceptance": {
+    "tests_run_by_this_proposal": 0,
+    "source_edits": 0,
+    "pg_runs": 0,
+    "canon_actions": 0,
+    "next_required": "若Root采用实现，旧55ba PASS不能直接覆盖新Source。固定新的Source SHA，正式独立review实际diff/调用面与上述真实PG负例，再获取实际candidate CI；此提案不签发PASS。",
+    "unknowns": [
+      "Scope-only Project/Integration/claim/Storage各实际入口在Source独立expiry时是否都已有统一拒绝门，未在本提案PG执行证明。",
+      "过期/暂时无eligible如何影响连接生命周期需明确；不得用零投影自动撤销有效未来macro。"
+    ]
+  }
+}

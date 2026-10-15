@@ -5,6 +5,18 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import ts from 'typescript';
+const AUTH_SOURCE = ts.transpileModule(readFileSync(new URL('../lib/context-authorization.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+const CONTROLS_SOURCE = ts.transpileModule(readFileSync(new URL('../lib/context-authorization-controls.tsx', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText;
+const authExports = {}; vm.runInNewContext(AUTH_SOURCE, { exports: authExports });
+function authorizationImport(name) {
+  if (name.endsWith('/context-authorization')) return authExports;
+  if (name.endsWith('/context-authorization-controls')) { const exports = {};
+    vm.runInNewContext(CONTROLS_SOURCE, { exports, require(id) { if (id === './context-authorization') return authExports;
+      if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) }; throw Error(id); } }); return exports;
+  }
+  return null;
+}
+
 
 const compile = path => ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
@@ -26,9 +38,9 @@ function fixture({ confirmAnswer = true } = {}) {
   const supabase = { auth, rpc(name, args) { let resolve, reject;
     const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); calls.push({ name, args, resolve, reject }); return promise; } };
   const exports = {};
-  vm.runInNewContext(COMPONENT, { exports, require(name) {
+  vm.runInNewContext(COMPONENT, { exports, require(name) { const shared = authorizationImport(name); if (shared) return shared;
     if (name === 'react') return React;
-    if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }), Fragment: 'fragment' };
+    if (name === 'react/jsx-runtime') return { jsx: (type, props) => typeof type === 'function' ? type(props) : ({ type, props }), jsxs: (type, props) => typeof type === 'function' ? type(props) : ({ type, props }), Fragment: 'fragment' };
     if (name.endsWith('/supabase-browser')) return { supabase };
     throw Error(name);
   }, Error, Date, Number, String, Math, Array, JSON, Object,
@@ -38,7 +50,7 @@ function fixture({ confirmAnswer = true } = {}) {
   function render() { cursor = 0; root = exports.default({}); while (effects.length) effects.shift()(); return root; }
   function nodes(type, from = root) { const out = []; (function visit(n) { if (Array.isArray(n)) return n.forEach(visit);
     if (!n || typeof n !== 'object') return; if (n.type === type) out.push(n); visit(n.props?.children); })(from); return out; }
-  function text(n = root) { if (Array.isArray(n)) return n.map(text).join(''); if (n == null || typeof n === 'boolean') return '';
+  function text(n) { if (arguments.length === 0) n = root; if (Array.isArray(n)) return n.map(text).join(''); if (n == null || typeof n === 'boolean') return '';
     return typeof n === 'object' ? text(n.props?.children ?? null) : String(n); }
   async function settle() { for (let i = 0; i < 12; i++) await Promise.resolve(); render(); }
   function emit(e, s) { authCallback(e, s); render(); }
@@ -85,15 +97,16 @@ test('issuing is two steps and the token is shown once', async t => {
   const f = fixture(); t.after(() => f.unmount());
   await open(f);
   assert.ok(f.text().includes('CI reader'));
-  assert.ok(f.text().includes('旧方式创建（全部权限、无有效期）'));
+  assert.ok(f.text().includes('旧方式创建'));
+  assert.ok(!f.text().includes('全部权限、无有效期'));
   assert.ok(f.text().includes('CI 准入'));
   assert.ok(f.button('预览').props.disabled, 'nothing chosen yet');
   f.nodes('input').find(n => n.props.maxLength === 80).props.onChange({ target: { value: '  Nightly script ' } });
   f.nodes('select')[0].props.onChange({ target: { value: '90' } });
   f.render();
-  checkbox(f, '全局视图', '读取').props.onChange({ target: { checked: true } });
+  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } });
   f.render();
-  checkbox(f, 'Alpha（project:p1）', '新增和修改').props.onChange({ target: { checked: true } });
+  checkbox(f, 'Alpha', '新增和修改').props.onChange({ target: { checked: true } });
   f.render();
   f.button('预览').props.onClick();
   assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_headless_binding_confirmation_issue_v1', { p_input: {
@@ -108,7 +121,7 @@ test('issuing is two steps and the token is shown once', async t => {
   await f.settle();
   const panel = f.nodes('section').find(n => n.props['aria-label'] === '确认签发');
   assert.ok(f.text(panel).includes('签发后 90 天'));
-  assert.ok(f.text(panel).includes('全局视图：读取；Alpha（project:p1）：新增和修改'));
+  assert.ok(f.text(panel).includes('个人记录：读取；Alpha：新增和修改'));
   assert.ok(f.nodes('button').filter(n => ['轮换为新令牌', '撤销'].includes(f.text(n))).every(n => n.props.disabled),
     'nothing else starts while a confirmation waits');
   f.button('确认签发', panel).props.onClick();
@@ -146,7 +159,7 @@ test('rotating the legacy CI Binding names it and shows the moving role', async 
   assert.ok(f.nodes('div', rotating).some(n => n.props['aria-label'] === '轮换表单'), 'form inside the clicked card');
   assert.ok(!f.nodes('button', rotating).some(n => f.text(n) === '轮换为新令牌'));
   assert.equal(f.nodes('div').filter(n => n.props['aria-label'] === '签发表单').length, 0, 'no second form at the top');
-  checkbox(f, '全局视图', '读取').props.onChange({ target: { checked: true } }); f.render();
+  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } }); f.render();
   f.button('预览').props.onClick();
   assert.deepEqual(plain(f.calls[1].args.p_input), { label: 'clued-work-admission', days: 30, replaces_binding_id: 'b-legacy',
     selected: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }] });
@@ -167,10 +180,10 @@ test('rotating a headless Binding starts from its current grants; revoking uses 
   await open(f);
   const head = f.nodes('article').find(n => f.text(n).includes('CI reader'));
   f.button('轮换为新令牌', head).props.onClick(); f.render();
-  assert.equal(checkbox(f, '全局视图', '读取').props.checked, true);
-  assert.equal(checkbox(f, '全局视图', '新增和修改').props.checked, false);
+  assert.equal(checkbox(f, '个人记录', '读取').props.checked, true);
+  assert.equal(checkbox(f, '个人记录', '新增和修改').props.checked, false);
   f.button('改为签发新令牌').props.onClick(); f.render();
-  assert.equal(checkbox(f, '全局视图', '读取').props.checked, false);
+  assert.equal(checkbox(f, '个人记录', '读取').props.checked, false);
   f.button('撤销', head).props.onClick();
   assert.deepEqual(plain([f.calls[1].name, f.calls[1].args]), ['clued_authorization_manage_v12',
     { p_input: { op: 'revoke', binding_id: 'b-head', base_version: 2 } }]);
@@ -231,7 +244,7 @@ test('a refusal is shown in plain words', async t => {
   const f = fixture(); t.after(() => f.unmount());
   await open(f);
   f.nodes('input').find(n => n.props.maxLength === 80).props.onChange({ target: { value: 'x' } });
-  checkbox(f, '全局视图', '查看审计回执').props.onChange({ target: { checked: true } }); f.render();
+  checkbox(f, '个人记录', '查看审计回执').props.onChange({ target: { checked: true } }); f.render();
   f.button('预览').props.onClick();
   f.calls[1].resolve({ data: { status: 'rejected', error_code: 'headless_binding_role_scope_missing' }, error: null }); await f.settle();
   assert.ok(f.text().includes('新令牌需要保留对应权限'));
@@ -248,7 +261,7 @@ test('a role Binding names its GitHub secret, and a rotation says which secret t
   const plainCard = f.nodes('article').find(n => f.text(n).includes('CI reader'));
   assert.ok(!f.text(plainCard).includes('令牌存放在'), 'a Binding without a role names no secret');
   f.button('轮换为新令牌', legacy).props.onClick(); f.render();
-  checkbox(f, '全局视图', '读取').props.onChange({ target: { checked: true } }); f.render();
+  checkbox(f, '个人记录', '读取').props.onChange({ target: { checked: true } }); f.render();
   f.button('预览').props.onClick();
   f.calls[1].resolve({ data: { status: 'issued', confirmation_token: 'clued_hbc_r', view_digest: 'r'.repeat(64),
     confirmation_view: { label: 'clued-work-admission', days: 30, selected: [], replaces: { binding_id: 'b-legacy',
@@ -265,4 +278,62 @@ test('a role Binding names its GitHub secret, and a rotation says which secret t
   assert.ok(alert, 'the update reminder stands out');
   assert.ok(f.text(alert).includes('CLUED_ADMISSION_CLUED_TOKEN'));
   assert.ok(f.text(alert).includes('旧令牌'));
+});
+
+
+test('new issuance with all-context capability preselects only the macro and a range change clears exact choices',async t=>{
+ const f=fixture();t.after(()=>f.unmount());f.emit('INITIAL_SESSION',session('owner'));
+ const macro={resource_kind:'scope',resource_id:'contexts:*',environment:'canonical',actions:['read','write','close','restore','audit','feedback_submit']};
+ f.calls[0].resolve({data:{status:'ok',eligible:[macro,...ELIGIBLE],bindings:[]},error:null});await f.settle();
+ assert.equal(f.calls.length,1,'no consent at load');
+ f.nodes('input').find(n=>n.props.maxLength===80).props.onChange({target:{value:'Own context client'}});f.render();
+ f.button('预览').props.onClick();await f.settle();
+ assert.deepEqual(plain(f.calls[1].args.p_input.selected),[macro]);
+ f.calls[1].resolve({data:{status:'rejected',error_code:'confirmation_view_stale'},error:null});await f.settle();
+ const specified=f.nodes('input').find(n=>n.props.type==='radio'&&!n.props.checked);specified.props.onChange();f.render();
+ assert.equal(f.button('预览').props.disabled,true);
+});
+
+
+test('source-aware rotation binds real source/override versions, sends no derived direct selections and rejects a missing snapshot',async t=>{
+ const f=fixture();t.after(()=>f.unmount());
+ const source={source_id:'source-actual',version:7,kind:'contexts_policy',actions:['read'],contributions:[]};
+ const override={override_id:'override-actual',version:4,denied_actions:['write'],allowed_ceiling:['read']};
+ await open(f,[{...ROWS[0],selection_format:'sources_v1',sources:[source],overrides:[override]}]);
+ f.button('轮换为新令牌').props.onClick();f.render();
+ const before=f.calls.length;f.button('预览').props.onClick();await f.settle();
+ assert.deepEqual(plain(f.calls[before].args.p_input),{label:'CI reader',days:30,selected:[],replaces_binding_id:'b-head',selection_format:'sources_v1',
+  sources:[{source_id:'source-actual',base_version:7,action_cap:['read']}],exceptions:[{override_id:'override-actual',base_version:4}]});
+ f.calls[before].resolve({data:{status:'issued',confirmation_token:'once',view_digest:'d'.repeat(64),confirmation_view:{label:'CI reader',days:30,selected:[]}},error:null});await f.settle();
+ assert.ok(f.text().includes('预览不完整'));assert.ok(!f.nodes('button').some(n=>f.text(n)==='确认签发'));
+ f.button('预览').props.onClick();await f.settle();
+ f.calls[before+1].resolve({data:{status:'issued',confirmation_token:'once-valid',view_digest:'e'.repeat(64),confirmation_view:{label:'CI reader',days:30,selected:ROWS[0].grants,
+  source_snapshot:{binding_version:2,sources:[{source_id:'source-actual',version:7,kind:'contexts_policy',actions:['read'],expires_at:null,revoked_at:null}],exceptions:[{override_id:'override-actual',version:4}],grant_limits:[]}}},error:null});await f.settle();
+ assert.ok(f.text().includes('保留的来源与限制版本'));f.button('确认签发').props.onClick();assert.equal(f.calls.at(-1).name,'clued_headless_binding_issue_v1');
+});
+
+
+test('raw legacy read scope is displayed without inferring full permission or all-context resource coverage',async t=>{
+ const f=fixture();t.after(()=>f.unmount());await open(f,[{...ROWS[1],scopes:['context:read'],active:true}]);
+ const card=f.nodes('article')[0];const text=f.text(card);
+ assert.ok(text.includes('客户端操作范围读取内容'));assert.ok(!text.includes('新增和修改内容'));assert.ok(!text.includes('全部权限'));
+ assert.ok(text.includes('授权明细未提供，不能推断为全部上下文'));assert.ok(text.includes('有效期至未提供，尚未确认'));
+ f.button('轮换为新令牌',card).props.onClick();f.render();assert.equal(f.button('预览').props.disabled,true);
+ assert.equal(f.calls.length,1,'opening rotation does not issue or implicitly select broader resources');
+});
+
+test('retired legacy Binding displays the actual retirement time and cannot be rotated again',async t=>{
+ const f=fixture();t.after(()=>f.unmount());const expires='2020-01-01T00:00:00Z';
+ await open(f,[{...ROWS[1],scopes:['context:read'],expires_at:expires,replaced_by:'replacement-binding',active:false}]);
+ const card=f.nodes('article')[0];assert.ok(f.text(card).includes(new Date(expires).toLocaleString('zh-CN')));assert.ok(f.text(card).includes('已被替换'));
+ assert.ok(!f.text(card).includes('无有效期'));assert.ok(!f.nodes('button',card).some(button=>f.text(button)==='轮换为新令牌'));
+});
+
+test('missing or malformed raw scopes stay unknown; expired legacy Binding has no actionable rotation',async t=>{
+ for(const fields of [{},{scopes:'context:read'},{scopes:[null]},{scopes:['context:read'],expires_at:'2020-01-01T00:00:00Z'}]){
+  const f=fixture();t.after(()=>f.unmount());await open(f,[{...ROWS[1],...fields}]);const card=f.nodes('article')[0];
+  assert.ok(!f.text(card).includes('全部权限'));assert.ok(!f.text(card).includes('无有效期'));
+  if(fields.expires_at){assert.ok(f.text(card).includes('已过期'));assert.equal(f.button('轮换为新令牌',card).props.disabled,true);}
+  else assert.ok(f.text(card).includes('客户端操作范围未提供，尚未确认'));
+ }
 });

@@ -1,0 +1,83 @@
+{
+  "schema": "clued.all-contexts-locks-final-local-evidence.v1",
+  "status": "REPORTER_PASS_WITH_LIMITED_RUN_PROVENANCE",
+  "verified_by": "/root/historical_authorization_test",
+  "verified_at_utc": "2026-10-14T07:04:55.9241082Z",
+  "claim_id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+  "actual_reporter": {
+    "subject": "all-contexts real early writer barriers and preserved caller catalog",
+    "counts": {
+      "tests": 15,
+      "suites": 0,
+      "pass": 15,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "duration_ms": 7389.593,
+    "normal_complete_footer_present": true
+  },
+  "run_provenance": {
+    "start_utc": null,
+    "end_utc": null,
+    "command": null,
+    "runtime_path": null,
+    "runtime_version": null,
+    "exit_code": null,
+    "qualification": "The complete reporter log contains PASS and a normal footer. Its original enclosing invocation receipt, absolute run timestamps, runtime and direct process exit code were not supplied to this verifier and remain unknown; no inference from file timestamps or parent summary fills these fields."
+  },
+  "loaded_migrations": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "ad2dd45c9e778f1365e3994ca2e065d4127309eedf11c366c220eec6020a778a",
+      "identity_source": "actual t.diagnostic migration SHA in complete reporter log, rechecked against file bytes"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad",
+      "identity_source": "actual t.diagnostic migration SHA in complete reporter log, rechecked against file bytes"
+    }
+  ],
+  "current_file_observations": [
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs",
+      "sha256": "821f6a924c4189fe998bd8be5c8ba91f31c224bba13673d51533d35123090334",
+      "identity_source": "current file observation at evidence verification, not self-reported execution identity"
+    },
+    {
+      "path": "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs",
+      "sha256": "e44218a813629219bd290d343e43154510f7dca4df7bf584a6c78a5e83bdbeef",
+      "identity_source": "current file observation at evidence verification, not self-reported execution identity"
+    },
+    {
+      "path": "apps/clued-cloud/tests/issuer-credentials-fixture.mjs",
+      "sha256": "b03fa1bbff66acef7e3a48d9c2dedf5b14e117139f01119070393b30a2e4928c",
+      "identity_source": "current file observation at evidence verification, not self-reported execution identity"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs",
+      "sha256": "3b105404d41cf024ab195ad42f07b028a70dab08a8d66c3a6a21ee2fe4799566",
+      "identity_source": "current file observation at evidence verification, not self-reported execution identity"
+    },
+    {
+      "path": "apps/clued-cloud/scripts/run-tests.mjs",
+      "sha256": "48fc4a5ea15ff8e812163153823807e2efa620720e8e24d46ddb2324d4bcdcc2",
+      "identity_source": "current file observation at evidence verification, not self-reported execution identity"
+    }
+  ],
+  "log": {
+    "path": "all-contexts-locks-final-test.log",
+    "sha256": "3c81f2562e49594962e3fee77e37fca28555677897a3ffa0949d68a60aefb8a1",
+    "size_bytes": 4077,
+    "creation_time_utc": "2026-10-14T06:48:38.0254652Z",
+    "last_write_time_utc": "2026-10-14T06:48:39.6477458Z",
+    "timestamp_qualification": "Filesystem provenance only; neither timestamp is represented as the test start or end."
+  },
+  "boundaries": [
+    "No rerun was performed by this verifier.",
+    "The reporter proves 15 reported tests passed on the logged ad2/ea3 migration bytes; no GitHub CI, merge, release, production migration or Native real-page acceptance is established.",
+    "Source SQL, serialization SQL, tests and fixtures were not changed by this verifier.",
+    "Canonical capture and checkpoint remain with the Root holder of the original Task; this verification did not create a separate Task or claim."
+  ]
+}

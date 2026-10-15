@@ -1,0 +1,480 @@
+{
+  "schema_version": 1,
+  "schema": "clued.pr818-main-inheritance-readonly.v4",
+  "kind": "read_only_main_snapshot_inheritance_diagnosis",
+  "read_at_utc": "2026-10-14 10:44:16 UTC",
+  "objects": {
+    "main_snapshot": "a9c21058592ef671a742b1ca1dd548276e34fe66",
+    "local_head": "c9158c9046af7cd14e1a6d03ec2c4d8843ffc4ea",
+    "common_ancestor": "af22e8c5d8c70f86d17abb32996a63414a1d5c94",
+    "main_ref_read_at_open": "a9c21058592ef671a742b1ca1dd548276e34fe66",
+    "main_ref_read_at_close": "a9c21058592ef671a742b1ca1dd548276e34fe66",
+    "main_is_ancestor_of_local_head": false,
+    "main_ancestor_probe_exit": 1,
+    "qualification": "Bound exclusively to the named local Git objects and working-tree bytes read. origin/main is a fetched ref, not a claim about final/latest remote main; no fetch, merge, commit or push performed."
+  },
+  "outcomes": {
+    "public_three_diff_main_to_head_empty": true,
+    "public_three_diff_main_to_worktree_empty": true,
+    "main_net_changed_paths_since_common_base": 14,
+    "main_added_paths": 6,
+    "main_modified_paths": 8,
+    "main_changes_already_identical_in_head": 3,
+    "main_changes_pending_in_head": 11,
+    "divergent_same_path_change_conflicts_found": 0,
+    "intersects_seven_tested_fixture_paths": false,
+    "intersects_authorization_source_pair": false,
+    "current_seven_fixture_bytes_match_actual_run_manifests": true,
+    "source_pair_and_current_caller_helper_bytes_match_existing_proofs": true,
+    "requires_new_integrated_head_ci": true,
+    "diagnosis": "公共3扫描文件在main/HEAD字节内容完全相同。其余main变化尚未继承到c915：PR816新增Web origin路由与layout/Worker/config变化，PR819新增provider timing记录/投影及M2 loader回归。与七fixture或两SQL无直接路径重叠；既有局部实测字节仍成立，但不证明合并后组合行为或新head CI。",
+    "tests_run": 0,
+    "builds_run": 0,
+    "ci_requested_or_rerun": 0,
+    "source_edits": 0,
+    "new_claims_or_tasks": 0
+  },
+  "public_scan_files": [
+    {
+      "path": ".gitleaks.toml",
+      "main_blob_sha1": "a75a8ce92c04238b48212d9086192ed406754f08",
+      "head_blob_sha1": "a75a8ce92c04238b48212d9086192ed406754f08",
+      "worktree_sha256": "0c3be2d80cf17a03ceda74dde3228cc8d03dc932f503214c983a40e3e1781f35",
+      "main_to_head_diff_bytes": 0,
+      "main_to_worktree_diff_bytes": 0
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "main_blob_sha1": "1f0d37b9c739c48ec60664cb35e25033a54ba21e",
+      "head_blob_sha1": "1f0d37b9c739c48ec60664cb35e25033a54ba21e",
+      "worktree_sha256": "6d54e0dab3d5c53769f41f3dbf740cdaa8cfa74e2b88b9527a036f326c99d6fa",
+      "main_to_head_diff_bytes": 0,
+      "main_to_worktree_diff_bytes": 0
+    },
+    {
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "main_blob_sha1": "186ebd0ffdfc175db76e9d942b7d3c8d191ba108",
+      "head_blob_sha1": "186ebd0ffdfc175db76e9d942b7d3c8d191ba108",
+      "worktree_sha256": "5e43750eeffd56e419f4129c5fbab42c109d02bbff396078f44df00feca81560",
+      "main_to_head_diff_bytes": 0,
+      "main_to_worktree_diff_bytes": 0
+    }
+  ],
+  "main_changes": [
+    {
+      "status": "M",
+      "path": ".gitleaks.toml",
+      "group": "PR816_shared_artifact_scans",
+      "main_blob_sha1": "a75a8ce92c04238b48212d9086192ed406754f08",
+      "branch_head_blob_sha1": "a75a8ce92c04238b48212d9086192ed406754f08",
+      "main_equals_branch_blob": true,
+      "branch_changed_since_common_base": true,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "M",
+      "path": "apps/clued-cloud/app/layout.tsx",
+      "group": "PR816_web_origin_routing",
+      "main_blob_sha1": "5de5d218b6c617619f1dc4a46058ac74d53bf669",
+      "branch_head_blob_sha1": "de5f15ca6843e98fff06ca5268572d167ce2603e",
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "A",
+      "path": "apps/clued-cloud/tests/web-origin-routing.test.mjs",
+      "group": "PR816_web_origin_routing",
+      "main_blob_sha1": "5e253efc0fbf60bf225d51f73aa1c8f6d51cd4fe",
+      "branch_head_blob_sha1": null,
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "M",
+      "path": "apps/clued-cloud/worker/index.ts",
+      "group": "PR816_web_origin_routing",
+      "main_blob_sha1": "fc0afee158a5e75c8d5c6008f96c0e20f191c30e",
+      "branch_head_blob_sha1": "2d1e88cc60e1dbb3d0cc03c25ab4a4f2c437b765",
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "A",
+      "path": "apps/clued-cloud/worker/web-origin-routing.d.mts",
+      "group": "PR816_web_origin_routing",
+      "main_blob_sha1": "4ae2f5e4b3b7c0739ff0c25f82c582ffbaaecbf6",
+      "branch_head_blob_sha1": null,
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "A",
+      "path": "apps/clued-cloud/worker/web-origin-routing.mjs",
+      "group": "PR816_web_origin_routing",
+      "main_blob_sha1": "bbc320a7ac1bec7efbf31e1d455901e99623f80f",
+      "branch_head_blob_sha1": null,
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "M",
+      "path": "apps/clued-cloud/wrangler.production.jsonc",
+      "group": "PR816_web_origin_routing",
+      "main_blob_sha1": "caccddc391fbb2b33e7c03d604b22f229cee3018",
+      "branch_head_blob_sha1": "00a014ea0db79f9526bcacf44c0b1bcb7901d30f",
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "M",
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "group": "PR816_shared_artifact_scans",
+      "main_blob_sha1": "1f0d37b9c739c48ec60664cb35e25033a54ba21e",
+      "branch_head_blob_sha1": "1f0d37b9c739c48ec60664cb35e25033a54ba21e",
+      "main_equals_branch_blob": true,
+      "branch_changed_since_common_base": true,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "M",
+      "path": "scripts/model-program/observed_completion_execution.py",
+      "group": "PR819_model_provider_timing",
+      "main_blob_sha1": "76b8da21f11010cc3e618d7d5dce53aeaeba20ce",
+      "branch_head_blob_sha1": "45dc7c32e19c33bca3a7f5f1676a1feb9de2eac0",
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "A",
+      "path": "scripts/model-program/provider_timing_saved_projection.py",
+      "group": "PR819_model_provider_timing",
+      "main_blob_sha1": "346139e27be8221fbd5ab3b6d3347ac4896e31b0",
+      "branch_head_blob_sha1": null,
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "M",
+      "path": "tests/test_model_observed_completion_execution.py",
+      "group": "PR819_model_provider_timing",
+      "main_blob_sha1": "5ac1b2ef0b19157e6f59af2bc58d1e7fdb7da4c5",
+      "branch_head_blob_sha1": "3ece380b57a5f44056ecc8d1fd26204a48069cfc",
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "M",
+      "path": "tests/test_model_program_m2_scoped_consumer.py",
+      "group": "PR819_model_provider_timing",
+      "main_blob_sha1": "02bd963316db977d11ead02a19359a4dcbe8a672",
+      "branch_head_blob_sha1": "4780c874ccac2c384fed8af4fefe16c750c3dca8",
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "A",
+      "path": "tests/test_model_provider_timing_saved_projection.py",
+      "group": "PR819_model_provider_timing",
+      "main_blob_sha1": "0d8b2d00762f4cb7ad0fbbce4489a4dd842121df",
+      "branch_head_blob_sha1": null,
+      "main_equals_branch_blob": false,
+      "branch_changed_since_common_base": false,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    },
+    {
+      "status": "A",
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "group": "PR816_shared_artifact_scans",
+      "main_blob_sha1": "186ebd0ffdfc175db76e9d942b7d3c8d191ba108",
+      "branch_head_blob_sha1": "186ebd0ffdfc175db76e9d942b7d3c8d191ba108",
+      "main_equals_branch_blob": true,
+      "branch_changed_since_common_base": true,
+      "intersects_seven_fixture_repairs": false,
+      "intersects_source_pair": false
+    }
+  ],
+  "pending_added_paths": [
+    "apps/clued-cloud/tests/web-origin-routing.test.mjs",
+    "apps/clued-cloud/worker/web-origin-routing.d.mts",
+    "apps/clued-cloud/worker/web-origin-routing.mjs",
+    "scripts/model-program/provider_timing_saved_projection.py",
+    "tests/test_model_provider_timing_saved_projection.py"
+  ],
+  "branch_intersection": [
+    {
+      "path": ".gitleaks.toml",
+      "identical_to_main": true
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "identical_to_main": true
+    },
+    {
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "identical_to_main": true
+    }
+  ],
+  "tested_fixture_bytes": [
+    {
+      "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+      "sha256": "e8ce500ddcf0aed8df86025264695eae076bdd1f5701bce0d23e34bf8a022e6a",
+      "tested_sha256": "e8ce500ddcf0aed8df86025264695eae076bdd1f5701bce0d23e34bf8a022e6a",
+      "manifest": "all-contexts-fixture-five-final-manifest.json",
+      "current_matches_tested": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-organization-db.test.mjs",
+      "sha256": "9560a84bdf5534fe91b36c2c4860b0b517a2192104c7aa664fc7f588e756a15b",
+      "tested_sha256": "9560a84bdf5534fe91b36c2c4860b0b517a2192104c7aa664fc7f588e756a15b",
+      "manifest": "all-contexts-fixture-five-final-manifest.json",
+      "current_matches_tested": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/imprint-development-organization-db.test.mjs",
+      "sha256": "47de32b018653eed6bc9f6264e655e69b0b307fc486e9db8b6a11e849b568e5b",
+      "tested_sha256": "47de32b018653eed6bc9f6264e655e69b0b307fc486e9db8b6a11e849b568e5b",
+      "manifest": "all-contexts-fixture-five-final-manifest.json",
+      "current_matches_tested": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/task-owner-detail-db.test.mjs",
+      "sha256": "449a91716394b918505b2e514dae1e18123024515305460bed0fb569808bac00",
+      "tested_sha256": "449a91716394b918505b2e514dae1e18123024515305460bed0fb569808bac00",
+      "manifest": "all-contexts-fixture-five-final-manifest.json",
+      "current_matches_tested": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/integration-runtime-identity-db.test.mjs",
+      "sha256": "fe9b8869d696a528a8ac5905256b70580f7c65fa32dd31e8dc1e38332aa116bd",
+      "tested_sha256": "fe9b8869d696a528a8ac5905256b70580f7c65fa32dd31e8dc1e38332aa116bd",
+      "manifest": "all-contexts-fixture-five-final-manifest.json",
+      "current_matches_tested": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/information-flow-context-db.test.mjs",
+      "sha256": "c76bbb253a67ebf519be02e6f94a641a1c1295e77ad4bb766f54579421cda2e2",
+      "tested_sha256": "c76bbb253a67ebf519be02e6f94a641a1c1295e77ad4bb766f54579421cda2e2",
+      "manifest": "s4-source-reduction-test-manifest.json",
+      "current_matches_tested": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/information-flow-invalidation-db.test.mjs",
+      "sha256": "bd7a93cc99e4cdac3f4dfcfbf1c55ad1fafb4bad852613015ffd3e7a3480bfa2",
+      "tested_sha256": "bd7a93cc99e4cdac3f4dfcfbf1c55ad1fafb4bad852613015ffd3e7a3480bfa2",
+      "manifest": "s5-source-reduction-test-manifest.json",
+      "current_matches_tested": true
+    }
+  ],
+  "retained_source_bytes": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+      "current_matches_s4_s5_after": true,
+      "present_in_main_snapshot": false,
+      "qualification": "PR818-added pair is absent in main snapshot; do not interpret direct tree comparison as main deleting an integrated migration."
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ce8ee42d89240a338cbd229846c397f9626f1445e2dfa832b60c19fecb994e58",
+      "current_matches_s4_s5_after": true,
+      "present_in_main_snapshot": false,
+      "qualification": "PR818-added pair is absent in main snapshot; do not interpret direct tree comparison as main deleting an integrated migration."
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs",
+      "sha256": "be9bc28c94ee2003ba3d48767ea5a9093fb73b17e8f1d21f764afa18c69f283a",
+      "current_matches_s4_s5_after": true,
+      "present_in_main_snapshot": true,
+      "qualification": "Current helper is PR818-specific and unchanged from actual S4/S5 runs."
+    }
+  ],
+  "manifest_evidence": [
+    {
+      "path": "all-contexts-fixture-five-final-manifest.json",
+      "sha256": "52ddf706549a5e43723aedfb34b074a1949a1e386673a3ab19a589983fe76ee5",
+      "schema": "clued.all-contexts-five-fixture-setup-evidence.v1",
+      "reported_verdict": null,
+      "reported_status": "LOCAL_COMPLETE_PARENT_PASS",
+      "reported_counts": {
+        "files": 5,
+        "parents": 6,
+        "tests": 63,
+        "pass": 63,
+        "fail": 0,
+        "skip": 0,
+        "cancelled": 0
+      }
+    },
+    {
+      "path": "s4-source-reduction-test-manifest.json",
+      "sha256": "61c5905c13d1a3b23385744c66e3dd084af7b3b682bda3bb8d93689a3b505651",
+      "schema": "clued.s4-source-reduction-qualification.v1",
+      "reported_verdict": null,
+      "reported_status": null,
+      "reported_counts": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 12896.1523
+      }
+    },
+    {
+      "path": "s5-source-reduction-test-manifest.json",
+      "sha256": "59af351d2f68e4afb137fd952f698e0a1766b8824436d37061e9ca9ac68fc35e",
+      "schema": "clued.s5-source-reduction-qualification.v1",
+      "reported_verdict": null,
+      "reported_status": null,
+      "reported_counts": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 11463.7501
+      }
+    },
+    {
+      "path": "pr818-fixture-repair-independent-review-r3.json",
+      "sha256": "f41d535c8e85b285ec0f9c7fab67f1998d3c80a9a07c570c3a35db02ce412b3d",
+      "schema": "clued.pr818-fixture-repair-independent-review.v3",
+      "reported_verdict": "CHANGES_REQUIRED",
+      "reported_status": null,
+      "reported_counts": null
+    },
+    {
+      "path": "pr818-fixture-repair-independent-review-r4.json",
+      "sha256": "7e92305b1849429949575d29fdc7fa412180ce0fdd690222c8e82e7a5514d0d2",
+      "schema": "clued.pr818-fixture-repair-independent-review.v4",
+      "reported_verdict": "PASS",
+      "reported_status": null,
+      "reported_counts": null
+    }
+  ],
+  "local_evidence_qualification": "Existing manifests report five complete files63 PASS plus S4/S5 one parent each; all seven current file hashes match those run artifacts. This diagnostic does not rerun or independently recount runtime logs. Prior r3 CHANGES_REQUIRED and r4 PASS remain separate artifacts; only r4 final evidence qualification applies to this unchanged working-tree subject, not combined main inheritance.",
+  "integration_validation_recommendations": [
+    {
+      "group": "PR816_shared_artifact_scans",
+      "paths": [
+        ".gitleaks.toml",
+        "scripts/ci/reviewed_gitleaks.py",
+        "tests/test_reviewed_gitleaks_artifacts.py"
+      ],
+      "required": "Preserve identical three files; run ordinary candidate secret scan on the final admitted head and new archived artifacts. No scan implementation change or broadened allowlist is required by this diff.",
+      "tests": [
+        "tests/test_reviewed_gitleaks_artifacts.py"
+      ],
+      "qualification": "Content identity means no new scanner code difference; head/artifacts still change."
+    },
+    {
+      "group": "PR816_web_origin_routing",
+      "paths": [
+        "apps/clued-cloud/app/layout.tsx",
+        "apps/clued-cloud/tests/web-origin-routing.test.mjs",
+        "apps/clued-cloud/worker/index.ts",
+        "apps/clued-cloud/worker/web-origin-routing.d.mts",
+        "apps/clued-cloud/worker/web-origin-routing.mjs",
+        "apps/clued-cloud/wrangler.production.jsonc"
+      ],
+      "required": "After normal main integration, verify Worker imports/types/bundle plus Native web-origin routing and existing consent/authorization paths together on the exact combined head.",
+      "tests": [
+        "apps/clued-cloud/tests/web-origin-routing.test.mjs",
+        "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+        "existing delegated OAuth and consent transport suite",
+        "Clued Cloud lint/typecheck/build/unit gate",
+        "information-flow full Worker+Supabase E2E"
+      ],
+      "reason": "routeWebOrigin now precedes handleDelegatedOAuth in Worker.fetch; the web alias serves Native routes, redirects compatibility GET pages to legacy origin, and rejects MCP/OAuth mutation routes. PR818 changes delegated auth/consent modules consumed by that existing Worker path.",
+      "qualified_gap": "Existing seven parent PG tests used c915/current fixture bytes without the inherited Worker entrypoint/layout/config, so they cannot certify this combination. No actual deployment/domain acceptance is asserted."
+    },
+    {
+      "group": "PR819_model_provider_timing",
+      "paths": [
+        "scripts/model-program/observed_completion_execution.py",
+        "scripts/model-program/provider_timing_saved_projection.py",
+        "tests/test_model_observed_completion_execution.py",
+        "tests/test_model_program_m2_scoped_consumer.py",
+        "tests/test_model_provider_timing_saved_projection.py"
+      ],
+      "required": "Preserve all five inherited files and validate the combined repository M2 scoped consumer/timing suites through normal exact-head CI selection.",
+      "tests": [
+        "tests/test_model_observed_completion_execution.py",
+        "tests/test_model_provider_timing_saved_projection.py",
+        "tests/test_model_program_m2_scoped_consumer.py"
+      ],
+      "workflow_evidence": {
+        "path": ".github/workflows/model-program-m2-scoped-consumer.yml",
+        "lines": [
+          104,
+          142
+        ],
+        "command": "python -m unittest tests.test_model_program_m2_scoped_consumer -v"
+      },
+      "reason": "M2 load_tests now imports provider_timing_saved_projection tests. Timing additions affect observed execution/report projection, with no direct SQL/fixture path overlap."
+    },
+    {
+      "group": "PR818_repaired_fixture_integration",
+      "required": "Use normal admitted new-head isolated suite/G4 and Information Flow E2E checks for seven fixture repairs plus main inheritance; retain SQL55ba/ce8 and exact fixture hashes. Do not weaken production guards or rerun historical failures against a different source pair.",
+      "qualification": "Only a new actual combined head can carry combined CI receipts; old c915 CI and local65 results remain bounded evidence."
+    }
+  ],
+  "commands_evidence": [
+    {
+      "operation": "Read local HEAD and fetched origin/main",
+      "exit_code": 0
+    },
+    {
+      "operation": "Read common ancestor and net main/branch paths",
+      "exit_code": 0
+    },
+    {
+      "operation": "Compare exact common scan files main->HEAD and main->worktree",
+      "exit_code": 0,
+      "output_bytes": 0
+    },
+    {
+      "operation": "Read exact main/branch tree blob IDs for14 main paths",
+      "exit_code": 0
+    },
+    {
+      "operation": "Hash current7 fixture/2 SQL/helper/3 scan files and compare retained manifests",
+      "exit_code": 0
+    },
+    {
+      "operation": "Check main is ancestor of branch HEAD",
+      "exit_code": 1,
+      "interpretation": "expected false: c915 has not merged a9c"
+    }
+  ],
+  "limits": [
+    "No mutation other than this external JSON report.",
+    "No new formal Source/code review verdict, current production acceptance, main-merge success or new runtime/CI PASS is inferred.",
+    "If main advances, this remains an audit of a9c21058 and must not be relabeled the final latest main."
+  ]
+}

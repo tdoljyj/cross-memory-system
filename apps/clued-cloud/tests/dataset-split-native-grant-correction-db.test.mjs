@@ -9,7 +9,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 const app = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceApp = path.resolve(process.env.CLUED_SYNTHETIC_SOURCE_APP ?? app);
 const { allowRawTestBindings } = await import(pathToFileURL(path.join(sourceApp,'tests/raw-binding-grants-fixture.mjs')));
-const { findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog } = await import(pathToFileURL(path.join(sourceApp,'tests/worker-gateway-caller-fixture.mjs')));
+const { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, findGatewayCloseoutMigration, assertGatewayCloseoutBoundary, snapshotCallerCatalog } = await import(pathToFileURL(path.join(sourceApp,'tests/worker-gateway-caller-fixture.mjs')));
 
 // Real isolated PostgreSQL and synthetic accounts/IDs only. No production,
 // real Owner approval, DomainAuthority, DataGate, M2 or model qualification.
@@ -57,7 +57,7 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    const names = (await fs.readdir(path.join(sourceApp,'supabase/migrations'))).filter(n => n.endsWith('.sql') && n !== candidateFile).sort();
+    const names = (await fs.readdir(path.join(sourceApp,'supabase/migrations'))).filter(n => n.endsWith('.sql') && n !== candidateFile && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(n)).sort();
     const closeout = await findGatewayCloseoutMigration(sourceApp);
     // The original request predates G6 and uses its now-retired project alias.
     // Only that historical setup precedes closeout; all Native correction cases run after it.
@@ -274,6 +274,19 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
       await assert.rejects(native(viewName,{request_id:REQUEST}));
     });
     }
+    // Keep all original Native correction/binding scenes and their sealed G6
+    // replay in the historical stage. Only now install the current pair.
+    const historicalCatalog = await snapshotCallerCatalog(db);
+    await db.query(await fs.readFile(path.join(sourceApp, 'supabase/migrations', closeout), 'utf8'));
+    assert.deepEqual(await snapshotCallerCatalog(db), historicalCatalog,
+      'sealed closeout remains unchanged after the complete historical scenarios');
+    await assertGatewayCloseoutBoundary(db);
+    const authorizationBefore = await snapshotAuthorizationCallerBoundary(db);
+    for (const name of AUTHORIZATION_SUCCESSOR_MIGRATIONS) {
+      await db.query(await fs.readFile(path.join(sourceApp, 'supabase/migrations', name), 'utf8'));
+    }
+    await assertAuthorizationSuccessorBoundary(db, authorizationBefore);
+
   } finally {
     if (db) await db.end();
     await server.stop();

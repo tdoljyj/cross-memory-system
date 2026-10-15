@@ -1,0 +1,396 @@
+run_started_utc=2026-10-14T10:22:07.9391238Z
+v24.19.0
+TAP version 13
+# CIMD (Client ID Metadata Document) is disabled: add '"compatibility_flags": ["global_fetch_strictly_public"]' to your wrangler.jsonc to enable. See: https://developers.cloudflare.com/workers/configuration/compatibility-flags/\#global-fetch-strictly-public
+# Subtest: OAuth consent, MCP record receipt, replay and revoke use the real database together
+ok 1 - OAuth consent, MCP record receipt, replay and revoke use the real database together
+  ---
+  duration_ms: 7160.3135
+  type: 'test'
+  ...
+# Subtest: Development Imprint: exact Owner namespace, shared Canonical tasks, immutable candidates and actual history
+    # Subtest: development labels change zero source, cursor, qualification, history or restricted-grant state
+    ok 1 - development labels change zero source, cursor, qualification, history or restricted-grant state
+      ---
+      duration_ms: 27.5771
+      type: 'test'
+      ...
+    # Subtest: development CAS and stable replay stay separate from Canonical organization even for the same UUID
+    ok 2 - development CAS and stable replay stay separate from Canonical organization even for the same UUID
+      ---
+      duration_ms: 84.3324
+      type: 'test'
+      ...
+    # Subtest: eight views share server filtering and a global merged page; formal views use actual Canonical tasks
+    ok 3 - eight views share server filtering and a global merged page; formal views use actual Canonical tasks
+      ---
+      duration_ms: 15.6422
+      type: 'test'
+      ...
+    # Subtest: default development browse retains terminal latest and candidates beside withheld Canonical records
+    ok 4 - default development browse retains terminal latest and candidates beside withheld Canonical records
+      ---
+      duration_ms: 12.1819
+      type: 'test'
+      ...
+    # Subtest: Native exact space+project ownership, environment and roles cannot broaden grants
+    ok 5 - Native exact space+project ownership, environment and roles cannot broaden grants
+      ---
+      duration_ms: 68.5369
+      type: 'test'
+      ...
+    # Subtest: only retained development revisions match old words before merged paging; latest source stays intact
+    ok 6 - only retained development revisions match old words before merged paging; latest source stays intact
+      ---
+      duration_ms: 20.0007
+      type: 'test'
+      ...
+    # Subtest: Canonically isolated rows cannot re-enter a development history projection
+    ok 7 - Canonically isolated rows cannot re-enter a development history projection
+      ---
+      duration_ms: 5.6763
+      type: 'test'
+      ...
+    1..7
+ok 2 - Development Imprint: exact Owner namespace, shared Canonical tasks, immutable candidates and actual history
+  ---
+  duration_ms: 6358.1827
+  type: 'test'
+  ...
+# Subtest: Native Imprint: one identity, terminal metadata, isolated CAS, source and currentness
+    # Subtest: closed labels preserve source, lifecycle, provenance and Currentness
+    ok 1 - closed labels preserve source, lifecycle, provenance and Currentness
+      ---
+      duration_ms: 41.0421
+      type: 'test'
+      ...
+    # Subtest: independent metadata CAS, replay and same-source version fence
+    ok 2 - independent metadata CAS, replay and same-source version fence
+      ---
+      duration_ms: 55.0642
+      type: 'test'
+      ...
+    # Subtest: eight projections, AND-domain filters, paging, full bodies and uncertain reads
+    ok 3 - eight projections, AND-domain filters, paging, full bodies and uncertain reads
+      ---
+      duration_ms: 21.4795
+      type: 'test'
+      ...
+    # Subtest: All and domains include saved terminal latest objects without borrowing unrelated Global State failure
+    ok 4 - All and domains include saved terminal latest objects without borrowing unrelated Global State failure
+      ---
+      duration_ms: 14.7725
+      type: 'test'
+      ...
+    # Subtest: direct Native tenancy and privilege isolation
+    ok 5 - direct Native tenancy and privilege isolation
+      ---
+      duration_ms: 79.1295
+      type: 'test'
+      ...
+    # Subtest: shared active-carrier reasons are preserved without treating a withheld view as empty
+    ok 6 - shared active-carrier reasons are preserved without treating a withheld view as empty
+      ---
+      duration_ms: 14.989
+      type: 'test'
+      ...
+    # Subtest: linked original segments verify ownership and hashes; external locators stay unavailable
+        # Subtest: isolation never becomes history, source access or an observable hidden count
+        ok 1 - isolation never becomes history, source access or an observable hidden count
+          ---
+          duration_ms: 6.1715
+          type: 'test'
+          ...
+        1..1
+    ok 7 - linked original segments verify ownership and hashes; external locators stay unavailable
+      ---
+      duration_ms: 57.9991
+      type: 'test'
+      ...
+    1..7
+ok 3 - Native Imprint: one identity, terminal metadata, isolated CAS, source and currentness
+  ---
+  duration_ms: 7351.1607
+  type: 'test'
+  ...
+# Subtest: S2c PR-2: identity, Installation Requests, claims, connections and ownership
+    # Subtest: T-S-3 applying the migration leaves every existing object unchanged
+    ok 1 - T-S-3 applying the migration leaves every existing object unchanged
+      ---
+      duration_ms: 5.3058
+      type: 'test'
+      ...
+    # Subtest: T-S-4 / T-A9-11 applying the migration creates no Integration, whatever Bindings exist
+    ok 2 - T-S-4 / T-A9-11 applying the migration creates no Integration, whatever Bindings exist
+      ---
+      duration_ms: 2.9862
+      type: 'test'
+      ...
+    # Subtest: T-S-1 every new table has RLS on, no policy and no privilege for public, anon, authenticated, service_role
+    ok 3 - T-S-1 every new table has RLS on, no policy and no privilege for public, anon, authenticated, service_role
+      ---
+      duration_ms: 2.893
+      type: 'test'
+      ...
+    # Subtest: T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)
+    ok 4 - T-S-2 no EXECUTE on any Integration function before the target grants (OQ-21)
+      ---
+      duration_ms: 2.596
+      type: 'test'
+      ...
+    # Subtest: T-S-2 after the target grants: exactly §5.13
+    ok 5 - T-S-2 after the target grants: exactly §5.13
+      ---
+      duration_ms: 1.6551
+      type: 'test'
+      ...
+    # Subtest: T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout
+    ok 6 - T-S-2 after the security hygiene migration: the current Binding path is gateway only after full-chain G6 closeout
+      ---
+      duration_ms: 0.7679
+      type: 'test'
+      ...
+    # Subtest: T-A9-1 / T-A10-10 structure: request status ∩ states = ∅; NOT NULL integration_id FKs; no state columns
+    ok 7 - T-A9-1 / T-A10-10 structure: request status ∩ states = ∅; NOT NULL integration_id FKs; no state columns
+      ---
+      duration_ms: 2.5965
+      type: 'test'
+      ...
+    # Subtest: T-S-5 an unusable token reads and writes nothing (403 before any side effect)
+    ok 8 - T-S-5 an unusable token reads and writes nothing (403 before any side effect)
+      ---
+      duration_ms: 34.7238
+      type: 'test'
+      ...
+    # Subtest: T-A10-1 one Installation Request never yields a second integration_id
+    ok 9 - T-A10-1 one Installation Request never yields a second integration_id
+      ---
+      duration_ms: 368.6937
+      type: 'test'
+      ...
+    # Subtest: T-A10-3 unavailable dimensions never merge through weak identifiers
+    ok 10 - T-A10-3 unavailable dimensions never merge through weak identifiers
+      ---
+      duration_ms: 37.3699
+      type: 'test'
+      ...
+    # Subtest: T-S-6 Integration operations write no Event and change no continuity state (OQ-15)
+    ok 11 - T-S-6 Integration operations write no Event and change no continuity state (OQ-15)
+      ---
+      duration_ms: 30.5653
+      type: 'test'
+      ...
+    # Subtest: T-A10-2 concurrent create_or_bind on one complete key never yields two current holders
+    ok 12 - T-A10-2 concurrent create_or_bind on one complete key never yields two current holders
+      ---
+      duration_ms: 1177.3861
+      type: 'test'
+      ...
+    # Subtest: T-A10-4 / T-A10-5 late strengthening re-claims atomically; a collision is CLAIM_CONFLICT and BLOCKED
+    ok 13 - T-A10-4 / T-A10-5 late strengthening re-claims atomically; a collision is CLAIM_CONFLICT and BLOCKED
+      ---
+      duration_ms: 1347.7739
+      type: 'test'
+      ...
+    # Subtest: T-A10-6 a key change has no observable double-current window; the deferred trigger rejects one
+    ok 14 - T-A10-6 a key change has no observable double-current window; the deferred trigger rejects one
+      ---
+      duration_ms: 491.3334
+      type: 'test'
+      ...
+    # Subtest: T-A10-13 the same Binding binding one Request 20 ways × 20 rounds never deadlocks
+    ok 15 - T-A10-13 the same Binding binding one Request 20 ways × 20 rounds never deadlocks
+      ---
+      duration_ms: 1846.9213
+      type: 'test'
+      ...
+    # Subtest: T-A10-7 / T-A10-8 / T-A3-6 CLAIM_CONFLICT, PENDING_RECONCILE and SUPERSEDED fail closed through one chain
+    ok 16 - T-A10-7 / T-A10-8 / T-A3-6 CLAIM_CONFLICT, PENDING_RECONCILE and SUPERSEDED fail closed through one chain
+      ---
+      duration_ms: 73.6418
+      type: 'test'
+      ...
+    # Subtest: Native reconcile REPLACE_HOLDER supersedes the holder and moves its Bindings; guards
+    ok 17 - Native reconcile REPLACE_HOLDER supersedes the holder and moves its Bindings; guards
+      ---
+      duration_ms: 113.0343
+      type: 'test'
+      ...
+    # Subtest: reconcile re-resolves the holder under L4 / L5: a SUPERSEDED holder never receives or loses a survivor (MAJOR-1)
+    ok 18 - reconcile re-resolves the holder under L4 / L5: a SUPERSEDED holder never receives or loses a survivor (MAJOR-1)
+      ---
+      duration_ms: 95.4007
+      type: 'test'
+      ...
+    # Subtest: Native identity_update / reconcile refuse a foreign Integration with 403 before any Receipt (MAJOR-2)
+    ok 19 - Native identity_update / reconcile refuse a foreign Integration with 403 before any Receipt (MAJOR-2)
+      ---
+      duration_ms: 23.2657
+      type: 'test'
+      ...
+    # Subtest: the post-write validity gate rejects a write whose result adds a reason code (G-A10, T-A7-9)
+    ok 20 - the post-write validity gate rejects a write whose result adds a reason code (G-A10, T-A7-9)
+      ---
+      duration_ms: 67.9084
+      type: 'test'
+      ...
+    # Subtest: T-A10-14(b) a same-client Binding owned by J cannot be linked to I through the Binding channel (O3)
+    ok 21 - T-A10-14(b) a same-client Binding owned by J cannot be linked to I through the Binding channel (O3)
+      ---
+      duration_ms: 48.5767
+      type: 'test'
+      ...
+    # Subtest: FORBIDS_REAUTH refuses a new connection at the bind site and at REBIND_TO_HOLDER (T-A11-20(c))
+    ok 22 - FORBIDS_REAUTH refuses a new connection at the bind site and at REBIND_TO_HOLDER (T-A11-20(c))
+      ---
+      duration_ms: 76.9609
+      type: 'test'
+      ...
+    # Subtest: T-A11-17(a) / T-A11-15(d) reconcile refuses a revoked I either way, and REBIND_TO_HOLDER a revoked H
+    ok 23 - T-A11-17(a) / T-A11-15(d) reconcile refuses a revoked I either way, and REBIND_TO_HOLDER a revoked H
+      ---
+      duration_ms: 86.8705
+      type: 'test'
+      ...
+    # Subtest: §6.5 a same-key write keeps PENDING_RECONCILE; only the Owner reconcile leaves it (MINOR-N27)
+    ok 24 - §6.5 a same-key write keeps PENDING_RECONCILE; only the Owner reconcile leaves it (MINOR-N27)
+      ---
+      duration_ms: 32.3393
+      type: 'test'
+      ...
+    # Subtest: T-A11-20(d) REBIND_TO_HOLDER clears H's reauth marks raised before b's grant and keeps later ones
+    ok 25 - T-A11-20(d) REBIND_TO_HOLDER clears H's reauth marks raised before b's grant and keeps later ones
+      ---
+      duration_ms: 65.1136
+      type: 'test'
+      ...
+    # Subtest: request_open and create_or_bind refuse unregistered hosts, surfaces and unverified connection evidence
+    ok 26 - request_open and create_or_bind refuse unregistered hosts, surfaces and unverified connection evidence
+      ---
+      duration_ms: 32.6783
+      type: 'test'
+      ...
+    # Subtest: a request_key replays only for its own channel and Binding; account deletion cascades over Requests
+    ok 27 - a request_key replays only for its own channel and Binding; account deletion cascades over Requests
+      ---
+      duration_ms: 281.1111
+      type: 'test'
+      ...
+    # Subtest: T-A10-9 / T-A7-9 a Claim Store divergence fails closed with one diagnostic and one Receipt
+    ok 28 - T-A10-9 / T-A7-9 a Claim Store divergence fails closed with one diagnostic and one Receipt
+      ---
+      duration_ms: 40.225
+      type: 'test'
+      ...
+    # Subtest: T-A10-11 no Binding can take over another connection's Integration
+    ok 29 - T-A10-11 no Binding can take over another connection's Integration
+      ---
+      duration_ms: 141.5128
+      type: 'test'
+      ...
+    # Subtest: T-A10-12 a conflict cannot be left by changing identity
+    ok 30 - T-A10-12 a conflict cannot be left by changing identity
+      ---
+      duration_ms: 34.8049
+      type: 'test'
+      ...
+    # Subtest: T-A10-14 explicit Binding ownership
+    ok 31 - T-A10-14 explicit Binding ownership
+      ---
+      duration_ms: 160.0331
+      type: 'test'
+      ...
+    # Subtest: T-A9-3 the Native path up to the PR-3 boundary; provider mismatch
+    ok 32 - T-A9-3 the Native path up to the PR-3 boundary; provider mismatch
+      ---
+      duration_ms: 48.7297
+      type: 'test'
+      ...
+    # Subtest: §10.1 a derived connection revoke is materialized by the next successful write; rebind is refused
+    ok 33 - §10.1 a derived connection revoke is materialized by the next successful write; rebind is refused
+      ---
+      duration_ms: 51.2792
+      type: 'test'
+      ...
+    # Subtest: §5.5 O7 a grant issued before a revocation cannot link or create; a later one can
+    ok 34 - §5.5 O7 a grant issued before a revocation cannot link or create; a later one can
+      ---
+      duration_ms: 65.2201
+      type: 'test'
+      ...
+    # Subtest: §10.3 the authorization ceiling: covers, C_eff after a reduce, fresh consent
+    ok 35 - §10.3 the authorization ceiling: covers, C_eff after a reduce, fresh consent
+      ---
+      duration_ms: 123.0064
+      type: 'test'
+      ...
+    # Subtest: ERRATA-004 a ceiling project:* covers the project:<id> entries it materializes
+    ok 36 - ERRATA-004 a ceiling project:* covers the project:<id> entries it materializes
+      ---
+      duration_ms: 88.2949
+      type: 'test'
+      ...
+    # Subtest: T-A9-11 adoption is explicit, one Binding at a time; P5 Bindings are not adoptable
+    ok 37 - T-A9-11 adoption is explicit, one Binding at a time; P5 Bindings are not adoptable
+      ---
+      duration_ms: 21.4199
+      type: 'test'
+      ...
+    # Subtest: T-A10-10 create_or_bind writes the Integration and the Request binding in one transaction
+    ok 38 - T-A10-10 create_or_bind writes the Integration and the Request binding in one transaction
+      ---
+      duration_ms: 22.6606
+      type: 'test'
+      ...
+    # Subtest: T-A3-1 / T-A3-3 DB: an empty candidate is never operable; each reachable state has an empty effective set
+    ok 39 - T-A3-1 / T-A3-3 DB: an empty candidate is never operable; each reachable state has an empty effective set
+      ---
+      duration_ms: 440.3339
+      type: 'test'
+      ...
+    # Subtest: T-A3-3 DB: A-class verification facts from fixture rows (verify is PR-3); REAUTH_REQUIRED and INCOMPATIBLE
+    ok 40 - T-A3-3 DB: A-class verification facts from fixture rows (verify is PR-3); REAUTH_REQUIRED and INCOMPATIBLE
+      ---
+      duration_ms: 93.5191
+      type: 'test'
+      ...
+    # Subtest: ERRATA-003 headless Bindings derive as clued.binding.v1, one provider connection each
+    ok 41 - ERRATA-003 headless Bindings derive as clued.binding.v1, one provider connection each
+      ---
+      duration_ms: 36.4964
+      type: 'test'
+      ...
+    # Subtest: §10.9 status and list views redact the provider connection id and carry the audit fields
+    ok 42 - §10.9 status and list views redact the provider connection id and carry the audit fields
+      ---
+      duration_ms: 37.5605
+      type: 'test'
+      ...
+    1..42
+ok 4 - S2c PR-2: identity, Installation Requests, claims, connections and ownership
+  ---
+  duration_ms: 14803.5518
+  type: 'test'
+  ...
+# Subtest: S2c PR-2 runs on the production-installed shape (no P5 migrations)
+ok 5 - S2c PR-2 runs on the production-installed shape (no P5 migrations)
+  ---
+  duration_ms: 6835.5446
+  type: 'test'
+  ...
+# Subtest: Owner record detail: Native tenancy, typed links, exact currentness and read-only claims
+ok 6 - Owner record detail: Native tenancy, typed links, exact currentness and read-only claims
+  ---
+  duration_ms: 7274.0639
+  type: 'test'
+  ...
+1..6
+# tests 63
+# suites 0
+# pass 63
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 50263.0083
+run_finished_utc=2026-10-14T10:22:58.3696409Z exit_code=0

@@ -1,0 +1,38 @@
+▶ all-contexts sources, exact permission inheritance and real transaction barriers
+  ✔ eligible policy intersects requested scopes and preserves the API action vocabulary (59.3272ms)
+  ✔ one Native macro approval covers exact self-owned resources with no foreign or execution-policy shortcut (39.7123ms)
+  ✔ same-Binding Owner upgrade preserves legacy baseline; removing macro restores only legacy read (140.8962ms)
+  ✔ new explicit Native consent really extends a read-only macro scope ceiling and its future resources (183.6078ms)
+  ✔ new Native policy consent renews an expired source within the unchanged Authorization hard expiry (136.6795ms)
+  ✔ fresh reader consent after expired full never revives old write/full and leaves a live independent source intact (162.0752ms)
+  ✔ specified exact Context and canonical project selections have independent boundaries (25.0043ms)
+  ✔ future Context and future Project inherit only the live self-owned macro (302.7857ms)
+  ✔ precise deny and existing history/field/version ceilings survive macro overlap and future refresh (437.0185ms)
+  ✔ single submitted macro materializes more than 100 real resources without a hidden truncation (314.1833ms)
+  ✔ management DTO exposes real activity, readable names and source-independent denial (129.9297ms)
+  ✔ last live source and last effective exact entry reject with a business error and complete rollback; explicit revoke truly denies MCP (491.0434ms)
+  ✔ a future project policy with zero owned projects remains meaningful and later materializes a real project (83.0783ms)
+  ✔ expired final source cannot execute Integration mutations or revive cached authority; Native revoke remains available (148.266ms)
+  ✔ revoking the final Context grant commits without Source rebuild rollback and denies MCP and Integration execution (83.281ms)
+  ✔ Integration capabilities use the same live exact entry, retaining read while independently expired write is denied (76.2808ms)
+  ✔ per-source expiry is checked at execution without read repair or killing a live independent source (141.0082ms)
+  ✔ revoked grants reopen only through exact Native old-to-new confirmation and all CAS values (196.9413ms)
+  ✔ historical exact action reduction survives upgrade, refresh and rotation until separate Native confirmation (632.8977ms)
+  ✔ canonical precise denial needs its own Native confirmation with no fabricated grant (460.0189ms)
+  ✔ precise confirmation binds Auth and exact limit versions and burns a stale token atomically (893.0949ms)
+  ✔ an invited Context is separate from the macro and keeps its exact original qualification (1050.0081ms)
+  ✔ unupgraded v12 Headless rotation preserves legacy history, fields, expiry and unknown baseline provenance (255.0788ms)
+  ✔ Headless source rotation snapshots every source, exception and exact grant limit (1120.6457ms)
+  ✔ two real clients: approval first then Context creation observes the new policy after waiting (325.3732ms)
+  ✔ two real clients: Context creation first then approval observes the committed new resource (201.0062ms)
+  ✔ two real clients: Native permission approval and Context creation cannot form the old GrantLock/Binding cycle (269.7798ms)
+  ✔ unguarded inserts, fake GUC guard, stronger snapshot and private API calls fail closed (9.0287ms)
+✔ all-contexts sources, exact permission inheritance and real transaction barriers (15549.7944ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 15641.9096

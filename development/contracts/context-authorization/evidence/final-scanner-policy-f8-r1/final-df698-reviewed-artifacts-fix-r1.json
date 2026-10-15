@@ -1,0 +1,215 @@
+{
+  "schema": "clued.final-df698-reviewed-artifact-fix.v1",
+  "authority_effect": "NONE",
+  "status": "LOCAL_FIX_TESTS_PASS_PENDING_NONAUTHOR_REVIEW_AND_REAL_SCAN",
+  "closed_at_utc": "2026-10-14T18:40:36.410440+00:00",
+  "claim": {
+    "id": "2c722a48-1fe3-42d9-974a-c5516e553f7a",
+    "fence": 8,
+    "lease": 4
+  },
+  "fixed_exception_commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+  "classified_input_sha256": "2789915c9a0b7c3045349a56b1dd7058acfa4d4172287e452ef0c1c0a7f3fbc1",
+  "files": [
+    {
+      "path": ".gitleaks.toml",
+      "bytes": 127119,
+      "sha256": "c8d78643a3e5fb112e20448305a825a1bcaa23bf14c9f57fb69ae271ece0fa2a"
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "bytes": 19323,
+      "sha256": "3cff545f0d26610de0097165cf9dc6d32421707357cf960a9f38af22b4d0e32f"
+    },
+    {
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "bytes": 13175,
+      "sha256": "a9ba72b3d96fea883ad2bcc6ef9450cf2051d139fdb78a8b1ed786d0548eedb0"
+    }
+  ],
+  "delta": {
+    "path": "final-df698-reviewed-artifacts-delta-r1.patch",
+    "sha256": "2a0703306eec7a2c7d35343823a5b8f3bfc2a2822a72882c478c5e17e21f4a68",
+    "bytes": 24635,
+    "hunks": {
+      ".gitleaks.toml": [
+        "@@ -14,7 +14,7 @@ regexes = ['''^sb_secret_fixture_rejected$''']",
+        "@@ -516,3 +516,13 @@ regexes = ['''^sb_secret_fixture_rejected$''']"
+      ],
+      "scripts/ci/reviewed_gitleaks.py": [
+        "@@ -1,5 +1,6 @@",
+        "@@ -12,7 +13,7 @@ import tomllib",
+        "@@ -20,6 +21,40 @@ REVIEW_DOCUMENT_DIGEST_LINES = {",
+        "@@ -67,7 +102,7 @@ def parse_records(text):",
+        "@@ -83,9 +118,22 @@ def parse_records(text):",
+        "@@ -131,6 +179,65 @@ def verify_auth_review_digest(repo, text, line_number):",
+        "@@ -144,6 +251,8 @@ def verify_history(repo, records):"
+      ],
+      "tests/test_reviewed_gitleaks_artifacts.py": [
+        "@@ -1,4 +1,8 @@",
+        "@@ -55,10 +59,180 @@ class ReviewedArtifactDigestTests(unittest.TestCase):"
+      ]
+    },
+    "diff_check_exit": 0
+  },
+  "policy": {
+    "old484_identical": true,
+    "old_record_digest": "b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172",
+    "new": 7,
+    "total": 491,
+    "new_exact_paths": 4,
+    "new_exact_lines": 7,
+    "reported_matches": 8,
+    "default_toml_and_allowlist_identical": true,
+    "new_regexes": 0,
+    "new_global_ignore": 0
+  },
+  "proof": {
+    "whole_immutable_git_document_pins": true,
+    "exact_json_parent_and_line": true,
+    "same_commit_actual_source_git_digest": true,
+    "encoded_lines": 2,
+    "decoded_source_occurrences": 3,
+    "strict_base64": true,
+    "pinned_original_size_and_digest": true,
+    "allowed_transform": "CRLF_to_LF_ONLY",
+    "normalized_original_equals_same_commit_git_sidecar": true,
+    "old23_encoded_originals_and_sidecars_unchanged": true,
+    "packet_envelope_sha256": "612941c58af479abc203c7c64ad3caeb6465f0851b8bcb6eb273c7eac2b68b39"
+  },
+  "tests": {
+    "pass": 28,
+    "fail": 0,
+    "skip": 0,
+    "retained_original_methods": 8,
+    "new_methods": 20,
+    "args": [
+      "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests",
+      "-p",
+      "test_reviewed_gitleaks_artifacts.py",
+      "-v"
+    ],
+    "runtime": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "python_version": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+    "started_utc": "2026-10-14T18:35:06.797710+00:00",
+    "finished_utc": "2026-10-14T18:35:07.889565+00:00",
+    "exit_code": 0,
+    "log": {
+      "path": "final-df698-reviewed-artifacts-tests-r1.log",
+      "sha256": "aedbf5caf0f5ee0ba51366e43a1b31ecf3cebaec0d4cec8ca5f958db4c20f091",
+      "bytes": 4854
+    },
+    "run": {
+      "path": "final-df698-reviewed-artifacts-tests-r1-run.json",
+      "sha256": "9876afa543a589e1d2f085f4fe29ad4850e43f8bc0fa2901cedf77c4e05abf7b",
+      "bytes": 1904
+    },
+    "cases": [
+      "commit/path/line/rule/reason/registry count and exact set",
+      "document bytes and false hex digest against real Source",
+      "encoded identity, malformed Base64, original size/hash and changed decoded bytes of same/different length",
+      "transform/sidecar metadata and targeted actual sidecar bytes",
+      "targeted Source bytes at all direct locations and all three decoded Source occurrences"
+    ],
+    "semantic_test_method": "Only controlled document pin is patched inside tests; original, Source and sidecar pins stay live. Wrong blob mocks intercept only their exact Git route."
+  },
+  "helper": {
+    "args": [
+      "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "-B",
+      "scripts/ci/reviewed_gitleaks.py",
+      "--config",
+      ".gitleaks.toml",
+      "--output",
+      "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-df698-491-reviewed.ignore"
+    ],
+    "runtime": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+    "started_utc": "2026-10-14T18:35:49.376715+00:00",
+    "finished_utc": "2026-10-14T18:35:57.493171+00:00",
+    "exit_code": 0,
+    "result": {
+      "exact_historical_fingerprints": 491,
+      "default_rules_unchanged": true,
+      "global_fingerprints": 0,
+      "ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a",
+      "commits": 70,
+      "files_at_commits": 128,
+      "verified_git_objects": 130
+    },
+    "preflight_required_commits": 70,
+    "missing_commits": 0,
+    "fetch_not_needed": true,
+    "docker_self_test": false,
+    "log": {
+      "path": "final-df698-reviewed-helper-r1.log",
+      "sha256": "27edf584cd50e0425aad39ba38c6edcee238ae55375434fe874f67dfe893a6b8",
+      "bytes": 253
+    },
+    "run": {
+      "path": "final-df698-reviewed-helper-r1-run.json",
+      "sha256": "43a3728fbfa148890bc29055b9fdcca6cf289c24cbb9a9b711fbf98b752872c9",
+      "bytes": 1771
+    },
+    "generated_ignore_path": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/scanner/pr818-final-df698-491-reviewed.ignore",
+    "generated_ignore_sha256": "7a60eed6546ba78c2c8f54cd0ccc53cf3ed30d405de4e6426482ea55ce00a71a"
+  },
+  "review_commands": [
+    {
+      "cwd": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo",
+      "args": [
+        "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_reviewed_gitleaks_artifacts.py",
+        "-v"
+      ]
+    },
+    {
+      "cwd": "C:/Users/Windows/Documents/Codex/2026-10-13/c-l/work/eight_implementation/repo",
+      "args": [
+        "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "-B",
+        "scripts/ci/reviewed_gitleaks.py",
+        "--config",
+        ".gitleaks.toml",
+        "--output",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\scanner\\pr818-final-df698-491-reviewed.ignore"
+      ],
+      "note": "Choose a fresh outside-repo output for independent verification; no --self-test without Docker."
+    }
+  ],
+  "qualification": {
+    "original_df698_scan": "FAIL_PRESERVED",
+    "classification_is_not_scan_pass": true,
+    "independent_diff_review": "PENDING",
+    "new_head_actual_scan": "PENDING_SCANNER_AGENT",
+    "ci": false,
+    "production": false,
+    "same_binding": false,
+    "native8view": false,
+    "archive": false,
+    "whole_product": false
+  },
+  "report_assembly_notes": [
+    "First report assembly stopped before writing due to CRLF footer parser; raw successful test log was retained.",
+    "A follow-up probe referenced a CandidateManifest not adopted into repo; final preservation check uses actual23 envelope originals and sidecars."
+  ],
+  "operations_not_performed": [
+    "Source/original23 edits",
+    "Git mutations/fetch/commit/push",
+    "CI/PG/full DB/build/Docker rerun",
+    "Canon/Drive"
+  ],
+  "budget_reset": false
+}

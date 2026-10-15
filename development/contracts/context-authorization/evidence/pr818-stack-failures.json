@@ -1,0 +1,249 @@
+{
+  "schema": "clued.pr-stack-failure-diagnosis.v1",
+  "generated_at": "2026-10-14T07:45:29Z",
+  "reviewer": "Codex independent read-only subagent /root/pr818_stack_failure_diagnosis",
+  "subject": {
+    "pull_request": "https://github.com/tdoljyj/cross-memory-system/pull/818",
+    "head_revision": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+    "source_migration_sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b",
+    "serialization_migration_sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad"
+  },
+  "acquisition": {
+    "tool": "mcp__code_review__pull_requests_checks",
+    "discovery_and_followups_preserved_head_revision": true,
+    "run_metadata_ids": [
+      38527507350,
+      38527507334,
+      38527507324
+    ],
+    "job_log_ids": [
+      115731675812,
+      115731672374,
+      115731646431
+    ],
+    "all_job_logs_truncated": false,
+    "source_files_read_via_exact_git_show": true,
+    "no_github_log_or_cli_fallback": true,
+    "no_ci_rerun": true,
+    "no_source_or_test_changes": true,
+    "no_credentials_or_full_logs_in_report": true
+  },
+  "conclusion": {
+    "classification": "Historical fixture and scenario protocol compatibility failures; no logged disk exhaustion explains these jobs.",
+    "source_fix_required_by_evidence": false,
+    "ci_still_failed": true,
+    "qualification": "New Source and serialization tests passing does not qualify the entire suite. These actual failures must be repaired and rerun on the new exact head before acceptance.",
+    "e2e_response_limitation": "E2E logs disclose the failing check IDs, not the raw PostgREST reduce response. Its exact expected server error is a code-derived inference, not an observed response."
+  },
+  "jobs": [
+    {
+      "run_id": 38527507350,
+      "job_id": 115731675812,
+      "name": "Supabase migration, RLS, transaction, and pgTAP",
+      "runner": "clued-ci-company-linux-04",
+      "runner_machine": "DESK-W-591",
+      "hosted_counterpart": "skipped",
+      "conclusion": "failure",
+      "actual_steps": [
+        {
+          "step": "build",
+          "outcome": "passed before later test failure"
+        },
+        {
+          "step": "fresh-start guard tests",
+          "outcome": "18 passed, 0 failed, 0 skipped"
+        },
+        {
+          "step": "Supabase start plus fresh-start verify",
+          "outcome": "251 migrations; history_matches=true, initialized_once=true, reset_skipped=true",
+          "safe_excerpt": "2026-10-14T07:25:18.5495351Z {\"migrations\":251,\"history_matches\":true,\"project\":\"clued-g4-38527507350-1\",\"initialized_once\":true,\"reset_skipped\":true}"
+        },
+        {
+          "step": "Supabase db lint public,clued_private",
+          "outcome": "passed"
+        },
+        {
+          "step": "Supabase pgTAP m1_runtime_contracts and m1_legacy_mapping",
+          "outcome": "72 tests in 2 files passed"
+        },
+        {
+          "step": "npm run test:project:lifecycle:v2",
+          "outcome": "69 passed, 1 failed, 0 skipped",
+          "failing_test": "tests/project-lifecycle-successor-v2-db.test.mjs:53",
+          "error_code": "42883",
+          "safe_excerpt": "2026-10-14T07:25:46.0025447Z Error: Migration 20261014045157_all_contexts_serialization_v2.sql: function \"clued_private.ii_pub_clued_authorization_approve_v12(text,uuid,bigint,jsonb,text,timestamptz)\" does not exist"
+        },
+        {
+          "step": "isolated Supabase cleanup",
+          "outcome": "own stack stopped"
+        }
+      ],
+      "root_cause": {
+        "evidence_status": "Confirmed assembly order from exact-head fixture and actual missing-function error",
+        "description": "The historical lifecycle test defers lifecycle, issuer identity, gateway transition, closeout and other prerequisite migrations, but its initial migration loop still includes the new all-contexts Source and serialization successors. Serialization patches an issuer-created private wrapper before the deferred issuer migration has created it.",
+        "source_locations": [
+          "apps/clued-cloud/tests/project-lifecycle-successor-v2-db.test.mjs:74",
+          "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql:189"
+        ]
+      },
+      "required_followup": "Preserve the historical fixture's old lifecycle assertions and apply both new successors only after all actual deferred prerequisites and old closeout proofs. Then verify the current successor catalog and exact Native/GW/CI ACL boundary. Do not skip serialization's target or change the immutable historical migration."
+    },
+    {
+      "run_id": 38527507334,
+      "job_id": 115731672374,
+      "name": "Information Flow E2E over the local Worker and Supabase stack",
+      "runner": "clued-ci-company-linux-02",
+      "runner_machine": "DESK-W-591",
+      "hosted_counterpart": "skipped",
+      "conclusion": "failure",
+      "actual_steps": [
+        {
+          "step": "isolated Supabase start",
+          "outcome": "completed full migration chain"
+        },
+        {
+          "step": "npm run test:information-flow:e2e",
+          "outcome": "13 scenarios PASS, E2E-11 OBSERVED, E2E-05 FAIL",
+          "safe_excerpt": "2026-10-14T07:29:29.3989862Z [ife2e] E2E-05: FAIL 05.reduce,05.next_scopes,05.next_items,05.revalidate"
+        },
+        {
+          "step": "information-flow:e2e:verify",
+          "outcome": "E2E-05 evidence stored/recomputed seals match; recorded scenario result remains FAIL"
+        },
+        {
+          "step": "isolated Supabase cleanup",
+          "outcome": "own stack stopped"
+        }
+      ],
+      "root_cause": {
+        "evidence_status": "Observed four failing check IDs; exact reduction refusal inferred from source, response absent in log",
+        "description": "E2E-05 reduces a newly minted binding using old flat selected:[scopeEntry(pa)]. New binding issuance activates source_protocol=true. Current management requires selection_format=sources_v1 and source IDs/versions/action caps for source-mode reduction, and explicitly refuses selected. The other three failures follow an unsuccessful reduction, so the previously granted scope B remains.",
+        "expected_code_derived_error": "22023 authorization_source_selection_required_sources_v1",
+        "source_locations": [
+          "apps/clued-cloud/evals/information-flow-e2e/scenarios/e2e-05.mjs:29",
+          "apps/clued-cloud/evals/information-flow-e2e/principals.mjs:111",
+          "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql:225",
+          "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql:811"
+        ]
+      },
+      "required_followup": "Use the actual list DTO to select the scope-A source ID/version and submit source-aware reduction. Preserve the existing behavioral checks: only scope A in the next pack and binding_scope_reduced for old manifest revalidation. Capture a safe explicit failure response if a new run still fails; do not permit ambiguous flat reductions."
+    },
+    {
+      "run_id": 38527507324,
+      "job_id": 115731646431,
+      "name": "isolated-candidate",
+      "runner": "clued-ci-company-linux-01",
+      "runner_machine": "DESK-W-591",
+      "hosted_counterpart": "skipped",
+      "conclusion": "failure",
+      "actual_steps": [
+        {
+          "step": "install/hydrate/typecheck",
+          "outcome": "passed before database tests"
+        },
+        {
+          "step": "test:authorization:transport",
+          "outcome": "86 passed, 0 failed, 0 skipped"
+        },
+        {
+          "step": "test:authorization:database",
+          "outcome": "175 passed, 9 failed, 0 skipped; 184 total"
+        }
+      ],
+      "failure_groups": [
+        {
+          "error": "authorization_early_writer_guard_required",
+          "code": "42501",
+          "count": 2,
+          "tests": [
+            {
+              "path": "tests/authorization-closeout.test.mjs",
+              "entry_line": 27,
+              "failure_line": 70
+            },
+            {
+              "path": "tests/worker-gateway-db.test.mjs",
+              "entry_line": 114,
+              "failure_line": 442
+            }
+          ],
+          "safe_excerpt": "PL/pgSQL function clued_private.authorization_writer_require_v2(uuid) line 5 at RAISE; SELECT clued_private.authorization_writer_require_v2(new.user_id); PL/pgSQL function clued_private.authorization_future_project_v2() line 4 at PERFORM",
+          "cause": "These current-chain fixtures directly INSERT project rows as raw admin without the real early Owner writer protocol. The new project trigger correctly refuses the unguarded insertion.",
+          "followup": "Use the actual Native project creation path for current-chain fixtures, or place historical raw setup in its bounded historical phase before applying the successors. Do not disable the trigger or invent a GUC bypass."
+        },
+        {
+          "error": "worker_gateway_closeout_boundary_unqualified",
+          "code": "42501",
+          "count": 6,
+          "tests": [
+            {
+              "path": "tests/k-cont-db.test.mjs",
+              "failure_line": 430
+            },
+            {
+              "path": "tests/owner-grants-db.test.mjs",
+              "failure_line": 301
+            },
+            {
+              "path": "tests/owner-grants-admission-door-db.case.mjs",
+              "failure_line": 226
+            },
+            {
+              "path": "tests/owner-grants-release-door-db.test.mjs",
+              "failure_line": 184
+            },
+            {
+              "path": "tests/owner-grants-scope-db.test.mjs",
+              "failure_line": 199
+            },
+            {
+              "path": "tests/owner-request-bundles-db.test.mjs",
+              "failure_line": 231
+            }
+          ],
+          "diagnostic": {
+            "violation_count": 1,
+            "truncated": false,
+            "kind": "legacy_alias_source_drift",
+            "object": "public.clued_project_mutate(text,jsonb)",
+            "source_sha256": "e1ef1b49c22dc320471da046f2c59647b87c9fcf63c5adcc0622c710a94baa08"
+          },
+          "cause": "All six fixtures apply the entire current chain, then replay the old immutable G6 CLOSEOUT migration. Serialization legitimately adds the early writer protocol to the legacy project alias, so its body no longer equals the historical CLOSEOUT fingerprint. These six errors share that exact one-object diagnostic.",
+          "followup": "Prove the immutable closeout/replay in its original bounded migration stage, then install all later successors in real order and prove actual current body/OID/metadata/ACL behavior separately. Never update the old CLOSEOUT hash or suppress its rejection."
+        },
+        {
+          "error": "authorization_serialization_gateway_boundary_changed",
+          "code": "P0001",
+          "count": 1,
+          "test": {
+            "path": "tests/worker-gateway-db.test.mjs",
+            "entry_line": 414,
+            "failure_line": 420
+          },
+          "cause": "The historical gateway transition fixture applies every later migration except CLOSEOUT before it applies CLOSEOUT. The new serialization successor qualifies project_mutate_v2 anon/GW privilege after the production closeout, so applying it before that required closeout fails its real ACL qualification.",
+          "followup": "Keep transition-era tests and their old anon compatibility proof in the bounded stage, apply CLOSEOUT and prove its replay there, then install new successors and verify the current gateway boundary."
+        }
+      ]
+    }
+  ],
+  "non_causes_and_limits": {
+    "no_log_evidence_of_disk_exhaustion": true,
+    "no_ENOSPC_or_No_space_left_on_device_in_any_of_three_complete_logs": true,
+    "github_official_outage_not_supported": true,
+    "billing_quota_block_not_supported": true,
+    "runner_inventory_note": "The docker diagnostic inventory includes old unhealthy or stopped containers; that observation alone is not the cause of these SQL/protocol failures. The actual current G4 migration/lint/pgTAP steps passed.",
+    "all_three_admission_gate_jobs_passed": true,
+    "do_not_treat_hosted_skipped_checks_as_passed": true
+  },
+  "candidate_fix_scope": {
+    "source_or_serialization_sql_change_not_indicated": true,
+    "test_and_e2e_files_need_claimed_occupancy_before_editing": true,
+    "owner_should_coordinate": "Root must extend/narrow occupancy for the affected historical test files, fixtures and E2E scenario before authoring repairs.",
+    "minimum_rerun": [
+      "Exact new-head affected historical project lifecycle suite",
+      "Exact new-head test:authorization:database including all previously failed files",
+      "Exact new-head Information Flow E2E and seal verifier",
+      "Normal required CI gates on the exact pushed candidate head"
+    ]
+  }
+}

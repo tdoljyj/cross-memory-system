@@ -1,0 +1,92 @@
+{
+  "schema": "clued.auth-historical-fixture-repair.v1",
+  "author": "Codex /root/auth_fixture_closeout_engineer",
+  "claim": {
+    "claim_id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+    "fence": 6,
+    "parent_lease_version_at_start": 12,
+    "parent_session_ref": "01a13354-ac0d-7ec2-a8b8-4f636aa9c605"
+  },
+  "subject": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "sha256": "e3d6f9066eb09d27d58393d5e5c756d0632c64e1124692a489faec2357f67e38"
+    }
+  ],
+  "files": [
+    {
+      "path": "apps/clued-cloud/tests/authorization-closeout.test.mjs",
+      "sha256": "ac12ec2846ddc52fd857007e375c39257b3e3656f4b62727b5602bf9a6ac6bfc"
+    },
+    {
+      "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+      "sha256": "232f0b1f0e3cbf4b396bcfde8992ba374e31954e1434f6ae1954076e6d2b91da"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-db.test.mjs",
+      "sha256": "ab8ac00bd8ee76903c1e8b55e86e4b7d222cafa962c8c1e0396e71080edc8c90"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs",
+      "sha256": "359d38231b77524f4d6b28ee2e6d4dedad5ffeb7a07599a874e853f18a400d9e"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-release-door-db.test.mjs",
+      "sha256": "de51e2ba36643a035cc24f18a3dc6a4413653c88a04850c0d38cc92594bcb15f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-scope-db.test.mjs",
+      "sha256": "61fc52269883328770abacea090f773244eab1d6b5d9bda09a6c0bd8813e6a58"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-request-bundles-db.test.mjs",
+      "sha256": "6f049be19f413c7c25255fd09fe232d66e734914e0a8d68f1616c4e59f9b32ef"
+    }
+  ],
+  "diagnosis": {
+    "actual_failure_report": "pr818-stack-failures.json",
+    "actual_failure_report_sha256": "159974afd86365a2730d7f44a0f0e3d44ad6fb8819bf06ba43b8453b28e6ccc9",
+    "prior_head": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+    "preserved_actual_failures": true
+  },
+  "change": [
+    "Six late historical CLOSEOUT replays moved to the precise pre-Source boundary; authorization-closeout also now proves that bounded replay. The actual unchanged sealed SQL runs, full caller catalog matches before/after, and GW80/CI8 are checked on both sides.",
+    "Source and serialization are applied in real migration order, bind their exact frozen hashes, assert Source remains not ready before serialization and current readiness becomes true afterward.",
+    "Relevant existing public OIDs/owners/security-definer/search_path/ACL are preserved across both successors; current legacy project alias contains the early Owner protocol; private guard/require/source-view helper EXECUTE is denied for anon, authenticated, service_role and Worker gateway.",
+    "Three raw project INSERTs in authorization-closeout and K-CONT use BEGIN, actual Owner advisory transaction guard and pg_locks-backed held assertion before INSERT, followed by COMMIT or rollback.",
+    "All original authorization, continuity, Owner confirmation, consumption, replay, rejection, reduction, revocation and cross-user behavioral assertions remain and run after the complete successor chain."
+  ],
+  "validation": {
+    "manifest": "auth-fixture-closeout-test-manifest.json",
+    "manifest_sha256": "e92f1141b4842249736779b68acf80913bfe57654a842082d9fb05855efec37e",
+    "log": "auth-fixture-closeout-test.log",
+    "log_sha256": "bc75e20b02f8e1d553d86241a4a018fa42cacd486257202e919322e192c30f7d",
+    "tests": 9,
+    "pass": 9,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "duration_ms": 53321.4366,
+    "runtime": "Node.js v24.19.0",
+    "exit_code": 0,
+    "started_at": "2026-10-14T07:58:45.7075087Z",
+    "ended_at": "2026-10-14T07:59:39.1425717Z",
+    "syntax_all_7": "PASS",
+    "diff_check": "PASS"
+  },
+  "qualification": "LOCAL_AFFECTED_FIXTURES_PASS_ONLY",
+  "limits": [
+    "No new Source or serialization SQL, old CLOSEOUT SQL/signature/registry, UI or public shared helper edits.",
+    "No CI dispatch, Git commit/push, Canonical write, production migration/deploy or Native approval.",
+    "Current exact-head CI, non-author review and original eight-view real-page acceptance remain Root-owned subsequent gates."
+  ]
+}

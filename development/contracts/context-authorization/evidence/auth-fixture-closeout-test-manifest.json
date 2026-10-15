@@ -1,0 +1,72 @@
+{
+  "schema": "clued.local-fixture-qualification.v1",
+  "started_at": "2026-10-14T07:58:45.7075087Z",
+  "ended_at": "2026-10-14T07:59:39.1425717Z",
+  "runtime": "Node.js v24.19.0",
+  "exit_code": 0,
+  "command": "scripts/run-tests.mjs --test --test-force-exit --test-reporter=spec --test-concurrency=1 [six entry files; admission case is imported by release]",
+  "qualification": "affected 7 fixture files only; no current CI or Native acceptance",
+  "log_sha256": "bc75e20b02f8e1d553d86241a4a018fa42cacd486257202e919322e192c30f7d",
+  "files": [
+    {
+      "path": "apps/clued-cloud/tests/authorization-closeout.test.mjs",
+      "sha256": "ac12ec2846ddc52fd857007e375c39257b3e3656f4b62727b5602bf9a6ac6bfc"
+    },
+    {
+      "path": "apps/clued-cloud/tests/k-cont-db.test.mjs",
+      "sha256": "232f0b1f0e3cbf4b396bcfde8992ba374e31954e1434f6ae1954076e6d2b91da"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-db.test.mjs",
+      "sha256": "ab8ac00bd8ee76903c1e8b55e86e4b7d222cafa962c8c1e0396e71080edc8c90"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-admission-door-db.case.mjs",
+      "sha256": "359d38231b77524f4d6b28ee2e6d4dedad5ffeb7a07599a874e853f18a400d9e"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-release-door-db.test.mjs",
+      "sha256": "de51e2ba36643a035cc24f18a3dc6a4413653c88a04850c0d38cc92594bcb15f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-grants-scope-db.test.mjs",
+      "sha256": "61fc52269883328770abacea090f773244eab1d6b5d9bda09a6c0bd8813e6a58"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-request-bundles-db.test.mjs",
+      "sha256": "6f049be19f413c7c25255fd09fe232d66e734914e0a8d68f1616c4e59f9b32ef"
+    }
+  ],
+  "subject": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "55ba0daa5b4e303c3a954f7eec7a7f82621f6dc432693f5456cf5026684d104b"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "sha256": "e3d6f9066eb09d27d58393d5e5c756d0632c64e1124692a489faec2357f67e38"
+    }
+  ],
+  "results": {
+    "tests": 9,
+    "pass": 9,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "duration_ms": 53321.4366
+  },
+  "entries": [
+    "tests/authorization-closeout.test.mjs",
+    "tests/k-cont-db.test.mjs",
+    "tests/owner-grants-db.test.mjs",
+    "tests/owner-grants-release-door-db.test.mjs",
+    "tests/owner-grants-scope-db.test.mjs",
+    "tests/owner-request-bundles-db.test.mjs"
+  ],
+  "admission_case_execution": "Actual import from owner-grants-release-door-db.test.mjs; one top-level passing admission test, no skip or green mock."
+}

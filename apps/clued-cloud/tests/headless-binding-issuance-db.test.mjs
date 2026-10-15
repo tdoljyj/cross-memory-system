@@ -217,7 +217,9 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
     assert.equal(entry.client_id, 'clued-headless');
     assert.equal(entry.active, true);
     const reduced = await native('clued_authorization_manage_v12', { op: 'reduce', binding_id: result.binding_id,
-      base_version: 1, selected: readGlobal });
+      base_version: 1, selection_format: 'sources_v1', exceptions: [],
+      sources: entry.sources.map((source) => ({ source_id: source.source_id, base_version: source.version,
+        action_cap: source.contributions.some((row) => row.resource_id === 'global') ? ['read'] : [] })) });
     assert.equal(reduced.version, 2);
     await assert.rejects(() => resolve(tokenHash, 'context:read', `project:${projectId}`), /resource_action_not_authorized/);
 
@@ -260,8 +262,11 @@ test('headless Binding issuance: Native two steps, least privilege, expiry, rota
       'headless_binding_replace_target_invalid');
 
     // A rotation confirmed against a Binding that changed in between is stale.
+    const sourceState = (await native('clued_authorization_manage_v12', { op: 'list' })).bindings.find((row) => row.binding_id === result.binding_id);
     pending = await native('clued_headless_binding_confirmation_issue_v1',
-      { label: 'stale', days: 7, selected: readGlobal, replaces_binding_id: result.binding_id });
+      { label: 'stale', days: 7, selected: [], replaces_binding_id: result.binding_id, selection_format: 'sources_v1',
+        sources: sourceState.sources.map((s) => ({ source_id: s.source_id, base_version: s.version, action_cap: s.actions })),
+        exceptions: sourceState.overrides.map((o) => ({ override_id: o.override_id, base_version: o.version })) });
     await native('clued_authorization_manage_v12', { op: 'revoke', binding_id: result.binding_id, base_version: 2 });
     refused = await native('clued_headless_binding_issue_v1',
       { confirmation_token: pending.confirmation_token, view_digest: pending.view_digest });

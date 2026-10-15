@@ -1,0 +1,13 @@
+{
+  "schema": "clued.machine-log-decoding.v1",
+  "source": "pr818-auth-fixtures-r2-root.log",
+  "source_sha256": "07a3ee7018fabd407d1e36410be416bf6b252b7f8ed3ee0bb29048b146a0c047",
+  "source_bytes": 2544,
+  "derived": "pr818-auth-fixtures-r2-root-decoded.log",
+  "derived_sha256": "380333d623724b03b1dd84ca7a62cba9f792f7f5e1f37b3b2911805ff5828a1f",
+  "derived_bytes": 1361,
+  "transform": "PowerShell5 mixed UTF8 header/footer and UTF16LE Tee payload decoded in original order into UTF8; no content edits or test rerun. Original bytes retained.",
+  "header_end": 49,
+  "footer_start": 2485,
+  "qualification": "Actual root run,10PASS0FAIL0SKIP; direct/imported admission case both ran; limited affected fixture regression."
+}

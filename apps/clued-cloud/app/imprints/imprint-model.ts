@@ -11,6 +11,7 @@ export type ImprintRecord = Json & {
   version: number; lifecycle_status: string | null; domains: Domain[]; organization_version: number;
   record_currentness: string; type_fields: Json; relations: Json; source_refs: unknown[];
   legacy_missing_fields?: Json;
+  authoritative?: boolean;
 };
 export type ReadInput = {
   view: ImprintView; scope: string; query: string; include_history: boolean;
@@ -83,6 +84,13 @@ export function sourceKind(record: ImprintRecord): "canonical" | "development" |
 }
 export function canEditDue(record: ImprintRecord): boolean {
   return record.record_type === "task" && record.record_schema_version === 1 && record.lifecycle_status === "active" && record.record_currentness === "CURRENT";
+}
+// This panel reads typed Records. Event carriers have their own authority
+// contract and are never accepted by applying this Record predicate.
+export function immediateAuthoritativeRecord(record: ImprintRecord): boolean {
+  return record.authoritative === true && record.record_currentness === "CURRENT"
+    && sourceKind(record) !== "development" && record.source_semantics !== "legacy_compatibility"
+    && recordType(record.record_type);
 }
 export function evidenceReferences(record: ImprintRecord): string[] {
   return [...new Set(record.source_refs.flatMap(ref => uuid(ref) ? [ref.toLowerCase()]

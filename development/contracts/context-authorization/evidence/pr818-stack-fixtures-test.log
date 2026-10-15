@@ -1,0 +1,40 @@
+▶ Project Lifecycle v2 deterministically disposes legacy rows and preserves authorization/currentness
+  ✔ deferred Native lifecycle includes its V2 successor with authenticated-only ACL and exact GW80 (3.783ms)
+  ✔ cutover advances and enqueues the dedicated Frontier currentness revision (1.6372ms)
+  ✔ legacy rows receive one immutable, deterministic disposition without bulk promotion (1.7536ms)
+  ✔ v2 list exposes only recognized Projects and no certainty axis (14.7576ms)
+  ✔ bounded v1 compatibility never promotes an unconfirmed create and appends a later explicit recognition (33.2092ms)
+  ✔ v1 confirmed create is recognized atomically without a transition row (3.9033ms)
+  ✔ v1 confirmation fails closed when a recognized Project already owns the normalized name (11.0516ms)
+  ✔ v2 create preserves caller-selected identity and records private recognition evidence (11.7868ms)
+  ✔ evidence-only history does not reserve a recognized Project name (3.4575ms)
+  ✔ Record and Event writes use effective Project/lifecycle disposition, not certainty (18.0313ms)
+  ✔ v2 canonical export keeps evidence-only rows in legacy history and advances Currentness (5.6145ms)
+  ✔ historical legacy assertions are followed by actual G6 closeout, replay and current Worker access (207.431ms)
+  ✔ storage master follows its deferred historical prerequisites and preserves the Native/GW boundary (66.3663ms)
+  ✔ work-claim handover follows the real deferred gateway/storage dependencies without changing caller grants (57.122ms)
+  ✔ authorization successors follow every deferred prerequisite and qualify the actual current caller catalog (97.0284ms)
+✔ Project Lifecycle v2 deterministically disposes legacy rows and preserves authorization/currentness (7253.8743ms)
+▶ Worker gateway is additive, least privileged, and still requires a live Binding
+  ✔ a non-superuser migration creator gets only the bootstrap administrative edge (4.2182ms)
+  ✔ prior callers, definer bodies and G6 compatibility are unchanged (23.4387ms)
+  ✔ the role has only the exact Worker overload grants, not native or P5 grants (4.9801ms)
+  ✔ schema lookup gates PUBLIC table/column grants, but never excuses direct ACLs or OID sequence access (275.0335ms)
+  ✔ replay refuses an existing role with unexpected privileges instead of silently cleaning it (272.4723ms)
+  ✔ the reviewed grant list covers live source call sites and no Native-only RPC (14.464ms)
+  ✔ Worker and transitional anon require the Binding proof; revocation still denies (19.8802ms)
+  ✔ a test-only G6 candidate distinguishes the request role from the definer owner (6.1484ms)
+  ✔ the bounded transition chain closes anon RPCs and preserves Native/P5 definitions and ACL (215.7483ms)
+  ✔ actual G6 uses request role and valid JWT object together, preserving Binding business rejection (38.927ms)
+  ✔ accidental caller grants do not bypass G6 and unknown app ACL drift refuses the whole replay (162.5798ms)
+  ✔ all later migrations follow the proved closeout and preserve actual current authorization OIDs and caller boundaries (403.6033ms)
+  ✔ Native sources_v1 reduction rejects the observed old flat protocol, enforces CAS and preserves untargeted consent (185.995ms)
+✔ Worker gateway is additive, least privileged, and still requires a live Binding (8426.7384ms)
+ℹ tests 30
+ℹ suites 0
+ℹ pass 30
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 15892.3793

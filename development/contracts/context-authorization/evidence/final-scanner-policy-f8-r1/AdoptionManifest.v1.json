@@ -1,0 +1,98 @@
+{
+  "schema": "clued.final-scanner-policy-byte-adoption.v1",
+  "authority_effect": "NONE",
+  "adopted_at_utc": "2026-10-14T18:47:39.256829+00:00",
+  "fixed_exception_commit": "df69831166fcb43ee0dee982fb7158b770bf54a6",
+  "source_files": {
+    ".gitleaks.toml": "c8d78643a3e5fb112e20448305a825a1bcaa23bf14c9f57fb69ae271ece0fa2a",
+    "scripts/ci/reviewed_gitleaks.py": "3cff545f0d26610de0097165cf9dc6d32421707357cf960a9f38af22b4d0e32f",
+    "tests/test_reviewed_gitleaks_artifacts.py": "a9ba72b3d96fea883ad2bcc6ef9450cf2051d139fdb78a8b1ed786d0548eedb0"
+  },
+  "files": [
+    {
+      "path": "final-df698-reviewed-artifacts-independent-review-r1.json",
+      "original_bytes": 7873,
+      "original_sha256": "ef3fd2e2f95d08bbb4de68c3610d89b9cb90ceb27b78755f01624b62e1e4b3df",
+      "git_text_sha256": "ef3fd2e2f95d08bbb4de68c3610d89b9cb90ceb27b78755f01624b62e1e4b3df",
+      "transform": "identity"
+    },
+    {
+      "path": "final-df698-independent-delta-verification-r1.json",
+      "original_bytes": 4752,
+      "original_sha256": "e3e90b67dae96c4dbcf26eedf77822b3fbcf44ea4ec7bfb63e43e679308a20bb",
+      "git_text_sha256": "e3e90b67dae96c4dbcf26eedf77822b3fbcf44ea4ec7bfb63e43e679308a20bb",
+      "transform": "identity"
+    },
+    {
+      "path": "final-df698-independent-helper-r1.log",
+      "original_bytes": 253,
+      "original_sha256": "27edf584cd50e0425aad39ba38c6edcee238ae55375434fe874f67dfe893a6b8",
+      "git_text_sha256": "b101bc305eb881fb4f5417b966e7a6ac57010321233123a6b3e4f9db78c0f113",
+      "transform": "CRLF_to_LF"
+    },
+    {
+      "path": "final-df698-independent-tests-r1.log",
+      "original_bytes": 4854,
+      "original_sha256": "b76f5a6c17e2d1de6c7e2a9ca2a10d47d8e2e33385624b6569d37e378ec1c5f5",
+      "git_text_sha256": "e331ff76fb7ddf99ff747c23472cd8a8b68653ba971caa8d796b71aecfb701a2",
+      "transform": "CRLF_to_LF"
+    },
+    {
+      "path": "final-df698-reviewed-artifacts-fix-r1.json",
+      "original_bytes": 8163,
+      "original_sha256": "8430d2020638e7ddf32147cf441df0914471829c813bfacbb3fa798fbedee7b9",
+      "git_text_sha256": "8430d2020638e7ddf32147cf441df0914471829c813bfacbb3fa798fbedee7b9",
+      "transform": "identity"
+    },
+    {
+      "path": "final-df698-reviewed-artifacts-delta-r1.patch",
+      "original_bytes": 24635,
+      "original_sha256": "2a0703306eec7a2c7d35343823a5b8f3bfc2a2822a72882c478c5e17e21f4a68",
+      "git_text_sha256": "2a0703306eec7a2c7d35343823a5b8f3bfc2a2822a72882c478c5e17e21f4a68",
+      "transform": "identity"
+    },
+    {
+      "path": "final-df698-reviewed-artifacts-tests-r1-run.json",
+      "original_bytes": 1904,
+      "original_sha256": "9876afa543a589e1d2f085f4fe29ad4850e43f8bc0fa2901cedf77c4e05abf7b",
+      "git_text_sha256": "9876afa543a589e1d2f085f4fe29ad4850e43f8bc0fa2901cedf77c4e05abf7b",
+      "transform": "identity"
+    },
+    {
+      "path": "final-df698-reviewed-artifacts-tests-r1.log",
+      "original_bytes": 4854,
+      "original_sha256": "aedbf5caf0f5ee0ba51366e43a1b31ecf3cebaec0d4cec8ca5f958db4c20f091",
+      "git_text_sha256": "1de40cedd9e4b7362230dcd42550fc9e005a85355aa53e1eb059f6e288e13434",
+      "transform": "CRLF_to_LF"
+    },
+    {
+      "path": "final-df698-reviewed-helper-r1-run.json",
+      "original_bytes": 1771,
+      "original_sha256": "43a3728fbfa148890bc29055b9fdcca6cf289c24cbb9a9b711fbf98b752872c9",
+      "git_text_sha256": "43a3728fbfa148890bc29055b9fdcca6cf289c24cbb9a9b711fbf98b752872c9",
+      "transform": "identity"
+    },
+    {
+      "path": "final-df698-reviewed-helper-r1.log",
+      "original_bytes": 253,
+      "original_sha256": "27edf584cd50e0425aad39ba38c6edcee238ae55375434fe874f67dfe893a6b8",
+      "git_text_sha256": "b101bc305eb881fb4f5417b966e7a6ac57010321233123a6b3e4f9db78c0f113",
+      "transform": "CRLF_to_LF"
+    },
+    {
+      "path": "pr818-final-df698-secret-scan-review-r1.json",
+      "original_bytes": 27127,
+      "original_sha256": "144b078077c0432b66ee567a4893ee19a56c485f143e3e7153aa6c3d311b584a",
+      "git_text_sha256": "144b078077c0432b66ee567a4893ee19a56c485f143e3e7153aa6c3d311b584a",
+      "transform": "identity"
+    },
+    {
+      "path": "original-df698-scan-invocations.json",
+      "original_bytes": 11491,
+      "original_sha256": "fdbe1190d8246b343736fc8a302f3dd33a99fac2612107f4df9fbaaecbbaf3c0",
+      "git_text_sha256": "a3fd356332fbbc0ab9574986c32b830b9688be4a97871832ce3c518db8dbf918",
+      "transform": "CRLF_to_LF"
+    }
+  ],
+  "qualification": "Exact4containers/7lines/7fingerprints proved public immutable artifact digests; old484/defaults unchanged. Author and independent28 tests and freshhelper passed; actual original scannerFAIL retained; finalnewheadscanner and CI/production/Native/archive PENDING. No Base64 republication or original23 evidence rewrite."
+}

@@ -1,0 +1,242 @@
+{
+  "schema": "clued.independent-code-review/1",
+  "review_id": "all-contexts-security-code-review-r1",
+  "reviewer": "non-author independent security reviewer",
+  "verdict": "FAIL",
+  "subject": {
+    "repository": "tdoljyj/cross-memory-system",
+    "branch": "codex/all-contexts-authorization-20261014",
+    "base_commit": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+    "source_path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+    "source_sha256": "95c81c1a61cf0b8fc43d8bb487dcb55c3d9e8973e3063baba0f9e49c46ebe61b",
+    "source_state": "exact frozen candidate independently read; author subsequently reopened it to repair findings",
+    "locks_sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad",
+    "plan_sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3"
+  },
+  "scope": "SQL/source projection, old precise grant preservation, effective diagnostic qualification, serialization entrypoints, Native/OAuth/Headless/MCP paths, Worker transport and preserved caller catalog. This report does not review the complete UI or certify runtime, CI, production, or eight-view acceptance.",
+  "counts": {
+    "BLOCKER": 0,
+    "MAJOR": 2,
+    "MINOR": 1
+  },
+  "admission": {
+    "contract_version": 49,
+    "contract_sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+    "skill_version": "1.0.20",
+    "independent_review_enabled": true,
+    "independent_review_execution_authority": false,
+    "global_resume_receipt": "aa495f94-751f-42b9-abf5-263a51066593",
+    "global_admission_receipt": "a9359ef7-5e3f-41d1-b0e8-23d90db33b9c",
+    "global_currentness": "CURRENT",
+    "global_state_version": 4960,
+    "project_resume_receipt": "4dc00ad2-0647-4c6c-9ced-9caf5ad9ed64",
+    "project_admission_receipt": "d0b905f6-aaa6-496b-bc4e-187608383a13",
+    "project_currentness": "CURRENT",
+    "project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "task_id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+    "task_version": 50,
+    "owner_decision_id": "1b609e13-9b44-47fb-90a1-89a74bf9875e",
+    "owner_decision_version": 4,
+    "root_claim_id": "40087fbb-4490-442d-8aba-80a44103b9c3",
+    "root_claim_fence": 6,
+    "root_claim_lease_version": 7,
+    "root_claim_expires_at": "2026-10-14T07:39:32.220755Z",
+    "note": "Read-only review only. No new Task or claim; no borrowing Root sessions. Inbox read without marking shared messages read; unrelated claim threads were not handled."
+  },
+  "version_evidence": {
+    "independent_ls_remote_main": "af22e8c5d8c70f86d17abb32996a63414a1d5c94",
+    "relevant_base_to_remote_diff": "No authorization migration or reviewed Worker/package changes in f890a19..af22e8c.",
+    "live_service_advertised_source": "8f960b5541e29ad279d4976f5c366ea4e1297ad4",
+    "interpretation": "Candidate and current deployed source remain distinct. Final main merge requires exact bytes revalidation."
+  },
+  "sources_read": [
+    {
+      "path": "C:/Users/Windows/.codex/skills/clued/SKILL.md",
+      "version": "1.0.20"
+    },
+    {
+      "path": "C:/Users/Windows/.codex/skills/clued/references/engineering.md"
+    },
+    {
+      "path": "C:/Users/Windows/.codex/skills/clued/references/memory-operations.md"
+    },
+    {
+      "source": "served Agent Contract49",
+      "parts": "both full parts read in this reviewer conversation",
+      "sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8"
+    },
+    {
+      "source": "fresh relevant resident constraints",
+      "ids": [
+        "7b8c1cee-d40d-4184-a9ba-7651888e5c03",
+        "8ba27d66-c72f-4ed1-86ef-b16e273d203a",
+        "f1dbabc4-a329-43e1-bb45-62c72772cf8b",
+        "5c852d8c-f14a-4080-bf22-adf45859ba21",
+        "5fea509f-4613-4fd5-a36f-46b4bb4a2f6e",
+        "5bed3d00-cd0d-4551-96fa-ece5f41ffa73",
+        "ded75f02-2993-4ad9-b006-76e5b8c9d026",
+        "d4663fa2-1d4b-4cc7-b4c8-91508b1e9849"
+      ]
+    },
+    {
+      "path": "development/contracts/context-authorization/AllContextsAuthorization.v0.1.md",
+      "sha256": "8f828102c87663c44cd4e9e270fde7fc72c771aaa94cef4bb8f2598f903b67b3"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "sha256": "95c81c1a61cf0b8fc43d8bb487dcb55c3d9e8973e3063baba0f9e49c46ebe61b",
+      "coverage": "complete body read; repaired metadata and legacy rotation separately reread at this hash"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "sha256": "ea3abed2a505cd32142db13ab9212cd58887d31c728d0cde264bc36f0badb0ad",
+      "coverage": "complete"
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-locks-db.test.mjs",
+      "sha256": "821f6a924c4189fe998bd8be5c8ba91f31c224bba13673d51533d35123090334",
+      "coverage": "complete source, not executed by reviewer"
+    },
+    {
+      "path": "apps/clued-cloud/tests/raw-binding-grants-fixture.mjs",
+      "sha256": "e44218a813629219bd290d343e43154510f7dca4df7bf584a6c78a5e83bdbeef",
+      "coverage": "complete source, test-only early guards confirmed"
+    },
+    {
+      "paths": [
+        "apps/clued-cloud/supabase/migrations/20260907173030_clued_development_context_runtime_v14.sql",
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+        "apps/clued-cloud/supabase/migrations/20260907173032_clued_project_invitations_v13.sql",
+        "apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql",
+        "apps/clued-cloud/supabase/migrations/20261004150000_connection_permission_requests.sql",
+        "apps/clued-cloud/supabase/migrations/20261009070002_worker_gateway_transition_v1.sql"
+      ],
+      "git_object": "f890a19da620bcd60efa20d44a0a78f9099c95bf",
+      "coverage": "necessary original RPC/qualification/ACL bodies and grant/nonce/resolver lock order"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261010161848_worker_gateway_closeout_v1.sql",
+      "sha256": "e3d6f9066eb09d27d58393d5e5c756d0632c64e1124692a489faec2357f67e38"
+    },
+    {
+      "path": "apps/clued-cloud/tests/worker-gateway-caller-fixture.mjs",
+      "coverage": "complete exact GW80/anon CI8 enumeration and catalog snapshot"
+    },
+    {
+      "path": "apps/clued-cloud/tests/connection-permission-request-db.test.mjs",
+      "sha256": "40344709ebf1f8818162b2a7b37f4d424452f493c953b66a7c93833ee480bec9",
+      "coverage": "diff and original-boundary replay/current successor assertions"
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "coverage": "20-case candidate body and privacy/legacy-rotation additions read; subsequently moving test amendments are not approved by this report"
+    },
+    {
+      "path": "apps/clued-cloud/worker/delegated-oauth.ts",
+      "sha256": "a0aa32dba4ba0b582c0244857f0b67ee48e3b8114ffc3ce32eb36fbf9c1303e2",
+      "coverage": "diff and Native HTTP/RPC boundary"
+    },
+    {
+      "path": "apps/clued-cloud/worker/owner-requests.ts",
+      "sha256": "9d7ffdebc21230764921418807ac1523bc4a48e0becd9d6caee62649a6f17c1c",
+      "coverage": "macro descriptor diff"
+    },
+    {
+      "path": "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+      "sha256": "f1a31efae54306d8df6f9cf54fd05cca800be5fe43650314a7aacd79a818b6a3",
+      "coverage": "new two-step forwarding and refusal/sanitization boundary source"
+    },
+    {
+      "path": "apps/clued-cloud/package.json",
+      "sha256": "78b872e62dcdcdae1c42a936ec12ff634ba758db1c70ea6bf43636f9a4cdc055",
+      "coverage": "two new authorization database scripts"
+    },
+    {
+      "path": "config/clued-components.json",
+      "sha256": "2ff5c768b2a3b0af2610447b94aefb9f65822c6276bc6dca9e756368667f8f18",
+      "coverage": "mcp.server version only, 0.6.4 to 0.6.5"
+    },
+    {
+      "path": "apps/clued-cloud/worker/generated/components.ts",
+      "sha256": "c48865b8151482c95f3a2d8f4560d85f6a56410a8919eea080d1772d7f1eb89c",
+      "coverage": "generated version only"
+    },
+    {
+      "url": "https://www.postgresql.org/docs/current/explicit-locking.html"
+    },
+    {
+      "url": "https://www.postgresql.org/docs/current/view-pg-locks.html"
+    },
+    {
+      "url": "https://supabase.com/docs/guides/database/functions"
+    }
+  ],
+  "findings": [
+    {
+      "id": "SQL-M1",
+      "severity": "MAJOR",
+      "status": "OPEN_AT_95C81",
+      "title": "首次来源迁移遗漏旧内部 grant 的更窄动作上限",
+      "location": {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "function": "authorization_initialize_sources_v2",
+        "lines": "322–337; authorization_project_resource_v2 484–486"
+      },
+      "contract": "r2 §4.1: the old exact resource grant ceiling remains a common hard ceiling and widening needs separate precise Native confirmation.",
+      "evidence": "The initializer reads g.actions but derives allowed_ceiling only from e.entry_actions for history/version/fields restrictions; otherwise NULL. A valid historical Native grant_upsert can narrow g.actions to read while entry actions remain read/write. First macro upgrade then rewrites g.actions from the source union and silently restores write. Legacy diagnostic fallback likewise reports stored entry actions instead of intersecting the precise grant.",
+      "correction": "Detect the normalized old grant action ceiling, intersect it with the old exact entry when a narrower or explicit restriction exists, persist that ceiling independently, and retain ordinary unrestricted legacy macro expansion. Legacy observations must intersect the actual live grant.",
+      "required_verification": "A legal pre-source entry read/write + internal grant read only must remain read only after macro consent, future refresh and Headless rotation; only separate exact Native CAS/digest confirmation may restore write. Seed Binding scopes consistently to isolate this limitation."
+    },
+    {
+      "id": "SQL-M2",
+      "severity": "MAJOR",
+      "status": "OPEN_AT_95C81",
+      "title": "已有只读宏来源无法被同 Binding 的新明确同意升级",
+      "location": {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "function": "authorization_add_selection_v2",
+        "lines": "167–170; permission_apply 895–900; rebuild 517–519"
+      },
+      "evidence": "Existing contexts_policy updates union actions but retain the initial scope_ceiling. Permission apply temporarily adds write to the Binding; projection rebuild resets scopes from unchanged source ceilings. Runtime source filtering therefore denies write despite a committed developer/full approval.",
+      "correction": "The server must bind the explicitly approved scope expansion to the named policy/version, without expanding unrelated sources. Expired sources require fresh exact action consent; renewing old union actions from a smaller request is unsafe.",
+      "required_verification": "Start with contexts:* reader/context:read, approve same-Binding developer then full, and verify existing and future Context writes and exact supported canonical/Context actions. Also ensure expired full → reader renewal cannot revive write/full and retains unrelated live sources."
+    },
+    {
+      "id": "SQL-m1",
+      "severity": "MINOR",
+      "status": "OPEN_AT_95C81",
+      "title": "未升级共享连接的有效动作展示未反映会员收窄",
+      "location": {
+        "path": "apps/clued-cloud/supabase/migrations/20261014044323_all_contexts_authorization_v2.sql",
+        "function": "authorization_effective_no_lock_v2",
+        "lines": "368–371 early return versus 387–389 membership intersection"
+      },
+      "evidence": "The pre-source fallback returns before intersecting the saved qualification's current membership actions. A legal member_reduce from read/write to read can still display effective write. The original locked execution assertion continues rejecting write.",
+      "correction": "Apply current original-membership action intersection in the legacy diagnostic fallback as well.",
+      "required_verification": "Unupgraded exact shared Binding list shows read only after member_reduce while execution continues denying write."
+    }
+  ],
+  "resolved_prior_finding": {
+    "id": "SQL-PRIVACY",
+    "severity": "MAJOR",
+    "status": "CLOSED_IN_95C81_CODE",
+    "evidence": "The current metadata helper proves actual self Context+Project ownership or the exact original live membership and current resource Owner; invalid qualification returns null live names/project relation and unavailable ownership. The real-chain test revokes membership, changes both private names, observes null names/effective_actions empty, and rejects the reachable preview without exposing the new names. Reviewer independently read code and negative assertions; execution evidence remains author-owned."
+  },
+  "compatibility_observations": [
+    "Legacy project:* and new contexts:* remain separate source kinds and future fan-out unions sorted Bindings before resource locks.",
+    "Frozen serialization prefix preserves existing public RPC OIDs/ACLs and gateway wrappers; private helpers are revoked. Native permission approval takes target Binding before GrantLock/token.",
+    "Immutable old CLOSEOUT is replayed at its actual bounded chain before new body patches, with before/after catalog equality. Complete successor chain separately asserts exact GW80 and anon CI8; the old migration and hardcoded hashes are not altered.",
+    "Normal business execution retains locked exact entry qualification plus live-source assertion; diagnostic listing performs no grant repair.",
+    "HTTP only adds the two exact Native management operations and keeps Owner bearer, Origin, size, unknown-operation and sanitized DB refusal boundaries."
+  ],
+  "limitations": {
+    "tests_run_by_reviewer": 0,
+    "ci_runs": 0,
+    "production_actions": 0,
+    "business_writes": 0,
+    "subject_edits": 0,
+    "author_test_claims": "20 Source cases and 15 lock cases were reported by their authors; they are not substitutes for independent review or final combined CI.",
+    "current_candidate": "After this failure, author repairs are a moving target and require a new frozen SHA and final re-review.",
+    "capture": "Parent Root owns canonical capture; reviewer does not write M1. No session credentials are in this report."
+  }
+}

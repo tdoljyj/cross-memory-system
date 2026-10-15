@@ -140,7 +140,7 @@ test('actual selected directory passes exactly its owned project/context/session
   await f.respondRpc(0, imprint()); assert.ok(f.text().includes('ALPHA BODY'));
   const scope = f.nodes('select').find(node => node.props['aria-label'] === '查询范围');
   assert.deepEqual(f.nodes('option', scope).map(node => node.props.value), ['all', 'project:' + PA]);
-  assert.equal(f.text(f.nodes('option', scope)[0]), '当前开发上下文');
+  assert.equal(f.text(f.nodes('option', scope)[0]), '当前上下文');
   const hrefs = f.nodes('a').map(node => node.props.href); assert.ok(hrefs.includes('/oauth/projects')); assert.ok(hrefs.includes('/oauth/connections'));
   assert.ok(f.http.every(call => call.url === '/v1/development/owner' && JSON.parse(call.options.body).op === 'owner_list'));
 });
@@ -208,6 +208,6 @@ test('Dev scope option is limited to current context and exact project in both r
   const f = fixture({ standaloneLocale: 'en' }); t.after(() => f.unmount());
   const scope = f.nodes('select').find(node => node.props['aria-label'] === 'Search scope'); assert.ok(scope);
   assert.equal(scope.props.value, 'all'); assert.deepEqual(f.nodes('option', scope).map(node => node.props.value), ['all', 'project:' + PA]);
-  assert.equal(f.text(f.nodes('option', scope)[0]), 'Current development context');
+  assert.equal(f.text(f.nodes('option', scope)[0]), 'Current context');
   assert.equal(f.rpc[0].args.p_input.scope, 'all'); assert.equal(f.rpc[0].name, 'clued_development_imprint_read_v1');
 });

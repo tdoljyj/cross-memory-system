@@ -30,6 +30,7 @@ const originalFetch = globalThis.fetch;
 function fixture() {
   const bindings = new Map(); const prepared = new Map(); const calls = []; const background = [];
   const storageGrants = new Set();
+  const nativeManagement = { response: { status: 'ok' }, status: 200 };
   const grantScopes = ['context:read', 'context:write'];
   const env = { CLUED_DB_GATEWAY_TOKEN: "test-worker-gateway", OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin,
     CLUED_AUTHORIZATION_ISSUER_TOKEN: 'isolated-issuer-test-value', SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'test-public-key', PROJECT_VIEWS_V2: 'true' };
@@ -66,6 +67,7 @@ function fixture() {
     }
     if (name === 'clued_authorization_status_v12') return Response.json(bindings.get(body.p_token_hash) || { active: false });
     if (name === 'clued_record_list') return Response.json({ status: 'ok', records: [] });
+    if (name === 'clued_authorization_manage_v12') return Response.json(nativeManagement.response, { status: nativeManagement.status });
     if (name === 'clued_storage_jobs_v1') {
       if (!bindings.get(body.p_token_hash)?.active || !storageGrants.has(body.p_token_hash)) {
         return Response.json({ message: 'storage_binding_denied', code: '42501' }, { status: 403 });
@@ -81,7 +83,7 @@ function fixture() {
     if (name === 'clued_mcp_projection_refresh_claim') return Response.json({ status: 'idle' });
     throw new Error(`Unexpected storage route: ${name}`);
   };
-  return { env, run, bindings, calls, background, storageGrants, grantScopes };
+  return { env, run, bindings, calls, background, storageGrants, grantScopes, nativeManagement };
 }
 async function client(f) {
   const response = await f.run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Isolated client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
@@ -114,6 +116,74 @@ async function approve(f, clientId, flow, days = 1) {
 }
 const call = (token, name) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { record_type: 'state' } } }) });
+
+test('Native exact limit confirmation forwards Owner credentials and CAS without bypassing Origin, operation or size gates', async () => {
+  const f = fixture();
+  try {
+    const headers = { Authorization: 'Bearer human-session-test', Origin: origin, 'Content-Type': 'application/json' };
+    const issue = { op: 'limit_confirmation_issue', binding_id: '20000000-0000-4000-8000-000000000001', base_version: 4,
+      resource_kind: 'context', resource_id: '20000000-0000-4000-8000-000000000002', environment: 'test',
+      grant_id: '20000000-0000-4000-8000-000000000003', grant_base_version: 3,
+      override_id: '20000000-0000-4000-8000-000000000004', override_base_version: 2,
+      new: { actions: ['read'], denied_actions: [], allowed_ceiling: ['read'], history_policy: 'SINCE_GRANT',
+        version_policy: 'LATEST', freeze_cursor: 8, since_cursor: 8, explicit_record_ids: [], allowed_fields: ['title'], expires_at: '2099-01-01T00:00:00Z' } };
+    const post = (body, requestHeaders = headers) => f.run('/oauth/connections/api', { method: 'POST', headers: requestHeaders, body: JSON.stringify(body) });
+    f.nativeManagement.response = { status: 'issued', confirmation_token: 'fixture-native-confirmation', view_digest: 'a'.repeat(64) };
+    let response = await post(issue);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).status, 'issued');
+    const forwarded = f.calls.filter(row => row.name === 'clued_authorization_manage_v12').at(-1);
+    assert.deepEqual(forwarded.body, { p_input: issue });
+    assert.equal(new Headers(forwarded.headers).get('Authorization'), 'Bearer human-session-test');
+    assert.equal(JSON.stringify(forwarded.body).includes('test-worker-gateway'), false);
+    const confirmation = { op: 'limit_confirm', confirmation_token: 'fixture-native-confirmation', view_digest: 'a'.repeat(64) };
+    f.nativeManagement.response = { status: 'committed', receipt_id: '20000000-0000-4000-8000-000000000005', version: 5 };
+    response = await post(confirmation);
+    assert.equal(response.status, 200);
+    assert.deepEqual(f.calls.filter(row => row.name === 'clued_authorization_manage_v12').at(-1).body, { p_input: confirmation });
+    const before = f.calls.length;
+    for (const [body, requestHeaders, status] of [
+      [issue, { ...headers, Origin: 'https://another.example' }, 403],
+      [issue, { Origin: origin, 'Content-Type': 'application/json' }, 401],
+      [{ op: 'clear_all_limits', binding_id: issue.binding_id }, headers, 400],
+      [{ ...issue, padding: 'x'.repeat(65536) }, headers, 413],
+    ]) {
+      response = await post(body, requestHeaders);
+      assert.equal(response.status, status);
+      assert.equal(f.calls.length, before, 'refused requests must not reach the database');
+    }
+    // Real precise authorization, expiry, digest, CAS and replay outcomes are exercised on PostgreSQL;
+    // this fake response proves only the existing HTTP boundary preserves an actual DB refusal.
+    f.nativeManagement.status = 409;
+    f.nativeManagement.response = { message: 'private SQL and confirmation details', code: 'conflict' };
+    response = await post(confirmation);
+    assert.equal(response.status, 409);
+    assert.equal((await response.text()).includes('private SQL'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+test('last-permission reduction exposes only its controlled business code and keeps private diagnostics redacted', async () => {
+  const f = fixture();
+  try {
+    const headers = { Authorization: 'Bearer human-session-test', Origin: origin, 'Content-Type': 'application/json' };
+    const post = op => f.run('/oauth/connections/api', { method: 'POST', headers, body: JSON.stringify({ op, binding_id: '20000000-0000-4000-8000-000000000001', base_version: 4 }) });
+    f.nativeManagement.status = 400;
+    f.nativeManagement.response = { code: '22023', message: 'authorization_empty_projection_requires_binding_revoke', details: 'private SQL and context identity' };
+    let response = await post('reduce');
+    assert.equal(response.status, 400);
+    const result = await response.json();
+    assert.equal(result.error, 'authorization_empty_projection_requires_binding_revoke');
+    assert.ok(result.message.includes('本次修改未保存'));
+    assert.ok(!JSON.stringify(result).includes('private SQL'));
+    response = await post('revoke');
+    assert.equal(response.status, 403, 'the business-code exception is limited to reduction');
+    assert.ok(!(await response.text()).includes('authorization_empty_projection'));
+    f.nativeManagement.response = { code: '22023', message: 'private SQL and context identity' };
+    response = await post('reduce');
+    assert.equal(response.status, 403);
+    assert.ok(!(await response.text()).includes('private SQL'));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 // A gateway scope refusal is a tool error (HTTP 200, isError) carrying what to request; Hosts drop 403 bodies.
 async function scopeDenied(response) {
   assert.equal(response.status, 200);

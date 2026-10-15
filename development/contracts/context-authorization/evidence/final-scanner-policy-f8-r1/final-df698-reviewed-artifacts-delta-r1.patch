@@ -1,0 +1,390 @@
+diff --git a/.gitleaks.toml b/.gitleaks.toml
+index a75a8ce9..bcc96d4b 100644
+--- a/.gitleaks.toml
++++ b/.gitleaks.toml
+@@ -14,7 +14,7 @@ regexes = ['''^sb_secret_fixture_rejected$''']
+ # GA record IDs, and OAuth user IDs (not bearer tokens).
+ # The CI helper validates and materializes these comments outside the repository.
+ # This keeps review data inside the existing scanner-configuration boundary.
+-# clued-reviewed-count: 484
++# clued-reviewed-count: 491
+ # clued-reviewed-finding: {"fingerprint":"023b363fbde0db8e2283746ec850832e48e93508:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/root6-registration/ReadRootSnapshotAfterNW01.json:generic-api-key:1","kinds":["IDEMPOTENCY_METADATA"]}
+ # clued-reviewed-finding: {"fingerprint":"0d283aa0352c0bf4cb315213a3eeaf413a0721b8:scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final-v14-expired1/ExpiredFinalGAPredispatchRecovery.sql:generic-api-key:2","kinds":["GA_RECORD_ID"]}
+ # clued-reviewed-finding: {"fingerprint":"0f1352758e23e33ad8a14bfae9ab5a9211e1c9f9:scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/ExpiredFinalGAPredispatchRecovery.sql:generic-api-key:5","kinds":["GA_RECORD_ID"]}
+@@ -516,3 +516,13 @@ regexes = ['''^sb_secret_fixture_rejected$''']
+ # The helper pins the report bytes, exact commit/path/lines, and matching source blobs.
+ # clued-reviewed-finding: {"fingerprint":"4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:150","kinds":["ARTIFACT_DIGEST"]}
+ # clued-reviewed-finding: {"fingerprint":"4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:152","kinds":["ARTIFACT_DIGEST"]}
++
++# Independently classified immutable public Source/artifact digests (2026-10-15).
++# Exact df698 commit/four paths/seven lines; full document, Source and Base64 proofs required.
++# clued-reviewed-finding: {"fingerprint":"df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json:generic-api-key:30","kinds":["ARTIFACT_DIGEST"]}
++# clued-reviewed-finding: {"fingerprint":"df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json:generic-api-key:49","kinds":["ARTIFACT_DIGEST"]}
++# clued-reviewed-finding: {"fingerprint":"df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json:generic-api-key:15","kinds":["ARTIFACT_DIGEST"]}
++# clued-reviewed-finding: {"fingerprint":"df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-integration-local-check-f8-r1.json:generic-api-key:35","kinds":["ARTIFACT_DIGEST"]}
++# clued-reviewed-finding: {"fingerprint":"df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json:generic-api-key:230","kinds":["ARTIFACT_DIGEST"]}
++# clued-reviewed-finding: {"fingerprint":"df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:184","kinds":["ARTIFACT_DIGEST"]}
++# clued-reviewed-finding: {"fingerprint":"df69831166fcb43ee0dee982fb7158b770bf54a6:development/contracts/context-authorization/evidence/final-integration-f8-r1/FinalIntegrationExactEvidenceF8R1.v1.json:generic-api-key:192","kinds":["ARTIFACT_DIGEST"]}
+diff --git a/scripts/ci/reviewed_gitleaks.py b/scripts/ci/reviewed_gitleaks.py
+index 1f0d37b9..714f8b14 100644
+--- a/scripts/ci/reviewed_gitleaks.py
++++ b/scripts/ci/reviewed_gitleaks.py
+@@ -1,5 +1,6 @@
+ """Materialize reviewed, commit-specific findings; never suppress a global rule."""
+ import argparse
++import base64
+ import hashlib
+ import json
+ import os
+@@ -12,7 +13,7 @@ import tomllib
+ 
+ PREFIX = "# clued-reviewed-finding: "
+ COUNT_PREFIX = "# clued-reviewed-count: "
+-EXPECTED_COUNT = 484
++EXPECTED_COUNT = 491
+ REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
+ REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
+ REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
+@@ -20,6 +21,40 @@ REVIEW_DOCUMENT_DIGEST_LINES = {
+     150: "apps/clued-cloud/worker/delegated-oauth.ts",
+     152: "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+ }
++FINAL_EVIDENCE_COMMIT = "df69831166fcb43ee0dee982fb7158b770bf54a6"
++FINAL_EVIDENCE_ROOT = "development/contracts/context-authorization/evidence/final-integration-f8-r1"
++FINAL_SOURCE_PATH = "apps/clued-cloud/worker/delegated-oauth.ts"
++FINAL_ENVELOPE_PATH = FINAL_EVIDENCE_ROOT + "/FinalIntegrationExactEvidenceF8R1.v1.json"
++FINAL_DB_REPORT_PATH = FINAL_EVIDENCE_ROOT + "/readable/ui-acceptance/final-integration-db-local-check-f8-r2.json"
++FINAL_LOCAL_REPORT_PATH = FINAL_EVIDENCE_ROOT + "/readable/ui-acceptance/final-integration-local-check-f8-r1.json"
++FINAL_SUBJECT_PATH = FINAL_EVIDENCE_ROOT + "/readable/ui-acceptance/final-three-path-integration-review-subject-f8-r1.json"
++FINAL_EVIDENCE_DOCUMENTS = {
++    FINAL_DB_REPORT_PATH: {
++        "sha256": "a18e3e28f4c1ef9acf6079c2bfde0f6612a98fb4b28f093fcd1e848f3ce0682c",
++        "lines": {30: {"parent": "/source_before"}, 49: {"parent": "/source_after"}},
++    },
++    FINAL_LOCAL_REPORT_PATH: {
++        "sha256": "a92829ffc664ef81026078e3aa7e1c9eeb7901e9e314fff9f1563591d274ed2b",
++        "lines": {15: {"parent": "/source_before"}, 35: {"parent": "/source_after"}},
++    },
++    FINAL_SUBJECT_PATH: {
++        "sha256": "f11d35391b0b8877118d473a1917565ee53e8b7511ed999eeb889eb7f4bdfafa",
++        "lines": {230: {"parent": "/source"}},
++    },
++    FINAL_ENVELOPE_PATH: {
++        "sha256": "612941c58af479abc203c7c64ad3caeb6465f0851b8bcb6eb273c7eac2b68b39",
++        "lines": {
++            184: {"entry_index": 1, "entry_path": "ui-acceptance/final-integration-db-local-check-f8-r2.json",
++                  "original_sha256": "1b16fc3a1d3e1bbc725243da0e5479a2e4c779fab4a404fa800716af00523ed3",
++                  "original_bytes": 6231, "readable_path": FINAL_DB_REPORT_PATH,
++                  "parents": ["/source_before", "/source_after"]},
++            192: {"entry_index": 2, "entry_path": "ui-acceptance/final-three-path-integration-review-subject-f8-r1.json",
++                  "original_sha256": "e5fbe30d680ea41a00cb1117397ac5e40483a8312a251a4b67d7856d6a9b7459",
++                  "original_bytes": 20152, "readable_path": FINAL_SUBJECT_PATH,
++                  "parents": ["/source"]},
++        },
++    },
++}
+ IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
+ KINDS = {
+     "GIT_OBJECT_METADATA", "OWNER_COMMIT_ID", "API_BUNDLE_DIGEST",
+@@ -67,7 +102,7 @@ def parse_records(text):
+         # The A03 register is admitted by exact path only (reviewed 2026-09-24, PR #330).
+         if (not (path.startswith(("artifacts/", "scripts/", "work/", "apps/clued-cloud/tests/"))
+                  or path == "development/contracts/information-flow/known-limitations.m0d.v0.1.json"
+-                 or path == REVIEW_DOCUMENT_PATH)
++                 or path == REVIEW_DOCUMENT_PATH or path in FINAL_EVIDENCE_DOCUMENTS)
+                 or any(p in ("", ".", "..") for p in path.split("/"))
+                 or any(c in path for c in "\\*?[]\r\n")
+                 or not re.fullmatch(r"[1-9][0-9]*", line)):
+@@ -83,9 +118,22 @@ def parse_records(text):
+                 or int(line) not in REVIEW_DOCUMENT_DIGEST_LINES
+                 or record["kinds"] != ["ARTIFACT_DIGEST"]):
+             raise ValueError("Authorization review exception identity changed")
++        if path in FINAL_EVIDENCE_DOCUMENTS and (
++                commit != FINAL_EVIDENCE_COMMIT or rule != "generic-api-key"
++                or int(line) not in FINAL_EVIDENCE_DOCUMENTS[path]["lines"]
++                or record["kinds"] != ["ARTIFACT_DIGEST"]):
++            raise ValueError("Final evidence exception identity changed")
+         fingerprints.append(record["fingerprint"])
+     if len(set(fingerprints)) != len(fingerprints):
+         raise ValueError("Duplicate reviewed fingerprint")
++    expected_final = {
++        f"{FINAL_EVIDENCE_COMMIT}:{path}:generic-api-key:{line}"
++        for path, document in FINAL_EVIDENCE_DOCUMENTS.items() for line in document["lines"]
++    }
++    actual_final = {record["fingerprint"] for record in records
++                    if record["fingerprint"].split(":")[1] in FINAL_EVIDENCE_DOCUMENTS}
++    if actual_final != expected_final:
++        raise ValueError("Final evidence exception set changed")
+     return records
+ 
+ 
+@@ -131,6 +179,65 @@ def verify_auth_review_digest(repo, text, line_number):
+         raise ValueError("Authorization digest differs from immutable artifact")
+ 
+ 
++def _final_pointer(document, pointer):
++    value = document
++    for part in pointer.strip("/").split("/"):
++        value = value[part]
++    return value
++
++
++def _final_source_digest(repo, digest):
++    blob = run(["git", "cat-file", "blob", f"{FINAL_EVIDENCE_COMMIT}:{FINAL_SOURCE_PATH}"], cwd=repo)
++    if not isinstance(digest, str) or hashlib.sha256(blob).hexdigest() != digest:
++        raise ValueError("Final evidence digest differs from immutable artifact")
++
++
++def verify_final_evidence_digest(repo, path, text, line_number):
++    """Admit only the seven classified locations and their immutable artifact proof."""
++    pinned = FINAL_EVIDENCE_DOCUMENTS.get(path)
++    if pinned is None or line_number not in pinned["lines"]:
++        raise ValueError("Unreviewed final evidence location")
++    if hashlib.sha256(text.encode("utf-8")).hexdigest() != pinned["sha256"]:
++        raise ValueError("Final evidence document bytes changed")
++    spec = pinned["lines"][line_number]
++    document = json.loads(text)
++    line = text.splitlines()[line_number - 1].strip().rstrip(",")
++    location = json.loads("{" + line + "}")
++    if "parent" in spec:
++        digest = _final_pointer(document, spec["parent"])[FINAL_SOURCE_PATH]
++        if location != {FINAL_SOURCE_PATH: digest}:
++            raise ValueError("Final evidence digest location changed")
++        _final_source_digest(repo, digest)
++        return
++    entry = document["entries"][spec["entry_index"]]
++    if (set(entry) != {"path", "original_sha256", "original_bytes", "original_base64", "git_text_sha256", "git_text_transform"}
++            or entry["path"] != spec["entry_path"]
++            or location != {"original_base64": entry["original_base64"]}):
++        raise ValueError("Final evidence encoded location changed")
++    if entry["original_sha256"] != spec["original_sha256"]:
++        raise ValueError("Final evidence original digest changed")
++    if type(entry["original_bytes"]) is not int or entry["original_bytes"] != spec["original_bytes"]:
++        raise ValueError("Final evidence original size changed")
++    try:
++        original = base64.b64decode(entry["original_base64"], validate=True)
++    except (ValueError, TypeError):
++        raise ValueError("Final evidence Base64 invalid") from None
++    if (len(original) != entry["original_bytes"]
++            or hashlib.sha256(original).hexdigest() != entry["original_sha256"]):
++        raise ValueError("Final evidence decoded original bytes changed")
++    if entry["git_text_transform"] != "CRLF_to_LF":
++        raise ValueError("Final evidence transform changed")
++    normalized = original.replace(b"\r\n", b"\n")
++    readable = run(["git", "cat-file", "blob", f"{FINAL_EVIDENCE_COMMIT}:{spec['readable_path']}"], cwd=repo)
++    readable_pin = FINAL_EVIDENCE_DOCUMENTS[spec["readable_path"]]["sha256"]
++    if (entry["git_text_sha256"] != readable_pin or hashlib.sha256(readable).hexdigest() != readable_pin
++            or normalized != readable):
++        raise ValueError("Final evidence readable artifact changed")
++    decoded = json.loads(original.decode("utf-8"))
++    for parent in spec["parents"]:
++        _final_source_digest(repo, _final_pointer(decoded, parent)[FINAL_SOURCE_PATH])
++
++
+ def verify_history(repo, records):
+     commits = _ensure_reviewed_commits(repo, records)
+     blobs = {}
+@@ -144,6 +251,8 @@ def verify_history(repo, records):
+             raise ValueError("Reviewed location no longer resolves")
+         if path == REVIEW_DOCUMENT_PATH:
+             verify_auth_review_digest(repo, text, int(line))
++        if path in FINAL_EVIDENCE_DOCUMENTS:
++            verify_final_evidence_digest(repo, path, text, int(line))
+         if rule == "sourcegraph-access-token":
+             if not path.endswith("/IndependentEnvOrderSourcePublicationAcceptance.json") or "sgp_" in text:
+                 raise ValueError("Unexpected historical object subject")
+diff --git a/tests/test_reviewed_gitleaks_artifacts.py b/tests/test_reviewed_gitleaks_artifacts.py
+index 186ebd0f..23171725 100644
+--- a/tests/test_reviewed_gitleaks_artifacts.py
++++ b/tests/test_reviewed_gitleaks_artifacts.py
+@@ -1,4 +1,8 @@
++import base64
++import copy
++import hashlib
+ import importlib.util
++import json
+ from pathlib import Path
+ import unittest
+ from unittest.mock import patch
+@@ -55,10 +59,180 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
+     def test_exact_record_count_and_artifact_reason(self):
+         records = reviewed.parse_records(self.config)
+         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
+-        self.assertEqual(len(records), 484)
++        self.assertEqual(len(records), 491)
++        legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
++        self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
+         self.assertEqual(len(exact), 2)
+         self.assertTrue(all(r['kinds'] == ['ARTIFACT_DIGEST'] for r in exact))
+ 
+ 
++class FinalEvidenceArtifactDigestTests(unittest.TestCase):
++    @classmethod
++    def setUpClass(cls):
++        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
++        cls.blobs = {
++            path: reviewed.run(['git', 'cat-file', 'blob', f'{reviewed.FINAL_EVIDENCE_COMMIT}:{path}'], cwd=ROOT)
++            for path in [*reviewed.FINAL_EVIDENCE_DOCUMENTS, reviewed.FINAL_SOURCE_PATH]
++        }
++        cls.envelope = json.loads(cls.blobs[reviewed.FINAL_ENVELOPE_PATH])
++
++    def verify(self, path, line, text=None):
++        reviewed.verify_final_evidence_digest(ROOT, path, self.blobs[path].decode('utf-8') if text is None else text, line)
++
++    def controlled_document(self, path, document):
++        text = json.dumps(document, ensure_ascii=False, indent=2) + '\n'
++        pin = copy.deepcopy(reviewed.FINAL_EVIDENCE_DOCUMENTS[path])
++        pin['sha256'] = hashlib.sha256(text.encode('utf-8')).hexdigest()
++        # Fault injection admits only the controlled document bytes. All other
++        # immutable original/Source/sidecar pins stay live, so each branch runs.
++        return text, patch.dict(reviewed.FINAL_EVIDENCE_DOCUMENTS, {path: pin})
++
++    def reject_encoded_mutation(self, mutate, error):
++        for line in [184, 192]:
++            with self.subTest(line=line):
++                document = copy.deepcopy(self.envelope)
++                entry_index = reviewed.FINAL_EVIDENCE_DOCUMENTS[reviewed.FINAL_ENVELOPE_PATH]['lines'][line]['entry_index']
++                mutate(document['entries'][entry_index])
++                text, permit_controlled_document = self.controlled_document(reviewed.FINAL_ENVELOPE_PATH, document)
++                with permit_controlled_document:
++                    with self.assertRaisesRegex(ValueError, error):
++                        self.verify(reviewed.FINAL_ENVELOPE_PATH, line, text)
++
++    def targeted_bad_blob(self, path):
++        real_run = reviewed.run
++        def changed(args, *, cwd=None):
++            if args == ['git', 'cat-file', 'blob', f'{reviewed.FINAL_EVIDENCE_COMMIT}:{path}']:
++                return b'controlled different immutable blob'
++            return real_run(args, cwd=cwd)
++        return patch.object(reviewed, 'run', side_effect=changed)
++
++    def test_all_seven_immutable_locations_have_actual_artifact_proof(self):
++        locations = 0
++        for path, document in reviewed.FINAL_EVIDENCE_DOCUMENTS.items():
++            for line in document['lines']:
++                with self.subTest(path=path, line=line):
++                    self.verify(path, line)
++                locations += 1
++        self.assertEqual(locations, 7)
++
++    def test_different_final_commit_is_rejected(self):
++        changed = self.config.replace(reviewed.FINAL_EVIDENCE_COMMIT + ':', '0' * 40 + ':', 1)
++        with self.assertRaisesRegex(ValueError, 'Final evidence exception identity changed'):
++            reviewed.parse_records(changed)
++
++    def test_different_final_path_is_rejected(self):
++        changed = self.config.replace(reviewed.FINAL_DB_REPORT_PATH, reviewed.FINAL_EVIDENCE_ROOT + '/other.json', 1)
++        with self.assertRaisesRegex(ValueError, 'Non-exact finding location'):
++            reviewed.parse_records(changed)
++
++    def test_different_final_line_is_rejected(self):
++        original = f'{reviewed.FINAL_EVIDENCE_COMMIT}:{reviewed.FINAL_DB_REPORT_PATH}:generic-api-key:30'
++        changed = self.config.replace(original, original[:-2] + '31', 1)
++        with self.assertRaisesRegex(ValueError, 'Final evidence exception identity changed'):
++            reviewed.parse_records(changed)
++
++    def test_different_final_reason_is_rejected(self):
++        row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
++                   and reviewed.FINAL_EVIDENCE_COMMIT in line)
++        for substitute in [row.replace('ARTIFACT_DIGEST', 'API_BUNDLE_DIGEST'),
++                           row.replace('generic-api-key', 'sourcegraph-access-token').replace('ARTIFACT_DIGEST', 'GIT_OBJECT_METADATA')]:
++            with self.subTest(substitute=substitute):
++                with self.assertRaisesRegex(ValueError, 'Final evidence exception identity changed'):
++                    reviewed.parse_records(self.config.replace(row, substitute, 1))
++
++    def test_changed_registry_count_is_rejected(self):
++        row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
++                   and reviewed.FINAL_EVIDENCE_COMMIT in line)
++        for changed in [self.config.replace('# clued-reviewed-count: 491', '# clued-reviewed-count: 490'),
++                        self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
++            with self.subTest():
++                with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
++                    reviewed.parse_records(changed)
++
++    def test_missing_final_identity_cannot_borrow_another_allowed_location(self):
++        original = f'{reviewed.FINAL_EVIDENCE_COMMIT}:{reviewed.FINAL_DB_REPORT_PATH}:generic-api-key:30'
++        substitute = f'{reviewed.FINAL_EVIDENCE_COMMIT}:apps/clued-cloud/tests/other.txt:generic-api-key:30'
++        with self.assertRaisesRegex(ValueError, 'Final evidence exception set changed'):
++            reviewed.parse_records(self.config.replace(original, substitute, 1))
++
++    def test_changed_document_bytes_are_rejected(self):
++        path = reviewed.FINAL_DB_REPORT_PATH
++        with self.assertRaisesRegex(ValueError, 'Final evidence document bytes changed'):
++            self.verify(path, 30, self.blobs[path].decode('utf-8') + '\n')
++
++    def test_hex_shape_does_not_admit_a_false_direct_digest(self):
++        for path, pin in reviewed.FINAL_EVIDENCE_DOCUMENTS.items():
++            for line, spec in pin['lines'].items():
++                if 'parent' not in spec:
++                    continue
++                with self.subTest(path=path, line=line):
++                    document = json.loads(self.blobs[path])
++                    document[spec['parent'].strip('/')][reviewed.FINAL_SOURCE_PATH] = '0' * 64
++                    text, permit_controlled_document = self.controlled_document(path, document)
++                    with permit_controlled_document:
++                        with self.assertRaisesRegex(ValueError, 'differs from immutable artifact'):
++                            self.verify(path, line, text)
++
++    def test_changed_encoded_entry_path_is_rejected(self):
++        self.reject_encoded_mutation(lambda entry: entry.update(path='ui-acceptance/other.json'), 'encoded location changed')
++
++    def test_changed_original_size_metadata_is_rejected(self):
++        self.reject_encoded_mutation(lambda entry: entry.update(original_bytes=entry['original_bytes'] + 1), 'original size changed')
++
++    def test_changed_original_digest_metadata_is_rejected(self):
++        self.reject_encoded_mutation(lambda entry: entry.update(original_sha256='0' * 64), 'original digest changed')
++
++    def test_invalid_base64_is_rejected_before_any_source_proof(self):
++        self.reject_encoded_mutation(lambda entry: entry.update(original_base64=entry['original_base64'] + '!'), 'Base64 invalid')
++
++    def test_changed_decoded_original_bytes_are_rejected(self):
++        for preserve_size in [False, True]:
++            def changed(entry):
++                raw = base64.b64decode(entry['original_base64'], validate=True)
++                bad = raw[:-1] + b'\x00' if preserve_size else raw + b'\n'
++                entry['original_base64'] = base64.b64encode(bad).decode('ascii')
++            with self.subTest(preserve_size=preserve_size):
++                self.reject_encoded_mutation(changed, 'decoded original bytes changed')
++
++    def test_a_different_transform_is_rejected(self):
++        self.reject_encoded_mutation(lambda entry: entry.update(git_text_transform='identity'), 'transform changed')
++
++    def test_changed_readable_digest_metadata_is_rejected(self):
++        self.reject_encoded_mutation(lambda entry: entry.update(git_text_sha256='0' * 64), 'readable artifact changed')
++
++    def test_changed_same_commit_readable_blob_is_rejected(self):
++        with self.targeted_bad_blob(reviewed.FINAL_DB_REPORT_PATH):
++            with self.assertRaisesRegex(ValueError, 'readable artifact changed'):
++                self.verify(reviewed.FINAL_ENVELOPE_PATH, 184)
++
++    def test_changed_source_blob_is_rejected_for_direct_digest(self):
++        for path, pin in reviewed.FINAL_EVIDENCE_DOCUMENTS.items():
++            for line, spec in pin['lines'].items():
++                if 'parent' in spec:
++                    with self.subTest(path=path, line=line), self.targeted_bad_blob(reviewed.FINAL_SOURCE_PATH):
++                        with self.assertRaisesRegex(ValueError, 'differs from immutable artifact'):
++                            self.verify(path, line)
++
++    def test_second_decoded_occurrence_cannot_skip_immutable_source_proof(self):
++        real_run = reviewed.run
++        for fail_at in [1, 2]:
++            source_reads = []
++            def changed_target(args, *, cwd=None):
++                if args == ['git', 'cat-file', 'blob', f'{reviewed.FINAL_EVIDENCE_COMMIT}:{reviewed.FINAL_SOURCE_PATH}']:
++                    source_reads.append(args)
++                    if len(source_reads) == fail_at:
++                        return b'controlled different source observation'
++                return real_run(args, cwd=cwd)
++            with self.subTest(fail_at=fail_at), patch.object(reviewed, 'run', side_effect=changed_target):
++                with self.assertRaisesRegex(ValueError, 'differs from immutable artifact'):
++                    self.verify(reviewed.FINAL_ENVELOPE_PATH, 184)
++            self.assertEqual(len(source_reads), fail_at)
++
++    def test_subject_decoded_occurrence_keeps_immutable_source_proof(self):
++        with self.targeted_bad_blob(reviewed.FINAL_SOURCE_PATH):
++            with self.assertRaisesRegex(ValueError, 'differs from immutable artifact'):
++                self.verify(reviewed.FINAL_ENVELOPE_PATH, 192)
++
++
+ if __name__ == '__main__':
+     unittest.main()

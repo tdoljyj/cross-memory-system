@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../../supabase-browser";
+import ContextAuthorizationControls from '../../../lib/context-authorization-controls';
+import { ACTION_LABELS as ACTIONS, applyPreset, authorizationDisplayOrder, changeRange, initialSelection, isAllContexts, operationSummary, presetActions,
+  resourceKey as grantKey, resourceTitle as resourceName, selectedResources, type Resource, type OperationPreset } from '../../../lib/context-authorization';
 
 // Headless Binding issuance (Task 364212a1, Owner Decision 6e0371e3). A client
 // that cannot do OAuth (CI, a runner, a script) gets its own Binding token here.
@@ -11,20 +14,19 @@ import { supabase } from "../../supabase-browser";
 // and returns the Binding token once. Only its hash is stored. Every RPC runs
 // as this signed-in account session; Bindings and delegated OAuth are refused.
 type Json = Record<string, unknown>;
-type Grant = { resource_kind: string; resource_id: string; environment: string; actions: string[]; name?: string };
+type Grant = Resource & { limits?: Json };
+type Source = { source_id: string; version: number; actions: string[] };
+type Override = { override_id: string; version: number };
 type Row = { binding_id: string; agent_name: string; vendor: string; kind: string; expires_at: string | null;
-  created_at: string | null; version: number | null; grants: Grant[] | null; roles: string[]; replaced_by: string | null };
+  created_at: string | null; version: number | null; grants: Grant[] | null; roles: string[]; replaced_by: string | null;
+  scopes: string[] | null; active?: boolean; selection_format?: string; sources: Source[]; overrides: Override[] };
 type Pending = { confirmation_token: string; view_digest: string; view: Json };
 type Issued = { token: string; binding_id: string; expires_at: string; replaced: Json | null };
 
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const strings = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
-const grantKey = (grant: { resource_kind: string; resource_id: string; environment: string }) =>
-  JSON.stringify([grant.resource_kind, grant.resource_id, grant.environment]);
-const ACTIONS: Record<string, string> = {
-  read: "读取", write: "新增和修改", close: "关闭和归档", restore: "恢复记录", feedback_submit: "提交反馈", audit: "查看审计回执",
-};
 const ROLES: Record<string, string> = { "ci-admission": "CI 准入", "release-door": "发布门口" };
+const SCOPE_LABELS: Record<string, string> = { 'context:read': '读取内容', 'context:write': '新增和修改内容', 'audit:read': '读取审计回执' };
 // Where each role's token lives on GitHub (PermissionSimplification §3.5). A
 // rotation moves the role at once, but the stored secret does not follow.
 const ROLE_SECRETS: Record<string, string> = {
@@ -70,23 +72,53 @@ async function rpc(name: string, input: Json): Promise<Json> {
 }
 
 function grants(value: unknown): Grant[] {
-  return Array.isArray(value) ? value.filter(object).map(item => ({ resource_kind: String(item.resource_kind),
+  return Array.isArray(value) ? value.filter(object).map(item => ({ ...item, resource_kind: item.resource_kind === "context" ? "context" : "scope",
     resource_id: String(item.resource_id), environment: String(item.environment), actions: strings(item.actions),
-    name: typeof item.name === "string" ? item.name : undefined })) : [];
+    name: typeof item.name === "string" ? item.name : undefined,
+    project_id: typeof item.project_id === "string" ? item.project_id : null,
+    project_name: typeof item.project_name === "string" ? item.project_name : null,
+    context_name: typeof item.context_name === "string" ? item.context_name : null,
+    effective_actions: Array.isArray(item.effective_actions) ? strings(item.effective_actions) : undefined })) : [];
+}
+function parseSources(value: unknown, required: boolean): Source[] {
+  if (!required && !Array.isArray(value)) return [];
+  if (!Array.isArray(value) || !value.every(item => object(item) && typeof item.source_id === 'string' && Number.isSafeInteger(item.version)
+    && Number(item.version) > 0 && Array.isArray(item.actions) && item.actions.every(action => typeof action === 'string'))) throw new RequestFailure('服务返回了不完整的授权来源，请重新读取。');
+  return value as Source[];
+}
+function parseOverrides(value: unknown, required: boolean): Override[] {
+  if (!required && !Array.isArray(value)) return [];
+  if (!Array.isArray(value) || !value.every(item => object(item) && typeof item.override_id === 'string' && Number.isSafeInteger(item.version)
+    && Number(item.version) > 0)) throw new RequestFailure('服务返回了不完整的精确权限限制，请重新读取。');
+  return value as Override[];
+}
+function rotationSnapshotValid(row: Row, value: unknown): boolean {
+  if (!object(value) || value.binding_version !== row.version || !Array.isArray(value.sources)
+    || !Array.isArray(value.exceptions) || !Array.isArray(value.grant_limits)) return false;
+  const sources = value.sources, exceptions = value.exceptions;
+  return row.sources.every(source => sources.some(item => object(item) && item.source_id === source.source_id
+      && item.version === source.version && Array.isArray(item.actions) && item.actions.length === source.actions.length
+      && source.actions.every(action => (item.actions as unknown[]).includes(action))))
+    && row.overrides.every(override => exceptions.some(item => object(item) && item.override_id === override.override_id && item.version === override.version))
+    && value.grant_limits.every(item => object(item) && typeof item.grant_id === 'string' && typeof item.context_id === 'string'
+      && Number.isSafeInteger(item.version) && Number(item.version) > 0 && Array.isArray(item.actions)
+      && typeof item.history_policy === 'string' && typeof item.version_policy === 'string' && Array.isArray(item.allowed_fields));
 }
 function rows(value: unknown): Row[] {
   return Array.isArray(value) ? value.filter(object).map(item => ({ binding_id: String(item.binding_id),
     agent_name: String(item.agent_name ?? ""), vendor: String(item.vendor ?? ""), kind: String(item.kind),
-    expires_at: typeof item.expires_at === "string" ? item.expires_at : null,
+    expires_at: typeof item.expires_at === "string" && Number.isFinite(Date.parse(item.expires_at)) ? item.expires_at : null,
     created_at: typeof item.created_at === "string" ? item.created_at : null,
     version: typeof item.version === "number" ? item.version : null,
     grants: Array.isArray(item.grants) ? grants(item.grants) : null, roles: strings(item.roles),
-    replaced_by: typeof item.replaced_by === "string" ? item.replaced_by : null })) : [];
+    scopes: Array.isArray(item.scopes) && item.scopes.every(scope => typeof scope === 'string') ? [...item.scopes] : null,
+    active: typeof item.active === 'boolean' ? item.active : undefined,
+    replaced_by: typeof item.replaced_by === "string" ? item.replaced_by : null,
+    selection_format: typeof item.selection_format === "string" ? item.selection_format : undefined,
+    sources: parseSources(item.sources, item.selection_format === 'sources_v1'), overrides: parseOverrides(item.overrides, item.selection_format === 'sources_v1') })) : [];
 }
-const resourceName = (grant: Grant) => grant.resource_id === "global" ? "全局视图"
-  : grant.resource_id === "profile" ? "个人资料" : grant.resource_id === "project:*" ? "我的全部项目（含以后新建的）"
-  : grant.name ? `${grant.name}（${grant.resource_id}）` : grant.resource_id;
-const when = (value: string | null) => value ? new Date(value).toLocaleString("zh-CN") : "未设定";
+const when = (value: string | null) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString("zh-CN") : "未提供，尚未确认";
+const unavailable = (row: Row) => row.active === false || !!row.replaced_by || (row.expires_at !== null && Date.parse(row.expires_at) <= Date.now());
 const failure = (error: unknown, fallback: string) => error instanceof RequestFailure ? error.message : fallback;
 
 export default function HeadlessBindings() {
@@ -96,6 +128,10 @@ export default function HeadlessBindings() {
   const [label, setLabel] = useState("");
   const [days, setDays] = useState(30);
   const [chosen, setChosen] = useState<Record<string, string[]>>({});
+  const [preset, setPreset] = useState<OperationPreset>('full');
+  const [range, setRange] = useState<'all' | 'specified'>('specified');
+  const [custom, setCustom] = useState(false);
+  const [selectionNotice, setSelectionNotice] = useState('');
   const [replaces, setReplaces] = useState<Row | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [issued, setIssued] = useState<Issued | null>(null);
@@ -132,19 +168,21 @@ export default function HeadlessBindings() {
     try {
       const value = await rpc("clued_headless_binding_list_v1", {});
       if (epoch.current !== generation) return;
-      setList(rows(value.bindings)); setEligible(grants(value.eligible));
+      const resources = grants(value.eligible);
+      setList(rows(value.bindings)); setEligible(resources);
+      if (!replaces) { const initial = initialSelection(resources); setChosen(initial.selected); setRange(initial.range); setPreset(initial.preset); setCustom(false); setSelectionNotice(''); }
+      setPending(null);
     } catch (problem) {
       if (epoch.current === generation) setError(failure(problem, "暂时无法读取无头令牌。"));
     } finally { if (epoch.current === generation) setWorking(false); }
   }
 
   function selection(): Grant[] {
-    return eligible.map(grant => ({ resource_kind: grant.resource_kind, resource_id: grant.resource_id,
-      environment: grant.environment, actions: grant.actions.filter(action => (chosen[grantKey(grant)] ?? []).includes(action)) }))
-      .filter(grant => grant.actions.length > 0);
+    return replaces?.selection_format === 'sources_v1' ? [] : selectedResources(eligible, chosen);
   }
 
   function toggle(grant: Grant, action: string, on: boolean) {
+    setCustom(true); setPending(null);
     setChosen(previous => {
       const values = previous[grantKey(grant)] ?? [];
       return { ...previous, [grantKey(grant)]: on ? grant.actions.filter(item => item === action || values.includes(item))
@@ -155,10 +193,14 @@ export default function HeadlessBindings() {
   function rotate(row: Row) {
     setReplaces(row); setLabel(row.agent_name); setIssued(null); setPending(null); setNotice(""); setError("");
     setChosen(Object.fromEntries((row.grants ?? []).map(grant => [grantKey(grant), [...grant.actions]])));
+    setRange((row.grants ?? []).some(isAllContexts) ? 'all' : 'specified');
+    const operation = operationSummary(row.grants ?? []); setPreset(operation === '只读' ? 'reader' : operation === '可编辑' ? 'developer' : 'full'); setCustom(operation === '自定义／受限');
+    setSelectionNotice('轮换沿用原授权及限制；新连接默认选择不会扩大旧令牌范围。');
   }
 
   function resetForm() {
-    setReplaces(null); setLabel(""); setDays(30); setChosen({}); setPending(null);
+    setReplaces(null); setLabel(""); setDays(30); setPending(null);
+    const initial = initialSelection(eligible); setChosen(initial.selected); setRange(initial.range); setPreset(initial.preset); setCustom(false); setSelectionNotice('');
   }
 
   // Step 1: Clued renders what will be issued and returns a token for exactly that.
@@ -168,10 +210,14 @@ export default function HeadlessBindings() {
     setWorking(true); setError(""); setNotice(""); setIssued(null);
     try {
       const value = await rpc("clued_headless_binding_confirmation_issue_v1", { label: label.trim(), days,
-        selected: selection(), ...(replaces ? { replaces_binding_id: replaces.binding_id } : {}) });
+        selected: selection(), ...(replaces ? { replaces_binding_id: replaces.binding_id } : {}),
+        ...(replaces?.selection_format === 'sources_v1' ? { selection_format: 'sources_v1',
+          sources: replaces.sources.map(source => ({ source_id: source.source_id, base_version: source.version, action_cap: source.actions })),
+          exceptions: replaces.overrides.map(item => ({ override_id: item.override_id, base_version: item.version })) } : {}) });
       if (epoch.current !== generation) return;
       if (value.status !== "issued" || typeof value.confirmation_token !== "string" || typeof value.view_digest !== "string"
         || !object(value.confirmation_view)) throw new RequestFailure("服务返回了无法识别的确认内容。");
+      if (replaces?.selection_format === 'sources_v1' && !rotationSnapshotValid(replaces, value.confirmation_view.source_snapshot)) throw new RequestFailure('轮换的授权来源或限制版本预览不完整，请重新读取。');
       setPending({ confirmation_token: value.confirmation_token, view_digest: value.view_digest, view: value.confirmation_view });
     } catch (problem) {
       if (epoch.current === generation) setError(failure(problem, "暂时无法生成预览。"));
@@ -245,24 +291,24 @@ export default function HeadlessBindings() {
         <select value={days} onChange={event => setDays(Number(event.target.value))}>
           {DAYS.map(d => <option key={d} value={d}>{`${d} 天`}</option>)}
         </select></label>
-      {eligible.map(grant => <fieldset key={grantKey(grant)}
-        style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 12, margin: "12px 0", minWidth: 0 }}>
-        <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>{resourceName(grant)}</legend>
-        {grant.actions.map(action => <label key={action} style={{ display: "flex", alignItems: "center", gap: 10, margin: "9px 0", fontSize: 13 }}>
-          <input type="checkbox" style={{ width: 18, height: 18, accentColor: "var(--green)" }}
-            checked={(chosen[grantKey(grant)] ?? []).includes(action)}
-            onChange={event => toggle(grant, action, event.target.checked)} />{ACTIONS[action] ?? action}
-        </label>)}
-      </fieldset>)}
+      {replaces?.selection_format === 'sources_v1' && <p>本次轮换保留原授权来源、精确拒绝和字段／历史／版本限制；需要收窄时，先在连接管理保存并重新读取。预览会绑定每项现有版本。</p>}
+      <ContextAuthorizationControls rows={eligible} selected={chosen} preset={preset} range={range} custom={custom}
+        allowLegacyProjectPolicy={!!replaces?.grants?.some(grant => grant.resource_id === 'project:*')}
+        busy={working || pending !== null || replaces?.selection_format === 'sources_v1'} notice={selectionNotice} onRange={next => { setRange(next); setCustom(false); setChosen(changeRange(eligible, next, preset)); setPending(null);
+          setSelectionNotice(next === 'specified' ? '已清空精确选择，请重新勾选需要的范围。' : '已改为全部上下文策略，请核对取消的精确选择和未来规则。'); }}
+        onPreset={next => { setPreset(next); setCustom(false); setChosen(old => applyPreset(eligible, old, next)); setPending(null); }}
+        onResource={(row, checked) => { setChosen(old => ({ ...old, [grantKey(row)]: checked ? presetActions(row, preset) : [] })); setPending(null); }}
+        onAction={toggle} />
       <button className="primary-button" type="button" onClick={() => void preview()}
-        disabled={!label.trim() || selection().length === 0}>预览</button>
+        disabled={!label.trim() || (replaces?.selection_format === 'sources_v1' ? replaces.sources.every(source => source.actions.length === 0) : selection().length === 0)}>预览</button>
     </fieldset>
     {pending && view && <section aria-label="确认签发" className="oauth-note" style={{ marginTop: 16 }}>
       <strong>请确认要签发的令牌</strong>
       <dl className="oauth-details">
         <div><dt>名称</dt><dd>{String(view.label)}</dd></div>
         <div><dt>有效期</dt><dd>{`签发后 ${String(view.days)} 天`}</dd></div>
-        <div><dt>权限</dt><dd>{grants(view.selected).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
+        <div><dt>权限</dt><dd>{authorizationDisplayOrder(grants(view.selected)).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>
+        {object(view.source_snapshot) && <div><dt>保留的来源与限制版本</dt><dd><pre>{JSON.stringify(view.source_snapshot, null, 2)}</pre></dd></div>}
         {viewReplaces && <div><dt>替换</dt><dd>{`「${String(viewReplaces.agent_name)}」，签发后 ${String(viewReplaces.grace_minutes)} 分钟失效`}
           {strings(viewReplaces.roles).length ? `；角色 ${strings(viewReplaces.roles).map(r => ROLES[r] ?? r).join("、")} 移到新令牌` : ""}</dd></div>}
       </dl>
@@ -307,16 +353,19 @@ export default function HeadlessBindings() {
         {list.map(row => <article key={row.binding_id} style={{ border: "1px solid var(--line)", borderRadius: 12, padding: 14, marginTop: 12 }}>
           <strong style={{ overflowWrap: "anywhere" }}>{row.agent_name}</strong>
           <dl className="oauth-details">
-            <div><dt>类型</dt><dd>{row.kind === "legacy" ? "旧方式创建（全部权限、无有效期）" : "无头令牌"}</dd></div>
+            <div><dt>类型</dt><dd>{row.kind === "legacy" ? "旧方式创建" : "无头令牌"}</dd></div>
+            <div><dt>状态</dt><dd>{row.active === false ? '已失效' : row.expires_at && Date.parse(row.expires_at) <= Date.now() ? '已过期' : row.active === true ? '当前有效' : '尚未确认'}</dd></div>
             <div><dt>有效期至</dt><dd>{row.replaced_by ? `已被替换，${when(row.expires_at)} 失效` : when(row.expires_at)}</dd></div>
+            {row.kind === 'legacy' && <><div><dt>客户端操作范围</dt><dd>{row.scopes === null ? '未提供，尚未确认' : row.scopes.length ? row.scopes.map(scope => SCOPE_LABELS[scope] ?? `未识别范围：${scope}`).join('、') : '未声明可用操作'}</dd></div>
+              {!row.grants && <div><dt>具体资源范围</dt><dd>授权明细未提供，不能推断为全部上下文；需要核对实际资格和资源授权。</dd></div>}</>}
             {row.roles.length > 0 && <div><dt>专用角色</dt><dd>{row.roles.map(r => ROLES[r] ?? r).join("、")}</dd></div>}
             {secretsFor(row.roles).length > 0 && <div><dt>令牌存放在</dt><dd>{secretsFor(row.roles).join("；")}</dd></div>}
-            {row.grants && <div><dt>权限</dt><dd>{row.grants.map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
+            {row.grants && <div><dt>权限</dt><dd>{authorizationDisplayOrder(row.grants).map(grant => `${resourceName(grant)}：${grant.actions.map(a => ACTIONS[a] ?? a).join("、")}`).join("；")}</dd></div>}
             <div><dt>连接编号</dt><dd>{row.binding_id}</dd></div>
           </dl>
           <div className="oauth-actions">
             {!row.replaced_by && replaces?.binding_id !== row.binding_id && <button className="oauth-secondary" type="button"
-              disabled={working || pending !== null} onClick={() => rotate(row)}>轮换为新令牌</button>}
+              disabled={working || pending !== null || unavailable(row)} onClick={() => rotate(row)}>轮换为新令牌</button>}
             <button className="oauth-secondary" style={{ color: "#ffc5c5" }} type="button"
               disabled={working || pending !== null} onClick={() => void revoke(row)}>撤销</button>
           </div>

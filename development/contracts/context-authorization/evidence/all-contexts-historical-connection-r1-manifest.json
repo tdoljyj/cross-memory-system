@@ -1,0 +1,94 @@
+{
+  "schema": "clued.qualified-local-test.v1",
+  "subject": "historical_connection_authorization_v12_bounded_chain",
+  "start_utc": "2026-10-14T07:00:22.7819322Z",
+  "end_utc": "2026-10-14T07:00:30.0255685Z",
+  "exit_code": 0,
+  "runtime_path": "C:/Program Files/nodejs/node.exe",
+  "runtime_version": "v24.19.0",
+  "platform": "Microsoft Windows NT 10.0.26300.0",
+  "args": [
+    "scripts/run-tests.mjs",
+    "--test",
+    "--test-force-exit",
+    "--test-reporter=spec",
+    "--test-concurrency=1",
+    "tests/connection-authorization-db.test.mjs"
+  ],
+  "temporary_root": "C:\\Users\\Windows\\AppData\\Local\\Temp\\clued-historical-connection-14810557e0a540eb91bcf295e9bebd00",
+  "test": {
+    "sha256": "4c9030c4328550615d4417cde0cb85058f9dbc5f046d4c4dd6879ed40799b96a",
+    "path": "tests/connection-authorization-db.test.mjs"
+  },
+  "migration_chain": [
+    {
+      "sha256": "7f29501a120927121820b1a05f04dbfde97eb9663c10a482e49de5276f115bdf",
+      "path": "supabase/migrations/202608230001_clued_continuity.sql"
+    },
+    {
+      "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+      "path": "supabase/migrations/202608230002_mandatory_continuity.sql"
+    },
+    {
+      "sha256": "517a6e3481afb6c38c9b35cfb3cce6b9eb1fea09473c340098f2670baeaef3e2",
+      "path": "supabase/migrations/20260823182409_clued_memory_crud.sql"
+    },
+    {
+      "sha256": "9b2b7556cd61b647a10ca5b1f80e6ea6ce3cea8084eb5029e3c458fc381c8bfb",
+      "path": "supabase/migrations/20260823182517_harden_clued_memory_grants.sql"
+    },
+    {
+      "sha256": "bc5889fac81cf0d6c318a5a18dfb3cc6d07911a678bcb779fc3295c7206c5f59",
+      "path": "supabase/migrations/202608240003_project_lifecycle_v1.sql"
+    },
+    {
+      "sha256": "0178e27aeee4717ccd81f5f693db308a97f5104c5810b4657fd120bb44e406c3",
+      "path": "supabase/migrations/20260824014005_unified_record_v2.sql"
+    },
+    {
+      "sha256": "109ecba6df9f3c90905180808d3e8d68b5ccd6b669d90fd99c7a6ed3e5cb939d",
+      "path": "supabase/migrations/20260824123000_map_optimistic_conflicts_to_http_409.sql"
+    },
+    {
+      "sha256": "aebd32e782b68785be062a5ecf477d2645528651fa9c38a18464a209bb6ed25b",
+      "path": "supabase/migrations/202608250005_oauth_mcp_binding.sql"
+    },
+    {
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "path": "supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql"
+    },
+    {
+      "sha256": "35c9e152fb7471e2b7e0fadd7f5b930c163af0ce5c98929a3063516e6b3627cf",
+      "path": "supabase/migrations/20260825183608_clued_m1_map_current_legacy_records.sql"
+    },
+    {
+      "sha256": "9987438b8a12af237b51eec93577e4617849d87e70d40deb7d5195b03c1d01db",
+      "path": "supabase/migrations/20260907123955_clued_context_ownership_publication_v11.sql"
+    },
+    {
+      "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4",
+      "path": "supabase/migrations/20260907131834_clued_search_canonical_records.sql"
+    },
+    {
+      "sha256": "26f41a2a403dc2e4b8779c1e0e64b7e597232bb1173b03afa8483abd8b487fc5",
+      "path": "supabase/migrations/20260907172309_retire_context_ownership_publication_v11.sql"
+    },
+    {
+      "sha256": "74749dbb6718784e0ed8b54edad5f47a18f44d986e319b86f0b47123355a74f6",
+      "path": "supabase/migrations/20260907173030_clued_development_context_runtime_v14.sql"
+    },
+    {
+      "sha256": "6f1379187f1f36c836e99f6cf2083334e733fcb10cd59f789797b9e3c5225f8d",
+      "path": "supabase/migrations/20260907173031_clued_connection_authorization_v12.sql"
+    },
+    {
+      "sha256": "82d625ee3b3fabac7b8fadba6660aa30c336d60698723d49b5e586b490db0ca5",
+      "path": "supabase/migrations/20260907173032_clued_project_invitations_v13.sql"
+    }
+  ],
+  "log": {
+    "sha256": "d84414e522f12987394f089f8f003f91994218ab9dd1f5966e5054cbec06613c",
+    "path": "all-contexts-historical-connection-r1-test.log"
+  },
+  "qualification": "Result qualified only by actual log, bounded historical migrations; not a current all-contexts integration result"
+}

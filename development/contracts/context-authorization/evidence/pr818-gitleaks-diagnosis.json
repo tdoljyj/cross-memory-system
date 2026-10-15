@@ -1,0 +1,104 @@
+{
+  "schema": "clued.redacted-secret-scan-diagnosis.v1",
+  "reviewer": "/root/all_contexts_final_security",
+  "head": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+  "subject": "PR818 Gitleaks two actual findings",
+  "review_authorized_setting": {
+    "enabled": true,
+    "version": 0,
+    "policy_version": 1,
+    "resume_receipt": "9262b38b-2cc3-4317-ba38-92bd142a2807",
+    "root_claim": "40087fbb-4490-442d-8aba-80a44103b9c3",
+    "fence": 6,
+    "lease_version": 10
+  },
+  "scanner": {
+    "version": "8.30.1",
+    "platform": "Windows x64",
+    "official_release_url": "https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1",
+    "archive_sha256": "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e",
+    "binary_sha256": "17157e2ee8b76fc8b1d8bee607a250e34b8a8023c8bc81822d4b5ee4d78fcb7c",
+    "redaction": 100,
+    "default_rules_unchanged": true
+  },
+  "existing_exception_verification": {
+    "count": 482,
+    "commits": 68,
+    "files_at_commits": 123,
+    "verified_git_objects": 130,
+    "global_fingerprints": 0,
+    "ignore_sha256": "2d36e1ab6b4b068d4175c060bd9f13ff7803704db215cc4a4a8254b185f2088d",
+    "self_test_executed_by_reviewer": false
+  },
+  "scans": [
+    {
+      "scope": "Branch exact af22..4d05 new history",
+      "start_utc": "2026-10-14T07:26:54.2604762Z",
+      "end_utc": "2026-10-14T07:26:54.8080753Z",
+      "scanner_exit_code": 1,
+      "findings": 2,
+      "redacted_report": "pr818-branch-redacted.json",
+      "location_only_report": "pr818-branch-locations.json"
+    },
+    {
+      "scope": "Complete ancestors of exact failing head4d05",
+      "start_utc": "2026-10-14T07:28:50.4040684Z",
+      "end_utc": "2026-10-14T07:28:57.2685164Z",
+      "scanner_exit_code": 1,
+      "findings": 2,
+      "redacted_report": "pr818-head-history-redacted.json",
+      "location_only_report": "pr818-head-history-locations.json",
+      "qualification": "Does not claim all remote branches/tags or a new Linux CI execution; reproduces exactly two findings across this head's complete history."
+    }
+  ],
+  "findings": [
+    {
+      "file": "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json",
+      "line": 150,
+      "rule": "generic-api-key",
+      "commit": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+      "fingerprint": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:150",
+      "metadata_target_file": "apps/clued-cloud/worker/delegated-oauth.ts",
+      "classification": "ARTIFACT_DIGEST",
+      "is_hex64": true,
+      "equals_independently_hashed_target_file": true,
+      "credential": false,
+      "matched_value_output": false
+    },
+    {
+      "file": "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json",
+      "line": 152,
+      "rule": "generic-api-key",
+      "commit": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904",
+      "fingerprint": "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904:development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json:generic-api-key:152",
+      "metadata_target_file": "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+      "classification": "ARTIFACT_DIGEST",
+      "is_hex64": true,
+      "equals_independently_hashed_target_file": true,
+      "credential": false,
+      "matched_value_output": false
+    }
+  ],
+  "conclusion": "Both reproduced findings are actual file SHA-256 metadata in the immutable final security report. Neither is a bearer token or credential; no additional finding appeared in this head's complete ancestor history. The base64 original-log envelope was not the source of these two findings.",
+  "recommended_remedy": [
+    "Preserve original reviewed report bytes and the historical commit. Moving/deleting/reformatting only current files cannot remove a finding in an ancestor scanned by the current CI.",
+    "After actual occupancy coordination and widened Root write_set, use the existing reviewed historical mechanism for exactly these two commit:path:rule:line fingerprints, classified ARTIFACT_DIGEST; no global regex/rule exemption.",
+    "Precisely admit only development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json in the verifier's path predicate, and advance EXPECTED_COUNT and config reviewed-count from482 to484. Do not admit the entire development/contracts tree or arbitrary reports.",
+    "Reverify existing object/finding proof and exact-history/new-commit/different-path detection regression. A normal exact-head protected-change Door must admit the new script/config commit.",
+    "Run the actual unchanged pinned CI scanner after applicable new-head admission; this diagnosis does not certify future CI or production."
+  ],
+  "changes_by_reviewer": {
+    "repository_source": 0,
+    "scanner_config": 0,
+    "ignore_entries": 0,
+    "canonical_record_mutations": 0,
+    "ci_runs": 0,
+    "downloads": "Official pinned scanner only inside existing claimed work/eight_implementation/scanner",
+    "artifact_writes": "Only scanner diagnostics and redacted reports in that same directory"
+  },
+  "limitations": [
+    "Linux pinned-container equivalence is not independently executed here; the official Windows release at the same version reproduces both location/rule/commit/fingerprints.",
+    "CI run38527507386/job115731245717 failure and FIFO exit are Root-observed inputs, not a new Code Review read by this reviewer.",
+    "Only diagnostic artifacts were created; no historical exemption or policy implementation was performed."
+  ]
+}
