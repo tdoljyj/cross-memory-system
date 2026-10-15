@@ -1,7 +1,7 @@
 // Operator-only candidate. Registers only an exact independently accepted
 // empty disposable cluster. No production target or generic SQL entry.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.0";
+export const COMPONENT_VERSION = "1.0.1";
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -10,6 +10,7 @@ import {pathToFileURL} from 'node:url';
 import {acceptedSourceCheck} from './clued-handover-external-source-check.mjs';
 import {verifyEmptyCluster} from './clued-handover-external-catalog.mjs';
 import {platformDescriptor,verifySupabasePlatform} from './clued-handover-external-bootstrap.mjs';
+import {preparePgTransport,makePgClientConfig,PG_IDENTITY_SQL,assertPgIdentity} from './clued-handover-external-pg-transport.mjs';
 const root=process.env.GITHUB_WORKSPACE;
 let failureCategory='SOURCE_ACCEPTANCE',registrationState='NOT_STARTED';
 async function evidence(value){
@@ -26,18 +27,16 @@ async function main(){
   assert.match(process.env.GITHUB_RUN_ID,/^[1-9][0-9]{0,19}$/);
   assert.equal(p.fixture_mode,'continuous');
   platformDescriptor(p);
+  const transport=preparePgTransport(p);
   const catalogue=JSON.parse(await fs.readFile(path.join(root,'config/clued-handover-external-catalog.json'),'utf8'));
   assert.equal(catalogue.operator_authority_receipt,p.operator_authority_receipt);
-  const u=new URL(process.env.QUALIFICATION_DISPOSABLE_PG_URL??'');
-  assert.ok(['postgres:','postgresql:'].includes(u.protocol));assert.equal(u.hostname,p.database_host);
-  assert.equal(decodeURIComponent(u.pathname.slice(1)),p.database_name);assert.equal(u.search,'');
-  assert.equal(decodeURIComponent(u.username),p.provisioner_role);
-  assert.equal(Number(u.port||5432),p.database_port);
+  const raw=process.env.QUALIFICATION_DISPOSABLE_PG_URL??'';
   const req=createRequire(path.join(root,'apps/clued-cloud/package.json'));
   const Pg=(await import(pathToFileURL(req.resolve('pg')).href)).default;
   const connect=async database=>{
-    const target=new URL(u);target.pathname='/'+encodeURIComponent(database);
-    const c=new Pg.Client({connectionString:target.toString(),ssl:{rejectUnauthorized:true}});await c.connect();return c;
+    const c=new Pg.Client(makePgClientConfig(transport,raw,{database}));
+    try{await c.connect();assertPgIdentity(await c.query(PG_IDENTITY_SQL),database);return c;}
+    catch{await c.end().catch(()=>{});throw new Error('PG_CLIENT_CONNECTION_OR_IDENTITY_REJECTED');}
   };
   const db=await connect(p.database_name);
   try{
