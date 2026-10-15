@@ -134,12 +134,43 @@ test("checkpoint and reconcile take the context from the session token", { timeo
     await assert.rejects(checkpoint(project.session_token, project.version, "global", "global"),
       /resume_required_or_session_expired/);
 
-    // An expired token too.
+    // Keep the near-past boundary: exactly one second before the actual
+    // Worker's fixed transaction clock, not an arbitrarily old expiry.
     const expiring = await restore(projectContext);
-    await admin.query(`update public.clued_continuity_sessions set expires_at=now()-interval '1 second'
-      where token_hash=encode(extensions.digest(convert_to($1,'UTF8'),'sha256'),'hex')`, [expiring.session_token]);
-    await assert.rejects(checkpoint(expiring.session_token, expiring.version, undefined, projectContext),
-      /resume_required_or_session_expired/);
+    let expiredRow;
+    await workerCaller.query("begin isolation level read committed");
+    try {
+      const reference = (await workerCaller.query("select now()::text as reference_time")).rows[0].reference_time;
+      const expired = await admin.query(`with target as materialized (
+        select id,expires_at::text as previous_expires_at from public.clued_continuity_sessions
+        where user_id=$3 and ended_at is null
+          and token_hash=encode(extensions.digest(convert_to($1,'UTF8'),'sha256'),'hex') for update
+      ) update public.clued_continuity_sessions s set expires_at=$2::timestamptz-interval '1 second'
+        from target t where s.id=t.id
+        returning s.id,t.previous_expires_at,s.expires_at<$2::timestamptz as expired,
+          extract(epoch from ($2::timestamptz-s.expires_at))::text as past_seconds`,
+      [expiring.session_token, reference, userId]);
+      assert.equal(expired.rowCount, 1, "exactly the intended live synthetic session was expired");
+      expiredRow = expired.rows[0];
+      assert.equal(expiredRow.expired, true);
+      assert.equal(Number(expiredRow.past_seconds), 1);
+      // Preserve omitted-context coverage and independently test the real expiry
+      // guard with the correct explicit context, so context mismatch cannot mask grace.
+      for (const contextKey of [undefined, projectContext]) {
+        await workerCaller.query("savepoint expired_session_probe");
+        await assert.rejects(checkpoint(expiring.session_token, expiring.version, contextKey, projectContext),
+          /resume_required_or_session_expired/);
+        await workerCaller.query("rollback to savepoint expired_session_probe");
+        await workerCaller.query("release savepoint expired_session_probe");
+      }
+    } finally {
+      await workerCaller.query("rollback");
+      if (expiredRow) {
+        const restoredExpiry = await admin.query(`update public.clued_continuity_sessions set expires_at=$2::timestamptz
+          where id=$1 returning id`, [expiredRow.id, expiredRow.previous_expires_at]);
+        assert.equal(restoredExpiry.rowCount, 1, "restore the original synthetic expiry after the negative probes");
+      }
+    }
 
     // Another Binding's session token reveals nothing about its context.
     const foreign = await restore(projectContext, otherTokenHash);
