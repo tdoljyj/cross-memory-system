@@ -36,7 +36,7 @@ test('project list uses current explicit Canonical project consent in real Postg
   async function client(role,u){const db=server.getPgClient();clients.push(db);await db.connect();await db.query('set role '+role);await db.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[u??'',JSON.stringify(u?{sub:u}:{})]);return db;}
   const owner=await client('authenticated',U),member=await client('authenticated',V),anon=await client('anon');
   const rpc=async(db,name,args)=>(await db.query('select public.'+name+'('+args.map((_,n)=>'$'+(n+1)).join(',')+') value',args.map(a=>Array.isArray(a)?JSON.stringify(a):a))).rows[0].value;
-  const denied=p=>assert.rejects(p,e=>['42501','28000'].includes(e.code));
+  const denied=(p,label)=>assert.rejects(p,e=>['42501','28000'].includes(e.code),label);
   async function grant(selected,db=owner){
    const r=await rpc(db,'clued_authorization_prepare_v12',[issuer,{request_digest:hash(),client_id:'fixture-client',client_name:'Fixture client',redirect_uri:'https://client.example.invalid/callback',resource,requested_scopes:['context:read','context:write','audit:read']}]);
    const h=hash();return {h,...await rpc(db,'clued_authorization_approve_v12',[issuer,r.request_id,r.version,selected,h,future()])};
@@ -75,7 +75,17 @@ test('project list uses current explicit Canonical project consent in real Postg
    // The existing resolver supports endpoints with and without this optional column.
    await admin.query('alter table public.clued_agent_bindings add column expires_at timestamptz');
    for(const [table,column,value] of [['public.clued_agent_bindings','revoked_at','now()'],['public.clued_agent_bindings','expires_at',"now()-interval '1 second'"],['clued_private.authorizations_v12','revoked_at','now()'],['clued_private.authorizations_v12','expires_at',"now()-interval '1 second'"]]){
-    const g=await grant([scope('project:'+A)]);await admin.query(`update ${table} set ${column}=${value} where ${table.startsWith('public')?'id':'binding_id'}=$1`,[g.binding_id]);await denied(list(g));
+    const label=`${table}.${column}`;
+    const g=await grant([scope('project:'+A)]);
+    const predicate=table.startsWith('public')?'id':'binding_id';
+    const changed=await admin.query(`update ${table} set ${column}=${value} where ${predicate}=$1`,[g.binding_id]);
+    assert.equal(changed.rowCount,1,`${label}: exactly one fixture row changed`);
+    const observed=(await admin.query(`select ${column} as actual_value,clock_timestamp() as db_clock,
+      ${column}<=clock_timestamp() as not_future from ${table} where ${predicate}=$1`,[g.binding_id])).rows[0];
+    t.diagnostic(JSON.stringify({case:label,row_count:changed.rowCount,...observed}));
+    assert.ok(observed.actual_value,`${label}: the mutated field is present`);
+    if(column==='expires_at')assert.equal(observed.not_future,true,`${label}: the fixture is already expired on the database clock`);
+    await denied(list(g),`${label}: current project list rejects the changed fixture`);
    }
    await denied(list({h:hash()}));await denied(list({h:'invalid'}));
    await admin.query("update auth.users set banned_until=now()+interval '1 hour' where id=$1",[U]);await denied(list(selected));
