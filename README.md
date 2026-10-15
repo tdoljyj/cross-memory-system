@@ -16,7 +16,9 @@ Kooyumi（原 Clued）是一个围绕「发现与继续」建立的数字平台�
 
 普通用户不需要 clone、浏览或直接依赖本仓库。
 
-- Kooyumi Connect：<https://clued.pixelgrav.com/connect>
+- Kooyumi Connect：<https://kooyumi.pixelgrav.com/connect>
+- Kooyumi Skill：[Skill 入口](./skills/clued/SKILL.md) · [安装与更新说明](./skills/README.md)。供支持 Skill 的 Agent 读取和维护经授权的个人与项目上下文，也用于 Kooyumi 的开发与维护；技术兼容名称仍为 `clued`。
+- 使用 Skill 前，先在客户端连接 Kooyumi MCP 并完成授权，再启用 Skill。Skill 提供操作指引；安装 Skill 本身不会建立 MCP 连接、创建账户或增加访问权限。
 - 产品运行时通过正式的 App / Web / Agent / MCP 入口访问 Kooyumi 服务。
 - Git/GitHub 仅参与开发、验证、构建、发布与治理，不作为普通用户请求中转层或产品可用性的前提。
 
