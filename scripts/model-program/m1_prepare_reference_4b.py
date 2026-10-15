@@ -30,7 +30,7 @@ STORAGE_MAX = 32 * 1024**3
 RAM_MIN = 16 * 1024**3
 AUXILIARY_MAX = 16 * 1024**2
 CAPTURE_MAX = 1024**2
-PHASE_SECONDS = {"download_verify": 2700, "convert_bf16_text": 1800, "hash_artifact": 600}
+PHASE_SECONDS = {"download_verify": 21600, "convert_bf16_text": 1800, "hash_artifact": 600}
 CATALOG = Path(__file__).resolve().parents[2] / "development/contracts/model-program/m1/reference4b-preparation/fixed-source-materials.json"
 WORKSPACE = Path(__file__).resolve().parents[3]
 MATERIAL_PARENT = WORKSPACE / "m1-4b-reference-preparation"
@@ -103,7 +103,7 @@ def fixed_catalog(raw, expected_sha256):
             "remote": False, "mmproj": False, "other_precisions": False}, "BF16_TEXT_ONLY")
     caps = spec.get("ceilings", {})
     require(caps == {"network_response_body_bytes": NETWORK_MAX, "new_storage_high_water_bytes": STORAGE_MAX,
-            "download_verify_seconds": 2700, "convert_seconds": 1800, "artifact_hash_seconds": 600,
+            "download_verify_seconds": 21600, "convert_seconds": 1800, "artifact_hash_seconds": 600,
             "minimum_available_ram_bytes": RAM_MIN}, "FIXED_CEILINGS")
     return spec
 
