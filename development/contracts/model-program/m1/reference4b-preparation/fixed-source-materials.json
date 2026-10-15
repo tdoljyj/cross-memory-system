@@ -1,0 +1,274 @@
+{
+  "purpose": "FIXED_REFERENCE4B_MATERIAL_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "permission_issued": false,
+  "model_id": "Qwen/Qwen3.5-4B",
+  "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "source_count": 14,
+  "source_bytes": 9342907469,
+  "license": "apache-2.0",
+  "gated": false,
+  "metadata_url": "https://huggingface.co/api/models/Qwen/Qwen3.5-4B/revision/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a?blobs=true",
+  "metadata_raw_sha256": "186fe533d6a981253ad4cb6e1808a37cd926251172215dccb6deb2ac2109ca40",
+  "metadata_bytes": 22086,
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 1570,
+      "git_blob_sha1": "52373fe24473b1aa44333d318f578ae6bf04b49b",
+      "lfs_sha256": null,
+      "small_text_sha256": null
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 11544,
+      "git_blob_sha1": "f938136e3adacfd92be087f6e113b5d6d97f678f",
+      "lfs_sha256": null,
+      "small_text_sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"
+    },
+    {
+      "path": "README.md",
+      "bytes": 77661,
+      "git_blob_sha1": "7950a3aadf378cd13758097bc52f0ed849a59007",
+      "lfs_sha256": null,
+      "small_text_sha256": null
+    },
+    {
+      "path": "chat_template.jinja",
+      "bytes": 7756,
+      "git_blob_sha1": "a585dec894e63da457d9440ec6aa7caa16d20860",
+      "lfs_sha256": null,
+      "small_text_sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+    },
+    {
+      "path": "config.json",
+      "bytes": 3161,
+      "git_blob_sha1": "557d961b205319c6a7da5f757f565b69b3967b7d",
+      "lfs_sha256": null,
+      "small_text_sha256": "ddc63e1c717afa86c865bb5e01313d89d72bb53b97ad4a8a03ba8510c0621670"
+    },
+    {
+      "path": "merges.txt",
+      "bytes": 3353259,
+      "git_blob_sha1": "a494e019ca1502219fd0128658b979e5f05ae8e8",
+      "lfs_sha256": null,
+      "small_text_sha256": null
+    },
+    {
+      "path": "model.safetensors-00001-of-00002.safetensors",
+      "bytes": 5329398688,
+      "git_blob_sha1": "d2e1801a99c9c1618c526812e779d9543df84891",
+      "lfs_sha256": "26a93f066e1916adb13453dae5a0c707c0fbc71299ed98779571a907b8e74c61",
+      "small_text_sha256": null
+    },
+    {
+      "path": "model.safetensors-00002-of-00002.safetensors",
+      "bytes": 3990429408,
+      "git_blob_sha1": "8fbeeec18827d3b20e3df1dc0abf94f7e85bcef1",
+      "lfs_sha256": "cb544bd9bfae93dc59b0f22b292f5933573854a7f9b97835c67060d7d910e188",
+      "small_text_sha256": null
+    },
+    {
+      "path": "model.safetensors.index.json",
+      "bytes": 76196,
+      "git_blob_sha1": "fddda6039f7c1d17260c9e923b8a72fd025d9a86",
+      "lfs_sha256": null,
+      "small_text_sha256": "cf3f798ee02ba45f9622aa8892a47369ab667d0afbf154ee7c2212de42e6302d"
+    },
+    {
+      "path": "preprocessor_config.json",
+      "bytes": 390,
+      "git_blob_sha1": "2ea84a437d448ff71b08df68fdd949d5cc4ebb64",
+      "lfs_sha256": null,
+      "small_text_sha256": null
+    },
+    {
+      "path": "tokenizer.json",
+      "bytes": 12807982,
+      "git_blob_sha1": "a73a846725794819aa6e1c9e97d8dc9671c2006d",
+      "lfs_sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+      "small_text_sha256": null
+    },
+    {
+      "path": "tokenizer_config.json",
+      "bytes": 16710,
+      "git_blob_sha1": "eda48d3e75a8e59a8479ee4ec8b37f76e711d9c1",
+      "lfs_sha256": null,
+      "small_text_sha256": null
+    },
+    {
+      "path": "video_preprocessor_config.json",
+      "bytes": 385,
+      "git_blob_sha1": "3ba673a5ad7d4d13f54155ecd38b2a94a6dac8fe",
+      "lfs_sha256": null,
+      "small_text_sha256": null
+    },
+    {
+      "path": "vocab.json",
+      "bytes": 6722759,
+      "git_blob_sha1": "0aa0ce0658d60ac4a5d609f4eadb0e8e43514176",
+      "lfs_sha256": null,
+      "small_text_sha256": null
+    }
+  ],
+  "small_metadata_observations": {
+    "config.json": {
+      "architectures": [
+        "Qwen3_5ForConditionalGeneration"
+      ],
+      "model_type": "qwen3_5",
+      "text_config": {
+        "dtype": "bfloat16",
+        "hidden_size": 2560,
+        "model_type": "qwen3_5_text",
+        "num_hidden_layers": 32,
+        "vocab_size": 248320
+      }
+    },
+    "chat_template.jinja": {
+      "bytes": 7756,
+      "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+    },
+    "model.safetensors.index.json": {
+      "metadata": {
+        "total_size": 9319737856
+      },
+      "tensor_count": 738,
+      "shards": [
+        "model.safetensors-00001-of-00002.safetensors",
+        "model.safetensors-00002-of-00002.safetensors"
+      ]
+    },
+    "LICENSE": {
+      "bytes": 11544,
+      "sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"
+    }
+  },
+  "ceilings": {
+    "network_response_body_bytes": 10737418240,
+    "new_storage_high_water_bytes": 34359738368,
+    "download_verify_seconds": 2700,
+    "convert_seconds": 1800,
+    "artifact_hash_seconds": 600,
+    "minimum_available_ram_bytes": 17179869184
+  },
+  "conversion": {
+    "outtype": "bf16",
+    "model_type": "TEXT",
+    "use_temp_file": true,
+    "remote": false,
+    "mmproj": false,
+    "other_precisions": false
+  },
+  "toolchain": {
+    "status": "OBSERVED_FIXED_CODE_ENVIRONMENT_CLOSURE_PINNED_REQUIRES_ROOT_REVIEW",
+    "converter_root": "C:/Users/Public/Clued/ModelProgram/M1/packages/Qwen_Qwen3.5-0.8B/m1pkg002/toolchain/llama.cpp",
+    "venv_root": "C:/Users/Public/Clued/ModelProgram/M1/packages/Qwen_Qwen3.5-0.8B/m1pkg002/toolchain/venv",
+    "base_python_root": "C:/Users/Windows/AppData/Local/Programs/Python/Python312",
+    "closure": {
+      "tree_algorithm": "SHA256_CANONICAL_UTF8_SORTED_RELATIVE_PATH_BYTES_SHA256_ROWS_V1",
+      "roots": [
+        {
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\toolchain\\llama.cpp\\conversion",
+          "files": 97,
+          "bytes": 1272479,
+          "tree_sha256": "f1f377ceb9f4d3de18d9a14e6fd8e175bb4dde71f098b83ba680447a1cb252cb",
+          "excluded_relative_directories": []
+        },
+        {
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\toolchain\\llama.cpp\\gguf-py\\gguf",
+          "files": 28,
+          "bytes": 1494235,
+          "tree_sha256": "f02af7e8ea36a1321dbbb23b570ebd59b109ed2de185d559957d212ed635180e",
+          "excluded_relative_directories": []
+        },
+        {
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\toolchain\\venv",
+          "files": 27148,
+          "bytes": 778326826,
+          "tree_sha256": "8fd754cd661c69168330229d4fc42c3719554eac9025d3fcb08d7dcdbe3863df",
+          "excluded_relative_directories": []
+        },
+        {
+          "path": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\DLLs",
+          "files": 39,
+          "bytes": 15093034,
+          "tree_sha256": "a30a371731456f6429c205c2ccdb944e4de18950fa55a7a3168fc002c158542a",
+          "excluded_relative_directories": []
+        },
+        {
+          "path": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\Lib",
+          "files": 2656,
+          "bytes": 50128793,
+          "tree_sha256": "ce4bfb807db2055a3828a5433d965f8e39689e6b4c7068c97538d6132377410e",
+          "excluded_relative_directories": [
+            "site-packages"
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\toolchain\\llama.cpp\\convert_hf_to_gguf.py",
+          "bytes": 13324,
+          "sha256": "c2b8d1f31a9007be75d6850aa1db47dedcaedee0eeebe00aa978eac6f2cc89ad"
+        },
+        {
+          "path": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+          "bytes": 104952,
+          "sha256": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
+        },
+        {
+          "path": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python312.dll",
+          "bytes": 6945272,
+          "sha256": "9a0e3435aaa680d868150f87ab3e388ad2eebc22f87e036155c7b4eda8cd2120"
+        },
+        {
+          "path": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\python3.dll",
+          "bytes": 70376,
+          "sha256": "fb975a606e7fbf74f64260e3f60c3490b4f74a183c0926fd6ed1ac4c52ac7b1c"
+        },
+        {
+          "path": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\vcruntime140.dll",
+          "bytes": 120400,
+          "sha256": "052ad6a20d375957e82aa6a3c441ea548d89be0981516ca7eb306e063d5027f4"
+        },
+        {
+          "path": "C:\\Users\\Windows\\AppData\\Local\\Programs\\Python\\Python312\\vcruntime140_1.dll",
+          "bytes": 49776,
+          "sha256": "6a99bc0128e0c7d6cbbf615fcc26909565e17d4ca3451b97f8987f9c6acbc6c8"
+        }
+      ],
+      "bootstrap": "ISOLATED_NO_SITE_FIXED_SOURCE_AND_VENV_PATHS",
+      "base_site_packages_excluded": true,
+      "all_code_imported_or_converter_started": false,
+      "static_import_route": [
+        "convert_hf_to_gguf.py -> conversion.__init__ -> conversion.qwen/Qwen3_5TextModel -> conversion.base",
+        "local gguf-py/gguf plus fixed existing venv site-packages and base interpreter stdlib/DLLs"
+      ],
+      "dynamic_native_system_libraries": "EXISTING_WINDOWS_HOST_BOUNDARY_NOT_FROZEN_BY_THIS_SOURCE_TREE"
+    }
+  },
+  "space_proof": {
+    "status": "DETERMINISTIC_POST_DOWNLOAD_HEADER_PREFLIGHT_REQUIRED",
+    "algorithm": "FIXED_QWEN35_HEADER_ELEMENTS_V1",
+    "actual_tensor_headers_read": false,
+    "actual_output_bytes_max": null,
+    "actual_temp_bytes_max": null,
+    "derivation": "Verified safetensors headers: ordinary fixed Qwen dense 2D projections BF16; all others F32; all tensors including skipped vision counted; element-preserving transforms; one aligned temporary plus final output plus metadata and 16MiB auxiliary simultaneously. Sum must fit 32GiB before conversion.",
+    "static_source_evidence": [
+      "conversion/base.py:598-600,731-740,987-1094,1161-1167,1315-1332",
+      "conversion/qwen.py:92-143,394-434,569-616,637-640",
+      "gguf-py/gguf/gguf_writer.py:390-407,486-490"
+    ],
+    "actual_write_before_cap": "Child-only single GGUFWriter guard checks actual aligned tensor bytes before temporary writes; actual serialized KV/tensor info before create-only final open; helper Source pin required; no converter file mutation."
+  },
+  "remaining": [
+    "Root review of observed fixed code/environment closure and isolated bootstrap; no runtime qualification or permission implied",
+    "After approved download: original source hashes, exact 738 tensor headers and deterministic simultaneous storage calculation before conversion; unknown shape/dtype or >32GiB is HOLD",
+    "Root original Owner approval/claim/currentness and qualified owned phase host/resource observer before effects; RAM must be fresh actual >=16GiB",
+    "Actual GGUF bytes/SHA are postconditions, to bind in true M1 before later invocation and independently rehash then"
+  ],
+  "inference_performed": false,
+  "conversion_performed": false,
+  "model_source_download_performed": false
+}

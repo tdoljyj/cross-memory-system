@@ -54,6 +54,56 @@ function fixture(root = path.resolve(os.tmpdir(),'source-fixture-not-an-experime
       task_query:'SOURCE ONLY TASK',holder_session_ref:'SOURCE-ONLY-SESSION'}};
   return {draft,window,request,p,record,approval,bindingArgs};
 }
+function fourBFixture(root) {
+  const f=fixture(root), b=f.draft.budget, fixed=f.draft.fixed_startup_preparation;
+  const plan=fixed.execution_plan_without_runtime_monotonic_deadline;
+  Object.assign(b,{development_budget_class:host.FOUR_B_BUDGET_CLASS,control_total_seconds:600,
+    control_wall_seconds:585,wall_seconds:480,output_tokens:1024,total_tokens:5120,observation_bytes:147456});
+  Object.assign(plan,{development_budget_class:host.FOUR_B_BUDGET_CLASS,cpu_threads:8});
+  f.draft.device.cpu_threads=8;
+  for(const name of Object.keys(plan.budget))plan.budget[name]=b[name];
+  plan.budget.control_wall_seconds=585;
+  fixed.execution_plan_sha256=objectSha(plan);
+  return f;
+}
+test('4B explicit class changes every hash domain and cannot inherit legacy approval',()=>{
+  const f=fourBFixture(), oldHash=f.request.requestSha256;
+  const next=host.makeDevelopmentRequestPayload(f.draft,f.window);
+  assert.notEqual(next.requestSha256,oldHash);
+  const args={...f.bindingArgs,requestBytes:next.requestBytes,expectedRequestSha256:next.requestSha256};
+  assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding(args),/EXACT_OWNER_EXPERIMENT/);
+  f.approval.request_sha256=next.requestSha256;
+  assert.throws(()=>host.prepareFixedDevelopmentOwnerBinding(args),/OWNER_REQUEST_PINS/);
+  f.approval.budget=clone(next.payload.budget);
+  f.approval.execution_plan_sha256=next.payload.fixed_startup.execution_plan_sha256;
+  const prepared=host.prepareFixedDevelopmentOwnerBinding(args);
+  assert.equal(prepared.permission_issued,false);
+  assert.equal(prepared.candidate_bootstrap.remaining_seconds,585);
+  assert.equal(prepared.candidate_bootstrap.plan.development_budget_class,host.FOUR_B_BUDGET_CLASS);
+  assert.equal(prepared.candidate_manifest.budget.control_total_seconds,600);
+  const b=next.payload.budget;
+  const bytes=[b.stdout_bytes,b.stderr_bytes,b.observation_bytes].reduce((n,s)=>n+4*Math.ceil(s/3),0)
+    +b.observation_bytes+b.other_result_profile_ledger_and_receipts_max_bytes;
+  assert.equal(bytes,955736);assert.ok(bytes<=1048576);
+});
+test('4B class is explicit in budget and plan, rejects widened caps, wrong CPU or unknown class',()=>{
+  for(const change of [f=>delete f.draft.budget.development_budget_class,
+    f=>delete f.draft.fixed_startup_preparation.execution_plan_without_runtime_monotonic_deadline.development_budget_class,
+    f=>f.draft.budget.development_budget_class='unknown',f=>f.draft.device.cpu_threads=2,
+    f=>f.draft.device.gpu_layers=1,f=>f.draft.budget.output_tokens=1025,
+    f=>f.draft.budget.wall_seconds=481,f=>f.draft.budget.control_wall_seconds=586,
+    f=>f.draft.budget.control_total_seconds=601,f=>f.draft.budget.observation_bytes=147457,
+    f=>f.draft.budget.max_output_storage_bytes=1048577,f=>f.draft.model.bytes=10*1024**3+1]) {
+    const f=fourBFixture();change(f);
+    f.draft.fixed_startup_preparation.execution_plan_sha256=objectSha(f.draft.fixed_startup_preparation.execution_plan_without_runtime_monotonic_deadline);
+    assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window));
+  }
+  const f=fixture();f.draft.proposed_profile_id='DEV-4B-BF16-CPU8';
+  f.draft.device.cpu_threads=8;f.draft.fixed_startup_preparation.execution_plan_without_runtime_monotonic_deadline.cpu_threads=8;
+  f.draft.budget.wall_seconds=480;
+  f.draft.fixed_startup_preparation.execution_plan_sha256=objectSha(f.draft.fixed_startup_preparation.execution_plan_without_runtime_monotonic_deadline);
+  assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window),/BUDGET_WALL_SECONDS|CONTROL_CHILD_BUDGET/);
+});
 test('explicit hash domain excludes later capture/profile/results and emits preparation only',()=>{
   const f=fixture(), original=Buffer.from(f.request.requestBytes);
   f.draft.owner_experiment_approval={selfReported:true}; f.draft.issued_profile={status:'ISSUED'};
@@ -214,11 +264,12 @@ test('budget encoded overhead and exact model/plan drift reject before effects',
     const f=fixture();alter(f);assert.throws(()=>host.makeDevelopmentRequestPayload(f.draft,f.window));
   }
 });
-async function saveFixture(t) {
+async function saveFixture(t,{large=false}={}) {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'clued-dev-source-save-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   await fs.mkdir(path.join(root,'ledger'));await fs.mkdir(path.join(root,'outputs'));await fs.mkdir(path.join(root,'tmp'));
-  const f=fixture(root), profile=Buffer.from('SOURCE FIXTURE NOT AN ISSUED PROFILE');
+  const f=large?fourBFixture(root):fixture(root), profile=Buffer.from('SOURCE FIXTURE NOT AN ISSUED PROFILE');
+  if(large){f.request=host.makeDevelopmentRequestPayload(f.draft,f.window);f.p=f.request.payload;}
   await fs.writeFile(path.join(root,'profile-manifest.json'),profile,{flag:'wx'});
   const spent={schema:'clued.model-attempt-reservation/1',status:'SPENT_BEFORE_MODEL_LOAD',max_attempts:1,
     retries_allowed:false,task_id:TASK,profile_id:f.p.profile_id,request_sha256:f.request.requestSha256,
@@ -244,6 +295,14 @@ test('save keeps one encoded terminal, original observation, Profile and spent r
   assert.deepEqual(await fs.readFile(f.spentPath),f.spentBytes);
   assert.deepEqual(await fs.readFile(f.observationPath),f.obs);
   await assert.rejects(host.saveFixedDevelopmentResult(f.args),/REPLAY/);
+});
+test('4B save shares the approved 600-second ceiling without widening legacy or refunding spent',async t=>{
+  const f=await saveFixture(t,{large:true});f.args.deadlineMonotonic=performance.now()+599000;
+  const result=await host.saveFixedDevelopmentResult(f.args);
+  assert.ok(result.total_saved_bytes<=1048576);assert.equal(result.attempt_remains_spent,true);
+  assert.deepEqual(await fs.readFile(f.spentPath),f.spentBytes);
+  const old=await saveFixture(t);old.args.deadlineMonotonic=performance.now()+599000;
+  await assert.rejects(host.saveFixedDevelopmentResult(old.args),/SAVE_SHARED_DEADLINE/);
 });
 test('capture limit, altered observation, fake cleanup or mismatched spent refuse saving',async t=>{
   for(const alter of [f=>f.args.terminalResult.stdout_raw.data=Buffer.alloc(131073).toString('base64'),
