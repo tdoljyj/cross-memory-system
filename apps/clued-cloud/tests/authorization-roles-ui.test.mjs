@@ -85,7 +85,7 @@ test('legacy project grants retain their operations while range no longer claims
   assert.ok(card, 'the connection is listed');
   const shown = f.text(card);
   assert.ok(shown.includes('自定义／受限'));
-  assert.ok(shown.includes('尚不包含项目用途上下文'));
+  assert.ok(shown.includes('尚不包含项目上下文'));
   assert.ok(shown.includes('自有项目正式记录（含未来项目）'));
   const legends = f.nodes('legend', card).map(n => f.text(n));
   assert.deepEqual(legends, ['个人记录', '自有项目正式记录（含未来项目）'], 'covered projects are not listed');
@@ -134,7 +134,7 @@ test('sources_v1 reduction sends actual source identities and preserves legacy r
   return {bindings:listed};
  });
  await f.open();
- const source=f.nodes('fieldset').find(n=>f.text(f.nodes('legend',n)[0])==='全部上下文策略（已有和未来）');
+ const source=f.nodes('fieldset').find(n=>f.text(f.nodes('legend',n)[0])==='全部权限策略（已有和未来）');
  assert.ok(source);for(const box of f.nodes('input',source))box.props.onChange({target:{checked:false}});f.render();
  f.nodes('button').find(n=>f.text(n)==='保存减少后的权限').props.onClick();await f.settle();
  const sent=JSON.parse(f.requests.find(r=>r.url==='/oauth/connections/api'&&r.options.method==='POST').options.body);
@@ -186,7 +186,7 @@ test('stored macro with restricted coverage never displays complete authorizatio
  const override={override_id:'override-1',version:5,...target,denied_actions:['close'],allowed_ceiling:['read','write'],limits:{allowed_fields:['content']}};
  let binding={...connection([scope('contexts:*',['read','write']),target]),selection_format:'sources_v1',sources:[{source_id:'source-1',version:3,kind:'contexts_policy',actions:['read','write'],contributions:[target]}],overrides:[override],coverage:{status:'restricted',differences:[{resource_id:'c-test',reason:'fixed_fields'}]}};
  const f=fixture((url,options)=>{if(url==='/v1/storage/owner')return {clients:[]};if(options.method==='POST'){binding={...binding,version:4,grants:[scope('contexts:*',['read','write']),{...target,effective_actions:['read']}],overrides:[{...override,version:6,denied_actions:['close','write']}]};return {version:4};}return {bindings:[binding]};});
- await f.open();assert.ok(f.text().includes('全部上下文策略 · 自定义／受限'));
+ await f.open();assert.ok(f.text().includes('全部权限策略 · 自定义／受限'));
  const field=f.nodes('fieldset').find(n=>f.text(f.nodes('legend',n)[0])==='验收 · 测试环境');
  f.nodes('input',field)[1].props.onChange({target:{checked:false}});f.render();f.nodes('button').find(n=>f.text(n)==='保存减少后的权限').props.onClick();await f.settle();
  const sent=JSON.parse(f.requests.find(r=>r.url==='/oauth/connections/api'&&r.options.method==='POST').options.body);
@@ -201,6 +201,38 @@ test('malformed source identity/version or contribution cannot produce an action
   const f=fixture(url=>url==='/v1/storage/owner'?{clients:[]}:{bindings:[{...connection([scope('contexts:*',['read'])]),selection_format:'sources_v1',sources:[source],overrides:[],coverage:{status:'complete',differences:[]}}]});
   await f.open();assert.equal(f.nodes('article').length,0);assert.ok(!f.nodes('button').some(n=>f.text(n)==='保存减少后的权限'));
  }
+});
+
+test('future policies expose source reduction without becoming precise business resources or exceptions', async () => {
+  const records = scope('owned-project-records:future', ['read', 'write']);
+  const contexts = scope('owned-project-contexts:future', ['read']);
+  const baseline = { source_id: 'old-direct', version: 2, kind: 'direct', actions: ['read'], contributions: [scope('global', ['read'])] };
+  const futureRecords = { source_id: 'future-records', version: 3, kind: 'future_owned_project_policy', actions: ['read', 'write'], contributions: [records] };
+  const futureContexts = { source_id: 'future-contexts', version: 4, kind: 'future_owned_context_policy', actions: ['read'], contributions: [contexts] };
+  let binding = { ...connection([records, contexts, scope('global', ['read'])]), selection_format: 'sources_v1',
+    sources: [baseline, futureRecords, futureContexts], overrides: [], coverage: { status: 'restricted', differences: [] } };
+  const f = fixture((url, options) => {
+    if (url === '/v1/storage/owner') return { clients: [] };
+    if (options.method === 'POST') {
+      binding = { ...binding, version: 4, grants: [contexts, scope('global', ['read'])], sources: [baseline, futureContexts] };
+      return { version: 4 };
+    }
+    return { bindings: [binding] };
+  });
+  await f.open();
+  assert.deepEqual(f.nodes('legend').map(n => f.text(n)), ['独立明确授权', '未来项目记录', '未来项目上下文', '个人记录']);
+  const field = f.nodes('fieldset').find(n => f.text(f.nodes('legend', n)[0]) === '未来项目记录');
+  assert.equal(f.nodes('input', field).length, 2, 'only the future source action cap is editable');
+  assert.ok(!f.nodes('button').some(n => /单独调整此范围/.test(f.text(n))), 'policy markers never open precise business-scope controls');
+  for (const box of f.nodes('input', field)) box.props.onChange({ target: { checked: false } });
+  f.render(); f.nodes('button').find(n => f.text(n) === '保存减少后的权限').props.onClick(); await f.settle();
+  const sent = JSON.parse(f.requests.find(r => r.url === '/oauth/connections/api' && r.options.method === 'POST').options.body);
+  assert.deepEqual(sent.sources, [{ source_id: 'old-direct', base_version: 2, action_cap: ['read'] },
+    { source_id: 'future-records', base_version: 3, action_cap: [] }, { source_id: 'future-contexts', base_version: 4, action_cap: ['read'] }]);
+  assert.deepEqual(sent.exceptions, [], 'a source marker is never converted to a hard resource denial');
+  assert.equal(sent.selected, undefined);
+  assert.ok(f.text().includes('权限已减少'));
+  assert.ok(f.text().includes('个人记录'));
 });
 
 

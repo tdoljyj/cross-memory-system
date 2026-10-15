@@ -3,9 +3,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { type Session } from '@supabase/supabase-js';
 import { supabase } from '../../supabase-browser';
 import Link from 'next/link';
-import ContextAuthorizationControls from '../../../lib/context-authorization-controls';
-import { applyPreset, changeRange, initialSelection, presetActions, requestedResources, resourceKey as rowKey, selectedResources,
-  type Resource, type OperationPreset } from '../../../lib/context-authorization';
+import { type Resource } from '../../../lib/context-authorization';
+import ConsentPermissions from './consent-permissions';
+import { consentModel, consentSubmission, EMPTY_SELECTION, initialConsentSelection, requestedConsentResources, selectedCount, type ConsentSelection } from './consent-selection';
+import styles from './consent.module.css';
 
 type Details = { request_id: string; version: number; client_name: string; client_id: string; requested_scopes: string[]; eligible: Resource[]; user: { id: string; email?: string } };
 const lifetimeDays = [1, 7, 30, 90, 365];
@@ -18,16 +19,14 @@ function validDetails(value: unknown): value is Details {
     && isObject(value.user) && typeof value.user.id === 'string' && Array.isArray(value.eligible)
     && value.eligible.every(row => isObject(row) && (row.resource_kind === 'scope' || row.resource_kind === 'context')
       && typeof row.resource_id === 'string' && typeof row.environment === 'string'
-      && Array.isArray(row.actions) && row.actions.every(action => typeof action === 'string'));
+      && Array.isArray(row.actions) && row.actions.every(action => typeof action === 'string')
+      && ['name', 'project_id', 'project_name', 'context_name', 'ownership'].every(key => row[key] === undefined || row[key] === null || typeof row[key] === 'string'));
 }
 
 export default function DelegatedConsent({ requestId }: { requestId: string }) {
   const [session, setSession] = useState<Session | null>(null);
   const [details, setDetails] = useState<Details | null>(null);
-  const [selected, setSelected] = useState<Record<string, string[]>>({});
-  const [role, setRole] = useState<OperationPreset>('full');
-  const [range, setRange] = useState<'all' | 'specified'>('specified');
-  const [custom, setCustom] = useState(false);
+  const [selection, setSelection] = useState<ConsentSelection>(EMPTY_SELECTION);
   const [selectionNotice, setSelectionNotice] = useState('');
   const [days, setDays] = useState(30);
   const [email, setEmail] = useState('');
@@ -47,7 +46,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     readController.current?.abort();
     writeController.current?.abort();
     writeController.current = null;
-    setDetails(null); setSelected({}); setPassword(''); setError(''); setSelectionNotice(''); setCustom(false); setRange('specified');
+    setDetails(null); setSelection(EMPTY_SELECTION); setPassword(''); setError(''); setSelectionNotice('');
     setSending(false); setAuthBusy(false); setLoading(false);
     return epoch;
   }, []);
@@ -58,7 +57,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     const controller = new AbortController();
     readController.current = controller;
     const number = ++readNumber.current;
-    setLoading(true); setError(''); setDetails(null); setSelected({});
+    setLoading(true); setError(''); setDetails(null); setSelection(EMPTY_SELECTION);
     try {
       const response = await fetch(`/oauth/request?request_id=${encodeURIComponent(requestId)}`, {
         headers: { Authorization: `Bearer ${who.access_token}` }, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
@@ -68,10 +67,9 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
       if (!validDetails(value)) throw new Error('授权服务返回了不完整的资源列表。');
       if (value.user.id !== who.user.id) throw new Error('授权请求与当前账户不匹配，请重新读取。');
       if (accountEpoch.current !== epoch || currentSession.current?.user.id !== who.user.id || number !== readNumber.current || controller.signal.aborted) return;
-      const bounded = { ...value, eligible: requestedResources(value.eligible, value.requested_scopes) };
-      const initial = initialSelection(bounded.eligible);
-      setDetails(bounded); setRole(initial.preset); setRange(initial.range); setCustom(false); setSelectionNotice('');
-      setSelected(initial.selected);
+      const bounded = { ...value, eligible: requestedConsentResources(value.eligible, value.requested_scopes) };
+      const initial = initialConsentSelection(consentModel(bounded.eligible));
+      setDetails(bounded); setSelectionNotice(''); setSelection(initial);
     } catch (failure) {
       if (accountEpoch.current === epoch && number === readNumber.current && !controller.signal.aborted) {
         setError(failure instanceof Error && !(failure instanceof TypeError) ? failure.message : '授权暂不可用，请稍后重试。');
@@ -143,11 +141,14 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     const who = currentSession.current;
     const epoch = accountEpoch.current;
     if (!who || !details || details.user.id !== who.user.id || writeController.current || loading || authBusy) return;
+    const model = consentModel(details.eligible);
+    const submission = consentSubmission(details.eligible, model, selection);
+    if (action === 'approve' && (model.invalid || !model.supportsFuturePolicies || submission.tooMany || !selectedCount(selection, model.allIds))) return;
     const controller = new AbortController();
     writeController.current = controller;
     setSending(true); setError('');
     try {
-      const entries = selectedResources(details.eligible, selected);
+      const entries = action === 'deny' ? [] : submission.selected;
       const response = await fetch(`/oauth/decision?request_id=${encodeURIComponent(requestId)}`, {
         method: 'POST', credentials: 'same-origin', signal: controller.signal,
         headers: { Authorization: `Bearer ${who.access_token}`, 'Content-Type': 'application/json' },
@@ -169,28 +170,15 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
         setSending(false);
       }
     }
-  }, [details, loading, authBusy, selected, requestId, days]);
+  }, [details, loading, authBusy, selection, requestId, days]);
 
   const busy = loading || authBusy || sending;
-  const count = Object.values(selected).reduce((n, actions) => n + actions.length, 0);
-  function choose(next: OperationPreset) {
-    if (!details) return;
-    setRole(next); setCustom(false); setSelected(old => applyPreset(details.eligible, old, next));
-    setSelectionNotice(custom ? '已明确替换所选资源的自定义动作；未选资源保持未授权。' : '');
-  }
-  function changeScope(next: 'all' | 'specified') {
-    if (!details || next === range) return;
-    setRange(next); setCustom(false); setSelected(changeRange(details.eligible, next, role));
-    setSelectionNotice(next === 'specified' ? '已清空精确选择，请重新勾选需要的范围。' : '已改为全部上下文策略，原精确自定义选择不再提交；请核对覆盖和未来规则。');
-  }
-  function selectResource(row: Resource, checked: boolean) {
-    setSelected(old => ({ ...old, [rowKey(row)]: checked ? presetActions(row, role) : [] }));
-  }
-  function editAction(row: Resource, action: string, checked: boolean) {
-    setCustom(true); setSelected(old => ({ ...old, [rowKey(row)]: row.actions.filter(value => value === action ? checked : (old[rowKey(row)] || []).includes(value)) }));
-  }
-  return <main className="oauth-shell"><section className="oauth-card oauth-consent" aria-busy={busy}>
-    <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>Kooyumi</span></Link>
+  const model = consentModel(details?.eligible || []);
+  const count = selectedCount(selection, model.allIds);
+  const submission = consentSubmission(details?.eligible || [], model, selection);
+  const consentReady = !model.invalid && model.supportsFuturePolicies;
+  return <main className="oauth-shell"><section className={'oauth-card oauth-consent ' + styles['selected-consent']} aria-busy={busy}>
+    <Link className="oauth-brand" href="/">Kooyumi</Link>
     {busy && <p role="status">正在核验授权…</p>}
     {error && <div className="oauth-error" role="alert"><strong>尚未完成</strong><p>{error}</p><button type="button" disabled={busy} onClick={() => void reload()}>重新读取请求</button></div>}
     {!busy && !session && <><h1>登录 Kooyumi 以继续</h1><p className="oauth-copy">开发和个人使用共用同一个账户。登录后选择允许此客户端使用的资源。</p>
@@ -203,14 +191,16 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     {details && <>
       <h1>允许 {details.client_name} 使用 Kooyumi</h1>
       <dl className="oauth-details"><div><dt>当前账户</dt><dd className="oauth-account-inline">{details.user.email || details.user.id}<button className="oauth-account-switch" type="button" disabled={busy} onClick={() => void switchAccount()}>切换账户</button></dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
-      <p className="oauth-copy">选择内容范围和操作权限；页面只预选，点击下方按钮才会授权。</p>
-      {details.eligible.length > 0 ? <ContextAuthorizationControls rows={details.eligible} selected={selected} preset={role} range={range}
-        custom={custom} busy={busy} notice={selectionNotice} onRange={changeScope} onPreset={choose} onResource={selectResource} onAction={editAction} />
+      <p className="oauth-copy">按内容选择权限，可展开后使用只读、读写或全部快捷设置，再逐项调整。</p>
+      {model.allIds.length > 0 ? <ConsentPermissions model={model} selection={selection} busy={busy} notice={selectionNotice}
+        onSelection={setSelection} onNotice={setSelectionNotice} />
         : <p role="status">身份已验证，尚无可授权的业务资源。</p>}
+      {!consentReady && <p className="oauth-note" role="alert">授权服务尚未提供完整的权限设置，请重新读取请求后继续。</p>}
+      {submission.tooMany && <p className="oauth-note" role="alert">当前选择超过 100 个授权范围，无法在保留这些具体权限的同时提交。请减少所选范围后继续。</p>}
       <p><Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">查看项目资格与邀请</Link></p>
-      <label className="oauth-form">授权有效期<select disabled={busy} value={days} onChange={e => setDays(Number(e.target.value))}>{lifetimeDays.map(n => <option key={n} value={n}>{n} 天</option>)}</select></label>
+      <label className={styles['selected-lifetime']}>授权有效期<select disabled={busy} value={days} onChange={e => { setDays(Number(e.target.value)); setSelectionNotice(''); }}>{lifetimeDays.map(n => <option key={n} value={n}>{n} 天</option>)}</select></label>
       <p className="oauth-note">此选择不包含成员管理、生产发布或大规模导出。可以随时在<Link href="/oauth/connections" target="_blank" rel="noopener noreferrer">连接管理</Link>中减少或撤销权限。</p>
-      <div className="oauth-actions"><button className="oauth-secondary" type="button" disabled={busy} onClick={() => void decide('deny')}>取消</button><button className="primary-button" type="button" disabled={busy || count === 0} onClick={() => void decide('approve')}>允许所选权限</button></div>
+      <div className="oauth-actions"><button className="oauth-secondary" type="button" disabled={busy} onClick={() => void decide('deny')}>取消</button><button className="primary-button" type="button" disabled={busy || !consentReady || submission.tooMany || count === 0} onClick={() => void decide('approve')}>允许所选权限</button></div>
     </>}
   </section></main>;
 }
