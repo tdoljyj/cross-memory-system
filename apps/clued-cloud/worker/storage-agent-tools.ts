@@ -24,7 +24,7 @@ const workClaim = { type: "object", required: ["claim_id", "fence"], additionalP
   properties: { claim_id: idSchema, fence: { type: "integer", minimum: 1 },
     lease_key: { type: "string", pattern: "^clued_lk_[0-9a-f]{64}$", description: "Current private claim key, required after Owner handover. Send only in the authenticated call; never put it in a record, Receipt, file or log." } } };
 const targetVersion = { type: "string", pattern: "^[1-9][0-9]{0,39}$", description: "The target file's Drive version as last observed with clued_storage_browse stat; a changed file is refused." };
-const binaryMime = { type: "string", minLength: 3, maxLength: 255, description: "MIME type bound to the destination extension (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp; legacy doc/xls/ppt and macro-carrying packages are refused)." };
+const binaryMime = { type: "string", minLength: 3, maxLength: 255, description: "MIME type bound to the destination extension (png, jpg/jpeg, gif, webp, pdf, zip, docx, xlsx, pptx, odt, ods, odp; legacy doc/xls/ppt and macro-carrying packages are refused). ZIP names containing Chinese or other non-ASCII characters must use UTF-8 with bit 11 set in both local and central headers; package correctly before computing content_sha256." };
 const binarySha = { type: "string", pattern: "^[0-9a-f]{64}$", description: "sha256 of the exact file bytes; Clued checks it on staging and against Drive's checksum after the write." };
 const pathParent = (path: string) => path.lastIndexOf("/") < 0 ? "" : path.slice(0, path.lastIndexOf("/"));
 const pathName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
