@@ -102,6 +102,19 @@ const PUBLIC = resolvePublicSupabaseConfig({}, ROOT);
 const RPC_URL = `${PUBLIC.url}/rest/v1/rpc/clued_work_verify_v1`;
 const EPOCH_URL = RPC_URL;
 
+test("Kooyumi check contexts keep the trusted App, workflow path and technical job ID", () => {
+  assert.equal(ADMISSION_APP_ID, 5164952);
+  assert.equal(APP_CHECK_NAME, "kooyumi-admission-verified");
+  assert.equal(MERGE_SLOT_CHECK_NAME, "kooyumi-merge-slot");
+  const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/clued-work-admission.yml"), "utf8");
+  assert.match(workflow, /^name: kooyumi-work-admission$/m);
+  assert.match(workflow, /^  clued-work-admission:\r?\n    name: kooyumi-work-admission$/m);
+  assert.match(workflow, /environment: clued-admission/);
+  const slotWorkflow = fs.readFileSync(path.join(ROOT, ".github/workflows/clued-merge-slot-ci.yml"), "utf8");
+  assert.match(slotWorkflow, /^      - kooyumi-work-admission$/m);
+  assert.doesNotMatch(slotWorkflow, /^      - clued-work-admission$/m);
+});
+
 function event(overrides = {}) {
   return {
     pull_request: {
@@ -171,7 +184,7 @@ const admissionTargetRun = (overrides = {}) => ({ id: 77, event: "pull_request_t
   conclusion: "success", created_at: RUN_CREATED, ...overrides });
 const SELF_RUN = { [THIS_RUN]: { body: { id: 9001, run_attempt: 1, created_at: RUN_CREATED } },
   [ADMISSION_RUNS]: { body: { workflow_runs: [admissionTargetRun()] } } };
-const appCheckRun = (overrides = {}) => ({ id: 1, name: "clued-admission-verified", head_sha: HEAD, status: "completed",
+const appCheckRun = (overrides = {}) => ({ id: 1, name: "kooyumi-admission-verified", head_sha: HEAD, status: "completed",
   conclusion: "success", started_at: "2026-10-02T04:00:40Z", external_id: "pr:452:run:77", app: { id: ADMISSION_APP_ID, slug: "clued-admission" },
   ...overrides });
 const checksReturn = (list) => ({ ...SELF_RUN, [CHECKS]: { body: { check_runs: list } } });
@@ -606,7 +619,7 @@ test("reverify: a pull request whose green App check outlived its claim gets a f
   // Merge Admission v0.1 §10: the title names the mode the head was judged in.
   assert.equal(posts[0].body.output.title, "RE-VERIFIED: REJECTED [normal · code · reruns 0]");
   assert.deepEqual(result.checked.map((c) => c.mode), ["normal · code · reruns 0", "normal · code · reruns 0", "normal · code · reruns 0"]);
-  assert.match(renderReverifySummary(result), /^## clued-work-admission re-verification\n\n\*\*Mode:\*\* `normal` · source `default`\n/);
+  assert.match(renderReverifySummary(result), /^## kooyumi-work-admission re-verification\n\n\*\*Mode:\*\* `normal` · source `default`\n/);
   assert.ok(!calls.some((c) => c.url.includes("/pulls/455")), "drafts are skipped");
   assert.ok(!calls.some((c) => c.url.includes("/pulls/457")), "pull requests into other branches are skipped");
   assert.ok(!calls.some((c) => c.url.includes("/pulls/454")), "a head whose newest check failed is not evaluated");
@@ -840,7 +853,7 @@ test("gate (re-review 2, N3c): the clued-admission App's check decides, never a 
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_run.id, outcome.admission_run.workflow_run_id], [true, "ADMITTED", 1, 77]);
   assert.equal(calls.length, 4, "its own run, the checks, the admission run, then current execution epoch");
   assert.match(calls[0].url, /\/actions\/runs\/9001$/);
-  assert.match(calls[1].url, /check-runs\?check_name=clued-admission-verified&filter=all/);
+  assert.match(calls[1].url, /check-runs\?check_name=kooyumi-admission-verified&filter=all/);
   assert.match(calls[2].url, /\/actions\/workflows\/clued-work-admission\.yml\/runs\?head_sha=a{40}&event=pull_request_target/);
   // A successful admission run (for instance one of a pull request into
   // another branch that lists this one) does not admit without the App check.
@@ -848,7 +861,8 @@ test("gate (re-review 2, N3c): the clued-admission App's check decides, never a 
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "ADMISSION_PENDING"]);
   // Only the App's own check on this head counts; the newest one decides.
   for (const list of [[check({ app: { id: 15368, slug: "github-actions" } })], [check({ head_sha: "e".repeat(40) })],
-    [check({ name: "clued-work-admission" })], [check({ id: 1 }), check({ id: 2, conclusion: "failure" })]]) {
+    [check({ name: "kooyumi-work-admission" })], [check({ name: "clued-admission-verified" })],
+    [check({ id: 1 }), check({ id: 2, conclusion: "failure" })]]) {
     ({ outcome } = await gateWith(list));
     assert.equal(outcome.admitted, false, JSON.stringify(list));
   }
@@ -1589,7 +1603,7 @@ test("gate (re-review 3, N-R3; Merge Admission step 2): a pull request run's re-
   ({ outcome } = await rerun(2, [titled("ADMITTED [normal · code · reruns 1]"),
     appCheckRun({ id: 9, conclusion: "failure", external_id: "pr:452:run:999", output: { title: "RE-VERIFIED: REJECTED [normal · code · reruns 1]" } })]));
   assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"]);
-  assert.match(outcome.reasons[0], /clued-admission-verified of App .* 9 concluded failure/);
+  assert.match(outcome.reasons[0], /kooyumi-admission-verified of App .* 9 concluded failure/);
   // ...and a newer success (an older admission run re-run after a grant) is not shadowed by the event's failure.
   ({ outcome } = await rerun(2, [titled("REJECTED [normal · code · reruns 1]", { conclusion: "failure" }),
     appCheckRun({ id: 9, external_id: "pr:452:run:70", output: { title: "ADMITTED [normal · code · reruns 1]" } })]));
@@ -1964,7 +1978,7 @@ const slotClaim = (extra = {}) => ({ ...admittedPayload.claim, trigger_refs: [SL
 
 test("merge slot: needed only when the head contains the tip; held only while live and named", () => {
   const at = { repository: "o/r", branch: "main", tip: TIP, verifiedAt: VERIFIED_AT };
-  assert.equal(MERGE_SLOT_CHECK_NAME, "clued-merge-slot");
+  assert.equal(MERGE_SLOT_CHECK_NAME, "kooyumi-merge-slot");
   assert.deepEqual(mergeSlotState({ ...at, upToDate: false, claim: slotClaim({ trigger_refs: [] }) }),
     { ref: SLOT, tip: TIP, until: null, state: "not_needed" });
   assert.equal(mergeSlotState({ ...at, upToDate: true, claim: admittedPayload.claim }).state, "not_reported",
@@ -2017,7 +2031,7 @@ test("merge slot: evaluate reports it without changing admission, so the heavy g
   }
 });
 
-test("merge slot: the app-check step posts clued-merge-slot after the admission check, on the same head", async () => {
+test("merge slot: the app-check step posts kooyumi-merge-slot after the admission check, on the same head", async () => {
   const pem = appKeyPem();
   const appEnv = (extra) => env({ GITHUB_RUN_ID: "77",
     CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: pem, ADMISSION_HEAD_SHA: HEAD, ADMISSION_PR_NUMBER: "452",
@@ -2081,7 +2095,7 @@ test("merge slot: main --mode required writes the slot state for the app-check s
   assert.ok(lines.includes("merge_slot_until=2026-10-06T10:45:00Z"));
 });
 
-test("merge slot: re-verification fails a green clued-merge-slot check whose slot lapsed", async () => {
+test("merge slot: re-verification fails a green kooyumi-merge-slot check whose slot lapsed", async () => {
   const sha = (c) => c.repeat(40);
   const other = "1f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f";
   const pulls = [
@@ -2111,7 +2125,7 @@ test("merge slot: re-verification fails a green clued-merge-slot check whose slo
   assert.deepEqual(posts.map((c) => [c.body.name, c.body.head_sha, c.body.conclusion, c.body.external_id]),
     [[MERGE_SLOT_CHECK_NAME, sha("1"), "failure", "pr:460:run:9001"]]);
   assert.match(posts[0].body.output.title, /^RE-VERIFIED: Merge slot not held$/);
-  assert.match(renderReverifySummary(result), /#460: failing clued-merge-slot 5005 posted, Merge slot not held: merge:o\/r:main/);
+  assert.match(renderReverifySummary(result), /#460: failing kooyumi-merge-slot 5005 posted, Merge slot not held: merge:o\/r:main/);
 });
 
 const SLOT_RETURN = `POST ${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`;
@@ -2167,7 +2181,7 @@ test("merge slot (review MINOR-2/3/4): the retired switch does not skip it; a tr
   let result = await reverify({ env: env({ CLUED_ADMISSION_APP_ID: "12345", CLUED_ADMISSION_APP_PRIVATE_KEY: appKeyPem() }),
     fetchImpl: f1, workspace: ROOT, now: () => 1_800_000_000_000 });
   assert.deepEqual(result.errors.map((e) => e.pr), [470]);
-  assert.match(result.errors[0].error, /clued-merge-slot/);
+  assert.match(result.errors[0].error, /kooyumi-merge-slot/);
   assert.deepEqual(result.blocked.map((b) => [b.pr, b.check ?? APP_CHECK_NAME]), [[470, APP_CHECK_NAME]]);
   assert.deepEqual(calls.filter((c) => c.method === "POST" && c.url.endsWith("/check-runs")).map((c) => [c.body.name, c.body.conclusion]),
     [[MERGE_SLOT_CHECK_NAME, "failure"], [APP_CHECK_NAME, "failure"]]);

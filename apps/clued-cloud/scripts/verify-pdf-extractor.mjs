@@ -10,7 +10,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const PRODUCTION_ORIGIN = 'https://clued.pixelgrav.com';
+export const PRODUCTION_ORIGIN = 'https://kooyumi.pixelgrav.com';
 export const CHECK_PATH = '/v1/storage/pdf-extractor/check';
 /** 8 attempts 10 s apart: longer than the route's 60 s per-isolate cache of an OK result. */
 export const ATTEMPTS = 8;

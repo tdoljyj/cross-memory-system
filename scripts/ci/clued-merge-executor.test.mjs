@@ -27,9 +27,9 @@ const env = (extra = {}) => ({ GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: "t", CLUED
 const BODY = `Clued-Work-Claim: ${CLAIM}\nClued-Work-Scope: ${SCOPE}`;
 const pull = (extra = {}) => ({ number: 5, node_id: "PR_node5", body: `${BODY}\nClued-Auto-Merge: ${HEAD}`, state: "open", mergeable_state:"clean", draft: false, auto_merge: null,
   head: { sha: HEAD, repo: { full_name: REPO } }, base: { ref: "main", repo: { default_branch: "main", full_name: REPO } }, ...extra });
-const verified = (extra = {}) => ({ id: 20, name: "clued-admission-verified", head_sha: HEAD, status: "completed", conclusion: "success",
+const verified = (extra = {}) => ({ id: 20, name: "kooyumi-admission-verified", head_sha: HEAD, status: "completed", conclusion: "success",
   app: { id: ADMISSION_APP_ID }, external_id: "pr:5:run:900", output: { title: "ADMITTED [normal · code · reruns 1]" }, ...extra });
-const check = (name, extra = {}) => (name === "clued-admission-verified" ? verified(extra)
+const check = (name, extra = {}) => (name === "kooyumi-admission-verified" ? verified(extra)
   : { id: CI_REQUIRED_CHECKS.findIndex(row=>row.name===name)+1, name, head_sha: HEAD, status: "completed", conclusion: "success", app: { id: 15368 }, ...extra });
 
 // Routes are matched by "METHOD prefix" (GET when no method); an RPC route answers with a function of its input.
@@ -127,7 +127,7 @@ test("a head behind the default branch is brought up to date as the App, bound t
   assert.match(renderSummary(result), /#5 `aaaaaaaaaaaa`: \*\*update_branch\*\*/);
   // Not a protected-layer pull request (review MINOR-4), nor one whose admission has no mode yet.
   for (const title of ["ADMITTED [normal · protected · reruns 0]", "ADMITTED"]) {
-    const held = world({ behindBy: 2, extra: checksRoute({ "clued-admission-verified": [verified({ output: { title } })] }) });
+    const held = world({ behindBy: 2, extra: checksRoute({ "kooyumi-admission-verified": [verified({ output: { title } })] }) });
     const outcome = await run(held);
     assert.deepEqual([writes(held), outcome.actions[0].action], [[], "none"], title);
   }
@@ -244,9 +244,9 @@ test("nothing is written unless every condition holds", async () => {
   const cases = [
     ["not opted in", { pulls: [pull({ body: BODY })] }, /did not opt in/],
     ["CI failed", { extra: checksRoute({ gitleaks: [check("gitleaks", { conclusion: "failure", completed_at: "2026-10-09T11:00:00Z" })] }) }, /CI failed/],
-    ["not admitted", { extra: checksRoute({ "clued-admission-verified": [verified({ conclusion: "failure" })] }) }, /has not admitted/],
-    ["admitted for another pull request (review MINOR-2)", { extra: checksRoute({ "clued-admission-verified": [verified({ external_id: "pr:6:run:901" })] }) }, /has not admitted/],
-    ["no mode in the title", { extra: checksRoute({ "clued-admission-verified": [verified({ output: { title: "ADMITTED" } })] }) }, /has not admitted/],
+    ["not admitted", { extra: checksRoute({ "kooyumi-admission-verified": [verified({ conclusion: "failure" })] }) }, /has not admitted/],
+    ["admitted for another pull request (review MINOR-2)", { extra: checksRoute({ "kooyumi-admission-verified": [verified({ external_id: "pr:6:run:901" })] }) }, /has not admitted/],
+    ["no mode in the title", { extra: checksRoute({ "kooyumi-admission-verified": [verified({ output: { title: "ADMITTED" } })] }) }, /has not admitted/],
   ];
   for (const [name, options, reason] of cases) {
     const fetch = world(options);
@@ -258,7 +258,7 @@ test("nothing is written unless every condition holds", async () => {
 });
 
 test("a protected-layer pull request gets auto-merge like any other; Owner review is always enforced (Merge Admission step 6)", async () => {
-  const protectedCheck = { extra: checksRoute({ "clued-admission-verified": [verified({ output: { title: "ADMITTED [normal · protected · reruns 0]" } })] }) };
+  const protectedCheck = { extra: checksRoute({ "kooyumi-admission-verified": [verified({ output: { title: "ADMITTED [normal · protected · reruns 0]" } })] }) };
   for (const retired of [undefined, "", "false"]) {
     const fetch = world(protectedCheck);
     const result = await run(fetch, retired === undefined ? {} : { CLUED_OWNER_REVIEW_ENFORCE: retired });
@@ -331,7 +331,7 @@ test("claim renewal opts in only a full matching head of a non-protected layer",
     ['protected', HEAD, 'none'], ['code', HEAD.slice(0, 12), 'none'], ['code', APPROVED, 'none'], ['code', `receipt:${HEAD}`, 'none']]) {
     const fetch = world({ pulls: [pull({ body: BODY })],
       holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_refs: [SLOT], progress_ref: progress }],
-      extra: checksRoute({ 'clued-admission-verified': [verified({ output: { title: `ADMITTED [normal · ${layer} · reruns 1]` } })] }) });
+      extra: checksRoute({ 'kooyumi-admission-verified': [verified({ output: { title: `ADMITTED [normal · ${layer} · reruns 1]` } })] }) });
     const result = await run(fetch);
     assert.equal(result.actions[0].action, expected, `${layer}: ${progress}`);
     if (expected === 'merge_pull_request') assert.match(result.actions[0].reason, new RegExp(`opted in by the claim renewal at ${HEAD}`));
@@ -343,7 +343,7 @@ const gateOnlyRun = (extra = {}) => ({ id: 700, path: `${GATED}@refs/pull/5/merg
 const rerunWorld = ({ attempt = 1, limit = 1, admitted = true, jobs = [['admission-gate', 'success'], ['clued-components', 'skipped']],
   runs, currentHead = HEAD, currentAttempt = attempt, extra = {} } = {}) => world({
   pulls: [pull({ body: BODY })], extra: {
-    ...checksRoute({ 'clued-admission-verified': [verified({ conclusion: admitted ? 'success' : 'failure',
+    ...checksRoute({ 'kooyumi-admission-verified': [verified({ conclusion: admitted ? 'success' : 'failure',
       output: { title: `${admitted ? 'ADMITTED' : 'REJECTED'} [normal · code · reruns ${limit}]` } })] }),
     [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]: { total_count:(runs ?? [0]).length,workflow_runs: runs ?? [gateOnlyRun({ run_attempt: attempt })] },
     [PROOF]:{passed:false,state:"unknown",reason:"qualified gate-only recovery",rerun:{id:700,run_attempt:attempt,path:GATED}},
@@ -409,7 +409,7 @@ test("execution becomes unknown after planning: no rerun",async()=>{
 function authorityWorld(extra={}) {
   const current=pull({changed_files:1,base:{ref:"main",sha:TIP,repo:{default_branch:"main",full_name:REPO}}});
   const fetch=world({pulls:[current],extra:{
-    ...checksRoute({"clued-admission-verified":[verified({output:{title:"ADMITTED [normal · docs · reruns 2]"}})]}),
+    ...checksRoute({"kooyumi-admission-verified":[verified({output:{title:"ADMITTED [normal · docs · reruns 2]"}})]}),
     [`/repos/${REPO}/pulls/5/files`]:[{filename:"README.md",status:"modified"}],
     [`/repos/${REPO}/compare/${TIP}...${HEAD}`]:{status:"ahead",files:[{filename:"README.md",status:"modified"}]},
     [`rpc:${VERIFY_RPC}`]:{verdict:"ADMITTED",reasons:[],verified_at:"2026-10-10T20:00:00Z",
@@ -482,7 +482,7 @@ test("final native barrier after authority refuses newer run, changed attempt, n
   }
 });
 test("production live authority retains efficiency's actual FIFO holder",async()=>{
-  const {fetch,current}=authorityWorld(checksRoute({"clued-admission-verified":[verified({output:{title:"ADMITTED [efficiency · docs · reruns 2]"}})]}));
+  const {fetch,current}=authorityWorld(checksRoute({"kooyumi-admission-verified":[verified({output:{title:"ADMITTED [efficiency · docs · reruns 2]"}})]}));
   const result=await currentOperationAuthority({env:env({CLUED_MERGE_ADMISSION_STATE:"efficiency"}),fetchImpl:fetch.fetchImpl,workspace:ROOT,
     readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"merge_pull_request"});
   assert.equal(result.valid,true);assert.deepEqual(writes(fetch),[]);
@@ -490,7 +490,7 @@ test("production live authority retains efficiency's actual FIFO holder",async()
 
 test("a stale App layer or retry limit does not describe the current policy",async()=>{
   for(const title of ["ADMITTED [normal · code · reruns 1]","ADMITTED [normal · docs · reruns 1]"]) {
-    const {fetch,current}=authorityWorld(checksRoute({"clued-admission-verified":[verified({output:{title}})]}));
+    const {fetch,current}=authorityWorld(checksRoute({"kooyumi-admission-verified":[verified({output:{title}})]}));
     const result=await currentOperationAuthority({env:env(),fetchImpl:fetch.fetchImpl,workspace:ROOT,
       readPolicyFile:fs.readFileSync,repository:REPO,pr:current,tip:TIP,scope:SCOPE,action:"rerun_gated"});
     assert.equal(result.valid,false,title);assert.deepEqual(writes(fetch),[]);

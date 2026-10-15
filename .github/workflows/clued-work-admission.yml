@@ -1,4 +1,4 @@
-name: clued-work-admission
+name: kooyumi-work-admission
 
 # Work Claim Admission v0.1 §4.6 L0a (development/contracts/execution-admission/
 # WorkClaimAdmission.v0.1.md). An unfiltered check on every pull request, a
@@ -32,7 +32,7 @@ name: clued-work-admission
 # edits this file included, is judged by the base-branch copy.
 #
 # Not covered here: a PR can add another workflow whose job is also named
-# clued-work-admission; both are GitHub Actions check runs. Closing that needs
+# kooyumi-work-admission; both are GitHub Actions check runs. Closing that needs
 # a check identity a PR workflow cannot use (a GitHub App, or required
 # workflows), which is an Owner setting outside the repository.
 #
@@ -61,7 +61,7 @@ concurrency:
 
 jobs:
   clued-work-admission:
-    name: clued-work-admission
+    name: kooyumi-work-admission
     # Re-review 6, B1: pull_request_target runs the default branch's workflow
     # with the default branch's ref whatever the pull request's base, so this
     # environment's secrets would reach a pull request into any branch. Only
@@ -123,7 +123,7 @@ jobs:
           # Merge Admission v0.1 §10: the mode the head was judged in, shown
           # in the check's title ("ADMITTED [normal · code · reruns 0]").
           ADMISSION_MODE: ${{ steps.admit.outputs.admission_mode }}
-          # Owner Decision 2ea795e4: the clued-merge-slot check on the same
+          # Owner Decision 2ea795e4: the kooyumi-merge-slot check on the same
           # head. A head that contains the base branch's tip passes it only
           # while its claim holds the merge slot; an empty state fails it.
           ADMISSION_MERGE_SLOT: ${{ steps.admit.outputs.merge_slot }}

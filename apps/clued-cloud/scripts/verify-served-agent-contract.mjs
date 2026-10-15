@@ -7,7 +7,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const PRODUCTION_ORIGIN = 'https://clued.pixelgrav.com';
+export const PRODUCTION_ORIGIN = 'https://kooyumi.pixelgrav.com';
 const contractSource = new URL('../../../protocol/agent/agent-contract.md', import.meta.url);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 

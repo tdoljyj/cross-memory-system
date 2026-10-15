@@ -2,14 +2,15 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha256 } from './build-release.mjs';
+import { verifyServedAgentContract } from '../clued-cloud/scripts/verify-served-agent-contract.mjs';
 
 export const ORIGIN = 'https://kooyumi.pixelgrav.com';
 export const LEGACY_ORIGIN = 'https://clued.pixelgrav.com';
 const ATTEMPTS = 6;
 
-export function verifyConnectRelease({ commit, revision, contractSha, page, legacyPage, smoke, resource, issuer, notBefore }) {
+export function verifyConnectRelease({ commit, revision, contract, page, legacyPage, smoke, resource, issuer, servedContract, bootstrap, notBefore }) {
   const errors = [];
-  for (const [name, result] of Object.entries({ page, legacyPage, smoke, resource, issuer })) {
+  for (const [name, result] of Object.entries({ page, legacyPage, smoke, resource, issuer, servedContract, bootstrap })) {
     if (result?.status !== 200) errors.push(`connect_${name}_http_${result?.status ?? 0}`);
   }
   if (!/Kooyumi Connect/.test(page?.body ?? '') || !/Kooyumi Connect/.test(legacyPage?.body ?? '')) errors.push('connect_brand_mismatch');
@@ -20,26 +21,34 @@ export function verifyConnectRelease({ commit, revision, contractSha, page, lega
   if (!(Date.parse(body?.checked_at ?? '') >= notBefore - 5_000)) errors.push('connect_smoke_not_fresh');
   if (body?.upstream?.healthz !== 200 || body?.upstream?.continuity_policy !== 200 || body?.upstream?.official_skill !== 200) errors.push('connect_upstream_unavailable');
   if (body?.upstream?.origin !== ORIGIN || body?.upstream?.resource !== ORIGIN + '/mcp') errors.push('connect_upstream_origin_mismatch');
-  if (body?.upstream?.official_skill_sha256 !== contractSha) errors.push('connect_contract_mismatch');
+  // Bootstrap identifies the repository contract; the served document also has
+  // origin-specific service information. Bind each hash to its own byte boundary.
+  errors.push(...verifyServedAgentContract({ contract, served: servedContract?.body, bootstrap: bootstrap?.body })
+    .map(error => `connect_${error}`));
+  if (bootstrap?.body?.lifecycle?.contract?.url !== ORIGIN + '/clued-agent.md') errors.push('connect_contract_origin_mismatch');
+  if (typeof servedContract?.body !== 'string' || body?.upstream?.official_skill_sha256 !== sha256(servedContract.body)) {
+    errors.push('connect_contract_mismatch');
+  }
   if (resource?.body?.resource !== ORIGIN + '/mcp' || JSON.stringify(resource?.body?.authorization_servers) !== JSON.stringify([ORIGIN])) errors.push('connect_resource_mismatch');
   if (issuer?.body?.issuer !== ORIGIN || issuer?.body?.authorization_endpoint !== ORIGIN + '/oauth/authorize' || issuer?.body?.token_endpoint !== ORIGIN + '/oauth/token') errors.push('connect_issuer_mismatch');
   return errors;
 }
 
 export async function collectChecks(commit, fetchImpl = fetch) {
-  const get = async (url, text = false) => {
+  const get = async (url, accept = 'application/json') => {
     try {
       // Read-only: never create an Installation Request, download an issued package or call protected MCP.
       const response = await fetchImpl(`${url}?release=${commit}`, { method: 'GET', redirect: 'error', cache: 'no-store',
-        signal: AbortSignal.timeout(20_000), headers: { accept: text ? 'text/html' : 'application/json' } });
-      return { status: response.status, body: text ? await response.text() : await response.json() };
+        signal: AbortSignal.timeout(20_000), headers: { accept } });
+      return { status: response.status, body: accept === 'application/json' ? await response.json() : await response.text() };
     } catch { return { status: 0, body: null }; }
   };
-  const [page, legacyPage, smoke, resource, issuer] = await Promise.all([
-    get(ORIGIN + '/connect', true), get(LEGACY_ORIGIN + '/connect', true), get(ORIGIN + '/connect/api/smoke'),
+  const [page, legacyPage, smoke, resource, issuer, servedContract, bootstrap] = await Promise.all([
+    get(ORIGIN + '/connect', 'text/html'), get(LEGACY_ORIGIN + '/connect', 'text/html'), get(ORIGIN + '/connect/api/smoke'),
     get(ORIGIN + '/.well-known/oauth-protected-resource/mcp'), get(ORIGIN + '/.well-known/oauth-authorization-server'),
+    get(ORIGIN + '/clued-agent.md', 'text/markdown'), get(ORIGIN + '/v1/continuity/bootstrap'),
   ]);
-  return { page, legacyPage, smoke, resource, issuer };
+  return { page, legacyPage, smoke, resource, issuer, servedContract, bootstrap };
 }
 
 async function main() {
@@ -49,7 +58,7 @@ async function main() {
   const revision = /\bREV='([^']+)'/.exec(source)?.[1];
   if (!revision) throw new Error('connect_revision_missing');
   const contract = (await readFile(new URL('../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-  const expected = { commit, revision, contractSha: sha256(contract), notBefore: Date.now() };
+  const expected = { commit, revision, contract, notBefore: Date.now() };
   let checks, errors;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     checks = await collectChecks(commit);
@@ -58,7 +67,8 @@ async function main() {
     if (attempt < ATTEMPTS) await new Promise(done => setTimeout(done, 5_000));
   }
   if (errors.length) throw new Error('connect_release_blocked:' + errors.join(','));
-  const result = { status: 'passed', source_commit: commit, revision, source_sha256: sha256(source), contract_sha256: expected.contractSha,
+  const result = { status: 'passed', source_commit: commit, revision, source_sha256: sha256(source), contract_sha256: sha256(contract),
+    served_contract_sha256: sha256(checks.servedContract.body),
     check: checks.smoke.body, checked_at: new Date().toISOString() };
   const index = process.argv.indexOf('--evidence-out'), evidence = process.argv[index + 1];
   if (index < 0 || !evidence) throw new Error('evidence_path_required');

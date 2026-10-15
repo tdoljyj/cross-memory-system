@@ -2,7 +2,7 @@
 // verified original-job natural artifacts. No JSON authentication flag and no
 // inference of cancellation causes or completed updates from an accepted 202.
 import {createHash} from 'node:crypto';
-import {MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL as P,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2 as P2,readMergeAdmissionFourSources,updateOperationObservation} from './merge-admission-four-sources.mjs';
+import {MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL as P,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2 as P2,readMergeAdmissionFourSources,updateOperationObservation,admissionDisplayNames} from './merge-admission-four-sources.mjs';
 import {admissionEnvelopeInput,naturalRoundId} from './merge-admission-source-producer.mjs';
 import {mapNaturalSourceEvents} from './merge-admission-natural-intake.mjs';
 import {timestampMicros} from './merge-admission-measurement-history.mjs';
@@ -145,8 +145,9 @@ export function assembleNaturalFourSourceFrame({native,attemptRows,natural,runti
       for(const [k,s] of candidates){
         const f=finals.find(f=>f.payload.evaluation_id===s.payload.evaluation_id),pr=s.payload;
         packet.targets.push({run_id:a.run_id,attempt:a.attempt,pr_number:pr.pr_number,head_sha:pr.head_sha,entry:entryName,scope:c.scope,selected_at:s.event_at});
-        const job=n.jobs.find(j=>j.name===(entryName==='required'?'clued-work-admission':'clued-work-admission-reverify')),
-          appEvent=events.find(e=>e.kind==='app_check'&&e.payload.pr_number===pr.pr_number&&e.payload.head_sha===pr.head_sha&&e.payload.app_check_name==='clued-admission-verified'),
+        const displayNames=admissionDisplayNames(sources.texts),
+          job=n.jobs.find(j=>j.name===(entryName==='required'?displayNames.job_name:'clued-work-admission-reverify')),
+          appEvent=events.find(e=>e.kind==='app_check'&&e.payload.pr_number===pr.pr_number&&e.payload.head_sha===pr.head_sha&&e.payload.app_check_name===displayNames.app_check_name),
           step=job?.steps.find(x=>x.name==='Verify the work claim with Clued and summarize applicable workflows');
         const nativeIdentity={repository:c.repository,pr_number:pr.pr_number,head_sha:pr.head_sha,run_id:a.run_id,run_attempt:a.attempt,
           native_pr:{number:pr.pr_number,head_sha:pr.head_sha,base_repository:pr.base_repository,base_ref:pr.base_ref,default_branch:sourceDescriptors.get(entry.checkout_sha).default_branch,state:pr.state,draft:pr.draft},

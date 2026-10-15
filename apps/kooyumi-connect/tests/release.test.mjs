@@ -6,15 +6,29 @@ import { buildRelease, sha256 } from '../build-release.mjs';
 import { collectChecks, verifyConnectRelease, ORIGIN, LEGACY_ORIGIN } from '../verify-production.mjs';
 
 const commit = 'a'.repeat(40), notBefore = Date.parse('2026-10-15T10:00:00Z');
-const contract = '# Contract fixture\n', contractSha = sha256(contract);
+const contract = '# Clued Agent Contract\n\nContract version: 49\n\nContract fixture.\n';
+// The real /clued-agent.md response appends this service-information boundary.
+const serviceTail = `
+---
+
+Kernel: 0.8.1
+Canonical store: clued-cloud/supabase
+MCP endpoint: ${ORIGIN}/mcp
+HTTP bootstrap: ${ORIGIN}/v1/continuity/bootstrap
+Binding portal: ${ORIGIN}/
+`;
+const servedContract = contract + serviceTail, contractSha = sha256(contract), servedSha = sha256(servedContract);
 function healthy() {
-  return { commit, revision: '0.2.14', contractSha, notBefore,
+  return { commit, revision: '0.2.14', contract, notBefore,
     page: { status: 200, body: '<b>Kooyumi Connect</b>' }, legacyPage: { status: 200, body: '<b>Kooyumi Connect</b>' },
     smoke: { status: 200, body: { ok: true, connect_service: 'clued-connect', revision: '0.2.14', source_commit: commit,
       checked_at: '2026-10-15T10:00:01Z', state_machine: { ok: true },
-      upstream: { origin: ORIGIN, resource: ORIGIN + '/mcp', healthz: 200, continuity_policy: 200, official_skill: 200, official_skill_sha256: contractSha } } },
+      upstream: { origin: ORIGIN, resource: ORIGIN + '/mcp', healthz: 200, continuity_policy: 200, official_skill: 200, official_skill_sha256: servedSha } } },
     resource: { status: 200, body: { resource: ORIGIN + '/mcp', authorization_servers: [ORIGIN] } },
     issuer: { status: 200, body: { issuer: ORIGIN, authorization_endpoint: ORIGIN + '/oauth/authorize', token_endpoint: ORIGIN + '/oauth/token' } },
+    servedContract: { status: 200, body: servedContract },
+    bootstrap: { status: 200, body: { lifecycle: { contract: { version: 49, url: ORIGIN + '/clued-agent.md' } },
+      agent_contract: { version: 49, sha256: contractSha } } },
   };
 }
 
@@ -40,7 +54,7 @@ test('the built module reports its compiled commit through read-only smoke witho
   globalThis.fetch = async url => {
     calls.push(String(url));
     assert.equal(new URL(url).origin, ORIGIN);
-    return String(url).endsWith('/clued-agent.md') ? new Response(contract) : Response.json({ ok: true });
+    return String(url).endsWith('/clued-agent.md') ? new Response(servedContract) : Response.json({ ok: true });
   };
   try {
     const response = await worker.fetch(new Request(ORIGIN + '/connect/api/smoke'), { KOOYUMI_UPSTREAM_ORIGIN: ORIGIN });
@@ -49,9 +63,21 @@ test('the built module reports its compiled commit through read-only smoke witho
     assert.equal(result.source_commit, commit);
     assert.equal(result.upstream.origin, ORIGIN);
     assert.equal(result.upstream.resource, ORIGIN + '/mcp');
-    assert.equal(result.upstream.official_skill_sha256, contractSha);
+    assert.equal(result.upstream.official_skill_sha256, servedSha);
+    assert.notEqual(result.upstream.official_skill_sha256, contractSha);
     assert.deepEqual(calls, [ORIGIN + '/healthz', ORIGIN + '/.well-known/clued-continuity', ORIGIN + '/clued-agent.md']);
   } finally { globalThis.fetch = previous; }
+});
+
+test('the real repository contract and service tail retain distinct verified hashes', async () => {
+  const value = healthy();
+  value.contract = (await readFile(new URL('../../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  value.servedContract.body = value.contract + serviceTail;
+  value.bootstrap.body.agent_contract.sha256 = sha256(value.contract);
+  value.smoke.body.upstream.official_skill_sha256 = sha256(value.servedContract.body);
+  assert.match(value.contract, /^Contract version: 49$/m);
+  assert.notEqual(value.smoke.body.upstream.official_skill_sha256, value.bootstrap.body.agent_contract.sha256);
+  assert.deepEqual(verifyConnectRelease(value), []);
 });
 
 test('production verification refuses wrong code, old issuers, failed upstream checks and stale responses', async t => {
@@ -65,6 +91,18 @@ test('production verification refuses wrong code, old issuers, failed upstream c
     [value => { value.smoke.body.upstream.healthz = 503; }, 'connect_upstream_unavailable'],
     [value => { value.smoke.body.upstream.origin = LEGACY_ORIGIN; }, 'connect_upstream_origin_mismatch'],
     [value => { value.smoke.body.upstream.official_skill_sha256 = 'b'.repeat(64); }, 'connect_contract_mismatch'],
+    [value => { value.smoke.body.upstream.official_skill_sha256 = contractSha; }, 'connect_contract_mismatch'],
+    [value => { value.servedContract.body += 'unexpected changed bytes'; }, 'connect_contract_mismatch'],
+    [value => {
+      value.servedContract.body = value.servedContract.body.replace('Contract fixture.', 'Tampered canonical instructions.');
+      value.smoke.body.upstream.official_skill_sha256 = sha256(value.servedContract.body);
+    }, 'connect_served_agent_contract_differs_from_repository'],
+    [value => { value.bootstrap.body.agent_contract.sha256 = servedSha; }, 'connect_bootstrap_agent_contract_sha256_mismatch'],
+    [value => { value.bootstrap.body.agent_contract.version = 48; }, 'connect_bootstrap_agent_contract_version_mismatch'],
+    [value => { value.bootstrap.body.lifecycle.contract.version = 48; }, 'connect_bootstrap_contract_version_mismatch'],
+    [value => { value.bootstrap.body.lifecycle.contract.url = LEGACY_ORIGIN + '/clued-agent.md'; }, 'connect_contract_origin_mismatch'],
+    [value => { value.servedContract.status = 503; }, 'connect_servedContract_http_503'],
+    [value => { value.bootstrap.status = 503; }, 'connect_bootstrap_http_503'],
     [value => { value.resource.body.authorization_servers = [LEGACY_ORIGIN]; }, 'connect_resource_mismatch'],
     [value => { value.issuer.body.token_endpoint = LEGACY_ORIGIN + '/oauth/token'; }, 'connect_issuer_mismatch'],
     [value => { value.legacyPage.body = '<b>Clued Connect</b>'; }, 'connect_brand_mismatch'],
@@ -82,6 +120,7 @@ test('production observation uses public GET checks only and refuses redirects o
     [ORIGIN + '/connect', value.page], [LEGACY_ORIGIN + '/connect', value.legacyPage],
     [ORIGIN + '/connect/api/smoke', value.smoke], [ORIGIN + '/.well-known/oauth-protected-resource/mcp', value.resource],
     [ORIGIN + '/.well-known/oauth-authorization-server', value.issuer],
+    [ORIGIN + '/clued-agent.md', value.servedContract], [ORIGIN + '/v1/continuity/bootstrap', value.bootstrap],
   ]);
   const checks = await collectChecks(commit, async (url, options) => {
     const target = new URL(url); requested.push(target.origin + target.pathname);
@@ -93,6 +132,8 @@ test('production observation uses public GET checks only and refuses redirects o
     assert.equal(options.body, undefined);
     const expected = bodies.get(target.origin + target.pathname);
     assert.ok(expected, 'unapproved observation route');
+    assert.equal(options.headers.accept, target.pathname === '/clued-agent.md' ? 'text/markdown'
+      : target.pathname === '/connect' ? 'text/html' : 'application/json');
     return typeof expected.body === 'string' ? new Response(expected.body) : Response.json(expected.body);
   });
   assert.deepEqual(new Set(requested), new Set(bodies.keys()));

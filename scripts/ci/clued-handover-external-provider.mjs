@@ -14,7 +14,7 @@ import {postAppCheckCore} from './clued-work-admission.mjs';
 import {revokeHandover} from './clued-work-claim-handover.mjs';
 
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
-const appNames = new Set(['clued-admission-verified', 'clued-merge-slot']);
+const appNames = new Set(['kooyumi-admission-verified', 'kooyumi-merge-slot', 'clued-admission-verified', 'clued-merge-slot']);
 const syntheticOrigin = 'https://clued-handover-fixture.invalid';
 const numeric = value => /^[0-9]{1,20}$/.test(String(value));
 const same = (a,b) => String(a).toLowerCase() === String(b).toLowerCase();

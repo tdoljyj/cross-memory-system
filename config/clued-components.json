@@ -220,7 +220,7 @@
     {
       "id": "script.handover-external-driver",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Canonical External2 driver and supporting modules; exact Source acceptance remains required for execution.",
       "root": ".",
       "files": [
@@ -238,7 +238,7 @@
         "scripts/ci/resources/supabase-official-prod-ca-2021.crt",
         "apps/clued-cloud/tests/handover-external-ci.test.mjs"
       ],
-      "content_sha256": "5aababb5bf266153d8097ad60a553ddfbe3854ef500de8fedd18bd9c8e619ea6",
+      "content_sha256": "3e7420fc35e027ab25c8f406dbd709ad0074bb77f9750f61a722532324cd58cc",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-driver.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"

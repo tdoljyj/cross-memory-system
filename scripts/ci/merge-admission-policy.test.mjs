@@ -241,7 +241,7 @@ test("I3: a state value that is not exactly one of the three, a missing, unreada
 // ---------------------------------------------------------------------------
 // The verdict matrix (§6): (table, state, layer, scenario) -> verdict, through
 // evaluate() with a scripted GitHub and Clued. "A+" admitted with a passing
-// clued-merge-slot check, "A-" admitted with a failing one, "R:<reason>" not
+// kooyumi-merge-slot check, "A-" admitted with a failing one, "R:<reason>" not
 // admitted for that first reason. Adding a column or a state adds rows here.
 
 const API = "https://api.test";
@@ -297,8 +297,8 @@ function scriptFor(layer, scenario, { policyFileAtHead = null } = {}) {
     ["GET", `${API}/repos/o/r/compare/${EARLIER}...${HEAD}`, () => ({ status: "ahead", files: [{ filename: "merged-from-main.txt" }] })],
     ["GET", `${API}/repos/o/r/compare/${TIP}...${EARLIER}`, () => ({ status: "diverged", files: files.map((f) => ({ filename: f.filename })), merge_base_commit: { sha: MERGE_BASE } })],
     ["GET", `${API}/repos/o/r/compare/${MERGE_BASE}...${TIP}`, () => ({ status: "ahead", files: [{ filename: "main-only.txt" }] })],
-    ["GET", `${API}/repos/o/r/commits/${EARLIER}/check-runs`, () => ({ check_runs: [{ id: 1, name: "clued-admission-verified", head_sha: EARLIER,
-      status: "completed", conclusion: "success", app: { id: ADMISSION_APP_ID } }] })],
+    ["GET", `${API}/repos/o/r/commits/${EARLIER}/check-runs`, () => ({ check_runs: [{ id: 1, name: s.historicalCheckName ?? "kooyumi-admission-verified", head_sha: EARLIER,
+      status: "completed", conclusion: "success", app: { id: s.historicalCheckApp ?? ADMISSION_APP_ID } }] })],
     ["GET", `${API}/repos/o/r/commits/${HEAD}`, () => ({ sha: HEAD, commit: { message: "x" }, parents: commits[HEAD].map((sha) => ({ sha })) })],
     ["GET", `${API}/repos/o/r/commits/${EARLIER}`, () => ({ sha: EARLIER, commit: { message: "x" }, parents: commits[EARLIER].map((sha) => ({ sha })) })],
     ["POST", `${CLUED}/rest/v1/rpc/clued_work_verify_v1`, () => ({ status: "ok", verdict: s.verdict, reasons: s.reasons,
@@ -457,6 +457,18 @@ test("advise: a claim base that cannot be compared is a notice; enforced, it is 
   await assert.rejects(judge({ table: RECOMMENDED_POLICY_TEXT, state: "normal", layer: "code", scenario: { claimBaseStatus: 500 } }), /returned 500/);
 });
 
+test("display-name migration preserves historical Owner Grant revalidation without accepting a foreign App", async () => {
+  for (const historicalCheckName of ["clued-admission-verified", "kooyumi-admission-verified"]) {
+    const { outcome, calls } = await judge({ state: "normal", layer: "protected",
+      scenario: { ...SCENARIOS.grant_carried, historicalCheckName } });
+    assert.equal(outcome.admitted, true, historicalCheckName);
+    assert.ok(calls.some(call => call.body?.p_input?.resources?.[0] === `repo:o/r/${EARLIER}`), "live original Grant revalidation remains required");
+    const foreign = await judge({ state: "normal", layer: "protected",
+      scenario: { ...SCENARIOS.grant_carried, historicalCheckName, historicalCheckApp: 15368 } });
+    assert.equal(foreign.outcome.admitted, false, historicalCheckName);
+  }
+});
+
 test("frozen: every head needs its own Owner Grant, never carried over, and auto-merge fails the merge slot", async () => {
   const { outcome, calls } = await judge({ state: "frozen", layer: "code", scenario: "ok" });
   const door = calls.filter((call) => call.url.endsWith("/clued_owner_grant_admission_door_v1"));
@@ -570,7 +582,7 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
   assert.equal(outcome.admission_mode.label, "normal · docs · reruns 0");
   assert.equal(modeLabel("normal", "docs", row()), "normal · docs · reruns 0");
   const summary = renderSummary(outcome);
-  assert.match(summary, /^## clued-work-admission\n\n\*\*Mode:\*\* `normal` · layer `docs` · source `default` · policy v1\n\*\*Verdict:\*\* `ADMITTED`/);
+  assert.match(summary, /^## kooyumi-work-admission\n\n\*\*Mode:\*\* `normal` · layer `docs` · source `default` · policy v1\n\*\*Verdict:\*\* `ADMITTED`/);
   assert.match(summary, /\| work_claim \| owner_grant \| up_to_date \| merge_slot \| reruns_per_head \| auto_merge \| merge_actor \|\n\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|\n\| enforce \| none \| strict_only \| required \| 0 \| allowed \| any \|/);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "merge-admission-main-"));
@@ -619,8 +631,8 @@ test("visibility: the summary leads with the mode and its rules; the outputs and
   await appCheck({ env: { ...appEnv, ADMISSION_OUTCOME: "success", ADMISSION_VERDICT: "ADMITTED", ADMISSION_MODE: "normal · code · reruns 0",
     ADMISSION_MERGE_SLOT: "not_required" }, fetchImpl: appFetch, now: () => 1_800_000_000_000 });
   assert.deepEqual(posts.map((post) => [post.name, post.output.title]), [
-    ["clued-admission-verified", "ADMITTED [normal · code · reruns 0]"],
-    ["clued-merge-slot", "not_required(code, normal)"],
+    ["kooyumi-admission-verified", "ADMITTED [normal · code · reruns 0]"],
+    ["kooyumi-merge-slot", "not_required(code, normal)"],
   ]);
   assert.equal(publicationInputs.length, 2);
   assert.ok(publicationInputs.every(input => input.action === "publication_begin" && input.head_sha === HEAD && input.pr_ref === "o/r#9"));
