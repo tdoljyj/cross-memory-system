@@ -18,6 +18,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts/model-program"
 sys.path.insert(0, str(SCRIPTS))
 import development_attempt_ledger as ledger
 import development_completion_entry as entry
+import development_currentness_channel  # Bootstrap imports it after this local path is removed.
 sys.path.remove(str(SCRIPTS))
 
 
@@ -61,6 +62,26 @@ class DevelopmentEntryTests(unittest.TestCase):
                  "remaining_seconds": 60}
         value.update(changes)
         return io.BytesIO((json.dumps(value) + "\n").encode())
+
+    def test_four_b_bootstrap_uses_explicit_class_and_original_remaining_deadline(self):
+        plan = {"cpu_threads": 8, "development_budget_class": entry.observed.legacy.FOUR_B_BUDGET_CLASS,
+                "budget": {"wall_seconds": 480, "control_wall_seconds": 585}}
+        clock = time.monotonic()
+        with mock.patch.object(entry, "_capture_child_job", return_value=object()), \
+                mock.patch.object(entry.FixedDevelopmentEntry, "for_clued_stdio") as factory:
+            factory.return_value.__enter__.return_value.execute.return_value = {"owned_cleanup_verified": True}
+            entry.run_captured_stdio_bootstrap(self.bootstrap(plan=plan, remaining_seconds=500), io.BytesIO())
+            passed = factory.return_value.__enter__.return_value.execute.call_args.args[1]
+            self.assertGreaterEqual(passed["deadline_monotonic"], clock + 500)
+            self.assertLess(passed["deadline_monotonic"], clock + 501)
+            self.assertEqual(factory.call_args.kwargs["timeout_seconds"], 30)
+        for bad in ({"budget": {"control_wall_seconds": 585}},
+                    {**plan, "cpu_threads": 2}, {**plan, "development_budget_class": "unknown"}):
+            with mock.patch.object(entry, "_capture_child_job", return_value=object()), \
+                    mock.patch.object(entry.FixedDevelopmentEntry, "for_clued_stdio") as factory:
+                with self.assertRaises(ValueError):
+                    entry.run_captured_stdio_bootstrap(self.bootstrap(plan=bad, remaining_seconds=500), io.BytesIO())
+                factory.assert_not_called()
 
     def test_fixed_bootstrap_encodes_nested_bytes_after_cleanup(self):
         result = {"owned_cleanup_verified": True, "stdout": b"\xff\x00",

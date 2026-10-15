@@ -49,6 +49,28 @@ SOURCE_PINS = MappingProxyType({
     "log_header_sha256": "d9a1b99a7767508548759a90b89dceb415f3af09af59931502663fe74f4d300e",
     "log_source_sha256": "d4c198a52e06284f22070bb50776dbb0f0ca9dd09bc176aac81983e49a432a21",
 })
+# Exact candidate artifacts and actual Source identities, not permission or
+# model-load qualification. Caller manifests cannot replace either closure.
+FOUR_B_RUNTIME_FILES = {
+    'ggml-base.dll': (966144, 'abdd8817e45c5c5c49b5b0ca2b5bacf935a430e8a2bde555394b88c7d7349865'),
+    'ggml-cpu.dll': (1201152, 'b8d05f6734ceaa2b047db2eaa8856763a8d05fea268e36aa7e1befde8185721c'),
+    'ggml.dll': (85504, '7d50cd49a5304f7bd9132cfb1c94c0b5d98fff5cd18f44f4c762038a378893fc'),
+    'libc++.dll': (2000384, '81fb50f0866840d7e5a1d35d48cf31adc02f623a61d8b77daf62881e1e59401b'),
+    'libllama-common.dll': (5781504, 'c03919e282b6a3a676778176f7a5a6ead8e0f1219156638f96eb1668841ef67b'),
+    'libllama-completion-impl.dll': (153600, '49fe6633b804482d6c74d6ffb0c68bbdfad51dde1421a389f8ae1e682643849e'),
+    'libllama.dll': (3793920, 'c3734b36a25638617bc69317765c7d984269b536a0146dcebf4db18ee7065d34'),
+    'libunwind.dll': (183808, 'b0636a4281610124704adb2be2edf5642e830d86c68b7f27dbc9c8154705a780'),
+    'llama-completion.exe': (62464, '9c6fcbc03ad0124b4ae42ad6290308ed131a841dd66692e38bb491a7e6a82cc8'),
+}
+FOUR_B_SOURCE_PINS = {
+    'completion_source_sha256': '0c617a78dccbfe9cbf499df1cbd06ef4fc3c98f443ba79489b4b4411f674e787',
+    'log_header_sha256': 'd9a1b99a7767508548759a90b89dceb415f3af09af59931502663fe74f4d300e',
+    'log_source_sha256': 'd4c198a52e06284f22070bb50776dbb0f0ca9dd09bc176aac81983e49a432a21',
+    'patch_sha256': 'e6db7fa673fef009afd6e8d76a08219d2a41f956b323a180f863f48d94597977',
+    'runtime_id': 'llama.cpp',
+    'sampling_source_sha256': 'a38a6624109ce01d317d6c89f5d1ff27c1427fd5934bddcf71c77d922fcf15b2',
+    'source_commit': '8ed1a55efcd7424d2c592f6cbc9f97756db1d74d',
+}
 FORMAT_ASSUMPTIONS = saved.FORMAT_ASSUMPTIONS
 BINDING_FIELDS = set(SOURCE_PINS) | set(FORMAT_ASSUMPTIONS) | {
     "runtime_files", "framing", "newline", "declared_stop", "plan_sha256", "provider_prompt_sha256"}
@@ -79,16 +101,27 @@ def _hex(value):
 
 
 def _binding(value):
-    if type(value) is not dict or set(value) != BINDING_FIELDS:
+    if type(value) is not dict:
         return False
+    new_class = "development_budget_class" in value
+    if set(value) != (BINDING_FIELDS | {"development_budget_class"} if new_class else BINDING_FIELDS):
+        return False
+    pins, runtime = SOURCE_PINS, RUNTIME_FILES
+    if new_class:
+        if (value["development_budget_class"] != records.FOUR_B_BUDGET_CLASS
+                or type(FOUR_B_SOURCE_PINS) is not dict or type(FOUR_B_RUNTIME_FILES) is not dict
+                or set(FOUR_B_SOURCE_PINS) != set(SOURCE_PINS) or set(FOUR_B_RUNTIME_FILES) != set(RUNTIME_FILES)
+                or FOUR_B_SOURCE_PINS == dict(SOURCE_PINS) or FOUR_B_RUNTIME_FILES == dict(RUNTIME_FILES)):
+            return False
+        pins, runtime = FOUR_B_SOURCE_PINS, FOUR_B_RUNTIME_FILES
     records._canonical(value)
-    if any(type(value[k]) is not str or value[k] != expected for k, expected in SOURCE_PINS.items()):
+    if any(type(value[k]) is not str or value[k] != expected for k, expected in pins.items()):
         return False
     if any(type(value[k]) is not bool or value[k] is not expected for k, expected in FORMAT_ASSUMPTIONS.items()):
         return False
-    if type(value["runtime_files"]) is not dict or set(value["runtime_files"]) != set(RUNTIME_FILES):
+    if type(value["runtime_files"]) is not dict or set(value["runtime_files"]) != set(runtime):
         return False
-    for name, (size, digest) in RUNTIME_FILES.items():
+    for name, (size, digest) in runtime.items():
         row = value["runtime_files"][name]
         if (type(row) is not dict or set(row) != {"bytes", "sha256"} or type(row["bytes"]) is not int
                 or row["bytes"] != size or type(row["sha256"]) is not str or row["sha256"] != digest):
@@ -115,7 +148,7 @@ def _machine(raw, validator, binding, limits, stdout, stderr, sidecar):
     _require(type(value["observation_ref"]) is str and bool(value["observation_ref"]))
     for key in ("stdout_sha256", "stderr_sha256", "sidecar_sha256", "format_binding_sha256", "plan_sha256"):
         _require(type(value[key]) is type(context[key]) and value[key] == context[key])
-    records._limits(value["expected_limits"])
+    records._limits(value["expected_limits"], binding.get("development_budget_class"))
     _require(records._canonical(value["expected_limits"]) == records._canonical(limits))
     _require(value["exit_code"] is None or type(value["exit_code"]) is int)
     for key in ("timed_out", "cancelled", "owned_cleanup_verified"):
@@ -167,7 +200,7 @@ def adapt_observed_completion_response(stdout_raw, stderr_raw, sidecar_raw, form
             answer["gaps"].append(code)
     try:
         _require(_binding(format_binding))
-        records._limits(expected_limits)
+        records._limits(expected_limits, format_binding.get("development_budget_class"))
     except Exception:
         gap("UNKNOWN_OR_INCOMPATIBLE_FORMAT_BINDING_OR_LIMITS")
         return answer
@@ -202,11 +235,14 @@ def adapt_observed_completion_response(stdout_raw, stderr_raw, sidecar_raw, form
         # not authenticate that validator or manufacture another authority.
         parser_binding = {"machine_snapshot_sha256": _sha(machine_snapshot_raw), "format_binding": binding,
                           "plan_sha256": binding["plan_sha256"]}
+        selected = binding.get("development_budget_class")
+        if selected is not None:
+            parser_binding["development_budget_class"] = selected
         def bound_sidecar(raw, supplied_limits, supplied_binding):
             _require(_sha(raw) == observed["sidecar_sha256"] and records._canonical(supplied_limits) == records._canonical(limits)
                      and records._canonical(supplied_binding) == records._canonical(parser_binding))
         tokens = records.parse_runtime_observation(sidecar_raw, expected_limits=limits, binding=parser_binding,
-                                                   verify_binding=bound_sidecar)
+                                                   verify_binding=bound_sidecar, development_budget_class=selected)
         answer["token_records"] = tokens
         if not tokens["complete"]:
             gap("TOKEN_STREAM_INCOMPLETE_OR_NON_NORMAL")
