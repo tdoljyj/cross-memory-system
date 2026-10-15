@@ -50,7 +50,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "description": "Kooyumi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
@@ -324,6 +324,22 @@
       "version_marker": {
         "file": "build_bundle.py",
         "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "script.storage-google-redirect-cutover",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Generate bounded, exact-client CAS configuration SQL for the original Google Storage callback cutover; no credential access.",
+      "root": "apps/clued-cloud",
+      "files": [
+        "scripts/storage-google-redirect-cutover.mjs",
+        "tests/storage-google-redirect-cutover.test.mjs"
+      ],
+      "content_sha256": "aee0fcd8f8d709558776279168003c69a65aef9871b762f69b2be3e545b91368",
+      "version_marker": {
+        "file": "scripts/storage-google-redirect-cutover.mjs",
+        "pattern": "export const VERSION = '{version}';"
       }
     }
   ]
