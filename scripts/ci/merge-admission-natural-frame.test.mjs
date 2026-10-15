@@ -146,6 +146,114 @@ function intakeVersionFixture({succession=false,renamed=false}={}){
   return {paths,runtimePath,sourcePaths,oldMap,middleMap,currentMap,oldDescriptor,middleDescriptor,currentDescriptor,descriptor,oldTexts,middleTexts,currentTexts,textsByCommit,records,native,selection,routes,request,collect};
 }
 
+function namedSuccessorFixture(){
+  const f=intakeVersionFixture({succession:true,renamed:true}),pins=texts=>Object.fromEntries(f.sourcePaths.map(p=>[p,blob(texts[p])])),
+    thirdTexts={...f.middleTexts,[f.paths.script]:'// reviewed third legacy script\n'},
+    successorTexts={...f.currentTexts,[f.paths.script]:'// reviewed Kooyumi successor script\n'},
+    rows=[
+      {run:'42',artifact:'9',commit:base,texts:f.oldTexts,name:'clued-work-admission'},
+      {run:'46',artifact:'13',commit:'c'.repeat(40),texts:f.middleTexts,name:'clued-work-admission'},
+      {run:'48',artifact:'15',commit:'d'.repeat(40),texts:thirdTexts,name:'clued-work-admission'},
+      {run:'44',artifact:'11',commit:head,texts:f.currentTexts,name:'kooyumi-work-admission'},
+      {run:'50',artifact:'17',commit:'e'.repeat(40),texts:successorTexts,name:'kooyumi-work-admission'}
+    ];
+  for(const row of rows){
+    row.map=pins(row.texts);f.textsByCommit[row.commit]=row.texts;
+    row.descriptor={...f.currentDescriptor,job_name:row.name,workflow_blob:row.map[f.paths.workflow],source_blobs:row.map};
+    const recorder=createNaturalRecorder({env:{GITHUB_REPOSITORY:repository,GITHUB_RUN_ID:row.run,GITHUB_RUN_ATTEMPT:'1',GITHUB_JOB:'clued-work-admission'},
+      sourcePath:f.paths.script,write:()=>{},now:()=>at(1)}),
+      session={...recorder.finish(),executed_checkout_sha:row.commit,source_sha256:h(row.texts[f.paths.script])},
+      bytes=Buffer.from(JSON.stringify({schema:'clued.merge-admission-natural-artifact/1',identity:{repository,run_id:row.run,attempt:1,logical_job_key:'clued-work-admission'},
+        events:[],sessions:[session],files:[],local_stream:{status:'CLOSED_LOCAL_STREAM',known_gaps:[]}}));
+    row.record={commit:row.commit,bytes,artifact:{id:row.artifact,name:`clued-r9-natural-source-${row.run}-1-clued-work-admission`,expired:false,
+      digest:'sha256:'+h(bytes),workflow_run:{id:row.run,head_sha:row.commit}},
+      native:{run:{run_id:row.run,run_attempt:1,status:'completed',conclusion:'success',head_sha:row.commit,path:f.paths.workflow,event:'push'},
+        jobs:[{id:String(Number(row.run)+1),name:row.name,status:'completed',conclusion:'success',steps:['Export','Upload'].map(name=>({name,status:'completed',conclusion:'success'}))}]}};
+  }
+  f.records.splice(0,f.records.length,...rows.map(r=>r.record));f.native.population_packets=f.records.map(r=>r.native);
+  const current=rows.at(-1),descriptor={...current.descriptor,previous_source_versions:rows.slice(0,-1).map(r=>({job_name:r.name,source_blobs:r.map}))};
+  f.selection.head_sha=current.commit;f.selection.natural_producers=[descriptor];
+  return {...f,rows,descriptor};
+}
+
+test('explicit Source versions retain three legacy generations and both Kooyumi generations with unchanged descriptor digests and old caches',async()=>{
+  const f=namedSuccessorFixture(),before=JSON.stringify(f.selection),r=await f.collect();
+  assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,5);
+  for(const [i,row]of f.rows.entries()){
+    assert.equal(r.entries[i].descriptor_digest,h(JSON.stringify(row.descriptor)));
+    assert.deepEqual(r.source_bytes[row.commit],{texts:Object.fromEntries(Object.entries(f.paths).map(([k,p])=>[k,row.texts[p]])),
+      ...Object.fromEntries(Object.entries(f.paths).map(([k,p])=>[k+'_blob',row.map[p]]))});
+    assert.ok(f.routes.some(route=>route.includes('/actions/artifacts/'+row.artifact+'/zip')));
+  }
+  assert.equal(f.rows[3].descriptor.workflow_blob,f.rows[4].descriptor.workflow_blob,'the Kooyumi successor changes the script, not the job name or workflow');
+  assert.notEqual(f.rows[3].map[f.paths.script],f.rows[4].map[f.paths.script]);
+  const entries=[],sources={};
+  for(const row of f.rows.slice(0,-1)){
+    const old=await f.collect({native:{status:'COMPLETE',population_packets:[row.record.native]},
+      selection:{...f.selection,natural_producers:[row.descriptor]}});
+    assert.equal(old.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(old.gaps));entries.push(...old.entries);Object.assign(sources,old.source_bytes);
+  }
+  let reads=0;const reused=await f.collect({native:{status:'COMPLETE',population_packets:f.rows.slice(0,-1).map(r=>r.record.native)},
+    authenticatedEntries:entries,authenticatedSourceBytes:sources,request:async()=>{reads++;throw Error('BOTH_HISTORICAL_NAMES_MUST_REUSE_EXACT_AUTHENTICATED_CACHE');}});
+  assert.equal(reused.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(reused.gaps));assert.equal(reads,0);assert.deepEqual(reused.entries,entries);
+  const current=f.rows.at(-1),empty=await f.collect({native:{status:'COMPLETE',population_packets:[current.record.native]},
+    selection:{...f.selection,natural_producers:[{...current.descriptor,previous_source_versions:[]}]}});
+  assert.equal(empty.status,'NATIVE_ORIGIN_BOUND');assert.equal(empty.entries[0].descriptor_digest,h(JSON.stringify(current.descriptor)));
+  assert.equal(JSON.stringify(f.selection),before);assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('explicit Source histories reject ambiguous formats, names, incomplete maps and duplicates before HTTP',async()=>{
+  const f=namedSuccessorFixture(),copy=()=>structuredClone(f.descriptor),without=(m,p)=>Object.fromEntries(Object.entries(m).filter(([k])=>k!==p)),
+    changes=[
+      ['non-array',d=>d.previous_source_versions={}],
+      ['over bound',d=>d.previous_source_versions.push({...d.previous_source_versions[0]})],
+      ['mixed old maps',d=>d.previous_source_blobs=[]],
+      ['mixed old name',d=>d.previous_job_name='clued-work-admission'],
+      ['missing current',d=>delete d.source_blobs],
+      ['non-object row',d=>d.previous_source_versions[0]=null],
+      ['extra row field',d=>d.previous_source_versions[0].source_authenticated=true],
+      ['missing row name',d=>delete d.previous_source_versions[0].job_name],
+      ['missing row map',d=>delete d.previous_source_versions[0].source_blobs],
+      ...['unknown','Kooyumi-work-admission',' kooyumi-work-admission',''].map(name=>['bad name '+name,d=>d.previous_source_versions[0].job_name=name]),
+      ['legacy name on another technical job',d=>d.job_id='unreviewed-job'],
+      ['current map incomplete',d=>d.source_blobs=without(d.source_blobs,f.paths.policy)],
+      ['historical map incomplete',d=>d.previous_source_versions[0].source_blobs=without(d.previous_source_versions[0].source_blobs,f.paths.policy)],
+      ['extra map path',d=>d.previous_source_versions[0].source_blobs['scripts/unreviewed.mjs']='a'.repeat(40)],
+      ['invalid map SHA',d=>d.previous_source_versions[0].source_blobs[f.paths.script]='A'.repeat(40)],
+      ['workflow absent',d=>d.source_paths=d.source_paths.filter(p=>p!==d.workflow_path)],
+      ['duplicate current',d=>d.previous_source_versions[0].source_blobs=Object.fromEntries(Object.entries(d.source_blobs).reverse())],
+      ['duplicate historical',d=>d.previous_source_versions[1].source_blobs=Object.fromEntries(Object.entries(d.previous_source_versions[0].source_blobs).reverse())]
+    ];
+  for(const [label,change]of changes){
+    const d=copy();change(d);let reads=0;const r=await f.collect({native:{status:'COMPLETE',population_packets:[]},
+      selection:{...f.selection,natural_producers:[d]},request:async()=>{reads++;throw Error('INVALID_EXPLICIT_HISTORY_MUST_NOT_READ');}});
+    assert.equal(r.status,'PARTIAL',label);assert.equal(r.entries.length,0,label);assert.equal(reads,0,label);
+    assert.ok(r.gaps.some(g=>g.code==='NATURAL_PRODUCER_SELECTION_INVALID'),label);
+  }
+});
+
+test('explicit names cannot borrow another generation and cached proof changes still require fresh Native artifacts',async()=>{
+  for(const [index,name]of [[0,'kooyumi-work-admission'],[2,'kooyumi-work-admission'],[3,'clued-work-admission'],[4,'clued-work-admission'],[4,'unknown']]){
+    const f=namedSuccessorFixture();f.rows[index].record.native.jobs[0].name=name;
+    const r=await f.collect({native:{status:'COMPLETE',population_packets:[f.rows[index].record.native]}});
+    assert.equal(r.status,'PARTIAL',name);assert.equal(r.entries.length,0,name);
+  }
+  for(const change of [f=>{f.textsByCommit[f.rows[3].commit]={...f.rows[3].texts,[f.paths.policy]:f.rows[0].texts[f.paths.policy]};},
+    f=>{f.textsByCommit[f.rows[3].commit]={...f.rows[3].texts,[f.runtimePath]:f.rows[0].texts[f.runtimePath]};}]){
+    const f=namedSuccessorFixture();change(f);const r=await f.collect({native:{status:'COMPLETE',population_packets:[f.rows[3].record.native]}});
+    assert.equal(r.status,'PARTIAL');assert.equal(r.entries.length,0);assert.ok(r.gaps.some(g=>g.code==='NATURAL_SOURCE_SELECTION_BYTES_MISMATCH'));
+  }
+  for(const index of [0,3]){
+    const f=namedSuccessorFixture(),native={status:'COMPLETE',population_packets:[f.rows[index].record.native]},old=await f.collect({native});
+    assert.equal(old.status,'NATIVE_ORIGIN_BOUND');
+    for(const change of [{native_run_digest:'f'.repeat(64)},{native_jobs_digest:'f'.repeat(64)},{descriptor_digest:h(JSON.stringify(f.descriptor))},null]){
+      let reads=0;const r=await f.collect({native,authenticatedEntries:change?[{...old.entries[0],...change}]:old.entries,
+        authenticatedSourceBytes:change?old.source_bytes:{},request:async()=>{reads++;return {ok:true,body:{total_count:0,artifacts:[]}};}});
+      assert.equal(r.status,'PARTIAL');assert.equal(r.entries.length,0);assert.equal(reads,1);
+    }
+  }
+});
+
 test('workflow/script succession retains three exact runtime Source versions and both old authenticated descriptor digests',async()=>{
   const f=intakeVersionFixture({succession:true}),r=await f.collect();
   assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,3);

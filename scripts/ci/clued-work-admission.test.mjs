@@ -1802,11 +1802,14 @@ test("evaluate (re-review 7, MAJOR-3): a protected change is admitted only with 
   let { outcome, calls } = await run(pending);
   assert.equal(outcome.admitted, false);
   assert.equal(outcome.verdict, "REJECTED");
-  assert.match(outcome.reasons[0], /^owner_review_required \(protected_path:scripts\/ci\/clued-work-admission\.mjs\); ask the Owner to approve https:\/\/clued\.pixelgrav\.com\/confirm\/r1$/);
+  assert.match(outcome.reasons[0], /^owner_review_required \(protected_path:scripts\/ci\/clued-work-admission\.mjs\); ask the Owner to approve https:\/\/kooyumi\.pixelgrav\.com\/confirm\/r1$/);
   const asked = calls.find((c) => c.url.endsWith(OWNER_REVIEW_RPC));
   assert.deepEqual(asked.body.p_input, { action: "repo.protected_change", resources: [`repo:o/r/${HEAD}`],
     note: `o/r#452 @ aaaaaaaaaaaa: 1 protected path(s) changed, see https://github.com/o/r/compare/${TIP}...${HEAD} (scripts/ci/clued-work-admission.mjs)` });
   assert.equal(asked.body.p_token_hash, sha256Hex("clued_bnd_test"));
+  ({ outcome } = await run(pending, { CLUED_CONFIRM_ORIGIN: "https://clued.pixelgrav.com/" }));
+  assert.equal(outcome.owner_review.confirm_url, "https://clued.pixelgrav.com/confirm/r1");
+  assert.equal(outcome.admitted, false, "an explicit legacy link still requires the Owner Grant");
   ({ outcome } = await run({ body: { status: "ok", admitted: true, grant: { grant_id: "g1", replayed: true } } }));
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"]);
   assert.ok(outcome.notices.some((n) => n.startsWith("owner_review_granted:g1")));
