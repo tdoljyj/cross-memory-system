@@ -80,7 +80,7 @@ export function activeRenewalCredentials(state, profileId, now = Date.now()) {
 }
 
 export async function callRenewal(token, request, fetchImpl = fetch) {
-  const response = await fetchImpl("https://clued.pixelgrav.com/v1/resource-center/renew", {
+  const response = await fetchImpl("https://kooyumi.pixelgrav.com/v1/resource-center/renew", {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(15000),
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ contract: "clued.resource-center-renewal/1", request }),
