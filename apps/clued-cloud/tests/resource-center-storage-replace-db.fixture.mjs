@@ -356,7 +356,11 @@ export async function testStorageReplace(t, admin, server, user, decision) {
       assert.deepEqual((await pins(created.id)).map(r => [r.revision_id, r.state]), [[ownerKept, "owner_kept"]]);
       for (let i = 0; i < 10; i++) assert.equal((await run(target, client, storage, replace(created.path, storage.files.get(file.id).version, { content: `more ${i}\n` }))).result.status, "committed");
       const rows = await pins(created.id);
-      assert.equal(rows[0].state, "owner_kept"); assert.equal(rows.filter(r => r.state === "pinned").length, 10);
+      assert.equal(rows.length, 11);
+      // Timestamp order does not identify the revision the Owner kept.
+      const ownerRows = rows.filter(r => r.revision_id === ownerKept && r.job_id === first.job.reference.job_id);
+      assert.equal(ownerRows.length, 1);
+      assert.equal(ownerRows[0].state, "owner_kept"); assert.equal(rows.filter(r => r.state === "pinned").length, 10);
       assert.equal(storage.revisions.get(file.id).get(ownerKept).keepForever, true, "Clued never releases the Owner's revision");
       const reverted = await run(target, client, storage, replace(created.path, storage.files.get(file.id).version, { restore_job_id: first.job.reference.job_id }));
       assert.equal(reverted.result.status, "committed", JSON.stringify(reverted.result));
