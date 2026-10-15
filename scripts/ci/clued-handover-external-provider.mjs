@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import {acceptedSourceCheck} from './clued-handover-external-source-check.mjs';
+import {acceptedSourceCheck,acceptedGateSourcePins} from './clued-handover-external-source-check.mjs';
+import {readCanonicalGate,createEvidenceReaders} from './clued-handover-external-gate-evidence.mjs';
+import {assertCanonicalClaimMatch,fixtureClaimDomains,registrationCompletion} from './clued-handover-external-journal.mjs';
+import {assertFixturePull,fixturePublicationInput} from './clued-handover-external-fixture-locator.mjs';
 // Planned reviewed integration location: scripts/ci/. These resolve only in
 // the integrated exact Source tree, never from the scratch candidate folder.
 import {postAppCheckCore} from './clued-work-admission.mjs';
@@ -37,8 +40,25 @@ export function fixtureEnvironment(hostEnv, syntheticCiProof) {
 // independent Host/operator PG registration, TLS peer, current_database(),
 // exact Source migration hash set and empty-before-bootstrap proof. A plain
 // caller-supplied URL/profile cannot establish those facts.
+export function projectRegisteredRuntimeProfile(profile,{registrationRows,run,jobs}) {
+  assert.equal(profile.qualified,true,'unqualified operator profile');
+  assert.equal(profile.runtime_authority,'exact-owner-source-approval');
+  assert.equal(profile.fixture_mode,'continuous','RECOVERY_UNSUPPORTED');
+  assert.ok(['PROJECT_CREATED_NOT_REGISTERED_OR_HOSTED_QUALIFIED','REGISTERED_DISPOSABLE'].includes(profile.provisioning_state),'UNSUPPORTED_PROVISIONING_STATE');
+  assert.ok(Array.isArray(registrationRows));assert.equal(registrationRows.length,1);
+  const row=registrationRows[0];assert.equal(row.realm,'clued-handover-disposable');assert.equal(row.synthetic_only,true);
+  assert.equal(row.registration,profile.disposable_pg_registration);assert.equal(row.database_name,profile.database_name);
+  assert.equal(row.registered_host,profile.database_host);assert.equal(row.profile_sha256,profile.profile_hash);
+  assert.equal(row.operator_authority_receipt,profile.operator_authority_receipt);
+  assert.equal(row.source_baseline,profile.source_baseline);assert.equal(row.source_pins_sha256,profile.source_pins_sha256);
+  assert.equal(row.registered_run_id,profile.registration_run_id);
+  registrationCompletion(profile,{run,jobs});
+  // Runtime observation only: accepted Source bytes/hash and qualification
+  // are preserved. The original on-disk profile is never rewritten.
+  return {...profile,provisioning_state:'REGISTERED_DISPOSABLE'};
+}
 export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fetch,
-  loseNextCheckPostResponse=false, trace=[],journal}) {
+  loseNextCheckPostResponse=false, trace=[],journal,sourceCache}) {
   assert.ok(journal?.read&&journal?.beginExactOnce&&journal?.rememberCompleted,'persistent cancellation journal required');
   assert.equal(profile.qualified,true,'unqualified operator profile');
   assert.equal(profile.provisioning_state,'REGISTERED_DISPOSABLE');
@@ -46,6 +66,9 @@ export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fe
   assert.equal(profile.acceptance_sha256,actualAcceptance.acceptance_sha256);
   assert.equal(profile.accepted_source_commit,actualAcceptance.accepted_source_commit);
   assert.equal(profile.profile_hash,actualAcceptance.profile_sha256);
+  for(const field of ['fixture_selection_policy','idle_selection_policy','fixture_paths','fixture_claim_id'])
+    assert.deepEqual(profile[field],actualAcceptance.profile[field],'ACCEPTED_FIXED_POLICY_CHANGED:'+field);
+  assert.deepEqual(profile.gate_source_pins,acceptedGateSourcePins(actualAcceptance),'ACCEPTED_GATE_SOURCE_PINS_CHANGED');
   assert.equal(profile.fixture_mode,'continuous','RECOVERY_UNSUPPORTED');
   assert.ok(profile.operator_authority_receipt);
   assert.equal(profile.repository,'tdoljyj/cross-memory-system');
@@ -73,9 +96,20 @@ export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fe
   assert.equal(sha(pinsBytes),observedIdentity.source_pins_sha256);
   assert.ok(numeric(fixture.publisher_run_id));
   const repo=profile.repository, root='/repos/'+repo, number=String(profile.pr_number);
-  const expectedClaim=fixture.claim_id, expectedScope=fixture.scope;
-  assert.match(expectedClaim,/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
-  assert.match(expectedScope,/^(global|project:[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12})$/);
+  const domains=fixtureClaimDomains(profile,fixture);
+  const expectedCanonicalClaim=domains.canonical_claim_id,expectedCanonicalScope=domains.canonical_scope;
+  const expectedSyntheticClaim=domains.synthetic_claim_id,expectedSyntheticScope=domains.synthetic_scope;
+  assert.match(expectedSyntheticClaim,/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+  assert.match(expectedSyntheticScope,/^(global|project:[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12})$/);
+  // Read a fresh, native main gate for this invocation. Parsed caller facts and
+  // historical idle TTL never substitute for present Canonical admission.
+  const readers=createEvidenceReaders({repository:repo,token:env.GITHUB_TOKEN,realFetch,sourceCache});
+  const currentGate=await readCanonicalGate({profile,runId:String(env.GITHUB_RUN_ID),
+    targetWorkflow:profile.qualifier_workflow,targetRef:'main',targetHead:profile.runtime_source_commit,
+    ...readers,realFetch});
+  assertCanonicalClaimMatch(profile,profile.fixture_locator.canonical_gate_fact,currentGate);
+  const originalBinding=await journal.read();assert.ok(originalBinding?.binding_fact,'ORIGINAL_IDLE_BINDING_MISSING');
+  assert.deepEqual(originalBinding.binding_fact.fixture_locator,profile.fixture_locator,'ORIGINAL_LOCATOR_CHANGED');
   assert.ok(Array.isArray(profile.fixture_paths) && profile.fixture_paths.length>0);
   assert.ok(profile.fixture_paths.every(p=>/^work\/handover-protection\/disposable-fixture\/[A-Za-z0-9_.-]+$/.test(p)));
   const checkIds=new Map(), runFacts=new Map(), headChecks=new Map(), allowedHeads=new Set();
@@ -96,9 +130,9 @@ export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fe
   assert.equal(preflight.head.ref,profile.disposable_branch);
   assert.equal(preflight.head.repo.full_name,repo); assert.equal(preflight.base.repo.full_name,repo);
   assert.equal(preflight.base.ref,profile.target_branch);
-  assert.match(preflight.body??'',new RegExp('^Clued-Work-Claim: '+expectedClaim+'\\s*$','m'));
-  if(expectedScope!=='global')
-    assert.match(preflight.body??'',new RegExp('^Clued-Work-Scope: '+expectedScope+'\\s*$','m'));
+  assertFixturePull(profile,preflight,profile.fixture_locator);
+  assert.equal(expectedCanonicalClaim,currentGate.canonical_claim_id);
+  assert.equal(expectedCanonicalScope,currentGate.scope);
   assert.ok(Number.isSafeInteger(preflight.commits) && preflight.commits>0 && preflight.commits<=250);
   let commits=[];
   for(let page=1;page<=3;page++){
@@ -171,6 +205,7 @@ export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fe
   }
   runFacts.set(String(idle.id),idle);
   const record=async(kind,data)=>{trace.push({sequence:trace.length+1,kind,...data});await journal.recordEvidence(kind,data);};
+  await record('canonical_gate',currentGate);
   await record('preflight',{pr_number:profile.pr_number,head_sha:profile.head_sha,
     ancestry_count:commits.length,provider_pr_digest:sha(JSON.stringify(preflight)),
     idle_run_id:String(idle.id),idle_status:idle.status,fixture_only:true});
@@ -182,8 +217,8 @@ export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fe
   async function pgRpc(body) {
     assert.equal(body.p_token_hash,sha(env.CLUED_CONTEXT_READ_TOKEN));
     const input=body.p_input;
-    assert.equal(input.scope,input.action==='revocations_contexts'?'global':expectedScope);
-    if(input.claim_id)assert.equal(input.claim_id,expectedClaim);
+    assert.equal(input.scope,input.action==='revocations_contexts'?'global':expectedSyntheticScope);
+    if(input.claim_id)assert.equal(input.claim_id,expectedSyntheticClaim);
     const allowed=new Set(['publication_begin','publication_finish','publication_abort',
       'publication_reconcile','revocation_ack','revocations_contexts','revocations_list']);
     assert.ok(allowed.has(input.action),'unexpected fixture CI action');
@@ -217,7 +252,7 @@ export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fe
     const value=(await ciClient.query('select public.clued_work_verify_v1($1::text,$2::jsonb) v',
       [body.p_token_hash,input])).rows[0].v;
     if(input.action==='revocations_contexts')
-      assert.ok(value.context_keys?.every(scope=>scope===expectedScope),'fixture context leakage');
+      assert.ok(value.context_keys?.every(scope=>scope===expectedSyntheticScope),'fixture context leakage');
     await record('fixture_rpc',{action:input.action,status:value?.status,verdict:value?.verdict,
       receipt_id:value?.receipt_id??null,publication_id:value?.publication_id??input.publication_id??null,
       outbox_id:value?.outbox_id??input.outbox_id??null,error_code:value?.error_code??null});
@@ -229,7 +264,9 @@ export async function guardedProvider({env,profile,fixture,ciClient,realFetch=fe
     const body=init.body?JSON.parse(init.body):null;
     if(u.origin===syntheticOrigin){
       assert.equal(u.pathname,'/rest/v1/rpc/clued_work_verify_v1');assert.equal(method,'POST');
-      return pgRpc(body);
+      const projected=body.p_input?.action==='publication_begin'
+        ? {...body,p_input:fixturePublicationInput(profile,fixture,body.p_input)} : body;
+      return pgRpc(projected);
     }
     assert.equal(u.origin,'https://api.github.com','external origin unavailable');
     assert.equal(u.username+u.password,'');

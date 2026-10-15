@@ -1,13 +1,13 @@
 // Planned scripts/ci/ source entry. Pure local validation: no secret, PG or network.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.0";
+export const COMPONENT_VERSION = "1.0.1";
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {platformDescriptor} from './clued-handover-external-bootstrap.mjs';
-import {assertIdleSelectionPolicy} from './clued-handover-external-journal.mjs';
+import {assertIdleSelectionPolicy,assertFixtureSelectionPolicy,assertEarlyFixtureLocators} from './clued-handover-external-journal.mjs';
 
 export const SOURCE_FLOOR='2ed3bf2a2985858153e472481f41cef5e4fcd818';
 export const REQUIRED_FILES=Object.freeze([
@@ -18,7 +18,13 @@ export const REQUIRED_FILES=Object.freeze([
   'scripts/ci/clued-handover-external-catalog-identities.mjs',
   'scripts/ci/clued-handover-external-register.mjs',
   'scripts/ci/clued-handover-external-journal.mjs',
+  'scripts/ci/clued-handover-external-gate-evidence.mjs',
+  'scripts/ci/clued-handover-external-fixture-locator.mjs',
+  'scripts/ci/clued-gated-proof-runtime.mjs',
   'scripts/ci/clued-handover-external-bootstrap.mjs',
+  'scripts/ci/clued-handover-external-pg-transport.mjs',
+  'scripts/ci/clued-handover-external-pg-transport.test.mjs',
+  'scripts/ci/resources/supabase-official-prod-ca-2021.crt',
   '.github/workflows/clued-handover-external-qualification.yml',
   '.github/workflows/clued-handover-disposable-idle.yml',
   '.github/workflows/clued-work-admission.yml',
@@ -78,6 +84,15 @@ export const EXECUTION_FLOOR=Object.freeze([
   "tests/test_model_observed_completion_execution.py"
 ]);
 export const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+export function acceptedGateSourcePins(verified){
+  const paths=['scripts/ci/clued-work-admission.mjs',
+    'scripts/ci/clued-gated-proof-runtime.mjs',
+    '.github/workflows/clued-work-admission-dispatch.yml',
+    '.github/workflows/clued-handover-disposable-idle.yml',
+    '.github/workflows/clued-handover-external-qualification.yml'];
+  return Object.fromEntries(paths.map(file=>{const hash=verified.acceptance.files[file];
+    assert.match(hash,/^[0-9a-f]{64}$/,'ACCEPTED_GATE_SOURCE_HASH_MISSING:'+file);return [file,hash];}));
+}
 const git=(root,args)=>execFileSync('git',args,{cwd:root,maxBuffer:32*1024*1024});
 function include(file){
   return EXECUTION_FLOOR.includes(file)||REQUIRED_FILES.includes(file)||file.startsWith('scripts/')||
@@ -96,6 +111,7 @@ export function candidateCheck(root){
   const paths=executionPaths(root,'HEAD');
   const profile=JSON.parse(fs.readFileSync(path.join(root,'config/clued-handover-external-profile.json'),'utf8'));
   assert.equal(profile.fixture_mode,'continuous','RECOVERY_UNSUPPORTED');
+  assertEarlyFixtureLocators(profile);assertFixtureSelectionPolicy(profile,{unqualified:profile.qualified===false});
   for(const file of paths){
     assert.ok(!fs.lstatSync(path.join(root,file)).isSymbolicLink(),'SYMLINK_EXECUTABLE:'+file);
     const actual=fs.readFileSync(path.join(root,file));
@@ -148,7 +164,7 @@ export function acceptedSourceCheck(root,env=process.env){
   assert.equal(profile.qualified,true);
   assert.equal(profile.runtime_authority,'exact-owner-source-approval');
   platformDescriptor(profile);
-  assert.equal(profile.idle_run_id,null,'EARLY_IDLE_ID_PROHIBITED');
+  assertEarlyFixtureLocators(profile);
   assertIdleSelectionPolicy(profile);
   if(profile.accepted_profile_source_commit!==undefined){
     assert.match(profile.accepted_profile_source_commit,/^[0-9a-f]{40}$/);

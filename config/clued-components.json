@@ -220,61 +220,78 @@
     {
       "id": "script.handover-external-driver",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
-      "root": "scripts/ci",
+      "version": "1.0.1",
+      "description": "Canonical External2 driver and supporting modules; exact Source acceptance remains required for execution.",
+      "root": ".",
       "files": [
-        "clued-handover-external-driver.late-idle-source3-v1.mjs"
+        "scripts/ci/clued-handover-external-driver.mjs",
+        "scripts/ci/clued-handover-external-provider.mjs",
+        "scripts/ci/clued-handover-external-bootstrap.mjs",
+        "scripts/ci/clued-handover-external-fixture-locator.mjs",
+        "scripts/ci/clued-handover-external-fixture-locator.test.mjs",
+        "scripts/ci/clued-handover-external-gate-evidence.mjs",
+        "scripts/ci/clued-handover-external-gate-evidence.fixture.mjs",
+        "scripts/ci/clued-handover-external-gate-evidence.test.mjs",
+        "scripts/ci/clued-handover-external-pg-transport.mjs",
+        "scripts/ci/clued-handover-external-pg-transport.test.mjs",
+        "scripts/ci/clued-handover-external-provider.integration.test.mjs",
+        "scripts/ci/resources/supabase-official-prod-ca-2021.crt"
       ],
-      "content_sha256": "15b97ddf636c6b469486f7058883df9bc80a8e5c1204b9e1bccfddb10f07c3a3",
+      "content_sha256": "2e9096f153b8f55f7eb8a5fdd5445dbcadc4f721c47f034acd16e919e81e3c3c",
       "version_marker": {
-        "file": "clued-handover-external-driver.late-idle-source3-v1.mjs",
+        "file": "scripts/ci/clued-handover-external-driver.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
     {
       "id": "script.handover-external-source-check",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
-      "root": "scripts/ci",
+      "version": "1.0.1",
+      "description": "Canonical External2 accepted-source guard and pinned migration bundle.",
+      "root": ".",
       "files": [
-        "clued-handover-external-source-check.late-idle-source3-v1.mjs"
+        "scripts/ci/clued-handover-external-source-check.mjs",
+        "scripts/ci/clued-handover-external-source-pins.json"
       ],
-      "content_sha256": "bb309d2c49e1cb6742756f6a196bb3ba946e34f4d43fe261e271a2a335d95c4e",
+      "content_sha256": "e4e1f2003ea41020cf1e4bec125c8302c53ac3f8a877824dd7193686feebdf4c",
       "version_marker": {
-        "file": "clued-handover-external-source-check.late-idle-source3-v1.mjs",
+        "file": "scripts/ci/clued-handover-external-source-check.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
     {
       "id": "script.handover-external-journal",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "version": "1.0.1",
+      "description": "Canonical External2 original-idle and cancellation journal.",
       "root": "scripts/ci",
       "files": [
-        "clued-handover-external-journal.late-idle-source3-v1.mjs"
+        "clued-handover-external-journal.mjs"
       ],
-      "content_sha256": "861bc80d12a473cb3701df29439f9527682e74793aeeb15435169c07181ec444",
+      "content_sha256": "91857388a38077e415c80f81ef29ce8b2be42f6cca83b81c3cfb7984e7ff1594",
       "version_marker": {
-        "file": "clued-handover-external-journal.late-idle-source3-v1.mjs",
+        "file": "clued-handover-external-journal.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
     {
       "id": "script.handover-external-register",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
-      "root": "scripts/ci",
+      "version": "1.0.1",
+      "description": "Canonical External2 operator registration, catalog, profile and exact registration DDL.",
+      "root": ".",
       "files": [
-        "clued-handover-external-register.late-idle-source3-v1.mjs",
-        "fixtures/clued-handover-operator-registration.late-idle-source3-v1.sql"
+        "scripts/ci/clued-handover-external-register.mjs",
+        "scripts/ci/clued-handover-external-catalog.mjs",
+        "scripts/ci/clued-handover-external-catalog-identities.mjs",
+        "scripts/ci/clued-handover-external-catalog-identities.test.mjs",
+        "scripts/ci/fixtures/clued-handover-operator-registration.sql",
+        "config/clued-handover-external-catalog.json",
+        "config/clued-handover-external-profile.json"
       ],
-      "content_sha256": "a996f2c20ae988dccd296c8ac59ef931bf2d7ea50e232102cdd2714a56764752",
+      "content_sha256": "8aebaf6d30b4b321117369eaad3955415542eb67cbd5df824cf139a621640a38",
       "version_marker": {
-        "file": "clued-handover-external-register.late-idle-source3-v1.mjs",
+        "file": "scripts/ci/clued-handover-external-register.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
