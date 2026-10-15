@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { validatePackage } from "./validate-package.mjs";
 
 const sourceRoot = fileURLToPath(new URL("./", import.meta.url));
+const appId = "asdk_app_6ad0cb1db0c48191a97bd2bd158836e3";
+const legacyAppId = "asdk_app_6a9f92f8ec908191a9ef87838c60177f";
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "kooyumi-package-"));
@@ -18,31 +20,74 @@ async function fixture(t) {
   return root;
 }
 
-test("clean source contains one direct MCP and no registered app or Skill", async () => {
-  assert.deepEqual(await validatePackage(sourceRoot, "1.0.4"), {
-    version: "1.0.4", registeredApps: 0, mcpServers: ["kooyumi"],
+test("clean source contains only the registered Kooyumi app and retains the local package identity", async () => {
+  assert.deepEqual(await validatePackage(sourceRoot, "1.0.5"), {
+    version: "1.0.5", registeredApps: 1, appIds: [appId], mcpServers: [],
+  });
+  const manifest = JSON.parse(await readFile(join(sourceRoot, ".codex-plugin/plugin.json"), "utf8"));
+  assert.equal(manifest.name, "dev-6a9f92f8ec908191a9ef87838c60177f");
+  assert.equal(manifest.apps, "./.app.json");
+  assert.equal(Object.hasOwn(manifest, "mcpServers"), false);
+  assert.deepEqual(JSON.parse(await readFile(join(sourceRoot, ".app.json"), "utf8")), {
+    apps: { kooyumi: { id: appId } },
   });
 });
 
-test("an overlay update retaining the old app reference fails validation", async (t) => {
+test("the old registered Clued app ID is rejected", async (t) => {
   const root = await fixture(t);
-  await writeFile(join(root, ".app.json"), JSON.stringify({ apps: { legacy: { id: "asdk_app_legacy" } } }));
-  await assert.rejects(validatePackage(root), /Package file set/);
+  await writeFile(join(root, ".app.json"), JSON.stringify({ apps: { kooyumi: { id: legacyAppId } } }));
+  await assert.rejects(validatePackage(root, "1.0.5"), /only the registered Kooyumi app/);
 });
 
-test("manifest app dependencies fail even without an app file", async (t) => {
-  const root = await fixture(t);
-  const path = join(root, ".codex-plugin/plugin.json");
-  const manifest = JSON.parse(await readFile(path, "utf8"));
-  manifest.apps = "./.app.json";
-  await writeFile(path, JSON.stringify(manifest));
-  await assert.rejects(validatePackage(root), /Unexpected plugin fields/);
+test("multiple aliases are rejected even when they reference the same registered app", async (t) => {
+  for (const aliasId of [appId, legacyAppId]) {
+    const root = await fixture(t);
+    await writeFile(join(root, ".app.json"), JSON.stringify({
+      apps: { kooyumi: { id: appId }, clued: { id: aliasId } },
+    }));
+    await assert.rejects(validatePackage(root, "1.0.5"), /only the registered Kooyumi app/);
+  }
 });
 
-test("the legacy MCP URL cannot become the default connection", async (t) => {
+test("app declarations have no additional fields or alternate aliases", async (t) => {
+  for (const declaration of [
+    { apps: { kooyumi: { id: appId, optional: true } } },
+    { apps: { other: { id: appId } } },
+    { apps: { kooyumi: { id: appId } }, mcpServers: {} },
+  ]) {
+    const root = await fixture(t);
+    await writeFile(join(root, ".app.json"), JSON.stringify(declaration));
+    await assert.rejects(validatePackage(root, "1.0.5"), /only the registered Kooyumi app/);
+  }
+});
+
+test("residual compatibility or portable MCP files fail the exact inventory", async (t) => {
+  for (const filename of [".mcp.json", "mcp.json"]) {
+    const root = await fixture(t);
+    await writeFile(join(root, filename), JSON.stringify({
+      mcpServers: { kooyumi: { type: "http", url: "https://kooyumi.pixelgrav.com/mcp" } },
+    }));
+    await assert.rejects(validatePackage(root, "1.0.5"), /Package file set/);
+  }
+});
+
+test("manifest direct MCP and Skill dependencies fail validation", async (t) => {
+  for (const extra of [
+    { mcpServers: "./.mcp.json" },
+    { mcpServers: { kooyumi: { type: "http", url: "https://kooyumi.pixelgrav.com/mcp" } } },
+    { skills: "./skills" },
+  ]) {
+    const root = await fixture(t);
+    const path = join(root, ".codex-plugin/plugin.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    await writeFile(path, JSON.stringify({ ...manifest, ...extra }));
+    await assert.rejects(validatePackage(root, "1.0.5"), /Unexpected plugin fields/);
+  }
+});
+
+test("an extra bundled Skill fails the exact package inventory", async (t) => {
   const root = await fixture(t);
-  await writeFile(join(root, ".mcp.json"), JSON.stringify({
-    mcpServers: { kooyumi: { type: "http", url: "https://clued.pixelgrav.com/mcp" } },
-  }));
-  await assert.rejects(validatePackage(root), /only the direct Kooyumi/);
+  await mkdir(join(root, "skills/clued"), { recursive: true });
+  await writeFile(join(root, "skills/clued/SKILL.md"), "---\nname: clued\ndescription: Fixture only\n---\n");
+  await assert.rejects(validatePackage(root, "1.0.5"), /Package file set/);
 });

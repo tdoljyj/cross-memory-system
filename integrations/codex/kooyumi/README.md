@@ -1,35 +1,37 @@
-# Kooyumi MCP for Codex
+# Kooyumi app for Codex
 
-This local desktop plugin connects directly to the authenticated Kooyumi MCP
-service. It replaces the local package's dependency on the old registered Clued
-app. It does not include or enable the Kooyumi Skill.
+This local desktop plugin references the registered Kooyumi app and uses that
+app's authenticated account connection. The Kooyumi Skill is installed and
+enabled independently under its compatible Skill ID `clued`.
 
-The package retains the existing local plugin name so it can update the personal
-Kooyumi installation rather than create a second plugin. The MCP server is named
-`kooyumi`; existing `clued_*` tool names and account IDs remain unchanged.
+The package retains its existing technical name
+`dev-6a9f92f8ec908191a9ef87838c60177f` so it updates the personal installation.
+Its sole app dependency is `asdk_app_6ad0cb1db0c48191a97bd2bd158836e3`, registered
+as Kooyumi for `https://kooyumi.pixelgrav.com/mcp`. Existing `clued_*` tool names
+and canonical account IDs remain unchanged.
 
-## Connection and verification
+## Clean package and installation
 
-Use an exact copy of this package for the personal source and the installed
-version. Its complete file set is:
+Use an exact copy of this package for the personal source and installed version.
+Its complete file set is:
 
 ```text
 .codex-plugin/plugin.json
-.mcp.json
+.app.json
 README.md
 validate-package.mjs
 validate-package.test.mjs
 ```
 
-When updating an existing personal source, remove its obsolete `.app.json` and
-any other files outside this set before installing the new version. Copying only
-the changed files leaves old dependencies behind. The Codex legacy package
-loader can discover a root `.app.json` even when the manifest has no `apps`
-field; leaving that file can retain the registered Clued app alongside the
-direct Kooyumi MCP server. Do not include a Skill in this package.
+Version 1.0.5 replaces the temporary direct MCP packages with one registered app
+reference. Remove obsolete `.mcp.json`, `mcp.json` and other extra files when
+updating the source; replace any old `.app.json` with this version's file.
+Copying only changed files leaves old connections behind. The Codex legacy
+loader can discover root `.app.json` and `.mcp.json` even without their manifest
+fields, so removing only `mcpServers` does not remove a direct MCP connection.
+Keep the explicit `apps: "./.app.json"` declaration. Do not bundle the Skill.
 
-Validate the source and the actual installed version, using the source's
-validator with the target directory as its optional argument:
+Validate the source and actual installed version using the source's validator:
 
 ```sh
 node integrations/codex/kooyumi/validate-package.mjs
@@ -37,36 +39,33 @@ node integrations/codex/kooyumi/validate-package.mjs <installed-plugin-directory
 node --test integrations/codex/kooyumi/validate-package.test.mjs
 ```
 
-Install this directory through Codex's local plugin installation flow. Load the
-updated plugin, then use the host's MCP authentication flow for `kooyumi`. OAuth
-client registration and PKCE are handled by the host and server discovery; the
-package contains no client secret, bearer token or account selector. An existing
-registered-app connection is not assumed to authenticate this independent MCP
-connection.
+Install the updated package through Codex's normal local plugin flow. Verify
+version 1.0.5 has one registered app named Kooyumi, with the exact app ID above,
+and no separately bundled direct MCP server or duplicate Clued app dependency.
+Use the registered app's normal OAuth flow with the intended account, then
+verify its tools and an authorized protected call. Installation, package checks
+and discovery alone do not establish a working authenticated connection.
 
-Verify the installed version is 1.0.4, reports zero registered apps and exactly
-one MCP server named `kooyumi`, and exposes its available tools. Then
-perform an authorized protected call using the intended account. Package parsing,
-installation and discovery alone do not establish a working connection. Enable
-the separate Skill only after that verification succeeds.
+## Account display and authorization
 
-New OAuth authorizations on service 0.8.1 can include the authenticated account's
-email for connection display. It is captured from the normal identity response
-at approval, kept in provider-encrypted properties, and returned only after the
-live Binding check. It is a display snapshot: refresh does not update a changed
-email. Existing tokens without it remain valid and return the stable account ID;
-they do not require another sign-in. A new authorization can capture a new email.
+Complete the new app's first OAuth authorization after service 0.8.1 is deployed
+to the new origin. New authorizations can include the authenticated account's
+email for connection display. The service captures it from the normal identity
+response at approval, keeps it in provider-encrypted properties, and returns it
+only after the live Binding and matching account ID checks.
 
-## Domain migration
+Email is an authorization-time display snapshot: refresh does not update a
+changed email. Existing tokens without it remain valid and return the stable
+account ID; they do not require another sign-in. A new authorization can capture
+a new email. Verify the real account label in the Host; a profile schema or an
+OAuth success alone does not prove which label that Host displays.
 
-Version 1.0.4 targets `https://kooyumi.pixelgrav.com/mcp`. Install it after the
-matching Worker release has activated the new resource and independent issuer.
 The old origin retains its existing issuer and OAuth storage for existing
-connections. Its credentials do not authenticate the new resource; complete the
-normal host OAuth flow and protected-call verification for the new origin.
+connections. Its credentials do not authorize the new resource. Keep each
+connection's own resource, issuer and Binding, and never copy tokens between
+clients. Retire the old domain only after its registered app, callbacks and
+remaining consumers have completed their migration and verification.
 
-Retire the old domain only after the cloud registered app, callbacks and all
-remaining consumers have completed their migration and passed verification.
-
-This local package does not rename the cloud registered app or publish a public
-directory plugin. Those changes require their own verified updates.
+This package references an existing app registration; its alias and display
+name do not edit that registration's name or endpoint. It does not publish a
+public directory plugin or change the separately installed Skill.

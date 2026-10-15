@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "kooyumi": {
-      "type": "http",
-      "url": "https://kooyumi.pixelgrav.com/mcp"
-    }
-  }
-}
