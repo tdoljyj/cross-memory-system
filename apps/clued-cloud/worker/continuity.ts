@@ -98,6 +98,7 @@ import { CLUED_COMPONENTS_SCHEMA, CLUED_COMPONENT_VERSIONS, MCP_SERVER_VERSION }
 import { createStorageGoogleOAuth, StorageGoogleConnectionError } from "./storage-google-oauth";
 import { createStorageGoogleRecoveryOAuth } from "./storage-google-recovery-oauth";
 import { createStorageGoogleOnboard } from "./storage-google-onboard";
+import { storageOAuthStartMaintenance, type StorageOAuthCutoverEnv } from "./storage-oauth-cutover";
 import { ONBOARD_DISCLOSURE_VERSION } from "./storage-onboard-disclosure";
 import { createStorageGoogleProbe, storageProbeDiagnostic } from "./storage-google-probe";
 import { createStorageGoogleRefresh } from "./storage-google-refresh";
@@ -143,7 +144,7 @@ const RESOURCE_CENTER_AUTHORITY_CONTRACT = "clued.resource-center-authority/1";
 type Scope = (typeof ALL_SCOPES)[number];
 
 export interface ContinuityEnv extends DatabaseGatewayEnv, RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
-  AgentMessageFeatureEnv, IntegrationFeatureEnv, ModelDomainFeatureEnv {
+  AgentMessageFeatureEnv, IntegrationFeatureEnv, ModelDomainFeatureEnv, StorageOAuthCutoverEnv {
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -3435,6 +3436,8 @@ async function handleContinuityRequestInner(
       if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return json({ error: "Not found." }, 404);
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
       if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { allow: "POST, OPTIONS" });
+      const maintenance = storageOAuthStartMaintenance(env, url.pathname, corsHeaders(request));
+      if (maintenance) return maintenance;
       const { token } = await requireSupabaseUser(request, env);
       try {
         const input = await parseBody(request);
@@ -3536,6 +3539,8 @@ async function handleContinuityRequestInner(
         return url.pathname.endsWith("/config")
           ? json({ enabled: false, reason: "onboard_disabled" }, 200, headers) : json({ error: "Not found." }, 404);
       }
+      const maintenance = storageOAuthStartMaintenance(env, url.pathname, headers);
+      if (maintenance) return maintenance;
       const { user, token } = await requireSupabaseUser(request, env);
       try {
         const input = await parseBody(request);
@@ -3642,7 +3647,10 @@ async function handleContinuityRequestInner(
       if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...headers, allow: "POST, OPTIONS" });
       const { user, token } = await requireSupabaseUser(request, env);
       try {
-        const input = await parseBody(request), runtime = await storageOwnerLifecycleRuntime(env, token);
+        const input = await parseBody(request);
+        const maintenance = storageOAuthStartMaintenance(env, url.pathname, headers, input.action);
+        if (maintenance) return maintenance;
+        const runtime = await storageOwnerLifecycleRuntime(env, token);
         const action = input.action;
         const body = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "action"));
         let result;
