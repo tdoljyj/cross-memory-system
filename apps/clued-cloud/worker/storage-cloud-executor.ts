@@ -78,9 +78,18 @@ export async function createStorageCloudWorker(config: {
         let result: Data;
         try { result = await config.rpc({...ref, action:"load"}); }
         catch (error) {
-          throw reject(error instanceof Error && error.message === "storage_root_has_unresolved_mutation"
+          throw reject(error instanceof Error && error.message === "storage_object_under_review" ? "STORAGE_OBJECT_UNDER_REVIEW"
+            : error instanceof Error && error.message === "storage_root_has_unresolved_mutation"
             ? "STORAGE_ROOT_BUSY" : "STORAGE_JOB_LOAD_REFUSED");
         }
+        // The database can settle an already queued overlap before issuing a
+        // writer. Preserve that terminal cause without reporting a second result.
+        if (result.contract === "clued.storage-job-execution/1" && result.status === "denied" &&
+            result.reason_code === "STORAGE_OBJECT_UNDER_REVIEW" && result.execution_permitted === false &&
+            result.connection_id === ref.connection_id && result.job_id === ref.job_id && result.intent_id === null &&
+            typeof result.receipt_id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(result.receipt_id) &&
+            typeof result.request_digest === "string" && /^[0-9a-f]{64}$/.test(result.request_digest))
+          throw reject("STORAGE_OBJECT_UNDER_REVIEW");
         if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
         loaded = result;
         const descriptor = {...result}; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
@@ -90,9 +99,14 @@ export async function createStorageCloudWorker(config: {
       rpc: async (input: Data) => {
         if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
         const {connection_id, job_id, action, ...body} = input;
-        return config.rpc({connection_id, job_id, action,
-          ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
-          ...(action==="finalize" ? {finish:{action,...body}} : body)});
+        try {
+          return await config.rpc({connection_id, job_id, action,
+            ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
+            ...(action==="finalize" ? {finish:{action,...body}} : body)});
+        } catch (error) {
+          if (error instanceof Error && error.message === "storage_object_under_review") throw reject("STORAGE_OBJECT_UNDER_REVIEW");
+          throw error;
+        }
       },
     });
     try {
