@@ -1,13 +1,15 @@
-# Kooyumi app for Codex
+# KooYomi app for Codex
 
-This local desktop plugin references the registered Kooyumi app and uses that
-app's authenticated account connection. The Kooyumi Skill is installed and
+This local desktop plugin references the existing registered app for KooYomi
+and uses that app's authenticated account connection. The KooYomi Skill is installed and
 enabled independently under its compatible Skill ID `clued`.
 
 The package retains its existing technical name
 `dev-6a9f92f8ec908191a9ef87838c60177f` so it updates the personal installation.
 Its sole app dependency is `asdk_app_6ad0cb1db0c48191a97bd2bd158836e3`, registered
-as Kooyumi for `https://kooyumi.pixelgrav.com/mcp`. Existing `clued_*` tool names
+under the compatible registration name Kooyumi for
+`https://kooyumi.pixelgrav.com/mcp`. The package display brand is KooYomi; that
+label does not rename the external registration. Existing `clued_*` tool names
 and canonical account IDs remain unchanged.
 
 ## Clean package and installation
@@ -23,9 +25,9 @@ validate-package.mjs
 validate-package.test.mjs
 ```
 
-Version 1.0.5 replaces the temporary direct MCP packages with one registered app
-reference. Remove obsolete `.mcp.json`, `mcp.json` and other extra files when
-updating the source; replace any old `.app.json` with this version's file.
+Version 1.0.6 retains the single registered app reference introduced in 1.0.5,
+which replaced the temporary direct MCP packages. Remove obsolete `.mcp.json`,
+`mcp.json` and other extra files when updating the source; replace any old `.app.json` with this version's file.
 Copying only changed files leaves old connections behind. The Codex legacy
 loader can discover root `.app.json` and `.mcp.json` even without their manifest
 fields, so removing only `mcpServers` does not remove a direct MCP connection.
@@ -40,8 +42,9 @@ node --test integrations/codex/kooyumi/validate-package.test.mjs
 ```
 
 Install the updated package through Codex's normal local plugin flow. Verify
-version 1.0.5 has one registered app named Kooyumi, with the exact app ID above,
-and no separately bundled direct MCP server or duplicate Clued app dependency.
+version 1.0.6 has one registered app under its existing Kooyumi registration
+name, with the exact app ID above, and no separately bundled direct MCP server
+or duplicate Clued app dependency.
 Use the registered app's normal OAuth flow with the intended account, then
 verify its tools and an authorized protected call. Installation, package checks
 and discovery alone do not establish a working authenticated connection.

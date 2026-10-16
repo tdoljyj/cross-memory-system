@@ -1,16 +1,16 @@
 {
   "name": "dev-6a9f92f8ec908191a9ef87838c60177f",
-  "version": "1.0.5",
-  "description": "Kooyumi app connection for Codex",
+  "version": "1.0.6",
+  "description": "KooYomi app connection for Codex",
   "author": {
-    "name": "Kooyumi"
+    "name": "KooYomi"
   },
   "apps": "./.app.json",
   "interface": {
-    "displayName": "Kooyumi",
-    "shortDescription": "Connect to Kooyumi",
-    "longDescription": "Connect Codex to the registered Kooyumi app using its authenticated account connection. The Kooyumi Skill is installed and enabled separately.",
-    "developerName": "Kooyumi",
+    "displayName": "KooYomi",
+    "shortDescription": "Connect to KooYomi",
+    "longDescription": "Connect Codex to the existing registered app for KooYomi using its authenticated account connection. The KooYomi Skill is installed and enabled separately.",
+    "developerName": "KooYomi",
     "category": "Other",
     "capabilities": []
   }

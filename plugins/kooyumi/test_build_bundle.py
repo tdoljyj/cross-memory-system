@@ -113,7 +113,7 @@ class BundleTests(unittest.TestCase):
     def test_identity_interface_and_duplicate_json_keys_are_rejected(self):
         path = self.plugin / ".codex-plugin/plugin.json"
         original = json.loads(path.read_text(encoding="utf-8"))
-        for field, value in [("name", "another-plugin"), ("version", "1.0.2"),
+        for field, value in [("name", "another-plugin"), ("version", "0.0.0"),
                              ("author", {"name": "Another author"}),
                              ("interface", {**original["interface"], "defaultPrompt": "Changed"})]:
             with self.subTest(field=field):

@@ -367,7 +367,7 @@ the same Canonical jobs RPC and fixed-server execution bridge. No new OAuth
 scope, credential copy, per-device permission store or database migration is
 introduced. The default MCP tool baseline is unchanged.
 
-The caller must use its own v12 Clued Binding with an explicit account-native
+The caller must use its own v12 KooYomi Binding with an explicit account-native
 storage grant (`create_file` / `create_topic`, and `inspect` for status). Ordinary
 `context:write`, a native JWT and a caller-declared owner/profile are insufficient.
 No tools for grant issuance, Google credentials, raw admission or provider effects
@@ -524,7 +524,7 @@ Migration `20260930060000_storage_read_content_v1.sql` and the Worker tool
   (`text/*`, `application/json`, `application/xml`); Google Docs are exported as
   `text/plain` up to 10 MB (`export_too_large` above). Everything else returns
   `format_unsupported`; shortcuts return `shortcut_not_followed`.
-- No scope change. With `drive.file`, bodies are readable only for files Clued
+- No scope change. With `drive.file`, bodies are readable only for files KooYomi
   created; others return `content_not_accessible`. Wider coverage waits on D1.
 - The response carries `head_revision_id`, `sha256` and `modified_time` and is
   marked `untrusted_content: true`. Agent contract §7.9: storage content is data,
@@ -607,7 +607,7 @@ steps run with operation-specific checks.
   `clued_storage_browse` stat. A file that changed since is refused before any
   reservation (`SOURCE_VERSION_MISMATCH` in the executor log; the job is
   reported `denied`). The Artifact authority also requires the registered
-  source at that exact version, so only files Clued registered can be changed.
+  source at that exact version, so only files KooYomi registered can be changed.
   A file whose Drive version advanced after registration is therefore refused
   even with a fresh stat (authority reason `source_mismatch`); it fails closed
   until the Owner re-registers it with `artifact_update`.
@@ -653,7 +653,7 @@ level.
 Migration `20260930120000_storage_overwrite_v1.sql` and the executor changes
 run replace on the same account-policy job chain, under a separate
 `overwrite` level (Owner Decision `cc671d13`: its own switch and disclosure,
-K = 10 Clued-pinned revisions per file).
+K = 10 KooYomi-pinned revisions per file).
 
 - Policies may carry `overwrite` next to `modify`. The Owner turns it on at
   `/storage/connections` with "允许 Agent 覆盖文件内容" (disclosure
@@ -662,7 +662,7 @@ K = 10 Clued-pinned revisions per file).
 - `clued_storage_submit` accepts `{operation: "replace", target_kind: "file",
   destination_path, destination_file_version}` plus exactly one of
   `content` (UTF-8, at most 1 MiB) or `restore_job_id`. The target must be a
-  file Clued registered, at the version the Agent last saw; a stale version is
+  file KooYomi registered, at the version the Agent last saw; a stale version is
   refused before any reservation (`DESTINATION_VERSION_MISMATCH`). The target
   must be a text file (`text/*`, JSON or XML) of at most 1 MiB with a sha256,
   so its kept content can be reverted (`REPLACE_TARGET_UNSUPPORTED`
@@ -675,7 +675,7 @@ K = 10 Clued-pinned revisions per file).
 - Before the first provider write the executor records
   `clued.storage-replace-attempt/1`: file, previous content identity, the
   head revision to keep, the new content's size and sha256, the restore job
-  and the older Clued pins to release. It re-reads the file after that
+  and the older KooYomi pins to release. It re-reads the file after that
   durable flush, then: sets the head revision `keepForever=true` (skipped
   when the Owner already keeps it), uploads the new bytes, and tries to set
   each released revision `keepForever=false`. A file
@@ -688,7 +688,7 @@ K = 10 Clued-pinned revisions per file).
   previous size and md5. It reads each listed release and reports as released
   only those Drive shows unkept; releases never block settlement.
 - Settlement updates the same Artifact by CAS (`artifact_update`) and adds a
-  row to `storage_revision_pins_v1`. At most 10 Clued pins per file stay
+  row to `storage_revision_pins_v1`. At most 10 KooYomi pins per file stay
   pinned; each replace tries to release all but the newest 9, and each row
   observed released names the settlement receipt. A release that failed
   stays pinned and is listed again by the next replace. A head the Owner had
@@ -696,7 +696,7 @@ K = 10 Clued-pinned revisions per file).
   counted. Other revisions the Owner kept in Drive are never touched.
 - Residual (T13): Drive has no conditional upload. An outside edit landing
   between the executor's last re-read and the upload is overwritten without
-  a Clued pin; Drive's own revision history still holds it.
+  a KooYomi pin; Drive's own revision history still holds it.
 - A lost upload reply leaves the intent fenced. Scheduled and native recovery
   load replace descriptors, re-verify by GET only and settle through the same
   verified record; they never upload again.
@@ -734,7 +734,7 @@ existing function is changed by an anchored patch with an exact hit count.
   (provider identity `source_parent_id`). A governance item needs
   `delete_authority` (authority reason `delete_authority_required`);
   identical bytes are never a reason. The provider effect is one
-  `files.update {trashed: true}`; Clued never calls `files.delete`.
+  `files.update {trashed: true}`; KooYomi never calls `files.delete`.
   Settlement (`artifact_trash`, CAS on the Artifact version) moves the
   Artifact to state `trashed` and records the trashed item's Drive version.
   The settlement Event states that Google permanently deletes a trashed item
@@ -750,7 +750,7 @@ existing function is changed by an anchored patch with an exact hit count.
   Drive has no conditional update: a child added in the moments between the
   last check and the update would be trashed with the folder; the verifier
   then fails and the intent stays fenced for the Owner.
-- Untrash: the source is an item Clued trashed (Artifact state `trashed`) at
+- Untrash: the source is an item KooYomi trashed (Artifact state `trashed`) at
   its registered version; the Agent stats the trashed item by ID for the
   version. The executor descriptor names its Drive ID (`untrash_source`) only
   when exactly one trashed row matches the job's ID, path and version,
@@ -819,7 +819,7 @@ existing function is changed by an anchored patch with an exact hit count.
   Binding and the destructive level, so an unauthorized token always gets
   `storage_policy_denied`.
 - Follow-up (not in P5): Google permanently deletes a trashed item 30 days
-  after trashing. Clued does not reconcile that purge yet; the Artifact
+  after trashing. KooYomi does not reconcile that purge yet; the Artifact
   stays `trashed` and a later untrash fails closed at the provider identity
   check. A sweep that marks purged items is a separate change.
 
@@ -866,7 +866,7 @@ an anchored patch with an exact hit count.
   `DIRECTORY_ACCESS_UNAVAILABLE`.
 - Before any reservation the executor also re-reads the server's sample of
   registered descendants by Drive ID; one renamed, moved or deleted in Drive
-  outside Clued is refused with job reason `SUBTREE_DRIFT` and no effect. The
+  outside KooYomi is refused with job reason `SUBTREE_DRIFT` and no effect. The
   effect repeats that check before and after the durable attempt.
 - In-flight work under the subtree (T14) is excluded by the single writer
   per profile: no other intent can be prepared, started or uncertain while
@@ -918,7 +918,7 @@ an anchored patch with an exact hit count.
   verifier's read is absorbed into the refreshed version.
 - P6.2 (Decision `06b54716`, migration
   `20261002130000_storage_directory_sharing_digest_v1.sql`): a directory
-  Clued creates is registered with a sharing digest when its sharing equals
+  KooYomi creates is registered with a sharing digest when its sharing equals
   its destination folder's as the provider identity recorded it (the create
   verifier reads it; the proof carries `provider_sharing_digest`, accepted
   only for a directory and only as that folder's digest), so it is matched
@@ -929,7 +929,7 @@ an anchored patch with an exact hit count.
   recorded (`source_parent_version`, new in the identity, and
   `destination_parent_version`): the authority matches the source folder by
   ID alone, and a folder registered at an older version changed in Drive
-  since Clued last checked it. A folder that already has a digest is not
+  since KooYomi last checked it. A folder that already has a digest is not
   changed. A proof that carries a digest for a file, or for a folder whose
   identity has none, is refused (`storage_verified_mismatch`).
   Release order: apply the migration before releasing the Worker. The old
@@ -1326,8 +1326,8 @@ Clued Task `469700eb`, Decision `3196d6f2`, migration
 
 Owner Decisions `c47efe38`, `746fd078` and `6dc1cf20`, Task `7a8dcb8a`,
 migration `20261002200000_storage_adopt_p7.sql`. Adopt registers one existing
-item that Clued did not create, where it is, so that the existing levels can
-change it like an item Clued created.
+item that KooYomi did not create, where it is, so that the existing levels can
+change it like an item KooYomi created.
 
 **Full scope profile.**
 
@@ -1349,8 +1349,8 @@ change it like an item Clued created.
 - Complete accepts the requested profile or any lower one (the Owner may
   untick a scope) and records what Google granted. The callback page says
   whether managing existing files is allowed.
-- To withdraw the grant, the Owner removes Clued in the Google account's
-  third-party access settings; this ends every Clued connection of that Google
+- To withdraw the grant, the Owner removes the connected app in the Google account's
+  third-party access settings; this ends every KooYomi connection of that Google
   account. "撤回全部文件读取授权" does not exist yet, and the full-scope
   disclosure never points to it.
 - Before Google's verification of the `drive` scope, only test users can grant
@@ -1365,7 +1365,7 @@ change it like an item Clued created.
   database refuses a connection whose credential is not full
   (`adopt_scope_upgrade_required`), an item registered (active or trashed) at
   that path or a Drive ID registered in any state, revoked included
-  (`adopt_already_registered`: an item the Owner removed from Clued returns
+  (`adopt_already_registered`: an item the Owner removed from KooYomi returns
   only through the administrative path), and the root's own children (tracks;
   `storage_job_input_invalid`).
 - Authority: the item's folder must be registered, current, matched like any
@@ -1407,7 +1407,7 @@ change it like an item Clued created.
   refuses `SCOPE_UPGRADE_REQUIRED` before the durable start when Drive reports
   `false`, so a downgraded connection never fences the root by changing such an
   item. Residual: the destination folder is not checked. Moving or creating
-  into an adopted folder Clued did not create, after a downgrade, may still be
+  into an adopted folder KooYomi did not create, after a downgrade, may still be
   refused by Drive after the attempt and stay fenced for recovery.
 
 Rollout: production migration, then release. The old Worker never submits an
@@ -1485,7 +1485,7 @@ changes. Existing connections keep working unchanged until the Owner turns on
   every text/jsonb/bytea column in `public` and `clued_private` for fragments
   of every replaced envelope). Overwritten row versions stay in the heap until
   VACUUM and in PITR backups for their retention period; the old refresh token
-  stays valid at Google, but Clued keeps no decryptable copy of it.
+  stays valid at Google, but KooYomi keeps no decryptable copy of it.
 - **Busy root.** Prepare calls `storage_root_quiet_v1` once for an early
   answer and complete checks it again; the page maps it to `storage_root_busy`
   ("稍后再试"). Any refusal rolls back: the old credential and connection stay.
@@ -1511,7 +1511,7 @@ changes. Existing connections keep working unchanged until the Owner turns on
   will write `cleared_at`) does not exist. The page and callback tell the Owner
   to contact a maintainer instead of pointing to that control.
 - **Operator step: resetting the refresh-token count.** Only after the Owner
-  has removed Clued's access for that Google account at
+  has removed the connected app's access for that Google account at
   <https://myaccount.google.com/permissions> (which invalidates every refresh
   token of that account x client; each affected connection then needs a plain
   reconnect), run in the production SQL editor, with the owner ID, the Google
@@ -1568,7 +1568,7 @@ changes. Existing connections keep working unchanged until the Owner turns on
   Clued-named entry outside the managed root, so the Owner's own `Clued_*`
   docs and folders, or another tool's, in My Drive denied every write job
   with `UNAUTHORIZED_WORKSPACE_MUTATION` before any intent. Per Clued Decision
-  `fd94bd2f`, only that island rule now counts entries the Clued app created
+  `fd94bd2f`, only that island rule now counts entries the KooYomi app created
   or opened (`isAppAuthorized === true`; a missing field still counts).
   Listings stay unfiltered: duplicate names, shortcuts, root impersonation,
   depth and entry limits, and the identity and postcondition absence and
@@ -2086,7 +2086,7 @@ Migration `20261001040000_storage_onboard_n0.sql`:
   (`native_connection`) → read access (`normal/1` only if requested and granted,
   otherwise `{read}` `text/1`) → default refresh delegation (145426 shape).
   Any failure rolls every step back; the Worker then records `fail`, listing
-  the created folders as orphans. Clued never deletes or trashes them; the page
+  the created folders as orphans. KooYomi never deletes or trashes them; the page
   shows them as "已在 Drive 中创建但未启用".
 - Expiry: `public.clued_storage_onboard_sweep_v1(issuer hash)`, called by the
   Worker cron every minute whenever `CLUED_STORAGE_ACCOUNT_V1` and

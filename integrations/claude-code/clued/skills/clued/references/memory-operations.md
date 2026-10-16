@@ -1,4 +1,4 @@
-# Kooyumi memory operations
+# KooYomi memory operations
 
 Use this workflow for personal and project context, including project records maintained during engineering. It does not authorize source changes, privileged administration or release publication.
 

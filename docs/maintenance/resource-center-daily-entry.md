@@ -38,7 +38,7 @@ does not change Windows/Drive ACLs or add a consumer capability.
 Do not install a writable root, credentials, host temporary directory or shell
 tool into the consumer. The only broker manifest is the two official schemas.
 
-## Kooyumi origin successor
+## KooYomi origin successor
 
 Current candidate bundles fix authority, write and committed-intent inspection
 to `https://kooyumi.pixelgrav.com`; renewal, status and stop use the same origin.

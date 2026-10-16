@@ -1,8 +1,8 @@
-# Kooyumi self-hosted runner pre-job check
+# KooYomi self-hosted runner pre-job check
 
 ## Private handover rollout candidate
 
-The `work-handover-current-epoch-v1` hook is a staged successor. Install only the reviewed, merged script after the service's execution-current observation RPC is deployed. The hook reads configuration from the repository's trusted default branch using its existing read-only App. PR code and job environment cannot replace that configuration. No Kooyumi CI Binding, private lease key, receiving key or admission App credential belongs on a runner.
+The `work-handover-current-epoch-v1` hook is a staged successor. Install only the reviewed, merged script after the service's execution-current observation RPC is deployed. The hook reads configuration from the repository's trusted default branch using its existing read-only App. PR code and job environment cannot replace that configuration. No KooYomi CI Binding, private lease key, receiving key or admission App credential belongs on a runner.
 
 The `work-handover-current-epoch-proxy-v1` successor also uses the runner's existing HTTP/HTTPS proxy settings. When those settings are present, it enables Node's built-in proxy support in one child process before reading credentials or making requests. The runtime must support `--use-env-proxy`; unsupported runtimes, invalid proxy values and an explicit Node proxy opt-out refuse. Existing wrappers, proxy settings, TLS validation, credentials and gate rules are preserved. Install this successor from its reviewed merged source, then repeat actual job-start qualification; the earlier installed copy's digest does not qualify this version.
 
@@ -21,7 +21,7 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 A job starts only when its run is one of the following:
 
 - **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch. A `pull_request_target` run counts only for a pull request into `main` (re-review 7, m1): it runs on `main`'s ref whatever the pull request's base, and a workflow may check out that base, which is the Agent's to edit when it is another branch.
-- **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the Kooyumi admission of the pull request.
+- **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the KooYomi admission of the pull request.
 - **A pull request into `main` that changes a workflow,** once `main`'s admission run of the same event as the job's run has succeeded.
   - That admission run is the newest `pull_request_target` run of `clued-work-admission.yml` on the head created no earlier than 15 seconds before the job's run. GitHub creates the runs of one event together. Skipped runs are left out: the admission job skips pull requests into other branches.
   - While that admission run is still going, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`, default 480). The same setting also bounds, separately, the wait for a re-run's `admission-gate` job (see Re-runs), so a heavy job of a re-run of a pull request that changes a workflow can wait up to twice that.
@@ -31,7 +31,7 @@ A job starts only when its run is one of the following:
   - The check itself is not read: a fine-grained token cannot read the Checks API (Task `b979d5a2`). Unlike the check, a run does not name its pull request. Another pull request into `main` with the same head, whose event came within 15 seconds, can therefore stand in. Its admission run judged the same commit and the same workflow changes.
 - **A manual dispatch on another branch of `clued-connection-authorization.yml`, `clued-g4-database.yml`, `information-flow-e2e.yml`, `clued-handover-external-qualification.yml` or `clued-handover-disposable-idle.yml`,** when the branch's `.github/workflows` directory is exactly `main`'s (same files, same object ids).
   - A branch behind `main` must merge `main` first.
-  - These workflows keep their dispatch gate, which needs a Kooyumi admission run for the dispatched commit.
+  - These workflows keep their dispatch gate, which needs a KooYomi admission run for the dispatched commit.
   - Other dispatchable workflows have no gate, so they run on `main` only.
 
 Everything else is refused before any step runs: pushes to other branches, pull requests into other branches, and other events.
