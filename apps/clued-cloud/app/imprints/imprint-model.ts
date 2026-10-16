@@ -48,6 +48,14 @@ export function normalizeRecord(value: unknown, development = false): ImprintRec
     || !(object(value.type_fields) || ((legacy || development) && value.type_fields == null))
     || !(object(value.relations) || ((legacy || development) && value.relations == null))
     || !(Array.isArray(value.source_refs) || ((legacy || development) && value.source_refs == null))) return null;
+  if (["associations", "association_version", "association_unavailable_count"].some(key => key in value)) {
+    if (!Array.isArray(value.associations) || !nonnegative(value.association_version) || !nonnegative(value.association_unavailable_count)
+      || value.associations.length + Number(value.association_unavailable_count) > 20
+      || value.associations.some(ref => !object(ref) || !uuid(ref.record_id) || ref.source_kind !== "canonical"
+        || !["task", "decision"].includes(String(ref.record_type)) || typeof ref.title !== "string"
+        || !positive(ref.record_version) || !positive(ref.current_version) || Number(ref.current_version) < Number(ref.record_version))
+      || new Set(value.associations.map(ref => object(ref) ? ref.record_id : null)).size !== value.associations.length) return null;
+  }
   return { ...value, id: value.id.toLowerCase(), scope: recordScope(value), domains: normalizedDomains(value.domains),
     title: value.title, content: value.content, record_type: value.record_type as string, version: value.version,
     lifecycle_status: value.lifecycle_status as string | null, organization_version: value.organization_version,
