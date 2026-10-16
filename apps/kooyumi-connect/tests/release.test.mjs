@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { buildRelease, sha256 } from '../build-release.mjs';
 import { collectChecks, verifyConnectRelease, PUBLIC_ORIGIN, ORIGIN, LEGACY_ORIGIN } from '../verify-production.mjs';
+import { contractVersionOf } from '../../clued-cloud/scripts/verify-served-agent-contract.mjs';
 
 const commit = 'a'.repeat(40), notBefore = Date.parse('2026-10-15T10:00:00Z');
 const contract = '# Clued Agent Contract\n\nContract version: 49\n\nContract fixture.\n';
@@ -72,12 +73,20 @@ test('the built module reports its compiled commit through read-only smoke witho
 test('the real repository contract and service tail retain distinct verified hashes', async () => {
   const value = healthy();
   value.contract = (await readFile(new URL('../../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const version = contractVersionOf(value.contract);
+  assert.ok(Number.isSafeInteger(version) && version > 0, 'repository contract must name a valid version');
+  value.bootstrap.body.lifecycle.contract.version = version;
+  value.bootstrap.body.agent_contract.version = version;
   value.servedContract.body = value.contract + serviceTail;
   value.bootstrap.body.agent_contract.sha256 = sha256(value.contract);
   value.smoke.body.upstream.official_skill_sha256 = sha256(value.servedContract.body);
-  assert.match(value.contract, /^Contract version: 49$/m);
   assert.notEqual(value.smoke.body.upstream.official_skill_sha256, value.bootstrap.body.agent_contract.sha256);
   assert.deepEqual(verifyConnectRelease(value), []);
+  value.bootstrap.body.lifecycle.contract.version = version - 1;
+  assert.ok(verifyConnectRelease(value).includes('connect_bootstrap_contract_version_mismatch'));
+  value.bootstrap.body.lifecycle.contract.version = version;
+  value.bootstrap.body.agent_contract.version = version - 1;
+  assert.ok(verifyConnectRelease(value).includes('connect_bootstrap_agent_contract_version_mismatch'));
 });
 
 test('production verification refuses wrong code, old issuers, failed upstream checks and stale responses', async t => {
