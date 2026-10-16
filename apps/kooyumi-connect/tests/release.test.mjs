@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { buildRelease, sha256 } from '../build-release.mjs';
-import { collectChecks, verifyConnectRelease, ORIGIN, LEGACY_ORIGIN } from '../verify-production.mjs';
+import { collectChecks, verifyConnectRelease, PUBLIC_ORIGIN, ORIGIN, LEGACY_ORIGIN } from '../verify-production.mjs';
 
 const commit = 'a'.repeat(40), notBefore = Date.parse('2026-10-15T10:00:00Z');
 const contract = '# Clued Agent Contract\n\nContract version: 49\n\nContract fixture.\n';
@@ -19,9 +19,9 @@ Binding portal: ${ORIGIN}/
 `;
 const servedContract = contract + serviceTail, contractSha = sha256(contract), servedSha = sha256(servedContract);
 function healthy() {
-  return { commit, revision: '0.2.14', contract, notBefore,
-    page: { status: 200, body: '<b>Kooyumi Connect</b>' },
-    smoke: { status: 200, body: { ok: true, connect_service: 'clued-connect', revision: '0.2.14', source_commit: commit,
+  return { commit, revision: '0.2.15', contract, notBefore,
+    page: { status: 200, body: '<b>KooYomi Connect</b>' },
+    smoke: { status: 200, body: { ok: true, connect_service: 'clued-connect', revision: '0.2.15', source_commit: commit,
       checked_at: '2026-10-15T10:00:01Z', state_machine: { ok: true },
       upstream: { origin: ORIGIN, resource: ORIGIN + '/mcp', healthz: 200, continuity_policy: 200, official_skill: 200, official_skill_sha256: servedSha } } },
     resource: { status: 200, body: { resource: ORIGIN + '/mcp', authorization_servers: [ORIGIN] } },
@@ -57,7 +57,7 @@ test('the built module reports its compiled commit through read-only smoke witho
     return String(url).endsWith('/clued-agent.md') ? new Response(servedContract) : Response.json({ ok: true });
   };
   try {
-    const response = await worker.fetch(new Request(ORIGIN + '/connect/api/smoke'), { KOOYUMI_UPSTREAM_ORIGIN: ORIGIN });
+    const response = await worker.fetch(new Request(PUBLIC_ORIGIN + '/connect/api/smoke'), { KOOYUMI_UPSTREAM_ORIGIN: ORIGIN });
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.equal(result.source_commit, commit);
@@ -106,6 +106,7 @@ test('production verification refuses wrong code, old issuers, failed upstream c
     [value => { value.resource.body.authorization_servers = [LEGACY_ORIGIN]; }, 'connect_resource_mismatch'],
     [value => { value.issuer.body.token_endpoint = LEGACY_ORIGIN + '/oauth/token'; }, 'connect_issuer_mismatch'],
     [value => { value.page.body = '<b>Clued Connect</b>'; }, 'connect_brand_mismatch'],
+    [value => { value.page.body = '<b>Kooyumi Connect</b>'; }, 'connect_brand_mismatch'],
     [value => { value.page.status = 302; }, 'connect_page_http_302'],
   ];
   for (const [mutate, expected] of cases) await t.test(expected, () => {
@@ -117,8 +118,8 @@ test('production verification refuses wrong code, old issuers, failed upstream c
 test('production observation uses public GET checks only and refuses redirects or transport failure', async () => {
   const requested = [], value = healthy();
   const bodies = new Map([
-    [ORIGIN + '/connect', value.page],
-    [ORIGIN + '/connect/api/smoke', value.smoke], [ORIGIN + '/.well-known/oauth-protected-resource/mcp', value.resource],
+    [PUBLIC_ORIGIN + '/connect', value.page],
+    [PUBLIC_ORIGIN + '/connect/api/smoke', value.smoke], [ORIGIN + '/.well-known/oauth-protected-resource/mcp', value.resource],
     [ORIGIN + '/.well-known/oauth-authorization-server', value.issuer],
     [ORIGIN + '/clued-agent.md', value.servedContract], [ORIGIN + '/v1/continuity/bootstrap', value.bootstrap],
   ]);
@@ -137,7 +138,7 @@ test('production observation uses public GET checks only and refuses redirects o
     return typeof expected.body === 'string' ? new Response(expected.body) : Response.json(expected.body);
   });
   assert.deepEqual(new Set(requested), new Set(bodies.keys()));
-  assert.ok(requested.every(url => new URL(url).origin === ORIGIN), 'new releases must not require legacy DNS or availability');
+  assert.ok(requested.every(url => [PUBLIC_ORIGIN, ORIGIN].includes(new URL(url).origin)), 'public entry and issuer checks must use only the two reviewed origins');
   assert.equal(Object.hasOwn(checks, 'legacyPage'), false);
   assert.deepEqual(verifyConnectRelease({ ...value, ...checks }), []);
   const unavailable = await collectChecks(commit, async () => { throw new Error('redirect or network failure'); });

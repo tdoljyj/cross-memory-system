@@ -14,8 +14,8 @@
     "extracted_module_sha256": "fe2677bd4f9c34ad467aa47e121e78877487126ae97004d04bb0e1f9c2c581c3"
   },
   "candidate": {
-    "revision": "0.2.14",
-    "module_sha256": "5216046f1bcf7124d935a506238229086cde3423ee4ae4c5fb88696884076ed7"
+    "revision": "0.2.15",
+    "module_sha256": "8af324adc8457d8e8fefcd32807d31eeb8e2a77e283eddbd4f9ad8127ff9f3ac"
   },
   "bindings": [
     {

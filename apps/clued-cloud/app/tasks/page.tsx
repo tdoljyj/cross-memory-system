@@ -97,7 +97,7 @@ const workflowMessages: Record<string, string> = {
   task_workflow_declared_input_requires_owner: "未自动核验的版本声明，需要由你核对并接受交付。",
 };
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 Kooyumi，授权给应用的登录不能查看任务详情。",
+  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能查看任务详情。",
   record_not_found: "找不到这条记录，或当前账户无权查看。",
 };
 const BEIJING = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit",
@@ -576,10 +576,10 @@ export default function TaskOwnerDetailPage() {
     </>;
   }
   return <main className="context-page owner-confirm">
-    <header><Link href="/">Kooyumi</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/grants">我的授权</Link></header>
+    <header><Link href="/">KooYomi</Link> <Link href="/work-claims">谁在做哪个任务</Link> <Link href="/grants">我的授权</Link></header>
     <h1>{visible ? kinds[visible.record.record_type] + "详情" : "任务详情"}</h1>
     <p className="context-muted">查看任务正文和关联记录，并按当前约定核对交付。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 Kooyumi</Link> 后查看详情。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后查看详情。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {!id ? <p role="alert">请使用完整的记录 ID，从认领页的任务链接打开详情。</p> : <>
         {loading && <p role="status">正在读取详情…</p>}

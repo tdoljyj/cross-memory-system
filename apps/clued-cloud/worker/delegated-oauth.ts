@@ -351,7 +351,7 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
       authorizeEndpoint: '/oauth/authorize', tokenEndpoint: '/oauth/token', clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: SCOPES, clientIdMetadataDocumentEnabled: false, allowPlainPKCE: false, allowImplicitFlow: false,
       accessTokenTTL: 900, refreshTokenTTL: 365 * 86400,
-      resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'Kooyumi' },
+      resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'KooYomi' },
       tokenExchangeCallback: async ({ grantType, props, scope, requestedScope }) => {
         await checkBinding(env, props);
         const narrowed = scope.some(item => !requestedScope.includes(item));

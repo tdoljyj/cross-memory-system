@@ -1,10 +1,58 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { routeWebOrigin } from "../worker/web-origin-routing.mjs";
+import { routeStorageOrigin } from "../worker/web-origin-routing.mjs";
+import { selectOAuthOrigin } from "../worker/oauth-origin.mjs";
 
 const legacy = "https://clued.pixelgrav.com";
 const web = "https://kooyumi.pixelgrav.com";
 const env = { CLUED_OAUTH_ORIGIN: legacy, CLUED_WEB_ORIGINS: web };
+
+test("the primary domain serves Native requests while existing issuers and callback sessions stay on their registered origins", async () => {
+  const config = JSON.parse(await readFile(new URL("../wrangler.production.jsonc", import.meta.url), "utf8"));
+  const primary = "https://kooyomi.com";
+  const production = { ...config.vars, CLUED_OAUTH_ORIGIN: legacy,
+    CLUED_STORAGE_GOOGLE_REDIRECT_URI: web + "/storage/google/callback" };
+  for (const host of ["clued.pixelgrav.com", "kooyumi.pixelgrav.com", "kooyomi.com"]) {
+    assert.ok(config.routes.some(route => route.pattern === host && route.custom_domain === true));
+  }
+  assert.equal(production.KOOYUMI_OAUTH_ORIGIN, web);
+  assert.equal(selectOAuthOrigin(new Request(primary + "/"), production), production);
+  for (const origin of [web, primary]) {
+    for (const path of ["/", "/contexts", "/v1/records"]) {
+      const request = new Request(origin + path, { method: "POST", body: "same-origin-body",
+        headers: { authorization: "Bearer same-origin-session" } });
+      const response = await routeWebOrigin(request, production, async received => {
+        assert.equal(received, request);
+        assert.equal(received.headers.get("authorization"), "Bearer same-origin-session");
+        assert.equal(await received.text(), "same-origin-body");
+        return new Response("native");
+      });
+      assert.equal(await response.text(), "native");
+    }
+  }
+  const unexpected = async () => { throw Error("protocol request must not reach Native handler"); };
+  for (const path of ["/mcp", "/oauth/token", "/oauth/register"]) {
+    const response = await routeWebOrigin(new Request(primary + path, { method: "POST", body: "secret" }), production, unexpected);
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get("location"), null);
+  }
+  const metadata = await routeWebOrigin(new Request(primary + "/.well-known/oauth-authorization-server"), production, unexpected);
+  assert.equal(metadata.status, 302);
+  assert.equal(metadata.headers.get("location"), legacy + "/.well-known/oauth-authorization-server");
+  for (const method of ["GET", "HEAD"]) {
+    const storage = routeStorageOrigin(new Request(primary + "/storage/admin?source=primary", { method }), production);
+    assert.equal(storage.status, 302);
+    assert.equal(storage.headers.get("location"), web + "/storage/admin?source=primary");
+  }
+  const storageMutation = routeStorageOrigin(new Request(primary + "/storage/admin", { method: "POST", body: "private" }), production);
+  assert.equal(storageMutation.status, 404);
+  assert.equal(storageMutation.headers.get("location"), null);
+  const authenticatedNavigation = routeStorageOrigin(new Request(primary + "/storage/admin", { headers: { authorization: "Bearer private" } }), production);
+  assert.equal(authenticatedNavigation.status, 404);
+  assert.equal(authenticatedNavigation.headers.get("location"), null);
+});
 
 test("explicit web origin serves Native pages and authenticated same-origin APIs", async () => {
   for (const path of ["/", "/contexts", "/v1/records", "/assets/app.js"]) {
