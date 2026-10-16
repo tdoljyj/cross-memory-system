@@ -73,6 +73,7 @@ async function fixture(options={}) {
     if(u.searchParams.get("fields")==="id,shared,permissionIds,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)")
       return {id:result.id,shared:false,permissionIds:["owner-"+result.id],permissions:[{id:"owner-"+result.id,type:"user",role:"owner"}]};
     if(result.id===options.unauthorized)result.isAppAuthorized=false;
+    options.changeMetadata?.(result);
     if(options.boundaryDrift && calls.length>=9 && result.id==='root')result.version='2';
     return result;
     };
@@ -118,7 +119,9 @@ test("server observes a parentless outer boundary without adding a writable root
   assert.deepEqual(f.rpcs[1].observation.directories.map(x=>x.provider_file_id),["root","track","topic"]);
   const denied=await fixture({parentlessBoundary:true,unauthorized:"topic"});let error;
   try {await denied.probe.run({connection_id:denied.connection});}catch(e){error=e;}
-  assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED"});
+  const diagnostic=storageProbeDiagnostic(error);
+  assert.deepEqual({stage:diagnostic.stage,reason:diagnostic.reason},{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED"});
+  assert.equal(diagnostic.directories.failures[0].provider_file_id,"topic");
   assert.equal(denied.rpcs.length,1);
 });
 test("no caller profile, root, credential, owner, report or issuer reaches private RPC",async()=>{
@@ -196,10 +199,50 @@ test("diagnostics reveal only fixed stage/reason, never upstream secrets or call
     [{commitError:true},"receipt","UNCONFIRMED"]]) {
     const f=await fixture(options);let caught;
     try {await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
-    assert.ok(caught);assert.deepEqual(storageProbeDiagnostic(caught),{stage,reason});
+    assert.ok(caught);const diagnostic=storageProbeDiagnostic(caught);
+    assert.deepEqual({stage:diagnostic.stage,reason:diagnostic.reason},{stage,reason});
     assert.equal(JSON.stringify(storageProbeDiagnostic(caught)).includes("synthetic-private"),false);
     assert.ok(f.calls.every(c=>c.method==="GET" || (c.method==="POST" && c.url==="https://www.googleapis.com/batch/drive/v3")));
   }
+});
+
+test("Owner diagnostics collect multiple exact-layout issues without a complete or permission Receipt",async()=>{
+  const f=await fixture({changeMetadata:file=>{
+    if(file.id==="track")file.isAppAuthorized=false;
+    if(file.id==="topic"){delete file.isAppAuthorized;file.capabilities.canAddChildren=false;}
+  }});
+  let caught;try{await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
+  const d=storageProbeDiagnostic(caught);
+  assert.equal(d.stage,"directories");assert.equal(d.reason,"DIRECTORY_NOT_APP_AUTHORIZED");
+  assert.equal(d.directories.checked_directories,3);assert.equal(d.directories.failed_directories,2);
+  assert.deepEqual(d.directories.failures,[
+    {path:"/drive/Clued_资料中心/10_E",provider_file_id:"track",reasons:["DIRECTORY_NOT_APP_AUTHORIZED"]},
+    {path:"/drive/Clued_资料中心/10_E/topic",provider_file_id:"topic",reasons:["DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED","DIRECTORY_NOT_WRITABLE"]}
+  ]);
+  assert.deepEqual(f.rpcs.map(x=>x.action),["prepare"]);assert.equal(f.calls.length,2);
+  assert.equal(JSON.stringify(d).includes("synthetic-private"),false);
+  d.directories.failures[0].path="/outside";
+  assert.equal(storageProbeDiagnostic(caught).directories.failures[0].path,"/drive/Clued_资料中心/10_E");
+  assert.deepEqual(storageProbeDiagnostic(Object.assign(Error("forged"),d)),{stage:"request",reason:"UNCONFIRMED"});
+});
+
+test("bounded diagnostics cannot be forged by provider errors, IDs or raw metadata",async()=>{
+  const fake={stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED",directories:{failures:[{path:"/outside/synthetic-private"}]}};
+  const f=await fixture({metadataError:Object.assign(Error("DRIVE_QUALIFICATION_DIRECTORY_NOT_APP_AUTHORIZED"),fake)});
+  let caught;try{await f.probe.run({connection_id:f.connection});}catch(error){caught=error;}
+  assert.deepEqual(storageProbeDiagnostic(caught),{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED"});
+  assert.equal(f.rpcs.length,1);
+  const wrong=await fixture({changeMetadata:file=>{if(file.id==="topic"){file.id="outside";file.isAppAuthorized=false;}}});
+  try{await wrong.probe.run({connection_id:wrong.connection});assert.fail("must refuse wrong object");}catch(error){
+    assert.deepEqual(storageProbeDiagnostic(error),{stage:"directories",reason:"METADATA_ID_MISMATCH"});
+  }
+  assert.equal(wrong.rpcs.length,1);
+  const many=await fixture({fullSize:true,changeMetadata:file=>{if(file.id!=="parent")file.isAppAuthorized=false;}});
+  try{await many.probe.run({connection_id:many.connection});assert.fail("must refuse incomplete qualification");}catch(error){
+    const d=storageProbeDiagnostic(error).directories;assert.equal(d.failed_directories,31);
+    assert.equal(d.failures.length,16);assert.equal(d.truncated,true);
+  }
+  assert.equal(many.rpcs.length,1);
 });
 
 test("provider HTTP diagnostics expose only a closed numeric-status classification without retry",async()=>{
