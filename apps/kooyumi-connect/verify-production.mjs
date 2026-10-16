@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { sha256 } from './build-release.mjs';
 import { verifyServedAgentContract } from '../clued-cloud/scripts/verify-served-agent-contract.mjs';
 
+// Public browser entry and authenticated issuer are deliberately independent.
+export const PUBLIC_ORIGIN = 'https://kooyomi.com';
 export const ORIGIN = 'https://kooyumi.pixelgrav.com';
 export const LEGACY_ORIGIN = 'https://clued.pixelgrav.com';
 const ATTEMPTS = 6;
@@ -13,7 +15,7 @@ export function verifyConnectRelease({ commit, revision, contract, page, smoke, 
   for (const [name, result] of Object.entries({ page, smoke, resource, issuer, servedContract, bootstrap })) {
     if (result?.status !== 200) errors.push(`connect_${name}_http_${result?.status ?? 0}`);
   }
-  if (!/Kooyumi Connect/.test(page?.body ?? '')) errors.push('connect_brand_mismatch');
+  if (!/KooYomi Connect/.test(page?.body ?? '')) errors.push('connect_brand_mismatch');
   const body = smoke?.body;
   if (body?.ok !== true || body?.state_machine?.ok !== true || body?.connect_service !== 'clued-connect') errors.push('connect_smoke_failed');
   if (body?.revision !== revision) errors.push('connect_revision_mismatch');
@@ -44,7 +46,7 @@ export async function collectChecks(commit, fetchImpl = fetch) {
     } catch { return { status: 0, body: null }; }
   };
   const [page, smoke, resource, issuer, servedContract, bootstrap] = await Promise.all([
-    get(ORIGIN + '/connect', 'text/html'), get(ORIGIN + '/connect/api/smoke'),
+    get(PUBLIC_ORIGIN + '/connect', 'text/html'), get(PUBLIC_ORIGIN + '/connect/api/smoke'),
     get(ORIGIN + '/.well-known/oauth-protected-resource/mcp'), get(ORIGIN + '/.well-known/oauth-authorization-server'),
     get(ORIGIN + '/clued-agent.md', 'text/markdown'), get(ORIGIN + '/v1/continuity/bootstrap'),
   ]);
