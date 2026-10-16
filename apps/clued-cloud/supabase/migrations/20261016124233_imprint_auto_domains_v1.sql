@@ -11,16 +11,20 @@ create function clued_private.imprint_auto_domains_v1(p_content text)
 returns text[] language plpgsql immutable parallel safe set search_path='' as $$
 declare rules jsonb:=clued_private.imprint_auto_rules_v1(); line text; segment text; piece text;
   pattern text; purpose text; captures text[]; rule jsonb; domains text[]:='{}';
-  external_block boolean:=false; code_block boolean:=false; excluded boolean;
+  external_block boolean:=false; code_fence text; fence text; excluded boolean;
 begin
   -- Abstain rather than truncate long sources or add latency to their write.
   if p_content is null or char_length(p_content)>65536 then return domains; end if;
   foreach line in array string_to_array(p_content,E'\n') loop
-    if line ~ '`' then
-      if line ~ '```' then code_block:=not code_block; end if;
+    fence:=substring(line from '^\s*(`{3,}|~{3,})');
+    if fence is not null then
+      if code_fence is null then code_fence:=fence;
+      elsif left(fence,1)=left(code_fence,1) and length(fence)>=length(code_fence)
+        and btrim(substr(btrim(line),length(fence)+1))='' then code_fence:=null;
+      end if;
       continue;
     end if;
-    if code_block then continue; end if;
+    if code_fence is not null or line ~ '`' then continue; end if;
     if btrim(line)='' then external_block:=false; continue; end if;
     if line ~* '^\s*(以下(是|为))?(客户(请求|要求|说|原话|邮件|消息)|对方(说|要求)|文章(说|内容)|原文|引用|转述|摘录|示例|例子|quoted text|client request|article says|example)\s*[:：]'
       then external_block:=true; end if;
@@ -113,7 +117,7 @@ returns trigger language plpgsql security definer set search_path='' as $$
 declare source clued_private.development_records_v14; space clued_private.development_spaces_v14;
   content text; domains text[];
 begin
-  if new.op<>'record_put' or new.actor_user_id<>new.owner_id
+  if new.op<>'record_put' or new.actor_user_id is distinct from new.owner_id
     or old.result is distinct from '{}'::jsonb or new.result->>'status' is distinct from 'committed'
     or new.result->'result'->>'version' is distinct from '1'
     or new.result->>'operation_id' is distinct from new.id::text

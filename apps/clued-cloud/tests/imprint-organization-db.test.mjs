@@ -424,6 +424,9 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
         ['如果保存用途：学习英语。', []], ['保存用途：不用来学习英语。', []],
         ['英文电影。', []], ['客户请求：\n保存用途：工作汇报。', []],
         ['```\n保存用途：工作汇报。\n```', []], ['“保存用途：工作汇报。”', []],
+        ['~~~text\n保存用途：工作汇报。\n~~~', []],
+        ['~~~\n```\n保存用途：工作汇报。\n```\n~~~', []],
+        ['````\n```\n保存用途：工作汇报。\n```\n````', []],
         ['原文：\n用途：工作汇报。\n\n用途：家庭预算。', ['daily']],
         ['x'.repeat(65537) + '\n保存用途：学习英语。', []],
       ]) assert.deepEqual(await classify(text), expected, text.slice(0, 120));
