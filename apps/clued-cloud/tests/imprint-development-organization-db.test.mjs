@@ -7,6 +7,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
+import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
+import { setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -352,6 +355,74 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       } finally {
         await admin.query(originalDefinition);
         await admin.query('drop function clued_private.imprint_development_fixture_fence(uuid,uuid,text[])');
+      }
+    });
+    await t.test('normal authorized Context writes auto-organize atomically; manual clear and replay retain source identity', async () => {
+      await allowRawTestBindings(admin); await allowTestIssuerCredentials(admin);
+      const gateway = server.getPgClient(); clients.push(gateway); await gateway.connect();
+      await setWorkerGatewayCaller(gateway);
+      const issuer = hash(uuid()), resource = 'https://imprint-auto.example.invalid/mcp';
+      await admin.query(`insert into clued_private.authorization_issuers_v12(token_hash,resource,name)
+        values($1,$2,'Automatic domain synthetic issuer')`, [issuer, resource]);
+      const prepared = (await human.query('select public.clued_authorization_prepare_v12($1,$2::jsonb) v', [issuer, JSON.stringify({
+        request_digest: hash(uuid()), client_id: 'imprint-auto-client', client_name: 'Automatic domain fixture',
+        redirect_uri: 'https://imprint-auto.example.invalid/callback', resource, requested_scopes: ['context:read', 'context:write'],
+      })])).rows[0].v;
+      const token = hash(uuid());
+      const authorized = (await human.query('select public.clued_authorization_approve_v12($1,$2,$3,$4::jsonb,$5,$6) v',
+        [issuer, prepared.request_id, prepared.version, JSON.stringify([{ resource_kind: 'context', resource_id: context,
+          environment: 'preview', actions: ['read', 'write'] }]), token, new Date(Date.now() + 3600000).toISOString()])).rows[0].v;
+      assert.ok(authorized.binding_id, JSON.stringify(authorized)); assert.equal(authorized.version, 1);
+      const write = request => workerGatewayRpc(gateway, 'clued_development_call_v14', token,
+        { context_id: context, environment: 'preview', ...request });
+      const create = body => ({ op: 'record_put', record_type: 'note', body, idempotency_key: uuid() });
+      const request = create({ title: 'Same raw source', content: '保存用途：工作汇报、课程学习、创作游戏剧情。',
+        source_refs: [{ content: '用途：兴趣探索。' }], metadata: { purpose: '家庭预算' } });
+      const saved = await write(request), id = saved.result.id;
+      assert.equal(saved.status, 'committed', JSON.stringify(saved));
+      const org = async target => (await admin.query('select * from clued_private.imprint_development_organization_v1 where record_id=$1', [target])).rows[0];
+      const original = (await admin.query('select to_jsonb(r) v from clued_private.development_records_v14 r where id=$1', [id])).rows[0].v;
+      assert.deepEqual((await org(id)).domains, ['creation', 'learning', 'work']);
+      assert.equal((await org(id)).source_operation_id, saved.operation_id);
+      assert.equal((await org(id)).receipt_id, null, 'private operation Receipt is not a public M1 Receipt');
+      assert.equal((await org(id)).auto_rules_version, 'imprint-explicit-local.v1');
+      const projection = (await read({ id, view: 'learning', source_kind: 'development' })).records[0];
+      assert.equal(projection.id, id); assert.equal(projection.organization_version, 1);
+      assert.equal(projection.version, 1); assert.equal(projection.record_currentness, 'UNKNOWN');
+      assert.equal(projection.authoritative, false); assert.deepEqual(projection.body, request.body);
+      assert.deepEqual((await read({ id, view: 'task' })).records, []);
+      const clear = input(id, [], 1), cleared = await set(clear), replay = await set(clear);
+      assert.equal(cleared.status, 'committed', JSON.stringify(cleared)); assert.equal(replay.receipt_id, cleared.receipt_id);
+      assert.equal(replay.replayed, true); assert.deepEqual((await org(id)).domains, []);
+      assert.equal((await org(id)).source_operation_id, null); assert.equal((await org(id)).auto_rules_version, null);
+      assert.equal((await org(id)).receipt_id, cleared.receipt_id);
+      assert.deepEqual((await admin.query('select to_jsonb(r) v from clued_private.development_records_v14 r where id=$1', [id])).rows[0].v, original);
+      assert.equal((await write(request)).replayed, true);
+      assert.deepEqual((await org(id)).domains, []);
+      const updated = await write({ ...create({ content: '用途：家庭预算。' }), record_id: id, base_version: 1 });
+      assert.equal(updated.result.version, 2); assert.deepEqual((await org(id)).domains, []);
+      assert.equal((await set(input(id, ['daily'], 1, 2))).error_code, 'organization_version_conflict');
+      for (const body of [{ content: '英文电影。' }, { content: '“用途：学习英语。”' },
+        { source_refs: [{ text: '用途：工作汇报。' }], metadata: { content: '用途：学习英语。' } },
+        { content: '用途：学习英语。', source_kind: 'external_material' }]) {
+        const result = await write(create(body)); assert.equal(result.status, 'committed');
+        assert.equal(await org(result.result.id), undefined);
+      }
+      const textField = await write(create({ text: '我收藏这篇文章用于兴趣探索。' }));
+      assert.deepEqual((await org(textField.result.id)).domains, ['interest']);
+      await assert.rejects(write({ ...create({ content: '用途：工作汇报。' }), environment: 'production' }), /context_environment_denied/);
+      await assert.rejects(write({ ...create({ content: '用途：工作汇报。' }), context_id: foreignContext }), /denied|authorized|scope/);
+      let aborted;
+      await gateway.query('begin');
+      try { aborted = (await write(create({ content: '用途：家庭预算。' }))).result.id; }
+      finally { await gateway.query('rollback'); }
+      assert.equal(await org(aborted), undefined);
+      assert.equal((await admin.query('select count(*) n from clued_private.development_records_v14 where id=$1', [aborted])).rows[0].n, '0');
+      const settled = await org(textField.result.id);
+      await admin.query('update clued_private.development_operations_v14 set result=result where id=$1', [textField.operation_id]);
+      assert.deepEqual(await org(textField.result.id), settled, 'settled operation updates do not classify twice');
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_function_privilege($1,'clued_private.imprint_auto_context_create_v1()','execute') v", [role])).rows[0].v, false);
       }
     });
   } finally {

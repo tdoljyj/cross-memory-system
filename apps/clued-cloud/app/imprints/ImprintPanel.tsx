@@ -129,6 +129,7 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
   const changeNote = (field: "title" | "content" | "scope", value: string) => setNote({ ...draft, [field]: value });
   return <section className="imprints-panel records-panel" aria-label={development ? (locale === "zh-CN" ? "上下文印记" : "Context imprints") : t.title}>
     <div className="continuity-heading"><div><h3>{development ? (locale === "zh-CN" ? "上下文印记" : "Context imprints") : t.title}{developmentContextName ? ` · ${developmentContextName}` : ""}</h3><p>{t.description}</p></div></div>
+    <p className="context-muted">{locale === "zh-CN" ? "新内容会按正文中明确写出的保存用途自动归类。不确定的留在全部；手动修改或清空后会保留你的选择。" : "New content is organized by explicitly stated saved purposes. Uncertain content stays in All. Manual edits, including clearing labels, keep your choice."}</p>
     <div className="record-tabs" role="tablist" aria-label={t.title}>
       {VIEW_KEYS.map((item, index) => <button type="button" role="tab" key={item} aria-selected={view === item} tabIndex={view === item ? 0 : -1}
         className={view === item ? "active" : ""} onClick={() => setView(item)} onKeyDown={event => {

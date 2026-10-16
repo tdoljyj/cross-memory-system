@@ -90,13 +90,29 @@ function uncertain(text: string): boolean {
 }
 
 function purpose(text: string): string | null {
-  const zh = /^(?:保存用途|收藏用途|记录用途|用途)\s*[:：]\s*(.+)$/u.exec(text)
-    ?? /^我(?:保存|收藏|记下|留存)(?:这(?:份|篇|条|个|段)(?:资料|材料|文章|笔记|内容|教程|记录|链接|视频)?)?(?:是)?(?:为了|用于|用来)\s*(.+)$/u.exec(text);
-  if (zh) return zh[1];
-  return /^(?:save purpose|purpose)\s*:\s*(.+)$/i.exec(text)?.[1]
-    ?? /^I (?:save|saved|keep|kept) (?:this|these)(?: (?:material|materials|article|notes|note|reference|video|link))? (?:for|to support)\s+(.+)$/i.exec(text)?.[1]
-    ?? null;
+  for (const rule of PURPOSE_ANCHORS) {
+    const match = rule.exec(text);
+    if (match) return match[1];
+  }
+  return null;
 }
+
+const PURPOSE_ANCHORS = [
+  /^(?:保存用途|收藏用途|记录用途|用途)\s*[:：]\s*(.+)$/u,
+  /^我(?:保存|收藏|记下|留存)(?:这(?:份|篇|条|个|段)(?:资料|材料|文章|笔记|内容|教程|记录|链接|视频)?)?(?:是)?(?:为了|用于|用来)\s*(.+)$/u,
+  /^(?:save purpose|purpose)\s*:\s*(.+)$/i,
+  /^I (?:save|saved|keep|kept) (?:this|these)(?: (?:material|materials|article|notes|note|reference|video|link))? (?:for|to support)\s+(.+)$/i,
+];
+
+// The database generator consumes these same purpose rules. They contain no
+// user content or execution rules; automatic organization never extracts Tasks.
+export const IMPRINT_DOMAIN_RULESET = {
+  version: "imprint-explicit-local.v1",
+  purposes: PURPOSE_ANCHORS.map(rule => rule.source),
+  domains: PURPOSE_DOMAINS.map(rule => ({ domain: rule.domain, patterns: [rule.zh.source, rule.en.source] })),
+  uncertain: [UNCERTAIN_ZH.source, UNCERTAIN_EN.source, "[?？]"],
+  reported: [REPORTED_ZH.source, REPORTED_EN.source],
+};
 
 function taskStatement(text: string): boolean {
   if (PAST_TASK_ZH.test(text) || PAST_TASK_EN.test(text)) return false;
