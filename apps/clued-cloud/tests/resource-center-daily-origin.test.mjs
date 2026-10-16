@@ -14,10 +14,13 @@ test("built daily consumer sends authority, writer and settlement inspection onl
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "kooyumi-daily-origin-")), bundle = path.join(dir, "runner.mjs");
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   try {
-    await build({ entryPoints: [fileURLToPath(new URL("../scripts/resource-center-daily-runner.mjs", import.meta.url))],
+    await build({ stdin: { contents: `
+      export { createDailyNativeWriterToolHost, createDailySettlementInspector } from './resource-center-daily-runner.mjs';
+      export { resourceCenterReservationDiagnostic } from '../../../kernel/host/resource-center-write-client.mjs';`,
+      resolveDir: fileURLToPath(new URL("../scripts/", import.meta.url)), sourcefile: "daily-origin-fixture.mjs" },
       outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent" });
   } finally { await stop(); }
-  const { createDailyNativeWriterToolHost, createDailySettlementInspector } = await import(pathToFileURL(bundle));
+  const { createDailyNativeWriterToolHost, createDailySettlementInspector, resourceCenterReservationDiagnostic } = await import(pathToFileURL(bundle));
   const reader = "clued_rcb_" + "a".repeat(40), writer = "clued_rcw_" + "b".repeat(40), root = "G:/review/Clued_资料中心";
   const profile = { registration_status: "registered", profile_id: randomUUID(), profile_version: "fixture/1",
     managed_root: root, allowed_root_children: ["track"] };
@@ -76,8 +79,15 @@ test("built daily consumer sends authority, writer and settlement inspection onl
   assert.equal(inspections[0].options.headers.authorization, "Bearer " + writer);assert.equal(inspections[0].options.redirect, "error");
   assert.equal(timeouts.get(inspections[0].options.signal), 10000);
   assert.equal(JSON.parse(inspections[0].options.body).request.action, "inspect");
-  await assert.rejects(inspector.prepare_write({ profile, mutation: { operation: "create" } }), /DAILY_SETTLEMENT_READ_ONLY/);
+  await assert.rejects(inspector.prepare_write({ profile, mutation: { operation: "create" } }), error => {
+    assert.equal(error.message, "RESERVATION_PROVIDER_IDENTITY_UNAVAILABLE");
+    assert.deepEqual(resourceCenterReservationDiagnostic(error), { stage: "provider_identity",
+      reason_code: "RESERVATION_PROVIDER_IDENTITY_UNAVAILABLE", reservation_status: "not_started" });
+    return true;
+  });
   assert.equal(inspections.length, 1, "settlement cannot prepare or start a provider operation");
+  assert.equal(JSON.parse(inspections[0].options.body).request.action, "inspect");
+  assert.equal(providerWrites, 0, "settlement never gains a provider effect callback");
   assert.throws(() => createDailySettlementInspector("clued_bnd_" + "a".repeat(40)), /dedicated writer Binding/);
   const failed = [];
   await assert.rejects(createDailySettlementInspector(writer, async url => { failed.push(url);throw Error("offline"); }).inspect_recovery(ticket), /offline/);

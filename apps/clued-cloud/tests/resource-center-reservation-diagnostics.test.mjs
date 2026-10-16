@@ -24,7 +24,11 @@ async function nativeFixture(t, failureStage) {
   const profile = { registration_status: "registered", profile_id: "native-fixture", profile_version: "test/1",
     managed_root: path.join(directory, "Clued_资料中心"), allowed_root_children: ["20_P_产品与体验"], boundary_scan_roots: [directory] };
   await fs.mkdir(path.join(profile.managed_root, "20_P_产品与体验"), { recursive: true });
-  const state = path.join(directory, "state"); await fs.mkdir(state); await fs.writeFile(path.join(state, "jobs.jsonl"), "");
+  // Operator runtime state is outside the provider workspace and its scanned
+  // parent. A sibling state directory is an actual boundary violation.
+  const state = await fs.mkdtemp(path.join(os.tmpdir(), "reservation-runtime-"));
+  t.after(() => fs.rm(state, { recursive: true, force: true }));
+  await fs.writeFile(path.join(state, "jobs.jsonl"), "");
   const actions = [], tickets = [];
   let failOnce = true;
   const failAt = stage => { if (failureStage === stage && failOnce) { failOnce = false; throw new Error(secret); } };
@@ -97,7 +101,8 @@ test("a diagnosed lost start still retains the daily profile fence across differ
   const run = (host = f.host) => runDailyJob({ state_directory: f.state, trusted_profile: f.profile, host,
     job: { job_id: randomUUID(), tool: RESOURCE_CENTER_MUTATION_TOOL, arguments: f.mutation },
     run_isolated: async ({ job, call_tool: call }) => {
-      await call(RESOURCE_CENTER_BOUNDARY_SCAN_TOOL, {});
+      const findings = await call(RESOURCE_CENTER_BOUNDARY_SCAN_TOOL, {});
+      assert.deepEqual(findings, [], "the normal consumer may mutate only after a clean boundary scan");
       return call(job.tool, job.arguments);
     } });
   const first = await run();
