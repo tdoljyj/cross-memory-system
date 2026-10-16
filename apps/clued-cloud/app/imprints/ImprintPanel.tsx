@@ -9,6 +9,8 @@ import { DOMAIN_KEYS, RECORD_TYPES, VIEW_KEYS, VIEW_LABELS, SelectionFence, beij
 import { ImprintFailure, mutateRecord, noteInput, organizationInput, prepareWrite, readImprints, readSource, setOrganization, taskDueInput,
   type NativeRpc, type PreparedWrite, type SourceRead } from "./imprint-client";
 import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-suggestions";
+import ExistingAssociationEditor from "./ExistingAssociationEditor";
+import type { AssociationRead } from "./imprint-associations";
 
 const COPY = {
   "zh-CN": {
@@ -98,13 +100,19 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
     return () => { cancelled = true; activeFence.begin("read"); }; /* callbacks belong to this exact selection */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection]);
-  async function openRecord(id: string, sourceNamespace?: "canonical" | "development") {
+  async function openRecord(id: string, sourceNamespace?: "canonical" | "development", association?: AssociationRead) {
     const ticket = fence.current.begin("detail");
     setDetail({ selection, value: { loading: true, record: null, error: "" } });
     try {
-      const result = await readImprints(rpc, { view: "all", scope: "all", query: "", include_history: true, limit: 30, cursor: 0, id,
+      const result = await readImprints(rpc, { view: association?.recordType ?? "all", scope: association?.scope ?? "all", query: "", include_history: !association, limit: 30, cursor: 0, id,
         ...(development && sourceNamespace ? { source_kind: sourceNamespace } : {}) }, developmentContextId,
         { isCurrent: () => fence.current.current(ticket) });
+      if (association && (result.records.length !== 1 || result.records[0].id !== id
+        || result.records[0].scope !== association.scope || result.records[0].record_type !== association.recordType
+        || sourceKind(result.records[0]) === "development" || result.records[0].record_schema_version !== 1
+        || result.records[0].record_currentness !== "CURRENT" || result.records[0].lifecycle_status !== "active"
+        || result.records[0].authoritative !== true || (development && result.records[0].context_id !== developmentContextId)))
+        throw new ImprintFailure("unavailable", "association_target_unavailable");
       if (fence.current.current(ticket)) setDetail({ selection, value: { loading: false, record: result.records[0] ?? null, error: result.records.length ? "" : t.unavailable } });
     } catch (failure) { if (fence.current.current(ticket)) setDetail({ selection, value: { loading: false, record: null, error: failureText(failure, locale) } }); }
   }
@@ -168,7 +176,7 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
 
 function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommitted, onRelated, expanded = false, includeHistory, developmentContextId }: {
   record: ImprintRecord; selection: object; owner: string; rpc: NativeRpc; locale: Locale; attempts: Attempts;
-  onCommitted: (message: string) => void; onRelated: (id: string, sourceNamespace?: "canonical" | "development") => void; expanded?: boolean; includeHistory: boolean; developmentContextId?: string;
+  onCommitted: (message: string) => void; onRelated: (id: string, sourceNamespace?: "canonical" | "development", association?: AssociationRead) => void; expanded?: boolean; includeHistory: boolean; developmentContextId?: string;
 }) {
   const t = COPY[locale], labels = VIEW_LABELS[locale];
   const development = developmentContextId !== undefined;
@@ -240,6 +248,8 @@ function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommit
       {development && Array.isArray(record.history) && record.history.length > 0 && <details><summary>{locale === "zh-CN" ? "实际保留的版本历史" : "Retained version history"}</summary><pre className="imprints-content">{JSON.stringify(record.history, null, 2)}</pre></details>}
       {typeof record.closure_summary === "string" && record.closure_summary && <><h5>{t.closure}</h5><pre className="imprints-content">{record.closure_summary}</pre></>}
       {Object.keys(record.relations).length > 0 && <div><h5>{t.relations}</h5>{relations.map(id => <button type="button" key={id} onClick={() => void onRelated(id, development ? sourceKind(record) ?? undefined : undefined)}>{t.related}: {id}</button>)}<details><summary>{t.relations}</summary><pre>{JSON.stringify(record.relations, null, 2)}</pre></details></div>}
+      <ExistingAssociationEditor record={record} selection={selection} owner={owner} rpc={rpc} locale={locale}
+        contextId={developmentContextId} prepare={(signature, make) => attempt(attempts, signature, make)} onCommitted={onCommitted} onRelated={onRelated} />
       <h5>{t.source}</h5>{development && sourceKind(record) !== "canonical" ? <p>{locale === "zh-CN" ? "此上下文原始记录的来源读取尚未接入。当前显示自身完整正文及实际返回的历史，不借用用户来源接口。" : "Source reading is not connected for this original development record. Its own full body and returned history are readable; user source APIs are not used."}</p> : sources.length ? sources.map(id => <button type="button" key={id} onClick={() => void sourceRead(id)}>{t.sourceButton}: {id}</button>) : <p>{t.noSource}</p>}
       {record.source_refs.length > 0 && <details><summary>{t.sourceMetadata}</summary><pre>{JSON.stringify(record.source_refs, null, 2)}</pre></details>}
       {source && <div className="imprints-source">{source.loading && <p role="status">{t.loading}</p>}{source.error && <p role="alert">{source.error}</p>}{source.value && <>{source.value.historical && <p className="notice">{locale === "zh-CN" ? "历史／诊断来源阅读，不能作为当前输入。" : "Historical / diagnostic source reading; never eligible as current input."}{source.value.evidenceStatus === "withdrawn" ? (locale === "zh-CN" ? "已撤回。" : " Withdrawn.") : source.value.evidenceStatus === "invalidated" ? (locale === "zh-CN" ? "已失效。" : " Invalidated.") : ""}</p>}{source.value.available && source.value.content !== null ? <><h5>{t.sourceBody}</h5><pre className="imprints-content">{source.value.content}</pre></> : <p>{source.value.reason === "stale_record_version" ? t.conflict : source.value.available ? t.locatorOnly : t.sourceMissing}</p>}{source.value.evidence && <details><summary>{t.sourceMetadata}</summary><pre>{JSON.stringify(source.value.evidence, null, 2)}</pre></details>}</>}</div>}
