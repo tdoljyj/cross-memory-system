@@ -28,6 +28,35 @@ test('explicit saved uses can suggest multiple domains from one unchanged body',
   assert.equal(result.fragments.length, 0);
 });
 
+test('concrete natural activities classify without asking the user to write purpose labels', () => {
+  for (const [text, expected] of [
+    ['客户Logo方案。', ['work', 'creation']], ['客户 Logo 设计方案。', ['work', 'creation']],
+    ['我正在给客户设计Logo。', ['work', 'creation']], ['给客户设计Logo。', ['work', 'creation']],
+    ['给客户设计 Logo。', ['work', 'creation']], ['给客户设计一个Logo。', ['work', 'creation']],
+    ['我今天正在给客户设计一套 Logo。', ['work', 'creation']],
+    ['我正在复习线性代数。', ['learning']], ['复习考试重点。', ['learning']],
+    ['我正在复习线性代数，用这本教材。', ['learning']], ['我在学习Rust。', ['learning']],
+    ['我今天整理家庭预算。', ['daily']], ['明天预约体检。', ['daily']],
+    ['继续写小说第二章。', ['creation']], ['我整理本周工作周报。', ['work']],
+    ['安排周末徒步路线。', ['interest']], ['Client logo design.', ['work', 'creation']],
+    ['I am studying linear algebra.', ['learning']], ['I am planning a weekend hike.', ['interest']],
+  ]) {
+    assert.deepEqual(domains(text), expected, text);
+    assert.deepEqual(suggest(text).fragments, [], 'domain classification never invents a formal commitment');
+    for (const item of suggest(text).domains) assert.equal(text.slice(item.source.start, item.source.end), item.source.text);
+  }
+});
+
+test('natural activity rules abstain from material topics, conditions, negation, quotation and reported requests', () => {
+  for (const text of ['客户Logo设计教程。', '客户Logo方案只是一个案例。', '写小说的教材。',
+    '我给客户设计Logo，但不是工作用途。', '如果给客户设计Logo。', '客户要求我设计Logo。',
+    '“给客户设计Logo。”', '> 给客户设计Logo。', '```\n客户Logo方案。\n```',
+    '我想要给客户设计Logo。', '我在看客户Logo教程。', '学习用品采购。', 'Client logo design tutorial.', 'I am not writing a novel.']) {
+    assert.deepEqual(domains(text), [], text);
+  }
+  assert.deepEqual(suggest('客户Logo方案。', { sourceKind: 'external_material' }).domains, []);
+});
+
 test('daily life and interests need explicit purposes rather than a personal-topic fallback', () => {
   assert.deepEqual(domains('我保存这份资料用于家庭预算。'), ['daily']);
   assert.deepEqual(domains('我收藏这篇文章用于兴趣探索。'), ['interest']);
