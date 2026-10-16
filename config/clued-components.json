@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "49",
+      "version": "50",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "49a387a32f8b52eb362c57ef8a9df1c339fc7fc6708dbd58dbd2dbd51f557cad",
+      "content_sha256": "7cc8c46b4d1abf8ef7b8757a1938b724594e09907cad998e3698e90f0965897c",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -86,13 +86,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.5",
+      "version": "1.1.6",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "479669a6d5d91a8908d1ca1c4346b4a9af20c4e2dc068d01c0b77ef61f2b0661",
+      "content_sha256": "4e1f82e3cd86cd8270184492fa90726246e041b8da85ab416f10bab7b46a4d64",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""

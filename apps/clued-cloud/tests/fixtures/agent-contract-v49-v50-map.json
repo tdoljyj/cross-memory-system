@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-runtime-autonomy-successor/1",
+  "source_version": 49,
+  "target_version": 50,
+  "source_document_normalized_sha256": "3ceae02826fceab33471f598cf8623d646d3ba65a0530cb34488d03b90d7f8c8",
+  "target_document_normalized_sha256": "f99e846a8c0405117ae282163582e626b2cf2cfe27bab2b805e990b1e192e230",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 49",
+      "after": "Contract version: 50"
+    },
+    {
+      "id": "runtime-boundaries",
+      "before": "- Before the lease expires, call `clued_work_renew` with a new `progress_ref` (a pushed head SHA or a Receipt id). To change paths outside your `write_set`, renew with the wider `write_set` first; it is checked for conflicts again.\n\n",
+      "after": "- Before the lease expires, call `clued_work_renew` with a new `progress_ref` (a pushed head SHA or a Receipt id). To change paths outside your `write_set`, renew with the wider `write_set` first; it is checked for conflicts again.\n\n- Handle ordinary CI queues, coordination waits, lease renewal and revised estimates within the existing authorized Task yourself. Preserve costs, failures and the Task's CI meter. Do not ask the Owner to extend a routine execution window merely because these take longer than estimated. Use the current service claim/profile and the existing renewal, queue and approval doors; an applicable pre-approved grant is already permission to proceed through its door.\n\n- Keep time boundaries separate and traceable. `expires_at` is that service claim's lease expiry; `hard_deadline_at` is that claim chain's service limit. Neither is an Owner-imposed Task deadline. An Owner hard deadline or spending limit needs its actual Owner instruction or authoritative policy source, with the applicable Task/scope and current version. Estimates, checkpoints, Agent-written Task text and historical claim metadata cannot create or carry forward that authority by themselves. Re-read the current claim/profile and source when they conflict; record a correction instead of asking the Owner to approve an invented extension.\n\n- A genuine service or Owner limit still binds: do not manufacture progress, renew after the chain cap, reclaim or rename work to evade it, reset spending/CI counts, or widen scope/permissions. On a real refusal, use its existing recovery or grant route, including the Owner's effective auto-approval setting. Ask the Owner only when an unresolved limit or scope/permission decision actually requires them; identify the precise source and remaining work. A queue delay or revised estimate alone is not such a decision.\n\n"
+    }
+  ]
+}

@@ -4,11 +4,11 @@ export const CLUED_COMPONENTS_SCHEMA = "clued.components/1";
 export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
   "skill.clued": "1.0.24",
-  "agent-contract": "49",
+  "agent-contract": "50",
   "mcp.server": "0.8.4",
   "hook.runner-job-started": "1.0.0",
   "hook.capture-guard": "1.0.3",
-  "hook.work-claim-guard": "1.1.5",
+  "hook.work-claim-guard": "1.1.6",
   "hook.version-check": "1.0.3",
   "hook.run-python": "1.0.2",
   "hook.settings": "1.1.1",
