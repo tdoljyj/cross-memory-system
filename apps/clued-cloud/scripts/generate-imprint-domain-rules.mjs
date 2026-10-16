@@ -15,6 +15,8 @@ const pg = regex => regex.replaceAll('\\b', '\\y');
 const rules = exports.IMPRINT_DOMAIN_RULESET;
 const catalog = JSON.stringify({ ...rules, purposes: rules.purposes.map(pg),
   domains: rules.domains.map(rule => ({ ...rule, patterns: rule.patterns.map(pg) })),
+  activities: rules.activities.map(rule => ({ ...rule, patterns: rule.patterns.map(pg) })),
+  activity_context_block: pg(rules.activity_context_block),
   uncertain: rules.uncertain.map(pg), reported: rules.reported.map(pg) });
 if (catalog.includes('$imprint_rules$')) throw Error('Unsafe SQL delimiter');
 const block = `-- BEGIN GENERATED IMPRINT PURPOSE RULES\ncreate function clued_private.imprint_auto_rules_v1()\nreturns jsonb language sql immutable parallel safe set search_path='' as $rules$\n  select $imprint_rules$${catalog}$imprint_rules$::jsonb\n$rules$;\n-- END GENERATED IMPRINT PURPOSE RULES`;

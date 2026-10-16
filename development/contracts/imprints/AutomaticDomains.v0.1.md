@@ -3,15 +3,18 @@
 Task d5dee826-27d7-452b-8948-48fe8ae8a961; Owner Decision b8638aba-752a-43a5-9e01-00acfdf0ae1f.
 
 New ordinary Canonical Records and owned Context records adopt the existing
-`imprint-explicit-local.v1` saved-purpose rules at creation, atomically with
+`imprint-explicit-local.v2` purpose/activity rules at creation, atomically with
 their existing write. Domains remain independent organization metadata;
 multiple domains reference the same source ID. No Task/Decision extraction,
 Record/Currentness/authority change, model call or permission expansion occurs.
 
-Examples: `保存用途：工作汇报、课程学习、创作游戏剧情。` gets work,
+Examples: `客户Logo方案。` or `给客户设计Logo。` gets work and creation,
+`我正在复习线性代数。` gets learning. These natural statements require no
+separate purpose label. `保存用途：工作汇报、课程学习、创作游戏剧情。` gets work,
 learning and creation; `我保存这份资料用于家庭预算。` gets daily;
 `我收藏这篇文章用于兴趣探索。` gets interest. `英文电影` or `客户的教程`
-alone abstain. This first batch recognizes explicit uses, not general semantic
+alone abstain. Material titles such as `客户Logo设计教程` do not prove a use.
+This first batch recognizes clear natural activities and explicit uses, not general semantic
 classification. Quotes, reported/conditional uses, code and unsupported text
 carriers abstain; inputs over 65,536 characters abstain without truncation.
 The generated SQL uses the same exported purpose/domain regex catalog as

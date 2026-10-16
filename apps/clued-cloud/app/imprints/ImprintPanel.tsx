@@ -129,7 +129,7 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
   const changeNote = (field: "title" | "content" | "scope", value: string) => setNote({ ...draft, [field]: value });
   return <section className="imprints-panel records-panel" aria-label={development ? (locale === "zh-CN" ? "上下文印记" : "Context imprints") : t.title}>
     <div className="continuity-heading"><div><h3>{development ? (locale === "zh-CN" ? "上下文印记" : "Context imprints") : t.title}{developmentContextName ? ` · ${developmentContextName}` : ""}</h3><p>{t.description}</p></div></div>
-    <p className="context-muted">{locale === "zh-CN" ? "新内容会按正文中明确写出的保存用途自动归类。不确定的留在全部；手动修改或清空后会保留你的选择。" : "New content is organized by explicitly stated saved purposes. Uncertain content stays in All. Manual edits, including clearing labels, keep your choice."}</p>
+    <p className="context-muted">{locale === "zh-CN" ? "新内容会按正文中明确的活动和用途自动归类，例如客户 Logo 方案归入工作和创作。不确定的留在全部；手动修改或清空后会保留你的选择。" : "New content is organized by clear activities and uses, such as a client logo proposal under Work and Creation. Uncertain content stays in All. Manual edits, including clearing labels, keep your choice."}</p>
     <div className="record-tabs" role="tablist" aria-label={t.title}>
       {VIEW_KEYS.map((item, index) => <button type="button" role="tab" key={item} aria-selected={view === item} tabIndex={view === item ? 0 : -1}
         className={view === item ? "active" : ""} onClick={() => setView(item)} onKeyDown={event => {
@@ -248,7 +248,7 @@ function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommit
       <button type="button" disabled={!!busy} onClick={() => setSuggestions({ selection, record,
         value: suggestImprintOrganization(record.content, { sourceKind: "unknown", locale }) })}>{locale === "zh-CN" ? "查看领域建议" : "Review domain suggestions"}</button>
       {suggestions && <section aria-label={locale === "zh-CN" ? "领域候选建议" : "Candidate domain suggestions"}>
-        <p>{locale === "zh-CN" ? "本地候选建议：只参考明确保存用途，不生成任务或决策，也不会自动保存。" : "Local candidates based on explicit saved purposes. They do not create tasks or decisions and are not saved automatically."}</p>
+        <p>{locale === "zh-CN" ? "本地候选建议：参考正文中明确的活动和用途，不生成任务或决策；这里的建议需要确认后保存。" : "Local candidates based on clear activities and uses. They do not create tasks or decisions; suggestions here require confirmation and saving."}</p>
         {suggestions.domains.length ? <><ul>{suggestions.domains.map(item => <li key={item.domain}><strong>{labels[item.domain]}</strong><p>{item.reason}</p><blockquote>{item.source.text}</blockquote></li>)}</ul>
           <button type="button" disabled={!!busy} onClick={() => setDraft({ record, selection, due,
             domains: normalizedDomains([...domains, ...suggestions.domains.map(item => item.domain)]) })}>{locale === "zh-CN" ? "采用这些建议" : "Use these suggestions"}</button></>

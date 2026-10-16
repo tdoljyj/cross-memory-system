@@ -368,14 +368,14 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
         idempotency_key: `imprint-auto:${id}`, authority, user_confirmed: true,
         confidence_reason: 'Synthetic Owner write', source_refs: [], source_unavailable_reason: 'synthetic fixture',
         mutation: { title: 'Automatic purpose fixture', content, type_fields: { note_kind: 'log' } } });
-      const id = uuid(), input = create(id, '保存用途：工作汇报、课程学习、创作游戏剧情。');
+      const id = uuid(), input = create(id, '客户Logo设计方案。\n我正在复习线性代数。');
       const saved = await call(human, 'clued_user_record_mutate', input, hash(JSON.stringify(input)));
       assert.equal(saved.status, 'committed', JSON.stringify(saved));
       const org = async target => (await admin.query('select * from clued_private.imprint_organization_v1 where record_id=$1', [target])).rows[0];
       const original = (await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [id])).rows[0].v;
       assert.deepEqual((await org(id)).domains, ['creation', 'learning', 'work']);
       assert.equal((await org(id)).receipt_id, saved.receipt_id);
-      assert.equal((await org(id)).auto_rules_version, 'imprint-explicit-local.v1');
+      assert.equal((await org(id)).auto_rules_version, 'imprint-explicit-local.v2');
       assert.equal(Number((await org(id)).version), 1);
       const projection = await read({ id, view: 'learning' });
       assert.equal(projection.records[0].id, id);
@@ -421,6 +421,13 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
         ['我保存这份资料用于家庭预算。', ['daily']], ['我收藏这篇文章用于兴趣探索。', ['interest']],
         ['Purpose: personal budget, creative writing and hobbies.', ['creation', 'daily', 'interest']],
         ['我保存这个视频用于学习英语。', ['learning']],
+        ['客户Logo方案。', ['creation', 'work']], ['给客户设计Logo。', ['creation', 'work']],
+        ['我正在复习线性代数。', ['learning']], ['我今天整理家庭预算。', ['daily']],
+        ['继续写小说第二章。', ['creation']], ['安排周末徒步路线。', ['interest']],
+        ['Client logo design.', ['creation', 'work']], ['I am studying linear algebra.', ['learning']],
+        ['客户Logo设计教程。', []], ['写小说的教材。', []],
+        ['给客户设计Logo，但不是工作用途。', []], ['“客户Logo方案。”', []],
+        ['客户要求我设计Logo。', []], ['我想要给客户设计Logo。', []],
         ['如果保存用途：学习英语。', []], ['保存用途：不用来学习英语。', []],
         ['英文电影。', []], ['客户请求：\n保存用途：工作汇报。', []],
         ['```\n保存用途：工作汇报。\n```', []], ['“保存用途：工作汇报。”', []],

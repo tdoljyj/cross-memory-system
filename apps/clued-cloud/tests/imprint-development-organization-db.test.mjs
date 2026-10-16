@@ -376,7 +376,7 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       const write = request => workerGatewayRpc(gateway, 'clued_development_call_v14', token,
         { context_id: context, environment: 'preview', ...request });
       const create = body => ({ op: 'record_put', record_type: 'note', body, idempotency_key: uuid() });
-      const request = create({ title: 'Same raw source', content: '保存用途：工作汇报、课程学习、创作游戏剧情。',
+      const request = create({ title: 'Same raw source', content: '客户Logo设计方案。\n我正在复习线性代数。',
         source_refs: [{ content: '用途：兴趣探索。' }], metadata: { purpose: '家庭预算' } });
       const saved = await write(request), id = saved.result.id;
       assert.equal(saved.status, 'committed', JSON.stringify(saved));
@@ -385,7 +385,7 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       assert.deepEqual((await org(id)).domains, ['creation', 'learning', 'work']);
       assert.equal((await org(id)).source_operation_id, saved.operation_id);
       assert.equal((await org(id)).receipt_id, null, 'private operation Receipt is not a public M1 Receipt');
-      assert.equal((await org(id)).auto_rules_version, 'imprint-explicit-local.v1');
+      assert.equal((await org(id)).auto_rules_version, 'imprint-explicit-local.v2');
       const projection = (await read({ id, view: 'learning', source_kind: 'development' })).records[0];
       assert.equal(projection.id, id); assert.equal(projection.organization_version, 1);
       assert.equal(projection.version, 1); assert.equal(projection.record_currentness, 'UNKNOWN');
