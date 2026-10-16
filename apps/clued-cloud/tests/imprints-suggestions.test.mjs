@@ -32,7 +32,10 @@ test('concrete natural activities classify without asking the user to write purp
   for (const [text, expected] of [
     ['客户Logo方案。', ['work', 'creation']], ['客户 Logo 设计方案。', ['work', 'creation']],
     ['我正在给客户设计Logo。', ['work', 'creation']], ['给客户设计Logo。', ['work', 'creation']],
+    ['给客户设计 Logo。', ['work', 'creation']], ['给客户设计一个Logo。', ['work', 'creation']],
+    ['我今天正在给客户设计一套 Logo。', ['work', 'creation']],
     ['我正在复习线性代数。', ['learning']], ['复习考试重点。', ['learning']],
+    ['我正在复习线性代数，用这本教材。', ['learning']], ['我在学习Rust。', ['learning']],
     ['我今天整理家庭预算。', ['daily']], ['明天预约体检。', ['daily']],
     ['继续写小说第二章。', ['creation']], ['我整理本周工作周报。', ['work']],
     ['安排周末徒步路线。', ['interest']], ['Client logo design.', ['work', 'creation']],
@@ -48,7 +51,7 @@ test('natural activity rules abstain from material topics, conditions, negation,
   for (const text of ['客户Logo设计教程。', '客户Logo方案只是一个案例。', '写小说的教材。',
     '我给客户设计Logo，但不是工作用途。', '如果给客户设计Logo。', '客户要求我设计Logo。',
     '“给客户设计Logo。”', '> 给客户设计Logo。', '```\n客户Logo方案。\n```',
-    '我想要给客户设计Logo。', 'Client logo design tutorial.', 'I am not writing a novel.']) {
+    '我想要给客户设计Logo。', '我在看客户Logo教程。', '学习用品采购。', 'Client logo design tutorial.', 'I am not writing a novel.']) {
     assert.deepEqual(domains(text), [], text);
   }
   assert.deepEqual(suggest('客户Logo方案。', { sourceKind: 'external_material' }).domains, []);

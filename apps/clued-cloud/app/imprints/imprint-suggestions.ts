@@ -47,9 +47,10 @@ const PURPOSE_DOMAINS: readonly { domain: Domain; zh: RegExp; en: RegExp }[] = [
 // Recognize an actual use/activity, not a material's language or file format.
 // These also work without a separate "purpose:" field. Uncertain/reported/code
 // exclusions below still apply before any domain is adopted.
-const ACTIVITY_PREFIX = "(?:我(?:今天|明天|本周|下周|正在|计划|会|将)?|今天|明天|本周|下周|正在|准备|继续)?";
+const ACTIVITY_PREFIX = "(?:我)?(?:今天|明天|本周|下周)?(?:正在|在|计划|会|将|准备|继续)?";
 const CLIENT_DESIGN = /^(?:客户|公司|团队)(?:的)?\s*(?:Logo|标志|品牌视觉|海报|插画|页面|界面)\s*(?:设计(?:方案|稿件|稿)?|方案|稿件)(?:$|[：:，,、。.!?\s])/iu;
-const ACTIVITY_CONTEXT_BLOCK = /(?:教程|教材|指南|案例|简介|介绍|是什么|如何|考虑|想要|只是|不是|并非|不用于|不再)|\b(?:tutorial|textbook|guide|example|not|never|no longer)\b/iu;
+const ACTIVITY_CONTEXT_BLOCK = /(?:考虑|想要|只是|不是|并非|不用于|不再)|\b(?:not|never|no longer)\b/iu;
+const ACTIVITY_MATERIAL_BLOCK = /(?:教程|教材|指南|案例|简介|介绍|是什么|如何)|\b(?:tutorial|textbook|guide|example)\b/iu;
 const DOMAIN_ACTIVITIES: readonly { domain: Domain; patterns: readonly RegExp[] }[] = [
   { domain: "daily", patterns: [
     new RegExp("^" + ACTIVITY_PREFIX + "(?:安排|核对|记录|支付|整理|制定|更新)(?:家庭预算|家庭开支|个人预算|房租|水电费|家务|搬家|就医|体检|门诊)", "u"),
@@ -63,12 +64,12 @@ const DOMAIN_ACTIVITIES: readonly { domain: Domain; patterns: readonly RegExp[] 
     /^(?:I am )?(?:designing|creating|preparing|delivering|revising) .+ for (?:a |the |my )?client\b/i,
   ] },
   { domain: "learning", patterns: [
-    /^(?:我(?:今天|明天|本周|下周|正在|计划|会|将)?|今天|明天|本周|下周|正在|继续|准备)(?:学习|复习|备考|练习)\s*\S+/u,
+    new RegExp("^(?=我|今天|明天|本周|下周|正在|在|继续|准备)" + ACTIVITY_PREFIX + "(?:学习(?!用品)|复习|备考|练习)\\s*\\S+", "u"),
     /^(?:复习|备考)(?!资料(?:$|[：:])|用品)\s*\S+/u,
     /^I am (?:studying|learning|revising|practicing)\s+\S/i,
   ] },
   { domain: "creation", patterns: [CLIENT_DESIGN,
-    new RegExp("^" + ACTIVITY_PREFIX + "(?:(?:为|给)(?:客户|公司|团队))?(?:设计(?:品牌标志|Logo|海报|插画|界面|页面)|(?:创作|绘制)(?:品牌标志|Logo|海报|插画|界面|页面))", "iu"),
+    new RegExp("^" + ACTIVITY_PREFIX + "(?:(?:为|给)(?:客户|公司|团队))?(?:设计|创作|绘制)\\s*(?:一(?:个|份|幅|套))?\\s*(?:品牌标志|Logo|海报|插画|界面|页面)", "iu"),
     new RegExp("^" + ACTIVITY_PREFIX + "(?:撰写|写|续写|修改|创作)(?:小说|剧本|故事|游戏剧情|诗歌|歌词|散文)", "u"),
     /^(?:client|customer) (?:logo|brand|poster|illustration) (?:design|proposal|concepts?)\b/i,
     /^(?:I am )?(?:designing|creating|drawing|writing|revising) (?:a |the |my )?(?:logo|illustration|poster|novel|script|story)\b/i,
@@ -146,6 +147,7 @@ export const IMPRINT_DOMAIN_RULESET = {
   domains: PURPOSE_DOMAINS.map(rule => ({ domain: rule.domain, patterns: [rule.zh.source, rule.en.source] })),
   activities: DOMAIN_ACTIVITIES.map(rule => ({ domain: rule.domain, patterns: rule.patterns.map(pattern => pattern.source) })),
   activity_context_block: ACTIVITY_CONTEXT_BLOCK.source,
+  activity_material_block: ACTIVITY_MATERIAL_BLOCK.source,
   uncertain: [UNCERTAIN_ZH.source, UNCERTAIN_EN.source, "[?？]"],
   reported: [REPORTED_ZH.source, REPORTED_EN.source],
 };
@@ -195,6 +197,7 @@ export function suggestImprintOrganization(content: string, options: SuggestionO
       if (mask[start]) return;
       const source = { start, end: start + body.length, text: body };
       for (const rule of DOMAIN_ACTIVITIES) if (!domains.has(rule.domain) && !ACTIVITY_CONTEXT_BLOCK.test(line)
+        && (rule.domain === "learning" || !ACTIVITY_MATERIAL_BLOCK.test(line))
         && rule.patterns.some(pattern => pattern.test(body))) {
         domains.add(rule.domain);
         result.domains.push({ ...candidate(source, "domain.explicit-activity." + rule.domain,
