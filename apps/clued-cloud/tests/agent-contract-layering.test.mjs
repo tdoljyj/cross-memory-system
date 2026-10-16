@@ -7,12 +7,30 @@ const source = (await readFile(new URL('../../../protocol/agent/agent-contract.m
 const map = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v46-v47-map.json', import.meta.url), 'utf8'));
 const successor = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v47-v48-map.json', import.meta.url), 'utf8'));
 const review = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v48-v49-map.json', import.meta.url), 'utf8'));
+const autonomy = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v49-v50-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
-// three scoped replacements separately; undo only those exact replacements
-// before checking all 24 original normative blocks against the frozen proof.
+// three scoped replacements separately, followed by exact v49 review and v50
+// runtime additions. Undo only these declared successors before checking all
+// 24 original normative blocks against the unchanged frozen proof.
+function v49Source() {
+  assert.equal(autonomy.schema, 'clued.agent-contract-runtime-autonomy-successor/1');
+  assert.equal(autonomy.source_version, 49);
+  assert.equal(autonomy.target_version, 50);
+  assert.deepEqual(autonomy.edits.map(row => row.id), ['version', 'runtime-boundaries']);
+  assert.equal(sha256(source), autonomy.target_document_normalized_sha256);
+  let restored = source;
+  for (const { id, before, after } of [...autonomy.edits].reverse()) {
+    assert.equal(restored.split(after).length - 1, 1, `${id}: exact runtime successor text`);
+    restored = restored.replace(after, before);
+  }
+  assert.equal(sha256(restored), autonomy.source_document_normalized_sha256);
+  return restored;
+}
+
 function v48Source() {
+  const source = v49Source();
   assert.equal(review.schema, 'clued.agent-contract-independent-review-successor/1');
   assert.equal(review.source_version, 48);
   assert.equal(review.target_version, 49);
@@ -51,7 +69,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only the declared v48 handover successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v50 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);
