@@ -21,6 +21,7 @@ const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v
 const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refresh_default_v1.sql';
 const storageConflictMigration = '20261016040000_storage_conflict_isolation_v1.sql';
 const storageAutomaticReconcileMigration = '20261016090000_storage_automatic_reconcile_v1.sql';
+const storageRegistrationRecoveryMigration = '20261016133429_storage_registration_recovery_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -79,7 +80,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -507,6 +508,50 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
         for(const signature of ['clued_private.storage_conflict_sweep_v1()','clued_private.storage_conflict_require_scheduler_v1()'])
           assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,signature])).rows[0].allowed,false,role+' '+signature);
       }
+    });
+    await t.test('registration recovery follows I9 and automatic reconciliation without widening the caller boundary',async()=>{
+      // The registration successor clones the actual I9 Worker and automatic
+      // status/queue implementations. Install it after their historical hash
+      // and guard assertions above, preserving the production dependency order.
+      const before=await snapshotAuthorizationCallerBoundary(admin);
+      const workerSignature='clued_private.ii_priv_storage_cloud_worker_v2(text,jsonb)';
+      const implementation=async signature=>(await admin.query(`select oid::text oid,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig,prosrc
+        from pg_proc where oid=$1::regprocedure`,[signature])).rows[0];
+      const original=await implementation(workerSignature);
+      assert.ok(original.prosrc.includes('storage_conflict_assert_v1'),'the source being cloned contains the actual I9 admission guard');
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageRegistrationRecoveryMigration),'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),before,
+        'registration recovery preserves every public RPC OID, owner, definer configuration and ACL');
+      await assertGatewayCloseoutBoundary(admin);
+      const preserved=await implementation('clued_private.storage_cloud_before_registration_v1(text,jsonb)');
+      assert.equal(preserved.prosrc,original.prosrc,'the private clone preserves the complete original Worker, including its I9 admission guard');
+      for(const key of ['owner','prosecdef','proconfig'])assert.deepEqual(preserved[key],original[key],key);
+      const wrapper=await implementation(workerSignature);
+      assert.equal(wrapper.oid,original.oid,'the existing private Worker keeps its OID');
+      for(const key of ['owner','prosecdef','proconfig'])assert.deepEqual(wrapper[key],original[key],key);
+      assert.ok(wrapper.prosrc.includes('storage_registration_recovery_v1'),'the installed wrapper routes only its new internal recovery actions');
+      assert.ok(wrapper.prosrc.includes('storage_cloud_before_registration_v1'),'ordinary Worker actions retain their original guarded implementation');
+      const privateNames=['ii_priv_storage_cloud_worker_v2','storage_cloud_before_registration_v1',
+        'storage_registration_finish_v1','storage_registration_recovery_v1','storage_delivery_issuer_compatible_v1',
+        'storage_registration_check_audit_v1','storage_registration_job_closed_v1',
+        'storage_job_status_before_registration_v1','storage_queue_before_registration_v1',
+        'storage_job_status_v1','ii_pub_clued_storage_queued_sweep_v1'];
+      const helpers=(await admin.query(`select proname,oid::regprocedure::text signature,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig from pg_proc
+        where pronamespace='clued_private'::regnamespace and proname=any($1::text[]) order by proname`,[privateNames])).rows;
+      assert.deepEqual(helpers.map(row=>row.proname),[...privateNames].sort(),'every new helper, clone and existing wrapper is checked');
+      for(const helper of helpers){
+        assert.equal(helper.owner,'postgres',helper.signature);assert.equal(helper.prosecdef,true,helper.signature);
+        assert.deepEqual(helper.proconfig,['search_path=""'],helper.signature);
+        for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') allowed",[role,helper.signature])).rows[0].allowed,false,helper.signature+' '+role);
+      }
+      const table='clued_private.storage_registration_checks_v1';
+      const sidecar=(await admin.query('select pg_get_userbyid(relowner) owner,relrowsecurity from pg_class where oid=$1::regclass',[table])).rows[0];
+      assert.equal(sidecar.owner,'postgres');assert.equal(sidecar.relrowsecurity,true);
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
+        assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed",[role,table])).rows[0].allowed,false,table+' '+role);
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
