@@ -270,7 +270,9 @@ if (state && phaseA) {
     child.on('message', (message) => { received = message; });
     child.on('exit', (code) => resolve({ code, received }));
     child.send({ apiUrl: status.apiUrl, publishableKey: status.publishableKey, dbUrl: status.dbUrl,
-      gatewayToken: createLocalGatewayToken(stack.status()),
+      // A container restart preserves this run's validated local signing config.
+      // CLI health labels can still lag the HTTP readiness checked above.
+      gatewayToken: createLocalGatewayToken(status),
       dbIdentity: state.dbIdentity, bridgeCidrs, email: ctx.U.email, password: ctx.U.password, userId: ctx.U.userId,
       bindingRaw: ctx.B_main.raw, bundleDir: path.join(work, 'bundle'),
       workerGuardLedger: path.join(guardDir, 'worker-host-phase-b.json') });
