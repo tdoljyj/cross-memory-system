@@ -523,7 +523,7 @@ export default function TaskOwnerDetailPage() {
       <h3>完成条件</h3><ul>{definition.conditions.map(condition => <li key={condition.id}>{condition.text}{" · "}{condition.kind === "owner_review" ? "由我核对" : "文件核验"}</li>)}</ul>
       {editable && !editor && <button type="button" onClick={() => setEditor(JSON.parse(JSON.stringify(definition)) as Definition)}>修改完成约定</button>}
       {editable && renderEditor()}
-      <h3>文件交付</h3><p className="context-muted">复用已经通过 Clued 归档的文件。排队或结果未知时，文件尚未完成核验。</p>
+      <h3>文件交付</h3><p className="context-muted">复用已经通过 KooYomi 归档的文件。排队或结果未知时，文件尚未完成核验。</p>
       {definition.deliverables.map(file => {
         const delivery = current.deliveries.find(item => item.deliverable_id === file.id);
         const binding = current.delivery_refs.find(item => item.deliverable_id === file.id);

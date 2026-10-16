@@ -46,7 +46,7 @@ prepared earlier, but role verification cannot pass before the role exists.
 Use the production project's Supabase **JWT signing keys** page. Generate a
 dedicated ES256 signing key through the pinned CLI and its actual help or
 wizard. Keep its private material in Owner-approved secure host storage; do
-not save it in this repository, a PR, a Clued record, logs or chat attachments.
+not save it in this repository, a PR, a KooYomi record, logs or chat attachments.
 Import that dedicated key and move it to the verification-only **Previously
 used** state. Do not rotate the current key used by Supabase Auth for users.
 
@@ -68,7 +68,7 @@ There is no requirement to grant the gateway a user's identity or the
 Request `migration.production` for the exact merged migration file, and
 `release.production` for the exact commit to publish. Use the configured
 production release workflow after its normal admission. Record each completed
-outcome in Clued before starting the next production action.
+outcome in KooYomi before starting the next production action.
 
 Verify all five request entrances:
 

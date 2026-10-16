@@ -1,6 +1,6 @@
-# Kooyumi Self-hosted CI Compute Pool — Node Profiles
+# KooYomi Self-hosted CI Compute Pool — Node Profiles
 
-This directory is the canonical onboarding and lifecycle surface for trusted Kooyumi self-hosted CI nodes.
+This directory is the canonical onboarding and lifecycle surface for trusted KooYomi self-hosted CI nodes.
 
 The maintained operating requirements and dated runtime evidence are in [Runner configuration and operations](../../../docs/maintenance/runner-configuration-and-operations.md). The JSON inventory declares desired identity/capacity; it is not online state, complete host qualification or a grant to install/stop nodes.
 
@@ -103,7 +103,7 @@ The following P7/P8/P14 evidence concerns the historical four-runner subjects. I
 - P14B Turing cold boot: PASS — post-boot P7 attempt 3 and P8 attempt 5 both succeeded
 - DESK-W-591 cold boot: DEFERRED / NOT TESTED
 
-Known operational notes: GitHub runner online/offline status can lag behind the actual runner session, so scheduler/job evidence and local watchdog state are authoritative for failover qualification. Turing's post-boot Runner/Docker qualification is PASS, but containerized scanners that must download external databases still require separate proxy-egress hardening. Full historical evidence and troubleshooting notes are intentionally kept outside this repository in the Clued资料中心.
+Known operational notes: GitHub runner online/offline status can lag behind the actual runner session, so scheduler/job evidence and local watchdog state are authoritative for failover qualification. Turing's post-boot Runner/Docker qualification is PASS, but containerized scanners that must download external databases still require separate proxy-egress hardening. Full historical evidence and troubleshooting notes are intentionally kept outside this repository in the KooYomi 资料中心.
 
 ## Runner profiles
 

@@ -1,4 +1,4 @@
-# Kooyumi connection repair
+# KooYomi connection repair
 
 Read this reference only for an Owner-requested connection, installation or diagnosis. Keep the working connection and its actual Binding throughout the procedure. The served Agent Contract remains authoritative; this reference neither grants permissions nor replaces its session and capture rules.
 

@@ -1,4 +1,4 @@
-# Kooyumi CI check names
+# KooYomi CI check names
 
 This source change renames three check contexts. Installing the source and
 updating GitHub's required-check settings are separate steps; this document is

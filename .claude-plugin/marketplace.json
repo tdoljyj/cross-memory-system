@@ -3,12 +3,12 @@
   "owner": {
     "name": "tdoljyj"
   },
-  "description": "Private Kooyumi plugins for trial. Not published.",
+  "description": "Private KooYomi plugins for trial. Not published.",
   "plugins": [
     {
       "name": "clued",
       "source": "./integrations/claude-code/clued",
-      "description": "The Kooyumi Skill and the Kooyumi capture Stop hook for Claude Code and Cowork."
+      "description": "The KooYomi Skill and the KooYomi capture Stop hook for Claude Code and Cowork."
     }
   ]
 }

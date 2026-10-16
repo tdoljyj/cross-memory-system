@@ -1,4 +1,4 @@
-# Kooyumi authorization issuer provisioning
+# KooYomi authorization issuer provisioning
 
 This configures a new technical issuer in the existing Supabase database. It does not migrate accounts, Bindings, Canonical data, Google credentials or the legacy issuer. `scripts/kooyumi-issuer-provision.mjs` is an offline SQL generator: it reads no environment secrets and has no Cloudflare or database transport.
 
