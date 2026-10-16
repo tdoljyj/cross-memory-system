@@ -362,6 +362,84 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
         }
       });
     });
+    await t.test('new Native M1 records atomically adopt purpose domains; manual clear wins without changing source', async () => {
+      const create = (id, content, authority = 'user_explicit') => ({ operation: 'create', id,
+        record_type: 'note', record_schema_version: 1, lifecycle_status: 'active', scope: 'global',
+        idempotency_key: `imprint-auto:${id}`, authority, user_confirmed: true,
+        confidence_reason: 'Synthetic Owner write', source_refs: [], source_unavailable_reason: 'synthetic fixture',
+        mutation: { title: 'Automatic purpose fixture', content, type_fields: { note_kind: 'log' } } });
+      const id = uuid(), input = create(id, '客户Logo设计方案。\n我正在复习线性代数。');
+      const saved = await call(human, 'clued_user_record_mutate', input, hash(JSON.stringify(input)));
+      assert.equal(saved.status, 'committed', JSON.stringify(saved));
+      const org = async target => (await admin.query('select * from clued_private.imprint_organization_v1 where record_id=$1', [target])).rows[0];
+      const original = (await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [id])).rows[0].v;
+      assert.deepEqual((await org(id)).domains, ['creation', 'learning', 'work']);
+      assert.equal((await org(id)).receipt_id, saved.receipt_id);
+      assert.equal((await org(id)).auto_rules_version, 'imprint-explicit-local.v2');
+      assert.equal(Number((await org(id)).version), 1);
+      const projection = await read({ id, view: 'learning' });
+      assert.equal(projection.records[0].id, id);
+      assert.equal(projection.records[0].organization_version, 1);
+      assert.equal(projection.records[0].version, 1);
+      const clear = await metadata(id, [], 1);
+      const cleared = await set(clear), replay = await set(clear);
+      assert.equal(cleared.status, 'committed', JSON.stringify(cleared));
+      assert.equal(replay.receipt_id, cleared.receipt_id); assert.equal(replay.replayed, true);
+      assert.deepEqual((await org(id)).domains, []); assert.equal((await org(id)).auto_rules_version, null);
+      assert.deepEqual((await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [id])).rows[0].v, original);
+      await call(human, 'clued_user_record_mutate', input, hash(JSON.stringify(input)));
+      assert.deepEqual((await org(id)).domains, [], 'source create replay cannot reclassify');
+      const update = { ...input, operation: 'update', base_version: 1, idempotency_key: uuid(),
+        mutation: { content: '保存用途：家庭预算。' } };
+      assert.equal((await call(human, 'clued_user_record_mutate', update, hash(JSON.stringify(update)))).status, 'committed');
+      assert.deepEqual((await org(id)).domains, [], 'source update cannot overwrite manual clear');
+      assert.deepEqual((await read({ id, view: 'work' })).records, []);
+      assert.deepEqual((await call(stranger, 'clued_imprint_read_v1', { id, view: 'all' })).records, []);
+      assert.equal((await set(await metadata(id, ['work'], 1, 2))).error_code, 'organization_version_conflict');
+      for (const [body, authority] of [['英文电影。', 'user_explicit'], ['“保存用途：工作汇报。”', 'user_explicit'],
+        ['客户请求：\n保存用途：工作汇报。', 'user_explicit'], ['保存用途：工作汇报。', 'imported']]) {
+        const target = uuid(), request = create(target, body, authority);
+        assert.equal((await call(human, 'clued_user_record_mutate', request, hash(JSON.stringify(request)))).status, 'committed');
+        assert.equal(await org(target), undefined, body);
+      }
+      const aborted = uuid(), request = create(aborted, '保存用途：兴趣探索。');
+      await human.query('begin');
+      try {
+        assert.equal((await call(human, 'clued_user_record_mutate', request, hash(JSON.stringify(request)))).status, 'committed');
+        assert.equal((await human.query('select count(*) n from public.clued_memories where id=$1', [aborted])).rows[0].n, '1');
+      } finally { await human.query('rollback'); }
+      assert.equal(await org(aborted), undefined);
+      assert.equal((await admin.query('select count(*) n from public.clued_memories where id=$1', [aborted])).rows[0].n, '0');
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_function_privilege($1,'clued_private.imprint_auto_domains_v1(text)','execute') v", [role])).rows[0].v, false);
+      }
+    });
+    await t.test('automatic SQL purpose classifier handles multi-use, abstention and bounded input', async () => {
+      const classify = async text => (await admin.query('select clued_private.imprint_auto_domains_v1($1) v', [text])).rows[0].v;
+      for (const [text, expected] of [
+        ['保存用途：工作汇报、课程学习、创作游戏剧情。', ['creation', 'learning', 'work']],
+        ['我保存这份资料用于家庭预算。', ['daily']], ['我收藏这篇文章用于兴趣探索。', ['interest']],
+        ['Purpose: personal budget, creative writing and hobbies.', ['creation', 'daily', 'interest']],
+        ['我保存这个视频用于学习英语。', ['learning']],
+        ['客户Logo方案。', ['creation', 'work']], ['给客户设计Logo。', ['creation', 'work']],
+        ['给客户设计 Logo。', ['creation', 'work']], ['给客户设计一个Logo。', ['creation', 'work']],
+        ['我正在复习线性代数，用这本教材。', ['learning']], ['我在学习Rust。', ['learning']],
+        ['我正在复习线性代数。', ['learning']], ['我今天整理家庭预算。', ['daily']],
+        ['继续写小说第二章。', ['creation']], ['安排周末徒步路线。', ['interest']],
+        ['Client logo design.', ['creation', 'work']], ['I am studying linear algebra.', ['learning']],
+        ['客户Logo设计教程。', []], ['写小说的教材。', []], ['我在看客户Logo教程。', []], ['学习用品采购。', []],
+        ['给客户设计Logo，但不是工作用途。', []], ['“客户Logo方案。”', []],
+        ['客户要求我设计Logo。', []], ['我想要给客户设计Logo。', []],
+        ['如果保存用途：学习英语。', []], ['保存用途：不用来学习英语。', []],
+        ['英文电影。', []], ['客户请求：\n保存用途：工作汇报。', []],
+        ['```\n保存用途：工作汇报。\n```', []], ['“保存用途：工作汇报。”', []],
+        ['~~~text\n保存用途：工作汇报。\n~~~', []],
+        ['~~~\n```\n保存用途：工作汇报。\n```\n~~~', []],
+        ['````\n```\n保存用途：工作汇报。\n```\n````', []],
+        ['原文：\n用途：工作汇报。\n\n用途：家庭预算。', ['daily']],
+        ['x'.repeat(65537) + '\n保存用途：学习英语。', []],
+      ]) assert.deepEqual(await classify(text), expected, text.slice(0, 120));
+    });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
