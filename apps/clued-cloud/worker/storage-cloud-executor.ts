@@ -6,6 +6,7 @@ import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/ho
 import { createStorageFetch } from "./storage-fetch";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { scopeProfile } from "./storage-google-scopes";
+import { createRegistrationRecoveryRpc } from "./registration-recovery";
 
 type Data = Record<string, unknown>;
 type Reference = {connection_id: string; job_id: string};
@@ -31,6 +32,7 @@ export async function createStorageCloudWorker(config: {
   return Object.freeze({ async run(reference: Reference) {
     let loaded: Data | null = null;
     let recoveryMode=false, refreshed=false;
+    let registrationRecovery: Data | null = null;
     // Each rejection below carries a fixed label so post-write diagnostics can name
     // the credential step. Outcomes are unchanged: every branch still fails closed.
     const reject = (code: string) => new Error(code);
@@ -62,6 +64,23 @@ export async function createStorageCloudWorker(config: {
       }
       return {...expected,access_token:token.access_token,scope:token.scope,expires_at_ms:token.expires_at_ms};
     };
+    const executionRpc = config.account_policy_v2 === true ? createRegistrationRecoveryRpc({
+      rpc: config.rpc, descriptor: () => loaded, clock: config.clock,
+      on_recovery: result => { registrationRecovery = result; },
+      get_file: async id => {
+        if (!loaded) throw denied();
+        const descriptor = loaded;
+        const metadata = createGoogleDriveMetadataApi({
+          get_credential: () => credential({owner_id:String(descriptor.owner_id),connection_id:String(descriptor.connection_id),
+            provider_subject:String(descriptor.provider_subject),credential_version:Number(descriptor.credential_version)}),
+          fetch: async (url, init) => {
+            if (init?.method !== "GET") throw denied();
+            return fetcher(url, init);
+          },
+        });
+        return await metadata.getFile(id);
+      },
+    }) : config.rpc;
     const executor = createResourceCenterCloudExecutor({
       clock: config.clock ?? Date.now, drive_fetch: fetcher,
       // The boundary scan reads a whole folder level per request, so one run
@@ -100,7 +119,7 @@ export async function createStorageCloudWorker(config: {
         if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
         const {connection_id, job_id, action, ...body} = input;
         try {
-          return await config.rpc({connection_id, job_id, action,
+          return await executionRpc({connection_id, job_id, action,
             ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
             ...(action==="finalize" ? {finish:{action,...body}} : body)});
         } catch (error) {
@@ -164,6 +183,13 @@ export async function createStorageCloudWorker(config: {
         } catch { return {status:"inspection_required",execution_permitted:false}; }
       }
       const result=await executor.run(reference);
+      if (registrationRecovery) {
+        // Only the qualified, pre-intent registration helper sets this value.
+        // Its sidecar/lease is durable; an RPC outage leaves the original job
+        // queued for the existing bounded sweep. Never report this as denied.
+        return {status: "registration_recovery", job_id: reference.job_id,
+          registration_recovery: registrationRecovery, execution_permitted: false};
+      }
       if (loaded && ["deny","unavailable","unreconciled"].includes(result.status)) {
         // Account-policy mode stores the fixed reason (and, for a boundary denial, the
         // scan's finding paths) in the Owner's private job row. It is never logged. A
