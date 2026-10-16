@@ -278,6 +278,12 @@ jobs:
           begin
             if md5(s) is distinct from '$expected' then raise exception 'migration text differs from the file'; end if;
             execute s;
+            -- Scheduler readiness is an activation dependency of storage I9.
+            -- Check inside this same transaction, before the migration ledger
+            -- can record success. Earlier schemas have no such dependency.
+            if to_regprocedure('clued_private.storage_conflict_require_scheduler_v1()') is not null then
+              perform clued_private.storage_conflict_require_scheduler_v1();
+            end if;
             insert into supabase_migrations.schema_migrations(version, name, statements) values ('$version', '$short', array[s]);
           end \$apply\$;
           commit;" < "$file"

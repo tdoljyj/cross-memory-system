@@ -7,8 +7,9 @@ import ts from "typescript";
 const compiled = ts.transpileModule(readFileSync(new URL("../app/storage/admin/page.tsx", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
 }).outputText;
-function fixture(confirm = true) {
-  const hooks = [], effects = [], requests = [], navigations = [], confirmations = [];
+function fixture(confirm = true, automaticJobs = []) {
+  const hooks = [], effects = [], requests = [], navigations = [], confirmations = [], recoveryLists = [];
+  const timers = new Map(); let timerId=0;
   let owner = "a", authCallback, cursor = 0, tree;
   const equal = (a,b) => a && b && a.length === b.length && a.every((v,i) => Object.is(v,b[i]));
   const React = {
@@ -18,7 +19,8 @@ function fixture(confirm = true) {
     useEffect(fn,deps) { const i=cursor++; if (!hooks[i] || !equal(hooks[i].deps,deps)) { hooks[i]={deps}; effects.push(fn); } },
   };
   const exports = {};
-  vm.runInNewContext(compiled, { exports, URL, Error, queueMicrotask, crypto: { randomUUID: () => "fixture-request" },
+  vm.runInNewContext(compiled, { exports, URL, Error, queueMicrotask, AbortSignal, crypto: { randomUUID: () => "fixture-request" },
+    setTimeout(fn) { const id=++timerId;timers.set(id,fn);return id; },clearTimeout(id) { timers.delete(id); },
     window: { confirm: message => { confirmations.push(message); return confirm; }, location: { assign: url => navigations.push(url) } },
     require(name) {
       if (name === "react") return React;
@@ -30,17 +32,26 @@ function fixture(confirm = true) {
       } } };
       throw Error(name);
     },
-    fetch(url,init) { return new Promise(resolve => { requests.push({ url,init,resolve }); }); },
+    fetch(url,init) {
+      const body = init.body && JSON.parse(init.body);
+      if (url === '/v1/storage/recovery' && body?.action === 'list') {
+        recoveryLists.push({url,init});
+        return Promise.resolve({ok:true,status:200,json:async()=>({status:'ok',connection_id:body.connection_id,
+          jobs:automaticJobs,execution_permitted:false})});
+      }
+      return new Promise(resolve => { requests.push({ url,init,resolve }); });
+    },
   });
   const render = () => { cursor=0; tree=exports.default(); while(effects.length) effects.shift()(); };
-  const settle = async () => { for(let i=0;i<20;i++) await Promise.resolve(); render(); };
+  const settle = async () => { for(let i=0;i<100;i++) await Promise.resolve(); render(); };
   const text = n => Array.isArray(n) ? n.map(text).join("") : n == null || typeof n === "boolean" ? "" : typeof n === "object" ? text(n.props?.children) : String(n);
   function button(label) { let found; const visit = n => { if (Array.isArray(n)) return n.forEach(visit); if (!n || typeof n !== "object") return; if(n.type === "button" && text(n) === label) found=n; visit(n.props?.children); }; visit(tree); assert.ok(found,label); return found; }
   function input(label) { let found; const visit = n => { if(Array.isArray(n)) return n.forEach(visit); if(!n || typeof n !== "object") return;
     if(n.type === "label" && text(n).startsWith(label)) { const children = Array.isArray(n.props.children) ? n.props.children : [n.props.children]; found=children.find(c=>c?.type === "input" || c?.type === "select"); }
     visit(n.props?.children); }; visit(tree); assert.ok(found,label); return found; }
   render();
-  return { requests, navigations, confirmations, settle, text: () => text(tree), button, input,
+  return { requests, recoveryLists, navigations, confirmations, settle, text: () => text(tree), button, input,
+    poll() { const pending=[...timers.values()];timers.clear();for(const fn of pending)fn(); },
     change(id) { owner=id; authCallback("SIGNED_IN", id ? { user:{id} } : null); render(); },
     respond(i,value,status=200) { requests[i].resolve({ ok:status<400, status, json:async()=>value }); },
     probeFeedback() { let found=""; const visit=n=>{if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=="object")return;
@@ -89,69 +100,238 @@ test("directory probe error text cannot inject upstream content or cross an acco
   }
 });
 
+
 const recoveryJob='10000000-0000-4000-8000-000000000081',recoveryReceipt='10000000-0000-4000-8000-000000000082';
-async function recoveryReady(confirm=true,state='reauthorization_required') {
-  const f=fixture(confirm);await f.settle();f.respond(0,{connections:[{...connection,state}]});await f.settle();
+const inspection=(status='started')=>({connection_id:connection.id,job_id:recoveryJob,status,receipt_id:recoveryReceipt,execution_permitted:false});
+async function recoveryReady(state='reauthorization_required') {
+  const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state}]});await f.settle();
   f.input('原存储任务 ID').props.onChange({target:{value:recoveryJob}});await f.settle();
+  f.button('查询原任务回执').props.onClick();await f.settle();f.respond(1,inspection());await f.settle();
   return f;
 }
-test('native recovery reads original receipt first, explicitly confirms settlement and prevents duplicate clicks',async()=>{
-  const f=await recoveryReady();const inspect=f.button('查询原任务回执');inspect.props.onClick();inspect.props.onClick();await f.settle();
-  assert.equal(f.requests.length,2);assert.equal(f.requests[1].url,'/v1/storage/recovery');
-  assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:'inspect',connection_id:connection.id,job_id:recoveryJob});
-  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
-  const settle=f.button('核验并登记原结果（不重写）');settle.props.onClick();settle.props.onClick();await f.settle();
-  assert.equal(f.requests.length,3);assert.equal(f.confirmations.length,1);assert.match(f.confirmations[0],/不会重新创建文件/);
+test('manual recovery confirms in the page, consumes one exact snapshot and prevents duplicate settlement',async()=>{
+  const f=await recoveryReady();
+  f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.equal(f.confirmations.length,0);assert.match(f.text(),/不会重新创建文件/);
+  const confirm=f.button('确认核验原作业');confirm.props.onClick();confirm.props.onClick();await f.settle();
+  assert.equal(f.requests.length,3);
   assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:'settle',connection_id:connection.id,job_id:recoveryJob});
-  f.respond(2,{job_id:recoveryJob,status:'committed',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
-  assert.match(f.text(),/没有重新写入文件或恢复权限/);assert.equal(f.requests.length,3);assert.equal(f.navigations.length,0);
+  f.respond(2,inspection('committed'));await f.settle();
+  assert.match(f.text(),/没有重新写入文件或恢复权限/);assert.equal(f.navigations.length,0);
 });
-test('cancelled or unknown recovery never resends; editing job clears old settlement controls',async()=>{
-  for(const consent of [false,true]) {
-    const f=await recoveryReady(consent);f.button('查询原任务回执').props.onClick();await f.settle();
-    f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'uncertain',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
-    f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();
-    if(!consent)assert.equal(f.requests.length,2);
-    else {f.respond(2,{status:'inspection_required',execution_permitted:false});await f.settle();assert.match(f.text(),/不会自动重试/);assert.equal(f.requests.length,3);}
-    f.input('原存储任务 ID').props.onChange({target:{value:recoveryReceipt}});await f.settle();
-    assert.equal(f.text().includes('核验并登记原结果（不重写）'),false);
+test('cancel, edited job, refreshed page and account change invalidate captured confirmation',async()=>{
+  for(const change of ['cancel','job','refresh','account']) {
+    const f=await recoveryReady();f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();
+    const stale=f.button('确认核验原作业');
+    if(change==='cancel')f.button('取消本次确认').props.onClick();
+    if(change==='job')f.input('原存储任务 ID').props.onChange({target:{value:recoveryReceipt}});
+    if(change==='refresh')f.button('刷新状态').props.onClick();
+    if(change==='account')f.change('b');
+    stale.props.onClick();await f.settle();
+    assert.equal(f.requests.some(r=>JSON.parse(r.init.body).action==='settle'),false,change);
   }
 });
-test('revoked connection permits historical inspection only, never a settlement button',async()=>{
-  const f=await recoveryReady(true,'revoked');f.button('查询原任务回执').props.onClick();await f.settle();
-  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
+test('unknown settlement reads the same original receipt instead of submitting settlement twice',async()=>{
+  const f=await recoveryReady();f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();
+  f.button('确认核验原作业').props.onClick();await f.settle();
+  f.respond(2,{status:'inspection_required',execution_permitted:false});await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[3].init.body),{action:'inspect',connection_id:connection.id,job_id:recoveryJob});
+  f.respond(3,inspection());await f.settle();
+  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==='settle').length,1);
+});
+test('revoked connection has historical inspection only',async()=>{
+  const f=await recoveryReady('revoked');
   assert.ok(f.text().includes(recoveryReceipt));assert.equal(f.text().includes('核验并登记原结果（不重写）'),false);
 });
-
-test('fresh recovery consent is exact-job, explicit, one-click and never sends default renewal authority',async()=>{
-  const f=await recoveryReady();f.button('查询原任务回执').props.onClick();await f.settle();
-  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
-  const button=f.button('重新授权并自动核对原任务（凭据失效时）');button.props.onClick();button.props.onClick();await f.settle();
-  assert.equal(f.requests.length,3);assert.equal(f.requests[2].url,'/v1/storage/google/recovery/auto-start');
+test('reauthorization uses an exact-job page confirmation and never adds renewal authority',async()=>{
+  const f=await recoveryReady();f.button('重新授权并自动核对原任务（凭据失效时）').props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.match(f.text(),/Google 最终同意由你确认/);assert.equal(f.confirmations.length,0);
+  const button=f.button('继续前往 Google 授权');button.props.onClick();button.props.onClick();await f.settle();
+  assert.equal(f.requests.length,3);
   assert.deepEqual(JSON.parse(f.requests[2].init.body),{connection_id:connection.id,job_id:recoveryJob});
-  assert.match(f.confirmations[0],/结果一致即登记原回执/);assert.match(f.confirmations[0],/不恢复已停用连接/);assert.match(f.confirmations[0],/Google 最终同意由你确认/);
   f.respond(2,{authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=fixture'});await f.settle();
   assert.equal(f.navigations.length,1);
 });
-
-test('cancel or account change prevents stale recovery consent and late redirects',async()=>{
-  for(const kind of ['cancel','before','after']){
-    const f=await recoveryReady(kind!=='cancel');f.button('查询原任务回执').props.onClick();await f.settle();
-    f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
-    f.button('重新授权并自动核对原任务（凭据失效时）').props.onClick();if(kind==='before')f.change('b');await f.settle();
-    if(kind==='after'){f.change('b');await f.settle();f.respond(2,{authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=fixture'});await f.settle();}
+test('account change rejects stale confirmation and suppresses a late authorization redirect',async()=>{
+  for(const when of ['before','after']) {
+    const f=await recoveryReady();f.button('重新授权并自动核对原任务（凭据失效时）').props.onClick();await f.settle();
+    const stale=f.button('继续前往 Google 授权');
+    if(when==='before')f.change('b');stale.props.onClick();await f.settle();
+    if(when==='after'){f.change('b');await f.settle();f.respond(2,{authorization_url:'https://accounts.google.com/o/oauth2/v2/auth?state=fixture'});await f.settle();}
     else assert.equal(f.requests.some(r=>r.url==='/v1/storage/google/recovery/auto-start'),false);
     assert.equal(f.navigations.length,0);
   }
 });
-test('account switch before recovery dispatch blocks it and suppresses a late settlement receipt',async()=>{
-  const blocked=await recoveryReady();blocked.button('查询原任务回执').props.onClick();blocked.change('b');await blocked.settle();
-  assert.equal(blocked.requests.some(r=>r.url==='/v1/storage/recovery'),false);
-  const f=await recoveryReady();f.button('查询原任务回执').props.onClick();await f.settle();
-  f.respond(1,{connection_id:connection.id,job_id:recoveryJob,status:'started',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
-  f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();f.change('b');await f.settle();
-  f.respond(3,{connections:[]});await f.settle();f.respond(2,{job_id:recoveryJob,status:'committed',receipt_id:recoveryReceipt,execution_permitted:false});await f.settle();
-  assert.equal(f.text().includes(recoveryReceipt),false);assert.equal(f.text().includes('原任务结果已核验'),false);assert.equal(f.requests.length,4);
+test('a late settlement cannot display success in another account',async()=>{
+  const f=await recoveryReady();f.button('核验并登记原结果（不重写）').props.onClick();await f.settle();
+  f.button('确认核验原作业').props.onClick();await f.settle();f.change('b');await f.settle();
+  f.respond(3,{connections:[]});await f.settle();f.respond(2,inspection('committed'));await f.settle();
+  assert.equal(f.text().includes(recoveryReceipt),false);assert.equal(f.text().includes('原任务结果已核验'),false);
+});
+test('opening storage discovers and checks an original job without typing or a native dialog',async()=>{
+  const f=fixture(true,[inspection()]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  assert.equal(f.recoveryLists.length,1);assert.equal(f.confirmations.length,0);
+  assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:'settle',connection_id:connection.id,job_id:recoveryJob});
+  f.respond(1,inspection('committed'));await f.settle();assert.match(f.text(),/已完成并登记/);
+  assert.equal(f.requests.length,2);
+});
+test('automatic recovery diagnoses a mismatch instead of claiming success or repeating a file effect',async()=>{
+  const f=fixture(true,[inspection()]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  f.respond(1,{...inspection('attention_required'),diagnostic:{stage:'verification',reason:'REVISION_UNCHANGED',
+    observed_at:'2026-10-16T03:27:00Z',automatic_next_action:'continue_object_recovery',secret:'not-for-display'}});await f.settle();
+  assert.match(f.text(),/文件仍是写入前的版本/);assert.equal(f.text().includes('已完成并登记'),false);
+  assert.equal(f.text().includes('not-for-display'),false);assert.equal(f.requests.length,2);
+});
+test('lost automatic settlement response inspects only the original job and never repeats settlement',async()=>{
+  const f=fixture(true,[inspection()]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  f.respond(1,{status:'unknown'},503);await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:'inspect',connection_id:connection.id,job_id:recoveryJob});
+  f.respond(2,inspection());await f.settle();assert.equal(f.requests.length,3);
+});
+test('automatic list rejects cross-connection or malformed jobs before any recovery action',async()=>{
+  for(const job of [{...inspection(),connection_id:'other'}, {...inspection(),job_id:'not-a-job'}, {...inspection(),execution_permitted:true}]) {
+    const f=fixture(true,[job]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+    assert.equal(f.requests.length,1);assert.match(f.text(),/暂时未能读取自动恢复状态/);
+  }
+});
+test('an old automatic list or checked result cannot cross an account change',async()=>{
+  const f=fixture(true,[inspection()]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  f.change('b');await f.settle();f.respond(2,{connections:[]});await f.settle();
+  f.respond(1,inspection('committed'));await f.settle();assert.equal(f.text().includes(recoveryReceipt),false);
+});
+test('recovery status updates automatically without repeating settlement, and stops on account change',async()=>{
+  const jobs=[inspection()];const f=fixture(true,jobs);await f.settle();
+  f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();f.respond(1,inspection());await f.settle();
+  f.poll();await f.settle();assert.equal(f.recoveryLists.length,2);assert.equal(f.requests.length,2);
+  jobs.length=0;f.poll();await f.settle();assert.match(f.text(),/没有需要恢复的文件操作/);
+  const reads=f.recoveryLists.length;f.change('b');f.poll();await f.settle();assert.equal(f.recoveryLists.length,reads);
+});
+test('page-triggered metadata recovery has a fixed three-job budget and status polling cannot spend more',async()=>{
+  const jobs=Array.from({length:4},(_,i)=>({...inspection(),job_id:'10000000-0000-4000-8000-00000000008'+i}));
+  const f=fixture(true,jobs);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  for(let i=0;i<3;i++){f.respond(i+1,jobs[i]);await f.settle();}
+  assert.equal(f.requests.length,4);f.poll();await f.settle();assert.equal(f.requests.length,4);
+});
+const reviewJob={...inspection('attention_required'),review_available:true,base_version:3,source_receipt_id:recoveryReceipt};
+const observation={status:'review_prepared',connection_id:connection.id,job_id:recoveryJob,
+  observation_id:'10000000-0000-4000-8000-000000000091',base_version:3,source_receipt_id:recoveryReceipt,
+  observed_at:'2026-10-16T03:27:00Z',observed_state:'before',file_name:'原文件.zip',provider_file_id:'fixture-file-a',
+  provider_file_version:'2',mime_type:'application/zip',size:'1046345',sha256:'a'.repeat(64),execution_permitted:false};
+const incompleteJob={...reviewJob,review_available:false,abandon_available:true,file_name:'原文件.zip'};
+async function incompleteReady() {
+  const jobs=[{...incompleteJob}],f=fixture(true,jobs);await f.settle();
+  f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  assert.equal(f.requests.length,1,'incomplete identity does not authorize a metadata recovery');
+  f.button('停止管理旧登记并解除保护').props.onClick();await f.settle();return {f,jobs};
+}
+test('incomplete identity has a reachable confirmed withdrawal without claiming a Google read or changing the file',async()=>{
+  const {f,jobs}=await incompleteReady();assert.match(f.text(),/原文件.zip/);assert.equal(f.text().includes('已直接读取 Google 当前文件'),false);
+  const accept=f.button('确认停止管理（不删除文件）');accept.props.onClick();accept.props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.deepEqual(JSON.parse(f.requests[1].init.body),{
+    action:'review_abandon',connection_id:connection.id,job_id:recoveryJob,base_version:3,source_receipt_id:recoveryReceipt,confirmed:true});
+  assert.equal(f.confirmations.length,0);jobs.length=0;
+  f.respond(1,{status:'resolved',resolution:'abandoned_registration',connection_id:connection.id,job_id:recoveryJob,
+    receipt_id:lateReceipt,execution_permitted:false});await f.settle();assert.match(f.text(),/已停止管理相关旧登记/);
+  assert.equal(f.text().includes('原任务结果已核验并登记'),false);
+});
+test('withdrawal cancellation, refresh, account switch and a changed server version invalidate old confirmation',async()=>{
+  for(const change of ['cancel','refresh','account','version']) {
+    const {f,jobs}=await incompleteReady(),old=f.button('确认停止管理（不删除文件）');
+    if(change==='cancel')f.button('保留旧登记').props.onClick();
+    if(change==='refresh')f.button('刷新状态').props.onClick();
+    if(change==='account')f.change('b');
+    if(change==='version'){jobs[0]={...incompleteJob,base_version:4};f.poll();await f.settle();}
+    old.props.onClick();await f.settle();
+    assert.equal(f.requests.some(r=>JSON.parse(r.init.body).action==='review_abandon'),false,change);
+  }
+});
+test('unknown withdrawal is inspected through the original list and never submitted again',async()=>{
+  const {f}=await incompleteReady();f.button('确认停止管理（不删除文件）').props.onClick();await f.settle();
+  f.respond(1,{status:'unknown'},503);await f.settle();
+  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==='review_abandon').length,1);
+  assert.match(f.text(),/本次处理结果尚未确认/);assert.equal(f.text().includes('已停止管理相关旧登记'),false);
+});
+test('incomplete identity never offers withdrawal without valid exact receipt and version references',async()=>{
+  for(const fields of [{base_version:0},{source_receipt_id:'invalid'},{source_receipt_id:undefined}]) {
+    const f=fixture(true,[{...incompleteJob,...fields}]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+    assert.equal(f.text().includes('停止管理旧登记并解除保护'),false);
+  }
+});
+test('a disconnected complete identity can stop old registration without preview, credentials or reauthorization',async()=>{
+  const f=fixture(true,[{...incompleteJob,review_available:true}]);await f.settle();
+  f.respond(0,{connections:[{...connection,state:'revoked'}]});await f.settle();
+  f.button('停止管理旧登记并解除保护').props.onClick();await f.settle();f.button('确认停止管理（不删除文件）').props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.equal(JSON.parse(f.requests[1].init.body).action,'review_abandon');
+  assert.equal(f.requests.some(r=>r.url.includes('google')),false);
+});
+test('every directory can load status beyond the initial five without spending provider recovery budget',async()=>{
+  const f=fixture(true,[]),roots=Array.from({length:6},(_,i)=>({...connection,id:'fixture-connection-'+i,state:'active'}));await f.settle();
+  f.respond(0,{connections:roots});await f.settle();assert.equal(f.recoveryLists.length,5);
+  const last=f.button('读取本目录文件操作状态');last.props.onClick();await f.settle();
+  assert.equal(f.recoveryLists.length,6);assert.equal(JSON.parse(f.recoveryLists[5].init.body).connection_id,roots[5].id);
+  assert.equal(f.requests.length,1);f.change('b');await f.settle();const reads=f.recoveryLists.length;
+  last.props.onClick();await f.settle();assert.equal(f.recoveryLists.length,reads);
+});
+async function reviewReady() {
+  const jobs=[reviewJob],f=fixture(true,jobs);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  f.respond(1,reviewJob);await f.settle();f.button('查看当前文件并处理冲突').props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[2].init.body),{action:'review_prepare',connection_id:connection.id,job_id:recoveryJob});
+  f.respond(2,observation);await f.settle();return {f,jobs};
+}
+test('accepting the current file is a separate informed confirmation with server observation references only',async()=>{
+  const {f,jobs}=await reviewReady();assert.match(f.text(),/原文件.zip/);assert.match(f.text(),/文件仍是原操作之前的状态/);
+  assert.equal(f.requests.length,3);assert.equal(f.confirmations.length,0);
+  const accept=f.button('保留当前文件并恢复使用');accept.props.onClick();accept.props.onClick();await f.settle();
+  assert.equal(f.requests.length,4);assert.deepEqual(JSON.parse(f.requests[3].init.body),{
+    action:'review_accept',connection_id:connection.id,job_id:recoveryJob,base_version:3,source_receipt_id:recoveryReceipt,
+    confirmed:true,observation_id:observation.observation_id});
+  jobs.length=0;f.respond(3,{status:'resolved',resolution:'accepted_current_state',connection_id:connection.id,job_id:recoveryJob,
+    receipt_id:lateReceipt,execution_permitted:false});await f.settle();assert.match(f.text(),/已按 Google 当前文件状态恢复登记和使用/);
+  assert.equal(f.text().includes('原任务结果已核验并登记'),false);
+});
+test('cancel, refresh and account change invalidate an old current-state acceptance',async()=>{
+  for(const kind of ['cancel','refresh','account']) {
+    const {f}=await reviewReady(),old=f.button('保留当前文件并恢复使用');
+    if(kind==='cancel')f.button('暂不采用').props.onClick();
+    if(kind==='refresh')f.button('刷新状态').props.onClick();
+    if(kind==='account')f.change('b');
+    old.props.onClick();await f.settle();assert.equal(f.requests.some(r=>JSON.parse(r.init.body).action==='review_accept'),false,kind);
+  }
+});
+test('unknown review result never becomes success and is not resubmitted',async()=>{
+  const {f}=await reviewReady();f.button('保留当前文件并恢复使用').props.onClick();await f.settle();
+  f.respond(3,{status:'attention_required',review_error:'REVIEW_NOT_COMMITTED',execution_permitted:false});await f.settle();
+  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==='review_accept').length,1);
+  assert.equal(f.text().includes('已按 Google 当前文件状态恢复登记'),false);assert.match(f.text(),/登记结果尚未确认/);
+});
+test('expired review gives a useful reread action without repeating acceptance',async()=>{
+  const {f}=await reviewReady();f.button('保留当前文件并恢复使用').props.onClick();await f.settle();
+  f.respond(3,{status:'attention_required',review_error:'REVIEW_REFRESH_REQUIRED',execution_permitted:false});await f.settle();
+  assert.match(f.text(),/读取记录已过期，或文件与登记状态已变化/);
+  assert.match(f.text(),/请重新查看当前文件/);
+  assert.equal(f.requests.filter(r=>JSON.parse(r.init.body).action==='review_accept').length,1);
+  assert.equal(f.text().includes('已按 Google 当前文件状态恢复登记'),false);
+});
+test('resolved history is displayed without rerunning settlement or keeping status polling alive',async()=>{
+  const f=fixture(true,[{...inspection('resolved'),resolution:'accepted_current_state'}]);await f.settle();
+  f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  assert.match(f.text(),/已按 Google 当前文件状态恢复登记和使用/);
+  const reads=f.recoveryLists.length;f.poll();await f.settle();
+  assert.equal(f.requests.length,1);assert.equal(f.recoveryLists.length,reads);
+});
+test('a late current-state acceptance cannot display success after an account switch',async()=>{
+  const {f}=await reviewReady();f.button('保留当前文件并恢复使用').props.onClick();await f.settle();f.change('b');await f.settle();
+  f.respond(4,{connections:[]});await f.settle();f.respond(3,{status:'resolved',resolution:'accepted_current_state',connection_id:connection.id,
+    job_id:recoveryJob,receipt_id:lateReceipt,execution_permitted:false});await f.settle();
+  assert.equal(f.text().includes('已按 Google 当前文件状态恢复登记'),false);
+});
+test('review observation identity, version and source receipt must match the displayed original job',async()=>{
+  for(const changed of [{job_id:lateReceipt},{base_version:4},{source_receipt_id:lateReceipt},{provider_file_id:'https://evil.invalid'}]) {
+    const f=fixture(true,[reviewJob]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+    f.respond(1,reviewJob);await f.settle();f.button('查看当前文件并处理冲突').props.onClick();await f.settle();
+    f.respond(2,{...observation,...changed});await f.settle();
+    assert.equal(f.text().includes('保留当前文件并恢复使用'),false);assert.equal(f.requests.length,3);
+  }
 });
 
 test("directory observation submits only one exact connection and never claims writing is enabled",async()=>{

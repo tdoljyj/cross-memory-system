@@ -107,9 +107,11 @@ import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageDemandRuntime, runStorageDemandRenewalScheduled } from "./storage-demand-runtime";
 import storageDemandPolicy from "../../../development/contracts/storage/StorageDemandRenewal.v0.1.json";
 import { createStorageCloudRecovery } from "./storage-cloud-recovery";
+import { createStorageRecoveryReview } from "./storage-recovery-review";
+import { recoveryDiagnostic, storageRecoveryListResult, storageRecoveryOwnerResult, storageRecoveryResolutionResult, type RecoveryDiagnostic, type RecoveryStage } from "./storage-recovery-diagnostics";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
   storageDestructiveCode, storageDestructiveMessages, storageAdoptCode, storageAdoptMessages, storageTrashBatchInput,
-  storageTrashBatchResult } from "./storage-agent-tools";
+  storageTrashBatchResult, storageObjectReviewCode, storageObjectReviewRefusal } from "./storage-agent-tools";
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
   sweepStaging, uploadBegin, uploadErrorBody, StorageUploadError, type StagingBucket } from "./storage-staging";
 import { createStorageReadAgent, storageReadTool, storageContentTool, StorageReadError, STORAGE_IMAGE } from "./storage-read-agent";
@@ -930,6 +932,11 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
       }) as Record<string, unknown>;
+    const reportDiagnostic = async (reference: StorageJobReference, diagnostic: RecoveryDiagnostic) => {
+      const reported = await recoveryRpc({ ...reference, action: "report", diagnostic });
+      if (reported.status !== "recorded" || reported.connection_id !== reference.connection_id ||
+          reported.job_id !== reference.job_id || reported.execution_permitted !== false) throw new Error("diagnostic unavailable");
+    };
     const due = await recoveryRpc({ action: "due" });
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     if (due.status !== "ok" || !Array.isArray(due.jobs) || due.jobs.length > 3 ||
@@ -946,6 +953,7 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
       }) as Record<string, unknown> }).catch(() => null) : null;
     let committed = 0, released = 0, attention = 0;
     for (const reference of due.jobs as Array<{ connection_id: string; job_id: string }>) {
+      let stage: RecoveryStage = "descriptor";
       try {
         const prior = await verifiedRpc({ ...reference, action: "verified_inspect" });
         if (prior.status === "committed" && prior.connection_id === reference.connection_id &&
@@ -958,6 +966,7 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
             prior.job_id === reference.job_id && prior.execution_permitted === false &&
             typeof prior.verified_receipt_id === "string" && uuid.test(prior.verified_receipt_id) &&
             typeof prior.verified_digest === "string" && /^[0-9a-f]{64}$/.test(prior.verified_digest)) {
+          stage = "settlement";
           const settled = await verifiedRpc({ ...reference, action: "settle_verified" });
           if (settled.status !== "committed" || settled.state !== "committed" ||
               settled.connection_id !== reference.connection_id || settled.job_id !== reference.job_id ||
@@ -978,6 +987,7 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
           const recovery = await createStorageCloudRecovery({
             client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
             rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, absent: { rpc: absentRpc }, report_expiring: true, timeout_ms: 10000,
+            report_diagnostic: reportDiagnostic,
           });
           return await recovery.run(reference);
         };
@@ -989,7 +999,10 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         if (result.status === "committed") committed++;
         else if (result.status === "released_not_effected") released++;
         else attention++;
-      } catch { attention++; }
+      } catch (error) {
+        attention++;
+        try { await reportDiagnostic(reference, recoveryDiagnostic(stage, error)); } catch { /* The same job stays due. */ }
+      }
     }
     if (released) console.warn(JSON.stringify({ event: "storage_recovery_released_not_effected", released }));
     return { status: attention ? "attention_required" : "ok", committed, released, attention };
@@ -1821,9 +1834,20 @@ async function callStorageJob(request: Request, env: ContinuityEnv, input: Recor
   if (!token || !/^clued_bnd_[A-Za-z0-9_-]{32,}$/.test(token)) throw new HttpError(403, "A valid Clued Binding is required.");
   const jobsRpc=env.CLUED_STORAGE_JOBS_V2==="true"
     ? "clued_storage_jobs_router_v2" : "clued_storage_jobs_v1";
-  const result = projectResult(await supabaseRequest(env, `/rest/v1/rpc/${jobsRpc}`, {
-    method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
-  }), input);
+  let raw: unknown;
+  try {
+    raw = await supabaseRequest(env, `/rest/v1/rpc/${jobsRpc}`, {
+      method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
+    });
+  } catch (error) {
+    if (storageObjectReviewCode(error)) return storageObjectReviewRefusal();
+    throw error;
+  }
+  if (raw && typeof raw === "object" && "status" in raw && raw.status === "rejected" &&
+      "error_code" in raw && raw.error_code === "storage_object_under_review") return storageObjectReviewRefusal();
+  const result = projectResult(raw && typeof raw === "object" && ("status" in raw && raw.status === "conflict" ||
+    "reason_code" in raw && ["PROVIDER_STATE_CONFLICT", "PROVIDER_RESULT_RECONCILED"].includes(String(raw.reason_code)))
+    ? storageAgentResult(raw, input) : raw, input);
   // Same durable job, root fence and fixed executor for REST and MCP. Inspect
   // never dispatches. A queued reply alone is neither admission nor completion.
   if (ctx && input.action === "submit" && result && typeof result === "object" && "status" in result &&
@@ -2456,6 +2480,10 @@ async function callTool(
       if (agentMessagesEnabled(env)) result = withCoordinationHint(result) as typeof result;
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: result.status === "rejected" };
     } catch (error) {
+      if (storageObjectReviewCode(error)) {
+        const result = storageObjectReviewRefusal();
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: true };
+      }
       const pathCode = storagePathCode(error);
       const message = error instanceof Error ? error.message : "";
       const result = pathCode ? { error: pathCode, message: storagePathMessages[pathCode] }
@@ -3318,23 +3346,129 @@ async function handleContinuityRequestInner(
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
       if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...headers, allow: "POST, OPTIONS" });
       const { token } = await requireSupabaseUser(request, env);
+      let recoveryReference: { connection_id: string; job_id: string } | undefined;
+      let originalOwnerStatus: Record<string, unknown> | undefined;
+      let reportRecoveryDiagnostic: ((reference: { connection_id: string; job_id: string }, diagnostic: RecoveryDiagnostic) => Promise<void>) | undefined;
+      let inspectOriginalRecovery: (() => Promise<Record<string, unknown>>) | undefined;
+      let originalReviewInput: Record<string, unknown> | undefined;
+      let reviewMutationDispatched = false;
+      let recoveryStage: RecoveryStage = "request";
       try {
         const input = await parseBody(request), issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
         const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-        if (Object.keys(input).length !== 3 || typeof input.action !== "string" || !["inspect", "settle"].includes(input.action) ||
-            typeof input.connection_id !== "string" || !uuid.test(input.connection_id) ||
-            typeof input.job_id !== "string" || !uuid.test(input.job_id) || !issuer || issuer.length < 32) throw new Error("Unavailable");
-        const reference = { connection_id: input.connection_id, job_id: input.job_id };
+        const finalReview = input.action === "review_accept" || input.action === "review_abandon";
+        const reviewKeys = ["action", "connection_id", "job_id", "base_version", "source_receipt_id", "confirmed", "observation_id"];
+        if (typeof input.action !== "string" || !["list", "inspect", "settle", "review_prepare", "review_accept", "review_abandon"].includes(input.action) ||
+            typeof input.connection_id !== "string" || !uuid.test(input.connection_id) || !issuer || issuer.length < 32 ||
+            (input.action === "list" ? Object.keys(input).length !== 2 : typeof input.job_id !== "string" || !uuid.test(input.job_id)) ||
+            (finalReview ? Object.keys(input).some(key => !reviewKeys.includes(key)) || input.confirmed !== true ||
+              !Number.isSafeInteger(input.base_version) || Number(input.base_version) < 1 || !uuid.test(String(input.source_receipt_id)) ||
+              (input.action === "review_accept" || input.observation_id !== undefined) && !uuid.test(String(input.observation_id))
+              : input.action !== "list" && Object.keys(input).length !== 3)) throw new Error("Unavailable");
+        if (finalReview) originalReviewInput = structuredClone(input);
         const issuerHash = await sha256(issuer);
         const rpc = async (value: Record<string, unknown>) => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_native_recovery_v1", {
           method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
           body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
         }) as Record<string, unknown>;
-        const ownerStatus = storageAgentResult(await rpc({ ...reference, action: "recovery_inspect" }), reference);
+        if (input.action === "list") return json(storageRecoveryListResult(
+          await rpc({ action: "recovery_list", connection_id: input.connection_id }), input.connection_id), 200, headers);
+        const reference = { connection_id: input.connection_id, job_id: input.job_id as string };
+        recoveryReference = reference;
+        inspectOriginalRecovery = async () => storageRecoveryOwnerResult(await rpc({ ...reference, action: "recovery_inspect" }), reference);
+        const ownerStatus = await inspectOriginalRecovery();
+        originalOwnerStatus = ownerStatus;
+        reportRecoveryDiagnostic = async (pinned, diagnostic) => {
+          const result = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_scheduled_recovery_v2", {
+            method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
+            body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: { ...pinned, action: "report", diagnostic } }),
+          }) as Record<string, unknown>;
+          if (result.status !== "recorded" || result.connection_id !== pinned.connection_id ||
+              result.job_id !== pinned.job_id || result.execution_permitted !== false) throw new Error("diagnostic unavailable");
+        };
+        const matchesReview = (result: Record<string, unknown>) => result.status === "resolved" &&
+          result.resolution === (input.action === "review_accept" ? "accepted_current_state" : "abandoned_registration") &&
+          result.source_receipt_id === input.source_receipt_id && result.base_version === input.base_version &&
+          (result.observation_id ?? null) === (input.observation_id ?? null);
+        let refreshAttempted = false;
+        const refreshOriginalOnce = async () => {
+          if (refreshAttempted || env.CLUED_STORAGE_REFRESH_V1 !== "true" || !env.CLUED_STORAGE_VAULT_KEYS) return false;
+          refreshAttempted = true;
+          try {
+            const refresh = await createStorageGoogleRefresh({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+              client_secret: env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS),
+              rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_refresh_worker_v1", {
+                method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }), redirect: "manual", signal: AbortSignal.timeout(10000),
+              }) as Record<string, unknown> });
+            return (await refresh.run(reference.connection_id, reference.job_id)).status === "committed";
+          } catch { return false; }
+        };
+        let reviewOwnerStatus = ownerStatus;
+        const readOwnerReview = async (revalidate?: { observation_id: string; base_version: number; source_receipt_id: string }): Promise<Record<string, unknown>> => {
+          const attempt = async () => {
+            if (reviewOwnerStatus.status === "resolved") return reviewOwnerStatus;
+            if (reviewOwnerStatus.review_available !== true) throw new HttpError(409, "Review changed.");
+            if (!env.CLUED_STORAGE_VAULT_KEYS) throw new Error("DRIVE_CREDENTIAL_UNAVAILABLE");
+            if (revalidate && (revalidate.base_version !== reviewOwnerStatus.base_version ||
+                revalidate.source_receipt_id !== reviewOwnerStatus.source_receipt_id)) throw new HttpError(409, "Review changed.");
+            recoveryStage = "descriptor";
+            const descriptor = await supabaseRequest(env, "/rest/v1/rpc/clued_storage_native_recovery_load_v2", {
+              method: "POST", userToken: token, redirect: "manual", signal: AbortSignal.timeout(10000),
+              body: JSON.stringify({ p_issuer_secret: issuer, p_input: { ...reference, action: "recovery_load" } }),
+            }) as Record<string, unknown>;
+            if (descriptor.version !== reviewOwnerStatus.base_version || reviewOwnerStatus.source_receipt_id !== reviewOwnerStatus.receipt_id)
+              throw new HttpError(409, "Review changed.");
+            recoveryStage = "verification";
+            const review = await createStorageRecoveryReview({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
+              vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), descriptor, source_receipt_id: String(reviewOwnerStatus.source_receipt_id),
+              rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_scheduled_recovery_v2", {
+                method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
+                body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
+              }) as Record<string, unknown> });
+            return review.prepare(reference, revalidate);
+          };
+          try { return await attempt(); }
+          catch (error) {
+            if (!(error instanceof Error) || error.message !== "storage_recovery_credential_expiring" || !await refreshOriginalOnce()) throw error;
+            // An existing delegation may refresh this original job once. Both
+            // current Owner identity and the sealed descriptor are reloaded;
+            // no flag, consent, connection or provider effect is enabled.
+            reviewOwnerStatus = await inspectOriginalRecovery!();
+            originalOwnerStatus = reviewOwnerStatus;
+            return attempt();
+          }
+        };
         if (input.action === "inspect") {
           // Status only, even without a vault or after connection revocation.
           return json(ownerStatus, 200, headers);
         }
+        if (finalReview) {
+          recoveryStage = "settlement";
+          if (ownerStatus.status === "resolved") {
+            if (!matchesReview(ownerStatus)) throw new HttpError(409, "Review changed.");
+            return json(ownerStatus, 200, headers);
+          }
+          if (input.action === "review_accept") {
+            const validated = await readOwnerReview({ observation_id: String(input.observation_id), base_version: Number(input.base_version),
+              source_receipt_id: String(input.source_receipt_id) });
+            if (validated.status === "resolved") {
+              if (!matchesReview(validated)) throw new HttpError(409, "Review changed.");
+              return json(validated, 200, headers);
+            }
+            if (validated.status !== "review_revalidated") throw new HttpError(409, "Review changed.");
+          }
+          recoveryStage = "settlement";
+          reviewMutationDispatched = true;
+          const reviewed = storageRecoveryResolutionResult(await rpc(input), reference);
+          if (!matchesReview(reviewed)) throw new Error("Unavailable");
+          return json(reviewed, 200, headers);
+        }
+        if (ownerStatus.status === "resolved") return json(ownerStatus, 200, headers);
+        if (input.action === "review_prepare") {
+          return json(await readOwnerReview(), 200, headers);
+        }
+        if (["committed", "cancelled", "denied"].includes(String(ownerStatus.status))) return json(ownerStatus, 200, headers);
+        recoveryStage = "credential";
         if (!env.CLUED_STORAGE_VAULT_KEYS) throw new Error("Unavailable");
         // Owner lookup above prevents the fixed issuer bridge from becoming a
         // cross-account recovery endpoint. This branch never calls the executor.
@@ -3343,6 +3477,7 @@ async function handleContinuityRequestInner(
             method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
             body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
           }) as Record<string, unknown>;
+        recoveryStage = "descriptor";
         let verifiedStatus: Record<string, unknown> | null = null;
         try { verifiedStatus = await verifiedRpc({ ...reference, action: "verified_inspect" }); }
         catch { /* The legacy connection is still restricted by the v1 fence. */ }
@@ -3357,6 +3492,7 @@ async function handleContinuityRequestInner(
             uuid.test(String(verifiedStatus.verified_receipt_id)) &&
             /^[0-9a-f]{64}$/.test(String(verifiedStatus.verified_digest)) &&
             verifiedStatus.execution_permitted === false) {
+          recoveryStage = "settlement";
           const settled = await verifiedRpc({ ...reference, action: "settle_verified" });
           if (settled.status !== "committed" || settled.state !== "committed" ||
               !uuid.test(String(settled.receipt_id)) || settled.execution_permitted !== false) throw new Error("Unavailable");
@@ -3365,6 +3501,7 @@ async function handleContinuityRequestInner(
         }
         if (verifiedStatus?.status === "none") throw new Error("No original effect");
         const recoveryAttempt=async()=>{
+        recoveryStage = "descriptor";
         let accountDescriptor: Record<string, unknown> | null = null;
         if (verifiedStatus) {
           if (verifiedStatus.status !== "inspection_required" || verifiedStatus.job_id !== reference.job_id ||
@@ -3377,28 +3514,51 @@ async function handleContinuityRequestInner(
           if (accountDescriptor.status !== "recovery_only") throw new Error("Unavailable");
         }
         const recovery = await createStorageCloudRecovery({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
-          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!), rpc, report_expiring:true,
+          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!), rpc, report_expiring:true, report_diagnostic: reportRecoveryDiagnostic,
           ...(accountDescriptor?.status === "recovery_only" ? { verified: { descriptor: accountDescriptor, rpc: verifiedRpc } } : {}) });
         return recovery.run(reference);
         };
         let recovered=await recoveryAttempt();
-        if(recovered.status==="credential_expiring" && env.CLUED_STORAGE_REFRESH_V1==="true"){
-          const refresh=await createStorageGoogleRefresh({client_id:env.CLUED_STORAGE_GOOGLE_CLIENT_ID??"",
-            client_secret:env.CLUED_STORAGE_GOOGLE_CLIENT_SECRET??"",vault:JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
-            rpc:async value=>await supabaseRequest(env,"/rest/v1/rpc/clued_storage_refresh_worker_v1",{
-              method:"POST",body:JSON.stringify({p_issuer_hash:issuerHash,p_input:value}),redirect:"manual",signal:AbortSignal.timeout(10000),
-            }) as Record<string,unknown>});
-          if((await refresh.run(reference.connection_id,reference.job_id)).status==="committed"){
+        if(recovered.status==="credential_expiring" && await refreshOriginalOnce()){
             // Re-enter the same live Owner RPC before loading the new sealed
             // version. A late renewal cannot substitute for that Owner session.
-            const freshOwnerStatus=storageAgentResult(await rpc({...reference,action:"recovery_inspect"}),reference);
-            if(["committed","cancelled","denied","attention_required"].includes(String(freshOwnerStatus.status)))
+            const freshOwnerStatus=await inspectOriginalRecovery();
+            if(["committed","cancelled","denied","resolved"].includes(String(freshOwnerStatus.status)))
               return json(freshOwnerStatus,200,headers);
             recovered=await recoveryAttempt();
-          }
         }
-        return json(recovered.status==="credential_expiring"?{status:"inspection_required",execution_permitted:false}:recovered,200,headers);
-      } catch {
+        if (["inspection_required", "credential_expiring"].includes(recovered.status)) {
+          // Recording a verified result or diagnostic may have committed even
+          // if its reply was lost. Inspect this same original job once; never
+          // resend settlement or dispatch a replacement effect in this request.
+          let latest = ownerStatus;
+          try { latest = await inspectOriginalRecovery(); } catch { /* Preserve the confirmed original receipt. */ }
+          if (["committed", "cancelled", "denied"].includes(String(latest.status))) return json(latest, 200, headers);
+          return json({ ...latest, ...recovered, status: latest.status, outcome: "inspection_required",
+            job_id: reference.job_id, receipt_id: latest.receipt_id, execution_permitted: false }, 200, headers);
+        }
+        return json(recovered,200,headers);
+      } catch (error) {
+        const diagnostic = recoveryDiagnostic(recoveryStage, error);
+        if (originalReviewInput && recoveryReference && originalOwnerStatus && inspectOriginalRecovery) {
+          let latest: Record<string, unknown> | undefined;
+          try { latest = await inspectOriginalRecovery(); } catch { /* Completion remains unknown, never repeat confirmation. */ }
+          if (latest?.status === "resolved" && latest.resolution === (originalReviewInput.action === "review_accept" ? "accepted_current_state" : "abandoned_registration") &&
+              latest.source_receipt_id === originalReviewInput.source_receipt_id && latest.base_version === originalReviewInput.base_version &&
+              (latest.observation_id ?? null) === (originalReviewInput.observation_id ?? null)) return json(latest, 200, headers);
+          return json({ ...originalOwnerStatus, status: "attention_required", outcome: "inspection_required", diagnostic,
+            review_error: !reviewMutationDispatched || error instanceof HttpError && [400, 403, 409].includes(error.status) ? "REVIEW_REFRESH_REQUIRED" : "REVIEW_COMPLETION_UNKNOWN",
+            execution_permitted: false }, 200, headers);
+        }
+        if (recoveryReference && originalOwnerStatus && reportRecoveryDiagnostic) {
+          try { await reportRecoveryDiagnostic(recoveryReference, diagnostic); } catch { /* Preserve the original failure. */ }
+          let latest = originalOwnerStatus;
+          try { latest = await inspectOriginalRecovery!(); } catch { /* No false success after a lost reply. */ }
+          if (["committed", "cancelled", "denied"].includes(String(latest.status))) return json(latest,200,headers);
+          return json({ ...latest, outcome: "inspection_required",
+            diagnostic, execution_permitted: false }, 200, headers);
+        }
+        // No detailed job diagnostics before the Owner lookup succeeds.
         return json({ status: "inspection_required", execution_permitted: false }, 403, headers);
       }
     }

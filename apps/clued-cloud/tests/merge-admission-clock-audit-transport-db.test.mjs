@@ -50,11 +50,13 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   const candidate=await fs.readFile(path.join(cloud,'supabase/migrations',transportMigration),'utf8');await db.query(candidate);
   const workerSource=await fs.readFile(path.join(cloud,'worker/continuity.ts'),'utf8');
   // Bind this current transport regression to the independently reviewed Worker.
-  // This fixture accepts the reviewed Kooyumi storage OAuth start-only guards;
-  // C1 audit paths are unchanged. The prior 23236e5f...24cf binding remains in
-  // earlier history; R9 registry and epoch pins are separate and unchanged.
+  // I9 changes only storage recovery routes/scheduler and scoped storage MCP
+  // refusals; C1 audit paths are unchanged. The prior OAuth guard binding was
+  // 005e2c10ccff1369b356ca56ad905c2a063f270332860ad905751053e34dd6f4.
+  // That and 23236e5f...24cf remain in earlier history; R9 registry and epoch
+  // pins are separate and unchanged.
   // All C1 behavior/permission assertions below remain exact.
-  assert.equal(hash(workerSource),'005e2c10ccff1369b356ca56ad905c2a063f270332860ad905751053e34dd6f4');
+  assert.equal(hash(workerSource),'8bf073ba083c3259afdc780f4db47dd232777c0e1eac057a1c56107286ee6514');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');
