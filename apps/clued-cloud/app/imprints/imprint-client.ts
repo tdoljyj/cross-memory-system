@@ -7,7 +7,7 @@ export type NativeRpc = (name: string, args: Json, signal?: AbortSignal) => Prom
 export class ImprintFailure extends Error {
   constructor(public reason: "unknown" | "conflict" | "unavailable", public code = "", public readFailure?: NativeReadFailure) { super(reason); }
 }
-const CONFLICT_CODES = new Set(["record_version_conflict", "organization_version_conflict", "development_record_version_conflict",
+const CONFLICT_CODES = new Set(["record_version_conflict", "organization_version_conflict", "association_version_conflict", "development_record_version_conflict",
   "context_version_conflict", "stale_base_version", "IDEMPOTENCY_KEY_CONFLICT"]);
 async function call(rpc: NativeRpc, name: string, args: Json): Promise<Json> {
   try {
@@ -170,4 +170,14 @@ export async function setOrganization(rpc: NativeRpc, pending: PreparedWrite, co
     || !Array.isArray(org.domains) || !org.domains.every(domain)
     || JSON.stringify(normalizedDomains(org.domains)) !== JSON.stringify(pending.input.domains)) throw new ImprintFailure("unknown");
   return { receipt: value.receipt_id, domains: normalizedDomains(org.domains), version: Number(org.version) };
+}
+
+export async function setAssociation(rpc: NativeRpc, pending: PreparedWrite): Promise<{ receipt: string; changed: boolean }> {
+  const value = await call(rpc, "clued_imprint_association_set_v1", { p_input: pending.input, p_received_payload_hash: pending.hash });
+  const supplemental = object(value.supplemental) ? value.supplemental : null;
+  const saved = supplemental && object(supplemental.association) ? supplemental.association : null;
+  if (value.status !== "committed" || !uuid(value.receipt_id) || !saved || saved.record_id !== pending.input.record_id
+    || saved.source_kind !== pending.input.source_kind || typeof saved.changed !== "boolean"
+    || saved.version !== Number(pending.input.base_version) + (saved.changed ? 1 : 0)) throw new ImprintFailure("unknown");
+  return { receipt: value.receipt_id, changed: saved.changed };
 }
