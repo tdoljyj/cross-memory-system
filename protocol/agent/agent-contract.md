@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 49
+Contract version: 50
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -252,6 +252,12 @@ Read this section on a conflict or reported inbox activity, before sending or re
 Read this section before renewal, continued work across sessions, release, takeover, or handling unavailable work-claim tools.
 
 - Before the lease expires, call `clued_work_renew` with a new `progress_ref` (a pushed head SHA or a Receipt id). To change paths outside your `write_set`, renew with the wider `write_set` first; it is checked for conflicts again.
+
+- Handle ordinary CI queues, coordination waits, lease renewal and revised estimates within the existing authorized Task yourself. Preserve costs, failures and the Task's CI meter. Do not ask the Owner to extend a routine execution window merely because these take longer than estimated. Use the current service claim/profile and the existing renewal, queue and approval doors; an applicable pre-approved grant is already permission to proceed through its door.
+
+- Keep time boundaries separate and traceable. `expires_at` is that service claim's lease expiry; `hard_deadline_at` is that claim chain's service limit. Neither is an Owner-imposed Task deadline. An Owner hard deadline or spending limit needs its actual Owner instruction or authoritative policy source, with the applicable Task/scope and current version. Estimates, checkpoints, Agent-written Task text and historical claim metadata cannot create or carry forward that authority by themselves. Re-read the current claim/profile and source when they conflict; record a correction instead of asking the Owner to approve an invented extension.
+
+- A genuine service or Owner limit still binds: do not manufacture progress, renew after the chain cap, reclaim or rename work to evade it, reset spending/CI counts, or widen scope/permissions. On a real refusal, use its existing recovery or grant route, including the Owner's effective auto-approval setting. Ask the Owner only when an unresolved limit or scope/permission decision actually requires them; identify the precise source and remaining work. A queue delay or revised estimate alone is not such a decision.
 
 - Either way of working is fine: claim for one step and release when that step ends, or keep one claim across turns, steps and sessions and renew it (any session of the same Binding can, with the `claim_id`, `fence` and `lease_version` that `active_work_claims` lists), using the Receipt id of what you just recorded or the new head SHA as `progress_ref`. A claim bound to an open pull request stays live until the pull request merges (see [Appendix A.5](#appendix-a5)).
 
