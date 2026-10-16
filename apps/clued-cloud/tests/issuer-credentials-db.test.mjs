@@ -281,20 +281,30 @@ test('issuer identity, versioned digests and independently retired credentials',
       const checkedResolve=(proof,action='inspect')=>checked.query('select clued_private.issuer_resolve_identity_policy_transition_v1($1,$2) value',
         [proof,{action,manifest_id:crypto.randomUUID()}]);
       const rejected=error=>error.code==='42501'&&error.message==='storage_transition_denied';
-      const expiration=async()=>{
+      const expiration=async(ttl=0.3)=>{
         const proof=hex(),generation=Number((await admin.query('select max(generation) generation from clued_private.issuer_credentials_v1 where issuer_id=$1',[storageId])).rows[0].generation)+1;
         const deadline=(await admin.query(`insert into clued_private.issuer_credentials_v1(issuer_id,generation,verifier,state,activated_at,valid_until)
-          values($1,$2,$3,'active',clock_timestamp(),clock_timestamp()+interval '0.3 seconds') returning valid_until`,[storageId,generation,verifier(proof)])).rows[0].valid_until;
-        return {proof,deadline};
+          values($1,$2,$3,'active',clock_timestamp(),clock_timestamp()+$4::numeric*interval '1 second') returning valid_until`,[storageId,generation,verifier(proof),ttl])).rows[0].valid_until;
+        return {proof,deadline,generation};
       };
-      const waitForLock=async(pending)=>{
-        let settled=false;pending.then(()=>{settled=true;});
+      const waitDetails=async(credential,settled,result)=>{
+        const state=(await admin.query(`select clock_timestamp() db_clock,valid_until,state,
+          state='active' and valid_until>clock_timestamp() live,
+          pg_blocking_pids($3) blocking_pids from clued_private.issuer_credentials_v1
+          where issuer_id=$1 and generation=$2`,[storageId,credential.generation,checked.processID])).rows[0];
+        const safeMessages=['storage_transition_denied','direct_human_session_required','issuer_credential_required'];
+        return JSON.stringify({state,settled,returned:!settled?'pending':result===null?'success':{
+          code:/^[0-9A-Z]{5}$/.test(result?.code??'')?result.code:'unknown',
+          message:safeMessages.includes(result?.message)?result.message:'unrecognized_error'}});
+      };
+      const waitForLock=async(pending,credential)=>{
+        let settled=false,result;pending.then(value=>{settled=true;result=value;});
         for(let i=0;i<200;i++){
           if((await admin.query('select exists(select 1 from pg_locks where pid=$1 and not granted) value',[checked.processID])).rows[0].value)return;
-          assert.equal(settled,false,'the credential must reach the intended lock wait');
+          if(settled)assert.fail('the credential must reach the intended lock wait: '+await waitDetails(credential,settled,result));
           await new Promise(resolve=>setTimeout(resolve,5));
         }
-        assert.fail('the transition credential did not wait');
+        assert.fail('the transition credential did not wait: '+await waitDetails(credential,settled,result));
       };
       const waitExpired=async(deadline)=>{
         for(let i=0;i<1200;i++){
@@ -323,9 +333,15 @@ test('issuer identity, versioned digests and independently retired credentials',
             if(action==='transition')await assert.rejects(noOwner.query('select clued_private.issuer_resolve_identity_policy_transition_v1($1,$2)',
               [newStorageProof,{action}]),error=>error.code==='42501'&&error.message==='direct_human_session_required',
               'an issuer proof without a Native Owner must not wait on the transition table');
-            const expiring=await expiration();
+            // Only the lock-wait fixtures need dispatch headroom. Keep the fast
+            // already-expired negative above unchanged. Expiry is still real DB
+            // time while the resolver is provably blocked, not a changed clock.
+            const expiring=await expiration(3);
+            if(action==='transition')await admin.query('select pg_sleep(0.4)');
+            assert.equal((await admin.query('select clock_timestamp()<$1::timestamptz live',[expiring.deadline])).rows[0].live,true,
+              'the lock-wait credential must be live before dispatch');
             const pending=checkedResolve(expiring.proof,action).then(()=>null,error=>error);
-            await waitForLock(pending);
+            await waitForLock(pending,expiring);
             if(action==='transition'){
               // The table wait must precede app-row SHARE: this real operator
               // UPDATE completes rather than waiting for the reader's row lock.
