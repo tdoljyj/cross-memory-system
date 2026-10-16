@@ -20,6 +20,7 @@ const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
 const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refresh_default_v1.sql';
 const storageConflictMigration = '20261016040000_storage_conflict_isolation_v1.sql';
+const storageAutomaticReconcileMigration = '20261016090000_storage_automatic_reconcile_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -78,7 +79,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -491,6 +492,9 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       // dependencies, preserving every earlier cutover/hash assertion above.
       const before=await snapshotAuthorizationCallerBoundary(admin);
       await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageConflictMigration),'utf8'));
+      // The automatic successor wraps I9 functions; this historical replay
+      // defers it with I9 instead of loading it before its prerequisites.
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageAutomaticReconcileMigration),'utf8'));
       assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),before,
         'I9 preserves every public RPC OID, owner, definer configuration and ACL');
       await assertGatewayCloseoutBoundary(admin);

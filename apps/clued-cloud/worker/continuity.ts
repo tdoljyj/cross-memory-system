@@ -951,7 +951,7 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: input }),
         signal: AbortSignal.timeout(10000), redirect: "manual",
       }) as Record<string, unknown> }).catch(() => null) : null;
-    let committed = 0, released = 0, attention = 0;
+    let committed = 0, released = 0, reconciled = 0, attention = 0;
     for (const reference of due.jobs as Array<{ connection_id: string; job_id: string }>) {
       let stage: RecoveryStage = "descriptor";
       try {
@@ -998,6 +998,7 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
             (await refresher.run(reference.connection_id, reference.job_id)).status === "committed") result = await attempt();
         if (result.status === "committed") committed++;
         else if (result.status === "released_not_effected") released++;
+        else if (result.status === "resolved") reconciled++;
         else attention++;
       } catch (error) {
         attention++;
@@ -1005,8 +1006,24 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
       }
     }
     if (released) console.warn(JSON.stringify({ event: "storage_recovery_released_not_effected", released }));
-    return { status: attention ? "attention_required" : "ok", committed, released, attention };
+    return { status: attention ? "attention_required" : "ok", committed, released,
+      ...(reconciled ? { reconciled } : {}), attention };
   } catch { return { status: "unavailable" }; }
+}
+
+// A normal authenticated refusal can wake the same bounded durable recovery
+// scan as cron. Caller-supplied references never select a privileged recovery
+// target. Database due-time reservations coordinate concurrent Workers; this
+// WeakMap merely coalesces overlapping wakes in one isolate.
+const storageRecoveryWakes = new WeakMap<ContinuityEnv, Promise<unknown>>();
+function wakeStorageRecovery(env: ContinuityEnv, ctx?: ContinuityExecutionContext) {
+  if (!ctx) return;
+  let pending = storageRecoveryWakes.get(env);
+  if (!pending) {
+    pending = runStorageRecoveryScheduled(env).finally(() => storageRecoveryWakes.delete(env));
+    storageRecoveryWakes.set(env, pending);
+  }
+  ctx.waitUntil(pending);
 }
 
 // Storage fix (Owner Decision d9d6db4c): a started journal with no recorded
@@ -1840,11 +1857,19 @@ async function callStorageJob(request: Request, env: ContinuityEnv, input: Recor
       method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token), p_input: input }),
     });
   } catch (error) {
-    if (storageObjectReviewCode(error)) return storageObjectReviewRefusal();
+    if (storageObjectReviewCode(error)) {
+      wakeStorageRecovery(env, ctx);
+      return storageObjectReviewRefusal();
+    }
     throw error;
   }
   if (raw && typeof raw === "object" && "status" in raw && raw.status === "rejected" &&
-      "error_code" in raw && raw.error_code === "storage_object_under_review") return storageObjectReviewRefusal();
+      "error_code" in raw && raw.error_code === "storage_object_under_review") {
+    wakeStorageRecovery(env, ctx);
+    return storageObjectReviewRefusal();
+  }
+  if (input.action === "inspect" && raw && typeof raw === "object" &&
+      "automatic_recovery" in raw && raw.automatic_recovery === "pending") wakeStorageRecovery(env, ctx);
   const result = projectResult(raw && typeof raw === "object" && ("status" in raw && raw.status === "conflict" ||
     "reason_code" in raw && ["PROVIDER_STATE_CONFLICT", "PROVIDER_RESULT_RECONCILED"].includes(String(raw.reason_code)))
     ? storageAgentResult(raw, input) : raw, input);
@@ -3514,7 +3539,13 @@ async function handleContinuityRequestInner(
           if (accountDescriptor.status !== "recovery_only") throw new Error("Unavailable");
         }
         const recovery = await createStorageCloudRecovery({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
-          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!), rpc, report_expiring:true, report_diagnostic: reportRecoveryDiagnostic,
+          vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
+          rpc: async value => value.action === "reconcile_before" ? await supabaseRequest(env,
+            "/rest/v1/rpc/clued_storage_scheduled_recovery_v2", {
+              method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
+              body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
+            }) as Record<string, unknown> : rpc(value),
+          report_expiring:true, report_diagnostic: reportRecoveryDiagnostic,
           ...(accountDescriptor?.status === "recovery_only" ? { verified: { descriptor: accountDescriptor, rpc: verifiedRpc } } : {}) });
         return recovery.run(reference);
         };
@@ -3533,7 +3564,7 @@ async function handleContinuityRequestInner(
           // resend settlement or dispatch a replacement effect in this request.
           let latest = ownerStatus;
           try { latest = await inspectOriginalRecovery(); } catch { /* Preserve the confirmed original receipt. */ }
-          if (["committed", "cancelled", "denied"].includes(String(latest.status))) return json(latest, 200, headers);
+          if (["committed", "cancelled", "denied", "resolved"].includes(String(latest.status))) return json(latest, 200, headers);
           return json({ ...latest, ...recovered, status: latest.status, outcome: "inspection_required",
             job_id: reference.job_id, receipt_id: latest.receipt_id, execution_permitted: false }, 200, headers);
         }
@@ -3554,7 +3585,7 @@ async function handleContinuityRequestInner(
           try { await reportRecoveryDiagnostic(recoveryReference, diagnostic); } catch { /* Preserve the original failure. */ }
           let latest = originalOwnerStatus;
           try { latest = await inspectOriginalRecovery!(); } catch { /* No false success after a lost reply. */ }
-          if (["committed", "cancelled", "denied"].includes(String(latest.status))) return json(latest,200,headers);
+          if (["committed", "cancelled", "denied", "resolved"].includes(String(latest.status))) return json(latest,200,headers);
           return json({ ...latest, outcome: "inspection_required",
             diagnostic, execution_permitted: false }, 200, headers);
         }

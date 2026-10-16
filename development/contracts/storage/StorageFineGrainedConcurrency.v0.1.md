@@ -3,6 +3,7 @@
 ## 0. 文档边界
 
 - **类型**：与实现、迁移和验收直接绑定的工程合同草案。它不是实施授权，也不是上线证明。
+- **后继提案**：§17 为 **r10.2 PROPOSED**。§1–§16 保留 r10.1 的完整接受文本与审核历史；§17 只提出本轮受支持的 cloud 单文件替换恢复修订，尚不代表该修订、候选代码或发布已获正式接受。
 - **状态**：**APPROVED（r10.1）**——Owner Decision `94fc26b4` 批准。r1–r3 审核 HOLD_FAIL；Owner Decision `d6f985e6` 把方案拆为 A（本文件：在现有根目录写锁保护下让作业有界结清）与 B（对象级锁，Task `e58aca14`）。r4（只含 A）复审 HOLD_FAIL，r5 处理（§9）；r5 复审 HOLD_FAIL（1 BLOCKER、5 MAJOR），r6 处理（§11）；r6 复审 HOLD_FAIL（1 BLOCKER、1 MAJOR），r7 处理（§12）；r7 复审 HOLD_FAIL（1 MAJOR），r8 处理（§13）；r8 复审 HOLD_FAIL（2 MAJOR），r9 处理（§14）；r9 复审 HOLD_FAIL（1 MAJOR），r10 处理（§15）；r10 复审 **PASS**（1 MINOR、2 NIT），r10.1 一并处理，见 §16。
 - **源码基线**：`a339f1d`（`main`，含第 1 步 PR #627）。SQL 函数以全部迁移（含锚点补丁）应用后的最终定义为准。
 - **来源**：Owner Decision `2faa8148`；Task `10826ce2`。第 1 步：Decision `56d61a92`、Task `ce5c725e`。
@@ -337,4 +338,71 @@ r1 B3、B4、B11、B12；r2 N2–N6、N12、N14、N17、N18；r3 M-4、M-6、M-7
 | MINOR-1 同步客户端按变更队列重放，本地文件状态不够 | I12 本地效果证据两种情况都要求同步客户端在该根目录下没有待同步变更；§7 用例 |
 | NIT-1 行号 | `20261002170000…:45`；v2 `:139-141` |
 | NIT-2 §7 与 I9 (b) 的时限措辞 | §7 改为「之后的第一次定时扫描」 |
+
+## 17. r10.2 后继提案：常规故障由程序自动核对与恢复
+
+### 17.1 状态、来源与本轮范围
+
+**状态：PROPOSED，待独立审核与正式接受。** Owner Decision `09ae2493-e980-49ef-a0ea-de552a42d1d9@3` 明确常规故障应由程序自动检测、核对、结算恢复，不能把常规收尾转交用户点击或 Agent。这是产品方向与本次实施范围的来源，不是对本节具体算法、代码、全部 A4 或生产上线的接受证明。r10.1 的接受状态与 §8–§16 审核历史保持不变。
+
+本轮仅覆盖：已登记 `storage_jobs_v1`、原身份可证明、`authority_snapshot_v2` 非空且原 cloud writer binding 一致的 **单文件 `replace`**；包括从 Native 入口产生、但保留这一相同服务端来源形态的作业。须有真实原 attempt 与回执、I9 已生成完整稳定对象范围的有效隔离、原连接/Owner/Google subject/client/root 一致。未登记 job 的 writer、无快照 legacy、目录/子树、其他操作、scope 不完整的对象不因本提案获得自动基线出口。
+
+I0–I5、I8–I10、I12 以及运行中的根目录 single-writer 与短事务 root 锁不修改。**I2、I9 的时间门与 I12 的终止证明不缩短、不移除**；本轮不是 B 的运行中对象级并发交付，也不表示 A4 全部完成。其余 A4、非 job/legacy 出口与 B 继续原任务后继。
+
+### 17.2 对 I6、I11 与旧 attempt 规则的窄修订
+
+以下规则只在本后继正式接受后、对 §17.1 的合格作业适用；不能反向声称 r10.1 已接受这些新行为。
+
+| r10.1 位置 | r10.2 候选规则 |
+| --- | --- |
+| I6「冲突只记录、不自动修复」 | **不自动改动外部内容**。程序可以核对当前状态并用独立回执结束服务端隔离；不得为达成期望状态而补写、覆盖、恢复、删除或重派原未知效果。真实不同内容才保留可选的 Owner 取舍。 |
+| I11「只经三个复核出口」 | 合法出口新增服务端 **当前基线自动核对恢复**，与原 after 核验结算、真正冲突的显式取舍并列。自动清保护必须由同一事务内的独立 `storage_automatic_reconcile` Receipt 与私有 permit 绑定，保留全部不可绕过的隔离触发器；事务变量、客户端报告或 `confirmed:true` 不能替代。 |
+| §4.3「上线前已开始的 attempt」 | 缺标记或完整历史 `content_before` 时仍不判历史「未生效」，不改写为 `cancelled`/`committed`。若原 authority、当前有效登记与 fresh 观察的稳定 ID/原版本完全一致，可得出较窄的「当前登记基线一致」并独立结束隔离；原未知写入历史保留。 |
+| §4.4「Owner 原生页面复核出口」 | 常规 before 的收尾由后台程序完成，不要求页面、用户确认或 Agent。只有经真实核对后与登记基线不同的当前内容才开放可选取舍；页面是状态展示与真正冲突的可选入口。 |
+
+「当前与原登记基线一致」不等于证明原写入从未发生，也不保证外部服务以后不会出现迟到变化。原 journal 的 `conflict`、I9 回执、attempt、attempt 回执及既有 proof 保持真实历史。新的正常作业仍重新取得当前对象身份/版本与正常授权；不得因独立恢复而跳过准入。
+
+### 17.3 服务端三出口与判定流程
+
+| 真实核对结果 | 程序行为与公开状态 |
+| --- | --- |
+| 期望 after 成立 | 继续原 `verified_record` → `settle_verified`。只有原完整核验器接受的 after proof 才可把原操作登记为 `committed`；不得用 before 自动回执替代。 |
+| 当前仍为原有效登记的精确 before 基线 | 服务端自动产生独立 Receipt/Event、解除这一原隔离，公开 `resolved` / `automatically_reconciled_before` / `automatic_recovery=resolved`。旧操作仍 `conflict`，不声称 `replace COMMITTED` 或历史 no-effect。 |
+| 真实当前内容不同，或事实仍不明 | 事实仍不明保持 `pending`，后台按有界退避继续；稳定不同内容公开 `current_state_conflict`，保持隔离并允许显式选择。读取失败、失效凭证、版本竞争或未知回复不得转换成成功。 |
+
+自动 before 出口必须同时满足：
+
+1. **原来源与当前授权**：同一原 job/intent、Owner、connection、Google subject、OAuth client、root、原 cloud writer；同应用有效 issuer；当前账户可用、连接未撤销，原 policy 仍当前且有效，auth generation、policy generation、scope digest、profile/决策版本满足 CAS；原 client 与 root 均无 deny。只读凭证在每次 GET 前仍有至少 60 秒有效期。仅可使用现有授权的同 job 限次刷新；不得开启续签、恢复已停止委托、扩大 scope 或绕过失效授权。
+2. **范围与时间**：原 I9 隔离完整，唯一稳定文件 ID、名称槽、父级与祖先覆盖成立；原 effect 已过既有 I9/最长请求时限，另核对真实 attempt Receipt 的时间。没有完整范围、仍有运行中可发送效果或尚未到时间门时，不得自动清保护。
+3. **fresh 双 GET**：Worker 只对原对象做两次真实 Google 元数据 GET，同时核对父目录/祖先身份与原名称槽；两次独立记录完成时间，语义字段完全相等。提交事务时第一观察距服务端时钟不超过 30 秒，第二不早于第一且无异常未来时钟。禁止从浏览器、缓存或 Agent 自报事实构造观察。
+4. **稳定基线**：原 authority 的 ID/Drive version、当前 active 登记的同 ID/版本、两次 GET 的 ID/版本一致；文件类型、trashed、名称、父 ID、当前合格父登记与祖先链均符合。原 attempt 有 size/hash/head revision 时逐项强比；历史缺少这些字段不能虚构证据，也不能把较窄的基线一致表述为历史无效果。Drive `files.version` 为每次服务端变更递增的版本依据，参见 [官方 Files 资源](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)。
+5. **事务与优先级**：原 job 锁、短事务 root 锁、journal/隔离/登记行版本与原 I9 source Receipt 绑定同一 CAS。若真实 after proof 已登记，候选 before 出口必须拒绝，让原结算优先；两会话竞争最多生成一个自动恢复回执。最终 Receipt、Event、隔离解除与版本推进同事务提交，任一失败全部回滚。
+6. **历史与读取投影**：旧 journal 不改为成功或未生效；只增加独立 resolution 及其 Receipt 引用。公开成功必须带正 `base_version`、原 `source_receipt_id`、与 source 不同的新 `receipt_id`。普通 MCP inspect 保留旧操作的 `attention_required`，用 `PROVIDER_RESULT_RECONCILED` 与独立 resolution 引用说明保护已解除，不能继续报成待处理旧冲突或伪造旧写入成功。
+
+Google 请求只查询状态与元数据，不盲重试未知非幂等写入；读取失败有界重试/退避遵循 [上传状态查询指南](https://developers.google.com/workspace/drive/api/guides/manage-uploads) 与 [错误处理指南](https://developers.google.com/workspace/drive/api/guides/handle-errors)。观察时间与数据库 CAS 构成有限证据窗口，不构成 Google 跨系统事务。
+
+### 17.4 §5 实施、正常入口与回退补充
+
+- 以新 successor migration `20261016090000_storage_automatic_reconcile_v1.sql` 承载候选，不能改写已生产 I9 迁移。复用现有私有 issuer 路由 action 与现有调度权威；不新增 public RPC，不扩大 GW80/CI8，克隆 helper 与技术观察表不得授 API 角色直调/读写权限。
+- 真实后台 scheduled recovery 加载原合格 job 后执行上述双 GET 与原 CAS。正常经过认证的 submit 若因 `storage_object_under_review` 提前拒绝，可唤醒既有受限 due 扫描；不得为唤醒创建新 queued job，也不得把客户端任意 job/Owner 引用提升为 issuer 代理权限。原 job 的 inspect 可以同样触发受限检查。唤醒只能返回真实状态或重试提示，不能把排入后台当作已经恢复。
+- 页面只列出/轮询服务端状态；常规 `pending` 不要求用户点击「核验/采纳/放弃」，不依赖打开页面或 Agent 持续操作。真正 `current_state_conflict` 的可选取舍仍使用 fresh 服务端核对、精确 CAS 与显式确认。
+- 同一稳定目标 ID 的两次真实观察已证明外部改名、移位、回收站状态或同名占位，但新名称槽/父级/祖先边界不合格时，必须持久显示 `current_state_conflict`，不能因核验提前拒绝而永久伪装成 `pending`。此类观察只开放安全的显式放弃登记与后台重新核对，`review_available=false`、`abandon_available=true`；不得据此采纳不合格新位置。读取失败、403、目标身份无法证明或双观察不一致仍保持未知，不假造真实冲突或成功。
+- 生产前分别验证迁移应用、自动调度与正常入口接线、实际 issuer/client 来源、公开投影和回执。候选本地通过或 schema 可载入不是发布证据；既有 I9 scheduler 的硬性激活条件保持。
+- **回退**：可停止新的自动 before 尝试并恢复 Worker 读取路径；已写入的独立 Receipt/Event、旧 journal 历史、resolution 投影、I11 permit/触发器与安全出口必须保留。不能回退成全局放行、删除隔离或重派旧效果；不得回退已生产 I9。after 仍走原核验结算，暂时无法核对的作业保留真实 pending/隔离及有界后台重试。
+
+### 17.5 §6 风险与 §7 验收增补
+
+| 风险或用例 | 必要断言 |
+| --- | --- |
+| 当前仍 before，历史缺完整 content_before | 以真实 Worker 双 GET 接真实 PostgreSQL RPC；精确 ID/版本及当前登记成立才生成独立自动回执，原 journal/attempt/I9 回执仍在，不伪造 no-effect。 |
+| 两 GET 间变化、读取失败、scope 不全 | 不调用成功出口或事务拒绝；不得成功、重写 Drive 或替用户确认。scope 不完整不获得此自动权限。 |
+| 真实不同内容、真实 after | 不同内容保持隔离并开放可选处理；after 继续原 verified 路径。已保存 after proof 使旧 before CAS 失败；after 最终结算仍保留原完整 proof。 |
+| stale/篡改/错 Owner、issuer/client、版本、source Receipt、凭证、拒绝/撤销/策略失效 | fresh proof/CAS/现有授权门拒绝；零新增 provider effect，不能借其他连接或应用的凭证。 |
+| 双连接同时自动恢复、未知回复 | 实际两个数据库会话竞争最多一张自动回执；未知回复只检查原 job/回执，不重派旧写入，不把未知当成功。 |
+| 最终回执失败 | 真实故障注入后隔离、技术观察、版本、Receipt/Event 同事务回滚；保护仍有效。 |
+| 自动恢复之后正常使用 | 同一对象的新正常作业可按当前授权准入；无关对象/root 不被恢复检查升级成全局锁；旧 journal 未伪造 committed。 |
+| UI、Agent 退出 | 后台仍会自动核对；正常入口可有界唤醒且原重叠 submit 不新建 queued job。页面仅展示 pending/resolved/真实 changed，不承担常规结算。 |
+| 权限与回退 | GW80/CI8 不变，新 helper/table 无 API 直调；I11 无旁路；回退保留真实历史、独立回执与保护，不能自动恢复停用续签或权限。 |
+
+本节的测试、独立审核、Owner 对具体后继的正式接受、合并与生产验收是分别记录的事件；尚未发生的步骤不得标为完成。本轮只修复 §17.1 的常规恢复链，不替代 r10.1 的其他交付，也不宣布 B 的并发目标达成。
 

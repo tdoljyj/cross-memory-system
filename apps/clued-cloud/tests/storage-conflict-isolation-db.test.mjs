@@ -12,7 +12,7 @@ import {fileURLToPath} from 'node:url';
 import EmbeddedPostgres from 'embedded-postgres';
 import {allowTestIssuerCredentials} from './issuer-credentials-fixture.mjs';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
-import {setWorkerGatewayCaller} from './worker-gateway-caller-fixture.mjs';
+import {setWorkerGatewayCaller,assertGatewayCloseoutBoundary} from './worker-gateway-caller-fixture.mjs';
 import {createResourceCenterCloudExecutor} from '../../../kernel/host/resource-center-cloud-executor.mjs';
 import {createGoogleDriveMetadataApi} from '../../../kernel/host/resource-center-google-drive-metadata.mjs';
 import {createGoogleDriveCreatePostconditionVerifier} from '../../../kernel/host/resource-center-google-drive-postcondition.mjs';
@@ -173,11 +173,13 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    await assert.rejects(db.query('delete from clued_private.resource_center_artifacts_v1 where user_id=$1 and provider_file_id=$2',[owner,file]),/storage_object_under_review/);
   });
   await t.test('all API roles are denied direct sweep, guards and isolation data',async()=>{
+   await assertGatewayCloseoutBoundary(db);
    assert.equal((await db.query("select count(*)::int n from cron.job where jobname='clued-storage-i9-conflict' and active and schedule='* * * * *' and command='select clued_private.storage_conflict_sweep_v1()'")).rows[0].n,1,'DB scheduler registration is mandatory and exact');
    for(const role of ['anon','authenticated','service_role','clued_worker_gateway']){
-    for(const signature of ['storage_conflict_sweep_v1()','storage_conflict_close_v1(uuid)','storage_conflict_close_candidate_v1(uuid)','storage_conflict_supported_v1(uuid)','storage_conflict_assert_v1(uuid,uuid,jsonb,jsonb)'])
+    for(const signature of ['storage_conflict_sweep_v1()','storage_conflict_close_v1(uuid)','storage_conflict_close_candidate_v1(uuid)','storage_conflict_supported_v1(uuid)','storage_conflict_assert_v1(uuid,uuid,jsonb,jsonb)','storage_automatic_reconcile_v1(text,jsonb)','storage_automatic_reconcile_candidate_v1(clued_private.storage_jobs_v1)','storage_conflict_load_before_automatic_v1(text,jsonb)'])
      assert.equal((await db.query('select has_function_privilege($1,$2,\'execute\') v',[role,'clued_private.'+signature])).rows[0].v,false);
     assert.equal((await db.query("select has_table_privilege($1,'clued_private.storage_conflict_isolations_v1','update') v",[role])).rows[0].v,false);
+    assert.equal((await db.query("select has_table_privilege($1,'clued_private.storage_automatic_reconcile_checks_v1','select,insert,update,delete') v",[role])).rows[0].v,false);
    }
   });
   await t.test('prepared expires without creating a quarantine; a directory move keeps native recovery',async()=>{
@@ -188,7 +190,7 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    assert.equal((await db.query('select clued_private.storage_conflict_close_candidate_v1($1) v',[directory])).rows[0].v,'owner_directory_recovery');
    assert.equal((await inspect(directory)).state,'started');
   });
-  await t.test('real account cloud jobs retain their receipt lineage through late-after settlement and explicit Owner review',async()=>{
+  await t.test('real account cloud jobs retain their receipt lineage through late-after settlement and explicit Owner review',async real=>{
    const native=server.getPgClient(),worker=server.getPgClient();clients.push(native,worker);await native.connect();await worker.connect();
    await native.query('set role authenticated');
    await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[owner,JSON.stringify({sub:owner,session_id:session})]);
@@ -449,6 +451,136 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    assert.equal(savedSettled.status,'committed');const afterSavedSettle=await journal(persisted);assert.equal(afterSavedSettle.version,'4');assert.deepEqual(afterSavedSettle.verified_result_v2,immutableProof);assert.equal(afterSavedSettle.verified_digest_v2,immutableDigest);assert.deepEqual({posts,writes},beforeSavedSettle);
    const savedExit=(await db.query('select q.state,q.resolution_receipt_id,r.operation,r.status from clued_private.storage_conflict_isolations_v1 q join public.clued_audit_receipts r on r.id=q.resolution_receipt_id where q.intent_id=$1',[beforeIsolation.id])).rows[0];
    assert.deepEqual(savedExit,{state:'resolved',resolution_receipt_id:savedSettled.receipt_id,operation:'storage_verified_settle',status:'committed'});
+
+   const automaticJob=async label=>{
+    const created=await submit({operation:'create',target_kind:'file',destination_path:managedRoot+'/20_P_产品与体验/automatic-'+label+'-'+id()+'.txt',content:'registered original baseline'});
+    assert.equal((await execute(created)).status,'committed');
+    const registered=(await db.query('select * from clued_private.resource_center_artifacts_v1 where user_id=$1 and profile_id=$2 and path=$3 and state=\'active\'',[owner,profileId,created.mutation.destination_path])).rows[0];
+    const job=await submit({operation:'replace',target_kind:'file',destination_path:created.mutation.destination_path,destination_file_version:registered.provider_file_version,content:'original failed replacement'});
+    blockPatch=true;try{assert.equal((await execute(job)).status,'unreconciled');}finally{blockPatch=false;}
+    let original=await journal(job);
+    if(label==='bridge'){
+     // Historical Native-origin shape: this one disposable journal predates
+     // content_before. Stable original/registered Drive ID+version remain;
+     // this does not manufacture a historical no-effect proof.
+     await db.query("update clued_private.resource_center_mutations_v1 set provider_attempt=provider_attempt-'content_before' where id=$1",[original.id]);original=await journal(job);
+    }
+    // Simulate the actual old operation clock, not a relaxed recovery window.
+    await db.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '3 hours' where id=$1",[original.provider_attempt_receipt_id]);
+    await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '3 hours' where id=$1",[original.id]);
+    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[original.id])).rows[0].v,'conflict');
+    const closed=await journal(job),descriptor=await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{action:'load',...job.reference});
+    assert.deepEqual(descriptor.conflict_reconcile,{closed_version:3,source_receipt_id:closed.receipt_id});
+    return {...job,original,closed,descriptor,registered};
+   };
+   const automaticInput=job=>{
+    const f=files.get(job.registered.provider_file_id),observation={observed_at:new Date().toISOString(),observed_state:'before',boundary_status:'qualified',provider_file_id:f.id,provider_file_version:f.version,parent_id:f.parents[0],name:f.name,trashed:f.trashed,mime_type:f.mimeType,size:f.size,sha256:f.sha256Checksum,head_revision_id:f.headRevisionId};
+    return {action:'reconcile_before',...job.reference,base_version:3,source_receipt_id:job.closed.receipt_id,credential_version:1,first_observation:observation,second_observation:{...observation}};
+   };
+   await real.test('automatic before reconciliation consumes real Worker double GET and separate atomic receipt while preserving original uncertainty',async()=>{
+    const job=await automaticJob('bridge'),beforeWrites={posts,writes},request=automaticInput(job);let actualReply,actualRequest;
+    const bridge=await createStorageRecoveryReview({client_id:oauthClient,vault:vaultConfig,descriptor:job.descriptor,source_receipt_id:job.closed.receipt_id,fetch:drive,rpc:async input=>{
+     actualRequest=structuredClone(input);actualReply=await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,input);return actualReply;
+    }});
+    const result=await bridge.reconcile(job.reference);assert.equal(result.status,'resolved',JSON.stringify(result));
+    assert.equal(result.resolution,'automatically_reconciled_before');assert.equal(actualReply.automatic_recovery,'resolved');
+    assert.notEqual(result.receipt_id,job.closed.receipt_id);assert.equal(result.base_version,3);assert.equal(result.source_receipt_id,job.closed.receipt_id);
+    assert.equal(actualRequest.action,'reconcile_before');assert.equal(actualRequest.first_observation.observed_state,'before');
+    assert.deepEqual({...actualRequest.first_observation,observed_at:null},{...actualRequest.second_observation,observed_at:null});
+    const final=await journal(job);assert.equal(final.state,'conflict');assert.equal(final.version,'4');assert.equal(final.receipt_id,job.closed.receipt_id);
+    assert.deepEqual(final.provider_attempt,job.original.provider_attempt);assert.equal(final.provider_attempt_receipt_id,job.original.provider_attempt_receipt_id);assert.equal(final.verified_result_v2,null);
+    const exit=(await db.query('select q.state,q.resolution_receipt_id,r.operation,r.status from clued_private.storage_conflict_isolations_v1 q join public.clued_audit_receipts r on r.id=q.resolution_receipt_id where q.intent_id=$1',[job.closed.id])).rows[0];
+    assert.deepEqual(exit,{state:'resolved',resolution_receipt_id:result.receipt_id,operation:'storage_automatic_reconcile',status:'committed'});
+    const inspected=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'recovery_inspect',...job.reference},native);
+    assert.equal(inspected.status,'resolved');assert.equal(inspected.automatic_recovery,'resolved');assert.equal(inspected.receipt_id,result.receipt_id);assert.equal(inspected.base_version,3);assert.equal(inspected.source_receipt_id,job.closed.receipt_id);
+    const normal=await rpc('clued_storage_jobs_router_v2',token,{action:'inspect',...job.reference});assert.equal(normal.status,'attention_required');assert.equal(normal.resolution,'automatically_reconciled_before');assert.equal(normal.resolution_receipt_id,result.receipt_id);
+    assert.equal((await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,request)).receipt_id,result.receipt_id,'lost reply only reads the same independent receipt');
+    assert.deepEqual({posts,writes},beforeWrites,'automatic recovery never writes to Drive');
+    const next=await submit({...job.mutation,content:'next authorized operation after automatic recovery'});assert.equal((await cloudRpc({action:'load',...next.reference})).status,'queued','the same object is usable by a new normally authorized job');
+   });
+   await real.test('automatic proof rejects changed GETs, stale/CAS/issuer/credential/revocation and rolls back every write on receipt failure',async()=>{
+    const job=await automaticJob('negative'),input=automaticInput(job),call=value=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,value);
+    const pending=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'recovery_inspect',...job.reference},native);assert.equal(pending.automatic_recovery,'pending');assert.equal(pending.review_available,false);assert.equal(pending.abandon_available,false);
+    for(const bad of [
+     {...input,base_version:2},{...input,source_receipt_id:id()},{...input,credential_version:2},
+     {...input,first_observation:{...input.first_observation,observed_at:new Date(Date.now()-31000).toISOString()}},
+     {...input,second_observation:{...input.second_observation,provider_file_version:'999'}},
+     {...input,first_observation:{...input.first_observation,sha256:'a'.repeat(64)},second_observation:{...input.second_observation,sha256:'a'.repeat(64)}}
+    ])await assert.rejects(call(bad),/storage_automatic_reconcile_(conflict|proof_changed)/);
+    await assert.rejects(rpc('clued_storage_scheduled_recovery_v2',sha(id()),input),/storage_scheduled_recovery_denied/);
+    await db.query("update clued_private.storage_connections_v1 set state='reauthorization_required' where id=$1",[connection]);
+    try{await assert.rejects(call(input),/storage_recovery_denied/);}finally{await db.query("update clued_private.storage_connections_v1 set state='active' where id=$1",[connection]);}
+    await db.query("update clued_private.storage_oauth_apps_v1 set revoked_at=clock_timestamp() where issuer_hash=$1",[cloudIssuer]);
+    try{await assert.rejects(call(input),/storage_(scheduled_)?recovery_denied/);}finally{await db.query('update clued_private.storage_oauth_apps_v1 set revoked_at=null where issuer_hash=$1',[cloudIssuer]);}
+    const observedBefore=(await db.query('select count(*)::int n from clued_private.storage_conflict_observations_v1 where intent_id=$1',[job.closed.id])).rows[0].n;
+    await db.query(`create function public.test_automatic_receipt_failure() returns trigger language plpgsql as $$begin if new.operation='storage_automatic_reconcile' and new.status='committed' then raise exception 'synthetic_automatic_receipt_failure';end if;return new;end$$;
+     create trigger test_automatic_receipt_failure before update on public.clued_audit_receipts for each row execute function public.test_automatic_receipt_failure()`);
+    try{await assert.rejects(call(automaticInput(job)),/synthetic_automatic_receipt_failure/);}finally{await db.query('drop trigger test_automatic_receipt_failure on public.clued_audit_receipts;drop function public.test_automatic_receipt_failure()');}
+    assert.equal((await journal(job)).version,'3');assert.equal((await db.query('select state from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[job.closed.id])).rows[0].state,'active');
+    assert.equal((await db.query('select count(*)::int n from clued_private.storage_conflict_observations_v1 where intent_id=$1',[job.closed.id])).rows[0].n,observedBefore,'failed final receipt rolls back technical observations too');
+    assert.equal((await call(automaticInput(job))).status,'resolved');
+   });
+   await real.test('two actual PostgreSQL recovery sessions serialize to one automatic receipt',async()=>{
+    const job=await automaticJob('race'),input=automaticInput(job),otherWorker=server.getPgClient();clients.push(otherWorker);await otherWorker.connect();await setWorkerGatewayCaller(otherWorker);
+    await worker.query('begin');let first;
+    try{
+     first=await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,input);let finished=false;
+     const second=rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,input,otherWorker).then(value=>{finished=true;return value;});
+     await new Promise(resolve=>setTimeout(resolve,30));assert.equal(finished,false,'the second connection waits on the original transaction identity lock');
+     await worker.query('commit');const again=await second;assert.equal(again.receipt_id,first.receipt_id);
+    }catch(error){await worker.query('rollback');throw error;}
+    assert.equal((await journal(job)).version,'4');assert.equal((await db.query("select count(*)::int n from public.clued_audit_receipts where operation='storage_automatic_reconcile' and idempotency_key=$1",['storage-auto-before:'+job.closed.id+':3'])).rows[0].n,1);
+   });
+   await real.test('genuine changed current content remains isolated with optional review, never automatic success',async()=>{
+    const job=await automaticJob('changed'),f=files.get(job.registered.provider_file_id);files.set(f.id,{...f,version:'2',sha256Checksum:sha('external different content')});
+    const beforeEffects={posts,writes},bridge=await createStorageRecoveryReview({client_id:oauthClient,vault:vaultConfig,descriptor:job.descriptor,source_receipt_id:job.closed.receipt_id,fetch:drive,rpc:input=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,input)});
+    const result=await bridge.reconcile(job.reference);assert.equal(result.status,'inspection_required');assert.equal(result.diagnostic.reason,'CONTENT_MISMATCH');
+    const inspected=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'recovery_inspect',...job.reference},native);assert.equal(inspected.automatic_recovery,'current_state_conflict');assert.equal(inspected.review_available,true);assert.equal(inspected.abandon_available,true);
+    assert.equal((await journal(job)).version,'3');assert.equal((await db.query('select state from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[job.closed.id])).rows[0].state,'active');assert.deepEqual({posts,writes},beforeEffects);
+   });
+   await real.test('late after proof wins the original CAS and a previously prepared before cannot clear it',async()=>{
+    const job=await automaticJob('late-after'),beforeInput=automaticInput(job),f=files.get(job.registered.provider_file_id),attempt=job.closed.provider_attempt;
+    revisions.get(f.id).get(attempt.pinned_revision_id).keepForever=true;
+    files.set(f.id,{...f,version:'2',size:attempt.content_after.size,sha256Checksum:attempt.content_after.sha256,headRevisionId:'late-revision-'+id()});
+    const {createStorageCloudRecovery}=await loadWorker('storage-cloud-recovery');stop();let withheldSettle;
+    const recovery=await createStorageCloudRecovery({client_id:oauthClient,vault:vaultConfig,fetch:drive,timeout_ms:3000,
+     rpc:input=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,input),verified:{descriptor:job.descriptor,rpc:async input=>{
+      if(input.action==='settle_verified'){withheldSettle=input;throw Error('synthetic lost settle request');}return cloudRpc(input);
+     }}});
+    assert.equal((await recovery.run(job.reference)).status,'inspection_required');assert.ok(withheldSettle,'late after reached real verified_record before settlement');
+    const recorded=await journal(job);assert.ok(recorded.verified_result_v2);assert.equal(recorded.state,'conflict');
+    await assert.rejects(rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,beforeInput),/storage_automatic_reconcile_conflict/,'saved true after proof invalidates an older before observation');
+    const beforeEffects={posts,writes},settled=await cloudRpc(withheldSettle);assert.equal(settled.status,'committed');
+    const final=await journal(job);assert.equal(final.state,'committed');assert.deepEqual(final.verified_result_v2,recorded.verified_result_v2);assert.equal(final.verified_digest_v2,recorded.verified_digest_v2);assert.deepEqual({posts,writes},beforeEffects);
+   });
+   await real.test('stable trash, rename, move and occupied name slot expose withdrawal without adopting an unqualified boundary',async()=>{
+    for(const mode of ['trash','rename','move','slot','absent','absent-slot']){
+     const job=await automaticJob('boundary-'+mode),f=files.get(job.registered.provider_file_id);let duplicate;
+     if(mode==='trash')files.set(f.id,{...f,version:'2',trashed:true});
+     if(mode==='rename')files.set(f.id,{...f,version:'2',name:'externally-renamed.txt'});
+     if(mode==='move')files.set(f.id,{...f,version:'2',parents:['outside-original-root']});
+     if(mode==='slot'){duplicate='collision-'+id();files.set(duplicate,{...f,id:duplicate});}
+     if(mode==='absent'||mode==='absent-slot')files.delete(f.id);
+     if(mode==='absent-slot'){duplicate='collision-'+id();files.set(duplicate,{...f,id:duplicate});}
+     const beforeEffects={posts,writes};let calls=0;
+     const bridge=await createStorageRecoveryReview({client_id:oauthClient,vault:vaultConfig,descriptor:job.descriptor,source_receipt_id:job.closed.receipt_id,fetch:drive,rpc:input=>{calls++;return rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,input);}});
+     const result=await bridge.reconcile(job.reference);assert.equal(result.status,'inspection_required',mode);assert.equal(result.automatic_recovery,'current_state_conflict');assert.equal(calls,1);
+     const inspected=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'recovery_inspect',...job.reference},native);
+     assert.equal(inspected.automatic_recovery,'current_state_conflict',mode);assert.equal(inspected.review_available,false,mode);assert.equal(inspected.abandon_available,true,mode);assert.equal(inspected.base_version,3);assert.equal(inspected.source_receipt_id,job.closed.receipt_id);
+     const listed=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'recovery_list',connection_id:connection},native);assert.equal(listed.jobs.find(value=>value.job_id===job.reference.job_id).automatic_recovery,'current_state_conflict');
+     assert.equal((await journal(job)).version,'3');assert.equal((await db.query('select state from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[job.closed.id])).rows[0].state,'active');
+     const check=(await db.query('select boundary_status,observation_id from clued_private.storage_automatic_reconcile_checks_v1 where intent_id=$1',[job.closed.id])).rows[0];assert.notEqual(check.boundary_status,'qualified');assert.equal(check.observation_id,null,'an unqualified new location is never an adoption observation');
+     const abandon=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'review_abandon',...job.reference,base_version:3,source_receipt_id:job.closed.receipt_id,confirmed:true},native);assert.equal(abandon.resolution,'abandoned_registration');assert.equal((await journal(job)).state,'conflict');assert.deepEqual({posts,writes},beforeEffects);
+     if(duplicate)files.delete(duplicate);
+    }
+   });
+   await real.test('a failed target metadata read remains pending instead of inventing a current-state conflict',async()=>{
+    const job=await automaticJob('read-failure');let calls=0;
+    const bridge=await createStorageRecoveryReview({client_id:oauthClient,vault:vaultConfig,descriptor:job.descriptor,source_receipt_id:job.closed.receipt_id,fetch:async(url,init)=>new URL(String(url)).pathname.endsWith('/'+job.registered.provider_file_id)?new Response('',{status:403}):drive(url,init),rpc:async()=>{calls++;assert.fail('no proof from a failed metadata read');}});
+    await assert.rejects(bridge.reconcile(job.reference));assert.equal(calls,0);
+    const inspected=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'recovery_inspect',...job.reference},native);assert.equal(inspected.automatic_recovery,'pending');assert.equal(inspected.review_available,false);assert.equal(inspected.abandon_available,false);
+    assert.equal((await db.query('select count(*)::int n from clued_private.storage_automatic_reconcile_checks_v1 where intent_id=$1',[job.closed.id])).rows[0].n,0);
+   });
 
    // Batching fixtures below deliberately seed old, unsupported non-job
    // journals. They exercise scanner ordering, never claim provider authority.

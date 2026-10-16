@@ -10,6 +10,7 @@ import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
 import { recoveryDiagnostic, type RecoveryDiagnostic, type RecoveryStage } from "./storage-recovery-diagnostics";
+import { createStorageRecoveryReview } from "./storage-recovery-review";
 
 type Data = Record<string, unknown>;
 type Reference = { connection_id: string; job_id: string };
@@ -160,6 +161,24 @@ export async function createStorageCloudRecovery(config: {
       if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
           d.attempt.operation !== "replace")) throw denied();
       if ("content_ref" in d.mutation && !config.verified) throw denied();
+      // I9 has already fenced this exact replace and released its running slot.
+      // Observe before-state first, while the original deadline and read-only
+      // credential remain in force; unchanged metadata must not exhaust the
+      // after verifier's budget before reconciliation can run.
+      if (config.verified && d.conflict_reconcile !== undefined) {
+        if (!replace || !object(d.conflict_reconcile) || !uuid.test(String(d.conflict_reconcile.source_receipt_id))) throw denied();
+        stage = "verification";
+        const review = await bounded(createStorageRecoveryReview({ client_id: config.client_id, vault: config.vault,
+          descriptor: d, source_receipt_id: String(d.conflict_reconcile.source_receipt_id), clock,
+          timeout_ms: Math.min(timeout, 30000), fetch: metadataFetch, rpc: async input => {
+            check();
+            const result = await bounded(config.rpc(input)); check();
+            return result;
+          } })); check();
+        const reconciled = await bounded(review.reconcile(pinned)); check();
+        if (reconciled.status === "resolved" || reconciled.status === "inspection_required") return reconciled;
+        if (reconciled.status !== "after_observed") throw denied();
+      }
       // BUG-20261008-002: a create that may be proven absent polls for its file for half the
       // budget only. Polling for the whole budget left no time for the absence probe and its
       // settlement, so a create whose file never reached Drive stayed started and fenced its root.

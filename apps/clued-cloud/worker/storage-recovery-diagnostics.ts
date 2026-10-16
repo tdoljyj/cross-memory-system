@@ -70,18 +70,30 @@ function reviewAvailability(raw: Data): Data {
     ...(raw.file_name !== undefined ? { file_name: raw.file_name } : {}) };
 }
 
+function automaticRecovery(raw: Data): Data {
+  if (!("automatic_recovery" in raw)) return {};
+  if (!["pending", "current_state_conflict", "resolved"].includes(String(raw.automatic_recovery)) ||
+      raw.automatic_recovery === "resolved" && raw.status !== "resolved" ||
+      raw.automatic_recovery !== "resolved" && ["resolved", "committed", "cancelled", "denied"].includes(String(raw.status)))
+    throw new Error("storage_recovery_response_invalid");
+  return { automatic_recovery: raw.automatic_recovery };
+}
+
 export function storageRecoveryResolutionResult(value: unknown, reference: Data): Data {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("storage_recovery_response_invalid");
   const raw = value as Data, uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  if (raw.status !== "resolved" || !["accepted_current_state", "abandoned_registration"].includes(String(raw.resolution)) ||
+  const automatic = raw.resolution === "automatically_reconciled_before";
+  if (raw.status !== "resolved" || !["accepted_current_state", "abandoned_registration", "automatically_reconciled_before"].includes(String(raw.resolution)) ||
       raw.connection_id !== reference.connection_id || raw.job_id !== reference.job_id || raw.execution_permitted !== false ||
       !uuid.test(String(raw.receipt_id)) || !uuid.test(String(raw.source_receipt_id)) ||
       !Number.isSafeInteger(raw.base_version) || Number(raw.base_version) < 1 ||
-      (raw.resolution === "accepted_current_state" || raw.observation_id !== null) && !uuid.test(String(raw.observation_id)))
+      raw.receipt_id === raw.source_receipt_id || automatic && raw.automatic_recovery !== "resolved" ||
+      (!automatic && raw.resolution === "accepted_current_state" || raw.observation_id != null) && !uuid.test(String(raw.observation_id)))
     throw new Error("storage_recovery_response_invalid");
   return { status: "resolved", resolution: raw.resolution, connection_id: raw.connection_id, job_id: raw.job_id,
     receipt_id: raw.receipt_id, source_receipt_id: raw.source_receipt_id, base_version: raw.base_version,
-    observation_id: raw.observation_id, review_available: false, execution_permitted: false };
+    ...(raw.observation_id !== undefined ? { observation_id: raw.observation_id } : {}), review_available: false,
+    ...(automatic ? { automatic_recovery: "resolved" } : {}), execution_permitted: false };
 }
 
 /** Native recovery may show a quarantined conflict as attention required. The
@@ -94,7 +106,7 @@ export function storageRecoveryOwnerResult(value: unknown, reference: Data): Dat
   if (projected.job_id !== reference.job_id || projected.connection_id !== reference.connection_id ||
       typeof projected.receipt_id !== "string" || projected.execution_permitted !== false)
     throw new Error("storage_recovery_response_invalid");
-  const review = reviewAvailability(raw);
+  const review = { ...reviewAvailability(raw), ...automaticRecovery(raw) };
   if (!("diagnostic" in raw) || raw.diagnostic === null) return { ...projected, ...review };
   const diagnostic = sanitizeRecoveryDiagnostic(raw.diagnostic);
   if (!diagnostic) throw new Error("storage_recovery_response_invalid");
@@ -119,7 +131,7 @@ export function storageRecoveryListResult(value: unknown, connectionId: string):
     const diagnostic = j.diagnostic === null || j.diagnostic === undefined ? undefined : sanitizeRecoveryDiagnostic(j.diagnostic);
     if (j.diagnostic != null && !diagnostic) throw new Error("storage_recovery_response_invalid");
     return { job_id: j.job_id, connection_id: connectionId, receipt_id: j.receipt_id, status: j.status === "conflict" ? "attention_required" : j.status,
-      execution_permitted: false, ...reviewAvailability(j), ...(diagnostic ? { diagnostic } : {}) };
+      execution_permitted: false, ...reviewAvailability(j), ...automaticRecovery(j), ...(diagnostic ? { diagnostic } : {}) };
   });
   return { status: "ok", connection_id: connectionId, jobs, execution_permitted: false };
 }

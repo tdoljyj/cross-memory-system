@@ -14,9 +14,9 @@ const safeName = (value: unknown): value is string => typeof value === "string" 
 function fail(reason = "DRIVE_POSTCONDITION_REQUEST_MISMATCH"): never { throw new Error(reason); }
 const folderType = "application/vnd.google-apps.folder";
 
-/** Owner review only observes the original target. Its private descriptor and
- * RPC come from the current same-Owner recovery route. It does not accept
- * browser metadata, change Drive, enable credentials or call an executor. */
+/** Recovery observes only the original target. The private descriptor and RPC
+ * pin its current authorization. Neither Owner review nor automatic before
+ * reconciliation accepts browser metadata, changes Drive or enables credentials. */
 export async function createStorageRecoveryReview(config: {
   client_id: string; vault: Parameters<typeof createStorageCredentialVault>[0]; descriptor: Data; source_receipt_id: string;
   rpc: (input: Data) => Promise<Data>; fetch?: typeof fetch; clock?: () => number; timeout_ms?: number;
@@ -25,7 +25,7 @@ export async function createStorageRecoveryReview(config: {
   const timeout = config.timeout_ms ?? 10000;
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || !uuid.test(config.source_receipt_id) || typeof config.rpc !== "function" ||
       !Number.isInteger(timeout) || timeout < 1 || timeout > 30000) fail();
-  return Object.freeze({ async prepare(reference: Reference, revalidate?: ReviewReference) {
+  const run = async (reference: Reference, revalidate?: ReviewReference, automatic = false) => {
     if (!object(reference) || Object.keys(reference).sort().join(",") !== "connection_id,job_id" ||
         !uuid.test(reference.connection_id) || !uuid.test(reference.job_id)) fail();
     const d = structuredClone(config.descriptor);
@@ -35,6 +35,13 @@ export async function createStorageRecoveryReview(config: {
         !Number.isSafeInteger(d.version) || Number(d.version) < 1 || !object(d.profile) || typeof d.profile.managed_root !== "string" ||
         !id.test(String(d.root_folder_id)) || !id.test(String(d.root_parent_id)) || !object(d.mutation) || !object(d.provider_before) ||
         !object(d.attempt) || !id.test(String(d.attempt.provider_file_id)) || d.mutation.target_kind !== "file") fail();
+    if (automatic && (d.mutation.operation !== "replace" || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
+        d.attempt.operation !== "replace" || !object(d.conflict_reconcile) ||
+        Object.keys(d.conflict_reconcile).sort().join(",") !== "closed_version,source_receipt_id" ||
+        d.conflict_reconcile.closed_version !== d.version || d.conflict_reconcile.source_receipt_id !== config.source_receipt_id ||
+        d.provider_before.destination_file_id !== d.attempt.provider_file_id ||
+        d.attempt.parent_id !== d.provider_before.destination_parent_id ||
+        d.attempt.destination_path !== d.mutation.destination_path)) fail();
     if (revalidate && (!uuid.test(revalidate.observation_id) || revalidate.base_version !== d.version ||
         revalidate.source_receipt_id !== config.source_receipt_id)) fail();
     const profile = d.profile as Data, mutation = d.mutation as Data, before = d.provider_before as Data, attempt = d.attempt as Data;
@@ -97,38 +104,91 @@ export async function createStorageRecoveryReview(config: {
         let file: Data | null = null;
         try { file = await getFile(targetId); } catch (error) { if (targetStatus !== 404) throw error; }
         if (!file) {
+          let boundary = "identity_changed";
           for (const location of locations) {
-            await parent(location);
-            if ((await list(String(location.parentId), location.name)).length !== 0) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
+            try { await parent(location); }
+            catch (error) {
+              if (!automatic || !(error instanceof Error) || !["DRIVE_POSTCONDITION_ANCESTOR_CHANGED", "DRIVE_POSTCONDITION_PARENT_AMBIGUOUS"].includes(error.message)) throw error;
+              boundary = "ancestor_changed";continue;
+            }
+            if ((await list(String(location.parentId), location.name)).length !== 0) {
+              if (!automatic) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
+              boundary = "namespace_conflict";
+            }
           }
           return { observed_state: "absent", provider_file_id: targetId, provider_file_version: null, parent_id: null, name: null,
-            trashed: null, mime_type: null, size: null, sha256: null, head_revision_id: null };
+            trashed: null, mime_type: null, size: null, sha256: null, head_revision_id: null,
+            ...(automatic ? { boundary_status: boundary } : {}) };
         }
         if (file.id !== targetId || !safeName(file.name) || !Array.isArray(file.parents) || file.parents.length !== 1 ||
             typeof file.trashed !== "boolean" || typeof file.version !== "string" || !/^[1-9]\d{0,39}$/.test(file.version) ||
             typeof file.mimeType !== "string" || file.mimeType.length > 255 || file.mimeType === folderType) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
         const location = locations.find(location => file!.name === location.name && file!.parents instanceof Array && file!.parents[0] === location.parentId);
-        if (!location) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
-        await parent(location);
-        const matches = await list(String(location.parentId), location.name);
-        if (file.trashed ? matches.length !== 0 : matches.length !== 1 || matches[0].id !== targetId) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
+        let boundary = "qualified";
+        if (!location) {
+          if (!automatic) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
+          boundary = "identity_changed";
+        } else {
+          try { await parent(location); }
+          catch (error) {
+            if (!automatic || !(error instanceof Error) || !["DRIVE_POSTCONDITION_ANCESTOR_CHANGED", "DRIVE_POSTCONDITION_PARENT_AMBIGUOUS"].includes(error.message)) throw error;
+            boundary = "ancestor_changed";
+          }
+          if (boundary === "qualified") {
+            const matches = await list(String(location.parentId), location.name);
+            if (file.trashed ? matches.length !== 0 : matches.length !== 1 || matches[0].id !== targetId) {
+              if (!automatic) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
+              boundary = "namespace_conflict";
+            }
+          }
+        }
+        if (automatic && file.trashed === true) boundary = "identity_changed";
         if (file.size != null && (typeof file.size !== "string" || !/^(0|[1-9]\d{0,19})$/.test(file.size)) ||
             file.sha256Checksum != null && (typeof file.sha256Checksum !== "string" || !/^[0-9a-f]{64}$/.test(file.sha256Checksum)) ||
             file.headRevisionId != null && (typeof file.headRevisionId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(file.headRevisionId))) fail("DRIVE_METADATA_RESPONSE_INVALID");
         let state = "changed";
         const old = object(attempt.content_before) ? attempt.content_before : null, after = object(attempt.content_after) ? attempt.content_after : null;
         const beforeVersion = before.destination_file_id === targetId ? before.destination_file_version : before.source_file_version;
-        if (file.version === beforeVersion && (!old || file.size === old.size && file.sha256Checksum === old.sha256 && file.headRevisionId === old.head_revision_id)) state = "before";
+        const oldMatches = !old || (!Object.hasOwn(old, "size") || file.size === old.size) &&
+          (!Object.hasOwn(old, "sha256") || file.sha256Checksum === old.sha256) &&
+          (!Object.hasOwn(old, "head_revision_id") || file.headRevisionId === old.head_revision_id);
+        if (automatic && boundary !== "qualified") state = "changed";
+        else if (file.version === beforeVersion && oldMatches && (!automatic || file.trashed === false)) state = "before";
         else if (mutation.operation === "replace" && after && file.trashed === false && file.size === after.size && file.sha256Checksum === after.sha256 && file.headRevisionId !== attempt.pinned_revision_id) state = "after";
         else if ((mutation.operation === "delete" && file.trashed === true) || (mutation.operation === "restore" && file.trashed === false)) state = "after";
-        else if (["rename", "move"].includes(String(mutation.operation)) && location.path === mutation.destination_path && file.trashed === false) state = "after";
+        else if (["rename", "move"].includes(String(mutation.operation)) && location?.path === mutation.destination_path && file.trashed === false) state = "after";
         return { observed_state: state, provider_file_id: targetId, provider_file_version: file.version, parent_id: file.parents[0], name: file.name,
-          trashed: file.trashed, mime_type: file.mimeType, size: file.size ?? null, sha256: file.sha256Checksum ?? null, head_revision_id: file.headRevisionId ?? null };
+          trashed: file.trashed, mime_type: file.mimeType, size: file.size ?? null, sha256: file.sha256Checksum ?? null, head_revision_id: file.headRevisionId ?? null,
+          ...(automatic ? { boundary_status: boundary } : {}) };
       };
-      const first = await observe(), second = await observe();
+      const first = await observe(), firstObservedAt = new Date(clock()).toISOString();
+      const second = await observe(), secondObservedAt = new Date(clock()).toISOString();
       if (JSON.stringify(first) !== JSON.stringify(second)) fail("DRIVE_POSTCONDITION_SYNC_TIMEOUT");
       controller.signal.throwIfAborted();
-      const observation = { observed_at: new Date(clock()).toISOString(), ...second };
+      const observation = { observed_at: secondObservedAt, ...second };
+      if (automatic) {
+        const result = await bounded(config.rpc({ action: "reconcile_before", ...reference, base_version: d.version,
+          source_receipt_id: config.source_receipt_id, credential_version: d.credential_version,
+          first_observation: { observed_at: firstObservedAt, ...first }, second_observation: observation }));
+        controller.signal.throwIfAborted();
+        if (result.connection_id !== reference.connection_id || result.job_id !== reference.job_id || result.intent_id !== d.intent_id ||
+            result.source_receipt_id !== config.source_receipt_id || result.base_version !== d.version || result.execution_permitted !== false) fail();
+        const pinned = { ...reference, intent_id: d.intent_id, source_receipt_id: config.source_receipt_id,
+          base_version: Number(d.version), execution_permitted: false };
+        if (result.status === "resolved") {
+          if (second.observed_state !== "before" || result.resolution !== "automatically_reconciled_before" ||
+              result.automatic_recovery !== "resolved" || !uuid.test(String(result.receipt_id)) || result.receipt_id === config.source_receipt_id) fail();
+          return { status: "resolved", resolution: "automatically_reconciled_before", automatic_recovery: "resolved", ...pinned, receipt_id: String(result.receipt_id) };
+        }
+        if (result.status === "after_observed" && second.observed_state === "after") return { status: "after_observed", ...pinned };
+        if (result.status === "inspection_required" && second.observed_state !== "before" && object(result.diagnostic) &&
+            Object.keys(result.diagnostic).sort().join(",") === "automatic_next_action,observed_at,reason,stage" &&
+            result.diagnostic.stage === "verification" && result.diagnostic.reason === "CONTENT_MISMATCH" &&
+            typeof result.diagnostic.observed_at === "string" && Date.parse(result.diagnostic.observed_at) === Date.parse(secondObservedAt) && result.diagnostic.automatic_next_action === "continue_object_recovery")
+          return { status: "inspection_required", automatic_recovery: "current_state_conflict", ...pinned, diagnostic: { stage: "verification", reason: "CONTENT_MISMATCH",
+            observed_at: secondObservedAt, automatic_next_action: "continue_object_recovery" } };
+        fail();
+      }
       const result = await bounded(config.rpc({ action: revalidate ? "review_revalidate" : "review_observe", ...reference, base_version: d.version,
         source_receipt_id: config.source_receipt_id, ...(revalidate ? { observation_id: revalidate.observation_id } : {}), observation }));
       controller.signal.throwIfAborted();
@@ -148,5 +208,7 @@ export async function createStorageRecoveryReview(config: {
         file_name: second.name ?? locations[0].name, provider_file_id: targetId, provider_file_version: second.provider_file_version,
         mime_type: second.mime_type, size: second.size, sha256: second.sha256, execution_permitted: false };
     } finally { clearTimeout(timer); controller.abort(); }
-  }});
+  };
+  return Object.freeze({ prepare: (reference: Reference, revalidate?: ReviewReference) => run(reference, revalidate),
+    reconcile: (reference: Reference) => run(reference, undefined, true) });
 }
