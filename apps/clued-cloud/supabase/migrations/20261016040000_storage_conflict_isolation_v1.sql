@@ -801,7 +801,9 @@ begin
  abandon:=coalesce(q.state='active' and m.state='conflict' and q.job_id=j.job_id and q.connection_id=j.connection_id
   and j.authority_snapshot_v2 is not null and j.cloud_writer_binding_id is not null
   and j.cloud_writer_binding_id=m.writer_binding_id and m.version>=q.closed_version,false);
- result:=result||jsonb_build_object('review_available',available,'abandon_available',abandon);
+ if q.state='active' then
+  result:=result||jsonb_build_object('review_available',available,'abandon_available',abandon);
+ end if;
  if available or abandon then
   result:=result||jsonb_build_object('base_version',m.version,'source_receipt_id',q.close_receipt_id);
   target_name:=regexp_replace(q.paths[1],'^.*/','');
