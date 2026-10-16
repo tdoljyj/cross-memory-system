@@ -581,6 +581,8 @@ def runtime_reminder(payload: dict, now: datetime | None = None) -> str | None:
     if not isinstance(session, str) or not session:
         return None
     response = payload.get("tool_response")
+    if isinstance(response, dict) and response.get("isError") is True:
+        return None
     body = response if isinstance(response, dict) and "active_work_claims" in response else response_body(response)
     if (not isinstance(body, dict) or body.get("error") or body.get("error_code")
             or body.get("status") not in (None, "committed", "restored", "ok")):

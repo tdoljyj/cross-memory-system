@@ -749,6 +749,17 @@ class RuntimeBoundaryTest(unittest.TestCase):
             saved = (Path(directory) / GUARD.CLAIM_FILE).read_text(encoding="utf-8")
             self.assertNotIn("private-capability", saved)
 
+    def test_mcp_outer_error_cannot_turn_valid_looking_data_into_a_renewal_advice(self):
+        payload = self.payload()
+        body = payload["tool_response"]
+        for wrapper in ({**body}, {"structuredContent": body},
+                        {"content": [{"type": "text", "text": json.dumps(body)}]}):
+            with self.subTest(wrapper=list(wrapper)):
+                payload["tool_response"] = {**wrapper, "isError": True}
+                self.assertIsNone(GUARD.runtime_reminder(payload, self.now))
+                payload["tool_response"] = {**wrapper, "isError": False}
+                self.assertIn("clued_work_renew", GUARD.runtime_reminder(payload, self.now))
+
 
 if __name__ == "__main__":
     unittest.main()
