@@ -10,6 +10,7 @@ import { ImprintFailure, mutateRecord, noteInput, organizationInput, prepareWrit
   type NativeRpc, type PreparedWrite, type SourceRead } from "./imprint-client";
 import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-suggestions";
 import ExistingAssociationEditor from "./ExistingAssociationEditor";
+import type { AssociationRead } from "./imprint-associations";
 
 const COPY = {
   "zh-CN": {
@@ -99,13 +100,19 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
     return () => { cancelled = true; activeFence.begin("read"); }; /* callbacks belong to this exact selection */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection]);
-  async function openRecord(id: string, sourceNamespace?: "canonical" | "development") {
+  async function openRecord(id: string, sourceNamespace?: "canonical" | "development", association?: AssociationRead) {
     const ticket = fence.current.begin("detail");
     setDetail({ selection, value: { loading: true, record: null, error: "" } });
     try {
-      const result = await readImprints(rpc, { view: "all", scope: "all", query: "", include_history: true, limit: 30, cursor: 0, id,
+      const result = await readImprints(rpc, { view: association?.recordType ?? "all", scope: association?.scope ?? "all", query: "", include_history: !association, limit: 30, cursor: 0, id,
         ...(development && sourceNamespace ? { source_kind: sourceNamespace } : {}) }, developmentContextId,
         { isCurrent: () => fence.current.current(ticket) });
+      if (association && (result.records.length !== 1 || result.records[0].id !== id
+        || result.records[0].scope !== association.scope || result.records[0].record_type !== association.recordType
+        || sourceKind(result.records[0]) === "development" || result.records[0].record_schema_version !== 1
+        || result.records[0].record_currentness !== "CURRENT" || result.records[0].lifecycle_status !== "active"
+        || result.records[0].authoritative !== true || (development && result.records[0].context_id !== developmentContextId)))
+        throw new ImprintFailure("unavailable", "association_target_unavailable");
       if (fence.current.current(ticket)) setDetail({ selection, value: { loading: false, record: result.records[0] ?? null, error: result.records.length ? "" : t.unavailable } });
     } catch (failure) { if (fence.current.current(ticket)) setDetail({ selection, value: { loading: false, record: null, error: failureText(failure, locale) } }); }
   }
@@ -169,7 +176,7 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
 
 function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommitted, onRelated, expanded = false, includeHistory, developmentContextId }: {
   record: ImprintRecord; selection: object; owner: string; rpc: NativeRpc; locale: Locale; attempts: Attempts;
-  onCommitted: (message: string) => void; onRelated: (id: string, sourceNamespace?: "canonical" | "development") => void; expanded?: boolean; includeHistory: boolean; developmentContextId?: string;
+  onCommitted: (message: string) => void; onRelated: (id: string, sourceNamespace?: "canonical" | "development", association?: AssociationRead) => void; expanded?: boolean; includeHistory: boolean; developmentContextId?: string;
 }) {
   const t = COPY[locale], labels = VIEW_LABELS[locale];
   const development = developmentContextId !== undefined;

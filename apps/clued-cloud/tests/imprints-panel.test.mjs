@@ -618,6 +618,51 @@ test('changed target requires review rather than silently linking a newer versio
   assert.ok(f.text().includes('原条目或关联已有更新')); assert.equal(f.calls.length, 4);
 });
 
+test('same-title same-body candidates remain distinguishable by original type, ID and version through confirmation', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const first = associationTask(), second = associationTask({ id: EVIDENCE, version: 4 });
+  await f.respond(0, page([associationSource()])); f.click('查找已有任务或决策');
+  await f.respond(1, page([first, second], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  const candidates = f.nodes('button').filter(node => f.text(node) === '核对这条记录'); assert.equal(candidates.length, 2);
+  assert.ok(f.text().includes(OTHER)); assert.ok(f.text().includes(EVIDENCE)); assert.ok(f.text().includes('已有任务'));
+  f.fire(candidates[1], 'onClick');
+  const confirmation = f.nodes('section').find(node => node.props['aria-label'] === '确认查阅关联');
+  assert.ok(f.text(confirmation).includes(EVIDENCE)); assert.ok(!f.text(confirmation).includes(OTHER));
+  assert.ok(f.text(confirmation).includes('版本 4')); assert.ok(f.text(confirmation).includes(second.content));
+  f.click('确认关联'); assert.equal(f.calls[3].args.p_input.id, EVIDENCE);
+  await f.respond(3, page([second], null, 'strict_current')); await f.untilCalls(5);
+  assert.equal(f.calls[4].args.p_input.target_id, EVIDENCE); assert.equal(f.calls[4].args.p_input.target_version, 4);
+});
+
+test('associated details recheck exact scope and current eligibility and directly show only that qualified read', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const link = { record_id: OTHER, source_kind: 'canonical', record_type: 'task', record_version: 1, current_version: 1, title: '原任务入口' };
+  await f.respond(0, page([associationSource({ associations: [link], association_version: 1 })])); f.click(link.title);
+  assert.deepEqual(plain(f.calls[1].args.p_input), { view: 'task', scope: 'global', query: '', include_history: false, limit: 30, cursor: 0, id: OTHER });
+  await f.respond(1, page([associationTask({ version: 2, content: 'UPDATED ORIGINAL BODY' })], null, 'strict_current'));
+  assert.ok(f.text().includes('UPDATED ORIGINAL BODY')); assert.equal(f.calls.length, 2);
+  for (const invalid of [{ scope: 'profile', canonical_scope: 'profile' }, { lifecycle_status: 'completed' }, { record_currentness: 'HISTORY', authoritative: false }]) {
+    f.click(link.title);
+    await f.respond(f.calls.length - 1, page([associationTask({ ...invalid, content: 'INELIGIBLE TARGET BODY' })], null, 'strict_current'));
+    assert.ok(!f.text().includes('INELIGIBLE TARGET BODY'));
+  }
+  assert.ok(f.calls.slice(1).every(call => call.args.p_input.scope === 'global' && call.args.p_input.include_history === false));
+});
+
+test('Context associated details bind canonical namespace and discard a late read after Context switch', async t => {
+  const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());
+  const link = { record_id: EVIDENCE, source_kind: 'canonical', record_type: 'task', record_version: 1, current_version: 1, title: 'Context原任务入口' };
+  const source = associationSource({ context_id: OTHER, environment: 'test', scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT,
+    source_kind: 'development', source_semantics: 'development_context', lifecycle_status: 'ACTIVE', record_currentness: 'UNKNOWN', authoritative: false, qualification: 'candidate',
+    associations: [link], association_version: 1 });
+  await f.respond(0, page([source])); f.click(link.title);
+  assert.equal(f.calls[1].args.p_input.scope, source.scope); assert.equal(f.calls[1].args.p_input.source_kind, 'canonical');
+  assert.equal(f.calls[1].args.p_input.context_id, OTHER); assert.equal(f.calls[1].args.p_input.include_history, false);
+  f.setDevelopmentContext(PROJECT);
+  await f.respond(1, page([associationTask({ id: EVIDENCE, context_id: OTHER, scope: source.scope, canonical_scope: source.scope, content: 'LATE OTHER CONTEXT BODY' })], null, 'strict_current'));
+  assert.ok(!f.text().includes('LATE OTHER CONTEXT BODY')); assert.equal(f.calls.length, 3);
+});
+
 test('late lookup cannot reveal old-account candidates or initiate a mutation after account switch', async t => {
   const f = fixture(); t.after(() => f.unmount());
   await f.respond(0, page([associationSource()])); f.click('查找已有任务或决策');

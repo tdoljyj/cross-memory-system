@@ -55,13 +55,15 @@ test('Native imprint query scope preserves lawful Owner source scope and all iso
     const additions = names.filter(name => name.endsWith('_imprint_query_owner_scope.sql'));
     assert.equal(additions.length, 1, 'one actual CLI-created additive migration');
     const migration = await fs.readFile(path.join(migrationDir, additions[0]), 'utf8');
-    for (const name of names.filter(name => name !== additions[0])) {
+    const predecessors = names.filter(name => name < additions[0]);
+    const successors = names.filter(name => name > additions[0]);
+    for (const name of predecessors) {
       try { await admin.query(await fs.readFile(path.join(migrationDir, name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     await allowRawTestBindings(admin);
     await assertGatewayCloseoutBoundary(admin);
-    t.diagnostic(`full predecessor chain ${names.length - 1} migrations: ${Math.round(performance.now() - started)}ms`);
+    t.diagnostic(`full chronological predecessor chain ${predecessors.length} migrations: ${Math.round(performance.now() - started)}ms`);
     const owner = uid(), other = uid(), project = uid(), sourceProject = uid(), foreignProject = uid();
     const scope = 'project:' + project, sourceScope = 'project:' + sourceProject, foreignScope = 'project:' + foreignProject;
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values
@@ -230,7 +232,21 @@ test('Native imprint query scope preserves lawful Owner source scope and all iso
       }
       assert.equal((await strict()).current_projection_unavailable, false, 'all failed probes left valid source identities intact');
     });
-    t.diagnostic(`complete chain ${names.length} migrations; total ${Math.round(performance.now() - started)}ms`);
+    await t.test('chronological successors preserve current Owner-scope behavior and Native isolation', async () => {
+      for (const name of successors) await admin.query(await fs.readFile(path.join(migrationDir, name), 'utf8'));
+      const result = await strict();
+      assert.equal(result.current_projection_unavailable, false); assert.equal(result.selection_complete, true);
+      assert.deepEqual(new Set(result.records.map(row => row.id)), new Set([globalTask, projectTask]));
+      assert.ok(result.records.every(row => row.scope === scope && row.record_currentness === 'CURRENT' && row.authoritative));
+      assert.deepEqual(new Set((await development()).records.map(row => row.id)), new Set([globalTask, projectTask]));
+      await assert.rejects(read({ view: 'all', scope: foreignScope, include_history: true }), /imprint_scope_not_found/);
+      assert.deepEqual((await read({ id: globalTask, include_history: true }, stranger)).records, []);
+      for (const role of ['authenticated', 'anon', 'service_role', 'clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_function_privilege($1,'public.clued_imprint_read_v1(jsonb)','execute') value", [role])).rows[0].value, role === 'authenticated');
+      }
+      await assertGatewayCloseoutBoundary(admin);
+    });
+    t.diagnostic(`complete chronological chain ${names.length} migrations; total ${Math.round(performance.now() - started)}ms`);
   } finally {
     for (const db of clients.reverse()) await db.end().catch(() => {});
     await server.stop().catch(() => {});

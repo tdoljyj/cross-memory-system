@@ -7,6 +7,7 @@ export type Association = { record_id: string; source_kind: "canonical"; record_
   record_version: number; current_version: number; title: string };
 export type AssociationMatch = { record: ImprintRecord; reason: "identity" | "title" | "terms" | "search"; score: number };
 export type AssociationMatches = { matches: AssociationMatch[]; complete: boolean };
+export type AssociationRead = { scope: string; recordType: "task" | "decision" };
 
 export function associations(record: ImprintRecord): Association[] {
   if (!Array.isArray(record.associations)) return [];
