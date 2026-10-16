@@ -391,11 +391,21 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       assert.equal(projection.version, 1); assert.equal(projection.record_currentness, 'UNKNOWN');
       assert.equal(projection.authoritative, false); assert.deepEqual(projection.body, request.body);
       assert.deepEqual((await read({ id, view: 'task' })).records, []);
+      const beforeAssociation = await org(id);
+      const association = { record_id: id, record_version: 1, source_kind: 'development', context_id: context,
+        environment: 'preview', target_id: canonicalTask, target_version: 1, action: 'add', base_version: 0, idempotency_key: uuid() };
+      const linked = await call(human, 'clued_imprint_association_set_v1', association, hash(JSON.stringify(association)));
+      assert.equal(linked.status, 'committed', JSON.stringify(linked));
+      const classification = ({ associations, association_version, association_receipt_id, ...rest }) => rest;
+      assert.deepEqual(classification(await org(id)), classification(beforeAssociation), 'association preserves actual automatic classification provenance');
+      assert.equal(Number((await org(id)).association_version), 1);
+      assert.deepEqual((await admin.query('select to_jsonb(r) v from clued_private.development_records_v14 r where id=$1', [id])).rows[0].v, original);
       const clear = input(id, [], 1), cleared = await set(clear), replay = await set(clear);
       assert.equal(cleared.status, 'committed', JSON.stringify(cleared)); assert.equal(replay.receipt_id, cleared.receipt_id);
       assert.equal(replay.replayed, true); assert.deepEqual((await org(id)).domains, []);
       assert.equal((await org(id)).source_operation_id, null); assert.equal((await org(id)).auto_rules_version, null);
       assert.equal((await org(id)).receipt_id, cleared.receipt_id);
+      assert.deepEqual((await org(id)).associations, [{ record_id: canonicalTask, version: 1 }], 'classification upsert retains reading associations');
       assert.deepEqual((await admin.query('select to_jsonb(r) v from clued_private.development_records_v14 r where id=$1', [id])).rows[0].v, original);
       assert.equal((await write(request)).replayed, true);
       assert.deepEqual((await org(id)).domains, []);
@@ -423,6 +433,98 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       assert.deepEqual(await org(textField.result.id), settled, 'settled operation updates do not classify twice');
       for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
         assert.equal((await admin.query("select has_function_privilege($1,'clued_private.imprint_auto_context_create_v1()','execute') v", [role])).rows[0].v, false);
+      }
+    });
+    const associate = (value, client = human) => call(client, 'clued_imprint_association_set_v1', value, hash(JSON.stringify(value)));
+    const associationRequest = (source, target = canonicalTask, extra = {}) => ({ record_id: source, record_version: 1,
+      source_kind: 'development', context_id: context, environment: 'preview', target_id: target, target_version: 1,
+      action: 'add', base_version: 0, idempotency_key: uuid(), ...extra });
+    const currentRaw = id => read({ id, source_kind: 'development' }).then(result => result.records[0]);
+    const rawSnapshot = async id => (await admin.query('select to_jsonb(r) v from clued_private.development_records_v14 r where id=$1', [id])).rows[0].v;
+    await t.test('reading associations preserve Raw/canonical namespaces and one original source, with independent CAS and no-op replay', async () => {
+      const original = await rawSnapshot(candidate), canonicalOriginal = (await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [canonicalTask])).rows[0].v;
+      const request = associationRequest(candidate, canonicalTask, { record_version: 2 });
+      const committed = await associate(request);
+      assert.equal(committed.status, 'committed', JSON.stringify(committed));
+      assert.equal(committed.supplemental.association.version, 1);
+      const projected = await currentRaw(candidate);
+      assert.equal(projected.association_version, 1); assert.equal(projected.authoritative, false); assert.equal(projected.record_currentness, 'UNKNOWN');
+      assert.deepEqual(projected.associations.map(x => [x.record_id, x.source_kind, x.record_version, x.current_version]), [[canonicalTask, 'canonical', 1, 1]]);
+      assert.deepEqual(await rawSnapshot(candidate), original);
+      assert.deepEqual((await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [canonicalTask])).rows[0].v, canonicalOriginal);
+      const replayed = await associate(request); assert.equal(replayed.receipt_id, committed.receipt_id); assert.equal(replayed.replayed, true);
+      const duplicate = await associate({ ...request, base_version: 1, idempotency_key: uuid() });
+      assert.equal(duplicate.status, 'committed'); assert.equal(duplicate.supplemental.association.changed, false);
+      assert.deepEqual(duplicate.event_ids, []); assert.equal((await currentRaw(candidate)).association_version, 1);
+      const mismatch = await associate({ ...request, target_id: decision });
+      assert.equal(mismatch.error_code, 'IDEMPOTENCY_KEY_CONFLICT');
+      assert.equal((await associate({ ...request, idempotency_key: uuid() })).error_code, 'association_version_conflict');
+      assert.equal((await associate({ ...request, record_version: 999, idempotency_key: uuid() })).error_code, 'record_version_conflict');
+      assert.equal((await associate({ ...request, target_version: 999, base_version: 1, idempotency_key: uuid() })).error_code, 'record_version_conflict');
+      assert.equal((await associate({ ...request, target_id: otherProjectTask, base_version: 1, idempotency_key: uuid() })).error_code, 'association_target_unavailable');
+      assert.equal((await associate({ ...request, target_id: annotation, base_version: 1, idempotency_key: uuid() })).error_code, 'association_target_unavailable');
+      assert.equal((await currentRaw(candidate)).association_version, 1, 'rejected operations never partly change metadata');
+    });
+    await t.test('same-key parallel calls settle once; first association initializes only absent organization and classification CAS0 must refresh', async () => {
+      const source = await put(), before = await rawSnapshot(source), second = await actor();
+      const request = associationRequest(source);
+      const saved = await Promise.all([associate(request), associate(request, second)]);
+      assert.ok(saved.every(x => x.status === 'committed'), JSON.stringify(saved)); assert.equal(saved[0].receipt_id, saved[1].receipt_id);
+      const row = (await admin.query('select * from clued_private.imprint_development_organization_v1 where record_id=$1', [source])).rows[0];
+      assert.equal(Number(row.version), 1); assert.equal(Number(row.association_version), 1); assert.deepEqual(row.domains, []);
+      assert.equal(row.auto_rules_version, null); assert.equal(row.source_operation_id, null);
+      assert.equal((await set(input(source, ['daily'], 0))).error_code, 'organization_version_conflict');
+      assert.equal((await set(input(source, ['daily'], 1))).status, 'committed');
+      assert.deepEqual((await currentRaw(source)).associations.map(x => x.record_id), [canonicalTask]);
+      assert.deepEqual(await rawSnapshot(source), before);
+      const racing = await put(), classification = input(racing, ['work'], 0), link = associationRequest(racing);
+      const results = await Promise.all([set(classification), associate(link, second)]);
+      assert.equal(results[1].status, 'committed', JSON.stringify(results));
+      assert.ok(results[0].status === 'committed' || results[0].error_code === 'organization_version_conflict');
+      const after = await currentRaw(racing); assert.equal(after.associations.length, 1);
+      assert.deepEqual(after.domains, results[0].status === 'committed' ? ['work'] : []);
+    });
+    await t.test('Canonical reciprocal links have fixed row order and never change either body/state or existing formal relations', async () => {
+      const a = await personal(), b = await personal({ kind: 'decision' }), second = await actor();
+      const original = (await admin.query('select to_jsonb(m) v from public.clued_memories m where id=any($1::uuid[]) order by id', [[a, b]])).rows.map(r => r.v);
+      await human.query("set statement_timeout='5s'"); await second.query("set statement_timeout='5s'");
+      const requests = [associationRequest(a, b, { source_kind: 'canonical' }), associationRequest(b, a, { source_kind: 'canonical' })];
+      const saved = await Promise.all([associate(requests[0]), associate(requests[1], second)]);
+      assert.ok(saved.every(x => x.status === 'committed'), JSON.stringify(saved));
+      assert.deepEqual((await admin.query('select to_jsonb(m) v from public.clued_memories m where id=any($1::uuid[]) order by id', [[a, b]])).rows.map(r => r.v), original);
+      const fromContext = (await read({ id: a, source_kind: 'canonical' })).records[0];
+      const fromUser = (await call(human, 'clued_imprint_read_v1', { id: a, scope: `project:${project}` })).records[0];
+      assert.deepEqual(fromUser.associations, fromContext.associations); assert.equal(fromContext.associations[0].record_id, b);
+      assert.equal((await associate(associationRequest(a, a, { source_kind: 'canonical', base_version: 1 }))).error_code, 'association_target_unavailable');
+    });
+    await t.test('unavailable target yields no stale title/ID; original association is retained diagnostically and can be removed', async () => {
+      const source = await put(), target = await personal({ kind: 'decision' });
+      assert.equal((await associate(associationRequest(source, target))).status, 'committed');
+      await admin.query("update public.clued_memories set lifecycle_status='completed',status='done',version=version+1 where id=$1", [target]);
+      const visible = await currentRaw(source);
+      assert.deepEqual(visible.associations, []); assert.equal(visible.association_unavailable_count, 1);
+      assert.equal(JSON.stringify(visible.associations).includes(target), false);
+      const remove = associationRequest(source, target, { action: 'remove', base_version: 1 }); delete remove.target_version;
+      assert.equal((await associate(remove)).status, 'committed'); assert.equal((await currentRaw(source)).association_unavailable_count, 0);
+    });
+    await t.test('cross-owner/context/environment, stale source and unqualified targets are refused; rollback and ACL remain strict', async () => {
+      const source = await put(), request = associationRequest(source), stranger = await actor({ sub: other, role: 'authenticated', session_id: 'other' });
+      await assert.rejects(associate(request, stranger), /denied|unavailable/);
+      await assert.rejects(associate({ ...request, context_id: production, environment: 'production' }), /unavailable/);
+      await assert.rejects(associate({ ...request, environment: 'production' }), /context_environment_denied/);
+      await assert.rejects(associate({ ...request, caller_owner: owner }), /imprint_association_input_invalid/);
+      assert.equal((await associate(associationRequest(closed))).error_code, 'association_source_unavailable');
+      await human.query('begin'); let receipt;
+      try { const saved = await associate(request); assert.equal(saved.status, 'committed'); receipt = saved.receipt_id; }
+      finally { await human.query('rollback'); }
+      assert.equal((await currentRaw(source)).association_version, 0);
+      assert.equal((await admin.query('select count(*) n from public.clued_audit_receipts where id=$1', [receipt])).rows[0].n, '0');
+      for (const role of ['anon', 'service_role', 'clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_function_privilege($1,'public.clued_imprint_association_set_v1(jsonb,text)','execute') v", [role])).rows[0].v, false);
+      }
+      for (const signature of ['public.clued_imprint_read_before_associations_v1(jsonb)', 'public.clued_development_imprint_read_before_associations_v1(jsonb)',
+        'clued_private.imprint_association_projection_v1(uuid,text,uuid,text,uuid)']) {
+        assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') v', ['authenticated', signature])).rows[0].v, false);
       }
     });
   } finally {

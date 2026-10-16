@@ -558,3 +558,102 @@ test('Immediate authoritative context is a qualified Record badge, not a ninth v
  f.click('刷新');await f.respond(1,page([record({authoritative:false,record_currentness:'HISTORY'})]));
  assert.ok(!f.text().includes('即时权威上下文'));assert.ok(f.text().includes('历史'));
 });
+
+const associationSource = extra => record({ title: '客户交付说明', content: '周五交Logo二稿，沿用原任务。',
+  source_semantics: 'canonical_record', authoritative: true, associations: [], association_version: 0, association_unavailable_count: 0, ...extra });
+const associationTask = extra => record({ id: OTHER, title: '周五交Logo第二版', content: '原任务唯一执行正文。', record_type: 'task',
+  source_kind: 'canonical', source_semantics: 'canonical_record', authoritative: true, version: 1, type_fields: { execution_bucket: 'later' }, ...extra });
+
+test('existing-record matching ranks literal evidence without inventing identity or including another scope/candidate/history', () => {
+  const m = modules().load('imprint-associations.ts'), source = associationSource(), target = associationTask();
+  const other = associationTask({ id: EVIDENCE });
+  const matches = m.rankAssociationMatches(source, [target, other, associationTask({ scope: 'profile' }),
+    associationTask({ source_kind: 'development' }), associationTask({ record_currentness: 'HISTORY' }),
+    associationTask({ authoritative: false })]);
+  assert.deepEqual(plain(matches.map(x => [x.record.id, x.reason])), [[OTHER, 'terms'], [EVIDENCE, 'terms']]);
+  assert.equal(m.rankAssociationMatches(associationSource({ title: '英文电影', content: '随手记一下' }), [target]).length, 0);
+  assert.equal(m.rankAssociationMatches(associationSource({ content: OTHER }), [target])[0].reason, 'identity');
+  assert.equal(m.rankAssociationMatches(associationSource({ content: target.title }), [target])[0].reason, 'title');
+  assert.equal(m.canAssociate(associationSource({ association_version: undefined })), false);
+  assert.equal(m.canAssociate(associationSource({ lifecycle_status: 'completed' })), false);
+});
+
+test('candidate lookup is bounded and honest about pagination, and only uses the existing strict-current readers', async () => {
+  const m = modules().load('imprint-associations.ts'), calls = [], source = associationSource();
+  const rpc = async (name, { p_input }) => { calls.push([name, p_input]);
+    return { data: page([associationTask({ id: p_input.view === 'task' ? OTHER : EVIDENCE, record_type: p_input.view })], p_input.cursor + 30, 'strict_current'), error: null }; };
+  const found = await m.findExistingAssociations(rpc, source, '', undefined, { isCurrent: () => true });
+  assert.equal(found.complete, false); assert.equal(calls.length, 4);
+  assert.ok(calls.every(([name, input]) => name === 'clued_imprint_read_v1' && input.scope === source.scope && input.include_history === false));
+  assert.deepEqual(calls.map(([,input]) => [input.view,input.cursor]), [['task',0],['task',30],['decision',0],['decision',30]]);
+  await assert.rejects(m.findExistingAssociations(rpc, source, '', undefined, { isCurrent: () => false }), e => e.reason === 'unknown');
+});
+
+test('actual picker previews the existing body, persists only a pointer, and reuses the exact lost-response request', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const source = associationSource(), target = associationTask();
+  await f.respond(0, page([source])); f.click('查找已有任务或决策');
+  await f.respond(1, page([target], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  assert.ok(f.text().includes(target.title)); assert.equal(f.calls.filter(x => /mutate|set_v1/.test(x.name)).length, 0);
+  f.click('核对这条记录'); assert.ok(f.text().includes(target.content));
+  f.click('确认关联'); await f.respond(3, page([target], null, 'strict_current')); await f.untilCalls(5);
+  const pending = plain(f.calls[4].args); assert.equal(f.calls[4].name, 'clued_imprint_association_set_v1');
+  assert.equal(pending.p_input.record_id, ID); assert.equal(pending.p_input.target_id, OTHER);
+  assert.equal(pending.p_input.record_version, source.version); assert.equal(pending.p_input.target_version, 1);
+  assert.equal('mutation' in pending.p_input, false); assert.equal('content' in pending.p_input, false);
+  await f.fail(4); assert.ok(f.text().includes('本次结果未能确认'));
+  f.click('确认关联'); await f.respond(5, page([target], null, 'strict_current')); await f.untilCalls(7);
+  assert.deepEqual(plain(f.calls[6].args), pending); assert.equal(f.calls[6].headers.Authorization, 'Bearer fixture-owner');
+  await f.respond(6, { status: 'committed', receipt_id: EVIDENCE, supplemental: { association: { record_id: ID, source_kind: 'canonical', version: 1, changed: true } } });
+  await f.respond(7, page([associationSource({ association_version: 1, associations: [{ record_id: OTHER, source_kind: 'canonical',
+    record_type: 'task', record_version: 1, current_version: 1, title: target.title }] })]));
+  assert.ok(f.text().includes('已关联原条目')); assert.ok(f.text().includes(source.content));
+  assert.equal(f.calls.filter(x => x.name === 'clued_user_record_mutate').length, 0, 'no duplicate task or source body mutation');
+});
+
+test('changed target requires review rather than silently linking a newer version', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const target = associationTask();
+  await f.respond(0, page([associationSource()])); f.click('查找已有任务或决策');
+  await f.respond(1, page([target], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  f.click('核对这条记录'); f.click('确认关联'); await f.respond(3, page([associationTask({ version: 2 })], null, 'strict_current'));
+  assert.ok(f.text().includes('原条目或关联已有更新')); assert.equal(f.calls.length, 4);
+});
+
+test('late lookup cannot reveal old-account candidates or initiate a mutation after account switch', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await f.respond(0, page([associationSource()])); f.click('查找已有任务或决策');
+  f.setSession(session('other')); await f.respond(1, page([associationTask()], null, 'strict_current'));
+  await f.respond(2, page([])); assert.ok(!f.text().includes('周五交Logo第二版'));
+  assert.equal(f.calls.filter(x => x.name === 'clued_imprint_association_set_v1').length, 0);
+  assert.equal(f.calls.length, 3, 'old lookup stops before reading another type');
+});
+
+test('Context candidate uses exact context and canonical namespace without promoting the original Raw source', async t => {
+  const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());
+  const source = associationSource({ source_kind: 'development', source_semantics: 'development_context', authoritative: false,
+    context_id: OTHER, environment: 'test', scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT,
+    lifecycle_status: 'ACTIVE', record_currentness: 'UNKNOWN', qualification: 'candidate' });
+  const target = associationTask({ context_id: OTHER, environment: 'test', scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT });
+  await f.respond(0, page([source])); f.click('查找已有任务或决策');
+  assert.equal(f.calls[1].args.p_input.context_id, OTHER); assert.equal(f.calls[1].args.p_input.source_kind, 'canonical');
+  await f.respond(1, page([target], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  f.click('核对这条记录'); f.click('确认关联'); await f.respond(3, page([target], null, 'strict_current')); await f.untilCalls(5);
+  assert.equal(f.calls[4].args.p_input.source_kind, 'development'); assert.equal(f.calls[4].args.p_input.context_id, OTHER);
+  assert.equal(f.calls[4].args.p_input.environment, 'test'); assert.ok(f.text().includes('候选内容'));
+  assert.ok(!f.text().includes('即时权威上下文'));
+  f.setDevelopmentContext(EVIDENCE); await f.respond(4, { status: 'committed', receipt_id: EVIDENCE,
+    supplemental: { association: { record_id: ID, source_kind: 'development', version: 1, changed: true } } });
+  assert.ok(!f.text().includes('已关联原条目'));
+});
+
+test('removal is an explicit metadata operation; inaccessible links never render stale identities or look absent', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const link = { record_id: OTHER, source_kind: 'canonical', record_type: 'task',
+    record_version: 1, current_version: 2, title: '原任务现标题' };
+  await f.respond(0, page([associationSource({ associations: [link], association_version: 2, association_unavailable_count: 1 })]));
+  assert.ok(f.text().includes('部分原有关联目前不可读取或已失效'));
+  f.click('取消关联'); assert.equal(f.calls.length, 1); f.click('确认取消关联'); await f.untilCalls(2);
+  assert.equal(f.calls[1].name, 'clued_imprint_association_set_v1'); assert.equal(f.calls[1].args.p_input.action, 'remove');
+  assert.equal('target_version' in f.calls[1].args.p_input, false); assert.equal(f.calls[1].args.p_input.base_version, 2);
+  const model = modules().load('imprint-model.ts');
+  assert.equal(model.normalizeRecord(associationSource({ associations: [{ ...link, source_kind: 'development' }] })), null);
+  assert.equal(model.normalizeRecord(associationSource({ associations: [link], association_version: undefined })), null);
+});
