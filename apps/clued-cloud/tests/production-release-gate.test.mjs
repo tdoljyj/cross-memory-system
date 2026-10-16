@@ -405,7 +405,8 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
   assert.match(apply, /copy migration_lines\(line\) from stdin with \(format csv, delimiter e'\\x01', quote e'\\x02'\)/);
   assert.match(apply, /commit;" < "\$file"/);
-  assert.match(apply, /if md5\(s\) is distinct from '\$expected' then raise exception[^\n]*\n\s*execute s;\n\s*insert into supabase_migrations\.schema_migrations/);
+  // Activation readiness must succeed in the same transaction before the ledger.
+  assert.match(apply, /if md5\(s\) is distinct from '\$expected' then raise exception[^\n]*\n\s*execute s;\n(?:\s*--[^\n]*\n)*\s*if to_regprocedure\('clued_private\.storage_conflict_require_scheduler_v1\(\)'\) is not null then\n\s*perform clued_private\.storage_conflict_require_scheduler_v1\(\);\n\s*end if;\n\s*insert into supabase_migrations\.schema_migrations/);
   assert.match(apply, /\[\[ "\$expected" =~ \^\[0-9a-f\]\{32\}\$ \]\]/);
   assert.match(apply, /grep -q \$'\[\\r\\x01\\x02\]' "\$file" \|\| grep -qx '\\\\\\\.' "\$file"/);
   assert.match(apply, /\[ -z "\$\(tail -c1 "\$file"\)" \]/);

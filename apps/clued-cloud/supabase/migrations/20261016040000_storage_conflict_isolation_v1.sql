@@ -957,12 +957,15 @@ end $staging$;
 -- check; merely loading schema never asserts an automatic service is active.
 create function clued_private.storage_conflict_require_scheduler_v1() returns void
 language plpgsql security definer set search_path='' as $$
+declare scheduler_ready boolean;
 begin
  if to_regprocedure('cron.schedule(text,text,text)') is null then raise exception 'storage_conflict_scheduler_required'; end if;
- if not exists(select 1 from cron.job where jobname='clued-storage-i9-conflict' and active
+ execute $query$select exists(select 1 from cron.job where jobname='clued-storage-i9-conflict' and active
   and schedule='* * * * *' and command='select clued_private.storage_conflict_sweep_v1()'
   and database=current_database() and username=pg_get_userbyid(
-   (select proowner from pg_proc where oid='clued_private.storage_conflict_sweep_v1()'::regprocedure))) then
+   (select proowner from pg_proc where oid='clued_private.storage_conflict_sweep_v1()'::regprocedure)))$query$
+  into scheduler_ready;
+ if scheduler_ready is distinct from true then
   raise exception 'storage_conflict_scheduler_unconfirmed'; end if;
 end $$;
 do $schedule$ begin
