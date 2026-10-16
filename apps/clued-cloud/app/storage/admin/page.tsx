@@ -6,14 +6,15 @@ import { supabase } from "../../supabase-browser";
 type Connection = { id: string; provider: string; state: string; version: number; root_name: string };
 type RecoveryDiagnostic = { stage: string; reason: string; observed_at: string; automatic_next_action: string };
 type RecoveryView = { job_id: string; status: string; receipt_id: string; diagnostic?: RecoveryDiagnostic;
-  review_available?: boolean; abandon_available?: boolean; file_name?: string; base_version?: number; source_receipt_id?: string; resolution?: string };
+  review_available?: boolean; abandon_available?: boolean; file_name?: string; base_version?: number; source_receipt_id?: string; resolution?: string;
+  automatic_recovery?: "pending" | "current_state_conflict" | "resolved" };
 type AbandonConfirmation = { connection_id: string; connection_version: number; job_id: string; base_version: number;
   source_receipt_id: string; file_name?: string; epoch: number };
 type ReviewObservation = { connection_id: string; job_id: string; observation_id: string; base_version: number; source_receipt_id: string;
   observed_at: string; observed_state: string; file_name: string; provider_file_id: string | null;
   provider_file_version: string | null; mime_type: string | null; size: number | string | null; sha256: string | null; epoch: number };
 type RecoveryConfirmation = { connection_id: string; connection_version: number; job_id: string; receipt_id: string;
-  status: string; epoch: number; action: "settle" | "authorize" };
+  status: string; epoch: number; action: "authorize" };
 const recoveryLabels: Record<string, string> = { queued: "排队中", prepared: "准备执行", started: "正在自动核验执行结果", uncertain: "正在自动恢复",
   committed: "已完成并登记", cancelled: "未完成，已结束原作业", denied: "未获执行许可", attention_required: "存在需要处理的异常", conflict: "检测到结果冲突，正在恢复", resolved: "原作业异常已处理" };
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -35,11 +36,26 @@ function recoveryView(value: unknown): RecoveryView | null {
   if (!isObject(value) || typeof value.job_id !== "string" || !uuid.test(value.job_id) || typeof value.status !== "string" ||
     !Object.hasOwn(recoveryLabels, value.status) || typeof value.receipt_id !== "string" || !uuid.test(value.receipt_id)) return null;
   const view: RecoveryView = { job_id: value.job_id, status: value.status, receipt_id: value.receipt_id };
-  if (value.status === "resolved") {
-    if (value.resolution !== "accepted_current_state" && value.resolution !== "abandoned_registration") return null;
-    view.resolution = value.resolution;
+  if (value.automatic_recovery !== undefined) {
+    if (!["pending", "current_state_conflict", "resolved"].includes(String(value.automatic_recovery))) return null;
+    view.automatic_recovery = value.automatic_recovery as RecoveryView["automatic_recovery"];
+    if (value.automatic_recovery === "resolved" && (value.status !== "resolved" || value.resolution !== "automatically_reconciled_before")) return null;
+    if (value.automatic_recovery !== "resolved" && ["resolved", "committed", "cancelled", "denied"].includes(value.status)) return null;
   }
-  if ((value.review_available === true || value.abandon_available === true) && Number.isSafeInteger(value.base_version) && Number(value.base_version) > 0 &&
+  if (value.status === "resolved") {
+    if (!["accepted_current_state", "abandoned_registration", "automatically_reconciled_before"].includes(String(value.resolution))) return null;
+    if (value.resolution === "automatically_reconciled_before") {
+      if (value.automatic_recovery !== "resolved" || !Number.isSafeInteger(value.base_version) || Number(value.base_version) < 1 ||
+        typeof value.source_receipt_id !== "string" || !uuid.test(value.source_receipt_id) || value.source_receipt_id === value.receipt_id) return null;
+      view.base_version = Number(value.base_version); view.source_receipt_id = value.source_receipt_id;
+    }
+    view.resolution = String(value.resolution);
+  }
+  // The server also grants legacy/non-candidate exits without an automatic
+  // recovery marker. Only an explicit pending/terminal result suppresses them.
+  if (value.automatic_recovery !== "pending" && value.automatic_recovery !== "resolved" &&
+    ["conflict", "attention_required"].includes(value.status) &&
+    (value.review_available === true || value.abandon_available === true) && Number.isSafeInteger(value.base_version) && Number(value.base_version) > 0 &&
     typeof value.source_receipt_id === "string" && uuid.test(value.source_receipt_id)) {
     view.review_available = value.review_available === true; view.abandon_available = value.abandon_available === true;
     view.base_version = Number(value.base_version); view.source_receipt_id = value.source_receipt_id;
@@ -53,7 +69,16 @@ function recoveryView(value: unknown): RecoveryView | null {
   }
   return view;
 }
+function recoveryTitle(view: RecoveryView) {
+  if (view.automatic_recovery === "pending") return "系统正在自动恢复";
+  if (view.resolution === "automatically_reconciled_before") return "已自动恢复使用";
+  if (view.automatic_recovery === "current_state_conflict") return "当前文件状态存在冲突";
+  return recoveryLabels[view.status];
+}
 function recoveryExplanation(view: RecoveryView) {
+  if (view.resolution === "automatically_reconciled_before") return "当前文件与原登记一致，系统已自动恢复使用；原操作结果未确认的历史保留。";
+  if (view.automatic_recovery === "pending") return "系统会自动核验并处理这个原作业，关闭页面后仍会继续。无需手工确认或重新提交。";
+  if (view.automatic_recovery === "current_state_conflict") return "当前文件状态与原操作预期不同；其他文件可继续使用。你可以查看文件后选择处理方式。";
   if (view.resolution === "accepted_current_state") return "已按 Google 当前文件状态恢复登记和使用；原操作历史保留。";
   if (view.resolution === "abandoned_registration") return "已停止管理这个文件；Google 文件没有删除。";
   return view.diagnostic ? `${recoveryReasons[view.diagnostic.reason]}。${recoveryActions[view.diagnostic.automatic_next_action]}` : recoveryLabels[view.status];
@@ -128,10 +153,10 @@ export default function StorageConnections() {
   const confirmation = useRef<RecoveryConfirmation | null>(null);
   const review = useRef<ReviewObservation | null>(null);
   const abandon = useRef<AbandonConfirmation | null>(null);
-  const automaticBudget = useRef(3);
   const recoveryTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const recoveryReads = useRef(new Map<string, number>());
-  const loadRecoveries = useCallback(async function load(c: Connection, epoch: number, verify = true) {
+  const recoveryLatest = useRef<Record<string, RecoveryView[]>>({});
+  const loadRecoveries = useCallback(async function load(c: Connection, epoch: number) {
     if (epoch !== revision.current) return;
     const read = (recoveryReads.current.get(c.id) ?? 0) + 1;
     recoveryReads.current.set(c.id, read);
@@ -147,6 +172,11 @@ export default function StorageConnections() {
       const jobs = result.jobs.map(recoveryView);
       if (jobs.some(job => job === null) || new Set(jobs.map(job => job!.job_id)).size !== jobs.length) throw new Error("Invalid recovery list");
       const views = jobs as RecoveryView[];
+      recoveryLatest.current[c.id] = views;
+      if (review.current?.connection_id === c.id && !views.some(job => job.review_available && job.job_id === review.current?.job_id &&
+          job.base_version === review.current?.base_version && job.source_receipt_id === review.current?.source_receipt_id)) {
+        review.current = null; setReviewObservation(null);
+      }
       if (abandon.current?.connection_id === c.id && !views.some(job => job.abandon_available && job.job_id === abandon.current?.job_id &&
           job.base_version === abandon.current?.base_version && job.source_receipt_id === abandon.current?.source_receipt_id)) {
         abandon.current = null; setAbandonConfirmation(null);
@@ -154,52 +184,32 @@ export default function StorageConnections() {
       shouldPoll = views.some(job => ["prepared", "started", "uncertain", "conflict", "attention_required"].includes(job.status));
       setAutomaticJobs(old => ({ ...old, [c.id]: views }));
       setAutomaticMessages(old => ({ ...old, [c.id]: !views.length ? "没有需要恢复的文件操作。"
-        : shouldPoll ? "系统正在处理以下原作业，无需填写任务编号。" : "文件操作恢复结果如下。" }));
-      if (c.state !== "active" || !verify) return;
-      for (const job of views) {
-        if (!current() || automaticBudget.current <= 0) break;
-        if (!["started", "uncertain", "conflict", "attention_required"].includes(job.status)) continue;
-        if (job.abandon_available && !job.review_available) continue;
-        automaticBudget.current--;
-        let checked: RecoveryView | null = null;
-        try {
-          const value = await request("/v1/storage/recovery", { action: "settle", connection_id: c.id, job_id: job.job_id }, current);
-          if (value.execution_permitted !== false) throw new Error("Unconfirmed recovery");
-          // An unknown response is observed through the original receipt, never
-          // by sending a second settlement or repeating a provider write.
-          checked = recoveryView(value);
-          if (checked?.job_id !== job.job_id) checked = null;
-        } catch { /* Observe the same job below. */ }
-        if (!current()) return;
-        if (!checked) {
-          try {
-            const value = await request("/v1/storage/recovery", { action: "inspect", connection_id: c.id, job_id: job.job_id }, current);
-            if (value.execution_permitted === false && value.connection_id === c.id) checked = recoveryView(value);
-            if (checked?.job_id !== job.job_id) checked = null;
-          } catch { /* The server's bounded background recovery remains active. */ }
-        }
-        if (!current()) return;
-        if (checked) setAutomaticJobs(old => ({ ...old, [c.id]: (old[c.id] ?? []).map(item => item.job_id === job.job_id ? checked! : item) }));
-        else setAutomaticMessages(old => ({ ...old, [c.id]: "这次读取没有完成，后台会继续按原作业恢复；没有重新执行文件操作。" }));
-      }
+        : shouldPoll ? "系统正在自动处理以下原作业，关闭页面后仍会继续。" : "文件操作恢复结果如下。" }));
+
     } catch {
-      if (current()) setAutomaticMessages(old => ({ ...old, [c.id]: "暂时未能读取自动恢复状态。可刷新重读；不会重新执行文件操作。" }));
+      shouldPoll = true;
+      if (current()) {
+        delete recoveryLatest.current[c.id];
+        if (review.current?.connection_id === c.id) { review.current = null; setReviewObservation(null); }
+        if (abandon.current?.connection_id === c.id) { abandon.current = null; setAbandonConfirmation(null); }
+        setAutomaticMessages(old => ({ ...old, [c.id]: "暂时未能读取恢复进度；后台恢复不依赖这个页面。系统会重新读取状态，不会重复文件操作。" }));
+      }
     } finally {
       // Poll only the scoped status. The background worker owns recovery and
       // backoff; a status poll never sends settlement or a provider effect.
-      if (current() && shouldPoll) recoveryTimers.current.set(c.id, setTimeout(() => { void load(c, epoch, false); }, 30_000));
+      if (current() && shouldPoll) recoveryTimers.current.set(c.id, setTimeout(() => { void load(c, epoch); }, 30_000));
     }
   }, []);
   const refresh = useCallback(async () => {
     const epoch = ++revision.current;
     for (const timer of recoveryTimers.current.values()) clearTimeout(timer); recoveryTimers.current.clear();
-    confirmation.current = null; setRecoveryConfirmation(null); automaticBudget.current = 3;
+    confirmation.current = null; setRecoveryConfirmation(null);
     review.current = null; setReviewObservation(null);
     abandon.current = null; setAbandonConfirmation(null);
     setRenewals({});
     setProbeMessages({});
     setRecoveryJobs({}); setRecoveryViews({});
-    setAutomaticJobs({}); setAutomaticMessages({});
+    recoveryLatest.current = {}; setAutomaticJobs({}); setAutomaticMessages({});
     setBusy(true);
     try { const result = await request("/v1/storage/owner", { action: "connections" }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
@@ -223,7 +233,7 @@ export default function StorageConnections() {
       accountId.current = nextAccount;
       ++revision.current; setConnections([]); setRenewals({}); setProfileId(""); setDecisionId("");
       for (const timer of recoveryTimers.current.values()) clearTimeout(timer); recoveryTimers.current.clear();
-      confirmation.current = null; setRecoveryConfirmation(null); setAutomaticJobs({}); setAutomaticMessages({});
+      confirmation.current = null; setRecoveryConfirmation(null); recoveryLatest.current = {}; setAutomaticJobs({}); setAutomaticMessages({});
       review.current = null; setReviewObservation(null);
       abandon.current = null; setAbandonConfirmation(null);
       setProbeMessages({});
@@ -237,7 +247,9 @@ export default function StorageConnections() {
       for (const timer of timers.values()) clearTimeout(timer); timers.clear(); data.subscription.unsubscribe(); };
   }, [refresh]);
   function confirmAbandon(c: Connection, job: RecoveryView) {
-    if (busy || operationBusy.current || registrationBusy.current || !job.abandon_available || !job.base_version || !job.source_receipt_id) return;
+    if (busy || operationBusy.current || registrationBusy.current || !job.abandon_available || !job.base_version || !job.source_receipt_id ||
+      !(recoveryLatest.current[c.id] ?? []).some(item => item.job_id === job.job_id && item.abandon_available &&
+        item.base_version === job.base_version && item.source_receipt_id === job.source_receipt_id)) return;
     const snapshot = { connection_id: c.id, connection_version: c.version, job_id: job.job_id, base_version: job.base_version,
       source_receipt_id: job.source_receipt_id, file_name: job.file_name, epoch: revision.current };
     review.current = null; setReviewObservation(null); confirmation.current = null; setRecoveryConfirmation(null);
@@ -260,16 +272,18 @@ export default function StorageConnections() {
       if (epoch === revision.current) setMessage("本次处理结果尚未确认，正在读取原作业状态；不会再次提交或改动 Google 文件。");
     } finally {
       operationBusy.current = false;
-      if (epoch === revision.current) { setBusy(false); void loadRecoveries(c, epoch, false); }
+      if (epoch === revision.current) { setBusy(false); void loadRecoveries(c, epoch); }
     }
   }
   async function prepareReview(c: Connection, job: RecoveryView) {
-    if (busy || operationBusy.current || registrationBusy.current || !job.review_available) return;
-    const epoch = revision.current;
+    if (busy || operationBusy.current || registrationBusy.current || !job.review_available ||
+      !(recoveryLatest.current[c.id] ?? []).some(item => item.job_id === job.job_id && item.review_available &&
+        item.base_version === job.base_version && item.source_receipt_id === job.source_receipt_id)) return;
+    const epoch = revision.current, read = recoveryReads.current.get(c.id);
     operationBusy.current = true; setBusy(true); review.current = null; setReviewObservation(null); abandon.current = null; setAbandonConfirmation(null);
     try {
       const value = await request("/v1/storage/recovery", { action: "review_prepare", connection_id: c.id, job_id: job.job_id }, () => epoch === revision.current);
-      if (epoch !== revision.current) return;
+      if (epoch !== revision.current || recoveryReads.current.get(c.id) !== read) return;
       if (value.status !== "review_prepared" || value.execution_permitted !== false || value.connection_id !== c.id || value.job_id !== job.job_id ||
         typeof value.observation_id !== "string" || !uuid.test(value.observation_id) || value.base_version !== job.base_version ||
         value.source_receipt_id !== job.source_receipt_id || typeof value.observed_at !== "string" || !Number.isFinite(Date.parse(value.observed_at)) ||
@@ -280,6 +294,10 @@ export default function StorageConnections() {
         !(value.mime_type === null || typeof value.mime_type === "string" && /^[\w.+-]+\/[\w.+-]+$/.test(value.mime_type)) ||
         !(value.size === null || typeof value.size === "string" && /^[0-9]{1,30}$/.test(value.size) || Number.isSafeInteger(value.size) && Number(value.size) >= 0) ||
         !(value.sha256 === null || typeof value.sha256 === "string" && /^[a-f0-9]{64}$/.test(value.sha256))) throw new Error("Invalid review observation");
+      if (job.automatic_recovery === "current_state_conflict" && (value.observed_state === "before" || value.observed_state === "after")) {
+        setMessage("当前文件状态无需人工取舍，后台程序会继续自动核验并处理原作业。");
+        void loadRecoveries(c, epoch); return;
+      }
       const observation = { ...value, epoch } as ReviewObservation;
       review.current = observation; setReviewObservation(observation);
     } catch {
@@ -309,15 +327,15 @@ export default function StorageConnections() {
         : "登记结果尚未确认，正在读取原作业状态；不会再次提交确认或改动文件。");
     } finally {
       operationBusy.current = false;
-      if (epoch === revision.current) { setBusy(false); void loadRecoveries(c, epoch, false); }
+      if (epoch === revision.current) { setBusy(false); void loadRecoveries(c, epoch); }
     }
   }
-  async function recover(c: Connection, action: "inspect" | "settle" | "authorize", approved?: RecoveryConfirmation) {
+  async function recover(c: Connection, action: "inspect" | "authorize", approved?: RecoveryConfirmation) {
     if (operationBusy.current || registrationBusy.current || busy) return;
     const job = recoveryJobs[c.id]?.trim(), prior = recoveryViews[c.id];
     if (!job || !uuid.test(job)) { setMessage("请填写原存储任务 ID；不要生成新任务重试。"); return; }
     if (action === "inspect") { confirmation.current = null; setRecoveryConfirmation(null); }
-    if (action === "settle" || action === "authorize") {
+    if (action === "authorize") {
       if (!["active", "reauthorization_required"].includes(c.state) || prior?.job_id !== job || !["started", "uncertain", "conflict", "attention_required"].includes(prior.status)) return;
       if (!approved) {
         const snapshot: RecoveryConfirmation = { connection_id: c.id, connection_version: c.version, job_id: job,
@@ -348,11 +366,6 @@ export default function StorageConnections() {
         const view = recoveryView(result); if (!view) throw new Error("Unconfirmed");
         setRecoveryViews(old => ({ ...old, [c.id]: view }));
         setMessage("已读取原任务；回执不代表重新取得写入权限。");
-      } else {
-        const view = recoveryView(result);
-        if (!view) throw new Error("Unconfirmed");
-        setRecoveryViews(old => ({ ...old, [c.id]: view }));
-        setMessage(result.status === "committed" ? `原任务结果已核验并登记。回执：${result.receipt_id}。没有重新写入文件或恢复权限。` : recoveryExplanation(view));
       }
     } catch {
       if (epoch === revision.current) {
@@ -366,7 +379,7 @@ export default function StorageConnections() {
             }
           } catch { /* A lost reply is never a reason to repeat a file operation. */ }
         }
-        if (epoch === revision.current) void loadRecoveries(c, epoch, false);
+        if (epoch === revision.current) void loadRecoveries(c, epoch);
       }
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
@@ -453,7 +466,7 @@ export default function StorageConnections() {
   }
   const renderedEpoch = revision.current;
   return <main className="mx-auto max-w-3xl px-6 py-16"><h1 className="text-2xl font-semibold">存储管理</h1>
-    <p className="my-4">仅当前登录账号可处理受治理目录、原任务核对和续签设置。所有操作仍由服务端核验。</p>
+    <p className="my-4">仅当前登录账号可管理受治理目录、查看自动恢复记录和设置续签。文件操作的核验与恢复由后台程序执行。</p>
     <p role="status" className="my-4">{message}</p>
     <section className="my-4 rounded-xl border p-4"><h2>登记已治理目录</h2>
       <p className="my-2 text-sm">仅引用服务端已登记的目录与当前授权，不接受自定义磁盘路径。登记不代表写入已启用；相同请求可安全核对回执，已停用连接不会自动恢复。</p>
@@ -469,15 +482,20 @@ export default function StorageConnections() {
       <details className="my-2 text-sm"><summary>连接技术信息</summary><p className="break-all">连接：{c.id}</p></details>
       <section className="my-4 rounded border p-3" aria-label="文件操作自动恢复">
         <h3>文件操作自动恢复</h3>
-        <button disabled={busy} onClick={() => { if (!operationBusy.current && !registrationBusy.current) void loadRecoveries(c, renderedEpoch, false); }}>读取本目录文件操作状态</button>
+        <button disabled={busy} onClick={() => { if (!operationBusy.current && !registrationBusy.current) void loadRecoveries(c, renderedEpoch); }}>读取本目录文件操作状态</button>
         <p role="status" aria-live="polite" className="my-2">{automaticMessages[c.id]}</p>
         {(automaticJobs[c.id] ?? []).map(job => <article key={job.job_id} className="my-2 border-t pt-2">
-          <p>{recoveryLabels[job.status]}</p><p className="my-1 text-sm">{recoveryExplanation(job)}</p>
-          {job.diagnostic && <p className="text-sm">最近核验：{new Date(job.diagnostic.observed_at).toLocaleString()}</p>}
+          <p>{recoveryTitle(job)}</p><p className="my-1 text-sm">{recoveryExplanation(job)}</p>
+          {(job.review_available || job.abandon_available) && <details className="my-2 text-sm"><summary>可选冲突处理</summary>
           {job.review_available && <button disabled={busy} onClick={() => void prepareReview(c, job)}>查看当前文件并处理冲突</button>}
           {job.abandon_available && <><p className="my-2 text-sm">{job.review_available ? "也可停止管理相关旧登记，以解除旧保护；Google 文件保留。" : "这个旧作业暂不能自动核对。可停止管理相关旧登记，以解除旧保护；Google 文件保留。"}</p>
             <button disabled={busy} onClick={() => confirmAbandon(c, job)}>停止管理旧登记并解除保护</button></>}
-          <details className="text-sm"><summary>操作记录</summary><p className="break-all">任务：{job.job_id}；回执：{job.receipt_id}</p></details>
+          </details>}
+          <details className="text-sm"><summary>操作记录与诊断</summary><p className="break-all">任务：{job.job_id}；回执：{job.receipt_id}</p>
+            {job.source_receipt_id && <p className="break-all">原作业回执：{job.source_receipt_id}</p>}
+            {job.diagnostic && <><p>{recoveryReasons[job.diagnostic.reason]}。{recoveryActions[job.diagnostic.automatic_next_action]}</p>
+              <p>最近核验：{new Date(job.diagnostic.observed_at).toLocaleString()}</p></>}
+          </details>
         </article>)}
         {abandonConfirmation?.connection_id === c.id && <section role="region" aria-label="确认停止管理旧登记" className="my-3 rounded border p-3">
           <h4>确认停止管理旧登记</h4><p className="my-2 break-all">{abandonConfirmation.file_name ?? "这条原作业的旧登记"}</p>
@@ -499,7 +517,7 @@ export default function StorageConnections() {
         </section>}
       </section>
       <details className="my-4 rounded border p-3"><summary>按原任务编号查看技术诊断</summary>
-        <p className="my-2 text-sm">使用原任务 ID 查询结果。核验仅读取 Google 元数据并登记原回执，不会重派文件操作、恢复权限或开启续签。</p>
+        <p className="my-2 text-sm">使用原任务 ID 只读查看状态和记录。后台程序自动核验与恢复，不需要在此手工结算。</p>
         <label className="my-2 block">原存储任务 ID<input className="block w-full rounded border p-2" autoComplete="off" disabled={busy}
           value={recoveryJobs[c.id] ?? ""} onChange={event => {
             confirmation.current = null; setRecoveryConfirmation(null);
@@ -508,17 +526,14 @@ export default function StorageConnections() {
           }} /></label>
         <button disabled={busy || !recoveryJobs[c.id]?.trim()} onClick={() => void recover(c, "inspect")}>查询原任务回执</button>
         {recoveryViews[c.id] && <><p role="status" className="my-2 break-all">{recoveryExplanation(recoveryViews[c.id])}；回执：{recoveryViews[c.id].receipt_id}</p>
-          {["active", "reauthorization_required"].includes(c.state) && ["started", "uncertain", "conflict", "attention_required"].includes(recoveryViews[c.id].status) &&
-            <><button disabled={busy} onClick={() => void recover(c, "settle")}>核验并登记原结果（不重写）</button>
-              <button disabled={busy} onClick={() => void recover(c, "authorize")}>重新授权并自动核对原任务（凭据失效时）</button></>}</>}
+          {c.state === "reauthorization_required" && ["started", "uncertain", "conflict", "attention_required"].includes(recoveryViews[c.id].status) &&
+            <button disabled={busy} onClick={() => void recover(c, "authorize")}>重新授权并自动核对原任务（凭据失效时）</button>}</>}
         {recoveryConfirmation?.connection_id === c.id && <section role="region" aria-label="确认原作业恢复" className="my-3 rounded border p-3">
-          <h4>{recoveryConfirmation.action === "authorize" ? "重新授权原作业" : "核验原作业"}</h4>
-          <p className="my-2">{recoveryConfirmation.action === "authorize"
-            ? "为这个原作业重新取得同一 Google 账号的两项既有权限。Google 同意后将自动只读核对原对象，结果一致即登记原回执；不恢复已停用连接、Agent 权限或后台续签，不重新创建文件。Google 最终同意由你确认。"
-            : "读取这个原作业的 Google 元数据，结果一致时登记原回执。不会重新创建文件、恢复权限或开启续签。"}</p>
+          <h4>重新授权原作业</h4>
+          <p className="my-2">为这个原作业重新取得同一 Google 账号的两项既有权限。Google 同意后将自动只读核对原对象，结果一致即登记原回执；不恢复已停用连接、Agent 权限或后台续签，不重新创建文件。Google 最终同意由你确认。</p>
           <p className="text-sm break-all">原任务：{recoveryConfirmation.job_id}</p>
           <div className="mt-2 flex gap-4"><button disabled={busy} onClick={() => void recover(c, recoveryConfirmation.action, recoveryConfirmation)}>
-            {recoveryConfirmation.action === "authorize" ? "继续前往 Google 授权" : "确认核验原作业"}</button>
+            继续前往 Google 授权</button>
             <button disabled={busy} onClick={() => { confirmation.current = null; setRecoveryConfirmation(null); }}>取消本次确认</button></div>
         </section>}
       </details>

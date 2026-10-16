@@ -67,7 +67,7 @@ export function storageAdoptCode(error: unknown): StorageAdoptCode | null {
 const reasonHints: Record<string, string> = {
   STORAGE_OBJECT_UNDER_REVIEW: "This queued job was stopped before a writer was issued or any Drive write began because it overlaps a file, name slot or subtree under review. Unrelated storage remains available. Review the original unresolved job at /storage/admin before submitting another write to this object.",
   PROVIDER_STATE_CONFLICT: "The original job has an unresolved provider result. Only its affected object, name slot or subtree is held for review; unrelated storage remains available. Kooyumi continues read-only checks. The Owner can review the current file at /storage/admin; do not replay the old effect under another job or path.",
-  PROVIDER_RESULT_RECONCILED: "The Owner resolved the registration review by accepting the current file state or abandoning its registration. The review hold has ended and unrelated storage remains available. The original provider effect is not declared successful; use the separate resolution receipt and do not replay the old effect.",
+  PROVIDER_RESULT_RECONCILED: "The registration hold has ended through a separate reconciliation receipt. Storage can continue. The original provider effect is not declared successful; use the separate resolution receipt and do not replay the old effect.",
   NO_PROVIDER_ATTEMPT: "The job stopped before Kooyumi changed anything in Drive and was cancelled; nothing was changed. If the user still wants it, check the current state and submit it again under a new job_id.",
   DISPATCH_NOT_STARTED: "The job was never started: it stayed queued for 2 hours (for example while another unsettled job held the folder), so Kooyumi stopped it; nothing was changed in Drive. If the user still wants it, check the current state with clued_storage_browse and submit it again under a new job_id.",
   PROVIDER_EFFECT_ABSENT: "The job started but its file never reached Drive (Kooyumi checked Drive and found neither the file it was creating nor any file tagged with this job), so it was cancelled; nothing was changed. If the user still wants it, check the current state and submit it again under a new job_id.",
@@ -406,8 +406,8 @@ export function storageAgentResult(value: unknown, input: Data): Data {
   const projected = Object.fromEntries(["job_id", "connection_id", "request_digest", "status", "intent_id", "receipt_id", "execution_permitted", "replayed", "reason_code"]
     .filter(key => key in value).map(key => [key, value[key]]));
   if (value.reason_code === "PROVIDER_RESULT_RECONCILED") {
-    if (value.status !== "attention_required" || !["accepted_current_state", "abandoned_registration"].includes(String(value.resolution)) ||
-        !uuid(value.resolution_receipt_id) || !uuid(value.source_receipt_id)) throw new Error("storage_job_response_invalid");
+    if (value.status !== "attention_required" || !["accepted_current_state", "abandoned_registration", "automatically_reconciled_before"].includes(String(value.resolution)) ||
+        !uuid(value.resolution_receipt_id) || !uuid(value.source_receipt_id) || value.resolution_receipt_id === value.source_receipt_id) throw new Error("storage_job_response_invalid");
     Object.assign(projected, { resolution: value.resolution, resolution_receipt_id: value.resolution_receipt_id, source_receipt_id: value.source_receipt_id });
   }
   // A fixed Worker-side hint for reasons the Agent must act on (never database text).
