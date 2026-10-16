@@ -684,8 +684,20 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
     });
 
     await t.test("no live size / sha256 derivation reads mutation.content without a content_ref guard", async () => {
-      for (const signature of ["clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)", "clued_private.storage_verified_result_v2(text,jsonb)"]) {
-        const body = await issuerBusinessDefinition(admin,signature);
+      // The issuer-protected verified entry now dispatches to two live business
+      // implementations. Check both instead of treating the router as the body.
+      const dispatcher = await issuerBusinessDefinition(admin,"clued_private.storage_verified_result_v2(text,jsonb)");
+      assert.match(dispatcher, /return clued_private\.storage_conflict_verified_v1\(p_issuer_identity,p_input\);/);
+      assert.match(dispatcher, /return clued_private\.storage_verified_before_conflict_v1\(p_issuer_identity,p_input\);/);
+      assert.doesNotMatch(dispatcher, /j\.mutation->>'content'/, "the router derives no inline-content digest or size");
+      const implementations = [
+        ["clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)",
+          await issuerBusinessDefinition(admin,"clued_private.storage_job_provider_attempt_v2(uuid,uuid,text,jsonb)")],
+      ];
+      for (const signature of ["clued_private.storage_verified_before_conflict_v1(text,jsonb)", "clued_private.storage_conflict_verified_v1(text,jsonb)"]) {
+        implementations.push([signature,(await admin.query("select pg_get_functiondef($1::regprocedure) body",[signature])).rows[0].body]);
+      }
+      for (const [signature,body] of implementations) {
         const uses = [...body.matchAll(/(octet_length\(j\.mutation->>'content'\)|convert_to\(j\.mutation->>'content')/g)];
         assert.ok(uses.length >= 2, signature);
         for (const use of uses) {

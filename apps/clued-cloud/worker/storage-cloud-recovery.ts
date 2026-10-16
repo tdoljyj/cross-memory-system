@@ -9,6 +9,7 @@ import { createGoogleDriveCreateAbsenceProbe } from "../../../kernel/host/resour
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
+import { recoveryDiagnostic, type RecoveryDiagnostic, type RecoveryStage } from "./storage-recovery-diagnostics";
 
 type Data = Record<string, unknown>;
 type Reference = { connection_id: string; job_id: string };
@@ -38,11 +39,14 @@ export async function createStorageCloudRecovery(config: {
   absent?: { rpc: (input: Data) => Promise<Data> };
   /** Report an expiring credential as credential_expiring instead of inspection_required. */
   report_expiring?: boolean;
+  /** Same-job diagnostic persistence only; never dispatches a storage effect. */
+  report_diagnostic?: (reference: Reference, diagnostic: RecoveryDiagnostic) => Promise<void>;
 }) {
   const timeout = config.timeout_ms ?? 10000;
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || typeof config.rpc !== "function" ||
       !Number.isInteger(timeout) || timeout < 1 || timeout > 60000 ||
-      (config.absent !== undefined && (!config.verified || typeof config.absent?.rpc !== "function"))) throw denied();
+      (config.absent !== undefined && (!config.verified || typeof config.absent?.rpc !== "function")) ||
+      (config.report_diagnostic !== undefined && typeof config.report_diagnostic !== "function")) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
   const fetcher = createStorageFetch(config.fetch);
   const clock = config.clock ?? Date.now;
@@ -68,6 +72,23 @@ export async function createStorageCloudRecovery(config: {
     // Race even a misbehaving private adapter that ignores AbortSignal. A late
     // load/provider response must never proceed to settlement after the deadline.
     const bounded = <T>(work: Promise<T>): Promise<T> => Promise.race([work, expired]);
+    let stage: RecoveryStage = "descriptor";
+    const failure = async (error: unknown, expiring = false) => {
+      if (!config.report_diagnostic) return { status: expiring ? "credential_expiring" : "inspection_required", execution_permitted: false };
+      const diagnostic = recoveryDiagnostic(stage, error, clock(), abort.signal.aborted && ["provider", "verification"].includes(stage));
+      // A lost diagnostic write does not replace the original failure, prove
+      // settlement or permit another provider effect. Owner inspect reads the
+      // original journal; a later scheduled run continues the same job.
+      let reportTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([config.report_diagnostic(pinned, diagnostic), new Promise<never>((_, reject) => {
+          reportTimer = setTimeout(() => reject(denied()), Math.min(timeout, 10000));
+        })]);
+      } catch { /* Preserve the original closed diagnostic. */ }
+      finally { clearTimeout(reportTimer); }
+      return { status: expiring ? "credential_expiring" : "inspection_required", job_id: pinned.job_id,
+        execution_permitted: false, diagnostic };
+    };
     try {
       const loaded = config.verified?.descriptor ?? await bounded(config.rpc({ ...pinned, action: "recovery_load" })); check();
       const d = structuredClone(loaded);
@@ -85,6 +106,7 @@ export async function createStorageCloudRecovery(config: {
           // Trash and in-place untrash (P5) have no destination: the attempt names the source's folder.
           d.attempt.parent_id !== (d.provider_before.destination_parent_id ??
             (d.mutation.operation === "delete" || d.mutation.operation === "restore" ? d.provider_before.source_parent_id : undefined))) throw denied();
+      stage = "credential";
       const credential = async () => {
         check();
         const token: unknown = JSON.parse(await vault.open(d.credential_envelope as StorageCredentialEnvelope, {
@@ -95,14 +117,16 @@ export async function createStorageCloudRecovery(config: {
         if (!object(token) || token.token_type !== "Bearer" || typeof token.access_token !== "string" ||
             token.access_token.length < 16 || scopeProfile(token.scope) === null ||
             !Number.isFinite(token.expires_at_ms) || !Number.isFinite(clock())) throw denied();
-        if (Number(token.expires_at_ms) - clock() <= timeout + 1000) throw new Error(EXPIRING);
+        // A recovery read has the same freshness floor as normal metadata
+        // reads. Recheck before every GET, including quarantined jobs.
+        if (Number(token.expires_at_ms) - clock() < Math.max(60000, timeout + 1000)) throw new Error(EXPIRING);
         return { access_token: token.access_token, scope: token.scope };
       };
       // An expiring credential is reported before any Drive read.
       try { await credential(); }
       catch (error) {
         if (config.report_expiring && error instanceof Error && error.message === EXPIRING)
-          return { status: "credential_expiring", execution_permitted: false };
+          return await failure(error, true);
         throw error;
       }
       // The one GET-only Drive metadata channel, shared by verification and the absence probe.
@@ -163,6 +187,7 @@ export async function createStorageCloudRecovery(config: {
         : createGoogleDriveCreatePostconditionVerifier({ ...verifierConfig, require_effect_provider_id: true,
           get_sharing: (id: string) => metadata.getSharing(id, { signal: abort.signal }),
           get_access: (id: string) => metadata.getVersionedAccess(id, { signal: abort.signal }) });
+      stage = "verification";
       const verification = bounded(verify({ profile: d.profile, mutation: d.mutation, provider_before: d.provider_before,
         effect_result: subtree
           ? { operation, target_kind: "directory", source_path: d.mutation.source_path, destination_path: d.mutation.destination_path,
@@ -191,6 +216,7 @@ export async function createStorageCloudRecovery(config: {
           { provider_file_id: String(d.attempt.provider_file_id), parent_id: String(d.attempt.parent_id), intent_id: String(d.intent_id) },
           { signal: abort.signal })); check();
         if (!proof) throw error;
+        stage = "settlement";
         const settled = await bounded(config.absent.rpc({ action: "settle_absent", ...pinned, intent_id: d.intent_id,
           base_version: d.version, request_sha256: d.request_sha256, proof })); check();
         if (settled.status !== "committed" || settled.state !== "cancelled" || settled.intent_id !== d.intent_id ||
@@ -213,15 +239,18 @@ export async function createStorageCloudRecovery(config: {
         const { verified_proof: proof, ...post } = verifiedPost;
         const finish = { action: "finalize", intent_id: d.intent_id, base_version: d.version,
           request_sha256: d.request_sha256, idempotency_key: `account-job:${pinned.job_id}:finalize`, postcondition: post };
+        stage = "verified_record";
         const recorded = await bounded(config.verified.rpc({ ...pinned, action: "verified_record",
           credential_version: d.credential_version, finish, proof })); check();
         if (recorded.status !== "verified" || recorded.intent_id !== d.intent_id ||
           recorded.version !== d.version || !uuid.test(String(recorded.verified_receipt_id)) ||
           !/^[0-9a-f]{64}$/.test(String(recorded.verified_digest)) || recorded.execution_permitted !== false) throw denied();
+        stage = "settlement";
         done = await bounded(config.verified.rpc({ ...pinned, action: "settle_verified", intent_id: d.intent_id,
           base_version: d.version, request_sha256: d.request_sha256,
           verified_receipt_id: recorded.verified_receipt_id, verified_digest: recorded.verified_digest }));
       } else {
+        stage = "settlement";
         done = await bounded(config.rpc({ ...pinned, action: "recovery_finalize", credential_version: d.credential_version,
           recovery_binding: d.recovery_binding,
           finish: { intent_id: d.intent_id, base_version: d.version, request_sha256: d.request_sha256, postcondition } }));
@@ -231,10 +260,10 @@ export async function createStorageCloudRecovery(config: {
           !uuid.test(String(done.receipt_id)) || done.execution_permitted !== false ||
           (config.verified && (!object(done.final_result) || done.final_result.status !== "committed"))) throw denied();
       return { status: "committed", job_id: pinned.job_id, receipt_id: String(done.receipt_id), execution_permitted: false };
-    } catch {
+    } catch (error) {
       // Includes an unknown finalize reply: query the original job separately;
       // never treat failure/timeout as permission to repeat its provider effect.
-      return { status: "inspection_required", execution_permitted: false };
+      return await failure(error);
     } finally { clearTimeout(timer); abort.abort(); }
   }});
 }

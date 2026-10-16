@@ -19,6 +19,7 @@ const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
 const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
 const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refresh_default_v1.sql';
+const storageConflictMigration = '20261016040000_storage_conflict_isolation_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -77,7 +78,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -483,6 +484,25 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       const listed=await workerGatewayRpc(gateway,'clued_project_list_v2',tokenHash,{limit:200});
       assert.ok(listed.projects.some(p=>p.id===compatId),'recognized history remains readable through the actual current gateway');
       await assert.rejects(rpc('clued_project_list_v2',{limit:200}),e=>e.code==='42501');
+    });
+    await t.test('storage conflict isolation follows its actual deferred prerequisites and preserves current caller grants',async()=>{
+      // I9 patches the issuer-wrapped Worker/recovery functions and the final
+      // demand-renewal implementation. Replay it only after those historical
+      // dependencies, preserving every earlier cutover/hash assertion above.
+      const before=await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageConflictMigration),'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),before,
+        'I9 preserves every public RPC OID, owner, definer configuration and ACL');
+      await assertGatewayCloseoutBoundary(admin);
+      assert.ok((await admin.query("select to_regclass('clued_private.storage_conflict_isolations_v1') as table_id")).rows[0].table_id,
+        'the actual deferred I9 module is installed');
+      const worker=(await admin.query("select pg_get_functiondef('clued_private.ii_priv_storage_cloud_worker_v2(text,jsonb)'::regprocedure) as body")).rows[0].body;
+      assert.ok(worker.includes('storage_conflict_assert_v1'),'the actual Worker load contains the I9 admission guard');
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway']){
+        assert.equal((await admin.query("select has_table_privilege($1,'clued_private.storage_conflict_isolations_v1','SELECT,INSERT,UPDATE,DELETE') as allowed",[role])).rows[0].allowed,false,role);
+        for(const signature of ['clued_private.storage_conflict_sweep_v1()','clued_private.storage_conflict_require_scheduler_v1()'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,signature])).rows[0].allowed,false,role+' '+signature);
+      }
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
