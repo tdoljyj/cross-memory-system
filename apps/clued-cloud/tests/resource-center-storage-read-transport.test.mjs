@@ -418,8 +418,11 @@ test("credential scope, subject and expiry are rechecked; failures still finaliz
     const { h, value } = await browse({ operation: "list" }, { envelope: await envelope(override) });
     assert.equal(value.error, "storage_read_unavailable"); assert.equal(h.googleRequests, 0);
     assert.equal(h.calls.at(-1).p_input.action, "finalize");
-    // BUG-20261007-005: only an expired credential carries the fixed renewal hint.
-    if (override.expires_at_ms) assert.match(value.hint, /Google access has expired/);
+    // Insufficient sealed validity does not establish why renewal was not ready.
+    if (override.expires_at_ms) {
+      assert.match(value.hint, /does not have enough remaining validity/);
+      assert.doesNotMatch(value.hint, /unfinished|same root|has expired|check.*jobs/);
+    }
     else assert.equal(value.hint, undefined);
   }
   const wrong = await vault.seal(JSON.stringify({ token_type: "Bearer", access_token: "fixture-read-access-token", scope: "x", expires_at_ms: Date.now() + 3600000 }),

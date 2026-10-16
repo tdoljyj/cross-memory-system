@@ -8,10 +8,13 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {build} from 'esbuild';
 const dir=await mkdtemp(path.join(os.tmpdir(),'clued-owner-lifecycle-worker-'));
 const output=path.join(dir,'lifecycle.mjs'),vaultOutput=path.join(dir,'vault.mjs');
+const readOutput=path.join(dir,'read-agent.mjs');
 await build({entryPoints:[fileURLToPath(new URL('../worker/storage-owner-lifecycle.ts',import.meta.url))],outfile:output,bundle:true,platform:'node',format:'esm'});
 await build({entryPoints:[fileURLToPath(new URL('../worker/storage-credential-vault.ts',import.meta.url))],outfile:vaultOutput,bundle:true,platform:'node',format:'esm'});
+await build({entryPoints:[fileURLToPath(new URL('../worker/storage-read-agent.ts',import.meta.url))],outfile:readOutput,bundle:true,platform:'node',format:'esm'});
 const {createStorageOwnerLifecycle,STORAGE_OWNER_CONFIRMATION,STORAGE_OWNER_WHOLE_ROOT_CONFIRMATION,STORAGE_OWNER_WHOLE_ROOT_MODE}=await import(pathToFileURL(output));
 const {createStorageCredentialVault}=await import(pathToFileURL(vaultOutput));
+const {createStorageReadAgent,StorageReadError}=await import(pathToFileURL(readOutput));
 test.after(()=>rm(dir,{recursive:true,force:true}));
 async function fixture(options={}){
   const owner=randomUUID(),connection=randomUUID(),profile=randomUUID(),project=randomUUID(),attempt=randomUUID();
@@ -403,4 +406,135 @@ test('V2 fixed Root identity and incomplete durable mode refuse recovery without
     ?Response.json({...metadata(),id:'foreign-root'}):undefined});
   const result=await f.lifecycle.delete(f.owner,wholeValue(f));assert.equal(result.status,'uncertain');assert.equal(f.patches(),1);
   await assert.rejects(f.lifecycle.recover(f.owner,result.attempt_id),e=>e.reason==='root_drift');assert.equal(f.patches(),1);
+});
+
+// Read preparation shares the same demand renewal contract as Owner metadata,
+// but must never replay an admitted operation or send a denied read to Drive.
+async function readFixture(options={}){
+  let now=1_700_000_000_000;
+  const context={owner_id:randomUUID(),connection_id:randomUUID(),provider:'google-drive',provider_subject:'synthetic-read-owner',
+    oauth_client_id:'synthetic-read-client',credential_version:3};
+  const keys={current_key_id:'test',keys:{test:randomBytes(32).toString('base64url')}},vault=await createStorageCredentialVault(keys);
+  const envelope=await vault.seal(JSON.stringify({token_type:'Bearer',access_token:'synthetic-private-read-access-token',
+    scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/drive.readonly',
+    expires_at_ms:now+(options.expired?1000:3600000)}),context);
+  const calls=[],preflights=[],pauses=[],provider=[],receipt=randomUUID();
+  const advance=ms=>{now+=ms;};
+  const agent=await createStorageReadAgent({client_id:context.oauth_client_id,vault:keys,
+    receipt_keys:{current:'k1',keys:{k1:randomBytes(32).toString('base64')}},cursor_key:randomBytes(32).toString('base64'),
+    clock:()=>now,pause:async ms=>{pauses.push(ms);if(options.pause)return options.pause(ms,{advance});advance(ms);},
+    credential_preflight:async request=>{preflights.push(structuredClone(request));
+      assert.equal(calls.length,0,'all preparation remains before admission');
+      assert.equal(provider.length,0,'all preparation remains before Drive');
+      return options.preflight?options.preflight(preflights.length,{advance,request}):{status:'ready',credential_version:3};},
+    rpc:async value=>{calls.push(value);const input=value.input;
+      if(input.action==='finalize')return {status:'completed'};
+      assert.equal(input.action,'admit');
+      if(options.deny)throw new Error('storage_read_denied synthetic-private-proof');
+      return {contract:'clued.storage-read-admission/1',receipt_id:receipt,class:'read',...context,
+        binding_id:randomUUID(),read_generation:2,root_folder_id:'synthetic-read-root',provider_scope_profile:'normal',
+        content_profile:'normal/1',credential_envelope:envelope,...options.admission};},
+    fetch:async(url,init)=>{provider.push({url:String(url),method:init.method});
+      assert.equal(calls.filter(c=>c.input.action==='admit').length,1);
+      assert.equal(calls.some(c=>c.input.action==='finalize'),false);
+      if(options.providerFailure)throw new Error('synthetic-private-provider-error');
+      const ids=[...String(init.body).matchAll(/Content-ID: <([^>]+)>/g)].map(match=>match[1]);
+      assert.ok(ids.length>0);const boundary='synthetic-read-boundary';
+      const body=ids.map(id=>`--${boundary}\r\nContent-Type: application/http\r\nContent-ID: <response-${id}>\r\n\r\n`+
+        `HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({files:[],incompleteSearch:false})}\r\n`).join('')+`--${boundary}--\r\n`;
+      return new Response(body,{headers:{'content-type':`multipart/mixed; boundary=${boundary}`}});
+    }});
+  return {run:()=>agent.run('c'.repeat(64),{connection_id:context.connection_id,operation:'list'}),calls,preflights,pauses,provider,advance,receipt};
+}
+const preflightError=pattern=>error=>error.code==='storage_read_unavailable'&&pattern.test(error.detail?.hint??'')&&
+  !/synthetic-private|unfinished|same root|has expired/.test(JSON.stringify(error.detail));
+const noAdmittedRead=f=>{assert.equal(f.calls.length,0);assert.equal(f.provider.length,0);};
+const finalizedRead=(f,complete)=>{
+  assert.deepEqual(f.calls.map(c=>c.input.action),['admit','finalize']);
+  assert.equal(f.calls[1].input.receipt_id,f.receipt);assert.equal(f.calls[1].input.complete,complete);
+  assert.equal(f.calls[1].input.byte_count,0);
+};
+
+test('read pending preparation rechecks the same authorized request and automatically completes once ready',async()=>{
+  const f=await readFixture({preflight:n=>({status:n===1?'pending':'ready',credential_version:3})});
+  const result=await f.run();assert.deepEqual(result.items,[]);assert.equal(result.complete,true);
+  assert.equal(f.preflights.length,2);assert.deepEqual(f.preflights[0],f.preflights[1]);
+  assert.deepEqual(f.pauses,[200]);assert.equal(f.provider.length,1);finalizedRead(f,true);
+});
+
+test('read pending preparation has a fixed check limit and never admits or contacts Drive at that limit',async()=>{
+  const f=await readFixture({preflight:()=>({status:'pending'})});
+  await assert.rejects(f.run(),preflightError(/could not confirm.*bounded wait/));
+  assert.equal(f.preflights.length,3);assert.deepEqual(f.pauses,[200,400]);noAdmittedRead(f);
+});
+
+test('read preflight uses one 30 second deadline including its first ensure call and pauses',async()=>{
+  for(const elapsed of [29900,30000,30001]){
+    const f=await readFixture({preflight:(_n,{advance})=>{advance(elapsed);return {status:elapsed===30001?'ready':'pending'};}});
+    await assert.rejects(f.run(),preflightError(/bounded wait/));
+    assert.equal(f.preflights.length,1);assert.deepEqual(f.pauses,elapsed===29900?[100]:[]);noAdmittedRead(f);
+  }
+});
+
+test('a hung read preflight times out once and a late ready cannot admit the expired read',async t=>{
+  let finish;const f=await readFixture({preflight:()=>new Promise(resolve=>{finish=resolve;})});
+  t.mock.timers.enable({apis:['setTimeout']});
+  const result=f.run();t.mock.timers.tick(30000);
+  await assert.rejects(result,preflightError(/bounded wait/));
+  finish({status:'ready',credential_version:3});await Promise.resolve();await Promise.resolve();
+  assert.equal(f.preflights.length,1);assert.deepEqual(f.pauses,[]);noAdmittedRead(f);
+});
+
+test('the same total deadline bounds a hung preparation pause and prevents a subsequent check',async t=>{
+  let enteredPause,finishPause;
+  const paused=new Promise(resolve=>{enteredPause=resolve;});
+  const f=await readFixture({preflight:()=>({status:'pending'}),pause:()=>{enteredPause();return new Promise(resolve=>{finishPause=resolve;});}});
+  t.mock.timers.enable({apis:['setTimeout']});
+  const result=f.run();await paused;t.mock.timers.tick(30000);
+  await assert.rejects(result,preflightError(/bounded wait/));
+  finishPause();await Promise.resolve();await Promise.resolve();
+  assert.equal(f.preflights.length,1);assert.deepEqual(f.pauses,[200]);noAdmittedRead(f);
+});
+
+test('disabled, unavailable, unknown, malformed and thrown read preflight results stop without retry or provider access',async()=>{
+  const cases=[[{status:'renewal_disabled'},/renewal was disabled or its authorization settings changed/],[{status:'unavailable'},/could not confirm/],
+    [{status:'unexpected',proof:'synthetic-private-proof'},/unrecognized/],[null,/unrecognized/],
+    [new Error('synthetic-private-provider-error'),/could not confirm/],
+    [new StorageReadError('storage_read_unavailable',{hint:'synthetic-private-forged-hint'}),/could not confirm/]];
+  for(const [result,hint] of cases){
+    const f=await readFixture({preflight:()=>{if(result instanceof Error)throw result;return result;}});
+    await assert.rejects(f.run(),preflightError(hint));assert.equal(f.preflights.length,1);assert.deepEqual(f.pauses,[]);noAdmittedRead(f);
+  }
+});
+
+test('a pending read stops immediately on later disable, denial or malformed state without another retry',async()=>{
+  for(const result of [{status:'renewal_disabled'},new Error('synthetic-private-denial'),{status:'unknown'},null]){
+    const f=await readFixture({preflight:n=>{if(n===1)return {status:'pending'};if(result instanceof Error)throw result;return result;}});
+    await assert.rejects(f.run(),preflightError(/disabled|could not confirm|unrecognized/));
+    assert.equal(f.preflights.length,2);assert.deepEqual(f.pauses,[200]);noAdmittedRead(f);
+  }
+});
+
+test('nonfinite or backwards preparation clocks fail closed without an operation admission',async()=>{
+  for(const drift of [-1,NaN,Infinity]){
+    const f=await readFixture({preflight:(_n,{advance})=>{advance(drift);return {status:'ready'};}});
+    await assert.rejects(f.run(),preflightError(/could not confirm/));
+    assert.equal(f.preflights.length,1);noAdmittedRead(f);
+  }
+});
+
+test('a sealed credential with insufficient validity finalizes once and is not blamed on an old job',async()=>{
+  const f=await readFixture({expired:true});
+  await assert.rejects(f.run(),preflightError(/does not have enough remaining validity/));
+  assert.equal(f.preflights.length,1);assert.equal(f.provider.length,0);finalizedRead(f,false);
+});
+
+test('fresh admission denial and failures after admission never reenter credential preparation',async()=>{
+  const denied=await readFixture({deny:true});await assert.rejects(denied.run(),e=>e.code==='storage_read_unavailable'&&e.detail===undefined);
+  assert.equal(denied.preflights.length,1);assert.equal(denied.calls.length,1);assert.equal(denied.provider.length,0);
+  for(const options of [{providerFailure:true},{admission:{read_generation:undefined}}]){
+    const f=await readFixture(options);await assert.rejects(f.run(),e=>e.code==='storage_read_unavailable'&&e.detail===undefined);
+    assert.equal(f.preflights.length,1);assert.deepEqual(f.pauses,[]);finalizedRead(f,false);
+    assert.equal(f.provider.length,options.providerFailure?1:0);
+  }
 });
