@@ -12,7 +12,7 @@ import {
 } from "../../../kernel/host/resource-center-online-tool-host.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL } from "../../../kernel/host/resource-center-governed-tool-surface.mjs";
 import { qualifyResourceCenterHost } from "../../../kernel/host/resource-center-host-qualification.mjs";
-import { createResourceCenterWriteClient } from "../../../kernel/host/resource-center-write-client.mjs";
+import { createResourceCenterWriteClient, resourceCenterReservationDiagnostic } from "../../../kernel/host/resource-center-write-client.mjs";
 import { createResourceCenterRecoveryStore } from "../../../kernel/host/resource-center-recovery-store.mjs";
 
 function profileFor(root) {
@@ -485,7 +485,13 @@ test("writer client persists before network and can inspect a lost start without
     },
   });
   await assert.rejects(client.prepare_write({ profile: { profile_id: "profile", profile_version: "1" },
-    mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } }), /response lost/);
+    mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } }), error => {
+      assert.equal(error.message, "RESERVATION_START_RPC_UNAVAILABLE");
+      assert.deepEqual(resourceCenterReservationDiagnostic(error), { stage: "start_rpc",
+        reason_code: "RESERVATION_START_RPC_UNAVAILABLE", reservation_status: "unknown" });
+      assert.doesNotMatch(String(error), /response lost/);
+      return true;
+    });
   assert.equal(calls, 2);
   assert.equal((await client.inspect_recovery(await store.read_recovery(ticket.request_key))).status, "started");
   assert.equal(calls, 3);
@@ -577,6 +583,12 @@ test("unavailable durable recovery storage prevents all service calls", async ()
     fetch: async () => { calls += 1; throw new Error("must not call"); },
   });
   await assert.rejects(client.prepare_write({ profile: { profile_id: "profile", profile_version: "1" },
-    mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } }), /disk unavailable/);
+    mutation: { operation: "create" }, binding: { request_sha256: "a".repeat(64) } }), error => {
+      assert.equal(error.message, "RESERVATION_RECOVERY_TICKET_UNAVAILABLE");
+      assert.deepEqual(resourceCenterReservationDiagnostic(error), { stage: "recovery_ticket",
+        reason_code: "RESERVATION_RECOVERY_TICKET_UNAVAILABLE", reservation_status: "not_started" });
+      assert.doesNotMatch(String(error), /disk unavailable/);
+      return true;
+    });
   assert.equal(calls, 0);
 });

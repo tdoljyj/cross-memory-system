@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createResourceCenterOnlineToolHost } from "./resource-center-online-tool-host.mjs";
+import { resourceCenterReservationFailure, sanitizeReservationDiagnostic } from "./resource-center-write-client.mjs";
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
 import { scopeProfile, scopeProfileCovers } from "./resource-center-google-scopes.mjs";
 import { createGoogleDriveProviderIdentityResolver, ancestorMatchShape } from "./resource-center-google-drive-identity.mjs";
@@ -39,7 +40,9 @@ const reasonCode = /^[A-Z][A-Z0-9_]{2,63}$/;
 const findingReason = /^[a-z][a-z0-9_]{2,63}$/;
 export function cloudDispatchOutcome(result) {
   const status = result?.status==="deny" ? "denied" : "attention_required";
-  const code = result?.error_code;
+  const diagnostic = ["DURABLE_WRITE_PREPARATION_FAILED", "DURABLE_WRITE_RESERVATION_FAILED"].includes(result?.error_code)
+    ? sanitizeReservationDiagnostic(result.reservation_diagnostic) : null;
+  const code = diagnostic?.reason_code ?? result?.error_code;
   if (typeof code!=="string" || !reasonCode.test(code)) return {status};
   const findings = status==="denied" && Array.isArray(result.findings) ? result.findings
     .filter(f=>typeof f?.path==="string" && f.path.length>0 && !f.path.includes("\u0000") &&
@@ -426,6 +429,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       const host=createResourceCenterOnlineToolHost({trusted_profile:profile,resolve_artifact_online:resolveAuthority,
         mutation_effect:effect,scan_boundary:scan,clock,qualified_operations:modify||replace||destructive||subtree||adopt?[mutation.operation]:["create"],
         prepare_write:async({mutation:input,binding})=>{
+          let stage="provider_identity";
+          try {
           const request=await authorityRequest(input);
           // P7: without the full credential Drive refuses writes to an item this
           // app did not create or open. Changing one that Drive reports as such
@@ -443,9 +448,11 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
               fail("SCOPE_UPGRADE_REQUIRED");
             }
           }
+          stage="begin_rpc";
           const result=await invoke({action:"begin",prepare:{action:"prepare",request_key:"account-job:"+ref.job_id,
             idempotency_key:"account-job:"+ref.job_id+":prepare",request_sha256:binding.request_sha256,
             exact_request:{mutation:input,binding},authority_request:request}});
+          stage="begin_result";
           if(result?.status!=="committed" || result.state!=="started" || result.execution_permitted!==true || !uuid(result.intent_id) ||
             result.job_id!==ref.job_id || result.job_request_digest!==descriptor.request_digest || result.request_sha256!==binding.request_sha256 ||
             !Number.isSafeInteger(result.version)) fail();
@@ -454,6 +461,7 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
             // P6: the descendants to re-read, chosen by the durable start under its locks.
             ...(subtree ? {subtree_sample:result.subtree_sample,subtree_registry:result.subtree_registry} : {})};
           return {status:"started",execution_permitted:true,intent_id:result.intent_id,request_sha256:result.request_sha256};
+          } catch(error) { throw resourceCenterReservationFailure(stage,error); }
         },commit_post_write:async({mutation:input,binding,reservation,effect_result:result})=>{
           let stage="reservation";
           try{
@@ -587,12 +595,16 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
       }
       if(result.status==="unreconciled" || result.status==="deny") {
         // Keep the original journal fenced, but leave a stable diagnostic.
+        const diagnostic=sanitizeReservationDiagnostic(result.reservation_diagnostic);
+        if(diagnostic) console.warn(JSON.stringify({event:"storage_cloud_prepare_failed",...diagnostic}));
         logDiagnostic(result.status,result.error_code);
       }
       // Keep the internal admission, binding and provider result out of the
       // public job result. Recovery reads the original durable service state.
       return result.status==="committed" ? {status:"committed",job_id:ref.job_id,receipt_id:result.canonical_receipt_id,execution_permitted:false} :
-        {status:result.status,error_code:result.error_code,side_effects:result.side_effects,execution_permitted:false};
+        {status:result.status,error_code:result.error_code,side_effects:result.side_effects,execution_permitted:false,
+          ...(sanitizeReservationDiagnostic(result.reservation_diagnostic) ?
+            {reservation_diagnostic:sanitizeReservationDiagnostic(result.reservation_diagnostic)} : {})};
     }catch(error){
       const code=unavailableCode(error);
       logDiagnostic("unavailable",code);
