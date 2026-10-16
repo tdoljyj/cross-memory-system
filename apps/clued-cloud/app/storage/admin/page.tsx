@@ -86,7 +86,8 @@ function recoveryExplanation(view: RecoveryView) {
 type RefreshStatus = { enabled: boolean; version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
 const probeStages: Record<string, string> = { request: "请求验证", prepare: "账号与目录当前状态", descriptor: "目录配置", credential: "连接凭据与有效期",
   identity: "Google 账号身份", directories: "Google 目录元数据与权限", boundary: "父级与同级目录边界", receipt: "最终状态复核与回执" };
-const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "至少一个已登记目录尚未向当前 Google 应用授权", DIRECTORY_NOT_WRITABLE: "至少一个目录不允许新建子项",
+const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "至少一个登记目录尚未通过当前应用的目录管理检查", DIRECTORY_NOT_WRITABLE: "至少一个目录当前不允许新建内容",
+  DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED: "Google 未返回完整的目录资格信息", DIRECTORY_WRITE_CAPABILITY_UNCONFIRMED: "Google 未返回完整的新建能力信息",
   IDENTITY_INVALID: "提供方返回的对象身份字段不完整或无效", PARENT_INVALID: "父目录身份不符合登记", LAYOUT_INVALID: "登记布局不符合检查合同",
   DIRECTORY_CHANGED: "目录名称、位置或版本发生变化", PATH_AMBIGUOUS: "目录存在同名或身份冲突", SHORTCUT_UNQUALIFIED: "检测到尚未纳入资格验证的快捷方式",
   DIRECTORY_NOT_LISTED: "目录枚举结果缺少已登记对象", ENUMERATION_INVALID: "目录枚举未确认", ENTRY_LIMIT: "目录数量超过本次检查上限",
@@ -105,7 +106,35 @@ const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "�
   BOUNDARY_ENUMERATION_INVALID: "边界枚举不完整", BOUNDARY_ENTRY_LIMIT: "边界条目超过检查上限",
   BOUNDARY_PATH_AMBIGUOUS: "边界存在同名或路径冲突", BOUNDARY_SHORTCUT_UNQUALIFIED: "边界存在未验证的快捷方式",
   BOUNDARY_DEPTH_LIMIT: "边界目录深度超过检查上限", BOUNDARY_ROOT_NOT_LISTED: "边界枚举缺少资料根" };
-class ProbeRequestError extends Error {}
+class ProbeRequestError extends Error {
+  constructor(message: string, readonly hasDirectoryIssues = false) { super(message); }
+}
+const directoryIssueLabels: Record<string,string> = {
+  DIRECTORY_NOT_APP_AUTHORIZED:"尚未通过当前应用的目录管理检查",
+  DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED:"Google 未返回完整的目录资格信息",
+  DIRECTORY_NOT_WRITABLE:"当前不允许新建内容",
+  DIRECTORY_WRITE_CAPABILITY_UNCONFIRMED:"Google 未返回完整的新建能力信息",
+};
+function directoryIssueSummary(value: unknown): string {
+  if (!isObject(value) || value.contract!=="clued.storage-directory-diagnostic/1" ||
+    !Number.isSafeInteger(value.total_directories) || Number(value.total_directories)<1 || Number(value.total_directories)>1024 ||
+    value.checked_directories!==value.total_directories || !Number.isSafeInteger(value.failed_directories) ||
+    Number(value.failed_directories)<1 || Number(value.failed_directories)>Number(value.total_directories) ||
+    !Array.isArray(value.failures) || value.failures.length!==Math.min(Number(value.failed_directories),16) ||
+    value.truncated!==(Number(value.failed_directories)>16)) return "";
+  const seen = new Set<string>(), rows: string[] = [];
+  for (const item of value.failures) {
+    if (!isObject(item) || typeof item.path!=="string" || !item.path.length || item.path.length>1000 ||
+      /[\u0000-\u001f\u007f]/.test(item.path) || typeof item.provider_file_id!=="string" ||
+      !/^[A-Za-z0-9_-]{1,160}$/.test(item.provider_file_id) || seen.has(item.path) ||
+      !Array.isArray(item.reasons) || item.reasons.length<1 || item.reasons.length>2 ||
+      new Set(item.reasons).size!==item.reasons.length ||
+      item.reasons.some(reason=>typeof reason!=="string" || !Object.hasOwn(directoryIssueLabels,reason))) return "";
+    seen.add(item.path);
+    rows.push(`${item.path}：${item.reasons.map(reason=>directoryIssueLabels[String(reason)]).join("；")}`);
+  }
+  return `已核对 ${value.checked_directories} 个登记目录，${value.failed_directories} 个目录的资格未确认。\n${rows.join("\n")}${value.truncated ? `\n仅显示前 16 个，另有 ${Number(value.failed_directories)-16} 个目录未列出。` : ""}\n`;
+}
 class ReviewRefreshError extends Error {}
 async function request(path: string, body: object | undefined, stillCurrent: () => boolean = () => true) {
   const { data, error } = await supabase.auth.getSession();
@@ -122,7 +151,9 @@ async function request(path: string, body: object | undefined, stillCurrent: () 
         const { stage, reason } = failure.diagnostic;
         if (typeof stage === "string" && Object.hasOwn(probeStages, stage) && typeof reason === "string" &&
           (reason === "UNCONFIRMED" || Object.hasOwn(probeReasons, reason))) {
-          throw new ProbeRequestError(`目录检查未确认：${probeStages[stage]}${reason === "UNCONFIRMED" ? "" : `；${probeReasons[reason]}`}。不会自动重试或开启文件写入。`);
+          const summary = stage === "directories" ? directoryIssueSummary(failure.diagnostic.directories) : "";
+          const localIssue = stage === "directories" && Object.hasOwn(directoryIssueLabels, reason);
+          throw new ProbeRequestError(`${summary || `目录检查未确认：${probeStages[stage]}${reason === "UNCONFIRMED" ? "" : `；${probeReasons[reason]}`}。`}${localIssue ? "个别目录资格未确认，其他已获授权的目录仍可正常使用。" : ""}本次检查不会自动重试或更改授权。`, Boolean(summary));
         }
       }
     }
@@ -387,8 +418,10 @@ export default function StorageConnections() {
     if (operationBusy.current || registrationBusy.current || busy || c.state !== "active") return;
     const epoch = revision.current;
     operationBusy.current = true; setBusy(true);
-    const report = (value: string) => { setMessage(value); setProbeMessages(old => ({ ...old, [c.id]: value })); };
-    report("正在只读检查已登记目录；不会创建文件或开启写入。");
+    const report = (value: string, summary = "目录检查已完成，请查看下方结果。") => {
+      setMessage(summary); setProbeMessages(old => ({ ...old, [c.id]: value }));
+    };
+    report("正在只读检查全部登记目录的信息和新建能力；不会创建文件或更改授权。", "正在检查目录信息，请查看下方进度。");
     try {
       const result = await request("/v1/storage/google/probe", { connection_id: c.id }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
@@ -410,7 +443,8 @@ export default function StorageConnections() {
         report(`目录检查回执：${result.receipt_id}。本次父级与同级边界只读扫描未发现违规；这只是观察时点检测，不是原子快照。边界结果需连同受审发布版本另存验收证据，不包含在旧目录回执合同中。不会开启文件写入。验收摘要：${JSON.stringify(evidence)}`);
       }
     } catch (error) {
-      if (epoch === revision.current) report(error instanceof ProbeRequestError ? error.message : "目录检查未确认；可能需要核对目录授权、当前版本或等待凭据续签。不会自动重试或开启文件写入。");
+      if (epoch === revision.current) report(error instanceof ProbeRequestError ? error.message : "目录检查暂未完成，不会自动重试或更改授权。",
+        error instanceof ProbeRequestError && error.hasDirectoryIssues ? "检查已完成，有待确认目录，请查看下方结果。" : "目录检查未确认，请查看下方结果。");
     } finally { operationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
   async function register() {
@@ -537,9 +571,10 @@ export default function StorageConnections() {
             <button disabled={busy} onClick={() => { confirmation.current = null; setRecoveryConfirmation(null); }}>取消本次确认</button></div>
         </section>}
       </details>
-      {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查已登记目录（只读）</button>
+      {c.state === "active" && <div className="my-2"><button disabled={busy} onClick={() => void observeDirectories(c)}>检查全部登记目录的信息和新建能力</button>
+        <p>此检查只读取 Google 目录信息，不创建文件或更改授权。个别目录资格未确认时，其他已获授权的目录仍可正常使用。</p>
         <p className="text-sm">只核对服务端登记目录的访问与元数据，不读取文件正文，不授予 Agent 写入权限。</p>
-        {probeMessages[c.id] && <p role="status" aria-live="polite" className="my-2 break-all">{probeMessages[c.id]}</p>}</div>}
+        {probeMessages[c.id] && <p role="status" aria-live="polite" className="my-2 whitespace-pre-line break-words">{probeMessages[c.id]}</p>}</div>}
       <div className="mt-4 border-t pt-4"><h3>账号级后台续签</h3>
         <p className="my-2 text-sm">新连接在授权时默认选择自动续签，可取消或随时停用；已有停用设置不会自动恢复。由服务端执行，不依赖任何设备在线，不授予 Agent 整理或写入文件的权限。</p>
         <button disabled={busy} onClick={() => void renewal(c, "status")}>查询续签状态</button>

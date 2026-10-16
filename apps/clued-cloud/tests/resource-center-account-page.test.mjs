@@ -52,12 +52,14 @@ function fixture(confirm = true, automaticJobs = [], options = {}) {
     visit(n.props?.children); }; visit(tree); assert.ok(found,label); return found; }
   render();
   return { requests, recoveryLists, navigations, confirmations, settle, text: () => text(tree), button, input,
+    statusBlocks() { const result=[];const visit=n=>{if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=="object")return;
+      if(n.props.role==="status")result.push({text:text(n),className:n.props.className});visit(n.props.children);};visit(tree);return result;},
     poll() { const pending=[...timers.values()];timers.clear();for(const fn of pending)fn(); },
     change(id) { owner=id; authCallback("SIGNED_IN", id ? { user:{id} } : null); render(); },
     respond(i,value,status=200) { requests[i].resolve({ ok:status<400, status, json:async()=>value }); },
     respondList(i,jobs,status=200) { recoveryLists[i].resolve({ok:status<400,status,json:async()=>({status:"ok",connection_id:JSON.parse(recoveryLists[i].init.body).connection_id,jobs,execution_permitted:false})}); },
     probeFeedback() { let found=""; const visit=n=>{if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=="object")return;
-      if(n.type==="div" && Array.isArray(n.props.children) && n.props.children.some(c=>c?.type==="button" && text(c)==="检查已登记目录（只读）"))
+      if(n.type==="div" && Array.isArray(n.props.children) && n.props.children.some(c=>c?.type==="button" && text(c)==="检查全部登记目录的信息和新建能力"))
         found=n.props.children.filter(c=>c?.props?.role==="status").map(text).join("");visit(n.props.children);};visit(tree);return found;},
   };
 }
@@ -66,11 +68,11 @@ const fixtureReceipt = "10000000-0000-4000-8000-000000000083", lateReceipt = "10
 
 test("directory probe shows progress and safe failure beside its button without a second dispatch",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
-  const b=f.button("检查已登记目录（只读）");b.props.onClick();b.props.onClick();await f.settle();
+  const b=f.button("检查全部登记目录的信息和新建能力");b.props.onClick();b.props.onClick();await f.settle();
   assert.equal(f.requests.length,2);assert.match(f.probeFeedback(),/正在只读检查/);
   f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED"}},403);await f.settle();
-  assert.match(f.probeFeedback(),/尚未向当前 Google 应用授权/);assert.match(f.probeFeedback(),/不会自动重试或开启文件写入/);
-  assert.equal(f.requests.length,2);assert.equal(f.button("检查已登记目录（只读）").props.disabled,false);
+  assert.match(f.probeFeedback(),/尚未通过当前应用的目录管理检查/);assert.match(f.probeFeedback(),/不会自动重试或更改授权/);
+  assert.equal(f.requests.length,2);assert.equal(f.button("检查全部登记目录的信息和新建能力").props.disabled,false);
 });
 test("provider diagnostic categories render beside the button without raw errors or retries",async()=>{
   for(const [reason,label] of [["PROVIDER_AUTHENTICATION_REJECTED","未接受当前访问凭据"],
@@ -84,21 +86,72 @@ test("provider diagnostic categories render beside the button without raw errors
     ["UNAUTHORIZED_WORKSPACE_MUTATION","UNAUTHORIZED_WORKSPACE_MUTATION"],
     ["BOUNDARY_CHANGED","扫描期间边界发生变化"]]) {
     const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
-    f.button("检查已登记目录（只读）").props.onClick();await f.settle();
+    f.button("检查全部登记目录的信息和新建能力").props.onClick();await f.settle();
     f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason},error:"private-provider-text"},403);await f.settle();
     assert.ok(f.probeFeedback().includes(label));assert.equal(f.text().includes("private-provider-text"),false);
-    assert.match(f.probeFeedback(),/不会自动重试或开启文件写入/);assert.equal(f.requests.length,2);
+    assert.equal(f.probeFeedback().includes("其他已获授权的目录仍可正常使用"),false);
+    assert.match(f.probeFeedback(),/不会自动重试或更改授权/);assert.equal(f.requests.length,2);
+  }
+});
+
+test("directory issues name each affected object, distinguish unknown fields and leave ordinary operations available",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+  f.button("检查全部登记目录的信息和新建能力").props.onClick();await f.settle();
+  f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED",directories:{
+    contract:"clued.storage-directory-diagnostic/1",total_directories:66,checked_directories:66,failed_directories:2,truncated:false,
+    failures:[{path:"/root/track/topic-a",provider_file_id:"private-drive-id-a",reasons:["DIRECTORY_NOT_APP_AUTHORIZED"]},
+      {path:"/root/track/topic-b",provider_file_id:"private-drive-id-b",reasons:["DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED","DIRECTORY_NOT_WRITABLE"]}]
+  }}},403);await f.settle();
+  const text=f.probeFeedback();assert.match(text,/已核对 66 个登记目录，2 个目录/);
+  assert.match(text,/topic-a/);assert.match(text,/topic-b/);assert.match(text,/Google 未返回完整的目录资格信息/);
+  assert.match(text,/当前不允许新建内容/);assert.match(text,/其他已获授权的目录仍可正常使用/);
+  assert.equal(f.text().includes("private-drive-id"),false);assert.equal(f.text().includes("根目录锁"),false);
+  assert.equal(f.text().includes("撤回已有普通操作"),false);assert.equal(text.includes("拒绝读取"),false);
+  assert.match(text,/\n\/root\/track\/topic-a/);assert.match(text,/\n\/root\/track\/topic-b/);
+  const top=f.statusBlocks().find(x=>x.className==="my-4");
+  assert.equal(top.text,"检查已完成，有待确认目录，请查看下方结果。");
+  assert.equal(f.text().split("/root/track/topic-a").length-1,1);
+  assert.match(f.statusBlocks().find(x=>x.text===text).className,/whitespace-pre-line/);
+  assert.equal(f.button("检查全部登记目录的信息和新建能力").props.disabled,false);
+  assert.equal(f.requests.length,2);assert.equal(f.confirmations.length,0);
+});
+
+test("truncated directory details stay multiline and the top message does not duplicate them",async()=>{
+  const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+  f.button("检查全部登记目录的信息和新建能力").props.onClick();await f.settle();
+  f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason:"DIRECTORY_NOT_WRITABLE",directories:{
+    contract:"clued.storage-directory-diagnostic/1",total_directories:66,checked_directories:66,failed_directories:20,truncated:true,
+    failures:Array.from({length:16},(_,i)=>({path:"/root/folder-"+i,provider_file_id:"private-drive-id-"+i,reasons:["DIRECTORY_NOT_WRITABLE"]}))
+  }}},403);await f.settle();
+  assert.match(f.probeFeedback(),/仅显示前 16 个，另有 4 个目录未列出/);
+  assert.equal(f.probeFeedback().split("\n").filter(line=>line.startsWith("/root/folder-")).length,16);
+  assert.equal(f.text().includes("private-drive-id"),false);
+  assert.equal(f.statusBlocks().find(x=>x.className==="my-4").text,"检查已完成，有待确认目录，请查看下方结果。");
+  assert.equal(f.requests.length,2);assert.equal(f.confirmations.length,0);
+});
+
+test("directory summary rejects malformed counters, unknown reasons and unbounded detail",async()=>{
+  for(const changes of [{failed_directories:1025},{truncated:true},{failures:Array(17).fill({})},
+    {failures:[{path:"/private-provider-text",provider_file_id:"bad/id",reasons:["PRIVATE_REASON"]}]}]){
+    const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
+    f.button("检查全部登记目录的信息和新建能力").props.onClick();await f.settle();
+    f.respond(1,{execution_permitted:false,diagnostic:{stage:"directories",reason:"DIRECTORY_NOT_APP_AUTHORIZED",directories:{
+      contract:"clued.storage-directory-diagnostic/1",total_directories:1,checked_directories:1,failed_directories:1,truncated:false,
+      failures:[{path:"/root/topic",provider_file_id:"topic",reasons:["DIRECTORY_NOT_APP_AUTHORIZED"]}],...changes
+    }}},403);await f.settle();
+    assert.equal(f.probeFeedback().includes("private-provider-text"),false);assert.equal(f.probeFeedback().includes("PRIVATE_REASON"),false);
+    assert.equal(f.probeFeedback().includes("已核对"),false);assert.equal(f.requests.length,2);
   }
 });
 
 test("directory probe error text cannot inject upstream content or cross an account switch",async()=>{
   for(const changed of [false,true]) {
     const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
-    f.button("检查已登记目录（只读）").props.onClick();await f.settle();
+    f.button("检查全部登记目录的信息和新建能力").props.onClick();await f.settle();
     if(changed){f.change("b");await f.settle();f.respond(2,{connections:[]});await f.settle();}
     f.respond(1,{execution_permitted:false,diagnostic:{stage:"credential",reason:"private-token"},error:"private-token"},403);await f.settle();
     assert.equal(f.text().includes("private-token"),false);
-    if(changed)assert.equal(f.probeFeedback(),"");else assert.match(f.probeFeedback(),/目录检查未确认/);
+    if(changed)assert.equal(f.probeFeedback(),"");else assert.match(f.probeFeedback(),/目录检查暂未完成/);
   }
 });
 
@@ -440,7 +493,7 @@ test('review observation identity, version and source receipt must match the dis
 
 test("directory observation submits only one exact connection and never claims writing is enabled",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
-  const check=f.button("检查已登记目录（只读）");check.props.onClick();check.props.onClick();await f.settle();
+  const check=f.button("检查全部登记目录的信息和新建能力");check.props.onClick();check.props.onClick();await f.settle();
   assert.equal(f.requests.length,2);assert.equal(f.requests[1].url,"/v1/storage/google/probe");
   assert.deepEqual(JSON.parse(f.requests[1].init.body),{connection_id:connection.id});
   f.respond(1,{status:"metadata_observed",attempt_id:"10000000-0000-4000-8000-000000000001",receipt_id:"10000000-0000-4000-8000-000000000002",execution_permitted:false});await f.settle();
@@ -449,7 +502,7 @@ test("directory observation submits only one exact connection and never claims w
 });
 test("directory observation late reply is discarded after account switch",async()=>{
   const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:"active"}]});await f.settle();
-  f.button("检查已登记目录（只读）").props.onClick();await f.settle();f.change("b");await f.settle();
+  f.button("检查全部登记目录的信息和新建能力").props.onClick();await f.settle();f.change("b");await f.settle();
   f.respond(2,{connections:[]});await f.settle();
   f.respond(1,{status:"metadata_observed",attempt_id:"10000000-0000-4000-8000-000000000001",receipt_id:"10000000-0000-4000-8000-000000000002",execution_permitted:false});await f.settle();
   assert.equal(f.text().includes("检查已记录"),false);assert.equal(f.text().includes("10000000-0000-4000-8000-000000000002"),false);
@@ -458,7 +511,7 @@ test("directory observation late reply is discarded after account switch",async(
 test('boundary clean report is distinct from a durable receipt and malformed reports cannot claim clean',async()=>{
   for(const valid of [true,false]) {
     const f=fixture();await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
-    f.button('检查已登记目录（只读）').props.onClick();await f.settle();
+    f.button('检查全部登记目录的信息和新建能力').props.onClick();await f.settle();
     f.respond(1,{status:'metadata_observed',attempt_id:'10000000-0000-4000-8000-000000000001',receipt_id:'10000000-0000-4000-8000-000000000002',execution_permitted:false,
       boundary_observation:{contract:'clued.storage-boundary-observation/1',status:'clean',observed_at_ms:100,digest_format:'sorted-json/1',
         policy_version:'clued.resource-center-mutation-policy/1',scanner_contract:'clued.google-drive-boundary/1',secret:'must-not-display',
