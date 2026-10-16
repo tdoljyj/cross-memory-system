@@ -13,6 +13,9 @@ import fs from 'node:fs/promises'; import path from 'node:path';
 import { runDailyJob, settleDailyJob } from ${JSON.stringify(moduleUrl)};
 import { RESOURCE_CENTER_GOVERNED_TOOL_MANIFEST as tools } from ${JSON.stringify(manifestUrl)};
 const [dir, id, mode] = process.argv.slice(1);
+if(mode==='hang_before_ready')await new Promise(()=>setInterval(()=>{},1000));
+process.send({event:'daily-fixture-ready'});process.disconnect();
+if(mode==='hang_after_ready')await new Promise(()=>setInterval(()=>{},1000));
 const job = {job_id:id,tool:tools[0].name,arguments:{operation:'create',destination_path:'/resource/10_E/topic/new.md',target_kind:'file',content:'fixture'}};
 const profile = {registration_status:'registered',profile_id:'official',profile_version:'1',managed_root:'/resource',allowed_root_children:['10_E']};
 try {
@@ -45,35 +48,63 @@ async function fixture(t) {
 }
 test("operator settlement only releases a dead process fence after proven committed receipt", async t => {
   const dir = await fixture(t), id = randomUUID();
-  assert.equal((await invoke(dir, id, "crash_after_effect")).code, 73);
+  const crashed = await invoke(dir, id, "crash_after_effect"); assert.equal(crashed.code, 73, JSON.stringify(crashed));
   assert.equal(JSON.parse((await invoke(dir, id, "unproven")).stdout).error, "DAILY_CANONICAL_SETTLEMENT_UNPROVEN");
-  const settled = await invoke(dir, id, "settle");assert.equal(settled.code, 0, settled.stderr + settled.stdout);
+  const settled = await invoke(dir, id, "settle");assert.equal(settled.code, 0, JSON.stringify(settled));
   assert.equal(JSON.parse(settled.stdout).write_gate_released, true);
-  const replay = await invoke(dir, id);assert.equal(replay.code, 0, replay.stderr);
+  const replay = await invoke(dir, id);assert.equal(replay.code, 0, JSON.stringify(replay));
   assert.equal(JSON.parse(replay.stdout).replayed, true);
   assert.equal((await fs.readFile(path.join(dir, "effects.jsonl"), "utf8")).trim().split("\n").length, 1);
 });
-function invoke(dir, id, mode = "normal") {
+function invoke(dir, id, mode = "normal", { startupTimeoutMs = 30000, executionTimeoutMs = 10000 } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--input-type=module", "-e", script, dir, id, mode], { windowsHide: true });
-    let stdout = "", stderr = "";
-    const timer = setTimeout(() => child.kill(), 10000);
+    const started = Date.now();
+    const child = spawn(process.execPath, ["--input-type=module", "-e", script, dir, id, mode], {
+      windowsHide: true, stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    let stdout = "", stderr = "", phase = "startup", timedOut = false;
+    const expire = () => { timedOut = true; child.kill(); };
+    // Concurrent CI can delay a new Node process and its imports. Keep startup
+    // bounded separately; the actual job still has the original 10 s watchdog.
+    let timer = setTimeout(expire, startupTimeoutMs);
+    child.on("message", message => {
+      if (phase !== "startup" || message?.event !== "daily-fixture-ready" || timedOut) return;
+      clearTimeout(timer); phase = "execution";
+      timer = setTimeout(expire, executionTimeoutMs);
+    });
     child.stdout.on("data", b => { stdout += b; });child.stderr.on("data", b => { stderr += b; });
-    child.once("error", reject);
-    child.once("close", code => { clearTimeout(timer);resolve({code,stdout,stderr}); });
+    child.once("error", error => { clearTimeout(timer); reject(error); });
+    child.once("close", (code, signal) => { clearTimeout(timer);resolve({ code, signal, phase, timed_out: timedOut,
+      elapsed_ms: Date.now() - started, stdout, stderr }); });
   });
 }
 test("separate OS processes replay one committed job without repeating effect", async t => {
   const dir = await fixture(t), id = randomUUID();
-  const first = await invoke(dir, id);assert.equal(first.code, 0, first.stderr);
-  const replay = await invoke(dir, id);assert.equal(replay.code, 0, replay.stderr);
+  const first = await invoke(dir, id);assert.equal(first.code, 0, JSON.stringify(first));
+  const replay = await invoke(dir, id);assert.equal(replay.code, 0, JSON.stringify(replay));
   assert.equal(JSON.parse(replay.stdout).replayed, true);
   assert.equal((await fs.readFile(path.join(dir, "effects.jsonl"), "utf8")).trim().split("\n").length, 1);
+});
+test("the process watchdog diagnoses both startup and execution hangs without accepting an effect", async t => {
+  const dir = await fixture(t);
+  for (const [mode, phase, budgets] of [
+    ["hang_before_ready", "startup", { startupTimeoutMs: 100 }],
+    ["hang_after_ready", "execution", { executionTimeoutMs: 100 }],
+  ]) {
+    const result = await invoke(dir, randomUUID(), mode, budgets);
+    assert.equal(result.code, null, JSON.stringify(result));
+    assert.equal(result.signal, "SIGTERM", JSON.stringify(result));
+    assert.equal(result.timed_out, true, JSON.stringify(result));
+    assert.equal(result.phase, phase, JSON.stringify(result));
+  }
+  assert.equal(await fs.readFile(path.join(dir, "effects.jsonl"), "utf8"), "");
+  assert.equal(await fs.readFile(path.join(dir, "jobs.jsonl"), "utf8"), "");
 });
 for (const mode of ["crash_before_effect", "crash_after_effect"]) {
   test(`real abrupt process exit ${mode} fences later independent process`, async t => {
     const dir = await fixture(t), id = randomUUID();
-    assert.equal((await invoke(dir, id, mode)).code, mode === "crash_before_effect" ? 72 : 73);
+    const crashed = await invoke(dir, id, mode);
+    assert.equal(crashed.code, mode === "crash_before_effect" ? 72 : 73, JSON.stringify(crashed));
     assert.equal(JSON.parse((await invoke(dir, id)).stdout).error, "EEXIST");
     // Simulated lost lock directory entry, NOT an operator recovery procedure.
     await fs.unlink(path.join(dir, "executor.lock"));
