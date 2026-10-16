@@ -205,7 +205,7 @@ test("current-state answers are sourced from Clued on every injected surface (co
   assert.match(contract, /Host's own memory, Host-side conversation summaries, earlier replies, cached files, repository snapshots and old checkpoints are not sources/);
   assert.match(contract, /say that the current state is unknown/);
   assert.match(skill, /Required for any question about the current or latest state/);
-  assert.match(skill, /must come from Kooyumi/);
+  assert.match(skill, /must come from KooYomi/);
   const instructions = init.result?.instructions ?? "";
   assert.match(instructions, /answered only from records read in this session after clued_session_resume/);
   assert.match(instructions, /host memory, chat summaries, earlier replies, cached files and old checkpoints are not sources/);
@@ -221,7 +221,7 @@ test("repository Skill, project rules and root snapshot share the v1.6 authority
     readFile(new URL("../../../memory/manifest.json", import.meta.url), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
-  assert.match(skill, /authenticated Kooyumi service/);
+  assert.match(skill, /authenticated KooYomi service/);
   assert.match(contract, /only online Canonical Store/);
   assert.match(contract, /never dual-write Markdown/);
   assert.match(contract, /read-only, versioned export/);
