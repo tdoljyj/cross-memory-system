@@ -73,10 +73,15 @@ const READ_HINTS: Record<string, string> = {
   image_too_large: "The image is larger than 5 MiB or 8000 px on its long edge; downscaling is not available yet. Only metadata is returned.",
 };
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
-/** Fixed hint when the connection's sealed Google access has expired (BUG-20261007-005). */
-export const CREDENTIAL_RENEWAL_HINT = "This storage connection's Google access has expired and Kooyumi has not renewed it yet. " +
-  "Kooyumi renews it automatically, but not while an unfinished storage job on the same root is still being settled. " +
-  "Retry in a few minutes; if reads keep failing, tell the user to check this connection and its jobs on the Kooyumi storage page.";
+/** Insufficient sealed validity is observed here; its cause is not known. */
+export const CREDENTIAL_RENEWAL_HINT = "The admitted Google credential does not have enough remaining validity for this read. " +
+  "The read stopped before requesting Drive.";
+const CREDENTIAL_PENDING_HINT = "Kooyumi could not confirm Google access readiness within this read's bounded wait.";
+const CREDENTIAL_DISABLED_HINT = "Google access preparation could not continue because renewal was disabled or its authorization settings changed.";
+const CREDENTIAL_UNAVAILABLE_HINT = "Kooyumi could not confirm Google access readiness for this read.";
+const CREDENTIAL_UNKNOWN_HINT = "Kooyumi received an unrecognized Google access readiness result. This read was not started.";
+// StorageDemandRenewal caller_wait_max_seconds, shared by all preflight checks.
+const CREDENTIAL_WAIT_MS = 30_000, CREDENTIAL_CHECKS = 3;
 
 export class StorageReadError extends Error {
   constructor(readonly code: "storage_read_input_invalid" | "storage_read_unavailable" | "not_found_in_scope" | "cursor_invalid" |
@@ -239,12 +244,15 @@ export async function createStorageReadAgent(config: {
   rpc: (input: Data) => Promise<Data>; receipt_keys: unknown; cursor_key: unknown;
   credential_preflight?: (input: Data) => Promise<StorageDemandResult>;
   fetch?: typeof fetch; clock?: () => number;
+  /** Internal wait adapter for deterministic tests; callers cannot change limits. */
+  pause?: (milliseconds: number) => Promise<void>;
   /** The PDF_EXTRACTOR service binding (clued-storage-pdf); PDF reads fail closed without it. */
   pdf_extractor?: unknown;
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) fail("storage_read_unavailable");
   const vault = await createStorageCredentialVault(config.vault);
   const clock = config.clock ?? Date.now;
+  const pause = config.pause ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)));
   const ring = config.receipt_keys;
   if (!object(ring) || typeof ring.current !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(ring.current) || !object(ring.keys)) fail("storage_read_unavailable");
   const receiptRing = ring as { current: string; keys: Data };
@@ -272,6 +280,53 @@ export async function createStorageReadAgent(config: {
     return state as Data;
   };
 
+  // Only preparation is repeatable. Every check reauthorizes the original
+  // request in Native; ready is never cached or used as operation admission.
+  const prepareCredential = async (request: Data) => {
+    if (!config.credential_preflight) return;
+    const started = clock(), deadline = started + CREDENTIAL_WAIT_MS;
+    let lastTime = started;
+    const pending = Symbol("storage-read-preflight-wait-ended");
+    const stopped = Symbol("storage-read-preflight-stopped");
+    let hint = CREDENTIAL_UNAVAILABLE_HINT;
+    const stop = (reason: string): never => { hint = reason; throw stopped; };
+    const time = () => {
+      const now = clock();
+      if (!Number.isFinite(started) || !Number.isFinite(now) || now < lastTime)
+        stop(CREDENTIAL_UNAVAILABLE_HINT);
+      lastTime = now;
+      return now;
+    };
+    const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const remaining = deadline - time();
+      if (remaining <= 0) throw pending;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([operation(), new Promise<T>((_resolve, reject) => {
+          timer = setTimeout(() => reject(pending), remaining);
+        })]);
+      } finally { if (timer !== undefined) clearTimeout(timer); }
+    };
+    try {
+      for (let check = 0; check < CREDENTIAL_CHECKS; check++) {
+        const result: unknown = await bounded(() => config.credential_preflight!(request));
+        const status = object(result) ? result.status : undefined;
+        if (status === "renewal_disabled") stop(CREDENTIAL_DISABLED_HINT);
+        if (status === "unavailable") stop(CREDENTIAL_UNAVAILABLE_HINT);
+        if (status !== "ready" && status !== "pending")
+          stop(CREDENTIAL_UNKNOWN_HINT);
+        if (time() >= deadline) throw pending;
+        if (status === "ready") return;
+        if (check + 1 === CREDENTIAL_CHECKS) throw pending;
+        await bounded(() => pause(Math.min(200 * 2 ** check, deadline - time())));
+      }
+    } catch (error) {
+      // Provider errors, private proofs and credential details never escape.
+      throw new StorageReadError("storage_read_unavailable", { hint: error === pending ? CREDENTIAL_PENDING_HINT
+        : error === stopped ? hint : CREDENTIAL_UNAVAILABLE_HINT });
+    }
+  };
+
   // tool "browse" = clued_storage_browse (read class); "content" = clued_storage_read (read_content class).
   return Object.freeze({ async run(token_hash: string, raw: unknown, tool: "browse" | "content" = "browse") {
     const input = tool === "content" ? storageContentInput(raw) : storageReadInput(raw);
@@ -281,13 +336,10 @@ export async function createStorageReadAgent(config: {
     const hmac = Object.values(condition).some(v => v !== undefined) ? await conditionHmac(input.connection_id, condition) : null;
     const objectId = input.operation === "stat" || input.operation === "read" ? input.object_id : input.operation === "list" ? input.folder_id : input.operation === "search" ? input.within : undefined;
     const expectedClass = input.operation === "read" ? "read_content" : "read";
-    if (config.credential_preflight) {
-      const ready = await config.credential_preflight({ token_hash, input: { connection_id: input.connection_id,
+    await prepareCredential({ token_hash, input: { connection_id: input.connection_id,
         operation: input.operation, ...(objectId ? { object_id: objectId } : {}),
         ...(hmac ? { condition_hmac: hmac, key_id: receiptRing.current } : {}),
         ...(input.operation === "search" && input.text ? { content_search: true } : {}) } });
-      if (ready.status !== "ready") throw new StorageReadError("storage_read_unavailable", { hint: CREDENTIAL_RENEWAL_HINT });
-    }
     let admitted: Data = {};
     try {
       admitted = await config.rpc({ token_hash, input: { action: "admit", connection_id: input.connection_id, operation: input.operation,
@@ -323,7 +375,8 @@ export async function createStorageReadAgent(config: {
         // row's recorded profile (StorageNormalUse §2.2 item 6).
         scopeProfile(token.scope) === null || scopeProfile(token.scope) !== admitted.provider_scope_profile ||
         !Number.isFinite(token.expires_at_ms)) fail("storage_read_unavailable");
-      // BUG-20261007-005: an expired credential says so with a fixed hint.
+      // Admission may observe a different sealed version after preparation.
+      // Never reenter preflight here; this intent must reach its own finalize.
       if (Number(token.expires_at_ms) - clock() <= 60000) throw new StorageReadError("storage_read_unavailable", { hint: CREDENTIAL_RENEWAL_HINT });
       let used = 0;
       const base = createStorageFetch(config.fetch);
