@@ -51,12 +51,15 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   const workerSource=await fs.readFile(path.join(cloud,'worker/continuity.ts'),'utf8');
   // Bind this current transport regression to the independently reviewed Worker.
   // I9 changes only storage recovery routes/scheduler and scoped storage MCP
-  // refusals; C1 audit paths are unchanged. The prior OAuth guard binding was
+  // refusals. The replacement-reader refresh bridge also selects the actual
+  // reader in those storage routes; C1 audit paths are unchanged. Its reviewed
+  // predecessor was ba86106e5e68cf1ddc84cb04455d342a164650b5444e491abf59ad3f2902262f.
+  // The prior OAuth guard binding was
   // 005e2c10ccff1369b356ca56ad905c2a063f270332860ad905751053e34dd6f4.
   // That and 23236e5f...24cf remain in earlier history; R9 registry and epoch
   // pins are separate and unchanged.
   // All C1 behavior/permission assertions below remain exact.
-  assert.equal(hash(workerSource),'ba86106e5e68cf1ddc84cb04455d342a164650b5444e491abf59ad3f2902262f');
+  assert.equal(hash(workerSource),'9aa56e4fa6e08eeda5011f86d3085163a7a11bc3ae691e1c9e408fb378f9fc43');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');
