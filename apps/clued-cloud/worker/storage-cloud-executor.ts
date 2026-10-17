@@ -7,11 +7,46 @@ import { createStorageFetch } from "./storage-fetch";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { scopeProfile } from "./storage-google-scopes";
 import { createRegistrationRecoveryRpc } from "./registration-recovery";
+import { isDeepStrictEqual } from "node:util";
+import { sanitizeReservationDiagnostic } from "../../../kernel/host/resource-center-write-client.mjs";
 
 type Data = Record<string, unknown>;
 type Reference = {connection_id: string; job_id: string};
 const object = (value: unknown): value is Data => !!value && typeof value === "object" && !Array.isArray(value);
 const denied = () => new Error("storage_cloud_unavailable");
+// Only the trusted PostgREST adapter supplies these Error/status/details
+// triples. A lost HTTP response, an AbortError or an arbitrary exception is
+// not evidence that the original transaction rolled back.
+const rolledBackAdmission = (error: unknown) => {
+  if (!(error instanceof Error) || !object(error) || error.status !== 500 || !object(error.details)) return false;
+  const code = error.details.code;
+  return code === "57014" && error.message === "canceling statement due to statement timeout" ||
+    code === "55P03" && error.message === "canceling statement due to lock timeout" ||
+    code === "40P01" && error.message === "deadlock detected";
+};
+const currentAdmissionRefusal = (error: unknown) => error instanceof Error && object(error) &&
+  object(error.details) && [400,403,404,409].includes(Number(error.status)) &&
+  ["42501","22023","P0002","40001"].includes(String(error.details.code));
+const originalStatus = (value: unknown, reference: Reference, digest: unknown): Data | null =>
+  object(value) && value.job_id === reference.job_id && value.connection_id === reference.connection_id &&
+    value.request_digest === digest && value.execution_permitted === false ? value : null;
+const originalReceiptId = (value: unknown): value is string => typeof value === "string" &&
+  /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value);
+const inspectOriginal = (reference: Reference, value?: Data | null) => {
+  // Only callers that checked originalStatus may supply a value. Project a
+  // known result from its real Receipt, never its private raw payload or an
+  // execution permit. A concurrent terminal settlement needs no more review.
+  if (value && originalReceiptId(value.receipt_id)) {
+    if (value.status === "committed" && originalReceiptId(value.intent_id))
+      return {status:"committed",job_id:reference.job_id,receipt_id:value.receipt_id,execution_permitted:false};
+    if (["denied","cancelled","attention_required"].includes(String(value.status)))
+      return {status:value.status,job_id:reference.job_id,receipt_id:value.receipt_id,execution_permitted:false,
+        ...(["STORAGE_OBJECT_UNDER_REVIEW","NO_PROVIDER_ATTEMPT","PROVIDER_EFFECT_ABSENT",
+          "ADOPT_NOT_SETTLED","DISPATCH_NOT_STARTED","DURABLE_WRITE_RESERVATION_FAILED"].includes(String(value.reason_code))
+          ? {reason_code:value.reason_code} : {})};
+  }
+  return {status:"inspection_required",job_id:reference.job_id,execution_permitted:false};
+};
 
 /** Private server bridge. The fixed RPC authenticates the issuer and derives
  * owner/profile/writer from Canonical job state. No raw result is an API reply.
@@ -33,6 +68,8 @@ export async function createStorageCloudWorker(config: {
     let loaded: Data | null = null;
     let recoveryMode=false, refreshed=false;
     let registrationRecovery: Data | null = null;
+    let admissionDeferred = false, beginUnknown = false;
+    let recoveredStatus: Data | null = null;
     // Each rejection below carries a fixed label so post-write diagnostics can name
     // the credential step. Outcomes are unchanged: every branch still fails closed.
     const reject = (code: string) => new Error(code);
@@ -120,9 +157,47 @@ export async function createStorageCloudWorker(config: {
         if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
         const {connection_id, job_id, action, ...body} = input;
         try {
-          return await executionRpc({connection_id, job_id, action,
+          const request = {connection_id, job_id, action,
             ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
-            ...(action==="finalize" ? {finish:{action,...body}} : body)});
+            ...(action==="finalize" ? {finish:{action,...body}} : body)};
+          if (action !== "begin" || config.account_policy_v2 !== true) return await executionRpc(request);
+          const retryUntil = (config.clock ?? Date.now)() + 25000;
+          for (let retry = 0; ; retry++) {
+            try {
+              const result = await executionRpc(structuredClone(request));
+              beginUnknown = false;
+              return result;
+            } catch (error) {
+              beginUnknown = true;
+              if (!rolledBackAdmission(error)) throw error;
+              if (retry >= 2 || (config.clock ?? Date.now)() >= retryUntil) {
+                admissionDeferred = true;
+                throw error;
+              }
+              await new Promise(resolve => setTimeout(resolve, 200 * 2 ** retry + Math.floor(Math.random() * 100)));
+              if ((config.clock ?? Date.now)() >= retryUntil) { admissionDeferred = true; throw error; }
+              let current: Data;
+              try { current = await config.rpc({...reference,action:"load"}); }
+              catch (readError) {
+                if (currentAdmissionRefusal(readError)) throw readError;
+                admissionDeferred = true; throw error;
+              }
+              // A real load returns this full descriptor only while the same
+              // original job has no intent/outcome and all current gates pass.
+              // It must still identify the original request and credential;
+              // never manufacture a new job/key or reuse stale authority.
+              const unchanged = object(current) && current.contract === "clued.storage-job-execution/1" && current.status === "queued" &&
+                current.intent_id == null && ["owner_id","connection_id","job_id","request_digest","provider",
+                  "provider_subject","credential_version","oauth_client_id","mutation","profile","root_folder_id",
+                  "root_parent_id","ancestor_match"].every(key => isDeepStrictEqual(current[key],loaded?.[key]));
+              if (!unchanged) {
+                recoveredStatus = originalStatus(current,reference,loaded.request_digest);
+                admissionDeferred = true;
+                throw error;
+              }
+              if ((config.clock ?? Date.now)() >= retryUntil) { admissionDeferred = true; throw error; }
+            }
+          }
         } catch (error) {
           if (error instanceof Error && error.message === "storage_object_under_review") throw reject("STORAGE_OBJECT_UNDER_REVIEW");
           throw error;
@@ -184,12 +259,22 @@ export async function createStorageCloudWorker(config: {
         } catch { return {status:"inspection_required",execution_permitted:false}; }
       }
       const result=await executor.run(reference);
+      const reservationDiagnostic = sanitizeReservationDiagnostic("reservation_diagnostic" in result ? result.reservation_diagnostic : undefined);
+      if (reservationDiagnostic?.reservation_status === "unknown" &&
+          ["begin_rpc","begin_result"].includes(reservationDiagnostic.stage)) beginUnknown = true;
       if (registrationRecovery) {
         // Only the qualified, pre-intent registration helper sets this value.
         // Its sidecar/lease is durable; an RPC outage leaves the original job
         // queued for the existing bounded sweep. Never report this as denied.
         return {status: "registration_recovery", job_id: reference.job_id,
           registration_recovery: registrationRecovery, execution_permitted: false};
+      }
+      if (admissionDeferred) {
+        if (recoveredStatus) return inspectOriginal(reference,recoveredStatus);
+        // This run never obtained a successful start. Do not terminally deny
+        // the original job or claim that a concurrent/original effect cannot
+        // exist. The existing durable queued sweep/expiry owns its next step.
+        return {status:"unavailable",job_id:reference.job_id,error_code:"STORAGE_ADMISSION_RETRY_PENDING",execution_permitted:false};
       }
       if (loaded && ["deny","unavailable","unreconciled"].includes(result.status)) {
         // Account-policy mode stores the fixed reason (and, for a boundary denial, the
@@ -199,12 +284,20 @@ export async function createStorageCloudWorker(config: {
           credential_version:(loaded as Data).credential_version,outcome});
         const outcome=cloudDispatchOutcome(result) as Data;
         const plain={status:outcome.status};
+        let reported: Data | null = null;
         try {
           if (config.account_policy_v2 === true && "reason" in outcome) {
-            try { await report(outcome); } catch { await report(plain); }
-          } else await report(plain);
+            try { reported = await report(outcome); } catch { reported = await report(plain); }
+          } else reported = await report(plain);
         }
         catch { /* Never redispatch. Original Canonical journal remains authoritative. */ }
+        if (config.account_policy_v2 === true) {
+          const current = originalStatus(reported,reference,(loaded as Data).request_digest);
+          if (current && typeof current.intent_id === "string" &&
+              (beginUnknown || result.status === "deny" || current.status === "committed")) return inspectOriginal(reference,current);
+          if (beginUnknown && (!current || !["denied","attention_required","cancelled"].includes(String(current.status))))
+            return inspectOriginal(reference,current);
+        }
       }
       return result;
     }

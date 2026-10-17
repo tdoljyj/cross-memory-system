@@ -4,6 +4,115 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
 
+test("private Worker retry boundaries retain identity, deadlines and original outcomes", async t => {
+  const {outputFiles}=await build({stdin:{contents:
+    "export {fixture,ids} from './tests/resource-center-cloud-executor.fixture.mjs';"+
+    "export {createStorageCloudWorker} from './worker/storage-cloud-executor.ts';"+
+    "export {createStorageCredentialVault} from './worker/storage-credential-vault.ts';",
+    resolveDir:fileURLToPath(new URL('../',import.meta.url))},bundle:true,platform:'node',format:'esm',write:false});
+  const {fixture,ids,createStorageCloudWorker,createStorageCredentialVault}=
+    await import('data:text/javascript;base64,'+Buffer.from(outputFiles[0].text).toString('base64'));
+  const cases=[
+    ['one_rollback','committed',2,1],['always_timeout','unavailable',3,0],
+    ['network_lost','inspection_required',1,0],['unknown_report','inspection_required',1,0],
+    ['bad_report_identity','inspection_required',1,0],['begin_response_mismatch','inspection_required',1,0],
+    ['postwrite_timeout','unreconciled',1,1],['unknown_message','deny',1,0],
+    ['deadline','unavailable',1,0],['changed_digest','unavailable',1,0],
+    ['changed_credential','unavailable',1,0],['changed_owner','unavailable',1,0],
+    ['read_unavailable','unavailable',1,0],['read_refused','deny',1,0],
+    ['business_cas','deny',1,0],['wrong_http_status','deny',1,0],['non_error_metadata','deny',1,0],
+    ['reload_denied','denied',1,0],['reload_cancelled','cancelled',1,0],
+    ['reload_attention','attention_required',1,0],['reload_committed','committed',1,0],
+    ['reload_bad_receipt','inspection_required',1,0],['reload_unknown_status','inspection_required',1,0],
+    ['reload_bad_identity','unavailable',1,0],['reload_private_reason','denied',1,0],
+  ];
+  for(const [mode,expected,beginsExpected,postsExpected] of cases) await t.test(mode,async()=>{
+    const f=fixture({redirect:'manual'}),d=await f.config.load_job(f.reference),token=await f.config.get_credential();
+    d.ancestor_match=[{path:d.profile.managed_root,provider_file_id:'root',match:'version'},
+      {path:d.profile.managed_root+'/track',provider_file_id:'track',match:'version'}];
+    const keys={current_key_id:'test',keys:{test:btoa('b'.repeat(32)).replace(/=+$/,'')}};
+    const vault=await createStorageCredentialVault(keys);
+    const envelope=await vault.seal(JSON.stringify({...token,token_type:'Bearer'}),{owner_id:d.owner_id,
+      connection_id:d.connection_id,provider:'google-drive',provider_subject:d.provider_subject,
+      credential_version:d.credential_version,oauth_client_id:'test-client'});
+    const timeout=()=>Object.assign(new Error('canceling statement due to statement timeout'),{status:500,details:{code:'57014'}});
+    let begins=0,loads=0,reports=0,finish=null,forcedClock=null;const requests=[],warnings=[];
+    const bridge=await createStorageCloudWorker({client_id:'test-client',vault:keys,account_policy_v2:true,
+      clock:()=>forcedClock??f.config.clock(),fetch:f.config.drive_fetch,rpc:async input=>{
+        if(input.action==='verified_inspect')return {status:'none',...f.reference,execution_permitted:false};
+        if(input.action==='load'){
+          loads++;
+          if(loads>1&&mode==='read_unavailable')throw new Error('synthetic original read lost');
+          if(loads>1&&mode==='read_refused')throw Object.assign(new Error('work_claim_not_active'),{status:403,details:{code:'42501'}});
+          const current={...d,credential_envelope:envelope,oauth_client_id:'test-client'};
+          if(loads>1&&mode==='changed_digest')current.request_digest='b'.repeat(64);
+          if(loads>1&&mode==='changed_credential')current.credential_version++;
+          if(loads>1&&mode==='changed_owner')current.owner_id=ids.receipt;
+          if(loads>1&&mode.startsWith('reload_'))return {...f.reference,request_digest:d.request_digest,
+            status:mode==='reload_cancelled'?'cancelled':mode==='reload_attention'?'attention_required':
+              mode==='reload_committed'?'committed':mode==='reload_unknown_status'?'started':'denied',
+            intent_id:mode==='reload_committed'?ids.intent:null,receipt_id:mode==='reload_bad_receipt'?'invalid':ids.receipt,
+            reason_code:mode==='reload_cancelled'?'NO_PROVIDER_ATTEMPT':mode==='reload_attention'?'DISPATCH_NOT_STARTED':
+              mode==='reload_private_reason'?'PRIVATE_REASON_WITHOUT_ALLOWLIST':'STORAGE_OBJECT_UNDER_REVIEW',
+            private_payload:token.access_token,execution_permitted:false,
+            ...(mode==='reload_bad_identity'?{job_id:ids.receipt}:{})};
+          return current;
+        }
+        if(input.action==='begin'){
+          begins++;requests.push(structuredClone(input));
+          if(['network_lost','unknown_report','bad_report_identity','begin_response_mismatch'].includes(mode)){
+            const begun=await f.config.rpc(input);
+            if(mode==='begin_response_mismatch')return {...begun,job_id:ids.receipt};
+            throw new Error('synthetic lost original begin reply');
+          }
+          if(mode==='unknown_message')throw Object.assign(new Error('private arbitrary SQL text'),{status:500,details:{code:'57014'}});
+          if(mode==='business_cas')throw Object.assign(new Error('work_claim_fence_mismatch'),{status:500,details:{code:'40001'}});
+          if(mode==='wrong_http_status')throw Object.assign(timeout(),{status:400});
+          if(mode==='non_error_metadata')throw {message:'canceling statement due to statement timeout',status:500,details:{code:'57014'}};
+          if(mode==='deadline'){forcedClock=f.config.clock()+25001;throw timeout();}
+          if(mode==='always_timeout'||begins===1&&(mode.startsWith('reload_')||['one_rollback','changed_digest','changed_credential','changed_owner','read_unavailable','read_refused'].includes(mode)))throw timeout();
+        }
+        if(input.action==='verified_record'){
+          if(mode==='postwrite_timeout')throw timeout();
+          finish=input.finish;return {status:'verified',intent_id:input.finish.intent_id,verified_receipt_id:ids.receipt,
+            verified_digest:'a'.repeat(64),version:3,execution_permitted:false};
+        }
+        if(input.action==='settle_verified')return {...await f.config.rpc({...input,...finish,action:'finalize'}),execution_permitted:false};
+        if(input.action==='report'){
+          reports++;if(mode==='unknown_report')throw new Error('synthetic original report lost');
+          const started=f.info().starts>0;
+          return {...f.reference,request_digest:d.request_digest,status:started?'started':'denied',intent_id:started?ids.intent:null,
+            receipt_id:ids.receipt,execution_permitted:false,...(mode==='bad_report_identity'?{job_id:ids.receipt,status:'committed'}:{})};
+        }
+        return f.config.rpc(input);
+      }});
+    const warn=console.warn;console.warn=value=>warnings.push(String(value));let result;
+    try{result=await bridge.run(f.reference);}finally{console.warn=warn;}
+    assert.equal(result.status,expected,JSON.stringify({mode,result}));
+    assert.equal(begins,beginsExpected);assert.equal(f.info().posts,postsExpected);
+    for(const request of requests)assert.deepEqual(request,requests[0],'never change the original job/key/payload');
+    if(expected==='unavailable'){
+      assert.equal(result.error_code,'STORAGE_ADMISSION_RETRY_PENDING');assert.equal(reports,0);
+    }
+    if(mode==='unknown_report')assert.equal(reports,2);
+    if(mode==='deadline')assert.equal(loads,1,'no new read or begin after the retry deadline');
+    if(mode.startsWith('reload_')){
+      assert.equal(reports,0,'do not overwrite a concurrent original result');
+      assert.equal(loads,2);assert.equal(f.info().starts,0);
+      assert.equal('private_payload' in result,false);assert.equal(JSON.stringify(result).includes(token.access_token),false);
+      if(['reload_denied','reload_cancelled','reload_attention','reload_committed','reload_private_reason'].includes(mode))
+        assert.equal(result.receipt_id,ids.receipt);
+      if(mode==='reload_denied')assert.equal(result.reason_code,'STORAGE_OBJECT_UNDER_REVIEW');
+      if(mode==='reload_cancelled')assert.equal(result.reason_code,'NO_PROVIDER_ATTEMPT');
+      if(mode==='reload_attention')assert.equal(result.reason_code,'DISPATCH_NOT_STARTED');
+      if(mode==='reload_private_reason')assert.equal('reason_code' in result,false);
+    }
+    for(const secret of ['private arbitrary SQL text','synthetic lost original',token.access_token,'credential_envelope'])
+      assert.equal(warnings.join('\n').includes(secret),false);
+    assert.equal(result.execution_permitted,false);
+  });
+});
+
 // Exercise the actual cloud composition in workerd with synthetic provider/RPC
 // closures. No production bindings, mounted Drive, credentials or outbound IO.
 test("cloud executor runs in workerd; unknown provider effects survive executor replacement", async () => {
