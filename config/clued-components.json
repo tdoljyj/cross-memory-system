@@ -341,6 +341,20 @@
         "file": "scripts/storage-google-redirect-cutover.mjs",
         "pattern": "export const VERSION = '{version}';"
       }
+    },
+    {
+      "id": "script.storage-zip",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Prepare and validate Unicode ZIP names before governed storage upload.",
+      "root": ".",
+      "files": [
+        "scripts/storage/README.md",
+        "scripts/storage/package_zip.py",
+        "tests/test_storage_zip.py",
+        "apps/clued-cloud/tests/storage-zip-packaging.test.mjs"
+      ],
+      "content_sha256": "504084360302d49a2f6a4dc803fd6f83e9abfd111da11c8157938623f8baf09c"
     }
   ]
 }
