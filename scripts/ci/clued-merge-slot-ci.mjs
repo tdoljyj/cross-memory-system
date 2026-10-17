@@ -47,6 +47,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherSource} from "./clued-production-publisher-source.mjs";
 import {createNaturalRecorder} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,6 +63,7 @@ import {
   parseClaimReference,
   postAppCheck,
   withTokenHint,
+  gateFindings,
   workflowIsGated,
 } from "./clued-work-admission.mjs";
 import { resolveMode } from "./merge-admission-policy.mjs";
@@ -106,7 +108,18 @@ export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.r
   for (const file of readDir(dir).filter((name) => /\.ya?ml$/.test(name)).sort()) {
     const bytes = readFile(path.join(dir, file));
     if (REQUIRED_CHECK_WORKFLOWS.includes(file) || workflowIsGated(bytes.toString("utf8"))) {
-      out.set(`.github/workflows/${file}`, gitBlobSha(bytes));
+      const workflowPath=`.github/workflows/${file}`;
+      if(Object.hasOwn(PUBLISHER_FILES,workflowPath)) {
+        // Only the exact registered default Source can be excluded from PR
+        // proof enumeration. A basename or dispatch trigger is insufficient.
+        const raw=readFile(path.join(workspace,PUBLISHER_SOURCE_PATH));
+        if(raw.length>524288)throw Error('publisher Source registry exceeds bounds');
+        const selected=registeredPublisherSource(JSON.parse(raw.toString('utf8')),workflowPath,bytes.toString('utf8'));
+        if(!selected.passed||selected.profile.source_kind!=='gated_successor'||
+          gateFindings(bytes.toString('utf8'),bytes.toString('utf8')).length)throw Error('unregistered default publisher Source');
+        continue;
+      }
+      out.set(workflowPath, gitBlobSha(bytes));
     }
   }
   return out;

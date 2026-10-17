@@ -75,6 +75,7 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -354,36 +355,18 @@ export function registeredPublisherGatedSuccessor(file, headText, baseText, prof
   if (workflowPath !== PRODUCTION_PUBLISHER_WORKFLOW || file.status !== "modified" ||
       workflowBasePath(file) !== PRODUCTION_PUBLISHER_WORKFLOW || baseText === null ||
       workflowIsGated(baseText) || !workflowIsGated(headText)) return false;
-  if (profiles?.schema !== "clued.gated-proof-profiles/2") return false;
-  const workflows = profiles?.workflows;
-  if (!workflows || !Object.hasOwn(workflows, workflowPath)) return false;
-  const profile = workflows[workflowPath];
-  if (profile?.registration_status !== "registered" || !Array.isArray(profile.accepted_sources)) return false;
-  const sources = [profile, ...profile.accepted_sources];
-  const normalized = (text) => String(text ?? "").replace(/\r\n/g, "\n");
-  const matches = (source, text) => {
-    if (!source || typeof source.source_yaml !== "string" ||
-        !Array.isArray(source.primary_ids) || source.primary_ids.length !== 1 ||
-        source.primary_ids[0] !== "release") return false;
-    const expected = normalized(text);
-    const bytes = Buffer.from(expected, "utf8");
-    const gitBlob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-    return normalized(source.source_yaml) === expected &&
-      source.source_sha256 === sha256Hex(expected) && source.workflow_blob === gitBlob;
-  };
-  return sources.filter((source) => matches(source, baseText)).length === 1 &&
-    sources.filter((source) => matches(source, headText)).length === 1;
+  return registeredPublisherTransition(profiles, workflowPath, headText, baseText).passed;
 }
 
 function trustedPublisherProfiles() {
-  // This exact file is the registry whose accepted successor has a 1 MiB
-  // bound. No other proof input, location or caller-selected path is widened.
-  const location = new URL("./clued-gated-proof-profiles.json", import.meta.url);
+  // The fixed adjacent default-branch catalogue is not a PR proof registry.
+  // A caller workspace, environment variable or PR file cannot select it.
+  const location = new URL("./clued-production-publisher-sources.json", import.meta.url);
   try {
     const info = fs.lstatSync(location);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) return null;
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 524288) return null;
     const bytes = fs.readFileSync(location);
-    if (bytes.length > 1024 * 1024) return null;
+    if (bytes.length > 524288) return null;
     return JSON.parse(bytes.toString("utf8"));
   } catch {
     return null;
@@ -1889,6 +1872,12 @@ const DISPATCH_HOWTO = `dispatch ${DISPATCH_ADMISSION_WORKFLOW} on the default b
 async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
   const workflow = workflowFileOf(env);
   const ref = env.GITHUB_REF_NAME ?? "";
+  if(workflow && Object.hasOwn(PUBLISHER_FILES,`.github/workflows/${workflow}`) &&
+    !DISPATCH_GATED_WORKFLOWS.includes(workflow)) {
+    outcome.verdict="REJECTED";
+    outcome.reasons=["publisher_dispatch_not_installed: a qualified self-hosted admission control is required"];
+    return outcome;
+  }
   if (!workflow || !DISPATCH_GATED_WORKFLOWS.includes(workflow)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";

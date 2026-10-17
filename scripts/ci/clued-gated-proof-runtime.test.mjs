@@ -24,13 +24,16 @@ const options={repository,headRepository,file,run};
 const pinned='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
 
 const snapshotProfile='scripts/ci/clued-gated-proof-profiles.json';
+const publisherPath='scripts/ci/clued-production-publisher-sources.json';
+const emptyPublisherSources={schema:'clued.production-publisher-sources/1',repository,default_branch:'main',workflows:{},roles:{}};
+const publisherFixtureTexts={[publisherPath]:JSON.stringify(emptyPublisherSources),'scripts/ci/clued-production-publisher-source.mjs':'trusted publisher compiler'};
 const snapshotFixtureFiles={
   [snapshotProfile]:JSON.stringify({schema:'clued.gated-proof-profiles/2',workflows:{}}),
   'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify({schema:'clued.gated-proof-role-specs/2',workflows:{}}),
   'scripts/ci/clued-work-admission.mjs':'trusted gate',
   'scripts/ci/clued-docs-only.py':'trusted classifier',
   'scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
-  'config/merge-admission-policy.json':'trusted policy',
+  'config/merge-admission-policy.json':'trusted policy',...publisherFixtureTexts,
 };
 function withSnapshotFixture(overrides,check) {
   const workspace=fs.mkdtempSync(path.join(os.tmpdir(),'clued-proof-snapshot-bound-'));
@@ -47,6 +50,34 @@ function withSnapshotFixture(overrides,check) {
   } finally {fs.rmSync(workspace,{recursive:true,force:true});}
 }
 const paddedSnapshot=(file,bytes)=>snapshotFixtureFiles[file]+' '.repeat(bytes-Buffer.byteLength(snapshotFixtureFiles[file]));
+
+test('exact registered dispatch publisher remains outside the PR test catalogue; unknown bytes or registry stay refused',async()=>{
+  const registry=JSON.parse(fs.readFileSync(new URL('./clued-production-publisher-sources.json',import.meta.url),'utf8'));
+  registry.repository=repository;
+  const publisher='.github/workflows/clued-cloud-production-release.yml';
+  const before=registry.workflows[publisher].sources.find(s=>!s.gated).source_yaml;
+  const after=registry.workflows[publisher].sources.find(s=>s.gated).source_yaml;
+  const text='catalogue fixture',parsed={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{run:'node --test'}]}}};
+  const roles=[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
+  const profile=compileRegisteredWorkflow(text,{primary_ids:['main'],parseYaml:()=>parsed,accepted_roles:roles});
+  const profiles={schema:'clued.gated-proof-profiles/2',workflows:{[file]:profile}};
+  const roleSpecs={schema:'clued.gated-proof-role-specs/2',workflows:{[file]:{sources:{[profile.workflow_blob]:roles}}}};
+  const tip='c'.repeat(40),content=(p,t)=>({type:'file',path:p,sha:workflowBlob(t),encoding:'base64',size:Buffer.byteLength(t),content:Buffer.from(t).toString('base64')});
+  const call=async({candidate=after,publisherRegistry=registry}={})=>{
+    const read=async route=>route.includes('/contents/.github/workflows?')?
+      [{type:'file',path:file,sha:profile.workflow_blob},{type:'file',path:publisher,sha:workflowBlob(route.includes('ref='+tip)?before:candidate)}]:
+      content(publisher,route.includes('ref='+tip)?before:candidate);
+    return boundWorkflowCatalog({read,repository,tip,head,defaultWorkflows:new Map([[file,profile.workflow_blob]]),registry:profiles,roleSpecs,publisherRegistry,
+      diff:{passed:true,diffComplete:true,commits:1,changedFiles:[publisher],descriptor:{repository,head}}});
+  };
+  const accepted=await call();assert.equal(accepted.passed,true);
+  assert.deepEqual([...accepted.workflows.keys()],[file]);
+  assert.deepEqual(accepted.publisher_transitions.map(t=>t.file),[publisher]);
+  for(const options of [{publisherRegistry:null},{publisherRegistry:{...registry,default_branch:'feature'}},
+    {candidate:after+'\n'},{candidate:after.replaceAll('\n','\r\n')},
+    {candidate:after.replace('  workflow_dispatch:','  pull_request:')},
+    {candidate:after.replace('node-version: 24.19.0','node-version: 24')}])assert.equal((await call(options)).passed,false);
+});
 
 test('trusted snapshot admits the complete profile registry through 1 MiB without changing its raw source binding',()=>{
   for(const bytes of [524289,1048576]) {
@@ -98,8 +129,8 @@ function executionWorld({conclusion='success',moveTip=false,moveSource=false,cha
     'scripts/ci/clued-work-admission.mjs':'trusted gate',
     'scripts/ci/clued-docs-only.py':'trusted classifier',
     'scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
-    'config/merge-admission-policy.json':'trusted policy'};
-  const snapshot={tip,checkout:tip,profiles,roleSpecs,workflows:new Map([[file,profile.workflow_blob]]),
+    'config/merge-admission-policy.json':'trusted policy',...publisherFixtureTexts};
+  const snapshot={tip,checkout:tip,profiles,roleSpecs,publisherSources:structuredClone(emptyPublisherSources),workflows:new Map([[file,profile.workflow_blob]]),
     files:Object.fromEntries(Object.entries(texts).map(([file,text])=>[file,workflowBlob(text)]))};
   const native={...run,status:'completed',conclusion,pull_requests:[{number:5}]};
   const pr={number:5,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
@@ -143,6 +174,12 @@ test('shared execution bridge binds native full execution to one trusted snapsho
   assert.equal((await qualifyPrExecution(missing)).state,'unknown');
   const mismatch=executionWorld();mismatch.snapshot.profiles={...mismatch.snapshot.profiles,extra:'candidate assertion'};
   assert.equal((await qualifyPrExecution(mismatch)).state,'unknown');
+  const publisherMismatch=executionWorld();publisherMismatch.snapshot.publisherSources={...publisherMismatch.snapshot.publisherSources,schema:'caller asserted catalogue'};
+  assert.equal((await qualifyPrExecution(publisherMismatch)).state,'unknown','publisher catalogue must match authenticated snapshot bytes');
+  for(const path of [publisherPath,'scripts/ci/clued-production-publisher-source.mjs']) {
+    const missing=executionWorld();delete missing.snapshot.files[path];
+    assert.equal((await qualifyPrExecution(missing)).state,'unknown',path+': compiler and catalogue identity are required');
+  }
 });
 test('authenticated snapshot revalidation applies the same exact-path profile capacity without widening other source reads',async()=>{
   async function proofWithSizedSource(file,bytes) {
@@ -356,7 +393,7 @@ function futureExecutionWorld({trustedFuture=true,acceptance='accepted',critical
   const texts={'scripts/ci/clued-gated-proof-profiles.json':JSON.stringify(profiles),
     'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(roleSpecs),
     'scripts/ci/clued-work-admission.mjs':'trusted gate','scripts/ci/clued-docs-only.py':'trusted classifier',
-    'scripts/ci/test_clued_docs_only.py':'trusted classifier tests','config/merge-admission-policy.json':'trusted policy'};
+    'scripts/ci/test_clued_docs_only.py':'trusted classifier tests','config/merge-admission-policy.json':'trusted policy',...publisherFixtureTexts};
   w.snapshot.files=Object.fromEntries(Object.entries(texts).map(([name,text])=>[name,workflowBlob(text)]));
   const futureText=entry.source_profile.source_yaml+(actualSourceDiffers?'\n# unaccepted bytes\n':''),futureBlob=workflowBlob(futureText);
   const originalProfile=profiles.workflows[file],activeEntry={path:file,sha:originalProfile.workflow_blob,type:'file'};
@@ -483,8 +520,8 @@ function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) 
   const texts={'scripts/ci/clued-gated-proof-profiles.json':JSON.stringify(profiles),
     'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(roleSpecs),'scripts/ci/clued-work-admission.mjs':'trusted gate',
     'scripts/ci/clued-docs-only.py':'trusted classifier','scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
-    'config/merge-admission-policy.json':'trusted policy'};
-  const snapshot={tip,checkout:tip,profiles,roleSpecs,workflows,
+    'config/merge-admission-policy.json':'trusted policy',...publisherFixtureTexts};
+  const snapshot={tip,checkout:tip,profiles,roleSpecs,publisherSources:structuredClone(emptyPublisherSources),workflows,
     files:Object.fromEntries(Object.entries(texts).map(([name,text])=>[name,workflowBlob(text)]))};
   const all={...profiles.workflows,...Object.fromEntries(profiles.future_workflows.map(entry=>[entry.file,entry.source_profile]))};
   const changedFiles=[...profiles.future_workflows.map(entry=>entry.file),'scripts/ci/clued-gated-proof-profiles.json',
