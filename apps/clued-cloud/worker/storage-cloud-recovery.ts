@@ -12,6 +12,7 @@ import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
 import { recoveryDiagnostic, type RecoveryDiagnostic, type RecoveryStage } from "./storage-recovery-diagnostics";
 import { createStorageRecoveryReview } from "./storage-recovery-review";
+import { createStorageCurrentRegistrationRecovery } from "./storage-registration-recovery";
 
 type Data = Record<string, unknown>;
 type Reference = { connection_id: string; job_id: string };
@@ -51,6 +52,7 @@ export async function createStorageCloudRecovery(config: {
   timeout_ms?: number;
   verified?: { descriptor: Data; rpc: (input: Data) => Promise<Data> };
   absent?: { rpc: (input: Data) => Promise<Data> };
+  current_registration?: { rpc: (input: Data) => Promise<Data> };
   /** Report an expiring credential as credential_expiring instead of inspection_required. */
   report_expiring?: boolean;
   /** Same-job diagnostic persistence only; never dispatches a storage effect. */
@@ -60,11 +62,12 @@ export async function createStorageCloudRecovery(config: {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id) || typeof config.rpc !== "function" ||
       !Number.isInteger(timeout) || timeout < 1 || timeout > 60000 ||
       (config.absent !== undefined && (!config.verified || typeof config.absent?.rpc !== "function")) ||
-      (config.report_diagnostic !== undefined && typeof config.report_diagnostic !== "function")) throw denied();
+      (config.report_diagnostic !== undefined && typeof config.report_diagnostic !== "function") ||
+      (config.current_registration !== undefined && (!config.verified || typeof config.current_registration.rpc !== "function"))) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
   const fetcher = createStorageFetch(config.fetch);
   const clock = config.clock ?? Date.now;
-  return Object.freeze({ async run(reference: Reference) {
+  const runOriginal = async (reference: Reference) => {
     let pinned: Reference;
     try {
       if (!object(reference) || Object.keys(reference).length !== 2 ||
@@ -370,5 +373,23 @@ export async function createStorageCloudRecovery(config: {
       // never treat failure/timeout as permission to repeat its provider effect.
       return await failure(error);
     } finally { clearTimeout(timer); abort.abort(); }
+  };
+  const registration = config.current_registration ? await createStorageCurrentRegistrationRecovery({ client_id: config.client_id,
+    vault: config.vault, rpc: config.current_registration.rpc, fetch: config.fetch, clock }) : null;
+  return Object.freeze({ async run(reference: Reference) {
+    const result = await runOriginal(reference);
+    const d = config.verified?.descriptor;
+    if (!registration || !d || !object(d.mutation) || !object(d.attempt) || !uuid.test(String(d.intent_id)) ||
+        d.connection_id !== reference?.connection_id || d.job_id !== reference?.job_id ||
+        d.mutation.target_kind !== "directory" || !["delete", "restore"].includes(String(d.mutation.operation)) ||
+        d.attempt.contract !== "clued.storage-destructive-attempt/1" ||
+        !["inspection_required", "attention_required", "credential_expiring"].includes(String(result.status))) return result;
+    try { return await registration.run(reference, String(d.intent_id)); }
+    catch (error) {
+      // Original result/diagnostic stays authoritative after a denied current
+      // qualification. This never manufactures success or a provider retry.
+      if (error instanceof Error && error.message === EXPIRING) return { ...result, status: "credential_expiring" };
+      return result;
+    }
   }});
 }

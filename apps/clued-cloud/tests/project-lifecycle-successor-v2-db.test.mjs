@@ -27,6 +27,7 @@ const storageRecoveryCoverageMigration = '20261017053535_storage_recovery_covera
 const storageRecoveryReaderMigration = '20261017060438_storage_recovery_read_connection_v1.sql';
 const storageRecoveryNativeMigration = '20261017063317_storage_recovery_native_coverage_v1.sql';
 const storageLegacyDirectoryMigration = '20261017074657_storage_legacy_directory_recovery_v1.sql';
+const storageCurrentRegistrationMigration = '20261017102500_storage_registration_reconcile_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -86,7 +87,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      name !== storageLegacyDirectoryMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -602,6 +603,43 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       await assertGatewayCloseoutBoundary(admin);
       for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
         assert.equal((await admin.query("select has_function_privilege($1,'clued_private.storage_legacy_directory_reconcile_v1(text,jsonb)','execute') allowed", [role])).rows[0].allowed, false);
+    });
+    await t.test('current registration installs after its actual issuer, master and legacy dependencies with unchanged callers', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageCurrentRegistrationMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      const names = ['storage_registration_program_authority_v1', 'storage_registration_artifact_permitted_v1',
+        'storage_current_registration_node_v1', 'storage_current_registration_plan_v1', 'storage_current_registration_observation_v1',
+        'storage_current_registration_reconcile_v1', 'storage_current_registration_status_v1',
+        'storage_scheduled_before_current_registration_v1', 'ii_pub_clued_storage_scheduled_recovery_v2',
+        'storage_job_status_before_current_registration_v1', 'storage_conflict_public_before_current_registration_v1',
+        'storage_job_status_v1', 'storage_conflict_public_status_v1', 'storage_conflict_exit_allowed_v1', 'storage_conflict_artifact_guard_v1'];
+      const helpers = (await admin.query(`select proname,oid::regprocedure::text signature,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig from pg_proc
+        where pronamespace='clued_private'::regnamespace and proname=any($1::text[]) order by proname`, [names])).rows;
+      assert.deepEqual(helpers.map(row => row.proname), [...names].sort());
+      for (const helper of helpers) {
+        assert.equal(helper.owner, 'postgres', helper.signature);
+        // This private immutable node projection is an invoker, while the
+        // authority/registry helpers remain definers. Both stay owner-only.
+        assert.equal(helper.prosecdef, helper.proname !== 'storage_current_registration_node_v1', helper.signature);
+        assert.deepEqual(helper.proconfig, ['search_path=""'], helper.signature);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false, helper.signature+' '+role);
+      }
+      for (const table of ['clued_private.storage_current_registration_results_v1', 'clued_private.storage_registration_artifact_permits_v1']) {
+        const catalog = (await admin.query(`select pg_get_userbyid(c.relowner) owner,c.relrowsecurity,
+          not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where a.grantee<>c.relowner or a.grantor<>c.relowner) owner_only,
+          not exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and a.attacl is not null) no_column_grants,
+          not exists(select 1 from pg_policy p where p.polrelid=c.oid) no_policies
+          from pg_class c where c.oid=$1::regclass`, [table])).rows[0];
+        assert.deepEqual(catalog, {owner:'postgres',relrowsecurity:true,owner_only:true,no_column_grants:true,no_policies:true}, table);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+          assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed", [role, table])).rows[0].allowed, false, table+' '+role);
+          assert.equal((await admin.query("select has_any_column_privilege($1,$2,'SELECT,INSERT,UPDATE,REFERENCES') allowed", [role, table])).rows[0].allowed, false, table+' '+role);
+        }
+      }
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

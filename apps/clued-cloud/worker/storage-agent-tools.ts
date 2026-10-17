@@ -406,7 +406,7 @@ export function storageAgentResult(value: unknown, input: Data): Data {
   const projected = Object.fromEntries(["job_id", "connection_id", "request_digest", "status", "intent_id", "receipt_id", "execution_permitted", "replayed", "reason_code"]
     .filter(key => key in value).map(key => [key, value[key]]));
   if (value.reason_code === "PROVIDER_RESULT_RECONCILED") {
-    if (value.status !== "attention_required" || !["accepted_current_state", "abandoned_registration", "automatically_reconciled_before"].includes(String(value.resolution)) ||
+    if (value.status !== "attention_required" || !["accepted_current_state", "abandoned_registration", "automatically_reconciled_before", "automatically_registered_current_state"].includes(String(value.resolution)) ||
         !uuid(value.resolution_receipt_id) || !uuid(value.source_receipt_id) || value.resolution_receipt_id === value.source_receipt_id) throw new Error("storage_job_response_invalid");
     Object.assign(projected, { resolution: value.resolution, resolution_receipt_id: value.resolution_receipt_id, source_receipt_id: value.source_receipt_id });
   }

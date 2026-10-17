@@ -40,6 +40,23 @@ test("automatic resolution exposes a distinct receipt and routine pending does n
   assert.equal(normal.status, "attention_required");assert.equal(normal.resolution_receipt_id, receipt);assert.match(normal.hint, /not declared successful/);
 });
 
+test("current qualification has its own strict automatic resolution rather than old-operation success", () => {
+  const ref = reference(), source = randomUUID(), receipt = randomUUID();
+  const resolved = { ...ref, status: "resolved", resolution: "automatically_registered_current_state", automatic_recovery: "resolved",
+    receipt_id: receipt, source_receipt_id: source, base_version: 7, execution_permitted: false };
+  const listed = value => storageRecoveryListResult({ status: "ok", connection_id: ref.connection_id, execution_permitted: false, jobs: [value] }, ref.connection_id).jobs[0];
+  assert.equal(listed(resolved).resolution, resolved.resolution);assert.equal(listed(resolved).review_available, false);
+  for (const invalid of [{ ...resolved, receipt_id: source }, { ...resolved, automatic_recovery: undefined },
+    { ...resolved, base_version: 0 }]) {
+    assert.throws(() => listed(invalid), /storage_recovery_response_invalid/);
+  }
+  const normal = storageAgentResult({ ...ref, status: "attention_required", request_digest: "a".repeat(64), intent_id: randomUUID(), receipt_id: source,
+    reason_code: "PROVIDER_RESULT_RECONCILED", resolution: resolved.resolution, resolution_receipt_id: receipt,
+    source_receipt_id: source, execution_permitted: false }, ref);
+  assert.equal(normal.status, "attention_required");assert.equal(normal.resolution, resolved.resolution);
+  assert.match(normal.hint, /not declared successful/);
+});
+
 test("closed diagnostics preserve failure categories and never copy exception text", () => {
   for (const [message, reason] of [["DRIVE_POSTCONDITION_REVISION_UNCHANGED", "REVISION_UNCHANGED"],
     ["DRIVE_POSTCONDITION_CONTENT_MISMATCH", "CONTENT_MISMATCH"], ["DRIVE_METADATA_TIMEOUT", "PROVIDER_TIMEOUT"]]) {
