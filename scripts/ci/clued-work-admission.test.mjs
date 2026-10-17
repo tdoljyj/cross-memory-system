@@ -58,6 +58,8 @@ import {
   checkNamesPullRequest,
   SAME_EVENT_MS,
   gateFindings,
+  PRODUCTION_PUBLISHER_WORKFLOW,
+  registeredPublisherGatedSuccessor,
   jobIsHosted,
   jobTimeout,
   rerunAttempt,
@@ -1066,6 +1068,87 @@ const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-dat
   .replace("needs: [admission-gate, push-reuse]", "needs: admission-gate")
   .replace("(!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((", "((")
   .replace("github.actor == github.repository_owner)))\n    name:", "github.actor == github.repository_owner))\n    name:");
+
+function publisherTransitionFixture() {
+  const base = "name: publisher-transition-fixture\non: workflow_dispatch\njobs:\n  release:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    environment: clued-release\n    steps:\n      - run: true\n";
+  const gateJob = workflowJobs(g4).find((job) => job.name === "admission-gate").lines.join("\n");
+  const head = `name: publisher-transition-fixture\non: workflow_dispatch\njobs:\n${gateJob}\n  release:\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (github.ref == 'refs/heads/main')\n    runs-on: [self-hosted, Linux, X64, clued, production-publisher]\n    timeout-minutes: 45\n    environment: clued-release\n    steps:\n      - run: true\n`;
+  const source = (text) => {
+    const bytes = Buffer.from(text);
+    return { source_yaml: text, source_sha256: sha256Hex(text), primary_ids: ["release"],
+      workflow_blob: crypto.createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex") };
+  };
+  const profiles = { schema: "clued.gated-proof-profiles/2", workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: {
+    registration_status: "registered", ...source(base), accepted_sources: [source(head)],
+  } } };
+  return { base, head, profiles, source };
+}
+
+test("publisher transition: only the exact registered old/new sources reach the existing canonical gate checks", () => {
+  const { base, head, profiles } = publisherTransitionFixture();
+  const registeredPublisherTransition = registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" }, head, base, profiles);
+  assert.equal(registeredPublisherTransition, true);
+  assert.deepEqual(gateFindings(head, base, { registeredPublisherTransition }), []);
+  assert.ok(gateFindings(head, base).includes("self_hosted_job_switched_ungated:release"), "there is no implicit conversion");
+  assert.equal(registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" }, head.replaceAll("\n", "\r\n"), base, profiles), true);
+});
+
+test("publisher transition: unknown sources, other paths, ambiguous versions and malformed registrations stay refused", () => {
+  const { base, head, profiles, source } = publisherTransitionFixture();
+  const field = profiles.workflows[PRODUCTION_PUBLISHER_WORKFLOW];
+  const variants = [
+    ["missing", null],
+    ["unknown schema", { ...profiles, schema: "unrecognized-fixture" }],
+    ["not registered", { workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: { ...field, registration_status: "candidate" } } }],
+    ["no predecessor", { workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: { ...source(head), registration_status: "registered", accepted_sources: [] } } }],
+    ["duplicate version", { workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: { ...field, accepted_sources: [source(head), source(head)] } } }],
+    ["wrong sha256", { workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: { ...field, accepted_sources: [{ ...source(head), source_sha256: "0".repeat(64) }] } } }],
+    ["wrong Git blob", { workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: { ...field, accepted_sources: [{ ...source(head), workflow_blob: "0".repeat(40) }] } } }],
+    ["wrong primary", { workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: { ...field, accepted_sources: [{ ...source(head), primary_ids: ["other"] }] } } }],
+  ];
+  for (const [label, value] of variants) {
+    const registry = value === null ? null : { ...profiles, ...value };
+    assert.equal(registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" }, head, base, registry), false, label);
+  }
+  assert.equal(registeredPublisherGatedSuccessor({ filename: ".github/workflows/other.yml", status: "modified" }, head, base, profiles), false);
+  assert.equal(registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" }, `${head}\n`, base, profiles), false);
+  assert.equal(registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" }, head, base.replace("true", "false"), profiles), false);
+  assert.equal(registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" }, head, null, profiles), false);
+  for (const status of ["added", "copied", "renamed", "removed"]) {
+    assert.equal(registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, previous_filename: PRODUCTION_PUBLISHER_WORKFLOW, status }, head, base, profiles), false, status);
+  }
+});
+
+test("publisher transition: registration cannot excuse a changed gate or an ungated release job", () => {
+  const { base, head, profiles, source } = publisherTransitionFixture();
+  for (const [label, altered, expected] of [
+    ["changed gate", head.replace("node-version: 24.19.0", "node-version: 24"), "admission_gate_changed"],
+    ["missing needs", head.replace("    needs: admission-gate\n", ""), "job_not_gated:release"],
+    ["missing condition", head.replace("needs.admission-gate.outputs.admitted == 'true' &&", "true &&"), "job_condition_not_gated:release"],
+  ]) {
+    const registered = { ...profiles, workflows: { [PRODUCTION_PUBLISHER_WORKFLOW]: { ...profiles.workflows[PRODUCTION_PUBLISHER_WORKFLOW], accepted_sources: [source(altered)] } } };
+    const registeredPublisherTransition = registeredPublisherGatedSuccessor({ filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" }, altered, base, registered);
+    assert.equal(registeredPublisherTransition, true, `${label}: source registration and gate validity are separate`);
+    assert.ok(gateFindings(altered, base, { registeredPublisherTransition }).includes(expected), label);
+  }
+});
+
+test("publisher transition: workflow API data and caller workspace do not supply a trusted registration", async () => {
+  const { base, head } = publisherTransitionFixture();
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    assert.ok(String(url).includes("/contents/.github/workflows/clued-cloud-production-release.yml?ref="));
+    const text = String(url).endsWith(`?ref=${HEAD}`) ? head : base;
+    return new Response(JSON.stringify({ content: Buffer.from(text).toString("base64"), encoding: "base64" }), { status: 200 });
+  };
+  const result = await workflowFindings(fetchImpl, { GITHUB_WORKSPACE: "untrusted-profile-fixture" }, "o/r", [
+    { filename: PRODUCTION_PUBLISHER_WORKFLOW, status: "modified" },
+    { filename: "scripts/ci/clued-gated-proof-profiles.json", status: "modified" },
+  ], HEAD, BASE);
+  assert.ok(result.gate.some((finding) => finding.endsWith("self_hosted_job_switched_ungated:release")));
+  assert.equal(calls.length, 2, "only the workflow's exact head/base are fetched; never the PR's profiles");
+});
 
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   // No pinned list (see "gate job digest"); the workflow this file reads below must stay gated.
