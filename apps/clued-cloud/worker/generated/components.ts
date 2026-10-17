@@ -16,13 +16,14 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.components": "1.0.2",
   "script.update-clued-skills": "1.0.1",
   "script.memory-sync": "1.0.1",
-  "script.gated-proof-runtime": "1.0.0",
+  "script.gated-proof-runtime": "1.0.1",
   "script.handover-external-driver": "1.0.2",
   "script.handover-external-source-check": "1.0.1",
   "script.handover-external-journal": "1.0.1",
   "script.handover-external-register": "1.0.1",
   "script.workflow-source-profile": "1.0.0",
   "script.kooyumi-plugin-bundle": "1.0.1",
-  "script.storage-google-redirect-cutover": "1.0.0"
+  "script.storage-google-redirect-cutover": "1.0.0",
+  "script.storage-zip": "1.0.0"
 };
 export const MCP_SERVER_VERSION = "0.8.4";

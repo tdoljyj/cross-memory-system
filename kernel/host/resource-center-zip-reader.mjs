@@ -75,6 +75,8 @@ function u64(dv, offset) {
 }
 
 const utf8 = new TextDecoder("utf-8", { fatal: false });
+const utf8Strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8_FLAG = 0x0800;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -158,7 +160,8 @@ function parseZip64Extra(extra, need) {
 }
 
 /** Open an archive and parse its central directory. Returns a reader with `entries`,
- * `listEntries({ offset, limit })` and `readEntry(indexOrName, { maxBytes })`. */
+ * `listEntries({ offset, limit })`, `readEntry(indexOrName, { maxBytes })` and the opt-in
+ * upload interoperability check `validateEntryName(indexOrName)`. */
 export async function openZip(input, { limits: overrides } = {}) {
   const limits = normaliseLimits(overrides);
   const source = makeSource(input, limits);
@@ -209,6 +212,7 @@ export async function openZip(input, { limits: overrides } = {}) {
   const cd = await source.read(cdOffset, cdSize);
   const dv = view(cd);
   const entries = [];
+  const nameMetadata = [];
   let at = 0;
   for (let index = 0; index < totalEntries; index += 1) {
     if (at + CENTRAL_SIZE > cd.byteLength || dv.getUint32(at, true) !== SIG_CENTRAL) invalid(`central header ${index}`);
@@ -224,6 +228,7 @@ export async function openZip(input, { limits: overrides } = {}) {
     if (nameLength > limits.maxNameBytes) limit(`entry name ${nameLength} bytes`);
     const rawName = cd.subarray(nameStart, extraStart);
     const extra = cd.subarray(extraStart, extraStart + extraLength);
+    const rawComment = cd.subarray(extraStart + extraLength, next);
     const need = { uncompressed: uncompressed === U32_MAX, compressed: compressed === U32_MAX, offset: localOffset === U32_MAX };
     let entryZip64 = false;
     if (need.uncompressed || need.compressed || need.offset || diskStart === U16_MAX) {
@@ -252,12 +257,14 @@ export async function openZip(input, { limits: overrides } = {}) {
       local_header_offset: localOffset,
       flags,
     }));
+    nameMetadata.push({ rawName, rawComment });
     at = next;
   }
 
   const byName = new Map();
   for (const entry of entries) byName.set(entry.name, byName.has(entry.name) ? null : entry);
   let consumed = 0;
+  const validatedLocalHeaders = new Map();
 
   function listEntries({ offset = 0, limit: pageSize = limits.listingPageSize } = {}) {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new RangeError("offset must be a non-negative integer");
@@ -282,6 +289,35 @@ export async function openZip(input, { limits: overrides } = {}) {
     return fail("entry_not_found");
   }
 
+  /** Opt-in upload check. Existing reads retain their legacy filename decoding. Non-ASCII
+   * names must explicitly use UTF-8 in both headers for Windows-compatible downloads;
+   * a Unicode path extra field alone cannot provide that guarantee. Never rewrites bytes. */
+  async function validateEntryName(ref) {
+    const entry = resolve(ref);
+    const { rawName, rawComment } = nameMetadata[entry.index];
+    if (!(entry.flags & UTF8_FLAG) && rawName.some(byte => byte >= 0x80)) invalid("non-ASCII entry name without the UTF-8 flag");
+    if (entry.flags & UTF8_FLAG) {
+      // Bit 11 governs the entry comment as well as its name. Setting it over arbitrary
+      // comment bytes would create a second encoding error rather than repair a package.
+      try { utf8Strict.decode(rawName); utf8Strict.decode(rawComment); }
+      catch { invalid("entry name or comment is not valid UTF-8"); }
+    }
+    if (validatedLocalHeaders.has(entry.index)) return true;
+    const headerLength = LOCAL_SIZE + rawName.byteLength;
+    if (entry.local_header_offset + headerLength > cdOffset) invalid("local entry name outside the data area");
+    const header = await source.read(entry.local_header_offset, headerLength);
+    const hv = view(header);
+    if (hv.getUint32(0, true) !== SIG_LOCAL) invalid("local header signature");
+    const flags = hv.getUint16(6, true), method = hv.getUint16(8, true);
+    if ((flags & UTF8_FLAG) !== (entry.flags & UTF8_FLAG)) invalid("local and central UTF-8 flags differ");
+    if (hv.getUint16(26, true) !== rawName.byteLength ||
+      rawName.some((byte, index) => byte !== header[LOCAL_SIZE + index])) invalid("local and central entry names differ");
+    const dataStart = entry.local_header_offset + headerLength + hv.getUint16(28, true);
+    if (dataStart + entry.compressed_size > cdOffset) invalid("entry data outside the data area");
+    validatedLocalHeaders.set(entry.index, { flags, method, dataStart });
+    return true;
+  }
+
   async function readEntry(ref, { maxBytes } = {}) {
     const entry = resolve(ref);
     if (entry.directory) fail("entry_not_found", "directory entry");
@@ -293,13 +329,18 @@ export async function openZip(input, { limits: overrides } = {}) {
     if (entry.compressed_size > limits.maxEntryCompressedBytes) limit("compressed entry too large");
     if (entry.method === 0 && entry.compressed_size !== entry.uncompressed_size) invalid("stored entry size mismatch");
 
-    const header = await source.read(entry.local_header_offset, LOCAL_SIZE);
-    const hv = view(header);
-    if (hv.getUint32(0, true) !== SIG_LOCAL) invalid("local header signature");
-    const localFlags = hv.getUint16(6, true);
+    let local = validatedLocalHeaders.get(entry.index);
+    if (!local) {
+      const header = await source.read(entry.local_header_offset, LOCAL_SIZE);
+      const hv = view(header);
+      if (hv.getUint32(0, true) !== SIG_LOCAL) invalid("local header signature");
+      local = { flags: hv.getUint16(6, true), method: hv.getUint16(8, true),
+        dataStart: entry.local_header_offset + LOCAL_SIZE + hv.getUint16(26, true) + hv.getUint16(28, true) };
+    }
+    const localFlags = local.flags;
     if ((localFlags & 0x1) !== 0 || (localFlags & 0x40) !== 0) fail("entry_encrypted");
-    if (hv.getUint16(8, true) !== entry.method) invalid("local and central method differ");
-    const dataStart = entry.local_header_offset + LOCAL_SIZE + hv.getUint16(26, true) + hv.getUint16(28, true);
+    if (local.method !== entry.method) invalid("local and central method differ");
+    const dataStart = local.dataStart;
     if (dataStart + entry.compressed_size > cdOffset) invalid("entry data outside the data area");
 
     const compressed = await source.read(dataStart, entry.compressed_size);
@@ -319,6 +360,7 @@ export async function openZip(input, { limits: overrides } = {}) {
     entries: Object.freeze(entries),
     listEntries,
     readEntry,
+    validateEntryName,
     get consumedBytes() { return consumed; },
   });
 }

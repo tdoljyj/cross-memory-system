@@ -203,7 +203,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -211,7 +211,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "7b84491a02edccc1e8de0a257a8f6b51428c8308410977423f210a8737b33d72",
+      "content_sha256": "9be93c9acc9bd850d6815ff7b660f98fe3e89969644b33ffaa966c52e2aed978",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -341,6 +341,20 @@
         "file": "scripts/storage-google-redirect-cutover.mjs",
         "pattern": "export const VERSION = '{version}';"
       }
+    },
+    {
+      "id": "script.storage-zip",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Prepare and validate Unicode ZIP names before governed storage upload.",
+      "root": ".",
+      "files": [
+        "scripts/storage/README.md",
+        "scripts/storage/package_zip.py",
+        "tests/test_storage_zip.py",
+        "apps/clued-cloud/tests/storage-zip-packaging.test.mjs"
+      ],
+      "content_sha256": "504084360302d49a2f6a4dc803fd6f83e9abfd111da11c8157938623f8baf09c"
     }
   ]
 }

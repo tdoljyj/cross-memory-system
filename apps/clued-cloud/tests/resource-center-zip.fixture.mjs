@@ -19,7 +19,7 @@ class Writer {
   out() { const o = new Uint8Array(this.length); let at = 0; for (const p of this.parts) { o.set(p, at); at += p.byteLength; } return o; }
 }
 
-/** entries: [{ name, data, method = 8, rawName?, lie?: { uncompressed, compressed, crc, flags, method, localFlags },
+/** entries: [{ name, data, method = 8, rawName?, localRawName?, rawComment?, extra?, lie?: { uncompressed, compressed, crc, flags, method, localFlags },
  *   zip64?: bool (sentinel sizes + Zip64 extra), payload?: Uint8Array (override compressed bytes) }]
  * options: { zip64Eocd, eocd?: { entries, cdSize, cdOffset }, zip64Record?: { entries, cdSize }, comment } */
 export async function buildZip(entries, options = {}) {
@@ -31,6 +31,9 @@ export async function buildZip(entries, options = {}) {
     const payload = entry.payload ?? (method === 8 ? await deflateRaw(data) : data);
     const lie = entry.lie ?? {};
     const nameBytes = entry.rawName ?? enc.encode(entry.name);
+    const localNameBytes = entry.localRawName ?? nameBytes;
+    const extraBytes = entry.extra ?? new Uint8Array(0);
+    const commentBytes = entry.rawComment ?? new Uint8Array(0);
     const flags = lie.flags ?? 0x0800;
     const crc = lie.crc ?? crc32(data);
     const compressed = lie.compressed ?? payload.byteLength;
@@ -38,18 +41,19 @@ export async function buildZip(entries, options = {}) {
     const offset = w.length;
     w.u32(0x04034b50); w.u16(20); w.u16(lie.localFlags ?? flags); w.u16(lie.method ?? method); w.u16(0); w.u16(0);
     w.u32(crc); w.u32(entry.zip64 ? 0xffffffff : compressed); w.u32(entry.zip64 ? 0xffffffff : uncompressed);
-    w.u16(nameBytes.byteLength); w.u16(0); w.bytes(nameBytes); w.bytes(payload);
-    central.push({ nameBytes, flags, method: lie.method ?? method, crc, compressed, uncompressed, offset, zip64: entry.zip64 });
+    w.u16(localNameBytes.byteLength); w.u16(extraBytes.byteLength); w.bytes(localNameBytes); w.bytes(extraBytes); w.bytes(payload);
+    central.push({ nameBytes, extraBytes, commentBytes, flags, method: lie.method ?? method, crc, compressed, uncompressed, offset, zip64: entry.zip64 });
   }
   const cdOffset = w.length;
   for (const c of central) {
     const extra = new Writer();
     if (c.zip64) { extra.u16(0x0001); extra.u16(24); extra.u64(c.uncompressed); extra.u64(c.compressed); extra.u64(c.offset); }
+    extra.bytes(c.extraBytes);
     const extraBytes = extra.out();
     w.u32(0x02014b50); w.u16(45); w.u16(c.zip64 ? 45 : 20); w.u16(c.flags); w.u16(c.method); w.u16(0); w.u16(0);
     w.u32(c.crc); w.u32(c.zip64 ? 0xffffffff : c.compressed); w.u32(c.zip64 ? 0xffffffff : c.uncompressed);
-    w.u16(c.nameBytes.byteLength); w.u16(extraBytes.byteLength); w.u16(0); w.u16(0); w.u16(0); w.u32(0);
-    w.u32(c.zip64 ? 0xffffffff : c.offset); w.bytes(c.nameBytes); w.bytes(extraBytes);
+    w.u16(c.nameBytes.byteLength); w.u16(extraBytes.byteLength); w.u16(c.commentBytes.byteLength); w.u16(0); w.u16(0); w.u32(0);
+    w.u32(c.zip64 ? 0xffffffff : c.offset); w.bytes(c.nameBytes); w.bytes(extraBytes); w.bytes(c.commentBytes);
   }
   const cdSize = w.length - cdOffset;
   const count = entries.length;
