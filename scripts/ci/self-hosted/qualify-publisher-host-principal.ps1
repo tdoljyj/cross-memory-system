@@ -566,4 +566,3 @@ try {
     try { Write-ProbeResult $failure } catch { [Console]::Error.WriteLine('HOST_PRINCIPAL_PROBE_REFUSED') }
     exit 20
 }
-
