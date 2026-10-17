@@ -373,9 +373,32 @@ function inspectOwned(docker, kind, resource, project) {
     ownName(resource.name, project) && (kind !== 'container' || typeof actual.running === 'boolean'), 'fresh_cleanup_identity');
   return actual;
 }
+// Retain only fixed child-process metadata. Docker messages, stdout/stderr,
+// arguments and arbitrary error properties may contain private material.
+function safeChildFailure(error) {
+  try {
+    const ownValue = (input, key) => {
+      if (!input || !['object', 'function'].includes(typeof input)) return undefined;
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+    };
+    const input = ownValue(error, 'child_failure') ?? error;
+    const status = ownValue(input, 'status'), signal = ownValue(input, 'signal'), code = ownValue(input, 'code');
+    const detail = {};
+    if (Number.isInteger(status) && status >= 0 && status <= 255) detail.status = status;
+    if (['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(signal)) detail.signal = signal;
+    if (['ETIMEDOUT', 'ENOENT', 'EACCES', 'ECONNRESET', 'EPIPE', 'ENOBUFS',
+      'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(code)) detail.code = code;
+    return Object.keys(detail).length ? detail : undefined;
+  } catch { return undefined; } // An accessor or Proxy cannot replace the fixed cleanup error.
+}
 const cleanupAction = (code, action) => {
   try { return action(); }
-  catch (error) { throw new Error(/^fresh_[a-z_]+$/.test(error.message) ? error.message : code); }
+  catch (error) {
+    const failure = new Error(/^fresh_[a-z_]+$/.test(error.message) ? error.message : code);
+    failure.child_failure = safeChildFailure(error);
+    throw failure;
+  }
 };
 
 /** No Supabase global prune, forced removal, name glob deletion or foreign
@@ -407,7 +430,9 @@ export function cleanup(env = process.env, overrides) {
     return result;
   } catch (error) {
     const reason = /^fresh_[a-z_]+$/.test(error.message) ? error.message : 'fresh_cleanup_unavailable';
-    fs.writeFileSync(markerPath(env), JSON.stringify({ ...marker, cleanup: { status: 'failed', reason_code: reason } }) + '\n');
+    const child = safeChildFailure(error);
+    fs.writeFileSync(markerPath(env), JSON.stringify({ ...marker, cleanup: { status: 'failed', reason_code: reason,
+      ...(child ? { child_failure: child } : {}) } }) + '\n');
     throw new Error(reason);
   }
 }
