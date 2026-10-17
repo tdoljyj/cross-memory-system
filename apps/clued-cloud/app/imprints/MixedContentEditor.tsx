@@ -8,7 +8,7 @@ import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-s
 import { extractionInput, extractionTexts, extractionStatus, issueExtraction, prepareExtraction, promoteExtraction, promotionInput,
   type ExtractionCandidate, type ExtractionConfirmation } from "./imprint-extraction";
 
-type Props = { record: ImprintRecord; selection: object; owner: string; rpc: NativeRpc; locale: Locale; contextId?: string;
+type Props = { record: ImprintRecord; selection: object; owner: string; rpc: NativeRpc; locale: Locale; contextId?: string; scopeLabel?: string;
   onCommitted: (message: string) => void; onRelated: (id: string, kind?: "canonical" | "development", association?: AssociationRead) => void };
 export default function MixedContentEditor(props: Props) {
   // A changed session/selection/source gets an entirely new interaction. Late
@@ -16,7 +16,7 @@ export default function MixedContentEditor(props: Props) {
   const boundary = useMemo(() => ({ record: props.record, selection: props.selection, owner: props.owner, key: crypto.randomUUID() }), [props.record, props.selection, props.owner]);
   return extractionTexts(props.record).length ? <ExtractionSession key={boundary.key} {...props} /> : null;
 }
-function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRelated }: Props) {
+function ExtractionSession({ record, rpc, locale, contextId, scopeLabel, onCommitted, onRelated }: Props) {
   const zh = locale === "zh-CN", texts = extractionTexts(record), alive = useRef(true), inFlight = useRef(false);
   useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [slot, setSlot] = useState(texts[0].slot), text = texts.find(value => value.slot === slot)!;
@@ -83,6 +83,10 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
   }
   const mutation = confirmation && object(confirmation.confirmation_view.mutation) ? confirmation.confirmation_view.mutation : null;
   const typeFields = mutation && object(mutation.type_fields) ? mutation.type_fields : null;
+  const confirmedScope = confirmation ? String(confirmation.confirmation_view.scope) : "";
+  const confirmedScopeLabel = scopeLabel && confirmedScope === record.scope ? scopeLabel
+    : confirmedScope === "global" ? (zh ? "个人记录" : "Personal records") : confirmedScope === "profile" ? (zh ? "个人资料" : "Profile")
+      : confirmedScope.startsWith("project:") ? `${zh ? "项目" : "Project"} · ${confirmedScope.slice(8)}` : zh ? "范围待核对" : "Scope requires review";
   return <details className="imprints-editor"><summary>{zh ? "从原文提取任务或决策" : "Extract tasks or decisions from the original"}</summary>
     <p>{zh ? "逐条核对片段，再确认是否另建任务或决策。说明文字继续保留在原文；已有条目可用上方“查找并关联已有条目”。" : "Review each fragment before creating a task or decision. Explanation stays in the original. Use Find and associate above for existing records."}</p>
     {texts.length > 1 && <label>{zh ? "提取哪段正文" : "Text to review"}<select value={slot} disabled={busy || sourceLocked} onChange={event => { setSlot(event.target.value as typeof slot); reset(); }}>{texts.map(value => <option key={value.slot} value={value.slot}>{value.slot}</option>)}</select></label>}
@@ -99,7 +103,7 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
       {!confirmation && (!candidate || candidate.candidate_status === "pending") && <button type="button" disabled={busy || (fragment.kind === "task" ? !bucket : !rationale.trim()) || [...fragment.source.text].length > 300} onClick={() => void review()}>{zh ? "准备候选并核对正式条目" : "Prepare candidate and review the formal record"}</button>}
     </div>}
     {confirmation && mutation && <section aria-label={zh ? "核对将生成的正式条目" : "Review the formal record to create"}><h5>{String(mutation.title)}</h5><pre className="imprints-content">{String(mutation.content)}</pre>
-      <p>{zh ? "性质：" : "Type: "}{confirmation.confirmation_view.record_type === "task" ? zh ? "任务" : "Task" : zh ? "决策" : "Decision"}{" · "}{zh ? "范围：" : "Scope: "}{String(confirmation.confirmation_view.scope)}</p>
+      <p>{zh ? "性质：" : "Type: "}{confirmation.confirmation_view.record_type === "task" ? zh ? "任务" : "Task" : zh ? "决策" : "Decision"}{" · "}{zh ? "范围：" : "Scope: "}{confirmedScopeLabel}</p>
       {typeFields && <p>{fragment?.kind === "task" ? (zh ? "安排：" : "Placement: ") + (zh ? ({ now: "现在", next: "接下来", blocked: "阻塞", later: "以后" } as Record<string,string>)[String(typeFields.execution_bucket)] ?? String(typeFields.execution_bucket) : String(typeFields.execution_bucket)) : (zh ? "理由：" : "Reason: ") + String(typeFields.rationale)}</p>}
       <p>{zh ? "确认后按你的明确表达保存为正式条目；相对时间仍保留原文，截止日期需另行设置。" : "Confirm to save your explicit statement as a formal record. Relative dates stay quoted; set a due date separately."}</p>
       <button type="button" disabled={busy} onClick={() => void confirm()}>{busy ? zh ? "正在核对…" : "Checking…" : zh ? "确认生成正式条目" : "Confirm formal record creation"}</button>
