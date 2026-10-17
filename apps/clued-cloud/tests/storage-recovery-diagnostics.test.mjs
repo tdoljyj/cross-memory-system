@@ -177,6 +177,21 @@ test("Owner recovery listing is bounded, scoped, and strips all private fields",
   assert.throws(() => storageRecoveryListResult({ ...raw, jobs: [raw.jobs[0], raw.jobs[0]] }, ref.connection_id));
 });
 
+test("a validated current read context keeps predecessor job identities and rejects a substituted context", () => {
+  const ref = reference(), context = randomUUID(), receipt = randomUUID();
+  const job = { ...ref, read_connection_id: context, receipt_id: receipt, status: "conflict", execution_permitted: false };
+  const list = value => storageRecoveryListResult({ status: "ok", connection_id: context, execution_permitted: false, jobs: [value] }, context);
+  const projected = list(job).jobs[0];
+  assert.equal(projected.connection_id, ref.connection_id); assert.equal(projected.read_connection_id, context);
+  assert.equal(projected.job_id, ref.job_id); assert.equal(projected.receipt_id, receipt);
+  for (const fields of [{ read_connection_id: randomUUID() }, { read_connection_id: undefined }, { connection_id: "not-a-connection" }])
+    assert.throws(() => list({ ...job, ...fields }));
+  const resolved = { ...job, status: "resolved", resolution: "automatically_reconciled_before", automatic_recovery: "resolved",
+    receipt_id: randomUUID(), source_receipt_id: receipt, base_version: 3 };
+  assert.equal(list(resolved).jobs[0].connection_id, ref.connection_id);
+  assert.equal(list(resolved).jobs[0].read_connection_id, context);
+});
+
 test("incomplete identity exposes only a separately confirmed withdrawal and its exact CAS references", () => {
   const ref = reference(), receipt = randomUUID();
   const job = { ...ref, receipt_id: receipt, status: "conflict", execution_permitted: false, review_available: false,

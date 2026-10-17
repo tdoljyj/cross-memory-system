@@ -444,3 +444,29 @@ Native 的 `resolved` 响应包含精确 connection/job、新 Receipt、不同�
 
 Task `e91a8ebc` 继续承担 legacy/null-snapshot 与非 job I9/I12 完整出口、替代合法只读连接和其余非目录移动目录复核范围；这些不由本增量的测试宣告完成。Task `2e439b59`、`300dcbd0`、`f5609ce7`、`e58aca14` 分别保留 §6 的续传、授权纪元、级别切换及 B 并发范围。已暂停的新域验收与退旧域保持暂停。
 
+## 19. I9 旧模式与非 job 的到期结案覆盖（e91 后继候选）
+
+本增量补齐已接受 I9 的到期分类入口，不改变 I1/I2、I11/I12 或证明含义。资格依据是原 journal 与同 Owner 的原 profile；不把当前账号策略、OAuth 连接是否仍有效或 `authority_snapshot_v2` 非空作为停止旧作业占用的前置条件。
+
+prepared 仍只在到期 60 秒后安全取消，不生成未知效果的隔离。started/uncertain 沿用原候选机制：数据库强制先记 attempt 的路径按原规则判定，其余旧模式与非 job 在 I9 上限后以 conflict 结案并登记对象、路径、名称槽和必要子树；不能因数据库没有 attempt 就断言一个未受控写入者没有产生效果。原 verified proof 优先、回执与 Event 原子性、退避、有界扫描和目录移动/认领例外保留。
+
+同一父目录的 rename 若只漏存 `source_parent_id`，可从不可变原请求的两个路径拥有相同父路径、且原 destination parent 已有身份这两项事实恢复源名称槽。跨父目录或原范围仍不完整时不使用当前登记行猜测；原物理范围保护继续有效。完整范围内的异常不扩大为其他对象的禁用。
+
+I12 的撤销、终止和本地同步效果证明没有被本增量删除或伪造；不把一次普通取消当成这些证明。非 job 的完整原生核对出口、可替代的合法只读连接及剩余目录核对仍属 e91 未完成范围。此节及其数据库测试不表示这些后继或生产发布已完成。
+
+## 20. 原连接退休后的合法只读核验（e91 后继候选）
+
+§4.4 的核验凭证与原写入授权分别校验：原 journal、job、attempt、typed proof、Receipt、Google subject、OAuth client、原 root 与 profile 身份保持；只在当前 Owner 的同 subject/client/profile/root 有合法有效连接时，以该连接做 GET。新连接的 profile、policy、Decision、拒绝记录、凭证和版本必须在服务端重新校验，不继承原写入者、旧 policy generation、旧 auth generation 或执行资格。每次 GET 的有效期下限仍为 60 秒。
+
+服务端返回独立 `clued.storage-recovery-reader/1`，包括实际读取连接、连接/凭证版本、授权 generation、policy 身份/generation/scope digest 与 profile version。Worker 只能用该读取连接的真实 vault AAD 解封；原 job 的 `connection_id` 仍是原历史身份。结算事务重新检查同一 reader，发生撤销、换账号/client、root/client/read deny 或版本变化就拒绝，不改写物理效果。
+
+执行与结算入口按原 client lineage shared guard → job → root 顺序进入，Owner client/read deny 使用同一 lineage 的 exclusive guard，不能在撤销已提交后继续提交旧核验结果。多作业 Native 列表仅作无执行锁的当前资格投影；真实 load/settle 重新完整核对。I9 扫描在已经处理其他候选时不等待新的 lineage/job/root/object 执行锁，忙对象留给后续有界扫描，不能以忙或超时伪造结案。对象锁在候选 Receipt 开始后遇忙时抛出受控异常，使整个候选子事务和 pending Receipt 一并回滚，不能返回一个悬空回执。
+
+before 仍经原双 GET、I2/I9、登记与 I11 出口；新 reader 及实际凭证版本写进独立恢复回执。after 仍经过原完整 typed verifier、原 admission/attempt/Receipt/registry 与语义证明链；reader 不能跳过 proof 形状、原 revision 保留或 CAS。实际 reader 记入不可变持久化 proof，之后按原 `settle_verified` 结案。观察表只在首次 INSERT 时记录 reader，不能事后改写不可变观察。
+
+当前连接的原生作业列表可列出同 Owner、同 profile/subject/client 且当前只读资格仍成立的旧连接作业。每行保留原 `connection_id`、job 和 Receipt；单独的 `read_connection_id` 只绑定当前页面上下文。页面继续只轮询状态，原作业的真正冲突取舍仍发送原 connection/job 与原 CAS；页面刷新、换账号、上下文变化或旧版本消失均作废已展示的选择。列表不向页面公开凭证或 reader 内部授权细节，旧授权不因列出而恢复。
+
+实际 reader 的凭据过期时，恢复程序以原 job 产生续签需求，复用既有 recovery-only 单次 token exchange、凭据 CAS 和回执，不等待该连接碰巧出现新作业或 30 天 idle keepalive。刷新接收者是私有 descriptor 指明的当前 reader，`recovery_job_id` 仍指原作业。服务端重新加载原恢复资格，将原 connection/job/intent/request/attempt 与完整 reader 版本和策略摘要一并钉在 refresh attempt digest；claim 与 commit 均校验这条侧链。当前 delegation 停用、Owner/root/client/read 拒绝或版本变化仍拒绝；不重开旧连接或开启续签，不重试不确定的 token exchange。续签后重新加载原 job descriptor，再走原只读核对与结算。刷新入口也先取得原 client/job 锁，避免先持 root 再等待原 job。
+
+此候选仍须正式源审核、合并、生产迁移与数据库先于页面的验收；非 job I12 的完整 Native 出口和剩余目录复核仍须分别交付与验证。生产 PR864 的应用时间版本 `20261017061135`、源文件 `20261017043050_storage_semantic_recovery_v1.sql` 与文本哈希在台账中如实绑定。不能把候选本地测试、台账补记或已上线 PR864 表述为整个 e91 完成。
+

@@ -44,6 +44,13 @@ export async function createStorageRecoveryReview(config: {
         d.attempt.destination_path !== d.mutation.destination_path)) fail();
     if (revalidate && (!uuid.test(revalidate.observation_id) || revalidate.base_version !== d.version ||
         revalidate.source_receipt_id !== config.source_receipt_id)) fail();
+    const reader = d.recovery_reader;
+    if (reader !== undefined && (!object(reader) || reader.contract !== "clued.storage-recovery-reader/1" ||
+        !uuid.test(String(reader.connection_id)) || reader.credential_version !== d.credential_version ||
+        Object.keys(reader).sort().join(",") !== "auth_generation,connection_id,connection_version,contract,credential_version,policy_generation,policy_id,profile_version,scope_digest" ||
+        !uuid.test(String(reader.policy_id)) || !/^[0-9a-f]{64}$/.test(String(reader.scope_digest)) ||
+        [reader.auth_generation, reader.connection_version, reader.policy_generation, reader.profile_version].some(value => !Number.isSafeInteger(value) || Number(value) < 1))) fail();
+    const readContext = object(reader) ? { recovery_reader: reader } : {};
     const profile = d.profile as Data, mutation = d.mutation as Data, before = d.provider_before as Data, attempt = d.attempt as Data;
     const root = String(profile.managed_root).replace(/\\/g, "/").replace(/\/$/, ""), targetId = String(attempt.provider_file_id);
     const paths = [...new Set([mutation.source_path, mutation.destination_path].filter((value): value is string => typeof value === "string"))];
@@ -57,7 +64,7 @@ export async function createStorageRecoveryReview(config: {
     const bounded = <T>(work: Promise<T>) => Promise.race([work, aborted]);
     try {
       const secret: unknown = JSON.parse(await bounded(vault.open(d.credential_envelope as StorageCredentialEnvelope, {
-        owner_id: String(d.owner_id), connection_id: reference.connection_id, provider: "google-drive", provider_subject: String(d.provider_subject),
+        owner_id: String(d.owner_id), connection_id: object(reader) ? String(reader.connection_id) : reference.connection_id, provider: "google-drive", provider_subject: String(d.provider_subject),
         oauth_client_id: config.client_id, credential_version: Number(d.credential_version),
       })));
       const credential = async () => {
@@ -168,7 +175,7 @@ export async function createStorageRecoveryReview(config: {
       const observation = { observed_at: secondObservedAt, ...second };
       if (automatic) {
         const result = await bounded(config.rpc({ action: "reconcile_before", ...reference, base_version: d.version,
-          source_receipt_id: config.source_receipt_id, credential_version: d.credential_version,
+          source_receipt_id: config.source_receipt_id, credential_version: d.credential_version, ...readContext,
           first_observation: { observed_at: firstObservedAt, ...first }, second_observation: observation }));
         controller.signal.throwIfAborted();
         if (result.connection_id !== reference.connection_id || result.job_id !== reference.job_id || result.intent_id !== d.intent_id ||
@@ -190,7 +197,7 @@ export async function createStorageRecoveryReview(config: {
         fail();
       }
       const result = await bounded(config.rpc({ action: revalidate ? "review_revalidate" : "review_observe", ...reference, base_version: d.version,
-        source_receipt_id: config.source_receipt_id, ...(revalidate ? { observation_id: revalidate.observation_id } : {}), observation }));
+        source_receipt_id: config.source_receipt_id, ...(revalidate ? { observation_id: revalidate.observation_id } : {}), ...readContext, observation }));
       controller.signal.throwIfAborted();
       if (revalidate) {
         if (result.status !== "review_revalidated" || result.connection_id !== reference.connection_id || result.job_id !== reference.job_id ||

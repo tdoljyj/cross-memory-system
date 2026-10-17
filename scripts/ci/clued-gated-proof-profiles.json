@@ -2359,6 +2359,112 @@
             ]
           }
         }
+      ],
+      "accepted_sources": [
+        {
+          "registration_status": "registered",
+          "workflow_blob": "18c48c7e20cc3ff6b9ff7aae953eb2d829a22f4f",
+          "source_sha256": "0e2a06807d022c93fa5d445460979625e9b99021e2ad31d8e509f02f565c130f",
+          "source_yaml": "name: Information Flow M0-D E2E\n\n# Contract development/contracts/information-flow/M0DCloseout.v0.1.md section 7\n# and gates M0D-B06..B08. Runs the S6 harness over the real local Worker\n# (workerd via Miniflare) and the full local Supabase stack (Kong, PostgREST,\n# GoTrue, PostgreSQL with the full migration chain). Local qualification only:\n# no production access, no deploy, no model or provider calls. The evidence is\n# uploaded as a CI artifact for the reproducibility cross-check; committed\n# evidence comes from the reviewed local run.\n\non:\n  workflow_dispatch:\n    inputs:\n      admission_run_id:\n        description: Id of a successful clued-work-admission-dispatch run that admitted this workflow and ref\n        required: false\n        type: string\n  push:\n    branches:\n      - main\n    paths:\n      - .github/workflows/information-flow-e2e.yml\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - apps/clued-cloud/supabase/migrations/**\n      - apps/clued-cloud/worker/**\n      - apps/clued-cloud/evals/information-flow-e2e/**\n      - apps/clued-cloud/evals/public-mcp/worker.ts\n      - apps/clued-cloud/tests/information-flow-*.test.mjs\n      - development/contracts/information-flow/**\n      - apps/clued-cloud/package.json\n      - apps/clued-cloud/package-lock.json\n  pull_request:\n    paths:\n      - .github/workflows/information-flow-e2e.yml\n      - 'scripts/ci/clued-push-reuse.mjs'\n      - 'scripts/ci/clued-push-reuse.test.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.mjs'\n      - 'scripts/ci/clued-g4-fresh-start.test.mjs'\n      - apps/clued-cloud/supabase/migrations/**\n      - apps/clued-cloud/worker/**\n      - apps/clued-cloud/evals/information-flow-e2e/**\n      - apps/clued-cloud/evals/public-mcp/worker.ts\n      - apps/clued-cloud/tests/information-flow-*.test.mjs\n      - development/contracts/information-flow/**\n      - apps/clued-cloud/package.json\n      - apps/clued-cloud/package-lock.json\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  # Work Claim Admission v0.1 §4.6 L0b: the heavy jobs below run only when\n  # Clued admits this pull request. The gate does not call Clued and gets no\n  # Clued token (this job runs PR code): it waits for the trusted\n  # pull_request_target run of clued-work-admission.yml on this head and reads\n  # its result, always enforced (Merge Admission step 6 retired the advisory\n  # switch CLUED_WORK_ADMISSION_ENFORCE). A hand dispatch needs\n  # admission_run_id from clued-work-admission-dispatch.yml; push events are\n  # admitted. Self-hosted Linux pool, pinned Node (Decision f86179b3).\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  push-reuse:\n    name: Verify prior PR tested tree\n    needs: admission-gate\n    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')\n    runs-on: ubuntu-slim\n    timeout-minutes: 3\n    permissions:\n      contents: read\n      actions: read\n      pull-requests: read\n    outputs:\n      run_heavy: ${{ steps.reuse.outputs.run_heavy }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        if: github.event_name == 'push'\n        with:\n          ref: ${{ github.sha }}\n          persist-credentials: false\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\n        if: github.event_name == 'push'\n        with:\n          node-version: 22.23.3\n      - name: Configure job temporary storage\n        if: github.event_name == 'push'\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Verify duplicate-push proof regressions\n        if: github.event_name == 'push'\n        run: node --test scripts/ci/clued-push-reuse.test.mjs\n      - id: reuse\n        if: github.event_name == 'push'\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n          REUSE_WORKFLOW: information-flow-e2e.yml\n        run: node scripts/ci/clued-push-reuse.mjs\n\n  e2e-trusted-self-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor == github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       github.event.pull_request.head.repo.full_name == github.repository &&\n       github.actor == github.repository_owner)))\n    name: Information Flow E2E over the local Worker and Supabase stack\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]\n    timeout-minutes: 35\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n\n      - name: Set up Node.js\n        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          # Self-hosted runners keep a persistent ~/.npm; no Actions npm cache.\n\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install application dependencies\n        # This suite uses the bundled CPU runtime; avoid the optional CUDA\n        # installer and its independent, unbounded external download.\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n        run: npm ci --cache \"$HOME/.npm\" --prefer-offline\n\n      - name: Isolate local Supabase ports\n        env:\n          CLUED_IFE2E_RUN_ID: ${{ github.run_id }}\n        run: |\n          python3 - <<'PY'\n          import os\n          import re\n          from pathlib import Path\n\n          run_id = int(os.environ['CLUED_IFE2E_RUN_ID'])\n          port_base = 45000 + (run_id % 1000) * 10\n          config = Path('supabase/config.toml')\n          source = config.read_text(encoding='utf-8')\n          project = 'project_id = \"clued-cloud\"'\n          if source.count(project) != 1:\n              raise RuntimeError('Unexpected Supabase project ID')\n          source = source.replace(project, f'project_id = \"clued-ife2e-{run_id}\"')\n          source, count = re.subn(\n              r'(?m)^([ \\t]*(?:port|shadow_port)[ \\t]*=[ \\t]*)5432([0-9])$',\n              lambda match: match.group(1) + str(port_base + int(match.group(2))),\n              source,\n          )\n          if count != 7:\n              raise RuntimeError(f'Expected seven Supabase ports, found {count}')\n          config.write_text(source, encoding='utf-8')\n          print(f'IF E2E Supabase project and ports isolated for run {run_id}')\n          PY\n\n      - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor\n\n      - name: Deny loopback proxy ports to the harness isolation guard\n        run: |\n          # Any loopback HTTP(S) proxy port is refused by the guard; \"none\" when\n          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).\n          ports=$(python3 - <<'PY'\n          import os, urllib.parse\n          out = set()\n          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):\n              value = os.environ.get(name)\n              if not value:\n                  continue\n              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)\n              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:\n                  out.add(str(url.port))\n          print(','.join(sorted(out)) or 'none')\n          PY\n          )\n          echo \"IFE2E_DENY_PORTS=$ports\" >> \"$GITHUB_ENV\"\n\n      - name: Run the Information Flow E2E harness\n        run: npm run test:information-flow:e2e -- --evidence-dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Recompute normalized evidence digests\n        if: always()\n        run: npm run information-flow:e2e:verify -- --dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Upload E2E evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: information-flow-e2e-evidence\n          path: ${{ runner.temp }}/ife2e\n          retention-days: 30\n          if-no-files-found: warn\n\n      - name: Capture safe failure diagnostics\n        if: failure()\n        run: |\n          docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\n          docker system df\n\n      - name: Stop the local Supabase stack\n        if: always()\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup\n\n      - name: Record the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        env:\n          REUSE_WORKFLOW: information-flow-e2e.yml\n          REUSE_REPORT_PATH: ${{ runner.temp }}/clued-tested-tree.json\n        run: node ../../scripts/ci/clued-push-reuse.mjs --report\n      - name: Upload the actual PR test tree\n        if: success() && github.event_name == 'pull_request'\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02\n        with:\n          name: clued-tested-tree-information-flow-e2e.yml-${{ github.run_attempt }}\n          path: ${{ runner.temp }}/clued-tested-tree.json\n          if-no-files-found: error\n          compression-level: 0\n          retention-days: 7\n\n  e2e-untrusted-hosted:\n    needs: [admission-gate, push-reuse]\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      (!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((github.event_name == 'workflow_dispatch' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'push' &&\n       github.actor != github.repository_owner) ||\n      (github.event_name == 'pull_request' &&\n       (github.event.pull_request.head.repo.full_name != github.repository ||\n        github.actor != github.repository_owner))))\n    name: Information Flow E2E over the local Worker and Supabase stack (hosted)\n    runs-on: ubuntu-24.04\n    timeout-minutes: 35\n    defaults:\n      run:\n        working-directory: apps/clued-cloud\n\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n\n      - name: Set up Node.js\n        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n          cache: npm\n          cache-dependency-path: apps/clued-cloud/package-lock.json\n\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - name: Install application dependencies\n        env:\n          ONNXRUNTIME_NODE_INSTALL: 'skip'\n        run: npm ci\n\n      - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor\n\n      - name: Deny loopback proxy ports to the harness isolation guard\n        run: |\n          # Any loopback HTTP(S) proxy port is refused by the guard; \"none\" when\n          # the runner has no loopback proxy (IFE2E_DENY_PORTS is recorded in run.json).\n          ports=$(python3 - <<'PY'\n          import os, urllib.parse\n          out = set()\n          for name in ('HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy'):\n              value = os.environ.get(name)\n              if not value:\n                  continue\n              url = urllib.parse.urlparse(value if '://' in value else 'http://' + value)\n              if url.hostname in ('127.0.0.1', 'localhost', '::1') and url.port:\n                  out.add(str(url.port))\n          print(','.join(sorted(out)) or 'none')\n          PY\n          )\n          echo \"IFE2E_DENY_PORTS=$ports\" >> \"$GITHUB_ENV\"\n\n      - name: Run the Information Flow E2E harness\n        run: npm run test:information-flow:e2e -- --evidence-dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Recompute normalized evidence digests\n        if: always()\n        run: npm run information-flow:e2e:verify -- --dir \"$RUNNER_TEMP/ife2e\"\n\n      - name: Upload E2E evidence\n        if: always()\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: information-flow-e2e-evidence\n          path: ${{ runner.temp }}/ife2e\n          retention-days: 30\n          if-no-files-found: warn\n\n      - name: Capture safe failure diagnostics\n        if: failure()\n        run: |\n          docker ps -a --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'\n          docker system df\n\n      - name: Stop the local Supabase stack\n        if: always()\n        run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup\n",
+          "primary_ids": [
+            "e2e-trusted-self-hosted",
+            "e2e-untrusted-hosted"
+          ],
+          "pull_request": {
+            "paths": [
+              ".github/workflows/information-flow-e2e.yml",
+              "scripts/ci/clued-push-reuse.mjs",
+              "scripts/ci/clued-push-reuse.test.mjs",
+              "scripts/ci/clued-g4-fresh-start.mjs",
+              "scripts/ci/clued-g4-fresh-start.test.mjs",
+              "apps/clued-cloud/supabase/migrations/**",
+              "apps/clued-cloud/worker/**",
+              "apps/clued-cloud/evals/information-flow-e2e/**",
+              "apps/clued-cloud/evals/public-mcp/worker.ts",
+              "apps/clued-cloud/tests/information-flow-*.test.mjs",
+              "development/contracts/information-flow/**",
+              "apps/clued-cloud/package.json",
+              "apps/clued-cloud/package-lock.json"
+            ]
+          },
+          "gated": true,
+          "routes": [
+            {
+              "job_id": "e2e-trusted-self-hosted",
+              "name": "Information Flow E2E over the local Worker and Supabase stack",
+              "self_hosted": true,
+              "required_steps": {
+                "Install application dependencies": 1,
+                "Isolate local Supabase ports": 1,
+                "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)": 1,
+                "Deny loopback proxy ports to the harness isolation guard": 1,
+                "Run the Information Flow E2E harness": 1,
+                "Recompute normalized evidence digests": 1,
+                "Stop the local Supabase stack": 1,
+                "Record the actual PR test tree": 1
+              },
+              "command_digests": {
+                "Install application dependencies": [
+                  "04f62177d39631ec60e1f258a78dbd2cebf48e0c52453253058e1c26426f889b"
+                ],
+                "Isolate local Supabase ports": [
+                  "20a9cdd92aac5e374a9e6dbe4b217e036d6e12936e892073fe59aaed2650cf9c"
+                ],
+                "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)": [
+                  "33a5a9bd3ec180e071aa4575b6d79c7a8b7f1b8d8fd17455537b786522066c0c"
+                ],
+                "Deny loopback proxy ports to the harness isolation guard": [
+                  "0575517e1b4def7b029395b044dd7f474a2b2c12823805e79c385640791aada3"
+                ],
+                "Run the Information Flow E2E harness": [
+                  "1042ac6869aaff94b885261521eb2246413cb386fcc8c12c9db7a0199c17b58a"
+                ],
+                "Recompute normalized evidence digests": [
+                  "1d8df57e9dd66de04ddd30c054ce45c7b539d8e8c82fd620d36d78f4b5bf66a9"
+                ],
+                "Stop the local Supabase stack": [
+                  "23e5a1fcbb56ea8066977755b4fc7b7aafe825853d7f6fa0069ad5b8224da96d"
+                ],
+                "Record the actual PR test tree": [
+                  "ad01e6e5d4a764c0ec7a1bcd7203a25881b5d3229e4f0f80132888dc5260a4f5"
+                ]
+              }
+            },
+            {
+              "job_id": "e2e-untrusted-hosted",
+              "name": "Information Flow E2E over the local Worker and Supabase stack (hosted)",
+              "self_hosted": false,
+              "required_steps": {
+                "Install application dependencies": 1,
+                "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)": 1,
+                "Deny loopback proxy ports to the harness isolation guard": 1,
+                "Run the Information Flow E2E harness": 1,
+                "Recompute normalized evidence digests": 1,
+                "Stop the local Supabase stack": 1
+              },
+              "command_digests": {
+                "Install application dependencies": [
+                  "9db3f780def6105eee3cc930de4d0982607760820fddaa3facdd3813ccb40628"
+                ],
+                "Start the local Supabase stack (db, Kong, PostgREST, GoTrue)": [
+                  "33a5a9bd3ec180e071aa4575b6d79c7a8b7f1b8d8fd17455537b786522066c0c"
+                ],
+                "Deny loopback proxy ports to the harness isolation guard": [
+                  "0575517e1b4def7b029395b044dd7f474a2b2c12823805e79c385640791aada3"
+                ],
+                "Run the Information Flow E2E harness": [
+                  "1042ac6869aaff94b885261521eb2246413cb386fcc8c12c9db7a0199c17b58a"
+                ],
+                "Recompute normalized evidence digests": [
+                  "1d8df57e9dd66de04ddd30c054ce45c7b539d8e8c82fd620d36d78f4b5bf66a9"
+                ],
+                "Stop the local Supabase stack": [
+                  "23e5a1fcbb56ea8066977755b4fc7b7aafe825853d7f6fa0069ad5b8224da96d"
+                ]
+              }
+            }
+          ]
+        }
       ]
     },
     ".github/workflows/model-program-m2-scoped-consumer.yml": {

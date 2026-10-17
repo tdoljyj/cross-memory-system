@@ -5,12 +5,12 @@ import Link from "next/link";
 import { supabase } from "../../supabase-browser";
 type Connection = { id: string; provider: string; state: string; version: number; root_name: string };
 type RecoveryDiagnostic = { stage: string; reason: string; observed_at: string; automatic_next_action: string };
-type RecoveryView = { job_id: string; status: string; receipt_id: string; diagnostic?: RecoveryDiagnostic;
+type RecoveryView = { job_id: string; connection_id?: string; read_connection_id?: string; status: string; receipt_id: string; diagnostic?: RecoveryDiagnostic;
   review_available?: boolean; abandon_available?: boolean; file_name?: string; base_version?: number; source_receipt_id?: string; resolution?: string;
   automatic_recovery?: "pending" | "current_state_conflict" | "resolved" };
-type AbandonConfirmation = { connection_id: string; connection_version: number; job_id: string; base_version: number;
+type AbandonConfirmation = { connection_id: string; context_connection_id: string; connection_version: number; job_id: string; base_version: number;
   source_receipt_id: string; file_name?: string; epoch: number };
-type ReviewObservation = { connection_id: string; job_id: string; observation_id: string; base_version: number; source_receipt_id: string;
+type ReviewObservation = { connection_id: string; context_connection_id: string; context_connection_version: number; job_id: string; observation_id: string; base_version: number; source_receipt_id: string;
   observed_at: string; observed_state: string; file_name: string; provider_file_id: string | null;
   provider_file_version: string | null; mime_type: string | null; size: number | string | null; sha256: string | null; epoch: number };
 type RecoveryConfirmation = { connection_id: string; connection_version: number; job_id: string; receipt_id: string;
@@ -36,6 +36,12 @@ function recoveryView(value: unknown): RecoveryView | null {
   if (!isObject(value) || typeof value.job_id !== "string" || !uuid.test(value.job_id) || typeof value.status !== "string" ||
     !Object.hasOwn(recoveryLabels, value.status) || typeof value.receipt_id !== "string" || !uuid.test(value.receipt_id)) return null;
   const view: RecoveryView = { job_id: value.job_id, status: value.status, receipt_id: value.receipt_id };
+  for (const key of ["connection_id", "read_connection_id"] as const) {
+    if (value[key] !== undefined) {
+      if (typeof value[key] !== "string" || !uuid.test(value[key])) return null;
+      view[key] = value[key];
+    }
+  }
   if (value.automatic_recovery !== undefined) {
     if (!["pending", "current_state_conflict", "resolved"].includes(String(value.automatic_recovery))) return null;
     view.automatic_recovery = value.automatic_recovery as RecoveryView["automatic_recovery"];
@@ -199,16 +205,18 @@ export default function StorageConnections() {
       const result = await request("/v1/storage/recovery", { action: "list", connection_id: c.id }, current);
       if (!current()) return;
       if (result.execution_permitted !== false || result.connection_id !== c.id || !Array.isArray(result.jobs) || result.jobs.length > 20 ||
-        !result.jobs.every(job => isObject(job) && job.connection_id === c.id && job.execution_permitted === false)) throw new Error("Invalid recovery list");
+        !result.jobs.every(job => isObject(job) && typeof job.connection_id === "string" && uuid.test(job.connection_id) &&
+          (job.read_connection_id !== undefined ? job.read_connection_id === c.id : job.connection_id === c.id) &&
+          job.execution_permitted === false)) throw new Error("Invalid recovery list");
       const jobs = result.jobs.map(recoveryView);
       if (jobs.some(job => job === null) || new Set(jobs.map(job => job!.job_id)).size !== jobs.length) throw new Error("Invalid recovery list");
       const views = jobs as RecoveryView[];
       recoveryLatest.current[c.id] = views;
-      if (review.current?.connection_id === c.id && !views.some(job => job.review_available && job.job_id === review.current?.job_id &&
+      if (review.current?.context_connection_id === c.id && !views.some(job => job.review_available && job.connection_id === review.current?.connection_id && job.job_id === review.current?.job_id &&
           job.base_version === review.current?.base_version && job.source_receipt_id === review.current?.source_receipt_id)) {
         review.current = null; setReviewObservation(null);
       }
-      if (abandon.current?.connection_id === c.id && !views.some(job => job.abandon_available && job.job_id === abandon.current?.job_id &&
+      if (abandon.current?.context_connection_id === c.id && !views.some(job => job.abandon_available && job.connection_id === abandon.current?.connection_id && job.job_id === abandon.current?.job_id &&
           job.base_version === abandon.current?.base_version && job.source_receipt_id === abandon.current?.source_receipt_id)) {
         abandon.current = null; setAbandonConfirmation(null);
       }
@@ -221,8 +229,8 @@ export default function StorageConnections() {
       shouldPoll = true;
       if (current()) {
         delete recoveryLatest.current[c.id];
-        if (review.current?.connection_id === c.id) { review.current = null; setReviewObservation(null); }
-        if (abandon.current?.connection_id === c.id) { abandon.current = null; setAbandonConfirmation(null); }
+        if (review.current?.context_connection_id === c.id) { review.current = null; setReviewObservation(null); }
+        if (abandon.current?.context_connection_id === c.id) { abandon.current = null; setAbandonConfirmation(null); }
         setAutomaticMessages(old => ({ ...old, [c.id]: "暂时未能读取恢复进度；后台恢复不依赖这个页面。系统会重新读取状态，不会重复文件操作。" }));
       }
     } finally {
@@ -279,24 +287,24 @@ export default function StorageConnections() {
   }, [refresh]);
   function confirmAbandon(c: Connection, job: RecoveryView) {
     if (busy || operationBusy.current || registrationBusy.current || !job.abandon_available || !job.base_version || !job.source_receipt_id ||
-      !(recoveryLatest.current[c.id] ?? []).some(item => item.job_id === job.job_id && item.abandon_available &&
+      !job.connection_id || !(recoveryLatest.current[c.id] ?? []).some(item => item.connection_id === job.connection_id && item.job_id === job.job_id && item.abandon_available &&
         item.base_version === job.base_version && item.source_receipt_id === job.source_receipt_id)) return;
-    const snapshot = { connection_id: c.id, connection_version: c.version, job_id: job.job_id, base_version: job.base_version,
+    const snapshot = { connection_id: job.connection_id, context_connection_id: c.id, connection_version: c.version, job_id: job.job_id, base_version: job.base_version,
       source_receipt_id: job.source_receipt_id, file_name: job.file_name, epoch: revision.current };
     review.current = null; setReviewObservation(null); confirmation.current = null; setRecoveryConfirmation(null);
     abandon.current = snapshot; setAbandonConfirmation(snapshot);
   }
   async function abandonRegistration(c: Connection, approved: AbandonConfirmation) {
     if (busy || operationBusy.current || registrationBusy.current || abandon.current !== approved || approved.epoch !== revision.current ||
-        approved.connection_id !== c.id || approved.connection_version !== c.version || !(automaticJobs[c.id] ?? []).some(job =>
-          job.abandon_available && job.job_id === approved.job_id && job.base_version === approved.base_version && job.source_receipt_id === approved.source_receipt_id)) return;
+        approved.context_connection_id !== c.id || approved.connection_version !== c.version || !(automaticJobs[c.id] ?? []).some(job =>
+          job.abandon_available && job.connection_id === approved.connection_id && job.job_id === approved.job_id && job.base_version === approved.base_version && job.source_receipt_id === approved.source_receipt_id)) return;
     const epoch = revision.current;
     abandon.current = null; setAbandonConfirmation(null); operationBusy.current = true; setBusy(true);
     try {
-      const value = await request("/v1/storage/recovery", { action: "review_abandon", connection_id: c.id, job_id: approved.job_id,
+      const value = await request("/v1/storage/recovery", { action: "review_abandon", connection_id: approved.connection_id, job_id: approved.job_id,
         base_version: approved.base_version, source_receipt_id: approved.source_receipt_id, confirmed: true }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
-      if (value.status !== "resolved" || value.resolution !== "abandoned_registration" || value.connection_id !== c.id || value.job_id !== approved.job_id ||
+      if (value.status !== "resolved" || value.resolution !== "abandoned_registration" || value.connection_id !== approved.connection_id || value.job_id !== approved.job_id ||
           value.execution_permitted !== false || typeof value.receipt_id !== "string" || !uuid.test(value.receipt_id)) throw new Error("Unconfirmed withdrawal");
       setMessage("已停止管理相关旧登记并解除这条保护；Google 文件没有删除，原作业历史保留。");
     } catch {
@@ -307,15 +315,15 @@ export default function StorageConnections() {
     }
   }
   async function prepareReview(c: Connection, job: RecoveryView) {
-    if (busy || operationBusy.current || registrationBusy.current || !job.review_available ||
-      !(recoveryLatest.current[c.id] ?? []).some(item => item.job_id === job.job_id && item.review_available &&
+    if (busy || operationBusy.current || registrationBusy.current || !job.review_available || !job.connection_id ||
+      !(recoveryLatest.current[c.id] ?? []).some(item => item.connection_id === job.connection_id && item.job_id === job.job_id && item.review_available &&
         item.base_version === job.base_version && item.source_receipt_id === job.source_receipt_id)) return;
     const epoch = revision.current, read = recoveryReads.current.get(c.id);
     operationBusy.current = true; setBusy(true); review.current = null; setReviewObservation(null); abandon.current = null; setAbandonConfirmation(null);
     try {
-      const value = await request("/v1/storage/recovery", { action: "review_prepare", connection_id: c.id, job_id: job.job_id }, () => epoch === revision.current);
+      const value = await request("/v1/storage/recovery", { action: "review_prepare", connection_id: job.connection_id, job_id: job.job_id }, () => epoch === revision.current);
       if (epoch !== revision.current || recoveryReads.current.get(c.id) !== read) return;
-      if (value.status !== "review_prepared" || value.execution_permitted !== false || value.connection_id !== c.id || value.job_id !== job.job_id ||
+      if (value.status !== "review_prepared" || value.execution_permitted !== false || value.connection_id !== job.connection_id || value.job_id !== job.job_id ||
         typeof value.observation_id !== "string" || !uuid.test(value.observation_id) || value.base_version !== job.base_version ||
         value.source_receipt_id !== job.source_receipt_id || typeof value.observed_at !== "string" || !Number.isFinite(Date.parse(value.observed_at)) ||
         !["before", "after", "changed", "absent"].includes(String(value.observed_state)) || typeof value.file_name !== "string" ||
@@ -329,7 +337,7 @@ export default function StorageConnections() {
         setMessage("当前文件状态无需人工取舍，后台程序会继续自动核验并处理原作业。");
         void loadRecoveries(c, epoch); return;
       }
-      const observation = { ...value, epoch } as ReviewObservation;
+      const observation = { ...value, context_connection_id: c.id, context_connection_version: c.version, epoch } as ReviewObservation;
       review.current = observation; setReviewObservation(observation);
     } catch {
       if (epoch === revision.current) setMessage("当前文件状态尚未读全，暂不显示确认操作。系统继续恢复原作业。");
@@ -337,19 +345,21 @@ export default function StorageConnections() {
   }
   async function resolveReview(c: Connection, observation: ReviewObservation, action: "review_accept" | "review_abandon") {
     if (busy || operationBusy.current || registrationBusy.current || review.current !== observation ||
-      observation.epoch !== revision.current || observation.connection_id !== c.id) return;
+      observation.epoch !== revision.current || observation.context_connection_id !== c.id || observation.context_connection_version !== c.version ||
+      !(recoveryLatest.current[c.id] ?? []).some(job => job.connection_id === observation.connection_id && job.job_id === observation.job_id &&
+        job.base_version === observation.base_version && job.source_receipt_id === observation.source_receipt_id)) return;
     const epoch = revision.current;
     // Consume the displayed observation once. A stale, cancelled or double
     // clicked confirmation cannot submit an acceptance for another object.
     review.current = null; setReviewObservation(null); operationBusy.current = true; setBusy(true);
     try {
-      const value = await request("/v1/storage/recovery", { action, connection_id: c.id, job_id: observation.job_id,
+      const value = await request("/v1/storage/recovery", { action, connection_id: observation.connection_id, job_id: observation.job_id,
         base_version: observation.base_version, source_receipt_id: observation.source_receipt_id, confirmed: true,
         ...(action === "review_accept" ? { observation_id: observation.observation_id } : {}) }, () => epoch === revision.current);
       if (epoch !== revision.current) return;
       if (value.review_error === "REVIEW_REFRESH_REQUIRED") throw new ReviewRefreshError();
       const resolution = action === "review_accept" ? "accepted_current_state" : "abandoned_registration";
-      if (value.status !== "resolved" || value.resolution !== resolution || value.connection_id !== c.id || value.job_id !== observation.job_id ||
+      if (value.status !== "resolved" || value.resolution !== resolution || value.connection_id !== observation.connection_id || value.job_id !== observation.job_id ||
         value.execution_permitted !== false || typeof value.receipt_id !== "string" || !uuid.test(value.receipt_id)) throw new Error("Unconfirmed review");
       setMessage(action === "review_accept" ? "已按 Google 当前文件状态恢复登记和使用。原操作的历史结果保留，没有重新覆盖文件。" : "已停止管理这个文件；Google 文件没有删除。原操作的历史结果保留。");
     } catch (error) {
@@ -531,14 +541,14 @@ export default function StorageConnections() {
               <p>最近核验：{new Date(job.diagnostic.observed_at).toLocaleString()}</p></>}
           </details>
         </article>)}
-        {abandonConfirmation?.connection_id === c.id && <section role="region" aria-label="确认停止管理旧登记" className="my-3 rounded border p-3">
+        {abandonConfirmation?.context_connection_id === c.id && <section role="region" aria-label="确认停止管理旧登记" className="my-3 rounded border p-3">
           <h4>确认停止管理旧登记</h4><p className="my-2 break-all">{abandonConfirmation.file_name ?? "这条原作业的旧登记"}</p>
           <p className="my-2 text-sm">这会停止 KooYomi 管理相关旧登记并解除这条保护，不删除或覆盖 Google 文件，不把原操作记为成功。需要再次通过 KooYomi 管理这个文件时，须重新登记。</p>
           <details className="text-sm"><summary>原操作记录</summary><p className="break-all">任务：{abandonConfirmation.job_id}；回执：{abandonConfirmation.source_receipt_id}</p></details>
           <div className="my-2 flex gap-4"><button disabled={busy} onClick={() => void abandonRegistration(c, abandonConfirmation)}>确认停止管理（不删除文件）</button>
             <button disabled={busy} onClick={() => { abandon.current = null; setAbandonConfirmation(null); }}>保留旧登记</button></div>
         </section>}
-        {reviewObservation?.connection_id === c.id && <section role="region" aria-label="确认当前 Google 文件" className="my-3 rounded border p-3">
+        {reviewObservation?.context_connection_id === c.id && <section role="region" aria-label="确认当前 Google 文件" className="my-3 rounded border p-3">
           <h4>已直接读取 Google 当前文件</h4><p className="my-2 break-all">{reviewObservation.file_name}</p>
           <p>{({ before: "文件仍是原操作之前的状态。", after: "文件符合原操作的预期状态。", changed: "文件已变成与原操作预期不同的状态。", absent: "Google 当前没有这个文件。" } as Record<string, string>)[reviewObservation.observed_state]}</p>
           <p className="my-2 text-sm">下方确认只采纳本次读取的文件状态，不会重做覆盖，也不会把原操作改记为成功。确认只适用于这个原文件和登记版本，读取记录过期时须重新读取。</p>

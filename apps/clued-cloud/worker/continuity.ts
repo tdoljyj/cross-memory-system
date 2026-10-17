@@ -106,7 +106,7 @@ import { createStorageOwnerLifecycle, StorageOwnerLifecycleError, type OwnerReco
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageDemandRuntime, runStorageDemandRenewalScheduled } from "./storage-demand-runtime";
 import storageDemandPolicy from "../../../development/contracts/storage/StorageDemandRenewal.v0.1.json";
-import { createStorageCloudRecovery } from "./storage-cloud-recovery";
+import { createStorageCloudRecovery, storageRecoveryRefreshReference } from "./storage-cloud-recovery";
 import { createStorageRecoveryReview } from "./storage-recovery-review";
 import { recoveryDiagnostic, storageRecoveryListResult, storageRecoveryOwnerResult, storageRecoveryResolutionResult, type RecoveryDiagnostic, type RecoveryStage } from "./storage-recovery-diagnostics";
 import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
@@ -980,10 +980,12 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         if (prior.status !== "inspection_required" || prior.connection_id !== reference.connection_id ||
             prior.job_id !== reference.job_id || prior.execution_permitted !== false)
           throw new Error("original journal unavailable");
+        let refreshReference = reference;
         const attempt = async () => {
           const descriptor = await recoveryRpc({ ...reference, action: "load" });
           if (descriptor.status !== "recovery_only" || descriptor.connection_id !== reference.connection_id ||
               descriptor.job_id !== reference.job_id) throw new Error("recovery descriptor unavailable");
+          refreshReference = storageRecoveryRefreshReference(descriptor, reference);
           const recovery = await createStorageCloudRecovery({
             client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
             rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, absent: { rpc: absentRpc }, report_expiring: true, timeout_ms: 10000,
@@ -995,7 +997,7 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
         // BUG-20261007-005: an expiring credential gets one recovery-only refresh
         // bound to this job (the root's ordinary refresh waits for a quiet root).
         if (result.status === "credential_expiring" && refresher &&
-            (await refresher.run(reference.connection_id, reference.job_id)).status === "committed") result = await attempt();
+            (await refresher.run(refreshReference.connection_id, refreshReference.job_id)).status === "committed") result = await attempt();
         if (result.status === "committed") committed++;
         else if (result.status === "released_not_effected") released++;
         else if (result.status === "resolved") reconciled++;
@@ -3415,7 +3417,7 @@ async function handleContinuityRequestInner(
           result.resolution === (input.action === "review_accept" ? "accepted_current_state" : "abandoned_registration") &&
           result.source_receipt_id === input.source_receipt_id && result.base_version === input.base_version &&
           (result.observation_id ?? null) === (input.observation_id ?? null);
-        let refreshAttempted = false;
+        let refreshAttempted = false, refreshReference = reference;
         const refreshOriginalOnce = async () => {
           if (refreshAttempted || env.CLUED_STORAGE_REFRESH_V1 !== "true" || !env.CLUED_STORAGE_VAULT_KEYS) return false;
           refreshAttempted = true;
@@ -3425,7 +3427,7 @@ async function handleContinuityRequestInner(
               rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_refresh_worker_v1", {
                 method: "POST", body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }), redirect: "manual", signal: AbortSignal.timeout(10000),
               }) as Record<string, unknown> });
-            return (await refresh.run(reference.connection_id, reference.job_id)).status === "committed";
+            return (await refresh.run(refreshReference.connection_id, refreshReference.job_id)).status === "committed";
           } catch { return false; }
         };
         let reviewOwnerStatus = ownerStatus;
@@ -3443,6 +3445,7 @@ async function handleContinuityRequestInner(
             }) as Record<string, unknown>;
             if (descriptor.version !== reviewOwnerStatus.base_version || reviewOwnerStatus.source_receipt_id !== reviewOwnerStatus.receipt_id)
               throw new HttpError(409, "Review changed.");
+            refreshReference = storageRecoveryRefreshReference(descriptor, reference);
             recoveryStage = "verification";
             const review = await createStorageRecoveryReview({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
               vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS), descriptor, source_receipt_id: String(reviewOwnerStatus.source_receipt_id),
@@ -3538,6 +3541,7 @@ async function handleContinuityRequestInner(
           }) as Record<string, unknown>;
           if (accountDescriptor.status !== "recovery_only") throw new Error("Unavailable");
         }
+        if (accountDescriptor) refreshReference = storageRecoveryRefreshReference(accountDescriptor, reference);
         const recovery = await createStorageCloudRecovery({ client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "",
           vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
           rpc: async value => value.action === "reconcile_before" ? await supabaseRequest(env,
