@@ -6,7 +6,7 @@ import { deflateRawSync } from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { prepare, identity } from './clued-g4-fresh-start.mjs';
+import { prepare, identity, freshPortMap } from './clued-g4-fresh-start.mjs';
 const { evaluatePush, validateEvidence, testedTreeReport, isolatedConfig, readReportZip, TARGETS, REPORT_NAME } = await import(process.env.CLUED_PUSH_REUSE_TEST_MODULE_PATH ?
   pathToFileURL(process.env.CLUED_PUSH_REUSE_TEST_MODULE_PATH).href : new URL('./clued-push-reuse.mjs', import.meta.url));
 const fixtureFile = relative => process.env.CLUED_G4_TEST_REPO_ROOT ? path.join(process.env.CLUED_G4_TEST_REPO_ROOT, relative) : new URL('../../' + relative, import.meta.url);
@@ -16,6 +16,7 @@ const file = 'clued-g4-database.yml';
 const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: M,
   GITHUB_ACTOR: 'owner', GITHUB_REPOSITORY_OWNER: 'owner', GITHUB_REPOSITORY: 'owner/repo',
   GITHUB_TOKEN: 'test-only-placeholder', REUSE_WORKFLOW: file };
+const G4_CONFIG = 'project_id = "clued-cloud"\n[api]\nport = 54321\n[db]\nport = 54322\nshadow_port = 54320\nmajor_version = 17\n[studio]\nport = 54323\n[local_smtp]\nport = 54324\n[analytics]\nport = 54327\n[db.pooler]\nport = 54329\n[edge_runtime]\ninspector_port = 8083\n[db.seed]\nenabled = false\n';
 function proof() {
   return { repository: 'owner/repo', owner: 'owner', sha: M, workflow: file,
     merge: { sha: M, parents: [{ sha: C }, { sha: H }], commit: { tree: { sha: T } } },
@@ -120,6 +121,7 @@ test('wrong source, tree, workflow, attempt, PR or missing actual tests never re
     p => p.report.pr_head_sha = M, p => p.jobs.total_count = 100,
     p => p.report.isolation.profile = 'fixed-seven-ports/1', p => p.report.isolation.run_attempt = 1,
     p => p.jobs.jobs[0].steps[0].conclusion = 'skipped', p => p.jobs.jobs[0].steps[0].conclusion = 'failure',
+    p => p.jobs.jobs[0].steps[0].name = 'Verify fresh migration initialization',
     p => p.jobs.jobs[0].conclusion = 'skipped', p => p.jobs.jobs[0].steps = []];
   for (const mutate of mutations) { const p = proof(); mutate(p); assert.throws(() => validateEvidence(p)); }
 });
@@ -153,22 +155,24 @@ test('report binds the checkout actually tested and refuses dirty tracked bytes'
   assert.throws(() => testedTreeReport({ ...prEnv, GITHUB_SHA: M }, event, git));
 });
 
-test('only the seven exact run-specific port/project changes qualify, never arbitrary dirty configuration', () => {
-  const source = 'project_id = "clued-cloud"\nport = 54321\nport = 54322\nshadow_port = 54320\nport = 54323\nport = 54324\nport = 54327\nport = 54329\nmajor_version = 17\n[db.seed]\nenabled = false\n';
-  const expected = 'project_id = "clued-g4-100-2"\nport = 46011\nport = 46012\nshadow_port = 46010\nport = 46013\nport = 46014\nport = 46017\nport = 46019\nmajor_version = 17\n[db.seed]\nenabled = false\n';
+test('only the exact registered listener and run-specific project changes qualify, never arbitrary dirty configuration', () => {
+  const source = G4_CONFIG;
+  const expected = 'project_id = "clued-g4-100-2"\n[api]\nport = 17617\n[db]\nport = 17618\nshadow_port = 17616\nmajor_version = 17\n[studio]\nport = 17619\n[local_smtp]\nport = 17620\n[analytics]\nport = 17623\n[db.pooler]\nport = 17625\n[edge_runtime]\ninspector_port = 17626\n[db.seed]\nenabled = false\n';
   assert.equal(isolatedConfig(source, file, 100, 2), expected);
   const event = { pull_request: { number: 12, user: { login: 'owner' }, head: { sha: H, repo: { full_name: 'owner/repo' } } } };
   const prEnv = { ...env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_SHA: C, GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '2' };
   const git = (verb, ref) => verb === 'status' ? 'M apps/clued-cloud/supabase/config.toml' :
     verb === 'show' ? source : ref === 'HEAD' ? C : T;
-  const marker = { schema: 'clued.g4.fresh-start/1', ...identity(prEnv), prepared: true, port_base: 46010,
+  const marker = { schema: 'clued.g4.fresh-start/2', ...identity(prEnv), prepared: true, port_base: 17616,
+    daemon_id: 'fixture-daemon-identity', ports: freshPortMap(source, 17616),
+    port_policy: { ephemeral: [32768, 60999], reserved: [] }, migrations: [],
     source_config_sha256: createHash('sha256').update(source).digest('hex'),
     config_sha256: createHash('sha256').update(expected).digest('hex') };
   const result = testedTreeReport(prEnv, event, git, () => expected, () => marker);
   assert.equal(result.isolation.profile, 'selected-seven-ports/3');
   assert.equal(result.isolation.run_attempt, 2);
   assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('major_version = 17', 'major_version = 18'), () => marker));
-  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('46011', '46012'), () => marker));
+  assert.throws(() => testedTreeReport(prEnv, event, git, () => expected.replace('17617', '17618'), () => marker));
   assert.throws(() => testedTreeReport(prEnv, event, (verb, ref) => verb === 'status' ? '' : git(verb, ref), () => expected, () => marker));
   assert.throws(() => isolatedConfig(source.replace('port = 54329\n', ''), file, 100, 2));
   assert.throws(() => isolatedConfig(source, file, 100));
@@ -200,7 +204,7 @@ test('workflow integration leaves the registered admission gate unchanged and re
 });
 
 test('PORT6: the actual prepared alternate block produces a marker-bound tree report', async () => {
-  const source = 'project_id = "clued-cloud"\nport = 54321\nport = 54322\nshadow_port = 54320\nport = 54323\nport = 54324\nport = 54327\nport = 54329\n[db.seed]\nenabled = false\n';
+  const source = G4_CONFIG;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-g4-reuse-test-'));
   const app = path.join(root, 'apps/clued-cloud/supabase');
   fs.mkdirSync(path.join(app, 'migrations'), { recursive: true });
@@ -215,19 +219,21 @@ test('PORT6: the actual prepared alternate block produces a marker-bound tree re
   let probes = 0;
   try {
     await prepare(prEnv, { git, platform: 'linux', portProbe: async () => ++probes > 1,
-      docker: (...args) => args[0] === 'context' ? JSON.stringify('unix:///var/run/docker.sock') : '' });
+      startLock: () => {}, portPolicy: () => ({ ephemeral: [32768, 60999], reserved: [] }),
+      docker: (...args) => args[0] === 'context' ? JSON.stringify('unix:///var/run/docker.sock')
+        : args[0] === 'info' ? JSON.stringify('fixture-daemon-identity') : '' });
     const report = testedTreeReport(prEnv, event, git, readConfig); // Default actual marker read.
     assert.equal(report.isolation.profile, 'selected-seven-ports/3');
-    assert.equal(report.isolation.port_base, 46020);
+    assert.equal(report.isolation.port_base, 17632);
     assert.match(report.isolation.fresh_marker_digest, /^sha256:[a-f0-9]{64}$/);
     assert.equal(readConfig(), isolatedConfig(source, file, 100, 2, report.isolation.port_base));
     const p = proof(); p.report = report; assert.equal(validateEvidence(p).run_heavy, false);
     fs.appendFileSync(path.join(app, 'config.toml'), '# arbitrary tracked edit\n');
     assert.throws(() => testedTreeReport(prEnv, event, git, readConfig), /fresh_configuration_changed/);
-    fs.writeFileSync(path.join(app, 'config.toml'), isolatedConfig(source, file, 100, 2, 46020));
+    fs.writeFileSync(path.join(app, 'config.toml'), isolatedConfig(source, file, 100, 2, 17632));
     const markerFile = path.join(root, 'clued-g4-fresh-100-2.json');
     const marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
-    for (const mutate of [m => m.port_base = 46010, m => m.config_sha256 = '0'.repeat(64), m => m.source_config_sha256 = '0'.repeat(64),
+    for (const mutate of [m => m.port_base = 17616, m => m.config_sha256 = '0'.repeat(64), m => m.source_config_sha256 = '0'.repeat(64),
       m => m.run_attempt = 1, m => m.prepared = false]) {
       const altered = structuredClone(marker); mutate(altered); fs.writeFileSync(markerFile, JSON.stringify(altered));
       assert.throws(() => testedTreeReport(prEnv, event, git, readConfig));
@@ -237,10 +243,10 @@ test('PORT6: the actual prepared alternate block produces a marker-bound tree re
 
 test('PORT7: selected-block evidence remains bounded and malformed or stale proof still requires real work', async () => {
   const p = proof();
-  Object.assign(p.report.isolation, { profile: 'selected-seven-ports/3', port_base: 46020, fresh_marker_digest: 'sha256:' + '3'.repeat(64) });
+  Object.assign(p.report.isolation, { profile: 'selected-seven-ports/3', port_base: 17632, fresh_marker_digest: 'sha256:' + '3'.repeat(64) });
   assert.equal(validateEvidence(p).run_heavy, false);
   assert.equal((await evaluatePush(env, api(p).fetch)).run_heavy, false);
-  for (const mutate of [x => x.port_base = '46020', x => x.port_base = 46025, x => x.port_base = 45000,
+  for (const mutate of [x => x.port_base = '17632', x => x.port_base = 17625, x => x.port_base = 45000, x => x.port_base = 46020,
     x => delete x.port_base, x => x.fresh_marker_digest = 'invalid', x => x.run_attempt = 1,
     x => x.source_config_digest = 'invalid', x => x.tested_config_digest = 'invalid']) {
     const q = structuredClone(p); mutate(q.report.isolation);
