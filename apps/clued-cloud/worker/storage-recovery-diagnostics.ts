@@ -80,11 +80,17 @@ function automaticRecovery(raw: Data): Data {
 }
 
 function currentDirectoryState(raw: Data): Data {
+  if (Object.hasOwn(raw,"current_path") && (!Object.hasOwn(raw,"current_artifact_state") ||
+      raw.current_artifact_state !== "active" || typeof raw.current_path !== "string" ||
+      raw.current_path.length < 2 || raw.current_path.length > 1000 || raw.current_path.endsWith("/") ||
+      /[\\\p{Cc}]/u.test(raw.current_path) || raw.current_path.split("/").some(part=>part==="."||part==="..")))
+    throw new Error("storage_recovery_response_invalid");
   if (!Object.hasOwn(raw, "current_artifact_state")) return {};
   if (raw.status !== "resolved" || raw.resolution !== "automatically_registered_current_state" ||
       raw.automatic_recovery !== "resolved" || typeof raw.current_artifact_state !== "string" || !["active", "trashed"].includes(raw.current_artifact_state))
     throw new Error("storage_recovery_response_invalid");
-  return { current_artifact_state: raw.current_artifact_state };
+  return { current_artifact_state: raw.current_artifact_state,
+    ...(Object.hasOwn(raw,"current_path")?{current_path:raw.current_path}:{}) };
 }
 
 export function storageRecoveryResolutionResult(value: unknown, reference: Data): Data {

@@ -7,6 +7,7 @@ type Connection = { id: string; provider: string; state: string; version: number
 type RecoveryDiagnostic = { stage: string; reason: string; observed_at: string; automatic_next_action: string };
 type RecoveryView = { job_id: string; connection_id?: string; read_connection_id?: string; status: string; receipt_id: string; diagnostic?: RecoveryDiagnostic;
   current_artifact_state?: "active" | "trashed";
+  current_path?: string;
   review_available?: boolean; abandon_available?: boolean; file_name?: string; base_version?: number; source_receipt_id?: string; resolution?: string;
   automatic_recovery?: "pending" | "current_state_conflict" | "resolved" };
 type AbandonConfirmation = { connection_id: string; context_connection_id: string; connection_version: number; job_id: string; base_version: number;
@@ -62,6 +63,13 @@ function recoveryView(value: unknown): RecoveryView | null {
       if (value.resolution !== "automatically_registered_current_state" || typeof value.current_artifact_state !== "string" || !["active", "trashed"].includes(value.current_artifact_state)) return null;
       view.current_artifact_state = value.current_artifact_state as RecoveryView["current_artifact_state"];
     }
+    if(value.current_path!==undefined){
+      if(value.resolution!=="automatically_registered_current_state" || value.current_artifact_state!=="active" ||
+        typeof value.current_path!=="string" || value.current_path.length<2 || value.current_path.length>1000 ||
+        value.current_path.endsWith("/") || /[\\\p{Cc}]/u.test(value.current_path) ||
+        value.current_path.split("/").some(part=>part==="."||part===".."))return null;
+      view.current_path=value.current_path;
+    }
   }
   // The server also grants legacy/non-candidate exits without an automatic
   // recovery marker. Only an explicit pending/terminal result suppresses them.
@@ -89,6 +97,7 @@ function recoveryTitle(view: RecoveryView) {
   return recoveryLabels[view.status];
 }
 function recoveryExplanation(view: RecoveryView) {
+  if(view.current_path)return `系统已自动核验目录当前位置并恢复使用：${view.current_path}。原操作历史保留。`;
   if (view.resolution === "automatically_registered_current_state" && view.current_artifact_state === "trashed") return "系统已核验并登记目录位于 Google 回收站，解除原作业占用，其他目录可正常使用；没有重新删除或恢复目录，原操作结果未确认的历史保留。";
   if (view.resolution === "automatically_registered_current_state") return "系统已重新核验当前目录及父级权限，更新登记并恢复使用；原操作结果未确认的历史保留。";
   if (view.resolution === "automatically_reconciled_before") return "当前文件与原登记一致，系统已自动恢复使用；原操作结果未确认的历史保留。";

@@ -61,6 +61,22 @@ test('real Native list and inspect sanitizers preserve trash state through the a
  }
 });
 
+test('actual Native list and inspect retain a validated current location through the page parser and text',()=>{
+ const raw={...response('active'),connection_id:randomUUID(),execution_permitted:false,current_path:'G:/资料中心/assets/当前位置'};
+ const owner=storageRecoveryOwnerResult(raw,{connection_id:raw.connection_id,job_id:raw.job_id});
+ const list=storageRecoveryListResult({status:'ok',connection_id:raw.connection_id,jobs:[raw],execution_permitted:false},raw.connection_id);
+ for(const value of [owner,...list.jobs]){
+  assert.equal(value.current_path,raw.current_path);const view=recoveryView(value);assert.ok(view);
+  assert.equal(view.current_path,raw.current_path);assert.match(recoveryExplanation(view),/当前位置/);
+ }
+ for(const change of [v=>v.current_path='../escape',v=>v.current_path='G:/Root/../other',v=>v.current_path='G:/Root/\nsecret',
+  v=>v.current_path=42,v=>v.current_artifact_state='trashed',v=>delete v.current_artifact_state]){
+  const bad=structuredClone(raw);change(bad);
+  assert.throws(()=>storageRecoveryOwnerResult(bad,{connection_id:raw.connection_id,job_id:raw.job_id}),/storage_recovery_response_invalid/);
+  assert.equal(recoveryView(bad),null);
+ }
+});
+
 for(const bad of ['deleted','true',true,null,{},[],['trashed'],['active']])test('unsupported directory state '+JSON.stringify(bad)+' cannot become a recovery result',()=>{
  assert.equal(recoveryView(response(bad)),null);
 });
