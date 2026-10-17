@@ -52,6 +52,9 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
 }) {
   const t = COPY[locale];
   const labels = VIEW_LABELS[locale];
+  const scopeLabel = (value: string) => value === "global" ? t.global : value === "profile" ? (locale === "zh-CN" ? "个人资料" : "Profile")
+    : value.startsWith("project:") ? `${projects.find(project => "project:" + project.id === value)?.name ?? (locale === "zh-CN" ? "项目" : "Project")} · ${value.slice(8)}`
+      : locale === "zh-CN" ? "范围待核对" : "Scope requires review";
   const [view, setView] = useState<ImprintView>("all");
   const [scope, setScope] = useState("all");
   const [searchText, setSearchText] = useState("");
@@ -168,15 +171,15 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
       {visible?.status === "unknown" && <p role="alert">{t.unknown}</p>}
       {visible?.status === "unavailable" && <p role="alert">{visible.error ?? t.unavailable}</p>}
       {visible?.status === "ready" && <>{visible.selection_complete === false && <p role="status" className="notice">{locale === "zh-CN" ? "部分内容待核对，本页不能证明全部当前内容已收齐。可保留阅读已合格内容；需要诊断原记录时显式开启历史。" : "Some content requires review. This page does not prove all current content has been collected. Qualified content remains readable; explicitly include history to diagnose other records."}</p>}
-        {visible.records.length === 0 && visible.selection_complete !== false && <p>{t.empty}</p>}{visible.records.map(record => <ImprintCard key={recordIdentity(record)} record={record} selection={selection} owner={session.user.id} rpc={rpc} locale={locale} attempts={attempts} onCommitted={committed} onRelated={openRecord} includeHistory={history} developmentContextId={developmentContextId} />)}
+        {visible.records.length === 0 && visible.selection_complete !== false && <p>{t.empty}</p>}{visible.records.map(record => <ImprintCard key={recordIdentity(record)} record={record} selection={selection} owner={session.user.id} rpc={rpc} locale={locale} scopeLabel={scopeLabel(record.scope)} attempts={attempts} onCommitted={committed} onRelated={openRecord} includeHistory={history} developmentContextId={developmentContextId} />)}
         {(!visible.page.complete || visible.selection_complete !== false) && <p className="context-muted">{visible.page.complete ? t.complete : t.partial}</p>}{visible.page.next_cursor !== null && <button type="button" onClick={() => void load(visible.page.next_cursor!)}>{t.more}</button>}</>}
     </div>
-    {visibleDetail && <section className="imprints-detail" aria-label={t.recordDetail}><h4>{t.recordDetail}</h4><button type="button" onClick={() => { fence.current.begin("detail"); setDetail(null); }}>{t.close}</button>{visibleDetail.loading && <p role="status">{t.loading}</p>}{visibleDetail.error && <p role="alert">{visibleDetail.error}</p>}{visibleDetail.record && <ImprintCard key={"detail-" + recordIdentity(visibleDetail.record)} record={visibleDetail.record} selection={selection} owner={session.user.id} rpc={rpc} locale={locale} attempts={attempts} onCommitted={committed} onRelated={openRecord} expanded includeHistory={history} developmentContextId={developmentContextId} />}</section>}
+    {visibleDetail && <section className="imprints-detail" aria-label={t.recordDetail}><h4>{t.recordDetail}</h4><button type="button" onClick={() => { fence.current.begin("detail"); setDetail(null); }}>{t.close}</button>{visibleDetail.loading && <p role="status">{t.loading}</p>}{visibleDetail.error && <p role="alert">{visibleDetail.error}</p>}{visibleDetail.record && <ImprintCard key={"detail-" + recordIdentity(visibleDetail.record)} record={visibleDetail.record} selection={selection} owner={session.user.id} rpc={rpc} locale={locale} scopeLabel={scopeLabel(visibleDetail.record.scope)} attempts={attempts} onCommitted={committed} onRelated={openRecord} expanded includeHistory={history} developmentContextId={developmentContextId} />}</section>}
   </section>;
 }
 
-function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommitted, onRelated, expanded = false, includeHistory, developmentContextId }: {
-  record: ImprintRecord; selection: object; owner: string; rpc: NativeRpc; locale: Locale; attempts: Attempts;
+function ImprintCard({ record, selection, owner, rpc, locale, scopeLabel, attempts, onCommitted, onRelated, expanded = false, includeHistory, developmentContextId }: {
+  record: ImprintRecord; selection: object; owner: string; rpc: NativeRpc; locale: Locale; scopeLabel: string; attempts: Attempts;
   onCommitted: (message: string) => void; onRelated: (id: string, sourceNamespace?: "canonical" | "development", association?: AssociationRead) => void; expanded?: boolean; includeHistory: boolean; developmentContextId?: string;
 }) {
   const t = COPY[locale], labels = VIEW_LABELS[locale];
@@ -237,7 +240,7 @@ function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommit
     {record.source_semantics === "legacy_compatibility" && <p className="context-muted">{locale === "zh-CN" ? "兼容记录：保留原有身份与正文，不视为正式当前结论。" : "Compatibility record: original identity and body are retained; this is not an authoritative current conclusion."}</p>}
     <div className="imprints-domains">{record.domains.length ? record.domains.map(key => <span key={key}>{labels[key]}</span>) : <span>{t.unclassified}</span>}</div>
     <details className="record-details" open={expanded || undefined}><summary>{t.details}</summary>
-      <dl><dt>{t.identity}</dt><dd><code>{record.id}</code></dd><dt>{t.version}</dt><dd>{record.version}</dd><dt>{t.scope}</dt><dd>{record.scope}</dd><dt>{t.currentness}</dt><dd>{(t.currentNames as Record<string, string>)[record.record_currentness] ?? t.currentNames.UNKNOWN}</dd></dl>
+      <dl><dt>{t.identity}</dt><dd><code>{record.id}</code></dd><dt>{t.version}</dt><dd>{record.version}</dd><dt>{t.scope}</dt><dd>{scopeLabel}</dd><dt>{t.currentness}</dt><dd>{(t.currentNames as Record<string, string>)[record.record_currentness] ?? t.currentNames.UNKNOWN}</dd></dl>
       {record.record_currentness !== "CURRENT" && <p className="notice">{t.historical}</p>}
       <h5>{t.full}</h5><pre className="imprints-content">{record.content}</pre>
       {historyMatch && <section aria-label={locale === "zh-CN" ? "历史版本命中" : "Historical-version matches"}><h5>{locale === "zh-CN" ? "历史版本命中" : "Historical-version matches"}</h5>
@@ -251,7 +254,7 @@ function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommit
       {Object.keys(record.relations).length > 0 && <div><h5>{t.relations}</h5>{relations.map(id => <button type="button" key={id} onClick={() => void onRelated(id, development ? sourceKind(record) ?? undefined : undefined)}>{t.related}: {id}</button>)}<details><summary>{t.relations}</summary><pre>{JSON.stringify(record.relations, null, 2)}</pre></details></div>}
       <ExistingAssociationEditor record={record} selection={selection} owner={owner} rpc={rpc} locale={locale}
         contextId={developmentContextId} prepare={(signature, make) => attempt(attempts, signature, make)} onCommitted={onCommitted} onRelated={onRelated} />
-      <MixedContentEditor record={record} selection={selection} owner={owner} rpc={rpc} locale={locale}
+      <MixedContentEditor record={record} selection={selection} owner={owner} rpc={rpc} locale={locale} scopeLabel={scopeLabel}
         contextId={developmentContextId} onCommitted={onCommitted} onRelated={onRelated} />
       <h5>{t.source}</h5>{development && sourceKind(record) !== "canonical" ? <p>{locale === "zh-CN" ? "此上下文原始记录的来源读取尚未接入。当前显示自身完整正文及实际返回的历史，不借用用户来源接口。" : "Source reading is not connected for this original development record. Its own full body and returned history are readable; user source APIs are not used."}</p> : sources.length ? sources.map(id => <button type="button" key={id} onClick={() => void sourceRead(id)}>{t.sourceButton}: {id}</button>) : <p>{t.noSource}</p>}
       {record.source_refs.length > 0 && <details><summary>{t.sourceMetadata}</summary><pre>{JSON.stringify(record.source_refs, null, 2)}</pre></details>}
