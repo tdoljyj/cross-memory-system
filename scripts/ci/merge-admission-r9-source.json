@@ -62,8 +62,8 @@
     }
   ],
   "execution_source": {
-    "profiles_sha256": "8e08fbadec49d9e61b6933c41001758fb1a0e5a4596dddc0b10f1341ce9d31ac",
-    "role_specs_sha256": "320ac72a469c948892713f0a8e3439b2f832058ebf405027fd7220462fda8adb"
+    "profiles_sha256": "cdaf731653781ae1abc74bf944bdaab45bfb1bdedb4dda94f19b25f2eaca7210",
+    "role_specs_sha256": "7cddf4abf791bf0f1d7feb8fb1462888f3da462033159d59694136aba16e4fa1"
   },
   "forward_epoch": {
     "epoch_id": "4197536d-465f-4046-9f11-e573aacc458b",
@@ -118,7 +118,7 @@
       "source_blobs": {
         "scripts/ci/clued-work-admission.mjs": "1797f502a96c83decd0779756d6cabbdd5080c9c",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "38228f39f1819c582c94ec4cfd2db9a50b21f4ed",
         ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
         "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
@@ -171,6 +171,17 @@
             ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
             "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
           }
+        },
+        {
+          "job_name": "kooyumi-work-admission",
+          "source_blobs": {
+            "scripts/ci/clued-work-admission.mjs": "1797f502a96c83decd0779756d6cabbdd5080c9c",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+            ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
+            ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+          }
         }
       ]
     },
@@ -195,7 +206,7 @@
         "scripts/ci/clued-merge-slot-ci.mjs": "c9490d55182bf5101a89779722e88a971c183e70",
         "scripts/ci/clued-merge-executor.mjs": "ca3b23fa07d733c2163e33375424961de6190ff4",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "38228f39f1819c582c94ec4cfd2db9a50b21f4ed",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
         ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
         "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
@@ -256,6 +267,19 @@
             ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
             "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
           }
+        },
+        {
+          "job_name": "clued-work-admission-reverify",
+          "source_blobs": {
+            "scripts/ci/clued-work-admission.mjs": "1797f502a96c83decd0779756d6cabbdd5080c9c",
+            "scripts/ci/clued-merge-slot-ci.mjs": "c9490d55182bf5101a89779722e88a971c183e70",
+            "scripts/ci/clued-merge-executor.mjs": "ca3b23fa07d733c2163e33375424961de6190ff4",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+            ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+            ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+          }
         }
       ]
     },
@@ -277,7 +301,7 @@
       "source_blobs": {
         "scripts/ci/clued-work-admission.mjs": "1797f502a96c83decd0779756d6cabbdd5080c9c",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "38228f39f1819c582c94ec4cfd2db9a50b21f4ed",
         ".github/workflows/clued-work-admission-dispatch.yml": "797efcd6218b04b347e0cd55d3352ac70cca2167",
         ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
@@ -335,6 +359,18 @@
             ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
             "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
           }
+        },
+        {
+          "job_name": "clued-work-admission-dispatch",
+          "source_blobs": {
+            "scripts/ci/clued-work-admission.mjs": "1797f502a96c83decd0779756d6cabbdd5080c9c",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+            ".github/workflows/clued-work-admission-dispatch.yml": "797efcd6218b04b347e0cd55d3352ac70cca2167",
+            ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
+            ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+          }
         }
       ]
     },
@@ -360,7 +396,7 @@
         "scripts/ci/clued-merge-slot-ci.mjs": "c9490d55182bf5101a89779722e88a971c183e70",
         "scripts/ci/clued-merge-executor.mjs": "ca3b23fa07d733c2163e33375424961de6190ff4",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "38228f39f1819c582c94ec4cfd2db9a50b21f4ed",
         ".github/workflows/clued-merge-executor.yml": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
         ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
@@ -426,6 +462,20 @@
             ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
             "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
           }
+        },
+        {
+          "job_name": "clued-merge-executor",
+          "source_blobs": {
+            "scripts/ci/clued-work-admission.mjs": "1797f502a96c83decd0779756d6cabbdd5080c9c",
+            "scripts/ci/clued-merge-slot-ci.mjs": "c9490d55182bf5101a89779722e88a971c183e70",
+            "scripts/ci/clued-merge-executor.mjs": "ca3b23fa07d733c2163e33375424961de6190ff4",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+            ".github/workflows/clued-merge-executor.yml": "727d4fdce1c8be1565b8f09c715422f9c7a35c88",
+            ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
+            ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+          }
         }
       ]
     },
@@ -451,7 +501,7 @@
         "scripts/ci/clued-merge-slot-ci.mjs": "c9490d55182bf5101a89779722e88a971c183e70",
         "scripts/ci/clued-merge-executor.mjs": "ca3b23fa07d733c2163e33375424961de6190ff4",
         "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
-        "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+        "scripts/ci/clued-gated-proof-runtime.mjs": "38228f39f1819c582c94ec4cfd2db9a50b21f4ed",
         ".github/workflows/clued-merge-slot-ci.yml": "662dbc3e846311379efa5f081b3cca518a881f74",
         ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
         ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
@@ -517,6 +567,20 @@
             ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
             "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
           }
+        },
+        {
+          "job_name": "clued-merge-slot-ci",
+          "source_blobs": {
+            "scripts/ci/clued-work-admission.mjs": "1797f502a96c83decd0779756d6cabbdd5080c9c",
+            "scripts/ci/clued-merge-slot-ci.mjs": "c9490d55182bf5101a89779722e88a971c183e70",
+            "scripts/ci/clued-merge-executor.mjs": "ca3b23fa07d733c2163e33375424961de6190ff4",
+            "scripts/ci/merge-admission-source-producer.mjs": "2f428d400de4dbf0a9feca2bd27269c0dd353033",
+            "scripts/ci/clued-gated-proof-runtime.mjs": "b093da9691dd30dabc431c80408618440e3269ca",
+            ".github/workflows/clued-merge-slot-ci.yml": "662dbc3e846311379efa5f081b3cca518a881f74",
+            ".github/workflows/clued-work-admission.yml": "19e67fd3b6b706b3c957506a7bfce6d8aeb7fd3b",
+            ".github/workflows/clued-work-admission-reverify.yml": "8d112ceea21487b9ef871558a2e3bab8decef126",
+            "config/merge-admission-policy.json": "a54ea27028f6361765fffce30f9ffa227a91b2ea"
+          }
         }
       ]
     }
@@ -567,6 +631,16 @@
       "source_checkout_sha": "59522b4158322e833ef152472a924c5fb40e0b24",
       "profiles_sha256": "64e5e972644ad7da5dfdf541072362807e498000b4ff99ecce0102940ec37c20",
       "role_specs_sha256": "9b76ef307b00ac2d8352e021d4f19cd65ea97fbc751d4ecb8e052fa23bd76f1a"
+    },
+    {
+      "source_checkout_sha": "280f778688cb652f72b60cf91d255689a3b888a6",
+      "profiles_sha256": "8e08fbadec49d9e61b6933c41001758fb1a0e5a4596dddc0b10f1341ce9d31ac",
+      "role_specs_sha256": "320ac72a469c948892713f0a8e3439b2f832058ebf405027fd7220462fda8adb"
+    },
+    {
+      "source_checkout_sha": "062543d943b65be1a88baed653f7999f25649668",
+      "profiles_sha256": "d67f29e1d2156639b56bf4592bb2def06c126945a629a7bc29b4ed046b4593dc",
+      "role_specs_sha256": "f077b742c49889630c587e540c453acfd7b2f1dc23986ef644ae9a519732e76d"
     }
   ]
 }

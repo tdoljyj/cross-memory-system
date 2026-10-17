@@ -117,3 +117,144 @@ test("project APIs reject missing account authentication", async () => {
   const response = await worker.fetch(new Request("https://clued.test/v1/projects"), env, ctx);
   assert.equal(response.status, 401);
 });
+
+const readTraceHeader = "x-kooyumi-read-trace";
+const readTraceId = "33333333-3333-4333-8333-333333333333";
+
+async function captureReadTrace(action) {
+  const original = console.info;
+  const logs = [];
+  console.info = value => { logs.push(JSON.parse(value)); };
+  try { await action(logs); }
+  finally { console.info = original; }
+}
+
+test("traced project read preserves payload, filters, auth and CORS without forwarding diagnostics", async () => {
+  const worker = await loadWorker();
+  const mock = mockAccountRpc("clued_user_project_list_v2", { query: "private-query", limit: 25 }, {
+    status: "ok", projects: [{ id: projectId, name: "private-project" }],
+  });
+  try {
+    await captureReadTrace(async logs => {
+      const headers = { authorization: "Bearer account-jwt", origin: "https://clued.test" };
+      const url = "https://clued.test/v1/projects?query=private-query&limit=25";
+      const baseline = await worker.fetch(new Request(url, { headers }), env, ctx);
+      const response = await worker.fetch(new Request(url, { headers: { ...headers, [readTraceHeader]: readTraceId } }), env, ctx);
+      assert.equal(response.status, baseline.status);
+      assert.equal(response.statusText, baseline.statusText);
+      assert.deepEqual(await response.json(), await baseline.json());
+      const tracedHeaders = new Headers(response.headers);
+      assert.equal(tracedHeaders.get(readTraceHeader), readTraceId);
+      tracedHeaders.delete(readTraceHeader);
+      assert.deepEqual([...tracedHeaders], [...baseline.headers]);
+      assert.deepEqual(logs.map(log => log.stage), ["entry", "auth_started", "auth_completed", "rpc_started", "rpc_completed", "response_built"]);
+      assert.equal(logs.at(-1).status, 200);
+      assert.ok(logs.every(log => log.traceId === readTraceId));
+      assert.equal(JSON.stringify(logs).includes("private-"), false);
+      assert.equal(JSON.stringify(logs).includes("account-jwt"), false);
+      assert.ok(mock.calls.every(call => call.init.headers.get(readTraceHeader) === null));
+      assert.equal(mock.calls.length, 4);
+    });
+  } finally { mock.restore(); }
+});
+
+test("trace identifies auth and RPC failures without leaking error details or changing status", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  const cases = [
+    { name: "missing auth", token: null, mode: "missing", status: 401, stages: ["entry", "auth_started", "auth_failed", "response_built"] },
+    { name: "auth denial", token: "account-jwt", mode: "auth_denied", status: 401, stages: ["entry", "auth_started", "auth_failed", "response_built"] },
+    { name: "auth transport", token: "account-jwt", mode: "auth_throws", status: 500, stages: ["entry", "auth_started", "auth_failed", "response_built"] },
+    { name: "RPC denial", token: "account-jwt", mode: "rpc_denied", status: 403, stages: ["entry", "auth_started", "auth_completed", "rpc_started", "rpc_failed", "response_built"] },
+    { name: "RPC transport", token: "account-jwt", mode: "rpc_throws", status: 500, stages: ["entry", "auth_started", "auth_completed", "rpc_started", "rpc_failed", "response_built"] },
+    { name: "RPC application rejection", token: "account-jwt", mode: "rpc_rejected", status: 200, stages: ["entry", "auth_started", "auth_completed", "rpc_started", "rpc_completed", "response_built"] },
+  ];
+  try {
+    for (const scenario of cases) {
+      let calls = 0;
+      globalThis.fetch = async (input, init) => {
+        calls += 1;
+        assert.equal(init.headers.get(readTraceHeader), null);
+        if (String(input).endsWith("/auth/v1/user")) {
+          if (scenario.mode === "auth_throws") throw new TypeError("private-auth-exception");
+          return scenario.mode === "auth_denied"
+            ? Response.json({ message: "private-auth-reason" }, { status: 401 })
+            : Response.json({ id: projectId });
+        }
+        if (scenario.mode === "rpc_throws") throw new TypeError("private-rpc-exception");
+        if (scenario.mode === "rpc_denied") return Response.json({ message: "private-rpc-reason" }, { status: 403 });
+        return Response.json({ status: "rejected", reason: "private-semantic-reason" });
+      };
+      await captureReadTrace(async logs => {
+        const headers = { [readTraceHeader]: readTraceId, ...(scenario.token ? { authorization: `Bearer ${scenario.token}` } : {}) };
+        const response = await worker.fetch(new Request("https://clued.test/v1/projects", { headers }), env, ctx);
+        assert.equal(response.status, scenario.status, scenario.name);
+        assert.equal(response.headers.get(readTraceHeader), readTraceId, scenario.name);
+        assert.deepEqual(logs.map(log => log.stage), scenario.stages, scenario.name);
+        assert.equal(logs.at(-1).status, scenario.status, scenario.name);
+        assert.equal(JSON.stringify(logs).includes("private-"), false, scenario.name);
+        assert.equal(JSON.stringify(logs).includes("account-jwt"), false, scenario.name);
+        assert.equal(calls, scenario.mode === "missing" ? 0 : scenario.mode.startsWith("auth_") ? 1 : 2);
+        // HTTP-200 business rejection remains HTTP-200, not a transport failure.
+        if (scenario.mode === "rpc_rejected") assert.equal((await response.json()).status, "rejected");
+      });
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("invalid project trace headers do not echo or log, and writes stay untraced", async () => {
+  const worker = await loadWorker();
+  await captureReadTrace(async logs => {
+    for (const id of ["private-invalid-header", `${readTraceId}, ${readTraceId}`, "x".repeat(1000)]) {
+      const response = await worker.fetch(new Request("https://clued.test/v1/projects", { headers: { [readTraceHeader]: id } }), env, ctx);
+      assert.equal(response.status, 401);
+      assert.equal(response.headers.get(readTraceHeader), null);
+    }
+    for (const [method, url, body, status] of [
+      ["POST", "/v1/projects", {}, 401],
+      ["PATCH", `/v1/projects/${projectId}`, {}, 401],
+      ["OPTIONS", "/v1/projects", null, 204],
+      ["GET", `/v1/projects/${projectId}`, null, 405],
+    ]) {
+      const response = await worker.fetch(new Request(`https://clued.test${url}`, {
+        method, headers: { [readTraceHeader]: readTraceId, ...(body ? { "content-type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      }), env, ctx);
+      assert.equal(response.status, status);
+      assert.equal(response.headers.get(readTraceHeader), null);
+    }
+    assert.deepEqual(logs, []);
+  });
+});
+
+test("trace captures pre-auth input rejection while preserving original validation", async () => {
+  const worker = await loadWorker();
+  await captureReadTrace(async logs => {
+    const response = await worker.fetch(new Request("https://clued.test/v1/projects?certainty_status=confirmed", {
+      headers: { [readTraceHeader]: readTraceId },
+    }), env, ctx);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, "legacy_project_certainty_forbidden");
+    assert.equal(response.headers.get(readTraceHeader), readTraceId);
+    assert.deepEqual(logs.map(log => log.stage), ["entry", "response_built"]);
+    assert.equal(logs.at(-1).status, 400);
+  });
+});
+
+test("project reads and denials retain their original result if trace logging fails", async () => {
+  const worker = await loadWorker();
+  const mock = mockAccountRpc("clued_user_project_list_v2", {});
+  const originalInfo = console.info;
+  console.info = () => { throw new Error("private-logger-failure"); };
+  try {
+    const ok = await worker.fetch(new Request("https://clued.test/v1/projects", {
+      headers: { authorization: "Bearer account-jwt", [readTraceHeader]: readTraceId },
+    }), env, ctx);
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { status: "ok", projects: [] });
+    const denied = await worker.fetch(new Request("https://clued.test/v1/projects", { headers: { [readTraceHeader]: readTraceId } }), env, ctx);
+    assert.equal(denied.status, 401);
+    assert.equal(denied.headers.get(readTraceHeader), readTraceId);
+    assert.equal(mock.calls.length, 2);
+  } finally { console.info = originalInfo; mock.restore(); }
+});
