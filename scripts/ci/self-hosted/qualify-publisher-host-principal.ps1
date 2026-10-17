@@ -188,6 +188,37 @@ function Read-ProbePullRequestEvent {
         return ($encoding.GetString($buffer, 0, $count) | ConvertFrom-Json)
     } finally { $stream.Dispose() }
 }
+function ConvertTo-ProbeDiagnosticSha($Value) {
+    if ($Value -is [string] -and $Value.Length -eq 40 -and $Value -cmatch '^[0-9a-f]{40}$') { return $Value }
+    return $null
+}
+function Get-ProbePullRequestBindingDiagnostic($Pr) {
+    # The caller has already checked the head/base repository and SHA fields.
+    # Missing/null or malformed merge fields remain distinct without echoing them.
+    $headProperty = $Pr.head.PSObject.Properties['ref']
+    $headRef = $null; if ($null -ne $headProperty) { $headRef = $headProperty.Value }
+    $mergeProperty = $Pr.PSObject.Properties['merge_commit_sha']
+    $merge = $null; if ($null -ne $mergeProperty) { $merge = $mergeProperty.Value }
+    $mergeKind = 'invalid'
+    if ($null -eq $mergeProperty) { $mergeKind = 'missing' }
+    elseif ($null -eq $merge) { $mergeKind = 'null' }
+    elseif ($null -ne (ConvertTo-ProbeDiagnosticSha $merge)) { $mergeKind = 'valid_sha' }
+    return [ordered]@{
+        schema = 'clued.publisher-qualification-case.pr-binding-diagnostic/1'
+        event_base_is_main = ($Pr.base.ref -is [string] -and $Pr.base.ref -ceq 'main')
+        environment_base_is_main = ($env:GITHUB_BASE_REF -ceq 'main')
+        head_is_string = ($headRef -is [string])
+        head_length_allowed = ($headRef -is [string] -and $headRef.Length -gt 0 -and $headRef.Length -le 255)
+        head_ref_matches = ($headRef -is [string] -and $headRef -ceq $env:GITHUB_HEAD_REF)
+        merge_equals_execution = ($merge -is [string] -and $merge -ceq $env:GITHUB_SHA)
+        merge_field_kind = $mergeKind
+        execution_sha = (ConvertTo-ProbeDiagnosticSha $env:GITHUB_SHA)
+        event_head_sha = (ConvertTo-ProbeDiagnosticSha $Pr.head.sha)
+        event_base_sha = (ConvertTo-ProbeDiagnosticSha $Pr.base.sha)
+        event_merge_sha = (ConvertTo-ProbeDiagnosticSha $merge)
+        production_qualified = $false
+    }
+}
 function Get-ProbeGitHubContext {
     # Observe the real PR event and execution merge separately from the checked-
     # out candidate head. Neither observation authenticates Source or admission.
@@ -214,9 +245,15 @@ function Get-ProbeGitHubContext {
             $pr.$side.repo.owner.login -cne 'tdoljyj' -or $pr.$side.repo.fork -isnot [bool] -or $pr.$side.repo.fork -ne $false -or
             $pr.$side.sha -cnotmatch '^[0-9a-f]{40}$') { throw 'OWNER_SAME_REPOSITORY_PR_SOURCE_REQUIRED' }
     }
+    $mergeProperty = $pr.PSObject.Properties['merge_commit_sha']
+    $merge = $null; if ($null -ne $mergeProperty) { $merge = $mergeProperty.Value }
     if ($pr.base.ref -cne 'main' -or $env:GITHUB_BASE_REF -cne 'main' -or $pr.head.ref -isnot [string] -or
         [string]::IsNullOrEmpty($pr.head.ref) -or $pr.head.ref -cne $env:GITHUB_HEAD_REF -or
-        $pr.merge_commit_sha -cne $env:GITHUB_SHA) { throw 'PULL_REQUEST_HEAD_BASE_MERGE_BINDING_REQUIRED' }
+        $merge -cne $env:GITHUB_SHA) {
+        $failure = [InvalidOperationException]::new('PULL_REQUEST_HEAD_BASE_MERGE_BINDING_REQUIRED')
+        $failure.Data['clued.pr_binding_diagnostic'] = Get-ProbePullRequestBindingDiagnostic $pr
+        throw $failure
+    }
     $context = [ordered]@{
         repository = $env:GITHUB_REPOSITORY; run_id = $env:GITHUB_RUN_ID; run_attempt = $env:GITHUB_RUN_ATTEMPT
         job_key = $env:GITHUB_JOB; provider_job_id = 'UNKNOWN'; sha = $env:GITHUB_SHA
@@ -715,6 +752,10 @@ try {
     $failure = [ordered]@{ schema = 'clued.publisher-host-principal.failure/1'; result = 'REFUSED_OR_UNKNOWN'
         mode = $Mode; internal_phase = $InternalPhase; qualification_id = $QualificationId.ToString('D')
         error = (Get-ErrorEvidence $_); production_qualified = $false; elapsed_milliseconds = $script:Budget.ElapsedMilliseconds }
+    if ($_.Exception -is [InvalidOperationException] -and $_.Exception.Message -ceq 'PULL_REQUEST_HEAD_BASE_MERGE_BINDING_REQUIRED' -and
+        $_.Exception.Data.Contains('clued.pr_binding_diagnostic')) {
+        $failure.pr_binding_diagnostic = $_.Exception.Data['clued.pr_binding_diagnostic']
+    }
     try { Write-ProbeResult $failure } catch { [Console]::Error.WriteLine('HOST_PRINCIPAL_PROBE_REFUSED') }
     exit 20
 }

@@ -223,6 +223,65 @@ Reject { Get-ProbeGitHubContext } '.' 'malformed actual event refused'
   assert.equal(report.checks.length, 39);
 });
 
+test('PR binding diagnostic is bounded, fixed-field and never echoes malformed values', { skip: !windows }, () => {
+  const report = runCase(String.raw`
+$valid=@{GITHUB_ACTIONS='true';GITHUB_REPOSITORY='tdoljyj/cross-memory-system';GITHUB_REPOSITORY_OWNER='tdoljyj';GITHUB_ACTOR='tdoljyj';GITHUB_TRIGGERING_ACTOR='tdoljyj';RUNNER_NAME='clued-ci-company-win-01';RUNNER_OS='Windows';RUNNER_ARCH='X64';GITHUB_EVENT_NAME='pull_request';GITHUB_JOB='host-principal-probe';GITHUB_SHA=('a'*40);GITHUB_BASE_REF='main';GITHUB_HEAD_REF='qualification-fixture';GITHUB_REF='refs/pull/42/merge';GITHUB_WORKFLOW_REF='tdoljyj/cross-memory-system/.github/workflows/clued-production-publisher-host-qualification.yml@refs/pull/42/merge';GITHUB_RUN_ID='12345';GITHUB_RUN_ATTEMPT='1'}
+foreach($key in $valid.Keys){[Environment]::SetEnvironmentVariable($key,$valid[$key],'Process')}
+$repository=[ordered]@{id=123;full_name='tdoljyj/cross-memory-system';owner=@{login='tdoljyj'};fork=$false}
+$validEvent=[ordered]@{action='synchronize';number=42;repository=$repository;sender=@{login='tdoljyj'};pull_request=@{number=42;user=@{login='tdoljyj'};merge_commit_sha=('a'*40);head=@{sha=('b'*40);ref='qualification-fixture';repo=$repository};base=@{sha=('c'*40);ref='main';repo=$repository}}}
+function Read-ProbePullRequestEvent { return $script:FixtureEvent }
+$expectedKeys=@('schema','event_base_is_main','environment_base_is_main','head_is_string','head_length_allowed','head_ref_matches','merge_equals_execution','merge_field_kind','execution_sha','event_head_sha','event_base_sha','event_merge_sha','production_qualified')
+foreach($mode in @('base-ref','environment-base','head-int','head-empty','head-long','head-object','head-ref','merge-null','merge-missing','merge-other')) {
+    $script:FixtureEvent=$validEvent|ConvertTo-Json -Depth 10|ConvertFrom-Json
+    $field='merge_equals_execution'
+    switch($mode) {
+        base-ref {$script:FixtureEvent.pull_request.base.ref='private-base-ref';$field='event_base_is_main'}
+        environment-base {$env:GITHUB_BASE_REF='private-environment-ref';$field='environment_base_is_main'}
+        head-int {$script:FixtureEvent.pull_request.head.ref=42;$field='head_is_string'}
+        head-empty {$script:FixtureEvent.pull_request.head.ref='';$field='head_length_allowed'}
+        head-long {$script:FixtureEvent.pull_request.head.ref='private-head-ref'*500;$field='head_length_allowed'}
+        head-object {$script:FixtureEvent.pull_request.head.ref=[pscustomobject]@{private='private-event-body'};$field='head_is_string'}
+        head-ref {$script:FixtureEvent.pull_request.head.ref='private-head-ref';$field='head_ref_matches'}
+        merge-null {$script:FixtureEvent.pull_request.merge_commit_sha=$null}
+        merge-missing {$script:FixtureEvent.pull_request.PSObject.Properties.Remove('merge_commit_sha')}
+        merge-other {$script:FixtureEvent.pull_request.merge_commit_sha='d'*40}
+    }
+    $caught=$null;try{Get-ProbeGitHubContext|Out-Null}catch{$caught=$_}
+    Check ($null -ne $caught -and $caught.Exception -is [InvalidOperationException] -and $caught.Exception.Message -ceq 'PULL_REQUEST_HEAD_BASE_MERGE_BINDING_REQUIRED') ('binding mismatch still refused: '+$mode)
+    $diagnostic=$caught.Exception.Data['clued.pr_binding_diagnostic']
+    Check ($diagnostic[$field] -is [bool] -and -not $diagnostic[$field]) ('separate false predicate: '+$mode)
+    Check (($diagnostic.Keys -join ',') -ceq ($expectedKeys -join ',')) ('exact diagnostic allowlist: '+$mode)
+    $json=$diagnostic|ConvertTo-Json -Depth 4 -Compress
+    Check ([Text.Encoding]::UTF8.GetByteCount($json) -le 1024 -and $json -cnotmatch 'private-' -and $diagnostic.production_qualified -eq $false) ('bounded and private values omitted: '+$mode)
+    $env:GITHUB_BASE_REF='main'
+}
+foreach($mode in @('null','upper','newline','crlf','private','integer','array','object','valid')) {
+    $pr=($validEvent|ConvertTo-Json -Depth 10|ConvertFrom-Json).pull_request
+    switch($mode) {
+        null {$pr.merge_commit_sha=$null}
+        upper {$pr.merge_commit_sha='A'*40}
+        newline {$pr.merge_commit_sha=('a'*40)+[char]10}
+        crlf {$pr.merge_commit_sha=('a'*40)+[char]13+[char]10}
+        private {$pr.merge_commit_sha='private-token-body'}
+        integer {$pr.merge_commit_sha=42}
+        array {$pr.merge_commit_sha=@('a'*40)}
+        object {$pr.merge_commit_sha=[pscustomobject]@{private='private-body'}}
+        valid {$pr.merge_commit_sha='d'*40}
+    }
+    $diagnostic=Get-ProbePullRequestBindingDiagnostic $pr
+    $kind=$(if($mode -ceq 'valid'){'valid_sha'}elseif($mode -ceq 'null'){'null'}else{'invalid'})
+    Check ($diagnostic.merge_field_kind -ceq $kind) ('merge field kind: '+$mode)
+    Check (($mode -ceq 'valid' -and $diagnostic.event_merge_sha -ceq ('d'*40)) -or ($mode -cne 'valid' -and $null -eq $diagnostic.event_merge_sha)) ('only lowercase SHA value included: '+$mode)
+    $json=$diagnostic|ConvertTo-Json -Depth 4 -Compress
+    Check ([Text.Encoding]::UTF8.GetByteCount($json) -le 1024 -and $json -cnotmatch 'private-|A{40}') ('invalid values absent: '+$mode)
+}
+foreach($value in @(('A'*40),'private-value',42,@(('a'*40)),[pscustomobject]@{private='private-body'})) {
+    Check ($null -eq (ConvertTo-ProbeDiagnosticSha $value)) 'SHA projection never coerces or enumerates arbitrary values'
+}
+`);
+  assert.equal(report.checks.length, 72);
+});
+
 test('loaded profile guard requires exact own metadata and actual Boolean values', { skip: !windows }, () => {
   const report = runCase(String.raw`
 $profile=[pscustomobject]@{profile_api_path='C:\Users\clued-runner';row_count=1;row_sid=$script:ExpectedSid;loaded=$true;special=$false;local_path='C:\Users\clued-runner';profilelist_path='C:\Users\clued-runner';hku_present=$true;profile_owner_sid=$script:ExpectedSid;no_reparse_chain=$true;ancestor_owner_acl_safe=$true;profile_acl_safe=$true}

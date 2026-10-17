@@ -12,6 +12,34 @@ export const EXPECTED_VM_ID = 'bd7d78d0-7936-4b33-8176-ea7afd57faaf';
 const REPOSITORY = 'tdoljyj/cross-memory-system';
 const OWNER = 'tdoljyj';
 const SHA = /^[0-9a-f]{40}$/u;
+const bindingDiagnostics = new WeakMap();
+
+export function pullRequestBindingDiagnostic(env, pr) {
+  const safeSha = value => typeof value === 'string' && value.length === 40 && SHA.test(value) ? value : null;
+  const merge = pr?.merge_commit_sha;
+  return {
+    schema: 'clued.publisher-qualification-case.pr-binding-diagnostic/1',
+    event_base_is_main: pr?.base?.ref === 'main',
+    environment_base_is_main: env.GITHUB_BASE_REF === 'main',
+    head_is_string: typeof pr?.head?.ref === 'string',
+    head_length_allowed: typeof pr?.head?.ref === 'string' && pr.head.ref.length > 0 && pr.head.ref.length <= 255,
+    head_ref_matches: typeof pr?.head?.ref === 'string' && env.GITHUB_HEAD_REF === pr.head.ref,
+    merge_equals_execution: typeof merge === 'string' && merge === env.GITHUB_SHA,
+    merge_field_kind: !Object.hasOwn(pr ?? {}, 'merge_commit_sha') ? 'missing' : merge === null ? 'null' : safeSha(merge) ? 'valid_sha' : 'invalid',
+    execution_sha: safeSha(env.GITHUB_SHA), event_head_sha: safeSha(pr?.head?.sha),
+    event_base_sha: safeSha(pr?.base?.sha), event_merge_sha: safeSha(merge),
+    production_qualified: false,
+  };
+}
+
+export function qualificationFailure(error) {
+  const failure = { schema: 'clued.publisher-qualification-case.failure/1', result: 'REFUSED_OR_UNKNOWN',
+    reason: /^[A-Z0-9_]+$/u.test(error.message ?? '') ? error.message : 'QUALIFICATION_OBSERVATION_FAILED', production_qualified: false };
+  // Only a diagnostic constructed at the exact binding refusal is eligible.
+  // Never serialize an arbitrary error property, event, environment or ref.
+  if (bindingDiagnostics.has(error)) failure.pr_binding_diagnostic = bindingDiagnostics.get(error);
+  return failure;
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CASE_PATH = fileURLToPath(new URL('./publisher-qualification-case.json', import.meta.url));
 const PROBE_PATH = fileURLToPath(new URL('./qualify-publisher-host-principal.ps1', import.meta.url));
@@ -81,9 +109,13 @@ export function validatePullRequestContext(env, event, kind) {
     requireFact(pr[side]?.repo?.full_name === REPOSITORY && pr[side].repo.id === event.repository.id
       && pr[side].repo.owner?.login === OWNER && pr[side].repo.fork === false && SHA.test(pr[side]?.sha ?? ''), 'SAME_REPOSITORY_SOURCE_REQUIRED');
   }
-  requireFact(pr.base.ref === 'main' && env.GITHUB_BASE_REF === 'main'
+  if (!(pr.base.ref === 'main' && env.GITHUB_BASE_REF === 'main'
     && typeof pr.head.ref === 'string' && pr.head.ref.length > 0 && pr.head.ref.length <= 255
-    && env.GITHUB_HEAD_REF === pr.head.ref && pr.merge_commit_sha === env.GITHUB_SHA, 'PR_HEAD_BASE_MERGE_BINDING_INVALID');
+    && env.GITHUB_HEAD_REF === pr.head.ref && pr.merge_commit_sha === env.GITHUB_SHA)) {
+    const error = new Error('PR_HEAD_BASE_MERGE_BINDING_INVALID');
+    bindingDiagnostics.set(error, pullRequestBindingDiagnostic(env, pr));
+    throw error;
+  }
   const ref = `refs/pull/${event.number}/merge`;
   const workflow = `clued-production-publisher-${kind}-qualification.yml`;
   requireFact(env.GITHUB_REF === ref && env.GITHUB_WORKFLOW_REF === `${REPOSITORY}/.github/workflows/${workflow}@${ref}`, 'PR_WORKFLOW_REF_INVALID');
@@ -205,8 +237,7 @@ export async function main(args = process.argv.slice(2)) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().then(code => { process.exitCode = code; }).catch(error => {
-    console.error(JSON.stringify({ schema: 'clued.publisher-qualification-case.failure/1', result: 'REFUSED_OR_UNKNOWN',
-      reason: /^[A-Z0-9_]+$/u.test(error.message ?? '') ? error.message : 'QUALIFICATION_OBSERVATION_FAILED', production_qualified: false }));
+    console.error(JSON.stringify(qualificationFailure(error)));
     process.exitCode = 20;
   });
 }

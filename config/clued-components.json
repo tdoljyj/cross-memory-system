@@ -410,7 +410,7 @@
     {
       "id": "script.publisher-pr-qualification",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Fixed public Host qualification case and actual Windows CI principal observations; Guest installation and production qualification remain separate.",
       "root": ".",
       "files": [
@@ -421,7 +421,7 @@
         "scripts/ci/self-hosted/qualify-publisher-host-principal.ps1",
         "scripts/ci/self-hosted/qualify-publisher-host-principal.test.mjs"
       ],
-      "content_sha256": "a6afa8c02f46d3c397b8282e338c1e6583beb6f431a84d7a279e74a9853859e3"
+      "content_sha256": "81cbbbb039eee534fa1f0d5c3885774d73d86eca66cbff9926cf16c76b1e911b"
     }
   ]
 }

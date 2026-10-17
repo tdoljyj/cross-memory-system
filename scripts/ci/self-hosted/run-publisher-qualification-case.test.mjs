@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
@@ -9,6 +11,7 @@ import { gateFindings } from '../clued-work-admission.mjs';
 import {
   CASE_SCHEMA, PURPOSE, CLASSIFICATION, PUBLIC_CANARY_ID, EXPECTED_VM_ID,
   parseArguments, validateCase, readBoundedJson, validatePullRequestContext,
+  pullRequestBindingDiagnostic, qualificationFailure, main,
   buildHostInvocation, validateHostResult, validateGuestLaunch, guestCaseOutcome,
 } from './run-publisher-qualification-case.mjs';
 
@@ -139,6 +142,80 @@ test('wrong event, actor, fork, PR number, ref, attempt, merge or checkout-sourc
   for (const mutate of mutations) { const value = copy(event); mutate(value); assert.throws(() => validatePullRequestContext(env, value, 'host')); }
   assert.throws(() => validatePullRequestContext({ ...env, GITHUB_RUN_ATTEMPT: '0' }, event, 'host'));
   assert.throws(() => validatePullRequestContext({ ...env, GITHUB_SHA: event.pull_request.head.sha }, event, 'host'), /MERGE_BINDING/u);
+});
+
+test('binding refusal emits only bounded booleans, merge kind and lowercase SHA allowlist', () => {
+  const { env, event } = fixture();
+  const keys = ['schema', 'event_base_is_main', 'environment_base_is_main', 'head_is_string', 'head_length_allowed',
+    'head_ref_matches', 'merge_equals_execution', 'merge_field_kind', 'execution_sha', 'event_head_sha', 'event_base_sha',
+    'event_merge_sha', 'production_qualified'];
+  const mutations = [
+    [value => { value.pull_request.base.ref = 'private-base-ref'; }, 'event_base_is_main'],
+    [value => { value.pull_request.head.ref = 42; }, 'head_is_string'],
+    [value => { value.pull_request.head.ref = ''; }, 'head_length_allowed'],
+    [value => { value.pull_request.head.ref = 'private-head-ref'.repeat(500); }, 'head_length_allowed'],
+    [value => { value.pull_request.head.ref = { private: 'private-event-body' }; }, 'head_is_string'],
+    [value => { value.pull_request.head.ref = 'private-head-ref'; }, 'head_ref_matches'],
+    [value => { value.pull_request.merge_commit_sha = null; }, 'merge_equals_execution'],
+    [value => { delete value.pull_request.merge_commit_sha; }, 'merge_equals_execution'],
+    [value => { value.pull_request.merge_commit_sha = 'd'.repeat(40); }, 'merge_equals_execution'],
+  ];
+  for (const [mutate, field] of mutations) {
+    const value = copy(event); mutate(value);
+    let error; try { validatePullRequestContext(env, value, 'host'); } catch (caught) { error = caught; }
+    assert.equal(error?.message, 'PR_HEAD_BASE_MERGE_BINDING_INVALID');
+    const failure = qualificationFailure(error), diagnostic = failure.pr_binding_diagnostic;
+    assert.equal(diagnostic[field], false, field);
+    assert.deepEqual(Object.keys(diagnostic), keys);
+    assert.equal(failure.production_qualified, false);
+    assert.ok(Buffer.byteLength(JSON.stringify(diagnostic), 'utf8') <= 1024);
+    assert.doesNotMatch(JSON.stringify(failure), /private-/u);
+  }
+  const baseMismatch = { ...env, GITHUB_BASE_REF: 'private-environment-ref' };
+  let baseError; try { validatePullRequestContext(baseMismatch, event, 'host'); } catch (error) { baseError = error; }
+  assert.equal(qualificationFailure(baseError).pr_binding_diagnostic.environment_base_is_main, false);
+  for (const [value, kind] of [[null, 'null'], ['d'.repeat(40), 'valid_sha'], ['A'.repeat(40), 'invalid'],
+    ['a'.repeat(40) + '\n', 'invalid'], ['a'.repeat(40) + '\r\n', 'invalid'],
+    ['private-token-body', 'invalid'], [42, 'invalid'], [['a'.repeat(40)], 'invalid'], [{ private: 'private-body' }, 'invalid']]) {
+    const pr = copy(event.pull_request); pr.merge_commit_sha = value;
+    const diagnostic = pullRequestBindingDiagnostic({ ...env, GITHUB_SHA: value }, pr);
+    assert.equal(diagnostic.merge_field_kind, kind);
+    assert.equal(diagnostic.event_merge_sha, kind === 'valid_sha' ? value : null);
+    assert.equal(diagnostic.execution_sha, kind === 'valid_sha' ? value : null);
+    assert.doesNotMatch(JSON.stringify(diagnostic), /private-|A{40}/u);
+    assert.ok(Buffer.byteLength(JSON.stringify(diagnostic), 'utf8') <= 1024);
+    for (const key of keys.filter(key => key.endsWith('_main') || key.startsWith('head_') || key === 'merge_equals_execution')) {
+      assert.equal(typeof diagnostic[key], 'boolean', key);
+    }
+  }
+  const missing = copy(event.pull_request); delete missing.merge_commit_sha;
+  assert.equal(pullRequestBindingDiagnostic(env, missing).merge_field_kind, 'missing');
+  const forged = new Error('PR_HEAD_BASE_MERGE_BINDING_INVALID'); forged.pr_binding_diagnostic = { private: 'private-body' };
+  assert.equal(qualificationFailure(forged).pr_binding_diagnostic, undefined);
+  assert.equal(qualificationFailure(new Error('private arbitrary error body')).reason, 'QUALIFICATION_OBSERVATION_FAILED');
+});
+
+test('entrypoint binding refusal cannot spawn PowerShell even with a valid fixed case', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-binding-refusal-'));
+  const file = path.join(directory, 'event.json');
+  const { env, event } = fixture(); event.pull_request.merge_commit_sha = null;
+  fs.writeFileSync(file, JSON.stringify(event));
+  const previousEnv = process.env, previousSpawn = childProcess.spawnSync;
+  let calls = 0;
+  try {
+    process.env = { ...previousEnv, ...env, GITHUB_EVENT_PATH: file };
+    childProcess.spawnSync = () => { calls += 1; throw new Error('Child process must never start.'); };
+    syncBuiltinESMExports();
+    await assert.rejects(main(['--kind', 'host']), error => {
+      assert.equal(error.message, 'PR_HEAD_BASE_MERGE_BINDING_INVALID');
+      assert.equal(qualificationFailure(error).pr_binding_diagnostic.merge_field_kind, 'null');
+      return true;
+    });
+    assert.equal(calls, 0);
+  } finally {
+    process.env = previousEnv; childProcess.spawnSync = previousSpawn; syncBuiltinESMExports();
+    fs.unlinkSync(file); fs.rmdirSync(directory);
+  }
 });
 
 test('bounded JSON reader refuses oversized, malformed, directory and a file grown during its read', () => {
