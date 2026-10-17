@@ -77,7 +77,7 @@ test('legacy directory: real P5 attempts and independent before recovery',{timeo
     if(historicalFault==='artifact-version')await db.query('update clued_private.resource_center_artifacts_v1 set version=version+1 where id=$1',[source.id]);
     if(historicalFault==='registered-descendant')await db.query(`insert into clued_private.resource_center_artifacts_v1
      select (jsonb_populate_record(null::clued_private.resource_center_artifacts_v1,to_jsonb(a)||jsonb_build_object(
-      'id',$2::uuid,'path',a.path||'/registered-child','provider_file_id','registered-child-'||$2::text,'target_kind','file'))).* 
+      'id',$2::uuid,'path',a.path||'/registered-child','provider_file_id','registered-child-'||$2::text,'target_kind','file'))).*
       from clued_private.resource_center_artifacts_v1 a where a.id=$1`,[source.id,uuid()]);
     // Only this disposable time fixture ages; the actual P5 attempt and its
     // original Receipt identities are not replaced or fabricated.
