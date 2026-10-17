@@ -480,5 +480,15 @@ before 仍经原双 GET、I2/I9、登记与 I11 出口；新 reader 及实际凭
 
 before 成立时只用独立 `storage_automatic_reconcile` Receipt 和同事务出口 permit 解除原隔离，原 conflict 状态、原 attempt/I9 Receipt、源 Artifact 及回收站状态均保留。并发两次核对只提交一张独立回执；回执失败全部回滚。after 仍需原 typed verifier/admission/proof/Receipt 完整结算，不能仅凭观察到 trash 位变化记为成功。changed 只记录具体核验冲突，不套单文件登记逻辑或改写后代路径。
 
-本有限候选未覆盖 I9 后旧 create 的 absence 出口、目录 Native 当前状态取舍、空历史 snapshot 的 after 完整链，以及非 job I12 的可信终止/本地效果/同步队列证明链。这些仍由 e91 后继分别实现和验收，不用合成 booleans、通过 before 的测试或本候选归档宣告完成。G 盘后备和暂停范围不因此启用。
+目录 Native 当前状态取舍、空历史 snapshot 的 after 完整链，以及非 job I12 的可信终止/本地效果/同步队列证明链仍由 e91 后继分别实现和验收，不用合成 booleans、通过 before 的测试或本候选归档宣告完成。G 盘后备和暂停范围不因此启用。
+
+## 22. I9 旧创建任务的自动缺失核对（e91 有限后继候选）
+
+没有语义 sidecar 的原 cloud writer 文件或目录 create，可通过当前合法 reader 读取原生成 ID，并用同 OAuth client、具备命名空间读取资格的凭据搜索原 intent 私有标签。只有原 ID 明确返回 404、标签搜索为空且完整、无下一页时才形成本次读取范围内的缺失证明；401/403/5xx、超时、`incompleteSearch` 或坏类型不等于缺失。不能由当前缺失反推旧请求从未产生过效果，也不重做旧 POST。
+
+服务端仍要求原 Owner/profile/cloud writer/intent/request/attempt/原回执完全绑定，I9 冲突完整隔离且只有原生成 ID，原 journal 与关闭回执、版本 CAS 一致。实际 reader 与凭据版本在同事务复核。原到期时间和实际 attempt 回执均至少过去 132 分钟；原 journal 的 conflict 状态禁止后续派发旧效果。已登记的 active/trashed 同 ID、路径或目录后代均拒绝这一出口，不覆盖当前登记或重用单文件登记路径。
+
+缺失核对只提交独立 `storage_automatic_reconcile` 回执和同事务 I11 permit，解除本任务隔离；原 conflict、attempt、原 I9 回执与文件登记保持。并发只形成一张新回执，回执提交失败时许可、隔离状态和 journal 版本一起回滚。实际 reader 身份、凭据版本、原 attempt 回执和本次缺失证明进入独立审计请求。私有 descriptor 的关闭版本与原冲突回执也必须与 Worker 收到的结果一致；没有该私有提示的旧 descriptor 不能声称走此 I9 出口。原 started/uncertain 缺失处理仍保留其完整原实现与校验，不扩公共调用角色。
+
+本节要求真实 gateway→PostgreSQL 与 Worker 读取组合测试，涵盖文件/目录、同任务新授权操作可进入、非空搜索/不完整搜索、reader/CAS变化、并发与回执回滚；先数据库后页面验收。本文及本地测试不等于已合入、已迁移或所有剩余机制完成。真实差异和暂时无法读取继续由程序按原有界退避自动核对，保护只限已确定的受影响范围。
 

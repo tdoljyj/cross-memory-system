@@ -105,6 +105,12 @@ async function recovery(options = {}) {
       destination_path: operation === "create" ? "G:/My Drive/Clued_资料中心/20_P/evidence.zip" : "G:/My Drive/Clued_资料中心/20_P/b.md",
       ...(operation === "create" ? {} : { contract: "clued.storage-modify-attempt/1", operation, source_path: "G:/My Drive/Clued_资料中心/20_P/a.md" }) },
   };
+  if (options.reader) {
+    descriptor.recovery_reader = { contract: "clued.storage-recovery-reader/1", connection_id: reference.connection_id,
+      credential_version: 4, connection_version: 1, auth_generation: 1, policy_generation: 1, profile_version: 1,
+      policy_id: randomUUID(), scope_digest: "c".repeat(64) };
+    descriptor.conflict_absence = { closed_version: 2, source_receipt_id: options.sourceReceipt };
+  }
   descriptor.credential_envelope = await vault.seal(JSON.stringify({ token_type: "Bearer", access_token: "fixture-access-token-0001",
     scope: SCOPE, expires_at_ms: now + (options.expiresInMs ?? 3600000) }), { owner_id: owner, connection_id: reference.connection_id,
     provider: "google-drive", provider_subject: "subject-1", oauth_client_id: "fixture-client", credential_version: 4 });
@@ -144,6 +150,26 @@ test("a missing create under unchanged registered folders is still settled as ab
   assert.equal(f.settles.length, 1);
   assert.equal(f.d.requests.filter(r => r.q?.includes("name = 'evidence.zip'")).length >= 1, true, "the verifier looked for the file first");
   assert.equal(f.d.requests.some(r => r.q?.startsWith("appProperties has")), true);
+});
+
+test("an I9 create absence reply binds the actual reader, closed version and original conflict Receipt", async () => {
+  const sourceReceipt = randomUUID(), receipt = randomUUID();
+  const settled = { status: "resolved", state: "conflict", resolution: "automatically_reconciled_before",
+    automatic_recovery: "resolved", base_version: 2, source_receipt_id: sourceReceipt };
+  const f = await recovery({ reader: true, sourceReceipt, receipt, settled });
+  assert.deepEqual(await f.run.run(f.reference), { status: "resolved", job_id: f.reference.job_id, receipt_id: receipt,
+    automatic_recovery: "resolved", execution_permitted: false });
+  assert.equal(f.settles.length, 1); assert.equal(f.settles[0].credential_version, 4);
+  assert.equal(f.settles[0].recovery_reader.connection_id, f.reference.connection_id);
+  for (const changed of [{ base_version: 99 }, { source_receipt_id: randomUUID() }, { state: "cancelled" },
+    { automatic_recovery: "pending" }, { execution_permitted: true }]) {
+    const bad = await recovery({ reader: true, sourceReceipt, settled: { ...settled, ...changed } });
+    assert.deepEqual(await bad.run.run(bad.reference), { status: "inspection_required", execution_permitted: false });
+    assert.equal(bad.settles.length, 1, "bad response never restarts a provider effect or repeats the RPC");
+  }
+  const old = await recovery({ settled });
+  assert.deepEqual(await old.run.run(old.reference), { status: "inspection_required", execution_permitted: false },
+    "an old descriptor cannot assert the I9 reader path");
 });
 
 test("present, tagged or unreadable effects, other operations and bad replies are never settled as absent", async () => {

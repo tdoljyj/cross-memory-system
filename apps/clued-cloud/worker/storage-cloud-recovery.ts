@@ -307,7 +307,17 @@ export async function createStorageCloudRecovery(config: {
         if (!proof) throw error;
         stage = "settlement";
         const settled = await bounded(config.absent.rpc({ action: "settle_absent", ...pinned, intent_id: d.intent_id,
-          base_version: d.version, request_sha256: d.request_sha256, proof })); check();
+          base_version: d.version, request_sha256: d.request_sha256, proof,
+          ...(object(reader) ? { credential_version: d.credential_version, ...readContext } : {}) })); check();
+        if (settled.status === "resolved" && settled.state === "conflict" &&
+            settled.resolution === "automatically_reconciled_before" && settled.automatic_recovery === "resolved" &&
+            settled.intent_id === d.intent_id && settled.connection_id === pinned.connection_id && settled.job_id === pinned.job_id &&
+            settled.base_version === d.version && uuid.test(String(settled.receipt_id)) && settled.execution_permitted === false &&
+            object(reader) && object(d.conflict_absence) && d.conflict_absence.closed_version === d.version &&
+            uuid.test(String(d.conflict_absence.source_receipt_id)) && settled.source_receipt_id === d.conflict_absence.source_receipt_id) {
+          return { status: "resolved", job_id: pinned.job_id, receipt_id: String(settled.receipt_id),
+            automatic_recovery: "resolved", execution_permitted: false };
+        }
         if (settled.status !== "committed" || settled.state !== "cancelled" || settled.intent_id !== d.intent_id ||
             settled.connection_id !== pinned.connection_id || settled.job_id !== pinned.job_id ||
             !uuid.test(String(settled.receipt_id)) || settled.execution_permitted !== false) throw denied();

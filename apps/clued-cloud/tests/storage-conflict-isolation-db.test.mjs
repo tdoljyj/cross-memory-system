@@ -486,13 +486,18 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '3 hours' where id=$1",[row.id]);
    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[row.id])).rows[0].v,'conflict');row=await journal(absent);
    const absentObservation={observed_at:new Date().toISOString(),provider_file_id:absentFile,provider_file_version:null,parent_id:null,name:null,trashed:null,mime_type:null,size:null,sha256:null,head_revision_id:null,observed_state:'absent'};
-   const absentReview=await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{action:'review_observe',...absent.reference,base_version:Number(row.version),source_receipt_id:row.receipt_id,observation:absentObservation});
+   const absentDescriptor=await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{action:'load',...absent.reference});
+   const absentReadContext=absentDescriptor.recovery_reader?{recovery_reader:absentDescriptor.recovery_reader}:{};
+   const absentReviewInput={action:'review_observe',...absent.reference,base_version:Number(row.version),source_receipt_id:row.receipt_id,observation:absentObservation};
+   if(absentDescriptor.recovery_reader)await assert.rejects(rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,absentReviewInput),/storage_recovery_reader_changed/,
+    'a private current reader returned by load cannot be omitted by a manual test caller');
+   const absentReview=await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{...absentReviewInput,...absentReadContext});
    assert.equal(absentReview.status,'review_prepared',JSON.stringify(absentReview));
    assert.match(absentReview.observation_id,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
    assert.deepEqual(absentReview,{status:'review_prepared',connection_id:connection,job_id:absent.reference.job_id,observation_id:absentReview.observation_id,base_version:3,source_receipt_id:row.receipt_id,observed_at:absentReview.observed_at,observed_state:'absent',execution_permitted:false,file_name:'disappeared.txt',provider_file_id:absentFile,provider_file_version:null,mime_type:null,size:null,sha256:null});
    assert.equal(Date.parse(absentReview.observed_at),Date.parse(absentObservation.observed_at));
    assert.equal((await drive('https://www.googleapis.com/drive/v3/files/'+absentFile)).status,404);
-   assert.equal((await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{action:'review_revalidate',...absent.reference,observation_id:absentReview.observation_id,base_version:absentReview.base_version,source_receipt_id:absentReview.source_receipt_id,observation:{...absentObservation,observed_at:new Date().toISOString()}})).status,'review_revalidated');
+   assert.equal((await rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{action:'review_revalidate',...absent.reference,observation_id:absentReview.observation_id,base_version:absentReview.base_version,source_receipt_id:absentReview.source_receipt_id,...absentReadContext,observation:{...absentObservation,observed_at:new Date().toISOString()}})).status,'review_revalidated');
    const absentAccepted=await rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'review_accept',...absent.reference,observation_id:absentReview.observation_id,base_version:absentReview.base_version,source_receipt_id:absentReview.source_receipt_id,confirmed:true},native);
    assert.equal(absentAccepted.resolution,'accepted_current_state');assert.equal((await journal(absent)).state,'conflict');
    assert.equal((await db.query('select count(*)::int n from clued_private.resource_center_artifacts_v1 where profile_id=$1 and provider_file_id=$2',[profileId,absentFile])).rows[0].n,0,'accepting absence never invents an artifact or reports the old create committed');
