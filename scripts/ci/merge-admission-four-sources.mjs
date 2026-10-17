@@ -48,6 +48,15 @@ const gitBlobOf=x=>{if(typeof x!=='string'||Buffer.from(x).toString('utf8')!==x)
 const expectationFailure=()=>({status:'NOT_QUALIFIED',reason_code:'EXPECTED_SOURCE_SELECTION_INVALID',candidate_ready:false,
   source_permission_qualification:'NOT_ESTABLISHED',source_authenticated:false,official_metric:false,execution_permission:false,t0:null});
 
+// Historical observations use the names in their exact reviewed Source bytes.
+// These names grant no authority; the caller still verifies every Source pin.
+export function admissionDisplayNames(source){
+  const checks=[...String(source?.script??'').replace(/\r\n?/g,'\n').matchAll(/^export const APP_CHECK_NAME = "((?:clued|kooyumi)-admission-verified)";$/gm)];
+  const jobs=[...String(source?.workflow??'').replace(/\r\n?/g,'\n').matchAll(/^  clued-work-admission:\n    name: ((?:clued|kooyumi)-work-admission)$/gm)];
+  if(checks.length!==1||jobs.length!==1)throw Error('ADMISSION_DISPLAY_NAMES_NOT_IN_REVIEWED_SOURCE');
+  return {app_check_name:checks[0][1],job_name:jobs[0][1]};
+}
+
 // Duplicate decoded keys are rejected. Expected source selection is per call.
 export function parseFourSourceRawData(raw){
   if(typeof raw!=='string'||Buffer.byteLength(raw)>32*1024*1024)throw Error('raw data limit');let at=0;
@@ -172,7 +181,7 @@ const blob=text=>{if(typeof text!=='string'||!Buffer.from(text).equals(Buffer.fr
 function sources(raw){
   const s=parse(raw);if(!exact(s,['script','workflow','reverify_workflow','policy'])||blob(s.script)!==SOURCE.script_blob||
     blob(s.workflow)!==SOURCE.workflow_blob||blob(s.reverify_workflow)!==SOURCE.reverify_workflow_blob||blob(s.policy)!==SOURCE.policy_blob)bad();
-  return {policy:JSON.parse(s.policy),digest:createHash('sha256').update(s.policy).digest('hex')};
+  return {policy:JSON.parse(s.policy),digest:createHash('sha256').update(s.policy).digest('hex'),...admissionDisplayNames(s)};
 }
 // Prefixes below are actual evaluate()/ownerReview()/workflowFindings outputs
 // of the exact source above (lines 832, 889, 922-924, 1099-1112,1195-1223;
@@ -214,7 +223,7 @@ function claimObservation(c,o,policy,state,layer,start,decision){
     rpc_head_admitted_receipt_id:c.head_admitted_receipt_id,...reasons,
     semantics:'claim RPC observation only; not the final admission decision'};
 }
-function appObservation(a,i,o,step,selection){
+function appObservation(a,i,o,step,selection,expectedName){
   if(a===null)return {state:'not_observed'};
   const publication=a.publication_observation;
   const expectedExternal=`pr:${i.pr_number}:run:${id(i.run_id)}`+(publication?`:publication:${publication.publication_id}`:'');
@@ -223,7 +232,7 @@ function appObservation(a,i,o,step,selection){
     !Number.isSafeInteger(publication.begin_execution_epoch)||publication.begin_execution_epoch<1||
     publication.finish_execution_epoch!==publication.begin_execution_epoch||publication.finish_status!=='committed'||publication.must_revoke!==false))bad();
   if(!exact(a,['id','app_id','name','head_sha','pr_number','run_id','run_attempt','external_id','status','conclusion',...(publication?['publication_observation']:[])])||
-    a.app_id!==SOURCE.app_id||a.name!=='clued-admission-verified'||a.head_sha!==i.head_sha||
+    a.app_id!==SOURCE.app_id||a.name!==expectedName||a.head_sha!==i.head_sha||
     a.pr_number!==i.pr_number||id(a.run_id)!==id(i.run_id)||a.run_attempt!==i.run_attempt||
     a.external_id!==expectedExternal||a.status!=='completed'||
     !['success','failure'].includes(a.conclusion)||o.verdict==='PR_NOT_OPEN')bad();
@@ -279,7 +288,7 @@ function buildParsed(p,supplied){
     }
     if(!noJob&&(!exact(j,['id','run_id','run_attempt','name','status','conclusion'])||id(j.id)!==id(i.job_id)||
       id(j.run_id)!==id(i.run_id)||j.run_attempt!==i.run_attempt||
-      j.name!==(i.entry==='required'?'clued-work-admission':'clued-work-admission-reverify')||
+      j.name!==(i.entry==='required'?supplied.job_name:'clued-work-admission-reverify')||
       !['in_progress','completed'].includes(j.status)||
       (j.status==='completed'?!['success','failure','cancelled','timed_out','skipped','neutral','action_required','startup_failure'].includes(j.conclusion):j.conclusion!==null)))bad();
     if(!exact(p.timing,['decision_at','observed_at'])||typeof p.final_decision_observed!=='boolean')bad();
@@ -330,7 +339,7 @@ function buildParsed(p,supplied){
       (o.verdict==='PR_NOT_OPEN'&&m.layer!==null)||
       (['ADMITTED','REJECTED'].includes(o.verdict)&&m.layer===null))bad();
     const claim=claimObservation(p.claim_observation,o,supplied.policy,m.state,m.layer,start,decision);
-    const reasons=reasonCodes(o.reasons),app=appObservation(p.app_observation,i,o,p.admit_step_outcome,p.selection_observation);
+    const reasons=reasonCodes(o.reasons),app=appObservation(p.app_observation,i,o,p.admit_step_outcome,p.selection_observation,supplied.app_check_name);
     if(o.admitted&&reasons.codes.some(c=>c!=='UNCLASSIFIED_REASON'&&c!=='SUMMARY_WORKFLOW_READ_UNAVAILABLE'))bad();
     return {schema:'clued.final-admission-measurement-candidate/1',status:'FINAL_OUTCOME_CANDIDATE',
       identity,source,native,decision_at:decision.text,observed_at:observed.text,

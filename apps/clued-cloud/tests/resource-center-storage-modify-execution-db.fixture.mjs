@@ -1,4 +1,5 @@
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
+import { setWorkerGatewayCaller } from './worker-gateway-caller-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -18,7 +19,7 @@ const TRACK = "20_P_产品与体验";
 // StorageFullCapability.v0.1 P3 part B: rename and file move through the real
 // cloud executor (verified-result mode) against disposable PostgreSQL and an
 // in-memory Drive. Never Google, never a disk.
-export async function testStorageModifyExecution(t, admin, server, user, decision) {
+export async function testStorageModifyExecution(t, admin, server, user, decision, options = {}) {
   await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
@@ -32,6 +33,10 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
     return database;
   };
   const native = await connect("authenticated"), caller = await connect("anon"), competing = await connect("anon"), operator = await connect();
+  if (options.gateway) {
+    await setWorkerGatewayCaller(caller);
+    await setWorkerGatewayCaller(competing);
+  }
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, user]);
   await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
     [user, JSON.stringify({ sub: user, session_id: session })]);
@@ -89,7 +94,10 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
     } catch (error) { await admin.query("rollback"); throw error; }
     return { ...target, policy };
   };
-  const cloud = async (input, database = caller) => (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value;
+  const cloud = async (input, database = caller) => {
+    try { return (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value; }
+    catch (error) { options.on_cloud_error?.(error, input); throw error; }
+  };
   const submit = async (target, client, suffix = randomUUID()) => {
     const reference = { connection_id: target.connection, job_id: randomUUID() };
     const mutation = { operation: "create", target_kind: "file", destination_path: target.root + `/20_P_产品与体验/${suffix}.txt`, content: "isolated account cloud UTF-8 fixture" };
@@ -123,7 +131,7 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
   const jobRow = async job => (await admin.query("select * from clued_private.storage_jobs_v1 where owner_id=$1 and job_id=$2", [user, job.reference.job_id])).rows[0];
   const journal = async job => (await admin.query("select m.* from clued_private.storage_jobs_v1 j join clued_private.resource_center_mutations_v1 m on m.id=j.intent_id where j.owner_id=$1 and j.job_id=$2", [user, job.reference.job_id])).rows[0];
   const provider = target => {
-    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" });
+    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, explicitlyTrashed: false, permissions: [{ id: "fixture-owner", type: "user", role: "owner" }], mimeType: "application/vnd.google-apps.folder" });
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
       [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, "20_P_产品与体验", target.rootId)],
       // The Owner's own Clued-named doc beside the root (StorageNormalUse §3.1): listed, not app-authorized.
@@ -139,6 +147,7 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
         const recorded = (await admin.query("select count(*)::int n from clued_private.resource_center_mutations_v1 where state='started' and provider_attempt->>'provider_file_id'=$1 and provider_attempt->>'contract'='clued.storage-modify-attempt/1'", [id])).rows[0].n;
         assert.equal(recorded, 1, "the exact attempt is durable before the update");
         if (body.name) file.name = body.name;
+        if (body.appProperties) file.appProperties = { ...file.appProperties, ...body.appProperties };
         const add = u.searchParams.get("addParents"), remove = u.searchParams.get("removeParents");
         if (add) { assert.deepEqual(file.parents, [remove]); file.parents = [add]; }
         file.version = String(Number(file.version) + 3); // Drive may jump by more than one.
@@ -150,8 +159,9 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
         const raw = init.body, match = /\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw), metadata = JSON.parse(match?.[0] ?? raw);
         const attempt = (await admin.query("select provider_attempt from clued_private.resource_center_mutations_v1 where id=$1", [metadata.appProperties.clued_intent_id])).rows[0].provider_attempt;
         assert.equal(attempt.provider_file_id, metadata.id);
-        const created = { ...metadata, version: "1", trashed: false, size: attempt.size, sha256Checksum: attempt.sha256,
-          md5Checksum: "f".repeat(32), headRevisionId: "rev-" + randomUUID() };
+        const created = { ...metadata, version: "1", trashed: false, explicitlyTrashed: false,
+          ...(metadata.mimeType === "application/vnd.google-apps.folder" ? { permissions: [{ id: "fixture-owner", type: "user", role: "owner" }] } : { size: attempt.size, sha256Checksum: attempt.sha256,
+            md5Checksum: "f".repeat(32), headRevisionId: "rev-" + randomUUID() }) };
         files.set(metadata.id, created);
         if (state.losePost) throw new Error("synthetic lost provider response");
         return Response.json(created);
@@ -161,7 +171,7 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
       const query = u.searchParams.get("q");
       if (query) {
         const parent = /'([^']+)' in parents/.exec(query)?.[1], name = /name = '([^']+)'/.exec(query)?.[1];
-        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && (!name || name === file.name)), incompleteSearch: false });
+        return Response.json({ files: [...files.values()].filter(file => file.parents.includes(parent) && !file.trashed && (!name || name === file.name)), incompleteSearch: false });
       }
       const found = files.get(u.pathname.split("/").at(-1));
       return found ? Response.json(found) : new Response("", { status: 404 });
@@ -169,9 +179,10 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
     return state;
   };
   // legacy: a Worker from before storage step 3 ignores load's ancestor_match.
-  const executor = (target, storage, database = caller, observe = async () => {}, { legacy = false } = {}) => {
+  const executor = (target, storage, database = caller, observe = async () => {}, { legacy = false, semantic = false } = {}) => {
     let loaded;
     return createResourceCenterCloudExecutor({ verified_result_mode: true,
+      ...(semantic ? { semantic_recovery_client_id: oauthClient } : {}),
       load_job: async ref => {
         loaded = await cloud({ action: "load", ...ref }, database);
         const descriptor = { ...loaded }; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
@@ -224,6 +235,11 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
   const modify = (operation, source, destination, version) => ({ operation, target_kind: "file", source_path: source, destination_path: destination, source_file_version: version });
 
   try {
+    if (options.extra_cases) await options.extra_cases({
+      setup, createFile, directoryIn, cloud, submitJob, modify, executor, journal, artifact, account,
+      oauth_client_id: oauthClient, owner_id: user, provider_subject: "modify-exec-subject", access_token: "fixture-modify-exec-access",
+    });
+    if (options.only_extra) return;
     await t.test("rename then move a Clued-created file; the registry follows by CAS and keeps the Artifact", async () => {
       const { target, client, storage } = await setup();
       const created = await createFile(target, client, storage, "draft.txt");

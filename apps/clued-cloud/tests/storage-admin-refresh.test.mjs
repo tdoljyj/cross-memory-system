@@ -23,13 +23,16 @@ function fixture() {
   };
   const auth = { async getSession(){if(refreshOnSession){refreshOnSession=false;listener('TOKEN_REFRESHED',session);}return {data:{session},error:null};}, onAuthStateChange(cb){listener=cb; queueMicrotask(()=>cb('INITIAL_SESSION',session)); return {data:{subscription:{unsubscribe(){listener=null;}}}};} };
   const exports = {};
-  vm.runInNewContext(source,{exports,URL,Error,crypto:{randomUUID},queueMicrotask,window:{confirm:message=>{confirmations.push(message);return true;},location:{assign(){throw Error('unexpected navigation');}}},require(name){
+  vm.runInNewContext(source,{exports,URL,Error,AbortSignal,setTimeout,clearTimeout,crypto:{randomUUID},queueMicrotask,window:{confirm:message=>{confirmations.push(message);return true;},location:{assign(){throw Error('unexpected navigation');}}},require(name){
     if(name==='react')return React;
     if(name==='react/jsx-runtime')return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props}),Fragment:'fragment'};
     if(name==='next/link')return {__esModule:true,default:'a'};
     if(name.endsWith('/supabase-browser'))return {supabase:{auth}};
     throw Error(name);
-  },fetch(url,options){let resolve;const promise=new Promise(r=>resolve=r);requests.push({url,options,resolve});return promise;}});
+  },fetch(url,options){
+    if(url==='/v1/storage/recovery'&&JSON.parse(options.body).action==='list')return Promise.resolve({ok:true,status:200,
+      json:async()=>({status:'ok',connection_id:JSON.parse(options.body).connection_id,jobs:[],execution_permitted:false})});
+    let resolve;const promise=new Promise(r=>resolve=r);requests.push({url,options,resolve});return promise;}});
   function render(){cursor=0;root=exports.default();while(effects.length)effects.shift()();}
   function text(node){if(arguments.length===0)node=root;if(Array.isArray(node))return node.map(n=>text(n)).join('');if(node==null||typeof node==='boolean')return '';return typeof node==='object'?text(node.props?.children):String(node);}
   function nodes(type){const found=[];function visit(n){if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=='object')return;if(n.type===type)found.push(n);visit(n.props?.children);}visit(root);return found;}

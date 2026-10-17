@@ -3,7 +3,7 @@
 Scope: only `global.priority_frontier` and `global.__aggregate__`. This is an
 independent operational alarm, not a Canonical writer, Projection Builder, or
 source of current action. A healthy alarm is never evidence that a projection
-is CURRENT; readers still use Clued currentness and fail closed.
+is CURRENT; readers still use KooYomi currentness and fail closed.
 
 ## Components and permissions
 
@@ -37,7 +37,7 @@ Environment for the independent monitor:
 | `CLUED_WATCHDOG_GRACE_UNTIL` | ISO timestamp after the first deployed cron tick; allow cron propagation during initial activation only. |
 | `CLUED_ALERT_CF_ACCOUNT_ID` | Cloudflare account ID. |
 | `CLUED_ALERT_CF_API_TOKEN` | Narrow Email Sending API token. |
-| `CLUED_ALERT_FROM` | Verified Clued alert sender. |
+| `CLUED_ALERT_FROM` | Verified KooYomi alert sender. |
 | `CLUED_ALERT_TO` | Owner-provided destination, stored as a secret. |
 | `CLUED_WATCHDOG_DRY_RUN` | `1` checks logic without delivery or state advance. |
 
@@ -88,7 +88,7 @@ approved account inventory at activation. Legitimate tenant removal requires
 an operator-reviewed reset of the retained tenant set.
 
 If alert delivery or the independent scheduler is unavailable, report
-monitoring as **inactive**, retain Clued's STALE/UNKNOWN read boundary, and do
+monitoring as **inactive**, retain KooYomi's STALE/UNKNOWN read boundary, and do
 not claim the system can self-detect future outages. Rollback the monitor by
 disabling its independent schedule; leave Canonical, invalidation, and
 projection semantics untouched. Preserve the state and diagnostic logs for

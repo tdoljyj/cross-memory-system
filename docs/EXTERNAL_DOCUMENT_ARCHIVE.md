@@ -1,6 +1,6 @@
 # External Document Archive
 
-Clued 的主代码仓库只保留与工程运行、构建、测试、协议、Schema、Migration、ADR、Runbook、Skill、当前执行控制和可复现机器证据直接绑定的内容。
+KooYomi 的主代码仓库只保留与工程运行、构建、测试、协议、Schema、Migration、ADR、Runbook、Skill、当前执行控制和可复现机器证据直接绑定的内容。
 
 产品研究、战略、商业、品牌、汇报、会议/对话整理、历史评审、验收长报告和 Closeout 叙事文档默认存放在 Google Drive，不再提交到主代码仓库。
 

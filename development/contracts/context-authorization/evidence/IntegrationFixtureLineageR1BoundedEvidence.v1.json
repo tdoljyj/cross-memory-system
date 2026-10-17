@@ -1,0 +1,93 @@
+{
+  "schema": "clued.integration-fixture-lineage-bounded-evidence.v1",
+  "authority_effect": "NONE",
+  "status": "PASS_EXACT_FIXTURE_LINEAGE_REVIEW_AND_ONE_COMPLETE_AFFECTED_PARENT",
+  "base_commit": "c7952115dc235094c9806c25386d835c2f2f127f",
+  "claim_id": "d7d142ee-fe18-4b1a-b216-f3a19087405d",
+  "fence": 10,
+  "scope_admission_receipt": "d66a04d3-3f26-480f-9164-55df73142f6d",
+  "subject": {
+    "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+    "sha256": "015747329b4fa4d37497fc1e5ee29f76584faaae32ae8232338f6fc24e4ab8ec",
+    "bytes": 89990,
+    "only_behavioral_delta": "Per-independent-Integration-case OAuth client identity; deliberate same-case Binding relationships retained. Default and Headless paths unchanged."
+  },
+  "actual_parent": {
+    "counts": {
+      "tests": 45,
+      "suites": 0,
+      "pass": 45,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "child_exit": 0,
+    "outer_exit": 0,
+    "elapsed_seconds": 60.656,
+    "complete_parent_ran_once": true,
+    "selected_subtests": false,
+    "same_final_fixture_bytes_tested": true,
+    "observed_source_inputs_before_after_unchanged": 260
+  },
+  "independent_review": {
+    "verdict": "PASS_BOUNDED_FIXTURE_LINEAGE_ISOLATION_AND_ACTUAL_PARENT_EVIDENCE",
+    "findings": {
+      "blocker": 0,
+      "major": 0,
+      "minor": 0
+    },
+    "reviewer": "final_manifest_review_non_author",
+    "reviewed_utc": "2026-10-15T04:04:07.017272+00:00",
+    "all_245_original_assertion_lines_exact_and_same_order": true,
+    "test_titles_exact_and_same_order": true
+  },
+  "original_artifacts": [
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\all-contexts-fixture-lineage-r1.json",
+      "sha256": "ee700de9433c9adb88c5308a65cdd4ed12199b4dad5a2559bf521b5281fc55bc",
+      "bytes": 123267,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\all-contexts-fixture-lineage-r1.log",
+      "sha256": "dd0ed2db0f1d84c92395c7f5b039960a23377f54271243e2d39574f8db82e02a",
+      "bytes": 8965,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\all-contexts-fixture-lineage-r1.patch",
+      "sha256": "974ff2eec0f1294492b37dc88272ce2434a7b0921ec2b12d47ac05a617c83e13",
+      "bytes": 10598,
+      "preserved": true
+    },
+    {
+      "original_work_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-10-13\\c-l\\work\\eight_implementation\\ui-acceptance\\all-contexts-fixture-lineage-r1-independent-review.json",
+      "sha256": "ff50f1d18cc957314783208336f3d8bbb4f8f86e2db9e2b8f674d07a4044fa6f",
+      "bytes": 4618,
+      "preserved": true
+    }
+  ],
+  "prior_failure": {
+    "pr": 830,
+    "head": "e8e4c8c5d606bec2f01b110a8cffa8958c6b5e2e",
+    "run_id": 38676220472,
+    "job_id": 116232080427,
+    "reported_counts": {
+      "tests": 216,
+      "pass": 204,
+      "fail": 12,
+      "skipped": 0
+    },
+    "first_failure": "binding_predates_revocation during reconcile setup; subsequent existing-membership errors were cascading setup failures. Original result remains failed."
+  },
+  "preserved_boundaries": [
+    "All Owner revocation, committed, wait and transaction rollback assertions",
+    "Same-case reconcile Bindings share the real OAuth lineage and tenant collision",
+    "Invited old/new consent retains one case lineage and exact membership qualification",
+    "O7 revocation fence, SQL, helpers, Worker, package, CI and permission policy unchanged",
+    "Clock regression remains a provider-log observation; no Host or PostgreSQL clock repair claimed"
+  ],
+  "raw_payloads_republished": false,
+  "qualification": "This manifest assembles pointers to the exact reviewed fixture and local full-parent evidence. It does not independently review itself or qualify other parent groups, a future head CI, protected approval, merge, production, same-Binding consent, Native eight-view acceptance, Stage3 completion or archive readiness."
+}

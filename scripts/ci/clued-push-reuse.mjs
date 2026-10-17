@@ -11,7 +11,7 @@ export const REPORT_NAME = 'clued-tested-tree.json';
 export const TARGETS = Object.freeze({
   'clued-g4-database.yml': {
     job: 'Supabase migration, RLS, transaction, and pgTAP',
-    steps: ['Verify fresh migration initialization', 'Run Unified Record V2 RLS and transaction tests', 'Run Project Lifecycle Successor v2 database and surface tests'],
+    steps: ['Prepare, start and verify one fresh isolated Supabase runtime', 'Run Unified Record V2 RLS and transaction tests', 'Run Project Lifecycle Successor v2 database and surface tests'],
   },
   'clued-connection-authorization.yml': {
     job: 'isolated-candidate',

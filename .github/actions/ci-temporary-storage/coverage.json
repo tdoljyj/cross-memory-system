@@ -5,7 +5,7 @@
     "temporary": "TMPDIR/TMP/TEMP, Python bytecode and Wrangler logs are job-owned; built-in job lifecycle handles hard-kill leftovers subject to permissions.",
     "retained": "Builds, qualification bundles, encrypted backups and evidence keep their existing artifact paths and retention.",
     "caches": "Existing npm/pip/tool caches and explicit action/Trivy caches remain persistent; no host-wide sweep or prune.",
-    "shared_lock": "scripts/ci/self-hosted/host-port-lock.sh deliberately keeps the stable /tmp/clued-ci-NAME.lock inode for cross-runner flock; a tiny coordination file, not transient extraction data.",
+    "shared_lock": "scripts/ci/self-hosted/host-port-lock.sh deliberately keeps the stable /tmp/clued-ci-NAME.lock inode for cross-runner flock; a tiny coordination file, not transient extraction data. G4 also keeps /tmp/clued-g4-docker-<daemon-hash>.lock through scripts/ci/clued-g4-fresh-start.mjs: a stable tiny flock inode only for qualified native runners sharing the same Docker daemon and /tmp filesystem; an equal daemon ID across separate mounts does not establish coordination. The kernel releases the startup lock when its last owning descriptor closes.",
     "vendor_bootstrap": "Official checkout/setup-node/setup-python/cache/upload-artifact actions manage workspace, tool cache and runner temporary transfers; they may run before repository bootstrap."
   },
   "local_actions": {
@@ -225,7 +225,7 @@
             }
           ],
           "retained_artifacts": [
-            "apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json\napps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json\napps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json\napps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json\napps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc\napps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json\napps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json\napps/clued-cloud/.sites-runtime/storage-client-source/registration.json\n"
+            "apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json\napps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json\napps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json\napps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json\napps/clued-cloud/.sites-runtime/release-evidence/connect-build.json\napps/clued-cloud/.sites-runtime/release-evidence/connect-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc\napps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json\napps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json\napps/clued-cloud/.sites-runtime/storage-client-source/registration.json\n"
           ],
           "persistent_action_caches": []
         }
@@ -478,6 +478,7 @@
             }
           ],
           "retained_artifacts": [
+            "${{ runner.temp }}/clued-g4-fresh-${{ github.run_id }}-${{ github.run_attempt }}.json",
             "${{ runner.temp }}/clued-tested-tree.json"
           ],
           "persistent_action_caches": []
@@ -495,7 +496,9 @@
               "repository": null
             }
           ],
-          "retained_artifacts": [],
+          "retained_artifacts": [
+            "${{ runner.temp }}/clued-g4-fresh-${{ github.run_id }}-${{ github.run_attempt }}.json"
+          ],
           "persistent_action_caches": []
         }
       }

@@ -7,13 +7,13 @@
 // open pull request that holds a merge slot:
 //
 //   failed   a CI required check (gitleaks, trivy, contract-placement and
-//            clued-work-admission from GitHub Actions, clued-admission-verified
+//            kooyumi-work-admission from GitHub Actions, kooyumi-admission-verified
 //            from the clued-admission App) finally failed on the head after
 //            the claim got the slot (step 4: an admission check that failed
 //            before, as it does when the head falls behind while the claim
 //            waits in the merge queue, leaves the holder the slot to bring
 //            the default branch in and push; it holds green back); Clued
-//            returns the slot at once, and a failing clued-merge-slot check is
+//            returns the slot at once, and a failing kooyumi-merge-slot check is
 //            posted on the head so that auto-merge cannot merge it on a
 //            re-run's green (independent review MAJOR-2).
 //   running  a run of a CI workflow is queued or in progress on the head; the
@@ -33,7 +33,7 @@
 // app id, as the ruleset reads them) and from the runs of the default
 // branch's CI workflows (gitleaks, trivy and the gated workflows) whose file
 // at the head is byte for byte the default branch's (git blob SHA). The
-// clued-merge-slot check is not counted: it is the slot's result, not CI's.
+// kooyumi-merge-slot check is not counted: it is the slot's result, not CI's.
 //
 // It runs from clued-merge-slot-ci.yml (a CI workflow of a pull request
 // completed) and as a step of the hourly clued-work-admission-reverify run.
@@ -73,16 +73,16 @@ export const TOUCH_RPC = "clued_work_merge_slot_touch_v1";
 export const HOLDERS_RPC = "clued_work_merge_slot_holders_v1";
 export const ACTIONS_APP_ID = 15368;
 // All CI required checks of the main ruleset, by (name, app id).
-// clued-merge-slot is required too, but it is the slot's own result.
+// kooyumi-merge-slot is required too, but it is the slot's own result.
 export const CI_REQUIRED_CHECKS = Object.freeze([
   Object.freeze({ name: "gitleaks", app_id: ACTIONS_APP_ID }),
   Object.freeze({ name: "trivy", app_id: ACTIONS_APP_ID }),
-  Object.freeze({ name: "clued-work-admission", app_id: ACTIONS_APP_ID }),
-  Object.freeze({ name: "clued-admission-verified", app_id: ADMISSION_APP_ID }),
+  Object.freeze({ name: "kooyumi-work-admission", app_id: ACTIONS_APP_ID }),
+  Object.freeze({ name: "kooyumi-admission-verified", app_id: ADMISSION_APP_ID }),
   Object.freeze({ name: "contract-placement", app_id: ACTIONS_APP_ID }),
 ]);
 // Workflows that count as CI besides the gated ones: those of the required checks
-// that run on the self-hosted runners. clued-work-admission takes seconds.
+// that run on the self-hosted runners. kooyumi-work-admission takes seconds.
 export const REQUIRED_CHECK_WORKFLOWS = Object.freeze(["gitleaks.yml", "trivy.yml", "contract-placement.yml"]);
 // A required check passes as the ruleset counts it. A final failure returns
 // the slot; cancelled is not one: the admission run of an edited pull request
@@ -175,7 +175,7 @@ export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,pro
   for(const required of CI_REQUIRED_CHECKS) {
     const check=newestCheck(checkSnapshot,head,required);
     if(!check || check.status!=='completed' || check.conclusion!=='success' ||
-      (required.name==='clued-admission-verified' && !checkNamesPullRequest(check,prNumber)))return false;
+      (required.name==='kooyumi-admission-verified' && !checkNamesPullRequest(check,prNumber)))return false;
   }
   if(proof && !Array.isArray(proof.native_runs))return false;
   const expected=proof?.native_runs??[];
@@ -206,7 +206,7 @@ export async function requiredBarrier(fetchImpl,env,repository,head,prNumber,pro
 // failed, running, green, or idle (not reported), with what was seen. An
 // admission check's failure that completed before slotSince (when the claim
 // became head of the merge queue, ms) is not reported.
-const STALE_OK = new Set(["clued-work-admission", "clued-admission-verified"]);
+const STALE_OK = new Set(["kooyumi-work-admission", "kooyumi-admission-verified"]);
 export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, slotSince = null, { pr, qualifyExecution } = {}) {
   const checks = [];
   let before = null;
@@ -214,7 +214,7 @@ export async function ciStateOf(fetchImpl, env, repository, headSha, workflows, 
   for (const required of CI_REQUIRED_CHECKS) {
     const check = newestCheck(checkSnapshot, headSha, required);
     checks.push({ name: required.name, status: check ? check.status : "missing", conclusion: check ? check.conclusion ?? null : null });
-    if (check && required.name === "clued-admission-verified" && pr && !checkNamesPullRequest(check, pr.number))
+    if (check && required.name === "kooyumi-admission-verified" && pr && !checkNamesPullRequest(check, pr.number))
       return { state: "idle", reason: "the newest admission check does not bind this pull request", checks };
     if (check && check.status === "completed" && FAILING.has(check.conclusion)) {
       const completed = Date.parse(check.completed_at ?? "");
@@ -373,7 +373,7 @@ async function reportMergeSlotsCore({ env, event, eventName, fetchImpl, workspac
         Object.assign(report, seen.state === "failed"
           ? { returned: Boolean(response.body.returned), notified: response.body.notified ?? [] }
           : { touched: Boolean(response.body.touched), merge_slot_until: response.body.merge_slot_until ?? null });
-        // The head's clued-merge-slot check may still be green: fail it, so a
+        // The head's kooyumi-merge-slot check may still be green: fail it, so a
         // re-run that turns CI green cannot let auto-merge merge without the
         // slot. Also when an earlier run returned the slot but could not post
         // (confirmation review NIT-2): the newest App check is still green then.

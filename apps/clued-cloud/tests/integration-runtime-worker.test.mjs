@@ -342,7 +342,7 @@ test('T-W-3 flag on: the seven tools match §12.2 and every existing tool defini
     // OQ-12 interim: context:read, server-enforced, and the description says connection-self
     assert.deepEqual(tool._meta, { 'clued/requiredScopes': ['context:read'], 'clued/scopeEnforcement': 'server-side' }, name);
     assert.match(tool.description, /Connection-self operation/, name);
-    assert.match(tool.description, /never reads or writes your Clued context\. Required Clued scope: context:read\.$/, name);
+    assert.match(tool.description, /never reads or writes your KooYomi context\. Required Clued scope: context:read\.$/, name);
     assert.equal(tool.inputSchema.type, 'object', name);
     assert.equal(tool.inputSchema.additionalProperties, false, name);
     assert.ok(tool.outputSchema, name);

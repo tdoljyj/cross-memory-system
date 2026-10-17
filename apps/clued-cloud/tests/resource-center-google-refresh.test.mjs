@@ -132,6 +132,20 @@ test("invalid stored credentials and forged claim identity never leave the serve
 
 // StorageNormalUse.v0.1 §2.2 item 4: a refresh never changes the sealed profile.
 const normalScope = scope + " https://www.googleapis.com/auth/drive.readonly";
+
+test("automatic refresh preserves full scope for an existing root without an app-opened marker",async()=>{
+  const fullScope=normalScope+" https://www.googleapis.com/auth/drive";
+  const f=await fixture({previous:{scope:fullScope},root:{isAppAuthorized:false}});
+  assert.deepEqual(await f.run(),{status:"committed"});
+  assert.equal((await f.plain()).scope.split(" ").sort().join(" "),fullScope.split(" ").sort().join(" "));
+  assert.equal(f.calls.filter(x=>x.url.endsWith("/token")).length,1);
+  for(const root of [{capabilities:{canAddChildren:false}},{parents:["other-parent"]},{trashed:true}]){
+    const denied=await fixture({previous:{scope:fullScope},root:{isAppAuthorized:false,...root}});
+    assert.equal((await denied.run()).status,"unavailable");assert.equal(denied.requests.some(x=>x.action==="commit"),false);
+  }
+  const normal=await fixture({previous:{scope:normalScope},root:{isAppAuthorized:false}});
+  assert.equal((await normal.run()).status,"unavailable");
+});
 test("scope profiles: refresh keeps the sealed profile and seals its normalized set", async () => {
   for (const [previous, tokens, sealed] of [
     [scope, {}, scope], [normalScope, {}, normalScope], [normalScope, { scope: normalScope }, normalScope],

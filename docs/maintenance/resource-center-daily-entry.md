@@ -19,8 +19,9 @@ replaced journals are not recreated. Its launchers remain `.disabled.ps1` until
 review/CI and live profile qualification are complete. Both launcher and runner
 require the pinned activation marker, which is absent while staged. Activation
 renames `activation.pending.json` to `activation.json` and the exact launchers;
-it does not change their pinned contents. The installer
-does not implement upgrades, resets or credential renewal. This establishes the
+it does not change their pinned contents. The installer stages an `existing_host`
+successor but does not perform its activation/cutover, reset state or renew
+credentials. This establishes the
 existing Host/NTFS fsync contract, not an arbitrary hardware power-loss warranty.
 On endpoints where WSL cannot see the Windows private application-data directory,
 set an operator-fixed `consumer_runtime_directory` on a verified shared mount.
@@ -36,6 +37,31 @@ then recheck its hash and run all 14 isolation checks before activation. This
 does not change Windows/Drive ACLs or add a consumer capability.
 Do not install a writable root, credentials, host temporary directory or shell
 tool into the consumer. The only broker manifest is the two official schemas.
+
+## KooYomi origin successor
+
+Current candidate bundles fix authority, write and committed-intent inspection
+to `https://kooyumi.pixelgrav.com`; renewal, status and stop use the same origin.
+There is no job-selected endpoint or fallback to the legacy domain. The dedicated
+`clued_rcb_`, `clued_rcw_` and `clued_rcr_` credentials and their protocols remain
+separate from MCP OAuth. A new MCP connection does not qualify this consumer.
+
+Build into a new operator-owned path, review the exact source and bundle hash,
+and stage through `installDailyHost` with the existing config path and hash in
+`existing_host`. The original activation, runtime and journal pins must still be
+verifiable during staging; disable the old activation only at the later controlled
+cutover. Preserve the exact profile, root, credential paths, runtime and
+all original journals. Retain the old installation manifest, bundle and pins;
+never overwrite them or use fresh-install state to bypass unresolved work.
+The new installation remains disabled until its own independent review, CI,
+process/runtime readback and live service qualification have completed.
+
+An existing `renewal-stop.json` stays in the preserved state directory and still
+blocks the successor. Staging a different bundle is not permission to delete the
+marker, reactivate a revoked grant, or clear a provider-root fence. Resolve the
+original lifecycle/intent under its existing authorization before any activation.
+The qualification modules produce bounded technical observations; they do not
+issue Canonical grants or turn a candidate package into accepted qualification.
 
 The Host configuration selects exact registered root/provider IDs, allowed
 track names, boundary scan roots, DPAPI credential files, journals and runtime

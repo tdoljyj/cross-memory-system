@@ -1,12 +1,12 @@
 {
   "schema": "clued.components/1",
-  "about": "Every self-developed Kooyumi component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
+  "about": "Every self-developed KooYomi component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
   "components": [
     {
       "id": "product",
       "kind": "product",
       "version": "1.6",
-      "description": "Kooyumi product version (root VERSION).",
+      "description": "KooYomi product version (root VERSION).",
       "root": ".",
       "files": [
         "VERSION"
@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.21",
-      "description": "The Kooyumi Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
+      "version": "1.0.24",
+      "description": "The KooYomi Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "66491f8608008b0d9eee4fe4ad705f3b95164c578099a78fde03a2b9e1015764",
+      "content_sha256": "35dc5890818c22e2ed1de8db49d7f02c5944bed2999ab4d79fc20bc09c92f89a",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "49",
+      "version": "50",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "49a387a32f8b52eb362c57ef8a9df1c339fc7fc6708dbd58dbd2dbd51f557cad",
+      "content_sha256": "7cc8c46b4d1abf8ef7b8757a1938b724594e09907cad998e3698e90f0965897c",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,8 +50,8 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.6.7",
-      "description": "Kooyumi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+      "version": "0.8.4",
+      "description": "KooYomi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
       "id": "hook.runner-job-started",
@@ -71,13 +71,13 @@
     {
       "id": "hook.capture-guard",
       "kind": "hook",
-      "version": "1.0.2",
-      "description": "Claude Code Stop hook enforcing Kooyumi capture.",
+      "version": "1.0.3",
+      "description": "Claude Code Stop hook enforcing KooYomi capture.",
       "root": "scripts/hooks",
       "files": [
         "clued_capture_guard.py"
       ],
-      "content_sha256": "e004bf11ed4719e4422f99b4ef3aabfd523222ffd535ee09508ec1938a2d6e08",
+      "content_sha256": "d33038791c4aa6f05c2d17df85b995456c5a727723375fda4165ed9077aeda19",
       "version_marker": {
         "file": "clued_capture_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -86,13 +86,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.4",
+      "version": "1.1.6",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "2cd752247e9aa9d9707e5cc16d5edf193ea020bdb2dd82b42b6ba83d4890ee78",
+      "content_sha256": "4e1f82e3cd86cd8270184492fa90726246e041b8da85ab416f10bab7b46a4d64",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -101,13 +101,13 @@
     {
       "id": "hook.version-check",
       "kind": "hook",
-      "version": "1.0.1",
+      "version": "1.0.3",
       "description": "Claude Code hook comparing component versions with the service.",
       "root": "scripts/hooks",
       "files": [
         "clued_version_check.py"
       ],
-      "content_sha256": "58138bd1000b02b9c95a49140634ebab92d73d09c24e7ae5d1aab515dc100c19",
+      "content_sha256": "3faf65def3d30609930d51161ed4ec7732f98b24e1f281e90d90d08e69628462",
       "version_marker": {
         "file": "clued_version_check.py",
         "pattern": "__version__ = \"{version}\""
@@ -116,13 +116,13 @@
     {
       "id": "hook.run-python",
       "kind": "hook",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Python launcher used by every Claude Code hook.",
       "root": "scripts/hooks",
       "files": [
         "run_python.sh"
       ],
-      "content_sha256": "717793c543dfaf4cac8170cf339d6e2926cf886571c5aa01cee7b554555ec58e",
+      "content_sha256": "e4da4a4a3d2575a8489fb771e61cd3d977ddae555ba2cb9e183631b4dbb59b52",
       "version_marker": {
         "file": "run_python.sh",
         "pattern": "# Version: {version}"
@@ -157,13 +157,13 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
         "clued_components.py"
       ],
-      "content_sha256": "d50a82a6915f840b533d6549a0790d22c533430e0943e23f673fced575b3147b",
+      "content_sha256": "5acd577f147a29a9c67a9ce52646bad951aed1fa44e15963aec18d5834d48741",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -172,13 +172,13 @@
     {
       "id": "script.update-clued-skills",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Installer for the Kooyumi Skill on Codex endpoints.",
+      "version": "1.0.1",
+      "description": "Installer for the KooYomi Skill on Codex endpoints.",
       "root": "scripts",
       "files": [
         "update_clued_skills.py"
       ],
-      "content_sha256": "604c10131081a75431713561c42a01a07483ca8b265b47e329d0766271b0c824",
+      "content_sha256": "23f683142adcfa3e9250421fff5263fddd08899c6282fc7d3056c1130a7f368b",
       "version_marker": {
         "file": "update_clued_skills.py",
         "pattern": "__version__ = \"{version}\""
@@ -220,7 +220,7 @@
     {
       "id": "script.handover-external-driver",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Canonical External2 driver and supporting modules; exact Source acceptance remains required for execution.",
       "root": ".",
       "files": [
@@ -238,7 +238,7 @@
         "scripts/ci/resources/supabase-official-prod-ca-2021.crt",
         "apps/clued-cloud/tests/handover-external-ci.test.mjs"
       ],
-      "content_sha256": "5aababb5bf266153d8097ad60a553ddfbe3854ef500de8fedd18bd9c8e619ea6",
+      "content_sha256": "3e7420fc35e027ab25c8f406dbd709ad0074bb77f9750f61a722532324cd58cc",
       "version_marker": {
         "file": "scripts/ci/clued-handover-external-driver.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -309,6 +309,37 @@
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.kooyumi-plugin-bundle",
+      "kind": "script",
+      "version": "1.0.1",
+      "description": "Build and verify the private registered KooYomi App plugin with the canonical Skill; no direct MCP or new account connection.",
+      "root": "plugins/kooyumi",
+      "files": [
+        "**/*"
+      ],
+      "content_sha256": "70afca67848ad55f2611591ac46b7205e2364b9c4877bbbf488c2f7b57893a22",
+      "version_marker": {
+        "file": "build_bundle.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "script.storage-google-redirect-cutover",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Generate bounded, exact-client CAS configuration SQL for the original Google Storage callback cutover; no credential access.",
+      "root": "apps/clued-cloud",
+      "files": [
+        "scripts/storage-google-redirect-cutover.mjs",
+        "tests/storage-google-redirect-cutover.test.mjs"
+      ],
+      "content_sha256": "84d033529b8fc691d81262df37ec224a7b1c84c3ce284c724bd03aee104e7496",
+      "version_marker": {
+        "file": "scripts/storage-google-redirect-cutover.mjs",
+        "pattern": "export const VERSION = '{version}';"
       }
     }
   ]

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("production build includes the Kooyumi account entry", async () => {
+test("production build includes the KooYomi account entry", async () => {
   // The vinext bundle imports cloudflare:workers and cannot run in Node's ESM
   // loader. The build gate emits the server bundle; this verifies that its
   // compiled account entry still contains the expected content.
@@ -15,7 +15,7 @@ test("production build includes the Kooyumi account entry", async () => {
   ].join("\n");
   assert.ok(/Let the good/i.test(built));
   assert.ok(/continue\./i.test(built));
-  assert.ok(/Kooyumi/i.test(built));
+  assert.ok(/KooYomi/.test(built));
   assert.doesNotMatch(built, /Clued by Pixel Gravity/i);
 });
 

@@ -173,15 +173,22 @@ jobs:
       - name: Verify fresh-start guard regressions
         run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs
 
-      - name: Prepare a fresh attempt-specific Supabase project
-        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
-
-      - name: Start isolated Supabase runtime
-        run: npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
-
-      - name: Verify fresh migration initialization
-        # start applies the complete migration chain once to a proven empty project.
-        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
+      - name: Prepare, start and verify one fresh isolated Supabase runtime
+        run: |
+          set -euo pipefail
+          umask 077
+          # All runner workspaces using this local daemon share this lock. It
+          # spans the socket-probe -> Docker-publish handoff, not the test run.
+          lock=$(node ../../scripts/ci/clued-g4-fresh-start.mjs --lock-path)
+          exec 9>>"$lock"
+          flock --exclusive --timeout 300 9 || { echo '::error::fresh_start_lock_timeout'; exit 1; }
+          export CLUED_G4_START_LOCK_FD=9
+          export CLUED_G4_FRESH_PROJECT="clued-g4-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
+          npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
+          # start applies the full migration chain once to a proven empty project.
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
         run: npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
@@ -221,20 +228,16 @@ jobs:
 
       - name: Stop isolated Supabase runtime
         if: always() && env.CLUED_G4_FRESH_PROJECT != ''
-        run: |
-          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup
-          # The CLI may return nonzero while pruning unrelated containers on
-          # this persistent runner. The gate still requires this run's isolated
-          # runtime to be stopped; Docker errors must not be mistaken for clean.
-          npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup || stop_status=$?
-          running=$(docker ps --format '{{.Names}}') || exit 1
-          if grep -Eq "^supabase_.*_${CLUED_G4_FRESH_PROJECT}$" <<< "$running"; then
-            echo '::error::Isolated Supabase containers remain running'
-            exit 1
-          fi
-          if [ "${stop_status:-0}" -ne 0 ]; then
-            echo '::warning::Supabase global prune failed after this run stopped'
-          fi
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --cleanup
+
+      - name: Preserve this attempt's safe allocation and cleanup diagnostics
+        if: always() && env.CLUED_G4_FRESH_PROJECT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: g4-fresh-start-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clued-g4-fresh-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Record the actual PR test tree
         if: success() && github.event_name == 'pull_request'
@@ -300,15 +303,19 @@ jobs:
       - name: Verify fresh-start guard regressions
         run: node --test ../../scripts/ci/clued-g4-fresh-start.test.mjs
 
-      - name: Prepare a fresh attempt-specific Supabase project
-        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
-
-      - name: Start isolated Supabase runtime
-        run: npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
-
-      - name: Verify fresh migration initialization
-        # start applies the complete migration chain once to a proven empty project.
-        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
+      - name: Prepare, start and verify one fresh isolated Supabase runtime
+        run: |
+          set -euo pipefail
+          umask 077
+          lock=$(node ../../scripts/ci/clued-g4-fresh-start.mjs --lock-path)
+          exec 9>>"$lock"
+          flock --exclusive --timeout 300 9 || { echo '::error::fresh_start_lock_timeout'; exit 1; }
+          export CLUED_G4_START_LOCK_FD=9
+          export CLUED_G4_FRESH_PROJECT="clued-g4-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
+          npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
+          node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
         run: npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db lint --local --schema public,clued_private --level error --fail-on error
@@ -348,7 +355,14 @@ jobs:
 
       - name: Stop isolated Supabase runtime
         if: always() && env.CLUED_G4_FRESH_PROJECT != ''
-        run: |
-          node ../../scripts/ci/clued-g4-fresh-start.mjs --guard-cleanup
-          npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase stop --no-backup
+        run: node ../../scripts/ci/clued-g4-fresh-start.mjs --cleanup
+
+      - name: Preserve this attempt's safe allocation and cleanup diagnostics
+        if: always() && env.CLUED_G4_FRESH_PROJECT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: g4-fresh-start-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clued-g4-fresh-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: error
+          retention-days: 7
 

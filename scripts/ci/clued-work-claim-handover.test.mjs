@@ -9,7 +9,7 @@ const privateKey=crypto.generateKeyPairSync('rsa',{modulusLength:2048}).privateK
 const head='a'.repeat(40);
 const environment={GITHUB_REPOSITORY:'o/r',GITHUB_API_URL:'https://api.test',GITHUB_TOKEN:'synthetic-gh',
   CLUED_CONTEXT_READ_TOKEN:'synthetic-clued',CLUED_ADMISSION_APP_ID:String(ADMISSION_APP_ID),CLUED_ADMISSION_APP_PRIVATE_KEY:privateKey};
-function fixture({running=false,publication=false,markerVisible=true,failCheck=false,prRunning=false,stopsOnCancel=false,historicHead=null,historyUnavailable=false,historyTruncated=false,headMoves=false}={}) {
+function fixture({running=false,publication=false,markerVisible=true,failCheck=false,prRunning=false,stopsOnCancel=false,historicHead=null,historyUnavailable=false,historyTruncated=false,headMoves=false,checkName='kooyumi-admission-verified',checkApp=ADMISSION_APP_ID}={}) {
   const calls=[];let patched=false,cancelled=false,reconciled=false,prReads=0;
   const fetchImpl=async(url,init={})=>{
     const method=init.method??'GET',body=init.body?JSON.parse(init.body):null;
@@ -41,8 +41,8 @@ function fixture({running=false,publication=false,markerVisible=true,failCheck=f
       if(historyUnavailable)status=503;
       data=[{sha:head},...(historicHead?[{sha:historicHead}]:[])];
     }
-    else if(String(url).includes('/check-runs?'))data={total_count:1,check_runs:[{id:42,name:'clued-admission-verified',
-      app:{id:ADMISSION_APP_ID},external_id:markerVisible?'pr:7/run:88:publication:pub':null,conclusion:patched?'failure':'success'}]};
+    else if(String(url).includes('/check-runs?'))data={total_count:1,check_runs:[{id:42,name:checkName,
+      app:{id:checkApp},external_id:markerVisible?'pr:7/run:88:publication:pub':null,conclusion:patched?'failure':'success'}]};
     else if(String(url).endsWith('/check-runs/42')&&method==='PATCH'){
       if(failCheck)status=503;else patched=true;
     }else if(String(url).endsWith('/check-runs/42')&&method==='GET')data={id:42,status:'completed',conclusion:patched?'failure':'success'};
@@ -56,6 +56,17 @@ test('revoker confirms old App checks failed before acknowledging an epoch',asyn
   assert.equal(result.acknowledged,1);assert.equal(result.pending,0);
   const patch=f.calls.findIndex(c=>c.method==='PATCH');const ack=f.calls.findIndex(c=>c.body?.p_input?.action==='revocation_ack');
   assert.ok(patch>=0&&ack>patch);assert.equal(f.calls[patch].body.conclusion,'failure');
+});
+test('name migration revokes both generations of the trusted App and ignores foreign or unrelated checks',async()=>{
+  for(const checkName of ['kooyumi-admission-verified','kooyumi-merge-slot','clued-admission-verified','clued-merge-slot']){
+    const f=fixture({checkName}),result=await revokeHandover({env:environment,workspace,fetchImpl:f.fetchImpl});
+    assert.equal(result.acknowledged,1,checkName);
+    assert.ok(f.calls.some(c=>c.method==='PATCH'&&c.body.conclusion==='failure'),checkName);
+  }
+  for(const options of [{checkApp:15368},{checkName:'unrelated-check'}]){
+    const f=fixture(options);await revokeHandover({env:environment,workspace,fetchImpl:f.fetchImpl});
+    assert.equal(f.calls.some(c=>c.method==='PATCH'),false);
+  }
 });
 test('a legacy PR revokes historical heads even when the outbox only names its current head',async()=>{
   const old='b'.repeat(40),f=fixture({historicHead:old});

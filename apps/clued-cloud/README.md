@@ -1,6 +1,6 @@
-# Kooyumi Cloud
+# KooYomi Cloud
 
-Kooyumi Cloud is the production-service implementation for Kooyumi (formerly Clued) continuity, Canonical context and the signed-in account surface. The deployed service uses Cloudflare Workers and a Supabase/PostgreSQL-backed Canonical Store.
+KooYomi Cloud is the production-service implementation for KooYomi (formerly Clued) continuity, Canonical context and the signed-in account surface. The deployed service uses Cloudflare Workers and a Supabase/PostgreSQL-backed Canonical Store.
 
 This directory is an engineering source tree. Repository source, tests and documentation do **not** by themselves prove what is currently deployed in production.
 
@@ -16,7 +16,7 @@ This directory is an engineering source tree. Repository source, tests and docum
 
 ## Runtime authority boundary
 
-The authenticated Kooyumi service is the online Canonical Authority.
+The authenticated KooYomi service is the online Canonical Authority.
 
 ```text
 App / Web / Agent / MCP
@@ -63,7 +63,7 @@ Do **not** treat that physical compatibility field as the long-term product orga
 
 The accepted successor direction is implemented in a reviewable v2 candidate:
 
-- Kooyumi creates a Project when it determines the item is a Project.
+- KooYomi creates a Project when it determines the item is a Project.
 - Recognition confidence/reason remain backend metadata/evidence.
 - Project progress remains separate from recognition.
 - The v2 public/product Project contract removes certainty as a lifecycle/filter axis.
@@ -113,7 +113,9 @@ Bundle/import compatibility contracts remain versioned. Bundle v2 and Snapshot v
 
 The production service target is the Cloudflare Worker `clued-cloud` at:
 
-<https://clued.pixelgrav.com>
+<https://kooyomi.com>
+
+The public site and Connect links use `kooyomi.com`. The existing `https://kooyumi.pixelgrav.com/mcp` issuer/resource and legacy `clued.pixelgrav.com` connections remain separate technical identities; changing the public brand does not migrate their credentials or Bindings.
 
 ChatGPT/Sites publishing surfaces are separate targets. A successful Sites build or preview must not be used as evidence that the production Worker, Supabase migrations, secrets or bindings were changed.
 

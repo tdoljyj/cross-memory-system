@@ -19,6 +19,19 @@ const gatewayMigration = '20261009070002_worker_gateway_transition_v1.sql';
 const storageMasterMigration = '20261011035952_storage_master_control_v1.sql';
 const storageReconnectRetryMigration = '20261011101500_storage_reconnect_retry_v1.sql';
 const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refresh_default_v1.sql';
+const storageConflictMigration = '20261016040000_storage_conflict_isolation_v1.sql';
+const storageAutomaticReconcileMigration = '20261016090000_storage_automatic_reconcile_v1.sql';
+const storageRegistrationRecoveryMigration = '20261016133429_storage_registration_recovery_v1.sql';
+const storageSemanticRecoveryMigration = '20261017043050_storage_semantic_recovery_v1.sql';
+const storageRecoveryCoverageMigration = '20261017053535_storage_recovery_coverage_v1.sql';
+const storageRecoveryReaderMigration = '20261017060438_storage_recovery_read_connection_v1.sql';
+const storageRecoveryNativeMigration = '20261017063317_storage_recovery_native_coverage_v1.sql';
+const storageLegacyDirectoryMigration = '20261017074657_storage_legacy_directory_recovery_v1.sql';
+const storageCurrentRegistrationMigration = '20261017102500_storage_registration_reconcile_v1.sql';
+const imprintBulkMigration = '20261017121706_imprint_bulk_backfill_v1.sql';
+const storageLegacyCreateMigration = '20261017131000_storage_legacy_create_adoption_v1.sql';
+const storageDirectoryCurrentRegistrationMigration = '20261017160500_storage_directory_current_registration_v2.sql';
+const imprintClassifierScanMigration = '20261017142000_imprint_classifier_scan_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -55,7 +68,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-project-v2-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: true, postgresFlags: ['-c', 'io_method=sync'],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -77,8 +90,8 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && name !== storageDirectoryCurrentRegistrationMigration && name !== imprintClassifierScanMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -484,6 +497,233 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       assert.ok(listed.projects.some(p=>p.id===compatId),'recognized history remains readable through the actual current gateway');
       await assert.rejects(rpc('clued_project_list_v2',{limit:200}),e=>e.code==='42501');
     });
+    await t.test('storage conflict isolation follows its actual deferred prerequisites and preserves current caller grants',async()=>{
+      // I9 patches the issuer-wrapped Worker/recovery functions and the final
+      // demand-renewal implementation. Replay it only after those historical
+      // dependencies, preserving every earlier cutover/hash assertion above.
+      const before=await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageConflictMigration),'utf8'));
+      // The automatic successor wraps I9 functions; this historical replay
+      // defers it with I9 instead of loading it before its prerequisites.
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageAutomaticReconcileMigration),'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),before,
+        'I9 preserves every public RPC OID, owner, definer configuration and ACL');
+      await assertGatewayCloseoutBoundary(admin);
+      assert.ok((await admin.query("select to_regclass('clued_private.storage_conflict_isolations_v1') as table_id")).rows[0].table_id,
+        'the actual deferred I9 module is installed');
+      const worker=(await admin.query("select pg_get_functiondef('clued_private.ii_priv_storage_cloud_worker_v2(text,jsonb)'::regprocedure) as body")).rows[0].body;
+      assert.ok(worker.includes('storage_conflict_assert_v1'),'the actual Worker load contains the I9 admission guard');
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway']){
+        assert.equal((await admin.query("select has_table_privilege($1,'clued_private.storage_conflict_isolations_v1','SELECT,INSERT,UPDATE,DELETE') as allowed",[role])).rows[0].allowed,false,role);
+        for(const signature of ['clued_private.storage_conflict_sweep_v1()','clued_private.storage_conflict_require_scheduler_v1()'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,signature])).rows[0].allowed,false,role+' '+signature);
+      }
+    });
+    await t.test('registration recovery follows I9 and automatic reconciliation without widening the caller boundary',async()=>{
+      // The registration successor clones the actual I9 Worker and automatic
+      // status/queue implementations. Install it after their historical hash
+      // and guard assertions above, preserving the production dependency order.
+      const before=await snapshotAuthorizationCallerBoundary(admin);
+      const workerSignature='clued_private.ii_priv_storage_cloud_worker_v2(text,jsonb)';
+      const implementation=async signature=>(await admin.query(`select oid::text oid,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig,prosrc
+        from pg_proc where oid=$1::regprocedure`,[signature])).rows[0];
+      const original=await implementation(workerSignature);
+      assert.ok(original.prosrc.includes('storage_conflict_assert_v1'),'the source being cloned contains the actual I9 admission guard');
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageRegistrationRecoveryMigration),'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),before,
+        'registration recovery preserves every public RPC OID, owner, definer configuration and ACL');
+      await assertGatewayCloseoutBoundary(admin);
+      const preserved=await implementation('clued_private.storage_cloud_before_registration_v1(text,jsonb)');
+      assert.equal(preserved.prosrc,original.prosrc,'the private clone preserves the complete original Worker, including its I9 admission guard');
+      for(const key of ['owner','prosecdef','proconfig'])assert.deepEqual(preserved[key],original[key],key);
+      const wrapper=await implementation(workerSignature);
+      assert.equal(wrapper.oid,original.oid,'the existing private Worker keeps its OID');
+      for(const key of ['owner','prosecdef','proconfig'])assert.deepEqual(wrapper[key],original[key],key);
+      assert.ok(wrapper.prosrc.includes('storage_registration_recovery_v1'),'the installed wrapper routes only its new internal recovery actions');
+      assert.ok(wrapper.prosrc.includes('storage_cloud_before_registration_v1'),'ordinary Worker actions retain their original guarded implementation');
+      const privateNames=['ii_priv_storage_cloud_worker_v2','storage_cloud_before_registration_v1',
+        'storage_registration_finish_v1','storage_registration_recovery_v1','storage_delivery_issuer_compatible_v1',
+        'storage_registration_check_audit_v1','storage_registration_job_closed_v1',
+        'storage_job_status_before_registration_v1','storage_queue_before_registration_v1',
+        'storage_job_status_v1','ii_pub_clued_storage_queued_sweep_v1'];
+      const helpers=(await admin.query(`select proname,oid::regprocedure::text signature,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig from pg_proc
+        where pronamespace='clued_private'::regnamespace and proname=any($1::text[]) order by proname`,[privateNames])).rows;
+      assert.deepEqual(helpers.map(row=>row.proname),[...privateNames].sort(),'every new helper, clone and existing wrapper is checked');
+      for(const helper of helpers){
+        assert.equal(helper.owner,'postgres',helper.signature);assert.equal(helper.prosecdef,true,helper.signature);
+        assert.deepEqual(helper.proconfig,['search_path=""'],helper.signature);
+        for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') allowed",[role,helper.signature])).rows[0].allowed,false,helper.signature+' '+role);
+      }
+      const table='clued_private.storage_registration_checks_v1';
+      const sidecar=(await admin.query('select pg_get_userbyid(relowner) owner,relrowsecurity from pg_class where oid=$1::regclass',[table])).rows[0];
+      assert.equal(sidecar.owner,'postgres');assert.equal(sidecar.relrowsecurity,true);
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
+        assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed",[role,table])).rows[0].allowed,false,table+' '+role);
+    });
+    await t.test('semantic recovery installs after the real gateway and I9 prerequisites without widening caller access', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageSemanticRecoveryMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      for (const table of ['storage_semantic_attempts_v1', 'storage_semantic_verifications_v1']) {
+        const signature = 'clued_private.' + table;
+        assert.equal((await admin.query('select relrowsecurity enabled from pg_class where oid=$1::regclass', [signature])).rows[0].enabled, true);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed", [role, signature])).rows[0].allowed, false);
+      }
+    });
+    await t.test('recovery coverage follows its semantic predecessor with the same public caller boundary', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageRecoveryCoverageMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+    });
+    await t.test('recovery reader installs after its real predecessors without expanding the public caller catalog', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageRecoveryReaderMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_reader_v1(text,uuid,uuid,uuid)','execute') allowed")).rows[0].allowed, false);
+      assert.equal((await admin.query(`select bool_and(not has_function_privilege(role_name,signature,'execute')) denied
+        from (values('anon'),('authenticated'),('service_role'),('clued_worker_gateway')) roles(role_name)
+        cross join (values('clued_private.storage_recovery_reader_refresh_v1(uuid,uuid,uuid,uuid,boolean,uuid,uuid,text)'),
+          ('clued_private.storage_recovery_refresh_input_guard_v1(jsonb)')) helpers(signature)`)).rows[0].denied,true);
+      assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_client_input_guard_v1(jsonb)','execute') allowed")).rows[0].allowed, false);
+    });
+    await t.test('Native predecessor recovery listing follows the read-connection migration with unchanged caller grants', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageRecoveryNativeMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_native_visible_v1(uuid,uuid,uuid,text)','execute') allowed")).rows[0].allowed, false);
+    });
+    await t.test('legacy directory before recovery installs after I9 and the actual reader without widening callers', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageLegacyDirectoryMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+        assert.equal((await admin.query("select has_function_privilege($1,'clued_private.storage_legacy_directory_reconcile_v1(text,jsonb)','execute') allowed", [role])).rows[0].allowed, false);
+    });
+    await t.test('current registration installs after its actual issuer, master and legacy dependencies with unchanged callers', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageCurrentRegistrationMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      const names = ['storage_registration_program_authority_v1', 'storage_registration_artifact_permitted_v1',
+        'storage_current_registration_node_v1', 'storage_current_registration_plan_v1', 'storage_current_registration_observation_v1',
+        'storage_current_registration_reconcile_v1', 'storage_current_registration_status_v1',
+        'storage_scheduled_before_current_registration_v1', 'ii_pub_clued_storage_scheduled_recovery_v2',
+        'storage_job_status_before_current_registration_v1', 'storage_conflict_public_before_current_registration_v1',
+        'storage_job_status_v1', 'storage_conflict_public_status_v1', 'storage_conflict_exit_allowed_v1', 'storage_conflict_artifact_guard_v1'];
+      const helpers = (await admin.query(`select proname,oid::regprocedure::text signature,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig from pg_proc
+        where pronamespace='clued_private'::regnamespace and proname=any($1::text[]) order by proname`, [names])).rows;
+      assert.deepEqual(helpers.map(row => row.proname), [...names].sort());
+      for (const helper of helpers) {
+        assert.equal(helper.owner, 'postgres', helper.signature);
+        // This private immutable node projection is an invoker, while the
+        // authority/registry helpers remain definers. Both stay owner-only.
+        assert.equal(helper.prosecdef, helper.proname !== 'storage_current_registration_node_v1', helper.signature);
+        assert.deepEqual(helper.proconfig, ['search_path=""'], helper.signature);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false, helper.signature+' '+role);
+      }
+      for (const table of ['clued_private.storage_current_registration_results_v1', 'clued_private.storage_registration_artifact_permits_v1']) {
+        const catalog = (await admin.query(`select pg_get_userbyid(c.relowner) owner,c.relrowsecurity,
+          not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where a.grantee<>c.relowner or a.grantor<>c.relowner) owner_only,
+          not exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and a.attacl is not null) no_column_grants,
+          not exists(select 1 from pg_policy p where p.polrelid=c.oid) no_policies
+          from pg_class c where c.oid=$1::regclass`, [table])).rows[0];
+        assert.deepEqual(catalog, {owner:'postgres',relrowsecurity:true,owner_only:true,no_column_grants:true,no_policies:true}, table);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+          assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed", [role, table])).rows[0].allowed, false, table+' '+role);
+          assert.equal((await admin.query("select has_any_column_privilege($1,$2,'SELECT,INSERT,UPDATE,REFERENCES') allowed", [role, table])).rows[0].allowed, false, table+' '+role);
+        }
+      }
+    });
+    await t.test('bounded imprint rehearsal installs after its real lifecycle dependency without widening existing callers', async () => {
+      // This historical scenario deliberately defers recognized-project helpers.
+      // Install the actual migration once, after every original assertion and
+      // predecessor; the ordinary full-chain test keeps timestamp order.
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', imprintBulkMigration), 'utf8'));
+      const after = await snapshotAuthorizationCallerBoundary(admin);
+      assert.deepEqual(after.filter(row => !row.signature.replace(/^public\./, '').startsWith('clued_imprint_bulk_')), before);
+      assert.equal(after.length, before.length + 3);
+      await assertGatewayCloseoutBoundary(admin);
+      const nativeSignatures = ['public.clued_imprint_bulk_preview_v1(jsonb)', 'public.clued_imprint_bulk_status_v1()',
+        'public.clued_imprint_bulk_mutate_v1(jsonb,text)'];
+      for (const signature of nativeSignatures) for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+        assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, signature])).rows[0].allowed, role === 'authenticated');
+      const helpers = (await admin.query(`select proname,oid::regprocedure::text signature,pg_get_userbyid(proowner) owner,prosecdef,proconfig
+        from pg_proc where pronamespace='clued_private'::regnamespace and proname like 'imprint_bulk_%' order by proname`)).rows;
+      assert.equal(helpers.length, 7);
+      for (const helper of helpers) {
+        assert.equal(helper.owner, 'postgres'); assert.deepEqual(helper.proconfig, ['search_path=""']);
+        assert.equal(helper.prosecdef, helper.proname !== 'imprint_bulk_domains_v1');
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false);
+      }
+      for (const table of ['imprint_bulk_batches_v1', 'imprint_bulk_items_v1', 'imprint_bulk_proof_key_v1']) {
+        const catalog = (await admin.query(`select pg_get_userbyid(c.relowner) owner,c.relrowsecurity,
+          not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where a.grantee<>c.relowner or a.grantor<>c.relowner) owner_only,
+          not exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and a.attacl is not null) no_column_grants,
+          not exists(select 1 from pg_policy p where p.polrelid=c.oid) no_policies from pg_class c where c.oid=$1::regclass`, ['clued_private.' + table])).rows[0];
+        assert.deepEqual(catalog, { owner: 'postgres', relrowsecurity: true, owner_only: true, no_column_grants: true, no_policies: true });
+      }
+    });
+    await t.test('legacy create registration follows its actual deferred registry dependencies without widening callers', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageLegacyCreateMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      const names = ['storage_legacy_create_registration_authority_v1', 'storage_legacy_create_registration_plan_v1',
+        'storage_legacy_create_registration_observation_v1', 'storage_legacy_create_registration_v1', 'storage_registration_before_create_v1'];
+      const helpers = (await admin.query(`select proname,oid::regprocedure::text signature,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig from pg_proc
+        where pronamespace='clued_private'::regnamespace and proname=any($1::text[]) order by proname`, [names])).rows;
+      assert.deepEqual(helpers.map(row => row.proname), [...names].sort());
+      for (const helper of helpers) {
+        assert.equal(helper.owner, 'postgres');assert.equal(helper.prosecdef, true);assert.deepEqual(helper.proconfig, ['search_path=""']);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false);
+      }
+    });
+    await t.test('nonempty directory registration follows both deferred helpers and preserves every caller and private function catalog', async () => {
+      const beforeCallers = await snapshotAuthorizationCallerBoundary(admin);
+      const privateCatalog = async () => (await admin.query(`select oid::text,proname,prosrc,
+        pg_get_userbyid(proowner) owner,prosecdef,provolatile,proparallel,proconfig,proacl::text
+        from pg_proc where pronamespace='clued_private'::regnamespace order by oid`)).rows;
+      const before = await privateCatalog();
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageDirectoryCurrentRegistrationMigration), 'utf8'));
+      const expected = before.map(row => ['storage_current_registration_observation_v1', 'storage_legacy_create_registration_observation_v1'].includes(row.proname)
+        ? { ...row, prosrc: row.prosrc.replace("p_observation->'target'->'empty' is distinct from 'true'::jsonb",
+          "jsonb_typeof(p_observation->'target'->'empty') is distinct from 'boolean'") } : row);
+      assert.equal(expected.filter((row, index) => row.prosrc !== before[index].prosrc).length, 2);
+      assert.deepEqual(await privateCatalog(), expected, 'only the two current directory child-presence predicates change');
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), beforeCallers);
+      await assertGatewayCloseoutBoundary(admin);
+    });
+    await t.test('classifier successor follows deferred bulk without changing function identity or caller privileges', async () => {
+      const beforeCallers = await snapshotAuthorizationCallerBoundary(admin);
+      const identity = async () => (await admin.query(`select oid::text,pg_get_userbyid(proowner) owner,
+        prosecdef,provolatile,proparallel,proconfig,proacl::text from pg_proc
+        where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure`)).rows[0];
+      const before = await identity();
+      const sql = await fs.readFile(path.join(root, 'supabase/migrations', imprintClassifierScanMigration), 'utf8');
+      await admin.query(sql);
+      assert.deepEqual(await identity(), before);
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), beforeCallers);
+      await assertGatewayCloseoutBoundary(admin);
+      const installed = (await admin.query("select md5(prosrc) body from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].body;
+      const expected = /as \$\$([\s\S]*)\$\$;/.exec(sql);
+      assert.ok(expected, 'the actual single-function successor is present');
+      assert.equal(installed, crypto.createHash('md5').update(expected[1]).digest('hex'), 'the deferred bulk migration cannot restore an older classifier');
+    });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});
@@ -491,6 +731,6 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     if (path.dirname(target) !== path.resolve(os.tmpdir()) || !path.basename(target).startsWith('clued-project-v2-')) {
       throw new Error('Unsafe test cleanup');
     }
-    await fs.rm(target, { recursive: true, force: true });
+    await fs.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 });

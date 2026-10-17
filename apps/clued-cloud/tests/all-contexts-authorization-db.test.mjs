@@ -66,9 +66,28 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations'))).filter((name) => name.endsWith('.sql')).sort();
     assert.ok(migrationNames.includes('20261014044323_all_contexts_authorization_v2.sql'));
+    const rawConflictMigration = '20261015052000_raw_context_business_conflict_http409.sql';
+    assert.ok(migrationNames.includes(rawConflictMigration));
     for (const name of migrationNames) {
+      const rawKernel = async () => (await admin.query(`select pg_get_functiondef(p.oid) definition,
+        to_jsonb(p)-'prosrc' metadata from pg_proc p
+        where p.oid='clued_private.development_execute_authorized_v14(uuid,uuid,jsonb)'::regprocedure`)).rows[0];
+      const before = name === rawConflictMigration ? await rawKernel() : null;
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+      if (before) {
+        const after = await rawKernel();
+        const oldRaise = "raise exception 'record_version_conflict' using errcode='40001';";
+        const newRaise = "raise exception 'record_version_conflict' using errcode='PT409';";
+        assert.equal(before.definition.split(oldRaise).length - 1, 2);
+        assert.equal(after.definition, before.definition.replaceAll(oldRaise, newRaise),
+          'only the two raw Record business-conflict SQLSTATE literals change');
+        assert.deepEqual(after.metadata, before.metadata, 'kernel OID, owner, ACL and security configuration are unchanged');
+        assert.ok(after.definition.includes("raise exception 'feedback_version_conflict' using errcode='40001';"),
+          'unrelated serialization SQLSTATE is not broadly remapped');
+        await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+        assert.deepEqual(await rawKernel(), after, 'exact migration replay is a no-op');
+      }
     }
     await allowRawTestBindings(admin);
     await allowTestIssuerCredentials(admin);
@@ -91,9 +110,9 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     async function native(name, input, db = human) {
       return (await db.query(`select public.${name}($1::jsonb) value`, [JSON.stringify(input)])).rows[0].value;
     }
-    async function prepare(requestedScopes = ['context:read', 'context:write', 'audit:read'], db = human) {
+    async function prepare(requestedScopes = ['context:read', 'context:write', 'audit:read'], db = human, clientId = 'all-contexts-client') {
       return (await db.query('select public.clued_authorization_prepare_v12($1,$2::jsonb) value', [issuer, JSON.stringify({
-        request_digest: proof(), client_id: 'all-contexts-client', client_name: 'All-contexts fixture',
+        request_digest: proof(), client_id: clientId, client_name: 'All-contexts fixture',
         redirect_uri: 'https://client.example.invalid/cb', resource, requested_scopes: requestedScopes,
       })])).rows[0].value;
     }
@@ -104,7 +123,9 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
         [issuer, request.request_id, request.version, JSON.stringify(selected), token, expires])).rows[0].value;
       return { ...result, token, expires };
     }
-    const authorize = async (selected, scopes, db = human) => approve(await prepare(scopes, db), selected, db);
+    // Independent Integration cases must not share a previously revoked OAuth client lineage.
+    // Deliberately related Bindings still pass the same case-local clientId.
+    const authorize = async (selected, scopes, db = human, clientId) => approve(await prepare(scopes, db, clientId), selected, db);
     const own = (input, db = human) => native('clued_development_owner_v14', { idempotency_key: uuid(), ...input }, db);
     const createContext = async (projectId, name, environment = 'test', db = human) => {
       const result = await own({ op: 'context_create', project_id: projectId, name, environment }, db);
@@ -267,6 +288,97 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       result.binding_owners = (await admin.query(`select to_jsonb(a) value from clued_private.integration_binding_owners_v1 a
         where owner_id=$1 order by binding_id`, [owner])).rows.map((row) => row.value);
       return result;
+    }
+
+    for (const ownership of ['owner', 'member']) {
+      await t.test(`raw ${ownership} stale put and revoke return PT409 without changing Record, cursor or audit`, async () => {
+        const actions = ['read', 'write', 'close'];
+        let contextId;
+        let binding;
+        if (ownership === 'owner') {
+          contextId = await createContext(project, `Raw owner CAS ${uuid()}`);
+          binding = await authorize([context(contextId, actions)], undefined, human, `raw-cas-owner-${uuid()}`);
+        } else {
+          const memberProject = await fixtureProject(other, `Raw member CAS ${uuid()}`);
+          contextId = await createContext(memberProject, 'Raw member CAS context', 'test', foreignHuman);
+          const invite = await native('clued_project_access_v13', { op: 'invite_create', project_id: memberProject,
+            environment: 'test', target_email: 'all-contexts@example.invalid', role: 'editor', actions,
+            expires_at: future(), idempotency_key: uuid() }, foreignHuman);
+          const membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
+            base_version: invite.version, idempotency_key: uuid() });
+          const request = await prepare(undefined, human, `raw-cas-member-${uuid()}`);
+          const eligible = request.eligible.find((row) => row.resource_id === contextId);
+          assert.equal(eligible.ownership, 'membership');
+          assert.equal(eligible.qualification_id, membership.membership_id);
+          assert.deepEqual(sorted(eligible.actions), sorted(actions));
+          binding = await approve(request, [context(contextId, actions)]);
+        }
+        const qualification = (await admin.query(`select qualification_id from clued_private.authorization_entries_v12
+          where binding_id=$1 and resource_kind='context' and resource_id=$2 and environment='test'`,
+        [binding.binding_id, contextId])).rows[0].qualification_id;
+        assert.equal(qualification === null, ownership === 'owner', 'the real own/member dispatch paths remain distinct');
+        assert.deepEqual(sorted((await grant(binding.binding_id, contextId)).actions), ['read', 'write'],
+          'close uses the existing internal write grant, never a fabricated grant action');
+        const originalOperationCount = (await admin.query(`select count(*)::int n
+          from clued_private.development_operations_v14 where context_id=$1`, [contextId])).rows[0].n;
+
+        const created = await write(binding, contextId, `Raw ${ownership} v1`);
+        assert.equal(created.status, 'committed');
+        assert.equal(Number(created.result.version), 1);
+        const recordId = created.result.id;
+        const bodyV2 = { title: `Raw ${ownership} v2`, content: `Current ${ownership} body must survive stale writes` };
+        const updated = await development(binding, { op: 'record_put', context_id: contextId, record_id: recordId,
+          record_type: 'note', base_version: 1, body: bodyV2, idempotency_key: uuid() });
+        assert.equal(updated.status, 'committed');
+        assert.equal(Number(updated.result.version), 2);
+        assert.equal(updated.actor_user_id, owner);
+        assert.equal(updated.resource_owner_id, ownership === 'owner' ? owner : other);
+
+        async function rawBusiness() {
+          const result = {};
+          for (const [name, table, predicate, order] of [
+            ['context', 'development_spaces_v14', 'id=$1', 'id'],
+            ['records', 'development_records_v14', 'context_id=$1', 'id'],
+            ['versions', 'development_record_versions_v14', 'context_id=$1', 'record_id,version'],
+            ['operations', 'development_operations_v14', 'context_id=$1', 'id'],
+            ['receipts', 'development_receipts_v14', 'context_id=$1', 'id'],
+            ['events', 'development_events_v14', 'context_id=$1', 'id'],
+          ]) result[name] = (await admin.query(`select to_jsonb(a) value from clued_private.${table} a
+            where ${predicate} order by ${order}`, [contextId])).rows.map((row) => row.value);
+          return result;
+        }
+        const before = await rawBusiness();
+        assert.deepEqual(before.records[0].body, bodyV2);
+        assert.equal(Number(before.records[0].version), 2);
+        assert.equal(before.records[0].lifecycle_status, 'ACTIVE');
+        assert.equal(before.versions.length, 2);
+        assert.equal(before.operations.length, originalOperationCount + 2);
+        assert.equal(before.receipts.length, before.operations.length);
+        assert.equal(before.events.length, before.operations.length);
+        const conflict = (error) => error.code === 'PT409' && error.message === 'record_version_conflict';
+        await assert.rejects(development(binding, { op: 'record_put', context_id: contextId, record_id: recordId,
+          record_type: 'note', base_version: 1, body: { title: 'Stale', content: 'Must never replace v2' },
+          idempotency_key: uuid() }), conflict, 'stale update is a non-retryable business conflict');
+        assert.deepEqual(await rawBusiness(), before, 'stale put rolls back cursor, body, history and Receipt/Event writes');
+        await assert.rejects(development(binding, { op: 'record_revoke', context_id: contextId, record_id: recordId,
+          base_version: 1, reason: 'Stale revoke must not retire v2', idempotency_key: uuid() }), conflict,
+        'stale revoke is the same exact non-retryable conflict');
+        assert.deepEqual(await rawBusiness(), before, 'stale revoke also leaves the complete business projection unchanged');
+        await assert.rejects(development(binding, { op: 'record_put', context_id: contextId, environment: 'preview',
+          record_id: recordId, record_type: 'note', base_version: 2, body: bodyV2, idempotency_key: uuid() }),
+        (error) => error.code === '42501' && error.message === 'context_environment_denied',
+        'the conflict repair does not remap authorization denials');
+        assert.deepEqual(await rawBusiness(), before);
+        const revoked = await development(binding, { op: 'record_revoke', context_id: contextId, record_id: recordId,
+          base_version: 2, reason: 'Dispose successful raw CAS fixture', idempotency_key: uuid() });
+        assert.equal(revoked.status, 'committed', 'current-version revoke proves the real close permission was present');
+        assert.equal(Number(revoked.result.version), 3);
+        assert.equal(revoked.result.lifecycle_status, 'REVOKED');
+        const after = await rawBusiness();
+        assert.deepEqual(after.records[0].body, bodyV2);
+        assert.equal(after.versions.length, 3);
+        assert.equal(after.operations.length, originalOperationCount + 3);
+      });
     }
 
     await t.test('eligible policy intersects requested scopes and preserves the API action vocabulary', async () => {
@@ -519,7 +631,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('expired final source cannot execute Integration mutations or revive cached authority; Native revoke remains available', async () => {
-      const binding = await authorize([context(testContext, ['read', 'write'])]);
+      const clientId = `all-contexts-integration-${uuid()}`;
+      const binding = await authorize([context(testContext, ['read', 'write'])], undefined, human, clientId);
       const id = await installIntegration(binding);
       const original = await bindingView(binding.binding_id);
       const cached = await entries(binding.binding_id);
@@ -551,7 +664,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('revoking the final Context grant commits without Source rebuild rollback and denies MCP and Integration execution', async () => {
-      const binding = await authorize([context(testContext, ['read', 'write'])]);
+      const clientId = `all-contexts-integration-${uuid()}`;
+      const binding = await authorize([context(testContext, ['read', 'write'])], undefined, human, clientId);
       const id = await installIntegration(binding);
       const initial = await grant(binding.binding_id, testContext);
       const result = await own({ op: 'grant_revoke', context_id: testContext, grant_id: initial.id, base_version: initial.version });
@@ -573,7 +687,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('Integration capabilities use the same live exact entry, retaining read while independently expired write is denied', async () => {
-      const binding = await authorize([scope('global', ['write']), scope(`project:${project}`, ['read'])]);
+      const clientId = `all-contexts-integration-${uuid()}`;
+      const binding = await authorize([scope('global', ['write']), scope(`project:${project}`, ['read'])], undefined, human, clientId);
       const id = await installIntegration(binding);
       const facts = (await normalized(id)).facts;
       assert.ok(facts.resource_action_scope_facts.capabilities.includes('project.read'));
@@ -606,6 +721,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
         'clued_integration_declare_v1', 'clued_integration_report_v1', 'clued_integration_verify_v1'];
       for (const loss of ['membership-revoke', 'natural-expiry']) for (const name of names) {
         await waitTests.test(`${name}: ${loss} while actually blocked`, async () => {
+          const clientId = `all-contexts-integration-${uuid()}`;
           let membership;
           if (loss === 'membership-revoke') {
             const invite = await native('clued_project_access_v13', { op: 'invite_create', project_id: foreignProject, environment: 'test',
@@ -613,11 +729,11 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
             membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
               base_version: invite.version, idempotency_key: uuid() });
           }
-          const binding = await authorize([context(loss === 'membership-revoke' ? foreignContext : testContext, ['read', 'write'])]);
+          const binding = await authorize([context(loss === 'membership-revoke' ? foreignContext : testContext, ['read', 'write'])], undefined, human, clientId);
           const tenant = { status: 'VALUE', value: uuid(), evidence_kind: 'TEST_TENANT_ID' };
           let id;
           if (name === 'clued_integration_reconcile_request_v1') {
-            const holding = await authorize([scope('global', ['read'])], ['context:read']);
+            const holding = await authorize([scope('global', ['read'])], ['context:read'], human, clientId);
             await installIntegration(holding, { host: 'source.wait.tenant', host_surface: 'default', tenant });
             id = await installIntegration(binding, { host: 'source.wait.tenant', host_surface: 'default' });
             const base = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
@@ -705,6 +821,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
 
     await t.test('partial permission loss while waiting retains real read but rolls back the entered operation instead of committing an old authority snapshot', async () => {
       for (const loss of ['membership-read-only', 'independent-write-expiry']) {
+        const clientId = `all-contexts-integration-${uuid()}`;
         let membership;
         let binding;
         if (loss === 'membership-read-only') {
@@ -712,8 +829,8 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
             target_email: 'all-contexts@example.invalid', role: 'editor', actions: ['read', 'write'], expires_at: future(), idempotency_key: uuid() }, foreignHuman);
           membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
             base_version: invite.version, idempotency_key: uuid() });
-          binding = await authorize([context(foreignContext, ['read', 'write'])]);
-        } else binding = await authorize([scope('global', ['read']), context(testContext, ['write'])]);
+          binding = await authorize([context(foreignContext, ['read', 'write'])], undefined, human, clientId);
+        } else binding = await authorize([scope('global', ['read']), context(testContext, ['write'])], undefined, human, clientId);
         const id = await installIntegration(binding);
         const version = Number((await admin.query('select version from clued_private.integrations_v1 where integration_id=$1', [id])).rows[0].version);
         const holder = await connect();
@@ -908,15 +1025,16 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
     });
 
     await t.test('an invited Context is separate from the macro and keeps its exact original qualification', async () => {
+      const clientId = `all-contexts-integration-${uuid()}`;
       const invite = await native('clued_project_access_v13', { op: 'invite_create', project_id: foreignProject, environment: 'test',
         target_email: 'all-contexts@example.invalid', role: 'editor', actions: ['read', 'write'], expires_at: future(), idempotency_key: uuid() }, foreignHuman);
       const membership = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: invite.invite_token,
         base_version: invite.version, idempotency_key: uuid() });
-      const request = await prepare();
+      const request = await prepare(undefined, human, clientId);
       const eligible = request.eligible.find((r) => r.resource_id === foreignContext);
       assert.equal(eligible.qualification_id, membership.membership_id);
       assert.equal(eligible.ownership, 'membership');
-      const macroBinding = await authorize([macro(['read', 'write'])]);
+      const macroBinding = await authorize([macro(['read', 'write'])], undefined, human, clientId);
       await denied(write(macroBinding, foreignContext, 'Shared is not part of all-owned'));
       const explicit = await approve(request, [{ ...context(foreignContext, ['read', 'write']), qualification_id: uuid() }]);
       const invitedIntegration = await installIntegration(explicit);
@@ -956,7 +1074,7 @@ test('all-contexts sources, exact permission inheritance and real transaction ba
       const next = await native('clued_project_access_v13', { op: 'invite_accept', invite_token: newInvite.invite_token, base_version: newInvite.version, idempotency_key: uuid() });
       assert.notEqual(next.membership_id, membership.membership_id);
       await denied(write(explicit, foreignContext, 'New membership must not replace original qualification'));
-      const current = await authorize([context(foreignContext, ['read', 'write'])]);
+      const current = await authorize([context(foreignContext, ['read', 'write'])], undefined, human, clientId);
       assert.equal((await write(current, foreignContext, 'New explicit consent')).status, 'committed');
     });
 

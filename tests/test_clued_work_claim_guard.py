@@ -448,7 +448,7 @@ class AgentInboxTest(unittest.TestCase):
                     self.assertEqual(context["hookEventName"], "PostToolUse")
                     self.assertIn("1 request(s) to you not yet answered", context["additionalContext"])
                     self.assertIn("clued_agent_message_send reply_to", context["additionalContext"])
-                    self.assertIn("reconnect the Clued connector", context["additionalContext"])
+                    self.assertIn("reconnect the KooYomi connector", context["additionalContext"])
 
     def test_disabled_inbox_reminder_requires_reading_without_replies(self):
         disabled = {**INBOX, "messages_enabled": False}
@@ -677,6 +677,88 @@ class HookLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no working Python 3.8+ interpreter", result.stderr)
         self.assertIn("hook.py did not run", result.stderr)
+
+
+class RuntimeBoundaryTest(unittest.TestCase):
+    now = datetime(2026, 10, 17, 0, 0, tzinfo=timezone.utc)
+
+    def payload(self, **changes):
+        value = {**claim(), "holder_session_ref": "session_test",
+                 "expires_at": (self.now + timedelta(minutes=5)).isoformat(),
+                 "hard_deadline_at": (self.now + timedelta(hours=2)).isoformat(), **changes}
+        return {"session_id": "session_test", "tool_name": "mcp__clued__clued_session_resume",
+                "tool_response": {"status": "restored", "active_work_claims": [value]}}
+
+    def test_own_near_lease_directs_agent_to_normal_renewal_without_owner_approval(self):
+        text = GUARD.runtime_reminder(self.payload(), self.now)
+        self.assertIn(CLAIM_ID, text)
+        self.assertIn("clued_work_renew", text)
+        self.assertIn("real fresh progress", text)
+        self.assertIn("do not require an Owner", text)
+
+    def test_agent_task_text_and_old_claim_metadata_do_not_create_deadlines(self):
+        payload = self.payload(expires_at=(self.now + timedelta(hours=1)).isoformat())
+        payload["tool_response"]["snapshot"] = {"task": {"original_deadline_not_reset": "2026-10-16T17:07:04.656847Z"}}
+        payload["tool_input"] = {"owner_deadline": "2020-01-01T00:00:00Z"}
+        self.assertIsNone(GUARD.runtime_reminder(payload, self.now))
+
+    def test_other_holder_unknown_holder_draining_and_malformed_claims_get_no_renewal(self):
+        for change in ({"holder_session_ref": "another-session"}, {"holder_session_ref": None},
+                       {"status": "DRAINING"}, {"status": "RELEASED"}, {"expires_at": "unknown"},
+                       {"claim_id": "free text masquerading as identity"}):
+            with self.subTest(change=change):
+                self.assertIsNone(GUARD.runtime_reminder(self.payload(**change), self.now))
+
+    def test_real_chain_cap_wins_over_an_apparently_live_lease(self):
+        text = GUARD.runtime_reminder(self.payload(hard_deadline_at=self.now.isoformat()), self.now)
+        self.assertIn("Stop new protected spending", text)
+        self.assertIn("Do not renew or reclaim", text)
+        self.assertNotIn("clued_work_renew", text)
+        self.assertIn("not an Owner-imposed", text)
+
+    def test_expired_lease_stays_expired_and_requires_lawful_recovery(self):
+        text = GUARD.runtime_reminder(self.payload(expires_at=self.now.isoformat()), self.now)
+        self.assertIn("lease has expired", text)
+        self.assertIn("Stop work protected", text)
+        self.assertNotIn("clued_work_renew", text)
+
+    def test_error_and_unrelated_tool_responses_cannot_look_like_fresh_claims(self):
+        payload = self.payload()
+        payload["tool_response"]["status"] = "refused"
+        self.assertIsNone(GUARD.runtime_reminder(payload, self.now))
+        payload = self.payload()
+        payload["tool_name"] = "mcp__clued__clued_record_list"
+        self.assertIsNone(GUARD.runtime_reminder(payload, self.now))
+
+    def test_real_post_hook_combines_inbox_with_renewal_and_keeps_capability_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = {**claim(expires=timedelta(minutes=5)), "hard_deadline_at": stamp(timedelta(hours=2)),
+                     "lease_key": "private-capability-must-not-appear"}
+            payload = {"hook_event_name": "PostToolUse", "session_id": "session_test", "cwd": directory,
+                       "tool_name": "mcp__clued__clued_work_renew", "tool_response": {
+                           **committed(value), "agent_inbox": INBOX, "lease_key": "private-capability-must-not-appear"}}
+            env = {**os.environ, "CLAUDE_PROJECT_DIR": directory}
+            env.pop("CLUED_WORK_CLAIM_GUARD", None)
+            result = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), text=True,
+                                    capture_output=True, env=env, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("clued_agent_inbox", context)
+            self.assertIn("clued_work_renew", context)
+            self.assertNotIn("private-capability", result.stdout)
+            saved = (Path(directory) / GUARD.CLAIM_FILE).read_text(encoding="utf-8")
+            self.assertNotIn("private-capability", saved)
+
+    def test_mcp_outer_error_cannot_turn_valid_looking_data_into_a_renewal_advice(self):
+        payload = self.payload()
+        body = payload["tool_response"]
+        for wrapper in ({**body}, {"structuredContent": body},
+                        {"content": [{"type": "text", "text": json.dumps(body)}]}):
+            with self.subTest(wrapper=list(wrapper)):
+                payload["tool_response"] = {**wrapper, "isError": True}
+                self.assertIsNone(GUARD.runtime_reminder(payload, self.now))
+                payload["tool_response"] = {**wrapper, "isError": False}
+                self.assertIn("clued_work_renew", GUARD.runtime_reminder(payload, self.now))
 
 
 if __name__ == "__main__":

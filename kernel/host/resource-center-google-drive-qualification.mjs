@@ -1,12 +1,21 @@
 import { isDeepStrictEqual } from "node:util";
 import { bindResourceCenterMutation } from "../policy/resource-center-mutation-policy.mjs";
 import { googleDriveAccessDigest, googleDriveSharingDigest } from "./resource-center-google-drive-sharing.mjs";
+import { isStorageScopeProfile } from "./resource-center-google-scopes.mjs";
 
 const FOLDER = "application/vnd.google-apps.folder";
 const SHORTCUT = "application/vnd.google-apps.shortcut";
 const id = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(value);
 const normalized = path => bindResourceCenterMutation({destination_path:path}).destination_path;
 const deny = code => { throw new Error(`DRIVE_QUALIFICATION_${code}`); };
+export const DIRECTORY_DIAGNOSTIC_LIMIT = 16;
+const directoryDiagnostics = new WeakMap();
+// Only this primitive can associate a report with an actual failure. Never
+// trust properties attached to provider/caller exceptions.
+export function googleDriveDirectoryDiagnostic(error) {
+  const report = error instanceof Error ? directoryDiagnostics.get(error) : undefined;
+  return report ? structuredClone(report) : null;
+}
 function identity(file, allowParentlessBoundary = false) {
   // The trusted outer boundary can be My Drive itself, whose parents field is
   // omitted by the provider. It is not a writable/observed directory: only its
@@ -27,17 +36,21 @@ function identity(file, allowParentlessBoundary = false) {
  * authenticate Owner + fixed issuer, pin its credential and recheck all CAS and
  * revocation predicates after this read. This function issues no qualification,
  * grant, admission or receipt. Its editable output alone cannot enable a writer.
- * Exact-ID authorization is checked independently for every registered directory;
- * root permission is never treated as inherited drive.file application access.
+ * The trusted scope profile must come from that verified credential, never the
+ * request or layout. Full drive scope covers existing files independently of
+ * isAppAuthorized (created/opened by this app). Lower profiles still require
+ * per-file application access; root permission never implies inherited access.
+ * Every profile still requires each directory's current canAddChildren capability.
  * get_sharings, when given, adds each directory's provider_sharing_digest (null
  * when Drive omits the sharing fields) and, from the same read, its
  * provider_access_digest (storage step 2; null without a usable permission
  * list), so the Owner can record them in the registry.
- * @param {{trusted_layout?: unknown, get_file?: Function, list_folder?: Function, get_files?: Function, list_folders?: Function, get_sharings?: Function, clock?: Function, timeout_ms?: number}} config
+ * @param {{trusted_layout?: unknown, trusted_scope_profile?: unknown, get_file?: Function, list_folder?: Function, get_files?: Function, list_folders?: Function, get_sharings?: Function, clock?: Function, timeout_ms?: number}} config
  */
-export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: getFile,
+export function createGoogleDriveDirectoryProbe({trusted_layout: raw, trusted_scope_profile: scopeProfile = "legacy", get_file: getFile,
   list_folder: listFolder, get_files: getFiles, list_folders: listFolders, get_sharings: getSharings,
   clock = Date.now, timeout_ms: timeoutMs = 60000} = {}) {
+  if (!isStorageScopeProfile(scopeProfile)) deny("SCOPE_PROFILE_INVALID");
   const batched = getFiles !== undefined || listFolders !== undefined;
   const layout = structuredClone(raw), directories = layout?.directories;
   const root = layout?.managed_root;
@@ -94,7 +107,7 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
       return structuredClone(value);
     };
     try {
-    const before = new Map(), observed = [];
+    const before = new Map(), observed = [], failures = [];
     const fileIds = [layout.root_parent_id, ...ordered.map(entry => entry.provider_file_id)];
     // These are strict phase barriers, not one mixed batch. A provider may
     // execute subrequests in any order. No batch failure falls back to GETs.
@@ -112,10 +125,22 @@ export function createGoogleDriveDirectoryProbe({trusted_layout: raw, get_file: 
       const parentId = entry.path === root ? layout.root_parent_id : byPath.get(entry.path.slice(0,entry.path.lastIndexOf("/"))).provider_file_id;
       if (file.id !== entry.provider_file_id || file.name !== entry.path.split("/").at(-1) ||
           file.mimeType !== FOLDER || !isDeepStrictEqual(file.parents,[parentId])) deny("DIRECTORY_CHANGED");
-      if (file.isAppAuthorized !== true) deny("DIRECTORY_NOT_APP_AUTHORIZED");
-      if (file.capabilities?.canAddChildren !== true) deny("DIRECTORY_NOT_WRITABLE");
+      const reasons = [];
+      if (scopeProfile !== "full" && file.isAppAuthorized !== true) reasons.push(file.isAppAuthorized === false
+        ? "DIRECTORY_NOT_APP_AUTHORIZED" : "DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED");
+      if (file.capabilities?.canAddChildren !== true) reasons.push(file.capabilities?.canAddChildren === false
+        ? "DIRECTORY_NOT_WRITABLE" : "DIRECTORY_WRITE_CAPABILITY_UNCONFIRMED");
+      if (reasons.length) failures.push({path:entry.path,provider_file_id:entry.provider_file_id,reasons});
       before.set(file.id,file);
       observed.push({path:entry.path,provider_file_id:file.id,provider_file_version:file.version,parent_id:parentId});
+    }
+    if (failures.length) {
+      checkTime();
+      const error = new Error(`DRIVE_QUALIFICATION_${failures[0].reasons[0]}`);
+      directoryDiagnostics.set(error,{contract:"clued.storage-directory-diagnostic/1",
+        total_directories:ordered.length,checked_directories:ordered.length,failed_directories:failures.length,
+        failures:failures.slice(0,DIRECTORY_DIAGNOSTIC_LIMIT),truncated:failures.length>DIRECTORY_DIAGNOSTIC_LIMIT});
+      throw error;
     }
     let count = 0;
     const listings = batched ? await phase(listFolders) : null;

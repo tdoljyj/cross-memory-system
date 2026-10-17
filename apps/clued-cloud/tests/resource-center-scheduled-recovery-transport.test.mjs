@@ -52,13 +52,19 @@ test("scheduled recovery uses the fixed issuer, bounded references and the origi
         : { status: "inspection_required", ...reference, execution_permitted: false });
     }
     if (input.p_input.action === "due") return Response.json({ status: "ok", jobs });
+    if (input.p_input.action === "report") {
+      assert.equal(input.p_input.connection_id, reference.connection_id);
+      assert.equal(input.p_input.job_id, reference.job_id);
+      assert.equal(input.p_input.diagnostic.reason, "DESCRIPTOR_UNAVAILABLE");
+      return Response.json({ status: "recorded", ...reference, execution_permitted: false });
+    }
     assert.deepEqual(input.p_input, { ...reference, action: "load" });
     return Response.json({ status: "inspection_required", execution_permitted: false });
   };
   try {
     assert.deepEqual(await worker.runStorageRecoveryScheduled(env),
       { status: "attention_required", committed: 0, released: 0, attention: 1 });
-    assert.deepEqual(calls.map(call => call.action), ["due", "verified_inspect", "load"]);
+    assert.deepEqual(calls.map(call => call.action), ["due", "verified_inspect", "load", "report"]);
     calls.length = 0; verified = true;
     assert.deepEqual(await worker.runStorageRecoveryScheduled(env), { status: "ok", committed: 1, released: 0, attention: 0 });
     assert.deepEqual(calls.map(call => call.action), ["due", "verified_inspect", "settle_verified"]);
@@ -106,6 +112,11 @@ test("an expiring credential gets one job-bound recovery refresh, then an absent
       assert.equal(hash, createHash("sha256").update(issuer).digest("hex"));
       const rpc = u.pathname.split("/").at(-1);
       rpcs.push([rpc, input.action, input]);
+      if (rpc === "clued_storage_scheduled_recovery_v2" && input.action === "report") {
+        assert.equal(input.connection_id, reference.connection_id); assert.equal(input.job_id, reference.job_id);
+        assert.equal(input.diagnostic.reason, "CREDENTIAL_EXPIRING");
+        return Response.json({ status: "recorded", ...reference, execution_permitted: false });
+      }
       if (rpc === "clued_storage_scheduled_recovery_v2")
         return Response.json(input.action === "due" ? { status: "ok", jobs: [reference] } : descriptor());
       if (rpc === "clued_storage_cloud_worker_router_v2")
@@ -141,7 +152,7 @@ test("an expiring credential gets one job-bound recovery refresh, then an absent
     assert.deepEqual(await worker.runStorageRecoveryScheduled(refreshEnv), { status: "ok", committed: 0, released: 1, attention: 0 });
     assert.deepEqual(rpcs.map(([rpc, action]) => `${rpc}:${action}`), [
       "clued_storage_scheduled_recovery_v2:due", "clued_storage_cloud_worker_router_v2:verified_inspect",
-      "clued_storage_scheduled_recovery_v2:load", "clued_storage_refresh_worker_v1:claim", "clued_storage_refresh_worker_v1:commit",
+      "clued_storage_scheduled_recovery_v2:load", "clued_storage_scheduled_recovery_v2:report", "clued_storage_refresh_worker_v1:claim", "clued_storage_refresh_worker_v1:commit",
       "clued_storage_scheduled_recovery_v2:load", "clued_storage_recovery_absent_v1:settle_absent"]);
     assert.equal(google.filter(request => request.startsWith("POST")).length, 1, "one token request, no Drive write");
     assert.equal(credentialVersion, 5);

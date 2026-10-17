@@ -8,6 +8,54 @@ const getCredential = async () => ({
   scope: "https://www.googleapis.com/auth/drive.metadata.readonly",
 });
 
+test("exact-ID missing target requires opt-in and never hides authorization or transient failures", async () => {
+  for (const status of [404, 403, 401, 500]) {
+    const api = createGoogleDriveMetadataApi({ get_credential: getCredential,
+      fetch: async () => new Response(null, { status }) });
+    await assert.rejects(api.getFile("known-file"), /DRIVE_METADATA_UNAVAILABLE/);
+    if (status === 404) assert.equal(await api.getFile("known-file", { allow_missing: true }), null);
+    else await assert.rejects(api.getFile("known-file", { allow_missing: true }), /DRIVE_METADATA_UNAVAILABLE/);
+    await assert.rejects(api.listChildren({ parent_id: "parent", name: "a.md" }), /DRIVE_METADATA_UNAVAILABLE/);
+  }
+});
+
+test("semantic reads explicitly request private marker and explicit trash without changing legacy reads", async () => {
+  for (const enabled of [false, true]) {
+    let fields;
+    const api = createGoogleDriveMetadataApi({ get_credential: getCredential, semantic_details: enabled,
+      fetch: async url => { fields = new URL(url).searchParams.get("fields"); return Response.json({ id: "known-file" }); } });
+    await api.getFile("known-file");
+    assert.equal(fields.includes("explicitlyTrashed"), enabled);
+    assert.equal(fields.includes("appProperties"), enabled);
+  }
+  assert.throws(() => createGoogleDriveMetadataApi({ get_credential: getCredential, semantic_details: "true" }), /semantic_details/);
+});
+
+test("registration observation requests listing/share capabilities and full ACL without inferring access", async () => {
+  const legacy = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,md5Checksum,headRevisionId";
+  for (const authorization of [false, true]) {
+    let fields;
+    const response = { id: "known-folder", ownedByMe: false, capabilities: { canListChildren: false, canShare: false }, permissions: [] };
+    const api = createGoogleDriveMetadataApi({ get_credential: getCredential, registration_details: true,
+      authorization_details: authorization, fetch: async url => {
+        fields = new URL(url).searchParams.get("fields"); return Response.json(response);
+      } });
+    assert.deepEqual(await api.getFile("known-folder"), response, "false or absent capabilities stay facts for the verifier to reject");
+    assert.ok(fields.startsWith(legacy));
+    for (const field of ["shared", "permissionIds", "ownedByMe", "driveId", "inheritedPermissionsDisabled", "canListChildren", "canShare",
+      "explicitlyTrashed", "appProperties", "permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted,pendingOwner,view)"])
+      assert.ok(fields.includes(field), field);
+    assert.equal((fields.match(/capabilities\(/g) ?? []).length, 1);
+    assert.equal(fields.includes("canAddChildren"), authorization);
+  }
+  let defaultFields;
+  await createGoogleDriveMetadataApi({ get_credential: getCredential, fetch: async url => {
+    defaultFields = new URL(url).searchParams.get("fields"); return Response.json({ id: "known-file" });
+  } }).getFile("known-file");
+  assert.equal(defaultFields, legacy, "existing metadata callers keep their exact projection");
+  assert.throws(() => createGoogleDriveMetadataApi({ get_credential: getCredential, registration_details: "true" }), /registration_details/);
+});
+
 test("drive.file and unknown grants never treat an empty search as absence", async () => {
   for (const scope of [undefined, "", "https://www.googleapis.com/auth/drive.file",
     "drive.metadata.readonly", "https://www.googleapis.com/auth/drive.metadata.readonly.evil"]) {

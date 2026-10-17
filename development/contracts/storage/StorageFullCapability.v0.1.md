@@ -568,6 +568,14 @@
 
 ## 11. 依据与核对定位
 
+### 完整权限下已有目录的检查与续期
+
+落实 D1/P7 的 `full` 已有文件授权时，`isAppAuthorized` 表示对象是否由本应用创建或打开，并不表示当前账号能否访问该对象。目录只读核对、原连接凭据续期和凭据恢复，须根据已验证凭据的实际 scope profile 判定：`full` 不要求此标记；`legacy`、`normal` 仍须逐对象确认应用访问，不能从根目录继承。普通请求参数、布局或描述符上的 profile 标签不能代替封存凭据的 scope。续期不得申请或接受不同的权限集合。
+
+三个入口均保留当前 Google 账号、OAuth 客户端、对象 ID、唯一父目录、未删除状态以及 `canAddChildren` 检查；全树核对还保留登记布局、阶段前后元数据一致性、共享摘要、超时和最终 CAS 回执。目录观察结果不授予写权限，不能绕过原操作等级、撤销或故障对象保护。已有完整授权可由程序使用，无须让用户逐目录打开、重新授权或点击恢复。
+
+依据：[Google Files 字段定义](https://developers.google.com/workspace/drive/api/reference/rest/v3/files)、[Drive API scope 定义](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)。对应回归覆盖封存 full/normal/legacy、伪造 profile、真实写能力不足、身份漂移，以及自动续期保持原 scope 和单次 token 交换。
+
 | 类别 | 文件与行号 |
 | --- | --- |
 | 授权对象 | `apps/clued-cloud/supabase/migrations/20260927073103_resource_center_account_connection_v1.sql:3-191`<br>`20260928051323_resource_center_account_policy_foundation_v2.sql`：表 `:55-98`，摘要 `:124-149`，不可变触发器 `:182-187`，mode guard `:207-217`，判定器 `:255-358`<br>`20260927232454_resource_center_binding_expiry_compat_v1.sql:7-30` |

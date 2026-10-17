@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {createGoogleDriveDirectoryProbe} from "../../../kernel/host/resource-center-google-drive-qualification.mjs";
+import {createGoogleDriveDirectoryProbe,googleDriveDirectoryDiagnostic,DIRECTORY_DIAGNOSTIC_LIMIT} from "../../../kernel/host/resource-center-google-drive-qualification.mjs";
 import {createGoogleDriveMetadataApi} from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 const FOLDER="application/vnd.google-apps.folder",root="/drive/Clued_资料中心";
 const item=(id,name,parent)=>({id,name,parents:parent?[parent]:[],mimeType:FOLDER,version:"1",trashed:false,
@@ -18,6 +18,58 @@ test("root, track and topic require independent application access; observation 
   assert.equal(result.status,"metadata_observed"); assert.equal(result.execution_permitted,false);
   assert.deepEqual(result.directories.map(x=>x.provider_file_id),["root","track","topic"]);
   assert.equal(Object.hasOwn(result,"admission"),false);
+});
+
+test("sealed full scope covers existing directories without an app-opened marker, with all capability and identity checks",async()=>{
+  const f=fixture();f.config.trusted_scope_profile="full";
+  for(const file of f.files)file.isAppAuthorized=false;
+  assert.equal((await f.run()).status,"metadata_observed");
+  delete f.files[3].isAppAuthorized;
+  assert.equal((await f.run()).execution_permitted,false);
+  f.files[3].capabilities.canAddChildren=false;
+  await assert.rejects(f.run(),/DIRECTORY_NOT_WRITABLE/);
+  f.files[3].capabilities.canAddChildren=true;f.files[3].parents=["outside"];
+  await assert.rejects(f.run(),/DIRECTORY_CHANGED/);
+});
+
+test("legacy and normal still require per-file application access; unknown scope profiles cannot relax qualification",async()=>{
+  for(const profile of ["legacy","normal"]){const f=fixture();f.config.trusted_scope_profile=profile;
+    f.files[3].isAppAuthorized=false;await assert.rejects(f.run(),/DIRECTORY_NOT_APP_AUTHORIZED/);}
+  for(const profile of [null,"drive",{},true]){const f=fixture();f.config.trusted_scope_profile=profile;
+    assert.throws(()=>createGoogleDriveDirectoryProbe(f.config),/SCOPE_PROFILE_INVALID/);}
+});
+
+test("all trusted directories are classified before denying, with false distinct from missing",async()=>{
+  const f=fixture();f.files[1].isAppAuthorized=false;delete f.files[2].isAppAuthorized;
+  f.files[3].capabilities.canAddChildren=false;
+  let caught;try{await f.run();}catch(error){caught=error;}
+  assert.match(caught.message,/DIRECTORY_NOT_APP_AUTHORIZED/);
+  const d=googleDriveDirectoryDiagnostic(caught);
+  assert.equal(d.total_directories,3);assert.equal(d.checked_directories,3);assert.equal(d.failed_directories,3);
+  assert.equal(d.truncated,false);
+  assert.deepEqual(d.failures.map(x=>x.reasons),[["DIRECTORY_NOT_APP_AUTHORIZED"],
+    ["DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED"],["DIRECTORY_NOT_WRITABLE"]]);
+  assert.deepEqual(d.failures.map(x=>x.provider_file_id),["root","track","topic"]);
+  d.failures[0].path="/injected";
+  assert.equal(googleDriveDirectoryDiagnostic(caught).failures[0].path,root);
+  assert.equal(googleDriveDirectoryDiagnostic(Object.assign(Error(caught.message),{directories:d})),null);
+});
+
+test("diagnostics are bounded with accurate counts and retain strict identity rejection",async()=>{
+  const f=fixture();for(let i=0;i<20;i++){
+    f.files.push({...item("extra"+i,"extra"+i,"track"),isAppAuthorized:false});
+    f.config.trusted_layout.directories.push({path:root+"/10_E/extra"+i,provider_file_id:"extra"+i});
+  }
+  let caught;try{await f.run();}catch(error){caught=error;}
+  const d=googleDriveDirectoryDiagnostic(caught);
+  assert.equal(d.total_directories,23);assert.equal(d.failed_directories,20);
+  assert.equal(d.failures.length,DIRECTORY_DIAGNOSTIC_LIMIT);assert.equal(d.truncated,true);
+  f.files[3].parents=["outside"];
+  await assert.rejects(f.run(),error=>{assert.match(error.message,/DIRECTORY_CHANGED/);
+    assert.equal(googleDriveDirectoryDiagnostic(error),null);return true;});
+  const missing=fixture();delete missing.files[1].capabilities;
+  await assert.rejects(missing.run(),error=>{assert.equal(googleDriveDirectoryDiagnostic(error).failures[0].reasons[0],
+    "DIRECTORY_WRITE_CAPABILITY_UNCONFIRMED");return true;});
 });
 
 test("paired batch callbacks preserve phase barriers, reject drift, and never fall back after failure",async()=>{

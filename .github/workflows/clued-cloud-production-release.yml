@@ -8,7 +8,8 @@ on:
           Release mode. Only deploy and migrate change production, and both first consume
           an Owner Grant for this commit. preflight runs the read-only gate, backup creates
           the encrypted pre-migration backup, source-capture captures one reviewed storage
-          client source, migrate applies the named migration files.
+          client source, migrate applies the named migration files. deploy publishes the
+          PDF, main application and Kooyumi Connect Workers as one controlled release.
         type: choice
         required: true
         default: preflight
@@ -223,6 +224,7 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           MIGRATIONS: ${{ inputs.migrations }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
           CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
         run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
       # OwnerCredential §6.1: each named file from this commit is applied in its
@@ -276,6 +278,12 @@ jobs:
           begin
             if md5(s) is distinct from '$expected' then raise exception 'migration text differs from the file'; end if;
             execute s;
+            -- Scheduler readiness is an activation dependency of storage I9.
+            -- Check inside this same transaction, before the migration ledger
+            -- can record success. Earlier schemas have no such dependency.
+            if to_regprocedure('clued_private.storage_conflict_require_scheduler_v1()') is not null then
+              perform clued_private.storage_conflict_require_scheduler_v1();
+            end if;
             insert into supabase_migrations.schema_migrations(version, name, statements) values ('$version', '$short', array[s]);
           end \$apply\$;
           commit;" < "$file"
@@ -324,6 +332,18 @@ jobs:
         # Builds the main Worker and the PDF extractor Worker (dist/pdf-extractor),
         # and fails if the main Worker's bundle contains pdf.js.
         run: npm run build
+      - name: Verify and build Kooyumi Connect release source
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        run: |
+          set -euo pipefail
+          node --test tests/oauth-origin.test.mjs
+          node --check ../kooyumi-connect/worker.mjs
+          node --test ../kooyumi-connect/tests/*.test.mjs
+          mkdir -p .sites-runtime/release-evidence
+          node ../kooyumi-connect/build-release.mjs \
+            --out-dir "$RUNNER_TEMP/kooyumi-connect-build" \
+            --evidence-out .sites-runtime/release-evidence/connect-build.json
+          node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
       - name: Block release unless database and Worker heartbeat are ready
         if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         env:
@@ -353,6 +373,7 @@ jobs:
           NODE_OPTIONS: ''
           RELEASE_MODE: ${{ inputs.mode }}
           CLUED_RELEASE_TOKEN: ${{ secrets.CLUED_RELEASE_TOKEN }}
+          CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
           CLUED_RELEASE_GRANT_ENFORCE: ${{ vars.CLUED_RELEASE_GRANT_ENFORCE }}
         run: node scripts/ci/clued-release-grant.mjs --mode "$RELEASE_MODE"
       - name: Ensure Storage job queue exists
@@ -398,6 +419,20 @@ jobs:
       - name: Verify the PDF extractor service binding
         if: ${{ inputs.mode == 'deploy' }}
         run: node scripts/verify-pdf-extractor.mjs --evidence-out .sites-runtime/release-evidence/pdf-extractor.json
+      # The existing service binding already names clued-cloud. Publish Connect only
+      # after the main application's exact commit, contract and PDF binding pass.
+      # The same commit's Owner Grant above covers this explicit release cohort.
+      - name: Deploy Kooyumi Connect Worker
+        if: ${{ inputs.mode == 'deploy' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          npx wrangler deploy "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
+          --config ../kooyumi-connect/wrangler.production.jsonc --no-bundle --keep-vars
+      - name: Verify Kooyumi Connect production release
+        if: ${{ inputs.mode == 'deploy' }}
+        run: node ../kooyumi-connect/verify-production.mjs --evidence-out .sites-runtime/release-evidence/connect-postflight.json
       - name: Verify projection currentness after deployment
         if: ${{ inputs.mode == 'deploy' }}
         env:
@@ -422,6 +457,8 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json
             apps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json
             apps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json
+            apps/clued-cloud/.sites-runtime/release-evidence/connect-build.json
+            apps/clued-cloud/.sites-runtime/release-evidence/connect-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json

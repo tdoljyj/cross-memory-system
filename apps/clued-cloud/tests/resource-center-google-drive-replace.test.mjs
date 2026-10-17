@@ -69,6 +69,26 @@ function effectFixture(mutation = contentMutation, d = drive(), overrides = {}) 
     request: { mutation, admission: { binding, expires_at_ms: Date.now() + 30000 }, profile_identity: profile } };
 }
 
+test("semantic replace sends marker and exact replacement bytes in one multipart upload", async () => {
+  const d = drive(); let uploads = 0;
+  const f = effectFixture(contentMutation, d, { intent_marker: true, fetch: async (url, options) => {
+    const u = new URL(url), parts = u.pathname.split("/");
+    if (parts.at(-2) === "revisions") {
+      const revision = d.revisions.get(parts.at(-1)), body = JSON.parse(options.body);
+      revision.keepForever = body.keepForever; return Response.json(revision);
+    }
+    uploads += 1; assert.equal(u.searchParams.get("uploadType"), "multipart");
+    const bytes = Buffer.from(options.body), text = bytes.toString("utf8");
+    assert.match(options.headers["content-type"], /^multipart\/related; boundary=/);
+    const metadata = JSON.parse(text.split("\r\n\r\n")[1].split("\r\n")[0]);
+    assert.deepEqual(metadata.appProperties, { clued_intent_id: intent });
+    const start = bytes.indexOf(Buffer.from("Content-Type: text/plain\r\n\r\n")) + Buffer.byteLength("Content-Type: text/plain\r\n\r\n");
+    assert.deepEqual(bytes.subarray(start, start + NEW.length), NEW);
+    return Response.json(upload(d, NEW));
+  } });
+  await f.effect(f.request); assert.equal(uploads, 1); assert.ok(f.events.includes("persist"));
+});
+
 test("replaceShape accepts one file with a version and exactly one of content or restore_job_id", () => {
   assert.ok(replaceShape(contentMutation)); assert.equal(replaceShape(restoreMutation).restore_job_id, restoreJob);
   for (const bad of [{ ...contentMutation, restore_job_id: restoreJob }, { ...contentMutation, content: undefined },

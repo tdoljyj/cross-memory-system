@@ -15,11 +15,25 @@ const code=e=>/^[A-Z0-9_]{1,100}$/.test(e?.message??'')?e.message:'NATURAL_INTAK
 const refuse=x=>{throw Error(x);};
 function descriptorVariants(d){
   const hasHistory=Object.hasOwn(d,'previous_source_blobs');
+  const renamed=Object.hasOwn(d,'previous_job_name');
+  const versioned=Object.hasOwn(d,'previous_source_versions');
+  if(versioned&&(hasHistory||renamed))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+  if(renamed&&(d.workflow_path!=='.github/workflows/clued-work-admission.yml'||
+    d.job_id!=='clued-work-admission'||d.job_name!=='kooyumi-work-admission'||
+    d.previous_job_name!=='clued-work-admission'||!hasHistory))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   if(d.source_blobs===undefined){
-    if(hasHistory)refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+    if(hasHistory||versioned)refuse('NATURAL_PRODUCER_SELECTION_INVALID');
     return [d];
   }
-  const history=hasHistory?d.previous_source_blobs:[];
+  const versions=versioned?d.previous_source_versions:[];
+  if(versioned&&(!Array.isArray(versions)||versions.length>4||!d.source_paths.includes(d.workflow_path)||
+    versions.some(v=>!object(v)||Object.keys(v).sort().join('|')!=='job_name|source_blobs'||
+      typeof v.job_name!=='string'||!v.job_name||v.job_name!==v.job_name.trim()||
+      v.job_name!==d.job_name&&!(d.workflow_path==='.github/workflows/clued-work-admission.yml'&&
+        d.job_id==='clued-work-admission'&&d.job_name==='kooyumi-work-admission'&&v.job_name==='clued-work-admission'))))
+    refuse('NATURAL_PRODUCER_SELECTION_INVALID');
+  const history=versioned?versions.map(v=>v.source_blobs):hasHistory?d.previous_source_blobs:[];
+  if(renamed&&(!history.length||history.some(map=>map?.[d.workflow_path]===d.workflow_blob)))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   if(!Array.isArray(history)||history.length>4||new Set(d.source_paths).size!==d.source_paths.length||
     d.source_paths.some(path=>typeof path!=='string'))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   const paths=[...d.source_paths].sort(),maps=[d.source_blobs,...history],seen=new Set();
@@ -31,8 +45,9 @@ function descriptorVariants(d){
   // History authorizes exact historical bytes only. Exclude that declaration
   // from each version's digest so a previously authenticated descriptor keeps
   // its original identity, field order and complete source-map identity.
-  const {previous_source_blobs,...base}=d;
-  return maps.map(source_blobs=>({...base,workflow_blob:source_blobs[d.workflow_path]??d.workflow_blob,source_blobs}));
+  const {previous_source_blobs,previous_job_name,previous_source_versions,...base}=d;
+  return maps.map((source_blobs,index)=>({...base,job_name:index&&versioned?versions[index-1].job_name:index&&renamed?previous_job_name:d.job_name,
+    workflow_blob:source_blobs[d.workflow_path]??d.workflow_blob,source_blobs}));
 }
 function executionSnapshotValid(snapshot,templates){
   try{
@@ -140,7 +155,7 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       const r=n.run,selected=index.get(r.path.split('@')[0]);if(!selected)continue;
       const {descriptor:d,variants}=selected;
       if(r.status!=='completed'){gaps.push({run_key:r.run_id+':'+r.run_attempt,code:'NATURAL_PRODUCER_RUN_NOT_TERMINAL'});continue;}
-      const runKey=r.run_id+':'+r.run_attempt,jobs=n.jobs.filter(j=>j.name===d.job_name);
+      const runKey=r.run_id+':'+r.run_attempt,jobs=n.jobs.filter(j=>variants.some(variant=>j.name===variant.job_name));
       if(jobs.length!==1){gaps.push({run_key:runKey,code:'NATURAL_PRODUCER_NATIVE_JOB_MISSING_OR_DUPLICATE'});continue;}
       const j=jobs[0];
       // The independently complete Native population retains these terminal
@@ -183,7 +198,7 @@ export async function collectNaturalSourceArtifacts({request,repository,native,s
       const compare=await body(request,`/repos/${repository}/compare/${commit}...${selection.head_sha}`);
       if(!['ahead','identical'].includes(compare?.status)||compare.merge_base_commit?.sha!==commit)refuse('NATURAL_CHECKOUT_NOT_MAIN_HISTORY');
       const workflow=await source(request,repository,d.workflow_path,commit);
-      let matchingVariants=variants.filter(variant=>workflow.blob===variant.workflow_blob);
+      let matchingVariants=variants.filter(variant=>workflow.blob===variant.workflow_blob&&j.name===variant.job_name);
       if(!matchingVariants.length)refuse('NATURAL_PRODUCER_WORKFLOW_SOURCE_MISMATCH');
       if(d.required_steps.some(name=>j.steps.filter(s=>s.name===name&&s.status==='completed'&&s.conclusion==='success').length!==1))refuse('NATURAL_PRODUCER_EXECUTION_INCOMPLETE');
       const admissionPaths=selection.admission_source;

@@ -88,6 +88,6 @@ If `main` passes, the failure belongs to the pull request; do not use this runbo
 
 ## Record
 
-- Record the Owner's unlock decision in Clued before the bypass is added.
+- Record the Owner's unlock decision in KooYomi before the bypass is added.
 - Record each merge, with its merge commit, as soon as it happens.
 - Record the verified restore with the closure of the fix Task.

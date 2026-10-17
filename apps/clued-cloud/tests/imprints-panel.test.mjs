@@ -338,7 +338,8 @@ test('source locator is not claimed as full text; real saved source body remains
   await f.respond(1, { status: 'ok', available: false, evidence: { id: EVIDENCE, storage_ref: 'https://example.test/source' }, unavailable_reason: 'external_only' });
   assert.ok(f.text().includes('定位信息不等于全文')); assert.ok(!f.text().includes('已保存来源正文'));
   f.click('读取来源: ' + EVIDENCE);
-  await f.respond(2, { status: 'ok', available: true, record_version: 2, evidence: { id: EVIDENCE }, content: 'Original meeting\n<script>not executable</script>', segment: null });
+  await f.respond(2, { status: 'ok', available: true, complete: true, record_id: ID, record_version: 2,
+    authoritative: false, current_input_eligible: false, evidence: { id: EVIDENCE }, content: 'Original meeting\n<script>not executable</script>', segment: null });
   assert.ok(f.text().includes('Original meeting')); assert.equal(f.nodes('script').length, 0);
 });
 
@@ -365,7 +366,8 @@ test('legacy compatibility keeps real identity/version/body and null metadata wi
 test('withdrawn source requires explicit history and stays identified as ineligible history', async t => {
   const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page([record({ source_refs: [EVIDENCE] })]));
   f.click('读取来源: ' + EVIDENCE);
-  const historical = { status: 'ok', available: true, record_version: 2, content: 'WITHDRAWN OLD SOURCE', evidence_status: 'withdrawn',
+  const historical = { status: 'ok', available: true, complete: true, record_id: ID, evidence: { id: EVIDENCE },
+    record_version: 2, content: 'WITHDRAWN OLD SOURCE', evidence_status: 'withdrawn',
     source_semantics: 'historical_evidence', authoritative: false, current_input_eligible: false };
   await f.respond(1, historical); assert.ok(!f.text().includes('WITHDRAWN OLD SOURCE'));
   f.check('包含旧版本及待核对内容', true); await f.respond(2, page([record({ source_refs: [EVIDENCE] })]));
@@ -376,13 +378,165 @@ test('withdrawn source requires explicit history and stays identified as ineligi
 test('English controls and scope/full-text limitations are actually rendered in English', async t => {
   const f = fixture(session('owner'), 'en'); t.after(() => f.unmount()); await f.respond(0, page());
   assert.deepEqual(f.nodes('button').filter(n => n.props.role === 'tab').map(f.text), ['All', 'Tasks', 'Decisions', 'Daily life', 'Work', 'Learning', 'Creation', 'Interests']);
-  assert.ok(f.text().includes('not indexed here')); assert.ok(f.text().includes('Unclassified content'));
+  assert.ok(f.text().includes('saved titles, bodies and readable source text'));
+  assert.ok(f.text().includes('previously unsaved bodies cannot be recovered'));
+  assert.ok(f.text().includes('Unclassified content'));
 });
 
 const developmentRecord = extra => record({ context_id: OTHER, source_kind: 'development', source_semantics: 'development_context',
   canonical_scope: 'project:' + PROJECT, scope: 'project:' + PROJECT, record_type: 'annotation', lifecycle_status: 'ACTIVE',
   record_schema_version: null, authority: 'candidate', qualification: 'candidate', authoritative: false, record_currentness: 'UNKNOWN',
   content: '{"title":"Engineering candidate","proposal":"Try blue"}', type_fields: {}, relations: {}, source_refs: [EVIDENCE], ...extra });
+
+const retainedMatch = (version = 1, extra = {}) => ({
+  id: ID, scope: 'global', context_id: null, source_kind: 'canonical', version, matched_record_version: version,
+  snippet: 'OLD retained body excerpt', updated_at: '2026-10-17T06:00:00Z', record_currentness: 'HISTORY',
+  authoritative: false, current_input_eligible: false, full_body_included: false, ...extra,
+});
+const sourceMatch = (historical = false, extra = {}) => ({
+  evidence_id: EVIDENCE, record_id: ID, record_version: 3, source_record_version: historical ? 1 : 3,
+  historical_record_version: historical ? 1 : null, scope: 'global', context_id: null,
+  snippet: 'SOURCE saved original excerpt', record_updated_at: '2026-10-17T06:00:00Z',
+  source_semantics: historical ? 'historical_evidence' : 'linked_evidence', evidence_status: 'retained',
+  authoritative: false, current_input_eligible: false, full_body_included: false, ...extra,
+});
+const searchable = (revisions = [], sources = [], extra = {}) => record({
+  version: 3, content: 'LATEST body stays separate', authoritative: false, source_semantics: 'canonical_record',
+  matched_revisions: revisions, matched_revision_count: revisions.length, matched_revisions_truncated: false,
+  matched_sources: sources, matched_source_count: sources.length, matched_sources_truncated: false, ...extra,
+});
+const revisionResult = (version = 1, extra = {}) => ({
+  status: 'ok', available: true, complete: true, record_id: ID, record_version: 3, historical_record_version: version,
+  source_kind: 'canonical', scope: 'global', context_id: null, authoritative: false, current_input_eligible: false,
+  record: record({ version, content: 'OLD full retained body ' + version, record_currentness: 'HISTORY',
+    authoritative: false, current_input_eligible: false, updated_at: '2026-10-17T06:00:00Z', source_refs: [EVIDENCE] }),
+  ...extra,
+});
+async function searchedFixture(t, row, contextId) {
+  const f = fixture(session('owner'), 'zh-CN', contextId); t.after(() => f.unmount());
+  await f.respond(0, page());
+  f.check('包含旧版本及待核对内容', true); await f.respond(1, page());
+  f.change('搜索当前视图', 'OLD'); f.submit('搜索'); await f.respond(2, page([row]));
+  assert.equal(f.calls[2].args.p_input.include_history, true); assert.equal(f.calls[2].args.p_input.query, 'OLD');
+  return f;
+}
+
+test('retained Canonical history reads exact old version while the latest complete body remains separate', async t => {
+  const f = await searchedFixture(t, searchable([retainedMatch()]));
+  assert.ok(f.text().includes('LATEST body stays separate')); assert.ok(f.text().includes('OLD retained body excerpt'));
+  assert.ok(!f.text().includes('OLD full retained body')); assert.ok(f.text().includes('历史，非当前'));
+  f.click('读取这个版本的完整正文: 1');
+  assert.equal(f.calls[3].name, 'clued_imprint_revision_read_v1');
+  assert.deepEqual(plain(f.calls[3].args.p_input), { record_id: ID, record_version: 3, historical_record_version: 1, scope: 'global' });
+  await f.respond(3, revisionResult());
+  assert.ok(f.text().includes('OLD full retained body 1')); assert.ok(f.text().includes('LATEST body stays separate'));
+  assert.equal(f.nodes('script').length, 0);
+  f.click('读取来源: ' + EVIDENCE);
+  assert.deepEqual(plain(f.calls[4].args.p_input), { record_id: ID, record_version: 3, historical_record_version: 1,
+    evidence_id: EVIDENCE, include_history: true });
+  await f.respond(4, { status: 'ok', available: true, complete: true, record_id: ID, record_version: 3, source_record_version: 1,
+    historical_record_version: 1, source_semantics: 'historical_evidence', authoritative: false, current_input_eligible: false,
+    evidence_status: 'retained', content: 'SOURCE full old body', evidence: { id: EVIDENCE } });
+  assert.ok(f.text().includes('SOURCE full old body')); assert.ok(f.text().includes('不能作为当前输入'));
+  assert.ok(f.calls.every(call => !/mutate|set|promote/.test(call.name)), 'reading history never writes or promotes it');
+});
+
+test('source-only historical matches request both current-card and selected-source versions', async t => {
+  const f = await searchedFixture(t, searchable([], [sourceMatch(true)]));
+  assert.ok(f.text().includes('来源全文命中')); assert.ok(f.text().includes('历史来源'));
+  assert.ok(!f.nodes('section').some(node => node.props['aria-label'] === '历史版本命中'));
+  f.click('读取来源: ' + EVIDENCE);
+  assert.equal(f.calls[3].args.p_input.record_version, 3); assert.equal(f.calls[3].args.p_input.historical_record_version, 1);
+  await f.respond(3, { status: 'ok', available: false, unavailable_reason: 'stale_record_version' });
+  assert.ok(f.text().includes('对象已有更新')); assert.ok(!f.text().includes('SOURCE full'));
+});
+
+test('complete historical read rejects mismatched identity, scope, version, context or authority', async t => {
+  for (const bad of [
+    { record_version: 2 }, { historical_record_version: 2 }, { record_id: OTHER }, { scope: 'project:' + PROJECT },
+    { context_id: OTHER }, { authoritative: true }, { current_input_eligible: true }, { complete: false },
+    { record: { ...revisionResult().record, id: OTHER } }, { record: { ...revisionResult().record, version: 2 } },
+    { record: { ...revisionResult().record, authoritative: true } },
+  ]) {
+    const f = await searchedFixture(t, searchable([retainedMatch()]));
+    f.click('读取这个版本的完整正文: 1'); await f.respond(3, revisionResult(1, bad));
+    assert.ok(!f.text().includes('OLD full retained body')); assert.ok(f.text().includes('读取结果未知'));
+  }
+});
+
+test('malformed query hits fail as unknown before snippets, hidden counts or a forged namespace render', async t => {
+  for (const bad of [
+    { matched_revisions: [retainedMatch(1, { id: OTHER, snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { source_kind: 'development', snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { context_id: OTHER, snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { version: 3, snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { content: 'PRIVATE forged hit'.repeat(10000) })] },
+    { matched_revisions: [retainedMatch(1, { body: 'PRIVATE forged hit' })] },
+    { matched_revision_count: 999, matched_revisions_truncated: false },
+    { matched_sources: [sourceMatch(true, { record_version: 2, snippet: 'PRIVATE forged hit' })] },
+    { matched_sources: [sourceMatch(true, { historical_record_version: 2, snippet: 'PRIVATE forged hit' })] },
+    { matched_sources: [sourceMatch(true, { current_input_eligible: true, snippet: 'PRIVATE forged hit' })] },
+  ]) {
+    const f = await searchedFixture(t, searchable([retainedMatch()], [], bad));
+    assert.equal(f.nodes('article').length, 0); assert.ok(f.text().includes('读取结果未知'));
+    assert.ok(!f.text().includes('PRIVATE forged hit')); assert.ok(!f.text().includes('999'));
+  }
+});
+
+test('newer historical reads win and late responses cannot repopulate after account or filter changes', async t => {
+  const f = await searchedFixture(t, searchable([retainedMatch(1), retainedMatch(2)]));
+  f.click('读取这个版本的完整正文: 1'); f.click('读取这个版本的完整正文: 2');
+  await f.respond(4, revisionResult(2)); await f.respond(3, revisionResult(1));
+  assert.ok(f.text().includes('OLD full retained body 2')); assert.ok(!f.text().includes('OLD full retained body 1'));
+  f.click('读取这个版本的完整正文: 1'); f.setSession(session('another'));
+  await f.respond(5, revisionResult(1));
+  assert.ok(!f.text().includes('OLD full retained body')); assert.ok(!f.text().includes('LATEST body stays separate'));
+  await f.respond(6, page([searchable([retainedMatch()])]));
+  f.click('读取这个版本的完整正文: 1'); f.check('包含旧版本及待核对内容', false);
+  await f.respond(7, revisionResult()); assert.ok(!f.text().includes('OLD full retained body'));
+  await f.respond(8, page()); assert.equal(f.nodes('article').length, 0);
+});
+
+test('historical full read carries exact context and cannot finish in a replacement directory', async t => {
+  const row = searchable([retainedMatch(1, { scope: 'project:' + PROJECT, context_id: OTHER })], [],
+    { canonical_scope: 'project:' + PROJECT, scope: 'project:' + PROJECT, source_kind: 'canonical', context_id: OTHER });
+  const f = await searchedFixture(t, row, OTHER);
+  f.click('读取这个版本的完整正文: 1');
+  assert.equal(f.calls[3].args.p_input.context_id, OTHER); assert.equal(f.calls[3].args.p_input.scope, 'project:' + PROJECT);
+  f.setDevelopmentContext(PROJECT);
+  await f.respond(3, revisionResult(1, { context_id: OTHER, scope: 'project:' + PROJECT,
+    record: { ...revisionResult().record, scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT } }));
+  assert.ok(!f.text().includes('OLD full retained body')); assert.equal(f.calls[4].args.p_input.context_id, PROJECT);
+});
+
+test('over-limit full reads report unavailable and exact partial counts stay honest', async t => {
+  const row = searchable([retainedMatch()], [], { matched_revision_count: 23, matched_revisions_truncated: true });
+  const f = await searchedFixture(t, row);
+  assert.ok(f.text().includes('已显示 1 个历史命中，共 23 个'));
+  f.click('读取这个版本的完整正文: 1');
+  await f.respond(3, { status: 'ok', available: false, complete: false, unavailable_reason: 'revision_content_exceeds_read_limit' });
+  assert.ok(f.text().includes('超过单次完整读取上限')); assert.ok(!f.text().includes('OLD full retained body'));
+});
+
+test('a non-authoritative history query does not expose the current-task due-date write control', async t => {
+  const f = await searchedFixture(t, searchable([retainedMatch()], [], { record_type: 'task', type_fields: { execution_bucket: 'later' } }));
+  assert.equal(f.nodes('input').filter(node => node.props.type === 'datetime-local').length, 0);
+});
+
+test('source full reads reject wrong identities, incomplete bodies and over-limit UTF8 before rendering', async t => {
+  for (const bad of [
+    { record_id: OTHER }, { evidence: { id: OTHER } }, { evidence: null }, { complete: false }, { complete: undefined },
+    { content: 'PRIVATE invalid source'.repeat(10000) }, { content: '界'.repeat(50000) },
+    { authoritative: true }, { current_input_eligible: true },
+  ]) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page([record({ source_refs: [EVIDENCE] })]));
+    f.click('读取来源: ' + EVIDENCE);
+    await f.respond(1, { status: 'ok', available: true, complete: true, record_id: ID, record_version: 2,
+      evidence: { id: EVIDENCE }, authoritative: false, current_input_eligible: false, content: 'PRIVATE invalid source', ...bad });
+    assert.ok(f.text().includes('读取结果未知')); assert.ok(!f.text().includes('PRIVATE invalid source'));
+    assert.ok(!f.text().includes('界界界'));
+  }
+});
 
 test('development mode shares eight views but isolates Native families, context and candidate identity', async t => {
   const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());
@@ -557,4 +711,304 @@ test('Immediate authoritative context is a qualified Record badge, not a ninth v
  assert.ok(f.text().includes('即时权威上下文'));assert.equal(f.nodes('button').filter(n=>n.props.role==='tab').length,8);
  f.click('刷新');await f.respond(1,page([record({authoritative:false,record_currentness:'HISTORY'})]));
  assert.ok(!f.text().includes('即时权威上下文'));assert.ok(f.text().includes('历史'));
+});
+
+const associationSource = extra => record({ title: '客户交付说明', content: '周五交Logo二稿，沿用原任务。',
+  source_semantics: 'canonical_record', authoritative: true, associations: [], association_version: 0, association_unavailable_count: 0, ...extra });
+const associationTask = extra => record({ id: OTHER, title: '周五交Logo第二版', content: '原任务唯一执行正文。', record_type: 'task',
+  source_kind: 'canonical', source_semantics: 'canonical_record', authoritative: true, version: 1, type_fields: { execution_bucket: 'later' }, ...extra });
+
+test('existing-record matching ranks literal evidence without inventing identity or including another scope/candidate/history', () => {
+  const m = modules().load('imprint-associations.ts'), source = associationSource(), target = associationTask();
+  const other = associationTask({ id: EVIDENCE });
+  const matches = m.rankAssociationMatches(source, [target, other, associationTask({ scope: 'profile' }),
+    associationTask({ source_kind: 'development' }), associationTask({ record_currentness: 'HISTORY' }),
+    associationTask({ authoritative: false })]);
+  assert.deepEqual(plain(matches.map(x => [x.record.id, x.reason])), [[OTHER, 'terms'], [EVIDENCE, 'terms']]);
+  assert.equal(m.rankAssociationMatches(associationSource({ title: '英文电影', content: '随手记一下' }), [target]).length, 0);
+  assert.equal(m.rankAssociationMatches(associationSource({ content: OTHER }), [target])[0].reason, 'identity');
+  assert.equal(m.rankAssociationMatches(associationSource({ content: target.title }), [target])[0].reason, 'title');
+  assert.equal(m.canAssociate(associationSource({ association_version: undefined })), false);
+  assert.equal(m.canAssociate(associationSource({ lifecycle_status: 'completed' })), false);
+});
+
+test('candidate lookup is bounded and honest about pagination, and only uses the existing strict-current readers', async () => {
+  const m = modules().load('imprint-associations.ts'), calls = [], source = associationSource();
+  const rpc = async (name, { p_input }) => { calls.push([name, p_input]);
+    return { data: page([associationTask({ id: p_input.view === 'task' ? OTHER : EVIDENCE, record_type: p_input.view })], p_input.cursor + 30, 'strict_current'), error: null }; };
+  const found = await m.findExistingAssociations(rpc, source, '', undefined, { isCurrent: () => true });
+  assert.equal(found.complete, false); assert.equal(calls.length, 4);
+  assert.ok(calls.every(([name, input]) => name === 'clued_imprint_read_v1' && input.scope === source.scope && input.include_history === false));
+  assert.deepEqual(calls.map(([,input]) => [input.view,input.cursor]), [['task',0],['task',30],['decision',0],['decision',30]]);
+  await assert.rejects(m.findExistingAssociations(rpc, source, '', undefined, { isCurrent: () => false }), e => e.reason === 'unknown');
+});
+
+test('actual picker previews the existing body, persists only a pointer, and reuses the exact lost-response request', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const source = associationSource(), target = associationTask();
+  await f.respond(0, page([source])); f.click('查找已有任务或决策');
+  await f.respond(1, page([target], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  assert.ok(f.text().includes(target.title)); assert.equal(f.calls.filter(x => /mutate|set_v1/.test(x.name)).length, 0);
+  f.click('核对这条记录'); assert.ok(f.text().includes(target.content));
+  f.click('确认关联'); await f.respond(3, page([target], null, 'strict_current')); await f.untilCalls(5);
+  const pending = plain(f.calls[4].args); assert.equal(f.calls[4].name, 'clued_imprint_association_set_v1');
+  assert.equal(pending.p_input.record_id, ID); assert.equal(pending.p_input.target_id, OTHER);
+  assert.equal(pending.p_input.record_version, source.version); assert.equal(pending.p_input.target_version, 1);
+  assert.equal('mutation' in pending.p_input, false); assert.equal('content' in pending.p_input, false);
+  await f.fail(4); assert.ok(f.text().includes('本次结果未能确认'));
+  f.click('确认关联'); await f.respond(5, page([target], null, 'strict_current')); await f.untilCalls(7);
+  assert.deepEqual(plain(f.calls[6].args), pending); assert.equal(f.calls[6].headers.Authorization, 'Bearer fixture-owner');
+  await f.respond(6, { status: 'committed', receipt_id: EVIDENCE, supplemental: { association: { record_id: ID, source_kind: 'canonical', version: 1, changed: true } } });
+  await f.respond(7, page([associationSource({ association_version: 1, associations: [{ record_id: OTHER, source_kind: 'canonical',
+    record_type: 'task', record_version: 1, current_version: 1, title: target.title }] })]));
+  assert.ok(f.text().includes('已关联原条目')); assert.ok(f.text().includes(source.content));
+  assert.equal(f.calls.filter(x => x.name === 'clued_user_record_mutate').length, 0, 'no duplicate task or source body mutation');
+});
+
+test('changed target requires review rather than silently linking a newer version', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const target = associationTask();
+  await f.respond(0, page([associationSource()])); f.click('查找已有任务或决策');
+  await f.respond(1, page([target], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  f.click('核对这条记录'); f.click('确认关联'); await f.respond(3, page([associationTask({ version: 2 })], null, 'strict_current'));
+  assert.ok(f.text().includes('原条目或关联已有更新')); assert.equal(f.calls.length, 4);
+});
+
+test('same-title same-body candidates remain distinguishable by original type, ID and version through confirmation', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const first = associationTask(), second = associationTask({ id: EVIDENCE, version: 4 });
+  await f.respond(0, page([associationSource()])); f.click('查找已有任务或决策');
+  await f.respond(1, page([first, second], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  const candidates = f.nodes('button').filter(node => f.text(node) === '核对这条记录'); assert.equal(candidates.length, 2);
+  assert.ok(f.text().includes(OTHER)); assert.ok(f.text().includes(EVIDENCE)); assert.ok(f.text().includes('已有任务'));
+  f.fire(candidates[1], 'onClick');
+  const confirmation = f.nodes('section').find(node => node.props['aria-label'] === '确认查阅关联');
+  assert.ok(f.text(confirmation).includes(EVIDENCE)); assert.ok(!f.text(confirmation).includes(OTHER));
+  assert.ok(f.text(confirmation).includes('版本 4')); assert.ok(f.text(confirmation).includes(second.content));
+  f.click('确认关联'); assert.equal(f.calls[3].args.p_input.id, EVIDENCE);
+  await f.respond(3, page([second], null, 'strict_current')); await f.untilCalls(5);
+  assert.equal(f.calls[4].args.p_input.target_id, EVIDENCE); assert.equal(f.calls[4].args.p_input.target_version, 4);
+});
+
+test('associated details recheck exact scope and current eligibility and directly show only that qualified read', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const link = { record_id: OTHER, source_kind: 'canonical', record_type: 'task', record_version: 1, current_version: 1, title: '原任务入口' };
+  await f.respond(0, page([associationSource({ associations: [link], association_version: 1 })])); f.click(link.title);
+  assert.deepEqual(plain(f.calls[1].args.p_input), { view: 'task', scope: 'global', query: '', include_history: false, limit: 30, cursor: 0, id: OTHER });
+  await f.respond(1, page([associationTask({ version: 2, content: 'UPDATED ORIGINAL BODY' })], null, 'strict_current'));
+  assert.ok(f.text().includes('UPDATED ORIGINAL BODY')); assert.equal(f.calls.length, 2);
+  for (const invalid of [{ scope: 'profile', canonical_scope: 'profile' }, { lifecycle_status: 'completed' }, { record_currentness: 'HISTORY', authoritative: false }]) {
+    f.click(link.title);
+    await f.respond(f.calls.length - 1, page([associationTask({ ...invalid, content: 'INELIGIBLE TARGET BODY' })], null, 'strict_current'));
+    assert.ok(!f.text().includes('INELIGIBLE TARGET BODY'));
+  }
+  assert.ok(f.calls.slice(1).every(call => call.args.p_input.scope === 'global' && call.args.p_input.include_history === false));
+});
+
+test('Context associated details bind canonical namespace and discard a late read after Context switch', async t => {
+  const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());
+  const link = { record_id: EVIDENCE, source_kind: 'canonical', record_type: 'task', record_version: 1, current_version: 1, title: 'Context原任务入口' };
+  const source = associationSource({ context_id: OTHER, environment: 'test', scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT,
+    source_kind: 'development', source_semantics: 'development_context', lifecycle_status: 'ACTIVE', record_currentness: 'UNKNOWN', authoritative: false, qualification: 'candidate',
+    associations: [link], association_version: 1 });
+  await f.respond(0, page([source])); f.click(link.title);
+  assert.equal(f.calls[1].args.p_input.scope, source.scope); assert.equal(f.calls[1].args.p_input.source_kind, 'canonical');
+  assert.equal(f.calls[1].args.p_input.context_id, OTHER); assert.equal(f.calls[1].args.p_input.include_history, false);
+  f.setDevelopmentContext(PROJECT);
+  await f.respond(1, page([associationTask({ id: EVIDENCE, context_id: OTHER, scope: source.scope, canonical_scope: source.scope, content: 'LATE OTHER CONTEXT BODY' })], null, 'strict_current'));
+  assert.ok(!f.text().includes('LATE OTHER CONTEXT BODY')); assert.equal(f.calls.length, 3);
+});
+
+test('late lookup cannot reveal old-account candidates or initiate a mutation after account switch', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await f.respond(0, page([associationSource()])); f.click('查找已有任务或决策');
+  f.setSession(session('other')); await f.respond(1, page([associationTask()], null, 'strict_current'));
+  await f.respond(2, page([])); assert.ok(!f.text().includes('周五交Logo第二版'));
+  assert.equal(f.calls.filter(x => x.name === 'clued_imprint_association_set_v1').length, 0);
+  assert.equal(f.calls.length, 3, 'old lookup stops before reading another type');
+});
+
+test('Context candidate uses exact context and canonical namespace without promoting the original Raw source', async t => {
+  const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());
+  const source = associationSource({ source_kind: 'development', source_semantics: 'development_context', authoritative: false,
+    context_id: OTHER, environment: 'test', scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT,
+    lifecycle_status: 'ACTIVE', record_currentness: 'UNKNOWN', qualification: 'candidate' });
+  const target = associationTask({ context_id: OTHER, environment: 'test', scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT });
+  await f.respond(0, page([source])); f.click('查找已有任务或决策');
+  assert.equal(f.calls[1].args.p_input.context_id, OTHER); assert.equal(f.calls[1].args.p_input.source_kind, 'canonical');
+  await f.respond(1, page([target], null, 'strict_current')); await f.respond(2, page([], null, 'strict_current'));
+  f.click('核对这条记录'); f.click('确认关联'); await f.respond(3, page([target], null, 'strict_current')); await f.untilCalls(5);
+  assert.equal(f.calls[4].args.p_input.source_kind, 'development'); assert.equal(f.calls[4].args.p_input.context_id, OTHER);
+  assert.equal(f.calls[4].args.p_input.environment, 'test'); assert.ok(f.text().includes('候选内容'));
+  assert.ok(!f.text().includes('即时权威上下文'));
+  f.setDevelopmentContext(EVIDENCE); await f.respond(4, { status: 'committed', receipt_id: EVIDENCE,
+    supplemental: { association: { record_id: ID, source_kind: 'development', version: 1, changed: true } } });
+  assert.ok(!f.text().includes('已关联原条目'));
+});
+
+test('removal is an explicit metadata operation; inaccessible links never render stale identities or look absent', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const link = { record_id: OTHER, source_kind: 'canonical', record_type: 'task',
+    record_version: 1, current_version: 2, title: '原任务现标题' };
+  await f.respond(0, page([associationSource({ associations: [link], association_version: 2, association_unavailable_count: 1 })]));
+  assert.ok(f.text().includes('部分原有关联目前不可读取或已失效'));
+  f.click('取消关联'); assert.equal(f.calls.length, 1); f.click('确认取消关联'); await f.untilCalls(2);
+  assert.equal(f.calls[1].name, 'clued_imprint_association_set_v1'); assert.equal(f.calls[1].args.p_input.action, 'remove');
+  assert.equal('target_version' in f.calls[1].args.p_input, false); assert.equal(f.calls[1].args.p_input.base_version, 2);
+  const model = modules().load('imprint-model.ts');
+  assert.equal(model.normalizeRecord(associationSource({ associations: [{ ...link, source_kind: 'development' }] })), null);
+  assert.equal(model.normalizeRecord(associationSource({ associations: [link], association_version: undefined })), null);
+});
+
+const bulkPlan = (extra = {}) => {
+  const value = { status: 'ok', complete: true, authoritative: false, max_batch_size: 100,
+  digest: 'a'.repeat(64), rules_version: 'imprint-explicit-local.v2', selection: { scope: 'all' },
+  counts: { total: 3, characters: 100, ineligible: 1, protected: 1, needs_review: 0, ready: 1,
+    personal: 3, profile: 0, project: 0, current: 3, history: 0, other_currentness: 0,
+    automatic_marked: 0, manual_or_unspecified_marked: 1, unmarked: 2, ready_characters: 20, review_characters: 0 },
+  items: [{ record_id: ID, record_version: 2, title: 'Existing old note', domains: ['learning'] }],
+  review_sample: [], ...extra };
+  const { ready, needs_review, ready_characters, review_characters, ...base } = value.counts;
+  const classifiable = ready + needs_review;
+  const samples = value.review_sample.length || !needs_review ? value.review_sample : [{ record_id: OTHER, title: 'Needs individual review' }];
+  return { ...value, inventory_counts: { ...base, classifiable }, ready_characters, review_characters,
+    review_sample: samples, page: { cursor: 0, scanned: classifiable, next_cursor: null, complete: true },
+    proof: { mac: 'b'.repeat(64), payload: { owner_id: 'owner', selection: value.selection, digest: value.digest,
+      rules_version: value.rules_version, cursor: classifiable, classifiable, ready, needs_review, ready_characters, review_characters,
+      expires_at: new Date(Date.now() + 3600000).toISOString(), items: value.items.map(({ title, ...item }) => item) } } };
+};
+const bulkBatch = (extra = {}) => ({ status: 'ok', available: true, batch_id: EVIDENCE, version: 1,
+  state: 'running', selection: { scope: 'all' }, rules_version: 'imprint-explicit-local.v2', preview_digest: 'a'.repeat(64),
+  items: [{ record_id: ID, record_version: 2, domains: ['learning'], state: 'pending', ordinal: 1,
+    receipt_id: null, organization_version: null, undo_receipt_id: null }], ...extra });
+const bulkWrite = batch => ({ status: 'committed', receipt_id: OTHER, supplemental: { batch } });
+
+test('bulk preview remains read-only and explicit plan confirmation does not run label mutations', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  assert.ok(f.text().includes('全部自有内容（个人资料、个人记录、项目）'));
+  f.click('盘点并预演（不修改内容）'); assert.equal(f.calls[1].name, 'clued_imprint_bulk_preview_v1');
+  await f.respond(1, bulkPlan()); await f.untilCalls(3); await f.respond(2, { status: 'ok', available: false });
+  assert.ok(f.text().includes('完整盘点 3 条')); assert.ok(f.text().includes('待逐条核对 0')); assert.equal(f.calls.length, 3);
+  f.click('确认这1条，保存首批计划'); await f.untilCalls(4);
+  assert.equal(f.calls[3].args.p_input.action, 'begin'); assert.equal(f.calls[3].args.p_input.digest, 'a'.repeat(64));
+  await f.respond(3, bulkWrite(bulkBatch())); assert.ok(f.text().includes('尚未修改标签')); assert.equal(f.calls.length, 4);
+});
+test('failed rehearsal distinguishes timeout and invalidation without retries or raw database details', async t => {
+  for (const [error, expected] of [
+    [{ message: 'canceling statement due to statement timeout', code: '57014' }, '预演超时'],
+    [{ message: 'bulk_preview_changed', code: '40001' }, '本轮预演已失效'],
+  ]) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+    f.click('盘点并预演（不修改内容）'); f.calls[1].resolve({ data: null, error, status: 500 }); await f.settle();
+    assert.ok(f.text().includes(expected)); assert.ok(f.text().includes('没有修改标签'));
+    assert.ok(!f.text().includes('完整盘点')); assert.ok(!f.text().includes('57014'));
+    assert.ok(!f.text().includes('statement timeout')); assert.equal(f.calls.length, 2);
+    assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+    f.click('读取已保存进度'); await f.respond(2, { status: 'ok', available: false });
+    assert.ok(f.text().includes('尚未建立首批计划'));
+  }
+});
+test('bulk unknown write never retries automatically; resume reconciles durable progress before another step', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('读取已保存进度'); await f.respond(1, bulkBatch()); f.click('继续处理首批');
+  await f.respond(2, bulkBatch()); await f.untilCalls(4);
+  assert.equal(f.calls[3].args.p_input.action, 'advance'); await f.fail(3);
+  assert.equal(f.calls.length, 4); assert.ok(f.text().includes('结果尚未确认'));
+  f.click('读取已保存进度'); assert.equal(f.calls[4].name, 'clued_imprint_bulk_status_v1');
+  await f.respond(4, bulkBatch({ version: 2, state: 'completed', items: [{ ...bulkBatch().items[0], state: 'applied', organization_version: 1, receipt_id: OTHER }] }));
+  assert.ok(f.text().includes('已补标签 1')); assert.ok(f.text().includes('撤销本批已补标签')); assert.equal(f.calls.length, 5);
+});
+test('bulk scope/context/account changes fence late previews and prevent the next write', async t => {
+  const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('盘点并预演（不修改内容）'); assert.equal(f.calls[1].args.p_input.context_id, OTHER);
+  f.setDevelopmentContext(EVIDENCE); await f.respond(1, bulkPlan());
+  assert.ok(!f.text().includes('Existing old note')); assert.equal(f.calls.length, 3);
+  await f.respond(2, page()); f.click('读取已保存进度'); await f.respond(3, bulkBatch());
+  f.click('继续处理首批'); f.setSession(session('replacement'));
+  await f.respond(4, bulkBatch()); assert.equal(f.calls.length, 6, 'only the replacement list read was added');
+  assert.ok(!f.text().includes('已补标签 1')); assert.equal(f.calls.filter(c => c.name === 'clued_imprint_bulk_mutate_v1').length, 0);
+});
+test('zero and malformed bulk previews cannot fabricate success or expose a write control', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('盘点并预演（不修改内容）'); await f.respond(1, bulkPlan({ counts: { ...bulkPlan().counts, total: 1, personal: 1, current: 1,
+    characters: 20, ineligible: 0, protected: 0, needs_review: 1, ready: 0, manual_or_unspecified_marked: 0, unmarked: 1, ready_characters: 0, review_characters: 20 }, items: [] }));
+  await f.respond(2, { status: 'ok', available: false }); assert.ok(f.text().includes('没有可可靠自动归类'));
+  assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+  f.click('盘点并预演（不修改内容）'); await f.respond(3, bulkPlan({ items: [bulkPlan().items[0], bulkPlan().items[0]] }));
+  assert.ok(f.text().includes('预演未完成')); assert.ok(!f.text().includes('Existing old note'));
+});
+test('a later failed batch-status read invalidates an earlier empty result before enabling begin', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('读取已保存进度'); await f.respond(1, { status: 'ok', available: false });
+  assert.ok(f.text().includes('尚未建立首批计划'));
+  f.click('盘点并预演（不修改内容）'); await f.respond(2, bulkPlan()); await f.untilCalls(4); await f.fail(3);
+  assert.ok(f.text().includes('预演未完成')); assert.ok(!f.text().includes('尚未建立首批计划'));
+  const confirm = f.nodes('button').find(b => f.text(b).includes('保存首批计划'));
+  assert.ok(!confirm || confirm.props.disabled);
+});
+test('selection replacement during the write digest prevents dispatch from the unmounted batch panel', async t => {
+  let resumeDigest;
+  const gate = new Promise(resolve => { resumeDigest = resolve; });
+  const crypto = { randomUUID: () => webcrypto.randomUUID(), subtle: { async digest(...args) { await gate; return webcrypto.subtle.digest(...args); } } };
+  const f = fixture(session('owner'), 'zh-CN', undefined, { crypto }); t.after(() => { f.unmount(); resumeDigest(); });
+  await f.respond(0, page()); f.click('盘点并预演（不修改内容）'); await f.respond(1, bulkPlan());
+  await f.respond(2, { status: 'ok', available: false }); f.click('确认这1条，保存首批计划');
+  f.change('查询范围', 'global'); resumeDigest(); await f.settle();
+  assert.equal(f.calls.filter(c => c.name === 'clued_imprint_bulk_mutate_v1').length, 0);
+});
+
+function bulkTwoPages() {
+  const completed = bulkPlan({ counts: { ...bulkPlan().counts, total: 4, personal: 4, current: 4, unmarked: 3,
+    ready: 1, needs_review: 1, review_characters: 40 }, review_sample: [{ record_id: OTHER, title: 'Needs individual review' }] });
+  const first = { ...completed, review_sample: [], ready_characters: 20, review_characters: 0,
+    page: { cursor: 0, scanned: 1, next_cursor: 1, complete: false }, proof: { ...completed.proof,
+      payload: { ...completed.proof.payload, cursor: 1, needs_review: 0, review_characters: 0 } } };
+  const last = { ...completed, items: [], ready_characters: 0, review_characters: 40,
+    page: { cursor: 1, scanned: 1, next_cursor: null, complete: true } };
+  return [first, last];
+}
+test('paged preview requires continuous full coverage and carries the final server proof into begin', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  const [first, last] = bulkTwoPages(); f.click('盘点并预演（不修改内容）'); await f.respond(1, first);
+  assert.ok(f.text().includes('已预演 1/2')); assert.ok(!f.text().includes('完整盘点'));
+  assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+  assert.deepEqual(plain(f.calls[2].args.p_input.proof), first.proof);
+  await f.respond(2, last); await f.respond(3, { status: 'ok', available: false });
+  assert.ok(f.text().includes('完整盘点 4 条')); assert.ok(f.text().includes('待逐条核对 1'));
+  f.click('确认这1条，保存首批计划'); await f.untilCalls(5);
+  assert.deepEqual(plain(f.calls[4].args.p_input.proof), last.proof);
+  assert.equal(f.calls[4].args.p_input.items.length, 1);
+});
+test('a missing, duplicated, drifting or forged-complete page invalidates all accumulated confirmation', async t => {
+  for (const mode of ['transport', 'duplicate', 'digest', 'counts', 'proof', 'cursor']) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page()); const [first, original] = bulkTwoPages();
+    f.click('盘点并预演（不修改内容）'); await f.respond(1, first);
+    const last = JSON.parse(JSON.stringify(original));
+    if (mode === 'transport') await f.fail(2);
+    else {
+      if (mode === 'duplicate') last.review_sample[0].record_id = ID;
+      if (mode === 'digest') last.digest = 'c'.repeat(64);
+      if (mode === 'counts') last.inventory_counts.characters++;
+      if (mode === 'proof') last.proof.payload.ready++;
+      if (mode === 'cursor') last.page.cursor = 10;
+      await f.respond(2, last);
+    }
+    assert.ok(f.text().includes('预演未完成'), mode); assert.ok(!f.text().includes('完整盘点'), mode);
+    assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')), mode);
+    assert.equal(f.calls.length, 3, mode);
+  }
+});
+test('stopping or changing account during a classification page cannot fetch a following page or create a batch', async t => {
+  for (const stop of [true, false]) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page()); const [first, last] = bulkTwoPages();
+    f.click('盘点并预演（不修改内容）'); await f.respond(1, first);
+    if (stop) f.click('停止预演'); else f.setSession(session('next-owner'));
+    await f.respond(2, last);
+    assert.equal(f.calls.filter(c => c.name === 'clued_imprint_bulk_status_v1' || c.name === 'clued_imprint_bulk_mutate_v1').length, 0);
+    assert.ok(!f.text().includes('完整盘点'));
+    if (stop) assert.ok(f.text().includes('已停止预演，没有修改标签'));
+  }
+});
+test('restoring the shared batch displays its original scope rather than the current preview scope', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.change('查询范围', 'global'); await f.respond(1, page()); f.click('读取已保存进度');
+  await f.respond(2, bulkBatch({ selection: { scope: 'project:' + PROJECT } }));
+  assert.ok(f.text().includes('预演范围：个人记录')); assert.ok(f.text().includes('原批次范围：Design project'));
 });

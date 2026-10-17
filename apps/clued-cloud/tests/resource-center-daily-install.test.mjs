@@ -7,6 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { installDailyHost } from "../scripts/install-resource-center-daily-runner.mjs";
 import { loadDailyHostConfig } from "../scripts/resource-center-daily-runner.mjs";
+import { assertResourceCenterNotStopped } from "../../../kernel/host/resource-center-renewal.mjs";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 async function fixture(t) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "clued-install-test-"));
@@ -55,18 +56,44 @@ test("installer never overwrites an existing deployment or its logs", async t =>
 });
 
 test("explicit upgrade preserves old journal identities/content and runtime without enabling", async t => {
-  const request = await fixture(t), original = await installDailyHost(request);
+  const request = await fixture(t), renewalPath = path.join(path.dirname(request.destination), "renewal.dpapi.jsonl");
+  const renewalBytes = "synthetic sealed renewal history\n";await fs.writeFile(renewalPath, renewalBytes);
+  const renewalIdentity = await fs.stat(renewalPath);
+  request.host_config.renewal = { path: renewalPath, identity: { dev: renewalIdentity.dev, ino: renewalIdentity.ino } };
+  const original = await installDailyHost(request);
   await fs.rename(path.join(request.destination, "activation.pending.json"), path.join(request.destination, "activation.json"));
   const oldConfig = JSON.parse(await fs.readFile(path.join(request.destination, "host.json"), "utf8"));
-  await fs.appendFile(path.join(oldConfig.state_directory, "jobs.jsonl"), "preserve old recovery history\n");
+  const journals = { "jobs.jsonl": "preserve old job history\n", "recovery.jsonl": "preserve original intent\n", "attempts.jsonl": "preserve original provider attempt\n" };
+  for (const [name, text] of Object.entries(journals)) await fs.appendFile(path.join(oldConfig.state_directory, name), text);
+  const stopPath = path.join(oldConfig.state_directory, "renewal-stop.json"), stopBytes = JSON.stringify({ request_id: randomUUID() }) + "\n";
+  await fs.writeFile(stopPath, stopBytes);const stopIdentity = await fs.stat(stopPath);
+  const nextBundle = path.join(path.dirname(request.destination), "next-bundle.mjs");await fs.writeFile(nextBundle, "Kooyumi candidate bundle");
   const upgrade = { ...request, destination: request.destination + "-upgrade", consumer_runtime_directory: request.destination,
+    artifacts: { ...request.artifacts, bundle: { path: nextBundle, sha256: hash("Kooyumi candidate bundle") } },
     existing_host: { config_path: path.join(request.destination, "host.json"), config_sha256: original.config_sha256 },
-    host_config: { ...request.host_config, renewal: { path: path.join(request.destination, "renewal.dpapi.jsonl"), identity: { dev: 1, ino: 1 } } } };
+    host_config: { ...request.host_config } };
   const next = await installDailyHost(upgrade);
   const c = JSON.parse(await fs.readFile(path.join(upgrade.destination, "host.json"), "utf8"));
   assert.equal(c.state_directory, oldConfig.state_directory);assert.deepEqual(c.journal_identity, oldConfig.journal_identity);
-  assert.equal(await fs.readFile(path.join(c.state_directory, "jobs.jsonl"), "utf8"), "preserve old recovery history\n");
+  for (const [name, text] of Object.entries(journals)) assert.equal(await fs.readFile(path.join(c.state_directory, name), "utf8"), text);
+  assert.deepEqual(c.profile, oldConfig.profile);
+  assert.deepEqual([c.root_folder_id, c.root_parent_id], [oldConfig.root_folder_id, oldConfig.root_parent_id]);
+  assert.deepEqual(c.renewal, oldConfig.renewal);
+  assert.equal(await fs.readFile(renewalPath, "utf8"), renewalBytes);
+  const nextRenewalIdentity = await fs.stat(renewalPath);
+  assert.deepEqual([nextRenewalIdentity.dev, nextRenewalIdentity.ino], [renewalIdentity.dev, renewalIdentity.ino]);
+  for (const key of ["bindings_path", "client_secret_path", "google_tokens_path", "consumer_path", "probe_path", "bwrap_path"]) assert.equal(c[key], oldConfig[key]);
+  assert.equal(hash(await fs.readFile(path.join(request.destination, "host.json"))), original.config_sha256);
+  assert.equal(hash(await fs.readFile(path.join(request.destination, "runner.mjs"))), original.bundle_sha256);
+  assert.equal(hash(await fs.readFile(path.join(upgrade.destination, "runner.mjs"))), next.bundle_sha256);
+  assert.notEqual(next.bundle_sha256, original.bundle_sha256);
+  const nextStopIdentity = await fs.stat(stopPath);
+  assert.deepEqual([nextStopIdentity.dev, nextStopIdentity.ino], [stopIdentity.dev, stopIdentity.ino]);
+  assert.equal(await fs.readFile(stopPath, "utf8"), stopBytes);
+  assert.throws(() => assertResourceCenterNotStopped(c.state_directory), /DAILY_RENEWAL_STOPPED/);
   assert.equal(next.state, "staged-not-enabled");
+  await assert.rejects(fs.stat(path.join(upgrade.destination, "activation.json")), /ENOENT/);
+  await assert.rejects(fs.stat(path.join(upgrade.destination, "Invoke-CluedResourceCenter.ps1")), /ENOENT/);
   assert.match(await fs.readFile(path.join(upgrade.destination, "Renew-CluedResourceCenter.disabled.ps1"), "utf8"), /--renew/);
   assert.match(await fs.readFile(path.join(upgrade.destination, "Stop-CluedResourceCenter.disabled.ps1"), "utf8"), /--stop-renewal/);
   assert.doesNotMatch(await fs.readFile(path.join(upgrade.destination, "Stop-CluedResourceCenter.disabled.ps1"), "utf8"), /Path = '[^']*activation\.json'/);

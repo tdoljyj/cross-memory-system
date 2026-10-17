@@ -9,6 +9,7 @@ export const CLOSEOUT_MIGRATION = '20261010161848_worker_gateway_closeout_v1.sql
 export const AUTHORIZATION_SUCCESSOR_MIGRATIONS = [
   '20261014044323_all_contexts_authorization_v2.sql',
   '20261014045157_all_contexts_serialization_v2.sql',
+  '20261015172722_consent_future_owned_policies.sql',
 ];
 export const CI_SIGNATURES = [
   'clued_owner_grant_admission_door_v1(text,jsonb)', 'clued_owner_grant_door_consume_v1(text,jsonb)',

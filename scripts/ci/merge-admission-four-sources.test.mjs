@@ -17,7 +17,7 @@ registerHooks({resolve(specifier,context,next){if(context.parentURL===moduleURL&
   return next(pathToFileURL(path.join(repo,'scripts/ci',specifier.slice(2))).href,context);
   return next(specifier,context);}});
 const {readMergeAdmissionFourSources:read,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL:FOUR_SOURCE_CONTRACT,MERGE_ADMISSION_FOUR_SOURCE_PROTOCOL_V2:FOUR_SOURCE_CONTRACT_V2,
-  parseFourSourceRawData:parseRawFourSourceDataCandidate,updateOperationObservation:produceOperation,finalAdmissionObservation:produceAdmission}=await import(moduleURL);
+  parseFourSourceRawData:parseRawFourSourceDataCandidate,updateOperationObservation:produceOperation,finalAdmissionObservation:produceAdmission,admissionDisplayNames}=await import(moduleURL);
 const {registeredWorkflowSource}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-workflow-profile.mjs')).href);
 const {applicableCI}=await import(pathToFileURL(path.join(repo,'scripts/ci/clued-gated-proof.mjs')).href);
 // Actual Parent-assigned immutable 891 fixture bytes; no Git/API execution.
@@ -98,13 +98,13 @@ function nativeAdmission({conclusion='success',entry='required'}={}){
   const ep={schema:FOUR_SOURCE_CONTRACT.admission_packet_schema,identity:{repository:SOURCE.repository,pr_number:727,head_sha:head,run_id:'42',run_attempt:1,job_id:'101',entry,dispatch_reason:null,source_checkout_sha:SOURCE.commit,
     native_pr:{number:727,head_sha:head,base_repository:SOURCE.repository,base_ref:'main',default_branch:'main',state:'open',draft:false},
     native_run:{id:42,run_attempt:1,event:'pull_request_target',path:SOURCE.workflow_path,head_sha:base,head_branch:'main',pull_requests:[727],status:'completed',conclusion,run_started_at:time(1)},
-    native_job:{id:101,run_id:42,run_attempt:1,name:'clued-work-admission',status:'completed',conclusion}},
+    native_job:{id:101,run_id:42,run_attempt:1,name:'kooyumi-work-admission',status:'completed',conclusion}},
     timing:{decision_at:time(3),observed_at:time(4)},final_decision_observed:true,
     outcome:{mode:'required',event:'pull_request_target',enforced:true,head_sha:head,pr_ref:`${SOURCE.repository}#727`,claim_id:uuid(1),admitted:true,
       verdict:'ADMITTED',reasons:[],admission_mode:{state:'normal',layer:'code'}},
     claim_observation:{disposition:'valid',claim_id:uuid(1),verified_at:time(2),rpc_verdict:'ADMITTED',reasons:[],head_admitted_receipt_id:uuid(2)},
     admit_step_outcome:'success',selection_observation:null,
-    app_observation:{id:555,app_id:SOURCE.app_id,name:'clued-admission-verified',head_sha:head,pr_number:727,run_id:42,run_attempt:1,external_id:'pr:727:run:42',status:'completed',conclusion:'success'}};
+    app_observation:{id:555,app_id:SOURCE.app_id,name:'kooyumi-admission-verified',head_sha:head,pr_number:727,run_id:42,run_attempt:1,external_id:'pr:727:run:42',status:'completed',conclusion:'success'}};
   if(entry!=='required'){
     ep.identity.dispatch_reason=entry==='rejudge'?'state_change':'scheduled';ep.identity.native_run.event=entry==='rejudge'?'workflow_dispatch':'schedule';
     ep.identity.native_run.path=SOURCE.reverify_workflow_path;ep.identity.native_job.name='clued-work-admission-reverify';
@@ -112,6 +112,20 @@ function nativeAdmission({conclusion='success',entry='required'}={}){
   }
   return {run,t,k,batch,ep};
 }
+test('historical display names come from exact Source bytes and cannot substitute for current Kooyumi checks',()=>{
+  const current=JSON.parse(sources);
+  assert.deepEqual(admissionDisplayNames(current),{app_check_name:'kooyumi-admission-verified',job_name:'kooyumi-work-admission'});
+  const old={...current,script:current.script.replace('export const APP_CHECK_NAME = "kooyumi-admission-verified";',
+    'export const APP_CHECK_NAME = "clued-admission-verified";'),workflow:current.workflow.replace('    name: kooyumi-work-admission','    name: clued-work-admission')};
+  assert.deepEqual(admissionDisplayNames(old),{app_check_name:'clued-admission-verified',job_name:'clued-work-admission'});
+  const {ep}=nativeAdmission();
+  assert.equal(produceAdmission(JSON.stringify(ep),sources,expectationsRaw).status,'ADMISSION_PACKET_CANDIDATE');
+  for(const mutate of [p=>p.app_observation.name='clued-admission-verified',p=>p.identity.native_job.name='clued-work-admission',
+    p=>p.app_observation.app_id=15368]){
+    const bad=copy(ep);mutate(bad);
+    assert.notEqual(produceAdmission(JSON.stringify(bad),sources,expectationsRaw).status,'ADMISSION_PACKET_CANDIDATE');
+  }
+});
 function addAdmission(p,opts){const a=nativeAdmission(opts);p.attempts.push(a.run);p.targets.push(a.t);p.admission_batches.push(a.batch);
   p.admissions.push({target_key:a.k,packet_raw:JSON.stringify(a.ep),collected_at:time(7)});return {p:seal(p),a};}
 test('current guarded publication suffix retains its real settlement while malformed, revoked and wrong-epoch publications fail closed',()=>{

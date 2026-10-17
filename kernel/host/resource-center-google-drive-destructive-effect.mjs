@@ -94,13 +94,15 @@ export function createGoogleDriveNativeDestructiveEffect({
   resolve_provider_identity: resolveProviderIdentity,
   consume_started_provider: consumeStartedProvider,
   persist_provider_attempt: persistProviderAttempt,
+  intent_marker: intentMarker = false,
   fetch: fetchImpl = globalThis.fetch,
   clock = Date.now,
 } = {}) {
   if (!trustedProfile || typeof getCredential !== "function" || typeof getFile !== "function" ||
     typeof getOwnership !== "function" || typeof hasChildren !== "function" ||
     typeof resolveProviderIdentity !== "function" || typeof consumeStartedProvider !== "function" ||
-    typeof persistProviderAttempt !== "function" || typeof fetchImpl !== "function" || typeof clock !== "function") {
+    typeof persistProviderAttempt !== "function" || typeof fetchImpl !== "function" || typeof clock !== "function" ||
+    typeof intentMarker !== "boolean") {
     throw new TypeError("A private native writer and durable attempt store are required.");
   }
   const profile = structuredClone(trustedProfile);
@@ -172,6 +174,7 @@ export function createGoogleDriveNativeDestructiveEffect({
       url.searchParams.set("removeParents", sourceParent);
     }
     const body = shape.restore_mode === "suffix" ? { trashed, name: shape.final_name } : { trashed };
+    if (intentMarker) body.appProperties = { clued_intent_id: started.intent_id };
     const result = await patch(url.href, body, admission.expires_at_ms);
     if (result?.id !== file.id || result.name !== shape.final_name || result.trashed !== trashed ||
       !isDeepStrictEqual(result.parents, [finalParent]) || result.mimeType !== file.mimeType ||

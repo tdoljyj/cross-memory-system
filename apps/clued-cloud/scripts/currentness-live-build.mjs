@@ -1,4 +1,4 @@
-export const PRODUCTION_HEALTH_URL = 'https://clued.pixelgrav.com/healthz';
+export const PRODUCTION_HEALTH_URL = 'https://kooyumi.pixelgrav.com/healthz';
 
 export async function verifyLiveSourceCommit(expected, fetchLive = globalThis.fetch) {
   if (!/^[0-9a-f]{40}$/.test(expected)) throw new Error('Invalid expected source commit');

@@ -1,4 +1,4 @@
-import { createGoogleDriveDirectoryProbe } from "../../../kernel/host/resource-center-google-drive-qualification.mjs";
+import { createGoogleDriveDirectoryProbe, googleDriveDirectoryDiagnostic, DIRECTORY_DIAGNOSTIC_LIMIT } from "../../../kernel/host/resource-center-google-drive-qualification.mjs";
 import { createGoogleDriveBoundaryScanner } from "../../../kernel/host/resource-center-google-drive-boundary.mjs";
 import { RESOURCE_CENTER_POLICY_VERSION } from "../../../kernel/policy/resource-center-mutation-policy.mjs";
 import { createHash } from "node:crypto";
@@ -24,13 +24,41 @@ const digest = (value: unknown) => createHash("sha256").update(sortedJson(value)
 const boundaryReasons = new Set(["PROFILE_UNQUALIFIED", "IDENTITY_INVALID", "ROOT_CHANGED", "ALIAS_OR_CYCLE",
   "FOLDER_INVALID", "CHANGED", "ENUMERATION_INVALID", "ENTRY_LIMIT", "PATH_AMBIGUOUS", "SHORTCUT_UNQUALIFIED",
   "DEPTH_LIMIT", "ROOT_NOT_LISTED"]);
+const probeFailures = new WeakMap<Error, Data>();
 class ProbeFailure extends Error {
-  constructor(readonly stage: ProbeStage, readonly reason: string) { super("storage_directory_probe_unavailable"); }
+  constructor(stage: ProbeStage, reason: string, directories?: Data) {
+    super("storage_directory_probe_unavailable");
+    probeFailures.set(this,{stage,reason,...(directories ? {directories} : {})});
+  }
+}
+const objectReasons = new Set(["DIRECTORY_NOT_APP_AUTHORIZED", "DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED",
+  "DIRECTORY_NOT_WRITABLE", "DIRECTORY_WRITE_CAPABILITY_UNCONFIRMED"]);
+function safeDirectoryDiagnostic(error: unknown, layout: unknown): Data | null {
+  const report: unknown = googleDriveDirectoryDiagnostic(error);
+  if (!object(report) || !object(layout) || !Array.isArray(layout.directories) ||
+    report.contract !== "clued.storage-directory-diagnostic/1" ||
+    report.total_directories !== layout.directories.length || report.checked_directories !== report.total_directories ||
+    !Number.isSafeInteger(report.total_directories) || Number(report.total_directories)<1 || Number(report.total_directories)>1024 ||
+    !Number.isSafeInteger(report.failed_directories) || Number(report.failed_directories)<1 || Number(report.failed_directories)>Number(report.total_directories) ||
+    !Array.isArray(report.failures) || report.failures.length!==Math.min(Number(report.failed_directories),DIRECTORY_DIAGNOSTIC_LIMIT) ||
+    report.truncated !== (Number(report.failed_directories)>DIRECTORY_DIAGNOSTIC_LIMIT)) return null;
+  const seen = new Set<string>(), failures: Data[] = [];
+  for (const row of report.failures) {
+    if (!object(row) || typeof row.path !== "string" || row.path.length>1000 || /[\u0000-\u001f\u007f]/.test(row.path) ||
+      typeof row.provider_file_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(row.provider_file_id) || seen.has(row.path) ||
+      !layout.directories.some(d=>object(d) && d.path===row.path && d.provider_file_id===row.provider_file_id) ||
+      !Array.isArray(row.reasons) || row.reasons.length<1 || row.reasons.length>2 || new Set(row.reasons).size!==row.reasons.length ||
+      row.reasons.some(reason=>typeof reason!=="string" || !objectReasons.has(reason))) return null;
+    seen.add(row.path);failures.push({path:row.path,provider_file_id:row.provider_file_id,reasons:[...row.reasons]});
+  }
+  return {contract:report.contract,total_directories:report.total_directories,checked_directories:report.checked_directories,
+    failed_directories:report.failed_directories,failures,truncated:report.truncated};
 }
 // Only fixed codes created here cross the route boundary, never upstream text,
 // credentials, descriptors, provider responses or database error details.
 const directoryReasons = new Set(["LAYOUT_INVALID", "IDENTITY_INVALID", "PARENT_INVALID", "DIRECTORY_CHANGED",
   "DIRECTORY_NOT_APP_AUTHORIZED", "DIRECTORY_NOT_WRITABLE", "ENUMERATION_INVALID", "PATH_AMBIGUOUS",
+  "DIRECTORY_APP_AUTHORIZATION_UNCONFIRMED", "DIRECTORY_WRITE_CAPABILITY_UNCONFIRMED",
   "SHORTCUT_UNQUALIFIED", "DIRECTORY_NOT_LISTED", "ENTRY_LIMIT", "OBSERVATION_EXPIRED", "CLOCK_INVALID"]);
 const metadataReasons: Readonly<Record<string, string>> = Object.freeze({
   DRIVE_METADATA_MISMATCH: "METADATA_ID_MISMATCH", DRIVE_LIST_INVALID: "ENUMERATION_INVALID",
@@ -47,7 +75,8 @@ const metadataReasons: Readonly<Record<string, string>> = Object.freeze({
 const subrequestLimitMessage = /^Too many subrequests(?:\.| by single [Ww]orker invocation\.?)?$/;
 const subrequestLimitHint = "Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits";
 export function storageProbeDiagnostic(error: unknown) {
-  return error instanceof ProbeFailure ? { stage: error.stage, reason: error.reason } : { stage: "request", reason: "UNCONFIRMED" };
+  const value = error instanceof Error ? probeFailures.get(error) : undefined;
+  return value ? structuredClone(value) : { stage: "request", reason: "UNCONFIRMED" };
 }
 
 /** Private server composition. rpc preserves the native Owner JWT AND adds the
@@ -65,6 +94,7 @@ export async function createStorageGoogleProbe(config: {
   return Object.freeze({ async run(input: unknown) {
     let stage: ProbeStage = "request";
     let observationSignal: AbortSignal | undefined, requestSignal: AbortSignal | undefined;
+    let trustedLayout: unknown;
     try {
       if (!object(input) || Object.keys(input).length !== 1 || typeof input.connection_id !== "string" || !uuid.test(input.connection_id)) fail();
       stage = "prepare";
@@ -85,6 +115,9 @@ export async function createStorageGoogleProbe(config: {
       if (!object(secret) || secret.token_type !== "Bearer" || typeof secret.access_token !== "string" || secret.access_token.length < 16 ||
         scopeProfile(secret.scope) === null ||
         !Number.isFinite(secret.expires_at_ms) || Number(secret.expires_at_ms) < deadline + 10000) fail();
+      // Only the exact, vault-authenticated scope set can cover existing files.
+      // Caller input and descriptor labels cannot supply this authority.
+      const credentialScopeProfile = scopeProfile(secret.scope);
       const accessToken = secret.access_token;
       const checkTime = () => { const now = clock(); if (!Number.isFinite(now) || now < started || now >= deadline) fail(); return now; };
       // One budget covers identity lookup, every metadata page, and final reads.
@@ -117,10 +150,12 @@ export async function createStorageGoogleProbe(config: {
       const identity: unknown = await about.json();
       if (!object(identity) || !object(identity.user) || identity.user.me !== true || identity.user.permissionId !== d.provider_subject) fail();
       stage = "directories";
+      trustedLayout = structuredClone(d.layout);
       // A separate closed transport wraps only metadata GETs in Google's batch
       // endpoint. The identity GET allowlist above is deliberately not widened.
       const metadata = createStorageGoogleMetadataBatch({ access_token: accessToken, fetch: fetcher, signal });
-      const observation = await createGoogleDriveDirectoryProbe({ trusted_layout: d.layout,
+      const observation = await createGoogleDriveDirectoryProbe({ trusted_layout: trustedLayout,
+        trusted_scope_profile: credentialScopeProfile,
         get_files: metadata.getFiles, list_folders: metadata.listFolders, get_sharings: metadata.getSharings, clock,
         timeout_ms: Math.max(1, Math.floor(deadline-checkTime())) })();
       checkTime(); signal.throwIfAborted();
@@ -162,6 +197,11 @@ export async function createStorageGoogleProbe(config: {
         boundary_observation: boundaryObservation, execution_permitted: false };
     } catch (error) {
       if (error instanceof ProbeFailure) throw error;
+      if (stage === "directories") {
+        const directories = safeDirectoryDiagnostic(error,trustedLayout);
+        if (directories && Array.isArray(directories.failures) && object(directories.failures[0]) && Array.isArray(directories.failures[0].reasons))
+          throw new ProbeFailure(stage,String(directories.failures[0].reasons[0]),directories);
+      }
       const candidate = error instanceof Error && error.message.startsWith("DRIVE_QUALIFICATION_")
         ? error.message.slice("DRIVE_QUALIFICATION_".length) : "";
       if (stage === "directories" && directoryReasons.has(candidate)) throw new ProbeFailure(stage, candidate);
