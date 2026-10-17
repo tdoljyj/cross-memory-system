@@ -5,7 +5,7 @@ import { object, type ImprintRecord, type Json, type Locale } from "./imprint-mo
 import { ImprintFailure, prepareWrite, readImprints, setAssociation, type NativeRpc, type PreparedWrite } from "./imprint-client";
 import { associationInput, type AssociationRead } from "./imprint-associations";
 import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-suggestions";
-import { extractionInput, extractionTexts, issueExtraction, prepareExtraction, promoteExtraction, promotionInput,
+import { extractionInput, extractionTexts, extractionStatus, issueExtraction, prepareExtraction, promoteExtraction, promotionInput,
   type ExtractionCandidate, type ExtractionConfirmation } from "./imprint-extraction";
 
 type Props = { record: ImprintRecord; selection: object; owner: string; rpc: NativeRpc; locale: Locale; contextId?: string;
@@ -57,13 +57,12 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
   }
   async function confirm() {
     if (!confirmation || !prepared.current) return;
-    const sourceAttempt = prepared.current;
     await run(async () => {
       if (!promoted.current) promoted.current = await promotionInput(confirmation, crypto.randomUUID());
       if (!alive.current) return;
       const saved = await promoteExtraction(rpc, promoted.current);
       if (!alive.current) return; setReceipt(saved);
-      const recovered = await prepareExtraction(rpc, sourceAttempt);
+      const recovered = await extractionStatus(rpc, confirmation.candidate_id);
       if (alive.current) { setCandidate(recovered); if (recovered.candidate_status === "promoted") setConfirmation(null); }
     });
   }
@@ -84,12 +83,12 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
   const typeFields = mutation && object(mutation.type_fields) ? mutation.type_fields : null;
   return <details className="imprints-editor"><summary>{zh ? "从原文提取任务或决策" : "Extract tasks or decisions from the original"}</summary>
     <p>{zh ? "逐条核对片段，再确认是否另建任务或决策。说明文字继续保留在原文；已有条目可用上方“查找并关联已有条目”。" : "Review each fragment before creating a task or decision. Explanation stays in the original. Use Find and associate above for existing records."}</p>
-    {texts.length > 1 && <label>{zh ? "提取哪段正文" : "Text to review"}<select value={slot} disabled={busy || !!candidate} onChange={event => { setSlot(event.target.value as typeof slot); reset(); }}>{texts.map(value => <option key={value.slot} value={value.slot}>{value.slot}</option>)}</select></label>}
+    {texts.length > 1 && <label>{zh ? "提取哪段正文" : "Text to review"}<select value={slot} disabled={busy || !!prepared.current} onChange={event => { setSlot(event.target.value as typeof slot); reset(); }}>{texts.map(value => <option key={value.slot} value={value.slot}>{value.slot}</option>)}</select></label>}
     {record.source_kind === "development" && <><p>{zh ? "以下为上下文原始记录的正文，尚非正式结论。新条目需经本次确认。" : "This is raw context text, not an accepted conclusion. A new record requires your confirmation."}</p><pre className="imprints-content">{text.text}</pre></>}
-    <label><input type="checkbox" checked={own} disabled={busy || !!candidate} onChange={event => { setOwn(event.target.checked); reset(); }} />{zh ? "这些是我自己的表达；引用、他人要求和示例不算我的承诺。" : "These are my own words; quotations, others’ requests and examples are not my commitments."}</label>
-    <button type="button" disabled={!own || busy || !!candidate} onClick={() => { setSuggestions(suggestImprintOrganization(text.text, { sourceKind: "owner_text", mixedContent: true, locale })); setChosen(null); }}>{zh ? "查看可提取片段" : "Review extractable fragments"}</button>
+    <label><input type="checkbox" checked={own} disabled={busy || !!prepared.current} onChange={event => { setOwn(event.target.checked); reset(); }} />{zh ? "这些是我自己的表达；引用、他人要求和示例不算我的承诺。" : "These are my own words; quotations, others’ requests and examples are not my commitments."}</label>
+    <button type="button" disabled={!own || busy || !!prepared.current} onClick={() => { setSuggestions(suggestImprintOrganization(text.text, { sourceKind: "owner_text", mixedContent: true, locale })); setChosen(null); }}>{zh ? "查看可提取片段" : "Review extractable fragments"}</button>
     {suggestions && <div>{!suggestions.fragments.length && <p role="status">{zh ? "没有找到明确的行动或选择语句。原文保留，不自动生成条目。" : "No explicit action or choice found. The original is preserved."}</p>}
-      {suggestions.fragments.map((item, index) => <div key={item.kind + ":" + item.source.start}><label><input type="radio" name={"extract-" + record.id} checked={chosen === index} disabled={busy || !!candidate} onChange={() => { setChosen(index); setBucket(""); setRationale(""); setConfirmation(null); }} />{item.kind === "task" ? zh ? "任务片段" : "Task fragment" : zh ? "决策片段" : "Decision fragment"}</label><blockquote>{item.source.text}</blockquote>
+      {suggestions.fragments.map((item, index) => <div key={item.kind + ":" + item.source.start}><label><input type="radio" name={"extract-" + record.id} checked={chosen === index} disabled={busy || !!prepared.current} onChange={() => { setChosen(index); setBucket(""); setRationale(""); setConfirmation(null); }} />{item.kind === "task" ? zh ? "任务片段" : "Task fragment" : zh ? "决策片段" : "Decision fragment"}</label><blockquote>{item.source.text}</blockquote>
         {[...item.source.text].length > 300 && <p>{zh ? "此片段超过300字，暂不支持整段提取；请先在原文中明确独立语句。" : "This fragment exceeds 300 characters. Make the sentence explicit in the source first."}</p>}</div>)}
     </div>}
     {fragment && candidate?.candidate_status !== "promoted" && <div>
@@ -104,6 +103,7 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
       <button type="button" disabled={busy} onClick={() => void confirm()}>{busy ? zh ? "正在核对…" : "Checking…" : zh ? "确认生成正式条目" : "Confirm formal record creation"}</button>
       <button type="button" disabled={busy} onClick={changeFields}>{zh ? "返回修改安排或理由" : "Change placement or reason"}</button>
     </section>}
+    {receipt && candidate?.candidate_status !== "promoted" && <p role="status">{zh ? "已收到处理回执，正在核对结果：" : "Processing receipt received; checking the outcome: "}{receipt}</p>}
     {candidate?.candidate_status === "promoted" && candidate.record_id && <div role="status"><p>{zh ? "已生成，同一片段不会重复创建。" : "Created. This fragment will not create another copy."}</p><p>{zh ? "回执：" : "Receipt: "}{receipt || candidate.promotion_receipt_id}</p>
       <button type="button" disabled={busy} onClick={() => onRelated(candidate.record_id!, "canonical", { scope: record.scope, recordType: candidate.kind })}>{zh ? "查看生成条目" : "Open the created record"}</button>
       <button type="button" disabled={busy} onClick={() => void associate()}>{zh ? "把生成条目关联到原文" : "Associate the created record with the original"}</button>

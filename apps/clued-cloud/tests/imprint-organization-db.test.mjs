@@ -482,6 +482,16 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
       const decisionQuote = '已经决定采用A，因为成本低', decisionCandidate = (await extract(extractRequest(id, text, decisionQuote, 'decision'))).supplemental;
       const decisionView = await issue(decisionCandidate, { rationale: '成本低' }); assert.equal(decisionView.status, 'issued');
       assert.equal((await promote(promoteInput(decisionView))).supplemental.outcome, 'promoted');
+      // First promotion response may be lost and the source edited before retry.
+      await admin.query('update public.clued_memories set content=$2,version=version+1 where id=$1', [id, 'Changed after promotion']);
+      assert.equal((await promote(input)).receipt_id, saved.receipt_id);
+      const recoveredStatus = await call(human, 'clued_imprint_extraction_status_v1', { candidate_id: candidate.candidate_id });
+      assert.equal(recoveredStatus.extraction.record_id, view.record_id);
+      assert.equal(recoveredStatus.extraction.promotion_receipt_id, saved.receipt_id);
+      assert.equal(recoveredStatus.extraction.authoritative, false, 'a recovery is not a claim of current Record authority');
+      assert.ok(!JSON.stringify(recoveredStatus).includes(quote));
+      assert.equal((await issue(candidate)).status, 'rejected', 'status reading cannot bypass source fences');
+      await assert.rejects(call(stranger, 'clued_imprint_extraction_status_v1', { candidate_id: candidate.candidate_id }), /unavailable/);
     });
     await t.test('source edits/terminal state block generic S3 issue/consume, burn the presented token and still permit candidate rejection', async () => {
       for (const change of ['edit', 'close']) {

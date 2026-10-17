@@ -70,7 +70,7 @@ function fixture(initial = record()) {
   function nodes(type){const out=[];function visit(n){if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=='object')return;if(n.type===type)out.push(n);visit(n.props?.children);}visit(tree);return out;}
   function text(n){if(arguments.length===0)n=tree;if(Array.isArray(n))return n.map(text).join('');return !n||typeof n==='boolean'?'':typeof n==='object'?text(n.props?.children??null):String(n);}
   function click(label){const b=nodes('button').find(n=>text(n)===label);assert.ok(b,label);assert.equal(!!b.props.disabled,false,label);b.props.onClick();render();}
-  function change(node,payload){node.props.onChange({target:payload});render();}
+  function change(node,payload){assert.equal(!!node.props.disabled,false,'control must be enabled');node.props.onChange({target:payload});render();}
   async function settle(){for(let i=0;i<5;i++)await new Promise(r=>setImmediate(r));render();}
   async function until(count){const deadline=Date.now()+3000;while(calls.length<count&&Date.now()<deadline)await settle();assert.equal(calls.length,count);await settle();}
   render();return {calls,notices,nodes,text,click,change,settle,until,load,
@@ -93,7 +93,8 @@ test('real extraction component: read-only suggestions, explicit final view, sta
   assert.ok(f.text().includes('结果未能确认'));f.click('确认生成正式条目');await f.until(4);
   assert.deepEqual(plain(f.calls[3].args),original,'same token/key/hash, no new confirmation');
   await f.reply(3,{status:'committed',receipt_id:randomUUID()});await f.until(5);
-  await f.reply(4,prepared(candidate({candidate_status:'promoted',candidate_version:2,record_id:targetId,record_version:1,promotion_receipt_id:randomUUID()})));
+  assert.equal(f.calls[4].name,'clued_imprint_extraction_status_v1','terminal recovery never revalidates a changed original');
+  await f.reply(4,{status:'ok',extraction:candidate({candidate_status:'promoted',candidate_version:2,record_id:targetId,record_version:1,promotion_receipt_id:randomUUID()})});
   assert.ok(f.text().includes('已生成，同一片段不会重复创建'));assert.ok(f.nodes('button').some(n=>f.text(n)==='把生成条目关联到原文'));
   assert.equal(f.calls.filter(c=>c.name==='clued_candidate_confirmation_issue_v1').length,1);
 });
@@ -101,4 +102,12 @@ test('late prepare replies cannot issue, promote or announce success after sourc
   const f=fixture();selectTask(f);f.click('准备候选并核对正式条目');await f.until(1);
   f.replace(record({id:targetId,content:'Different source'}));await f.reply(0,prepared(candidate()));
   assert.equal(f.calls.length,1);assert.equal(f.notices.length,0);assert.ok(!f.text().includes('服务确认标题'));
+});
+test('unknown prepare freezes source/fragment changes and recovers the exact original attempt', async () => {
+  const f=fixture();selectTask(f);f.click('准备候选并核对正式条目');await f.until(1);const original=plain(f.calls[0].args);await f.fail(0);
+  assert.ok(f.nodes('input').filter(n=>n.props.type==='radio'||n.props.type==='checkbox').every(n=>n.props.disabled));
+  assert.equal(f.nodes('button').find(n=>f.text(n)==='查看可提取片段').props.disabled,true);
+  f.click('准备候选并核对正式条目');await f.until(2);assert.deepEqual(plain(f.calls[1].args),original);
+  await f.reply(1,prepared(candidate()));await f.until(3);await f.reply(2,view());assert.ok(f.text().includes('服务确认标题'));
+  assert.equal(f.calls.filter(c=>c.name==='clued_imprint_extraction_prepare_v1').length,2);
 });

@@ -113,10 +113,12 @@ begin
   perform clued_private.authorization_writer_guard_v2(owner_id);
   perform clued_private.currentness_user_lock(owner_id);
   checked:=clued_private.imprint_extraction_source_v1(owner_id,source);
-  -- The resolved scope joins the exact namespace, Context, version and offsets
-  -- in the identity. Client request keys cannot cause semantic duplicates.
+  -- Canonical views share one source identity across both directories. Raw
+  -- records remain isolated by their exact Context. Every prepare still checks
+  -- its supplied Context; S3 retains the first immutable source constraints.
   identity_key:=clued_private.m1_sha256(jsonb_build_object('source_kind',source->>'source_kind',
-    'context_id',(source->>'context_id')::uuid,'record_id',(source->>'record_id')::uuid,
+    'context_id',case when source->>'source_kind'='development' then (source->>'context_id')::uuid end,
+    'record_id',(source->>'record_id')::uuid,
     'scope',checked->>'scope','record_version',(source->>'record_version')::bigint,
     'slot',source->>'slot','start',(source->>'start')::integer,'end',(source->>'end')::integer,
     'text_hash',source->>'text_hash','quote',source->>'quote','kind',source->>'kind'));
@@ -160,6 +162,23 @@ begin
   end;
 end $$;
 
+-- Minimal terminal recovery is independent of the original source version.
+-- The Native owner already owns this candidate/Receipt; do not return source
+-- text, titles, confirmation tokens or somebody else's mapping. This reader
+-- cannot issue a token, relax the source guard or initiate any write.
+create function public.clued_imprint_extraction_status_v1(p_input jsonb)
+returns jsonb language plpgsql stable security definer set search_path='' as $$
+declare owner_id uuid:=clued_private.authorization_owner_v12(); result jsonb;
+begin
+  if jsonb_typeof(p_input) is distinct from 'object'
+    or not clued_private.intake_keys_exact_v1(p_input,'["candidate_id"]')
+    or coalesce(p_input->>'candidate_id','') !~* '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' then
+    raise exception 'extraction_status_invalid' using errcode='22023'; end if;
+  result:=clued_private.imprint_extraction_result_v1(owner_id,(p_input->>'candidate_id')::uuid);
+  if result is null then raise exception 'extraction_candidate_unavailable' using errcode='42501'; end if;
+  return jsonb_build_object('status','ok','extraction',result);
+end $$;
+
 -- Preserve S3's generic routes, fresh session, single-use token, receipt and
 -- marker logic. Patch exactly once inside their existing exception handlers:
 -- malformed promotion still reaches the prelookup/burn logic added by F01.
@@ -187,7 +206,8 @@ end $migration$;
 
 revoke all on function clued_private.imprint_extraction_immutable_v1(),
   clued_private.imprint_extraction_source_v1(uuid,jsonb),clued_private.imprint_extraction_candidate_guard_v1(uuid,text,uuid),
-  clued_private.imprint_extraction_result_v1(uuid,uuid),public.clued_imprint_extraction_prepare_v1(jsonb,text)
+  clued_private.imprint_extraction_result_v1(uuid,uuid),public.clued_imprint_extraction_prepare_v1(jsonb,text),
+  public.clued_imprint_extraction_status_v1(jsonb)
   from public,anon,authenticated,service_role;
-grant execute on function public.clued_imprint_extraction_prepare_v1(jsonb,text) to authenticated;
+grant execute on function public.clued_imprint_extraction_prepare_v1(jsonb,text),public.clued_imprint_extraction_status_v1(jsonb) to authenticated;
 notify pgrst,'reload schema';

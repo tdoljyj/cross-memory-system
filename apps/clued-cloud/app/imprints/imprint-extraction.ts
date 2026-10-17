@@ -27,15 +27,25 @@ export async function extractionInput(record: ImprintRecord, text: ExtractionTex
 }
 export type ExtractionCandidate = { candidate_id: string; candidate_version: number; candidate_status: string; scope: string;
   kind: "task" | "decision"; record_id: string | null; record_version: number | null; promotion_receipt_id: string | null };
-export async function prepareExtraction(rpc: NativeRpc, pending: PreparedWrite): Promise<ExtractionCandidate> {
-  const result = await call(rpc, "clued_imprint_extraction_prepare_v1", { p_input: pending.input, p_received_payload_hash: pending.hash });
-  const item = result.supplemental;
-  if (result.status !== "committed" || !uuid(result.receipt_id) || !object(item) || !uuid(item.candidate_id)
+function candidateResult(item: unknown): ExtractionCandidate {
+  if (!object(item) || !uuid(item.candidate_id)
     || !positive(item.candidate_version) || !["pending", "promoted", "rejected", "withdrawn", "expired", "conflict"].includes(String(item.candidate_status))
     || !["task", "decision"].includes(String(item.kind)) || typeof item.scope !== "string"
     || (item.candidate_status === "promoted" && (!uuid(item.record_id) || !positive(item.record_version) || !uuid(item.promotion_receipt_id))))
     throw new ImprintFailure("unknown");
   return item as ExtractionCandidate;
+}
+export async function prepareExtraction(rpc: NativeRpc, pending: PreparedWrite): Promise<ExtractionCandidate> {
+  const result = await call(rpc, "clued_imprint_extraction_prepare_v1", { p_input: pending.input, p_received_payload_hash: pending.hash });
+  const item = result.supplemental;
+  if (result.status !== "committed" || !uuid(result.receipt_id)) throw new ImprintFailure("unknown");
+  return candidateResult(item);
+}
+export async function extractionStatus(rpc: NativeRpc, candidateId: string): Promise<ExtractionCandidate> {
+  const result = await call(rpc, "clued_imprint_extraction_status_v1", { p_input: { candidate_id: candidateId } });
+  const value = candidateResult(result.extraction);
+  if (result.status !== "ok" || value.candidate_id !== candidateId) throw new ImprintFailure("unknown");
+  return value;
 }
 export type ExtractionConfirmation = { candidate_id: string; candidate_version: number; record_id: string; confirmation_token: string;
   view_digest: string; expires_at: string; confirmation_view: Json };

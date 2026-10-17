@@ -577,6 +577,26 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
       assert.equal((await admin.query('select consumed_at is not null v from clued_private.candidate_confirmation_tokens where id=$1', [v.token_id])).rows[0].v, true);
       const reject = { tier: 'information', candidate_id: c.candidate_id, base_version: 1, idempotency_key: uuid() };
       assert.equal((await call(native, 'clued_candidate_reject_v1', reject, hash(JSON.stringify(reject)))).status, 'committed');
+      const canonicalSource = await personal({ projectId: extractionProject, kind: 'decision' });
+      const originalText = '正式任务同源全文', originalQuote = '正式任务';
+      const canonicalRequest = { ...request, idempotency_key: uuid(), source: { ...request.source, source_kind: 'canonical', record_id: canonicalSource,
+        start: 0, end: originalQuote.length, quote: originalQuote, text_hash: hash(originalText) } };
+      const canonicalFirst = (await prepare(canonicalRequest)).supplemental;
+      const secondContext = await space(owner, extractionProject), peer = await actor(jwt);
+      const fromUser = { ...canonicalRequest, idempotency_key: uuid(), source: { ...canonicalRequest.source } }; delete fromUser.source.context_id; delete fromUser.source.environment;
+      const crossViews = await Promise.all([prepare(fromUser), prepare({ ...canonicalRequest, idempotency_key: uuid(), source: { ...canonicalRequest.source, context_id: secondContext } },peer)]);
+      assert.ok(crossViews.every(r=>r.supplemental.candidate_id===canonicalFirst.candidate_id),'same Canonical fragment shares one candidate across both directories and multiple Contexts');
+      const cv = await call(native, 'clued_candidate_confirmation_issue_v1', { ...issueInput, candidate_id: canonicalFirst.candidate_id });
+      const cp = { ...promote, candidate_id: cv.candidate_id, confirmation_token: cv.confirmation_token, view_digest: cv.view_digest, idempotency_key: uuid() };
+      const canonicalSaved = await call(native, 'clued_candidate_promote_v1', cp, hash(JSON.stringify(cp)));
+      assert.equal(canonicalSaved.supplemental.outcome, 'promoted', JSON.stringify(canonicalSaved));
+      assert.equal((await prepare(fromUser)).supplemental.record_id, cv.record_id);
+      // A second quote remains pending, initially bound to the exact first Context.
+      const pending = (await prepare({ ...canonicalRequest, idempotency_key: uuid(), source: { ...canonicalRequest.source, start: 4, end: 6, quote: '同源' } })).supplemental;
+      await withOwnerWriter(owner, () => admin.query('update clued_private.development_spaces_v14 set project_id=$2 where id=$1', [extractionContext, otherProject]));
+      const pendingFromUser = { ...fromUser, idempotency_key: uuid(), source: { ...fromUser.source, start: 4, end: 6, quote: '同源' } };
+      assert.equal((await prepare(pendingFromUser)).supplemental.candidate_id,pending.candidate_id,'another view cannot replace the immutable first provenance');
+      assert.equal((await call(native, 'clued_candidate_confirmation_issue_v1', { ...issueInput, candidate_id: pending.candidate_id })).error_code,'context_access_denied');
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
