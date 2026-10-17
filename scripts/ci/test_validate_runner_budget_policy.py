@@ -4,6 +4,7 @@ import contextlib
 import copy
 import importlib.util
 import io
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -43,6 +44,26 @@ def frozen(text, name="legacy.yml"):
     return {name: {"control_sha256": policy.source_hash(control),
                    "jobs": {key: policy.source_hash(value) for key, value in jobs.items()
                             if policy.classify_route(name, key, policy.job_fields(value))[0] != "self-hosted"}}}
+
+
+def publisher_qualification_text(filename):
+    installed = policy.WORKFLOW_DIR / filename
+    if installed.exists():
+        return installed.read_text(encoding="utf-8")
+    # The Guest workflow is installed only after a trusted runner can take it.
+    # Keep all route negatives on its exact full, registered Source in the meantime.
+    if filename != "clued-production-publisher-guest-qualification.yml":
+        raise AssertionError("Only the uninstalled Guest Source may use the catalogue")
+    registry = json.loads(Path(__file__).with_name("clued-publisher-qualification-sources.json").read_text(encoding="utf-8"))
+    entry = registry["workflows"][".github/workflows/" + filename]
+    assert entry["registration_status"] == "registered"
+    expected = "2c96918d9a14bbadca4a5e247bafcf741290a3ee2c75d13e2acacc800b04ad44"
+    source = next(row for row in entry["sources"] if row["source_sha256"] == expected)
+    assert source["registration_status"] == "registered"
+    assert source["proof_classification"] == "qualification_only"
+    text = source["source_yaml"]
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == expected
+    return text
 
 
 class RunnerBudgetPolicyTests(unittest.TestCase):
@@ -215,7 +236,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
 
     def test_actual_disposable_publisher_qualification_route_passes(self):
         filename = "clued-production-publisher-guest-qualification.yml"
-        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        text = publisher_qualification_text(filename)
         self.assert_pass(self.evaluate({filename: text}))
         _, jobs, _ = policy.split_workflow(text)
         kind, labels = policy.classify_route(filename, "qualify", policy.job_fields(jobs["qualify"]))
@@ -226,7 +247,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
 
     def test_disposable_publisher_route_cannot_move_workflow_or_job(self):
         filename = "clued-production-publisher-guest-qualification.yml"
-        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        text = publisher_qualification_text(filename)
         for other in ["other.yml", "clued-production-publisher-qualification.yml",
                       "clued-production-publisher-guest-qualification.yaml"]:
             with self.subTest(workflow=other):
@@ -238,7 +259,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
 
     def test_disposable_publisher_route_requires_exact_labels_and_expression(self):
         filename = "clued-production-publisher-guest-qualification.yml"
-        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        text = publisher_qualification_text(filename)
         original = policy.job_fields(policy.split_workflow(text)[1]["qualify"])["runs-on"]
         changes = [
             original.replace("self-hosted, ", ""),
@@ -262,7 +283,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
 
     def test_disposable_publisher_route_does_not_authorize_reusable_or_hosted_jobs(self):
         filename = "clued-production-publisher-guest-qualification.yml"
-        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        text = publisher_qualification_text(filename)
         original = policy.job_fields(policy.split_workflow(text)[1]["qualify"])["runs-on"]
         self.assert_rejected(self.evaluate({filename: text.replace(original, "ubuntu-latest")}),
                              "new GitHub-hosted")

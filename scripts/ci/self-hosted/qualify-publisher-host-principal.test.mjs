@@ -77,10 +77,23 @@ ${body}
   return report;
 }
 
-test('two exact Owner PR workflows preserve the canonical admission gate and isolated qualification routes', () => {
+test('installed Host and registered Guest Source retain exact gates and isolated routes', () => {
   const require = createRequire(new URL('../../../apps/clued-cloud/package.json', import.meta.url));
   const yaml = require('yaml');
-  const workflows = ['host', 'guest'].map(kind => yaml.parse(fs.readFileSync(new URL(`../../../.github/workflows/clued-production-publisher-${kind}-qualification.yml`, import.meta.url), 'utf8')));
+  const workflows = ['host', 'guest'].map(kind => {
+    const file = `.github/workflows/clued-production-publisher-${kind}-qualification.yml`;
+    const location = new URL(`../../../${file}`, import.meta.url);
+    if (fs.existsSync(location)) return yaml.parse(fs.readFileSync(location, 'utf8'));
+    assert.equal(kind, 'guest');
+    const registry = JSON.parse(fs.readFileSync(new URL('../clued-publisher-qualification-sources.json', import.meta.url), 'utf8'));
+    const entry = registry.workflows[file];
+    assert.equal(entry.registration_status, 'registered');
+    const accepted = entry.sources.find(row => row.source_sha256 === '2c96918d9a14bbadca4a5e247bafcf741290a3ee2c75d13e2acacc800b04ad44');
+    assert.equal(accepted.registration_status, 'registered');
+    assert.equal(accepted.proof_classification, 'qualification_only');
+    assert.equal(createHash('sha256').update(accepted.source_yaml).digest('hex'), accepted.source_sha256);
+    return yaml.parse(accepted.source_yaml);
+  });
   assert.deepEqual(workflows[0].jobs['admission-gate'], workflows[1].jobs['admission-gate']);
   assert.equal(fs.existsSync(new URL('../../../.github/workflows/clued-production-publisher-qualification.yml', import.meta.url)), false);
   for (const workflow of workflows) {

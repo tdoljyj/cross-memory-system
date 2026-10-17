@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -15,9 +16,26 @@ import {
 // its CLI, a Host probe, WSL, Task Scheduler, Hyper-V, or the real Guest path.
 const selected = JSON.parse(fs.readFileSync(new URL('./publisher-qualification-case.json', import.meta.url), 'utf8'));
 const copy = value => structuredClone(value);
-test('both actual new workflow bytes satisfy the unchanged canonical G4 gate parser', () => {
+test('installed Host and exact registered Guest Source preserve the canonical G4 gate', () => {
   for (const kind of ['host', 'guest']) {
-    const text = fs.readFileSync(new URL(`../../../.github/workflows/clued-production-publisher-${kind}-qualification.yml`, import.meta.url), 'utf8');
+    const file = `.github/workflows/clued-production-publisher-${kind}-qualification.yml`;
+    const location = new URL(`../../../${file}`, import.meta.url);
+    const installed = fs.existsSync(location);
+    let text;
+    if (installed) text = fs.readFileSync(location, 'utf8');
+    else {
+      // Guest installation follows actual controller/pre-step/JIT readiness.
+      // Its exact full Source stays tested while no queued workflow is installed.
+      assert.equal(kind, 'guest');
+      const registry = JSON.parse(fs.readFileSync(new URL('../clued-publisher-qualification-sources.json', import.meta.url), 'utf8'));
+      const entry = registry.workflows[file];
+      assert.equal(entry.registration_status, 'registered');
+      const accepted = entry.sources.find(row => row.source_sha256 === '2c96918d9a14bbadca4a5e247bafcf741290a3ee2c75d13e2acacc800b04ad44');
+      assert.equal(accepted.registration_status, 'registered');
+      assert.equal(accepted.proof_classification, 'qualification_only');
+      text = accepted.source_yaml;
+      assert.equal(createHash('sha256').update(text).digest('hex'), accepted.source_sha256);
+    }
     assert.deepEqual(gateFindings(text, null), [], kind);
   }
 });

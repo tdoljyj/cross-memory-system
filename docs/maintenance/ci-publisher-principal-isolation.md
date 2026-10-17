@@ -81,13 +81,15 @@ cleanup 必须同时验证本次“准确任务原先不存在”的注册 inten
 
 本节尚未完成的 Source/compiler/role 接合、可信 pre-job hook、Host 单作业 consumer、真实执行/取消/回收与独立资格验证，全部继续归原 Task d745ea6e；逐项保留真实阻断与恢复条件，不新建替代 Task，也不把文稿或 fixture 通过当作完成。
 
-入口为 [Host qualification](../../.github/workflows/clued-production-publisher-host-qualification.yml) 和 [Guest qualification](../../.github/workflows/clued-production-publisher-guest-qualification.yml)，均为实际 pull_request → main，沿用原 canonical G4 admission-gate（可信 base checkout），通过准入后才将候选 checkout 固定到准确 head.sha。两个入口各只有一个 primary，分别为固定公司 Windows 路由的 host-principal-probe 和独占 run/attempt 标签的 qualify。purpose 为 production_publisher_nonproduction_PR_qualification，classification 为 qualification_only；正式 Source/role/compiler 登记由对应治理流程处理，YAML 注释不代替登记。旧合并 dispatch 入口已删除。
+本阶段仅安装 [Host qualification](../../.github/workflows/clued-production-publisher-host-qualification.yml)，先验证实际 Windows CI 主体。完整 Guest Source 保留在[正式目录](../../scripts/ci/clued-publisher-qualification-sources.json)并继续完整源码/路由负例测试；待可信控制器、步骤调度前硬屏障及 JIT runner 实际能够接活后，才在原 Task 独立安装 Guest workflow。当前 main 此前没有这两个入口，分期不删除已有 Gate；qualification_only 的 queued run 仍阻断最终 native barrier，不能为解除排队取消或豁免检查并宣称 runtime 通过。
+
+两 Source 均为实际 pull_request → main，沿用原 canonical G4 admission-gate（可信 base checkout），通过准入后才将候选 checkout 固定到准确 head.sha。各只有一个 primary，分别为固定公司 Windows 路由的 host-principal-probe 和独占 run/attempt 标签的 qualify。purpose 为 production_publisher_nonproduction_PR_qualification，classification 为 qualification_only；正式 Source/role/compiler 登记由对应治理流程处理，YAML 注释不代替登记。旧合并 dispatch 入口已删除。
 
 两入口仅运行固定 CLI：run-publisher-qualification-case.mjs --kind host 或 --kind guest。脚本只读取自身目录的 publisher-qualification-case.json，schema 为 clued.publisher-qualification-case/1，精确字段为 schema、purpose、classification、qualification_id、host、guest。host 仅允许 mode=Inventory|S4UCanary；isolation_canary_id 固定为 90612814-c769-4d3f-bfcc-5821261016e3，expected_qualification_vm 固定为 bd7d78d0-7936-4b33-8176-ea7afd57faaf。guest 仅有 case=success|failure|cancel。拒绝额外命令、脚本、路径或任意目标参数；实际公开 canary/VM 是否仍存在由 Host 独立确认，不能从源码 UUID 推断。
 
 初始公开 qualification_id 为 510acfb6-1698-4227-893b-0cc3fbd84099，与 runner/VM UUID 无关。Inventory 不创建结果目录；每次实际 S4UCanary 必须在受审 case 中分配新的 qualification_id，保留旧失败和清理证据，不覆盖旧目录。每 PR 的较新 head 会取消旧验证；这种取消不能直接算作 cancel case 已验证。父进程取消后的 S4U 精确任务清理仍适用上文 UNKNOWN 限制。
 
-Guest **硬前置条件**仍为另行安装、独立受审的不可变 pre-job hook 和可信 Host 单作业启动/回收 consumer：必须在任何 step（包括 checkout）之前准入实际 run/attempt/job/Source/runner/case。当前 case runner 只做作业内观察，不能提供该前置能力，不能先运行步骤再补造可信 launch。
+Guest **硬前置条件**仍为另行安装、独立受审的步骤调度前不可跳过屏障和可信 Host 单作业启动/回收 consumer：必须在任何 step（包括 checkout）之前准入实际 run/attempt/job/Source/runner/case。普通 started hook 非零退出只将作业置为失败，后续显式 always/failure 步骤仍可能运行；不能把它当拒绝/取消路径的硬停止保证。当前 case runner 只做作业内观察，不能提供该前置能力，不能先运行步骤再补造可信 launch。该硬屏障尚未实现或资格通过。
 
 观察器要求 /opt/clued-production-publisher/launch.json 是 root 所有、clued-release-runner 组、0640 的常规文件；schema=clued.production-vm-launch/1、purpose=qualification、production_qualified=false，qualification_id 和 qualification_case 精确匹配。repository、run_id、run_attempt、job_name、sha（真实 merge）、ref、workflow_ref、runner_name、pull_request_number、pull_request_head_sha、pull_request_base_sha 均为精确字符串绑定。它核实际非 root runner 身份后，以排他方式建立自己的无秘密 marker；旧 marker、未知身份或绑定失配均拒绝。
 

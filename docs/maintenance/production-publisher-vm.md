@@ -281,10 +281,17 @@ within original Task d745ea6e. Preserve their actual blockers and recovery
 conditions there; this runbook does not open replacement Tasks or claim that
 offline fixture results complete those operations.
 
-The nonproduction PR consumers are now separate
-[Host qualification](../../.github/workflows/clued-production-publisher-host-qualification.yml)
-and [Guest qualification](../../.github/workflows/clued-production-publisher-guest-qualification.yml)
-workflows. Both preserve the canonical G4 admission gate, accept only an
+The nonproduction PR consumers have separate, exact Host and Guest Sources.
+This phase installs only
+[Host qualification](../../.github/workflows/clued-production-publisher-host-qualification.yml).
+The full Guest Source stays registered and tested in
+[the Source catalogue](../../scripts/ci/clued-publisher-qualification-sources.json);
+its workflow is installed only when the trusted controller, pre-step barrier
+and JIT runner can actually take its jobs. Neither workflow existed on main
+before this phased installation; no existing gate is removed. Extra queued
+qualification runs still block the final native merge barrier, so Source-only
+acceptance must not create an unusable Guest queue or count as runtime acceptance.
+Both Sources preserve the canonical G4 admission gate, accept only an
 Owner-authored same-repository pull request to main, and check out its exact
 candidate head after admission from trusted base source. Their shared fixed
 [case](../../scripts/ci/self-hosted/publisher-qualification-case.json) and
@@ -295,10 +302,13 @@ classification is qualification_only; actual compiler/role registration and
 protected admission remain separate requirements. The former dispatch-only
 combined workflow was removed.
 
-An immutable installed pre-job hook and trusted Host one-job registration,
+An immutable installed barrier before step scheduling and trusted Host one-job registration,
 launch and retirement consumer remain **hard external prerequisites** before
 any Guest step, including checkout. The job-side observer does not implement
-or replace them. It requires a root-owned, runner-group 0640 launch record
+or replace them. A normal started hook returning a failure alone is insufficient:
+the runner can still evaluate explicit always/failure steps. Rejection and
+cancellation must not reach step scheduling; this remains unqualified.
+The job-side observer requires a root-owned, runner-group 0640 launch record
 binding exact run/attempt/job/runner, qualification UUID and finite case,
 actual execution merge SHA/ref/workflow_ref, and separate PR number/head/base
 SHAs. It never changes GITHUB_SHA to pretend the merge is the candidate head.
