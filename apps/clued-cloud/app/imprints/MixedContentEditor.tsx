@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { object, type ImprintRecord, type Json, type Locale } from "./imprint-model";
+import { object, type ImprintRecord, type Locale } from "./imprint-model";
 import { ImprintFailure, prepareWrite, readImprints, setAssociation, type NativeRpc, type PreparedWrite } from "./imprint-client";
 import { associationInput, type AssociationRead } from "./imprint-associations";
 import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-suggestions";
@@ -13,8 +13,8 @@ type Props = { record: ImprintRecord; selection: object; owner: string; rpc: Nat
 export default function MixedContentEditor(props: Props) {
   // A changed session/selection/source gets an entirely new interaction. Late
   // replies can never bind an old preview or token to the new record.
-  const key = useMemo(() => crypto.randomUUID(), [props.record, props.selection, props.owner]);
-  return extractionTexts(props.record).length ? <ExtractionSession key={key} {...props} /> : null;
+  const boundary = useMemo(() => ({ record: props.record, selection: props.selection, owner: props.owner, key: crypto.randomUUID() }), [props.record, props.selection, props.owner]);
+  return extractionTexts(props.record).length ? <ExtractionSession key={boundary.key} {...props} /> : null;
 }
 function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRelated }: Props) {
   const zh = locale === "zh-CN", texts = extractionTexts(record), alive = useRef(true), inFlight = useRef(false);
@@ -24,11 +24,12 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
   const [chosen, setChosen] = useState<number | null>(null), [bucket, setBucket] = useState(""), [rationale, setRationale] = useState("");
   const [candidate, setCandidate] = useState<ExtractionCandidate | null>(null), [confirmation, setConfirmation] = useState<ExtractionConfirmation | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [receipt, setReceipt] = useState("");
+  const [sourceLocked, setSourceLocked] = useState(false);
   // Keep exact write payload/key across uncertain replies. A new confirmation
   // has its own key; retrying a lost promotion never requests a second token.
   const prepared = useRef<PreparedWrite | null>(null), promoted = useRef<PreparedWrite | null>(null), linked = useRef<PreparedWrite | null>(null);
   const fragment = chosen === null ? null : suggestions?.fragments[chosen] ?? null;
-  function reset() { setSuggestions(null); setChosen(null); setCandidate(null); setConfirmation(null); prepared.current = null; promoted.current = null; linked.current = null; setError(""); setReceipt(""); }
+  function reset() { setSuggestions(null); setChosen(null); setCandidate(null); setConfirmation(null); prepared.current = null; promoted.current = null; linked.current = null; setSourceLocked(false); setError(""); setReceipt(""); }
   function changeFields() { setConfirmation(null); promoted.current = null; setError(""); }
   async function run(action: () => Promise<void>) {
     if (inFlight.current) return;
@@ -46,6 +47,7 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
   async function review() {
     if (!own || !fragment || [...fragment.source.text].length > 300 || (fragment.kind === "task" ? !bucket : !rationale.trim())) return;
     await run(async () => {
+      setSourceLocked(true);
       if (!prepared.current) prepared.current = await prepareWrite(await extractionInput(record, text, fragment.source, fragment.kind, crypto.randomUUID(), contextId));
       if (!alive.current) return;
       const value = await prepareExtraction(rpc, prepared.current);
@@ -83,12 +85,12 @@ function ExtractionSession({ record, rpc, locale, contextId, onCommitted, onRela
   const typeFields = mutation && object(mutation.type_fields) ? mutation.type_fields : null;
   return <details className="imprints-editor"><summary>{zh ? "从原文提取任务或决策" : "Extract tasks or decisions from the original"}</summary>
     <p>{zh ? "逐条核对片段，再确认是否另建任务或决策。说明文字继续保留在原文；已有条目可用上方“查找并关联已有条目”。" : "Review each fragment before creating a task or decision. Explanation stays in the original. Use Find and associate above for existing records."}</p>
-    {texts.length > 1 && <label>{zh ? "提取哪段正文" : "Text to review"}<select value={slot} disabled={busy || !!prepared.current} onChange={event => { setSlot(event.target.value as typeof slot); reset(); }}>{texts.map(value => <option key={value.slot} value={value.slot}>{value.slot}</option>)}</select></label>}
+    {texts.length > 1 && <label>{zh ? "提取哪段正文" : "Text to review"}<select value={slot} disabled={busy || sourceLocked} onChange={event => { setSlot(event.target.value as typeof slot); reset(); }}>{texts.map(value => <option key={value.slot} value={value.slot}>{value.slot}</option>)}</select></label>}
     {record.source_kind === "development" && <><p>{zh ? "以下为上下文原始记录的正文，尚非正式结论。新条目需经本次确认。" : "This is raw context text, not an accepted conclusion. A new record requires your confirmation."}</p><pre className="imprints-content">{text.text}</pre></>}
-    <label><input type="checkbox" checked={own} disabled={busy || !!prepared.current} onChange={event => { setOwn(event.target.checked); reset(); }} />{zh ? "这些是我自己的表达；引用、他人要求和示例不算我的承诺。" : "These are my own words; quotations, others’ requests and examples are not my commitments."}</label>
-    <button type="button" disabled={!own || busy || !!prepared.current} onClick={() => { setSuggestions(suggestImprintOrganization(text.text, { sourceKind: "owner_text", mixedContent: true, locale })); setChosen(null); }}>{zh ? "查看可提取片段" : "Review extractable fragments"}</button>
+    <label><input type="checkbox" checked={own} disabled={busy || sourceLocked} onChange={event => { setOwn(event.target.checked); reset(); }} />{zh ? "这些是我自己的表达；引用、他人要求和示例不算我的承诺。" : "These are my own words; quotations, others’ requests and examples are not my commitments."}</label>
+    <button type="button" disabled={!own || busy || sourceLocked} onClick={() => { setSuggestions(suggestImprintOrganization(text.text, { sourceKind: "owner_text", mixedContent: true, locale })); setChosen(null); }}>{zh ? "查看可提取片段" : "Review extractable fragments"}</button>
     {suggestions && <div>{!suggestions.fragments.length && <p role="status">{zh ? "没有找到明确的行动或选择语句。原文保留，不自动生成条目。" : "No explicit action or choice found. The original is preserved."}</p>}
-      {suggestions.fragments.map((item, index) => <div key={item.kind + ":" + item.source.start}><label><input type="radio" name={"extract-" + record.id} checked={chosen === index} disabled={busy || !!prepared.current} onChange={() => { setChosen(index); setBucket(""); setRationale(""); setConfirmation(null); }} />{item.kind === "task" ? zh ? "任务片段" : "Task fragment" : zh ? "决策片段" : "Decision fragment"}</label><blockquote>{item.source.text}</blockquote>
+      {suggestions.fragments.map((item, index) => <div key={item.kind + ":" + item.source.start}><label><input type="radio" name={"extract-" + record.id} checked={chosen === index} disabled={busy || sourceLocked} onChange={() => { setChosen(index); setBucket(""); setRationale(""); setConfirmation(null); }} />{item.kind === "task" ? zh ? "任务片段" : "Task fragment" : zh ? "决策片段" : "Decision fragment"}</label><blockquote>{item.source.text}</blockquote>
         {[...item.source.text].length > 300 && <p>{zh ? "此片段超过300字，暂不支持整段提取；请先在原文中明确独立语句。" : "This fragment exceeds 300 characters. Make the sentence explicit in the source first."}</p>}</div>)}
     </div>}
     {fragment && candidate?.candidate_status !== "promoted" && <div>
