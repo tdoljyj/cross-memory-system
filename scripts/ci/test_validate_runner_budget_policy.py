@@ -213,6 +213,64 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         renamed = text.replace("  windows-route:", "  newly-dynamic-route:")
         self.assert_rejected(self.evaluate({filename: renamed}), "unknown, dynamic")
 
+    def test_actual_disposable_publisher_qualification_route_passes(self):
+        filename = "clued-production-publisher-qualification.yml"
+        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        self.assert_pass(self.evaluate({filename: text}))
+        _, jobs, _ = policy.split_workflow(text)
+        kind, labels = policy.classify_route(filename, "qualify", policy.job_fields(jobs["qualify"]))
+        self.assertEqual(kind, "self-hosted")
+        self.assertEqual(labels, ["self-hosted", "Linux", "X64", "clued-production-publisher-v1",
+                                 "${{ format('clued-publisher-{0}-{1}', github.run_id, github.run_attempt) }}"])
+        self.assertNotIn("trust-internal", labels)
+
+    def test_disposable_publisher_route_cannot_move_workflow_or_job(self):
+        filename = "clued-production-publisher-qualification.yml"
+        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        for other in ["other.yml", "clued-production-publisher-qualification.yaml"]:
+            with self.subTest(workflow=other):
+                self.assert_rejected(self.evaluate({other: text}), "unknown, dynamic")
+        for other in ["qualify-shadow", "host-principal-probe-renamed"]:
+            with self.subTest(job=other):
+                changed = text.replace("  qualify:\n", f"  {other}:\n")
+                self.assert_rejected(self.evaluate({filename: changed}), "unknown, dynamic")
+
+    def test_disposable_publisher_route_requires_exact_labels_and_expression(self):
+        filename = "clued-production-publisher-qualification.yml"
+        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        original = policy.job_fields(policy.split_workflow(text)[1]["qualify"])["runs-on"]
+        changes = [
+            original.replace("self-hosted, ", ""),
+            original.replace("Linux", "Windows"),
+            original.replace("X64", "ARM64"),
+            original.replace("clued-production-publisher-v1", "clued-production-publisher-v2"),
+            original.replace("clued-production-publisher-v1, ", "clued-production-publisher-v1, trust-internal, "),
+            original.replace("clued-production-publisher-v1, ", "clued-production-publisher-v1, ubuntu-latest, "),
+            original.replace("github.run_id", "github.run_number"),
+            original.replace("github.run_attempt", "inputs.run_attempt"),
+            original.replace("clued-publisher-{0}-{1}", "clued-publisher-{1}-{0}"),
+            original.replace("github.run_attempt)", "github.run_attempt )"),
+            original.replace("${{ format('clued-publisher-{0}-{1}', github.run_id, github.run_attempt) }}",
+                             "${{ vars.LOCAL && 'self-hosted' || 'ubuntu-latest' }}"),
+            "[self-hosted, Linux, X64, clued-production-publisher-v1, trust-internal]",
+        ]
+        for changed in changes:
+            with self.subTest(route=changed):
+                self.assertNotEqual(changed, original)
+                self.assert_rejected(self.evaluate({filename: text.replace(original, changed)}), "unknown, dynamic")
+
+    def test_disposable_publisher_route_does_not_authorize_reusable_or_hosted_jobs(self):
+        filename = "clued-production-publisher-qualification.yml"
+        text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
+        original = policy.job_fields(policy.split_workflow(text)[1]["qualify"])["runs-on"]
+        self.assert_rejected(self.evaluate({filename: text.replace(original, "ubuntu-latest")}),
+                             "new GitHub-hosted")
+        self.assert_rejected(self.evaluate({filename: text.replace(
+            "  qualify:\n", "  qualify:\n    uses: owner/repo/.github/workflows/ci.yml@main\n")}),
+            "unknown, dynamic")
+        added = text + job("unrelated", "[self-hosted, Linux, X64, clued-production-publisher-v1]")
+        self.assert_rejected(self.evaluate({filename: added}), "literal trust-internal")
+
     def test_current_repository_workflows_and_embedded_schema_pass(self):
         self.assertEqual(policy.baseline_findings(policy.LEGACY_HOSTED_DEBT), [])
         texts = {p.name: p.read_text(encoding="utf-8")

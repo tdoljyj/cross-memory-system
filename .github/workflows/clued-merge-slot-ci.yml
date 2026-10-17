@@ -53,6 +53,7 @@ on:
       - Clued handover hook qualification / home-win-01
       - Clued disposable external handover qualification
       - Clued disposable cancellation fixture
+      - Clued production publisher qualification
     types: [completed]
   workflow_dispatch:
 
