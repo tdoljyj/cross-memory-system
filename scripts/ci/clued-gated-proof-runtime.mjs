@@ -1,7 +1,9 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES} from './clued-workflow-profile.mjs';
-export const COMPONENT_VERSION = "1.0.1";
+import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherTransition} from './clued-production-publisher-source.mjs';
+import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationTransition} from './clued-publisher-qualification-source.mjs';
+export const COMPONENT_VERSION = "1.0.2";
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
@@ -16,10 +18,50 @@ const safePath=name=>typeof name==='string' && name.length>0 && name.length<=409
   !/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(name) && !name.startsWith('/') &&
   !name.split('/').some(part=>!part || part==='.' || part==='..');
 
+const PUBLISHER_SNAPSHOT_FILES=Object.freeze({
+  publisherRegistry:PUBLISHER_SOURCE_PATH,publisherCompiler:'scripts/ci/clued-production-publisher-source.mjs',
+  qualificationRegistry:PUBLISHER_PR_QUALIFICATION_PATH,qualificationCompiler:'scripts/ci/clued-publisher-qualification-source.mjs',
+});
 const SNAPSHOT_FILES=['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
   'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py',
-  'config/merge-admission-policy.json'];
+  'config/merge-admission-policy.json',...Object.values(PUBLISHER_SNAPSHOT_FILES)];
 const trustedSourceByteLimit=file=>file===SNAPSHOT_FILES[0]?1048576:524288;
+export const PUBLISHER_SNAPSHOT_QUERY=`query CluedPublisherSnapshot($owner:String!,$name:String!,$publisherRegistry:String!,$publisherCompiler:String!,$qualificationRegistry:String!,$qualificationCompiler:String!) {
+  repository(owner:$owner,name:$name) { nameWithOwner
+    publisherRegistry:object(expression:$publisherRegistry) { ...CluedPublisherBlob }
+    publisherCompiler:object(expression:$publisherCompiler) { ...CluedPublisherBlob }
+    qualificationRegistry:object(expression:$qualificationRegistry) { ...CluedPublisherBlob }
+    qualificationCompiler:object(expression:$qualificationCompiler) { ...CluedPublisherBlob }
+  }
+}
+fragment CluedPublisherBlob on Blob { __typename oid byteSize text isBinary isTruncated }`;
+
+// Fetch the same four immutable path/commit identities together. Each initial
+// and final barrier still reads fresh bytes and validates every Blob, keeping
+// the original 160-callback and 90-second whole-observation limits unchanged.
+export async function readPublisherSourceSnapshot({graphRead,repository,tip,files}) {
+  if(typeof graphRead!=='function'||!REPO.test(repository??'')||!SHA.test(tip??''))return null;
+  const [owner,name]=repository.split('/');
+  try {
+    const result=await graphRead(PUBLISHER_SNAPSHOT_QUERY,{owner,name,
+      ...Object.fromEntries(Object.entries(PUBLISHER_SNAPSHOT_FILES).map(([alias,file])=>[alias,`${tip}:${file}`]))});
+    if(result?.errors!==undefined&&(!Array.isArray(result.errors)||result.errors.length))return null;
+    const repo=result?.data?.repository;if(repo?.nameWithOwner!==repository)return null;
+    const texts={};
+    for(const [alias,file] of Object.entries(PUBLISHER_SNAPSHOT_FILES)) {
+      const node=repo[alias],limit=trustedSourceByteLimit(file);
+      if(node?.__typename!=='Blob'||node.isBinary!==false||node.isTruncated!==false||
+        !SHA.test(files?.[file]??'')||node.oid!==files[file]||!Number.isSafeInteger(node.byteSize)||
+        node.byteSize<1||node.byteSize>limit||typeof node.text!=='string'||node.text.length>limit)return null;
+      const bytes=Buffer.from(node.text,'utf8');
+      if(bytes.length!==node.byteSize||bytes.toString('utf8')!==node.text)return null;
+      const text=decodedWorkflow({type:'file',path:file,sha:node.oid,size:node.byteSize,
+        encoding:'base64',content:bytes.toString('base64')},file,files[file]);
+      if(text===null)return null;texts[file]=text;
+    }
+    return texts;
+  } catch {return null;}
+}
 export function loadProofSnapshot(workspace,tip,workflows) {
   const checkout=execFileSync('git',['rev-parse','HEAD'],{cwd:workspace,encoding:'utf8',maxBuffer:1024}).trim();
   const dirty=execFileSync('git',['status','--porcelain','--untracked-files=no'],{cwd:workspace,encoding:'utf8',maxBuffer:65536});
@@ -33,7 +75,7 @@ export function loadProofSnapshot(workspace,tip,workflows) {
     if(bytes.length>trustedSourceByteLimit(file) || !Buffer.from(text,'utf8').equals(bytes))throw Error('trusted snapshot file exceeds bounds');
     files[file]=workflowBlob(text);texts[file]=text;
   }
-  return {tip,checkout,files,profiles:JSON.parse(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),
+  return {tip,checkout,files,profiles:JSON.parse(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),publisherSources:JSON.parse(texts[PUBLISHER_SOURCE_PATH]),qualificationSources:JSON.parse(texts[PUBLISHER_PR_QUALIFICATION_PATH]),
     workflows:new Map(workflows)};
 }
 
@@ -106,7 +148,15 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
     const tipRoute=`/repos/${repository}/branches/${encodeURIComponent(diff.descriptor.default_branch)}`;
     const snapshotCurrent=async()=>{
       if((await read(tipRoute))?.commit?.sha!==snapshot.tip)return false;
+      const publisherTexts=await readPublisherSourceSnapshot({graphRead,repository,tip:snapshot.tip,files:snapshot.files});
+      if(!publisherTexts)return false;
       for(const file of SNAPSHOT_FILES) {
+        if(Object.hasOwn(publisherTexts,file)) {
+          const text=publisherTexts[file];
+          if(file===PUBLISHER_SOURCE_PATH&&JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.publisherSources))return false;
+          if(file===PUBLISHER_PR_QUALIFICATION_PATH&&JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.qualificationSources))return false;
+          continue;
+        }
         const content=await read(`/repos/${repository}/contents/${file}?ref=${snapshot.tip}`);
         const text=decodedWorkflow(content,file,snapshot.files[file]);
         if(text===null)return false;
@@ -123,7 +173,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
       .some(entries=>Array.isArray(entries) && entries.length>0);
     const sourceRead=createImmutableWorkflowSourceReader({read,repository,enabled:()=>cacheEnabled});
     const catalog=await boundWorkflowCatalog({read:sourceRead,repository,tip:snapshot.tip,head,
-      defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,diff});
+      defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,publisherRegistry:snapshot.publisherSources,qualificationRegistry:snapshot.qualificationSources,diff});
     if(!catalog.passed)return catalog;
     cacheEnabled=catalog.future_installations.length>0 || catalog.external2_applicable===true;
     const sources=new Map();
@@ -145,7 +195,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         const finalDiff=await boundPullDiff({read,repository,prNumber,head});
         if(!finalDiff.passed || JSON.stringify(finalDiff)!==JSON.stringify(diff))return false;
         const finalCatalog=await boundWorkflowCatalog({read:sourceRead,repository,tip:snapshot.tip,head,
-          defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,diff:finalDiff});
+          defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,publisherRegistry:snapshot.publisherSources,qualificationRegistry:snapshot.qualificationSources,diff:finalDiff});
         if(!finalCatalog.passed || JSON.stringify(finalCatalog.default_directory)!==JSON.stringify(catalog.default_directory) ||
           JSON.stringify(finalCatalog.head_directory)!==JSON.stringify(catalog.head_directory))return false;
         for(const {file,run} of runs) {
@@ -365,7 +415,7 @@ export async function boundDocumentationAttempt({read,readLog,source,run,jobs,re
 // Default-branch counted workflows stay in the set even if the PR deletes
 // their gate. New/changed non-CI workflows retain their original admission
 // boundaries; they are not registered as tests merely because they changed.
-export async function boundWorkflowCatalog({read,repository,tip,head,defaultWorkflows,registry,roleSpecs,diff}) {
+export async function boundWorkflowCatalog({read,repository,tip,head,defaultWorkflows,registry,roleSpecs,publisherRegistry,qualificationRegistry,diff}) {
   try {
     if(typeof read!=='function' || !REPO.test(repository??'') || !SHA.test(tip??'') || !SHA.test(head??'') ||
       !(defaultWorkflows instanceof Map) || !defaultWorkflows.size || diff?.passed!==true || diff.diffComplete!==true ||
@@ -388,6 +438,7 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     if((futureInstalls.length || futureChanged) && (!sameDirectory(atDefault,await completeWorkflowDirectory({read,repository,commit:tip})) ||
       !sameDirectory(atHead,await completeWorkflowDirectory({read,repository,commit:head}))))
       return unknown('future workflow Git tree/directory incomplete or differs');
+    const publisherTransitions=[],qualificationTransitions=[];
     const sources=new Map(),selected={schema:registry.schema,workflows:{}};
     const sourceRegistry={...registry,workflows:{...registry.workflows}},sourceRoles={...roleSpecs,workflows:{...roleSpecs.workflows}};
     for(const [file,blob] of defaultWorkflows) {
@@ -418,6 +469,29 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
         sourceRegistry.workflows[file]=enrollment.profile;sourceRoles.workflows[file]={sources:{[blob]:enrollment.roles}};
         continue;
       }
+      if(Object.hasOwn(PUBLISHER_FILES,file)) {
+        const before=atDefault.has(file)?decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${tip}`),file,atDefault.get(file)):null;
+        const accepted=registeredPublisherTransition(publisherRegistry,file,text,before,{repository});
+        if(text===null || atDefault.has(file)&&before===null || !accepted.passed ||
+          workflowFormFindings(text).length || !explicitNonPrWorkflow(text) ||
+          gateFindings(text,before,{registeredPublisherTransition:true}).length)
+          return unknown('exact dispatch publisher Source/Role/gate missing');
+        publisherTransitions.push({file,workflow_blob:accepted.profile.workflow_blob,source_sha256:accepted.profile.source_sha256});
+        // This Source admission never turns a dispatch into a required PR run.
+        continue;
+      }
+      if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,file)) {
+        const before=atDefault.has(file)?decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${tip}`),file,atDefault.get(file)):null;
+        const accepted=registeredPublisherPrQualificationTransition(qualificationRegistry,file,text,before,{repository});
+        if(text===null||atDefault.has(file)&&before===null||!accepted.passed||
+          workflowFormFindings(text).length||gateFindings(text,before).length)
+          return unknown('exact nonproduction PR qualification Source/Role/gate missing');
+        qualificationTransitions.push({file,workflow_blob:accepted.profile.workflow_blob,
+          source_sha256:accepted.profile.source_sha256,proof_classification:'qualification_only'});
+        // Expected failure/cancellation are qualification evidence, never
+        // successful required application-CI proofs. Full Source checks remain.
+        continue;
+      }
       if(text===null || workflowFormFindings(text).length || workflowIsGated(text))
         return unknown('non-CI workflow became gated or has ambiguous source');
       if(atDefault.has(file)) {
@@ -435,6 +509,8 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     if(!targets.passed)return targets;
     return {passed:true,state:'qualified',scope:'applicable_workflow_catalogue',workflows:targets.workflows,
       profiles:selected,source_registry:sourceRegistry,source_roles:sourceRoles,
+      publisher_transitions:publisherTransitions,
+      qualification_transitions:qualificationTransitions,
       future_installations:futureInstalls.map(entry=>entry.file),
       external2_applicable:[...targets.workflows.keys()].some(file=>Object.hasOwn(EXTERNAL2_FILES,file)),
       default_directory:[...atDefault],head_directory:[...atHead]};

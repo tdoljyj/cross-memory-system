@@ -75,6 +75,8 @@
 import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
+import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -344,6 +346,44 @@ export const GATE_JOB_SHA256 = new Set([
   "d6d96a1eef2f756770304c25b1bf0aab3b8ec72408553ceb141edc0230a995c9",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
+export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
+
+// A publisher conversion is registered on trusted main before its workflow
+// changes. PR-provided profiles, flags and environment variables are not inputs.
+// Unknown or ambiguous sources keep the original ungated-workflow refusal.
+export function registeredPublisherGatedSuccessor(file, headText, baseText, profiles) {
+  const workflowPath = file?.filename;
+  if (workflowPath !== PRODUCTION_PUBLISHER_WORKFLOW || file.status !== "modified" ||
+      workflowBasePath(file) !== PRODUCTION_PUBLISHER_WORKFLOW || baseText === null ||
+      workflowIsGated(baseText) || !workflowIsGated(headText)) return false;
+  return registeredPublisherTransition(profiles, workflowPath, headText, baseText).passed;
+}
+
+function trustedPublisherProfiles() {
+  // The fixed adjacent default-branch catalogue is not a PR proof registry.
+  // A caller workspace, environment variable or PR file cannot select it.
+  const location = new URL("./clued-production-publisher-sources.json", import.meta.url);
+  try {
+    const info = fs.lstatSync(location);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 524288) return null;
+    const bytes = fs.readFileSync(location);
+    if (bytes.length > 524288) return null;
+    return JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function trustedPublisherPrQualificationProfiles() {
+  const location = new URL("./clued-publisher-qualification-sources.json", import.meta.url);
+  try {
+    const info=fs.lstatSync(location);
+    if(!info.isFile()||info.isSymbolicLink()||info.size>524288)return null;
+    const bytes=fs.readFileSync(location),text=bytes.toString('utf8');
+    if(bytes.length>524288||!Buffer.from(text,'utf8').equals(bytes))return null;
+    return JSON.parse(text);
+  }catch{return null;}
+}
 
 export function workflowJobs(text) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
@@ -484,12 +524,13 @@ export function jobIsHosted(job) {
 // Findings for one workflow at the PR head; baseText is its base-branch
 // version, or null when the PR adds it. Existing ungated workflows (the
 // short checks of Owner Decision 75abfe80) stay ungated.
-export function gateFindings(headText, baseText) {
+export function gateFindings(headText, baseText, { registeredPublisherTransition = false } = {}) {
   const form = workflowFormFindings(headText);
   if (form.length) return form;
   const jobs = workflowJobs(headText);
   const selfHosted = jobs.some((job) => !jobIsHosted(job));
-  const required = baseText === null ? selfHosted : workflowIsGated(baseText);
+  const required = baseText === null ? selfHosted : workflowIsGated(baseText) ||
+    (registeredPublisherTransition === true && workflowIsGated(headText));
   if (!required) {
     // An existing ungated workflow (a short check) may not grow a job that can
     // reach a self-hosted runner: no new one, no hosted job moved to a
@@ -556,7 +597,17 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
     if (head === null) throw new Error(`${file.filename} is missing at ${headSha}.`);
     const basePath = workflowBasePath(file);
     const base = basePath === null ? null : await fileAt(fetchImpl, env, repository, basePath, baseSha);
-    for (const finding of gateFindings(head, base)) gate.push(`workflow_gate:${file.filename}:${finding}`);
+    if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,file.filename)&&
+      (!['added','modified'].includes(file.status)||
+        file.status==='modified'&&basePath!==file.filename||
+        !registeredPublisherPrQualificationTransition(trustedPublisherPrQualificationProfiles(),file.filename,head,base,{repository}).passed)) {
+      gate.push(`workflow_gate:${file.filename}:publisher_PR_qualification_Source_not_registered`);
+    }
+    const registeredPublisherTransition = file.filename === PRODUCTION_PUBLISHER_WORKFLOW &&
+      registeredPublisherGatedSuccessor(file, head, base, trustedPublisherProfiles());
+    for (const finding of gateFindings(head, base, { registeredPublisherTransition })) {
+      gate.push(`workflow_gate:${file.filename}:${finding}`);
+    }
     for (const finding of ownerReviewFindings(head, base)) owner.push(`${file.filename}:${finding}`);
   }
   // A workflow the pull request deletes or renames away may be the one that
@@ -1839,6 +1890,12 @@ const DISPATCH_HOWTO = `dispatch ${DISPATCH_ADMISSION_WORKFLOW} on the default b
 async function dispatchGate({ env, event, fetchImpl, now, outcome }) {
   const workflow = workflowFileOf(env);
   const ref = env.GITHUB_REF_NAME ?? "";
+  if(workflow && Object.hasOwn(PUBLISHER_FILES,`.github/workflows/${workflow}`) &&
+    !DISPATCH_GATED_WORKFLOWS.includes(workflow)) {
+    outcome.verdict="REJECTED";
+    outcome.reasons=["publisher_dispatch_not_installed: a qualified self-hosted admission control is required"];
+    return outcome;
+  }
   if (!workflow || !DISPATCH_GATED_WORKFLOWS.includes(workflow)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";

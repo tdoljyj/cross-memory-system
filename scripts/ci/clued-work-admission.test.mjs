@@ -58,6 +58,8 @@ import {
   checkNamesPullRequest,
   SAME_EVENT_MS,
   gateFindings,
+  PRODUCTION_PUBLISHER_WORKFLOW,
+  registeredPublisherGatedSuccessor,
   jobIsHosted,
   jobTimeout,
   rerunAttempt,
@@ -81,6 +83,7 @@ import {
 } from "./clued-work-admission.mjs";
 import { fixedPolicy } from "./merge-admission-policy.fixtures.mjs";
 import { parseModeLabel } from "./merge-admission-policy.mjs";
+import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
 
 // Merge Admission v0.1 (review MAJOR-1): these self-tests run on the default
 // branch before every admission, so every evaluation here judges against the
@@ -996,6 +999,19 @@ test("dispatch gate: admits only a fresh, successful default-branch admission ru
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "NOT_APPLICABLE"]);
 });
 
+test("dispatch gate: uninstalled publisher targets fail closed without admission network reads", async () => {
+  for (const file of ["clued-cloud-production-release.yml", "clued-production-publisher-qualification.yml"]) {
+    for (const runId of [null, "77"]) {
+      const { outcome, calls } = await dispatchGateWith(admissionRun(), {
+        GITHUB_WORKFLOW_REF: `o/r/.github/workflows/${file}@refs/heads/main`,
+      }, runId);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [false, "REJECTED"]);
+      assert.match(outcome.reasons.join(" "), /publisher_dispatch_not_installed/);
+      assert.equal(calls.length, 0);
+    }
+  }
+});
+
 test("dispatch admission: verifies the claim on the default branch only, against the ref's head", async () => {
   const base = env({
     GITHUB_REF: "refs/heads/main", CLUED_DEFAULT_BRANCH: "main",
@@ -1045,6 +1061,7 @@ test("workflows: dispatch-gated workflows take admission_run_id; the admission w
   assert.doesNotMatch(admit, /^ {2}pull_request/m);
   for (const file of DISPATCH_GATED_WORKFLOWS) {
     const text = fs.readFileSync(path.join(dir, file), "utf8");
+
     assert.match(text, /^ {2}workflow_dispatch:\n {4}inputs:\n {6}admission_run_id:\n/m, file);
     assert.match(text, /--mode gate/, file);
   }
@@ -1066,6 +1083,65 @@ const g4 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "clued-g4-dat
   .replace("needs: [admission-gate, push-reuse]", "needs: admission-gate")
   .replace("(!cancelled() && needs.admission-gate.result == 'success' &&\n       (github.event_name != 'push' || needs.push-reuse.result != 'success' ||\n        needs.push-reuse.outputs.run_heavy != 'false') &&\n      ((", "((")
   .replace("github.actor == github.repository_owner)))\n    name:", "github.actor == github.repository_owner))\n    name:");
+
+function publisherTransitionFixture() {
+  const profiles=JSON.parse(fs.readFileSync(path.join(ROOT,"scripts/ci/clued-production-publisher-sources.json"),"utf8"));
+  const entries=profiles.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources;
+  const base=entries.find(s=>s.source_kind==='legacy_predecessor').source_yaml;
+  const head=entries.find(s=>s.source_kind==='gated_successor').source_yaml;
+  return {base,head,profiles};
+}
+
+test("publisher transition: exact trusted dispatch sources retain every canonical gate check",()=>{
+  const {base,head,profiles}=publisherTransitionFixture();
+  const file={filename:PRODUCTION_PUBLISHER_WORKFLOW,status:"modified"};
+  const registeredPublisherTransition=registeredPublisherGatedSuccessor(file,head,base,profiles);
+  assert.equal(registeredPublisherTransition,true);
+  assert.deepEqual(gateFindings(head,base,{registeredPublisherTransition}),[]);
+  assert.ok(gateFindings(head,base).includes("self_hosted_job_switched_ungated:release"));
+  assert.equal(registeredPublisherGatedSuccessor(file,head.replaceAll("\n","\r\n"),base,profiles),false,
+    "independent review M1: a different raw Git blob is never the registered LF source");
+  assert.equal(registeredPublisherGatedSuccessor(file,head,base.replaceAll("\n","\r\n"),profiles),false);
+});
+
+test("publisher transition: unknown, ambiguous, unrelated and newly added production sources remain refused",()=>{
+  const {base,head,profiles}=publisherTransitionFixture(),file={filename:PRODUCTION_PUBLISHER_WORKFLOW,status:"modified"};
+  for(const mutate of [r=>r.schema='unrecognized',r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].registration_status='candidate',
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources.push(structuredClone(r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1])),
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1].source_sha256='0'.repeat(64),
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1].workflow_blob='0'.repeat(40),
+    r=>r.workflows[PRODUCTION_PUBLISHER_WORKFLOW].sources[1].primary_ids=['other']]) {
+    const altered=structuredClone(profiles);mutate(altered);
+    assert.equal(registeredPublisherGatedSuccessor(file,head,base,altered),false);
+  }
+  assert.equal(registeredPublisherGatedSuccessor(file,head,base,null),false);
+  assert.equal(registeredPublisherGatedSuccessor(file,head+'\n',base,profiles),false);
+  assert.equal(registeredPublisherGatedSuccessor(file,head,null,profiles),false);
+  assert.equal(registeredPublisherGatedSuccessor({...file,filename:'.github/workflows/other.yml'},head,base,profiles),false);
+  for(const status of ['added','copied','renamed','removed'])assert.equal(registeredPublisherGatedSuccessor({...file,status},head,base,profiles),false);
+});
+
+test("publisher transition: even a registered transition cannot waive the frozen gate, dependency or condition",()=>{
+  const {base,head}=publisherTransitionFixture();
+  for(const [changed,expected] of [
+    [head.replace('node-version: 24.19.0','node-version: 24'),'admission_gate_changed'],
+    [head.replace('    needs: admission-gate\n',''),'job_not_gated:release'],
+    [head.replace("needs.admission-gate.outputs.admitted == 'true' &&",'true &&'),'job_condition_not_gated:release'],
+  ])assert.ok(gateFindings(changed,base,{registeredPublisherTransition:true}).includes(expected),expected);
+});
+
+test("publisher transition: caller workspace or API profiles never select the trusted default source",async()=>{
+  const {base,head}=publisherTransitionFixture();const calls=[];
+  const fetchImpl=async url=>{calls.push(String(url));assert.ok(String(url).includes('/contents/.github/workflows/clued-cloud-production-release.yml?ref='));
+    const text=String(url).endsWith(`?ref=${HEAD}`)?head+'# caller-only altered source\n':base;
+    return new Response(JSON.stringify({content:Buffer.from(text).toString('base64'),encoding:'base64'}),{status:200});};
+  const result=await workflowFindings(fetchImpl,{GITHUB_WORKSPACE:'untrusted-profile-fixture'},'o/r',[
+    {filename:PRODUCTION_PUBLISHER_WORKFLOW,status:'modified'},
+    {filename:'scripts/ci/clued-production-publisher-sources.json',status:'modified'},
+  ],HEAD,BASE);
+  assert.ok(result.gate.some(f=>f.endsWith('self_hosted_job_switched_ungated:release')));
+  assert.equal(calls.length,2);
+});
 
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   // No pinned list (see "gate job digest"); the workflow this file reads below must stay gated.

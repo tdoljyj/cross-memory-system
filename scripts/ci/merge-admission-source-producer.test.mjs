@@ -1,3 +1,4 @@
+import {loadPublisherSourceHistoryFixture} from './production-publisher-source-history.fixture.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -331,7 +332,7 @@ test('runtime loader validates the current Source registry against actual bytes 
   // The sealed exact predecessor is available in fresh shallow checkouts.
   // Its complete bytes and immutable commit are independently pinned by the
   // fixture loader, rather than recreated from today's descriptors.
-  const previous=JSON.parse(loadSourceHistoryFixture().predecessor_config);
+  const previous=JSON.parse(loadPublisherSourceHistoryFixture()),sealedLegacy=JSON.parse(loadSourceHistoryFixture().predecessor_config);
   for(const name of fs.readdirSync(path.join(repo,'.github/workflows')))if(fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
     f.files.set('.github/workflows/'+name,fs.readFileSync(path.join(repo,'.github/workflows',name),'utf8'));
   const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
@@ -342,10 +343,10 @@ test('runtime loader validates the current Source registry against actual bytes 
     assert.deepEqual(Object.keys(d.source_blobs).sort(),[...d.source_paths].sort());
     for(const p of d.source_paths)assert.equal(d.source_blobs[p],gitBlob(fs.readFileSync(path.join(repo,p))));
     assert.equal(Object.hasOwn(d,'previous_source_blobs'),false);assert.equal(Object.hasOwn(d,'previous_job_name'),false);
-    assert.equal(d.previous_source_versions.length,5);
+    assert.equal(d.previous_source_versions.length,6);
     const old=previous.natural_producers.find(p=>p.workflow_path===d.workflow_path&&p.job_id===d.job_id);
-    assert.ok(old);assert.deepEqual(d.previous_source_versions.slice(0,4),old.previous_source_versions);
-    assert.deepEqual(d.previous_source_versions[4],{job_name:old.job_name,source_blobs:old.source_blobs});
+    assert.ok(old);assert.deepEqual(d.previous_source_versions.slice(0,5),old.previous_source_versions);
+    assert.deepEqual(d.previous_source_versions[5],{job_name:old.job_name,source_blobs:old.source_blobs});
     assert.deepEqual(d.previous_source_versions.slice(0,4).map(v=>v.job_name),d.job_id==='clued-work-admission'
       ?['clued-work-admission','clued-work-admission','clued-work-admission','kooyumi-work-admission']:Array(4).fill(d.job_name));
   }
@@ -357,20 +358,22 @@ test('runtime loader validates the current Source registry against actual bytes 
     return previous_source_versions.slice(0,4).map(v=>({...base,job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path],source_blobs:v.source_blobs}));
   });
   assert.equal(sha256(JSON.stringify(oldDescriptors)),'15e90b3554151f0daaeaa3f32a02e5d9dbf9038cca6dc8a6dd547693542a8d97');
-  assert.equal(sha256(JSON.stringify(cfg.previous_admission_sources.slice(0,-1))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
+  assert.deepEqual(cfg.previous_admission_sources.slice(0,-1),previous.previous_admission_sources);
+  assert.equal(sha256(JSON.stringify(cfg.previous_admission_sources.slice(0,2))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
   const unchanged=Object.fromEntries(Object.entries(cfg).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers'].includes(key)));
   assert.deepEqual(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))),
     Object.fromEntries(Object.entries(previous).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers','execution_source','previous_execution_sources'].includes(key))));
-  assert.equal(sha256(JSON.stringify({...unchanged,execution_source:previous.execution_source,previous_execution_sources:previous.previous_execution_sources})),
+  assert.equal(sha256(JSON.stringify({...unchanged,execution_source:sealedLegacy.execution_source,previous_execution_sources:sealedLegacy.previous_execution_sources})),
     'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
   assert.deepEqual(cfg.previous_admission_sources.at(-1),{...cfg.admission_source,
-    script_blob:'112b737c54893f78eedb1deacc678777e5f16138',source_checkout_sha:'462f74c34d74b7dea65a0120eabbd4feb1ebc0ce',default_branch:'main'});
+    script_blob:previous.admission_source.script_blob,source_checkout_sha:'80bd559f283b7c009cd37f1fbde700b6d6be41ae',default_branch:'main'});
   assert.equal(cfg.execution_source.profiles_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))));
   assert.equal(cfg.execution_source.role_specs_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-role-specs.json'))));
   assert.equal(r.reason_code,'FORWARD_EPOCH_NOT_ESTABLISHED');assert.equal(r.window,null);
   const expected=JSON.parse(r.reviewed_expected_sources_raw);
   assert.equal(expected.schema,'clued.merge-admission-four-source-expectations/2');assert.deepEqual(expected.previous_execution_sources,cfg.previous_execution_sources);
-  assert.equal(cfg.previous_admission_sources.length,3);assert.equal(expected.admission_sources.length,4);
+  assert.equal(cfg.previous_admission_sources.length,4);assert.equal(expected.admission_sources.length,5);
+  assert.deepEqual(cfg.execution_source,previous.execution_source);assert.deepEqual(cfg.previous_execution_sources,previous.previous_execution_sources);
   assert.deepEqual(expected.admission_sources[0],{...cfg.admission_source,source_checkout_sha:subject,default_branch:'main'});
   assert.deepEqual(expected.admission_sources.slice(1),cfg.previous_admission_sources);
   const old=expected.admission_sources.find(s=>s.source_checkout_sha==='ea7d09330583e3fc417997b621579de16fee239e');assert.ok(old);assert.equal(old.default_branch,'main');
