@@ -96,7 +96,8 @@ jobs:
     name: Verify prior PR tested tree
     needs: admission-gate
     if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'push')
-    runs-on: ubuntu-slim
+    # Main-only reuse verification executes merged code without environment secrets.
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
     timeout-minutes: 3
     permissions:
       contents: read

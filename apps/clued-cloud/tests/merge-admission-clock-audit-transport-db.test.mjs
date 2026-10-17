@@ -63,7 +63,11 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // Prior storage-only Native absence pin: ffde428621829c2af21dba27c61f8494afe65ee6d9fcd50f86ebc08bca9e57f8.
   // Current storage registration wiring adds the authenticated program RPC
   // in the existing cron and Native recovery routes; C1 assertions stay exact.
-  assert.equal(hash(workerSource),'ce0646006b8da6269ae233214c52dabc7a9d08a5e2c146895767c5288398f0d8');
+  // Prior storage registration pin: ce0646006b8da6269ae233214c52dabc7a9d08a5e2c146895767c5288398f0d8.
+  // PR #833, normally merged as 1f45e7ab, adds bounded Native read trace and
+  // recovery diagnostics. Bind its exact inherited source; keep every C1
+  // permission, transport and transaction assertion below unchanged.
+  assert.equal(hash(workerSource),'f2277f9683c3d632e60015a1ae3c05c66cfc4001dcd6ea41e97f69c783d45a76');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

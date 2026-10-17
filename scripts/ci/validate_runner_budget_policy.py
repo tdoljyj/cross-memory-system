@@ -136,7 +136,6 @@ LEGACY_HOSTED_DEBT = {
     "clued-connection-authorization.yml": {
         "control_sha256": "3b612ffbd70f686787c9c4b73717a49dcf1c42a38e59ba6c7a63543a34530c1e",
         "jobs": {
-            "push-reuse": "e14a61b7b2e71bb3c9be9fdc63e7dceb6cfc6d29d84c7bdb8f1e96eb17ed6a23",
             "isolated-candidate-untrusted-hosted": "55c18e5085b2f39b17e6f1bd0842720d61e00f89ac1ac151689e616b46033edd"
         }
     },
@@ -149,8 +148,9 @@ LEGACY_HOSTED_DEBT = {
     "clued-g4-database.yml": {
         "control_sha256": "87a8650c72f07b769f3b01c699364897eccd68658928ee3f3e6d3534a15a98a7",
         "jobs": {
-            "push-reuse": "673e4ce7e907594640e6353488f9cd686939b556d63cd95ea5eb29f8666f4fa2",
-            "database-gate-untrusted-hosted": "79fcdf28b9613468cb259808c712319cef90b9155ab8640725b44ad66cf329ff"
+            # Same exact image pin and coverage test: inspect both caches before
+            # network pulls. No trigger, permission, timeout or runner expansion.
+            "database-gate-untrusted-hosted": "43e37eafc1de5b3fb8213484a85210a72941105bbeebf7679fd64d49623f8c8c"
         }
     },
     "clued-handover-disposable-idle.yml": {
@@ -255,7 +255,6 @@ LEGACY_HOSTED_DEBT = {
     "information-flow-e2e.yml": {
         "control_sha256": "b371b0f90a477bf7168fc0742d268300e203eef5c6253154f45969995f6059bc",
         "jobs": {
-            "push-reuse": "ab04f98da581cd5d12c7298772f29947dd7f0673edf6e5c8476d36b52c8a543d",
             "e2e-untrusted-hosted": "8d8a3ab34146ff5d1dce2c66a6919b5c6f74207121726c4408e8b6009648d9eb"
         }
     },
