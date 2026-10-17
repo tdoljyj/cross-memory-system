@@ -454,3 +454,15 @@ prepared 仍只在到期 60 秒后安全取消，不生成未知效果的隔离�
 
 I12 的撤销、终止和本地同步效果证明没有被本增量删除或伪造；不把一次普通取消当成这些证明。非 job 的完整原生核对出口、可替代的合法只读连接及剩余目录核对仍属 e91 未完成范围。此节及其数据库测试不表示这些后继或生产发布已完成。
 
+## 20. 原连接退休后的合法只读核验（e91 后继候选）
+
+§4.4 的核验凭证与原写入授权分别校验：原 journal、job、attempt、typed proof、Receipt、Google subject、OAuth client、原 root 与 profile 身份保持；只在当前 Owner 的同 subject/client/profile/root 有合法有效连接时，以该连接做 GET。新连接的 profile、policy、Decision、拒绝记录、凭证和版本必须在服务端重新校验，不继承原写入者、旧 policy generation、旧 auth generation 或执行资格。每次 GET 的有效期下限仍为 60 秒。
+
+服务端返回独立 `clued.storage-recovery-reader/1`，包括实际读取连接、连接/凭证版本、授权 generation、policy 身份/generation/scope digest 与 profile version。Worker 只能用该读取连接的真实 vault AAD 解封；原 job 的 `connection_id` 仍是原历史身份。结算事务重新检查同一 reader，发生撤销、换账号/client、root/client/read deny 或版本变化就拒绝，不改写物理效果。
+
+before 仍经原双 GET、I2/I9、登记与 I11 出口；新 reader 及实际凭证版本写进独立恢复回执。after 仍经过原完整 typed verifier、原 admission/attempt/Receipt/registry 与语义证明链；reader 不能跳过 proof 形状、原 revision 保留或 CAS。实际 reader 记入不可变持久化 proof，之后按原 `settle_verified` 结案。观察表只在首次 INSERT 时记录 reader，不能事后改写不可变观察。
+
+当前连接的原生作业列表可列出同 Owner、同 profile/subject/client 且当前只读资格仍成立的旧连接作业。每行保留原 `connection_id`、job 和 Receipt；单独的 `read_connection_id` 只绑定当前页面上下文。页面继续只轮询状态，原作业的真正冲突取舍仍发送原 connection/job 与原 CAS；页面刷新、换账号、上下文变化或旧版本消失均作废已展示的选择。列表不向页面公开凭证或 reader 内部授权细节，旧授权不因列出而恢复。
+
+此候选仍须正式源审核、合并、生产迁移与数据库先于页面的验收；非 job I12 的完整 Native 出口和剩余目录复核仍须分别交付与验证。生产 PR864 的应用时间版本 `20261017061135`、源文件 `20261017043050_storage_semantic_recovery_v1.sql` 与文本哈希在台账中如实绑定。不能把候选本地测试、台账补记或已上线 PR864 表述为整个 e91 完成。
+

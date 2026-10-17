@@ -711,6 +711,90 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    const incompleteExit=(await db.query('select q.state,r.operation,r.status from clued_private.storage_conflict_isolations_v1 q join public.clued_audit_receipts r on r.id=q.resolution_receipt_id where q.intent_id=$1',[incompleteStarted.id])).rows[0];assert.deepEqual(incompleteExit,{state:'resolved',operation:'storage_conflict_abandon',status:'committed'});
    await db.query('select clued_private.storage_conflict_assert_v1($1,$2,$3)',[owner,profileId,releaseMutation]);await submit(releaseMutation);
    assert.deepEqual({posts,writes},beforeIncompleteExit);assert.deepEqual(files.get(prior.id),incompleteProviderState);assert.equal((await db.query('select count(*)::int n from clued_private.resource_center_writer_bindings_v1')).rows[0].n,incompleteWriters,'Owner withdrawal neither calls the provider nor grants a new writer');
+   await real.test('a replacement legitimate read connection completes before and after recovery without reviving the old connection',async()=>{
+    const beforeJob=await automaticJob('replacement-reader-before'),afterJob=await automaticJob('replacement-reader-after');
+    // Historical OAuth connection retirement, distinct from an Owner root
+    // stop: the latter is tested below and must continue to deny recovery.
+    await db.query('begin');try{
+     await db.query("update clued_private.storage_account_policies_v2 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where connection_id=$1 and state='active'",[connection,connected.receipt_id]);
+     await db.query("update clued_private.storage_connections_v1 set state='revoked',revoked_at=clock_timestamp(),version=version+1,auth_mode='revoked',account_policy_id=null,auth_generation=auth_generation+1 where id=$1",[connection]);
+     await db.query('commit');
+    }catch(error){await db.query('rollback');throw error;}
+    const registration=await account({action:'register',profile_id:profileId,source_decision_id:decision,idempotency_key:id()});
+    assert.equal(registration.status,'committed',JSON.stringify(registration));
+    const readerConnection=registration.target_refs.find(r=>r.role==='primary').id,newPolicy=id();
+    const readEnvelope=await vault.seal(JSON.stringify({token_type:'Bearer',access_token:'synthetic-replacement-reader-access',scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly',expires_at_ms:Date.now()+3600000}),
+     {owner_id:owner,connection_id:readerConnection,provider:'google-drive',provider_subject:'conflict-fixture-subject',oauth_client_id:oauthClient,credential_version:2});
+    await db.query('begin');try{
+     await db.query("update clued_private.storage_connections_v1 set state='active',provider_subject='conflict-fixture-subject',oauth_client_id=$2,credential_version=2,credential_envelope=$3 where id=$1",[readerConnection,oauthClient,readEnvelope]);
+     await db.query(`insert into clued_private.storage_account_policies_v2(id,owner_id,connection_id,provider,provider_subject,root_folder_id,profile_id,scope_digest,policy_generation,source_decision_id,decision_version,consent_source,disclosure_version,consent_receipt_id)
+      select $1,c.owner_id,c.id,c.provider,c.provider_subject,p.root_folder_id,p.id,clued_private.storage_policy_scope_digest_v2(c.id),1,c.source_decision_id,c.decision_version,'reviewed_transition','conflict-reader-fixture/1',c.receipt_id
+      from clued_private.storage_connections_v1 c join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id where c.id=$2`,[newPolicy,readerConnection]);
+     await db.query("update clued_private.storage_account_policies_v2 set state='active',activation_receipt_id=$2 where id=$1",[newPolicy,registration.receipt_id]);
+     await db.query("update clued_private.storage_connections_v1 set auth_mode='account_policy',account_policy_id=$2,auth_generation=auth_generation+1 where id=$1",[readerConnection,newPolicy]);
+     await db.query('commit');
+    }catch(error){await db.query('rollback');throw error;}
+    const beforeEffects={posts,writes},writerCount=(await db.query('select count(*)::int n from clued_private.resource_center_writer_bindings_v1')).rows[0].n;
+    const load=job=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{action:'load',...job.reference});
+    const descriptor=await load(beforeJob);
+    assert.equal(descriptor.connection_id,connection);assert.equal(descriptor.recovery_reader.connection_id,readerConnection);
+    assert.equal(descriptor.credential_version,2);assert.deepEqual(descriptor.attempt,beforeJob.descriptor.attempt);
+    const listCurrent=()=>rpc('clued_storage_native_recovery_v1',cloudIssuer,{action:'recovery_list',connection_id:readerConnection},native);
+    const currentList=await listCurrent();
+    for(const original of [beforeJob,afterJob]){
+     const row=currentList.jobs.find(value=>value.job_id===original.reference.job_id);
+     assert.ok(row,'the current Native view includes the original predecessor job');
+     assert.equal(row.connection_id,connection);assert.equal(row.read_connection_id,readerConnection);
+     assert.equal(row.receipt_id,original.closed.receipt_id);
+    }
+    assert.doesNotMatch(JSON.stringify(currentList),/credential_envelope|access_token|recovery_reader|provider_attempt/);
+    const input={...automaticInput(beforeJob),credential_version:2,recovery_reader:descriptor.recovery_reader};
+    await assert.rejects(rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{...input,recovery_reader:{...input.recovery_reader,connection_version:input.recovery_reader.connection_version+1}}),/storage_automatic_reconcile_conflict|storage_recovery_reader_changed/);
+    for(const fault of ['root','client','credential','subject','client_id','policy']){
+     await db.query('begin');try{
+      if(fault==='root')await db.query('insert into clued_private.storage_root_denies_v2(owner_id,provider,provider_subject,root_folder_id,lineage_id,denied,receipt_id) values($1,\'google-drive\',\'conflict-fixture-subject\',$2,null,true,$3)',[owner,cloudRoot,registration.receipt_id]);
+      if(fault==='client')await db.query('insert into clued_private.storage_read_client_denies_v1(owner_id,lineage_id,class,denied,receipt_id) values($1,$2,\'read\',true,$3)',[owner,lineage,registration.receipt_id]);
+      if(fault==='credential')await db.query('update clued_private.storage_connections_v1 set credential_version=credential_version+1 where id=$1',[readerConnection]);
+      if(fault==='subject')await db.query("update clued_private.storage_connections_v1 set provider_subject='wrong-subject' where id=$1",[readerConnection]);
+      if(fault==='client_id')await db.query("update clued_private.storage_connections_v1 set oauth_client_id='wrong-client' where id=$1",[readerConnection]);
+      if(fault==='policy'){
+       await db.query("update clued_private.storage_account_policies_v2 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where id=$1",[newPolicy,registration.receipt_id]);
+       await db.query("update clued_private.storage_connections_v1 set state='revoked',revoked_at=clock_timestamp(),auth_mode='revoked',account_policy_id=null,auth_generation=auth_generation+1 where id=$1",[readerConnection]);
+      }
+      if(fault!=='credential')assert.equal((await db.query('select clued_private.storage_recovery_native_visible_v1($1,$2,$3,$4) visible',[owner,readerConnection,beforeJob.reference.job_id,cloudIssuer])).rows[0].visible,false,'a denied current read context cannot enumerate predecessor jobs: '+fault);
+      await assert.rejects(db.query('select clued_private.storage_recovery_reader_assert_v1($1,$2::jsonb)',[cloudIssuer,JSON.stringify(input)]),/storage_recovery_denied|storage_recovery_reader_changed/);
+     }finally{await db.query('rollback');}
+    }
+    const bridge=await createStorageRecoveryReview({client_id:oauthClient,vault:vaultConfig,descriptor,source_receipt_id:beforeJob.closed.receipt_id,fetch:drive,rpc:value=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,value)});
+    const reconciled=await bridge.reconcile(beforeJob.reference);assert.equal(reconciled.status,'resolved');
+    assert.equal((await journal(beforeJob)).state,'conflict','old unknown outcome is retained');
+    const audits=(await db.query('select e.change_summary payload,r.received_payload_hash=clued_private.m1_sha256(e.change_summary) digest_valid from public.clued_audit_receipts r join public.clued_context_events e on e.receipt_id=r.id where r.id=$1',[reconciled.receipt_id])).rows;
+    assert.equal(audits.length,1);assert.equal(audits[0].digest_valid,true);
+    assert.equal(audits[0].payload.credential_version,2);assert.deepEqual(audits[0].payload.recovery_reader,descriptor.recovery_reader);
+    const changed=files.get(afterJob.registered.provider_file_id),attempt=afterJob.descriptor.attempt;
+    files.set(changed.id,{...changed,version:'2',size:attempt.content_after.size,sha256Checksum:attempt.content_after.sha256,headRevisionId:'replacement-reader-after-revision'});
+    const {createStorageCloudRecovery}=await import('data:text/javascript;base64,'+Buffer.from((await build({entryPoints:[path.join(cloud,'worker/storage-cloud-recovery.ts')],bundle:true,platform:'node',format:'esm',write:false})).outputFiles[0].text).toString('base64'));
+    let typedProofChallenged=false;
+    const readerTrace=[],afterDescriptor=await load(afterJob),recovery=await createStorageCloudRecovery({client_id:oauthClient,vault:vaultConfig,fetch:drive,
+     report_diagnostic:async(reference,diagnostic)=>readerTrace.push({reference,diagnostic}),
+     rpc:value=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,value),verified:{descriptor:afterDescriptor,rpc:async value=>{
+      try{
+       if(value.action==='verified_record'&&!typedProofChallenged){
+        typedProofChallenged=true;
+        await assert.rejects(cloudRpc({...value,proof:{...value.proof,unexpected_field:true}}),/storage_verified_mismatch/,'a current read credential never skips the original complete typed proof validator');
+       }
+       const result=await cloudRpc(value);readerTrace.push({action:value.action,result});return result;
+      }catch(error){readerTrace.push({action:value.action,error:error.message});throw error;}
+     }}});
+    const unpinned=await recovery.run(afterJob.reference);assert.equal(unpinned.status,'inspection_required');
+    assert.equal(unpinned.diagnostic.reason,'PREVIOUS_REVISION_UNCONFIRMED','replacement credentials cannot bypass the original revision-retention proof');
+    revisions.get(changed.id).get(attempt.pinned_revision_id).keepForever=true;
+    const settled=await recovery.run(afterJob.reference);assert.equal(settled.status,'committed',JSON.stringify({settled,readerTrace}));
+    assert.equal(typedProofChallenged,true);
+    const afterJournal=await journal(afterJob);assert.equal(afterJournal.state,'committed');assert.deepEqual(afterJournal.verified_result_v2.recovery_reader,afterDescriptor.recovery_reader);
+    assert.equal((await db.query('select state from clued_private.storage_connections_v1 where id=$1',[connection])).rows[0].state,'revoked');
+    assert.deepEqual({posts,writes},beforeEffects);assert.equal((await db.query('select count(*)::int n from clued_private.resource_center_writer_bindings_v1')).rows[0].n,writerCount);
+   });
   });
   await t.test('incomplete candidate scope locks its physical root across Owners without blocking unrelated roots',async()=>{
    const partialRoot='/incomplete-'+id()+'/Clued_资料中心',physicalRoot='incomplete-root-'+id(),partialFile='incomplete-file-'+id();

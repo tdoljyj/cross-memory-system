@@ -108,11 +108,18 @@ export async function createStorageCloudRecovery(config: {
           // Trash and in-place untrash (P5) have no destination: the attempt names the source's folder.
           d.attempt.parent_id !== (d.provider_before.destination_parent_id ??
             (d.mutation.operation === "delete" || d.mutation.operation === "restore" ? d.provider_before.source_parent_id : undefined))) throw denied();
+      const reader = d.recovery_reader;
+      if (reader !== undefined && (!config.verified || !object(reader) || reader.contract !== "clued.storage-recovery-reader/1" ||
+          !uuid.test(String(reader.connection_id)) || reader.credential_version !== d.credential_version ||
+          Object.keys(reader).sort().join(",") !== "auth_generation,connection_id,connection_version,contract,credential_version,policy_generation,policy_id,profile_version,scope_digest" ||
+          !uuid.test(String(reader.policy_id)) || !/^[0-9a-f]{64}$/.test(String(reader.scope_digest)) ||
+          [reader.auth_generation, reader.connection_version, reader.policy_generation, reader.profile_version].some(value => !Number.isSafeInteger(value) || Number(value) < 1))) throw denied();
+      const readContext = object(reader) ? { recovery_reader: reader } : {};
       stage = "credential";
       const credential = async () => {
         check();
         const token: unknown = JSON.parse(await vault.open(d.credential_envelope as StorageCredentialEnvelope, {
-          owner_id: String(d.owner_id), connection_id: pinned.connection_id, provider: "google-drive",
+          owner_id: String(d.owner_id), connection_id: object(reader) ? String(reader.connection_id) : pinned.connection_id, provider: "google-drive",
           provider_subject: String(d.provider_subject), oauth_client_id: config.client_id,
           credential_version: Number(d.credential_version),
         })); check();
@@ -193,7 +200,7 @@ export async function createStorageCloudRecovery(config: {
           }
           stage = "settlement";
           const settled = await bounded(config.verified.rpc({ ...pinned, action: "semantic_settle", intent_id: d.intent_id,
-            base_version: d.version, request_sha256: d.request_sha256, credential_version: d.credential_version,
+            base_version: d.version, request_sha256: d.request_sha256, credential_version: d.credential_version, ...readContext,
             observation: semanticObservation, ...(absenceProof ? { absence_proof: absenceProof } : {}),
             ...(revisionObservation ? { revision_observation: revisionObservation } : {}) }));check();
           if (!["committed", "resolved", "attention_required"].includes(String(settled.status)) ||
@@ -312,7 +319,7 @@ export async function createStorageCloudRecovery(config: {
           request_sha256: d.request_sha256, idempotency_key: `account-job:${pinned.job_id}:finalize`, postcondition: post };
         stage = "verified_record";
         const recorded = await bounded(config.verified.rpc({ ...pinned, action: "verified_record",
-          credential_version: d.credential_version, finish, proof,
+          credential_version: d.credential_version, finish, proof, ...readContext,
           ...(semanticObservation ? { semantic_observation: semanticObservation } : {}) })); check();
         if (recorded.status !== "verified" || recorded.intent_id !== d.intent_id ||
           recorded.version !== d.version || !uuid.test(String(recorded.verified_receipt_id)) ||

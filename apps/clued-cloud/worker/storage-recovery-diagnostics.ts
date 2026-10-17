@@ -122,15 +122,18 @@ export function storageRecoveryListResult(value: unknown, connectionId: string):
   const jobs = raw.jobs.map(job => {
     if (!job || typeof job !== "object" || Array.isArray(job)) throw new Error("storage_recovery_response_invalid");
     const j = job as Data;
-    if (j.connection_id !== connectionId || j.execution_permitted !== false || typeof j.job_id !== "string" || !uuid.test(j.job_id) ||
+    if (typeof j.connection_id !== "string" || !uuid.test(j.connection_id) ||
+        (j.read_connection_id !== undefined ? j.read_connection_id !== connectionId : j.connection_id !== connectionId) ||
+        j.execution_permitted !== false || typeof j.job_id !== "string" || !uuid.test(j.job_id) ||
         typeof j.receipt_id !== "string" || !uuid.test(j.receipt_id) || seen.has(j.job_id) ||
         !["queued", "prepared", "started", "uncertain", "committed", "cancelled", "denied", "attention_required", "conflict", "resolved"].includes(String(j.status)))
       throw new Error("storage_recovery_response_invalid");
     seen.add(j.job_id);
-    if (j.status === "resolved") return storageRecoveryResolutionResult(j, { connection_id: connectionId, job_id: j.job_id });
+    const context = j.read_connection_id !== undefined ? { read_connection_id: connectionId } : {};
+    if (j.status === "resolved") return { ...storageRecoveryResolutionResult(j, { connection_id: j.connection_id, job_id: j.job_id }), ...context };
     const diagnostic = j.diagnostic === null || j.diagnostic === undefined ? undefined : sanitizeRecoveryDiagnostic(j.diagnostic);
     if (j.diagnostic != null && !diagnostic) throw new Error("storage_recovery_response_invalid");
-    return { job_id: j.job_id, connection_id: connectionId, receipt_id: j.receipt_id, status: j.status === "conflict" ? "attention_required" : j.status,
+    return { job_id: j.job_id, connection_id: j.connection_id, ...context, receipt_id: j.receipt_id, status: j.status === "conflict" ? "attention_required" : j.status,
       execution_permitted: false, ...reviewAvailability(j), ...automaticRecovery(j), ...(diagnostic ? { diagnostic } : {}) };
   });
   return { status: "ok", connection_id: connectionId, jobs, execution_permitted: false };

@@ -24,6 +24,8 @@ const storageAutomaticReconcileMigration = '20261016090000_storage_automatic_rec
 const storageRegistrationRecoveryMigration = '20261016133429_storage_registration_recovery_v1.sql';
 const storageSemanticRecoveryMigration = '20261017043050_storage_semantic_recovery_v1.sql';
 const storageRecoveryCoverageMigration = '20261017053535_storage_recovery_coverage_v1.sql';
+const storageRecoveryReaderMigration = '20261017060438_storage_recovery_read_connection_v1.sql';
+const storageRecoveryNativeMigration = '20261017063317_storage_recovery_native_coverage_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -82,7 +84,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -572,6 +574,20 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageRecoveryCoverageMigration), 'utf8'));
       assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
       await assertGatewayCloseoutBoundary(admin);
+    });
+    await t.test('recovery reader installs after its real predecessors without expanding the public caller catalog', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageRecoveryReaderMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_reader_v1(text,uuid,uuid,uuid)','execute') allowed")).rows[0].allowed, false);
+    });
+    await t.test('Native predecessor recovery listing follows the read-connection migration with unchanged caller grants', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageRecoveryNativeMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_native_visible_v1(uuid,uuid,uuid,text)','execute') allowed")).rows[0].allowed, false);
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

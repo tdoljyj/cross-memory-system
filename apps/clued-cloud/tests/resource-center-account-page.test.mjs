@@ -63,7 +63,7 @@ function fixture(confirm = true, automaticJobs = [], options = {}) {
         found=n.props.children.filter(c=>c?.props?.role==="status").map(text).join("");visit(n.props.children);};visit(tree);return found;},
   };
 }
-const connection = { id: "fixture-connection-a", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile", root_name:"Clued_资料中心" };
+const connection = { id: "10000000-0000-4000-8000-000000000001", provider: "google-drive", state: "awaiting_provider", version:1, profile_id:"fixture-profile", root_name:"Clued_资料中心" };
 const fixtureReceipt = "10000000-0000-4000-8000-000000000083", lateReceipt = "10000000-0000-4000-8000-000000000084";
 
 test("directory probe shows progress and safe failure beside its button without a second dispatch",async()=>{
@@ -268,6 +268,40 @@ test('automatic list rejects cross-connection or malformed jobs without starting
     const f=fixture(true,[job]);await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
     assert.equal(f.requests.length,1);assert.match(f.text(),/暂时未能读取恢复进度/);
   }
+});
+
+test('a current connection displays predecessor recovery with its original identities and only polls status',async()=>{
+  const prior='20000000-0000-4000-8000-000000000001';
+  const jobs=[{...autoPending(),connection_id:prior,read_connection_id:connection.id}],f=fixture(true,jobs);
+  await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  assert.match(f.text(),/系统正在自动恢复/);assert.equal(f.requests.length,1);assert.equal(f.confirmations.length,0);
+  jobs[0]={...autoResolved(),connection_id:prior,read_connection_id:connection.id};f.poll();await f.settle();
+  assert.match(f.text(),/已自动恢复使用/);assert.equal(f.requests.length,1);assert.equal(f.confirmations.length,0);
+  assert.ok(f.recoveryLists.every(r=>JSON.parse(r.init.body).connection_id===connection.id));
+});
+
+test('an optional predecessor conflict review uses original CAS identities and is invalidated by a changed current context',async()=>{
+  const prior='20000000-0000-4000-8000-000000000002';
+  const jobs=[{...reviewJob,connection_id:prior,read_connection_id:connection.id}],f=fixture(true,jobs);
+  await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  f.button('查看当前文件并处理冲突').props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:'review_prepare',connection_id:prior,job_id:recoveryJob});
+  f.respond(1,{...observation,connection_id:prior});await f.settle();
+  const old=f.button('保留当前文件并恢复使用');
+  jobs[0]={...jobs[0],read_connection_id:'20000000-0000-4000-8000-000000000003'};
+  f.poll();await f.settle();old.props.onClick();await f.settle();
+  assert.equal(f.requests.length,2);assert.equal(f.text().includes('保留当前文件并恢复使用'),false);
+});
+
+test('a predecessor optional withdrawal preserves the original connection and exact receipt',async()=>{
+  const prior='20000000-0000-4000-8000-000000000004';
+  const f=fixture(true,[{...withdrawalJob,connection_id:prior,read_connection_id:connection.id}]);
+  await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
+  f.button('停止管理旧登记并解除保护').props.onClick();await f.settle();
+  f.button('确认停止管理（不删除文件）').props.onClick();await f.settle();
+  assert.deepEqual(JSON.parse(f.requests[1].init.body),{action:'review_abandon',connection_id:prior,job_id:recoveryJob,
+    base_version:3,source_receipt_id:recoveryReceipt,confirmed:true});
+  assert.equal(f.confirmations.length,0);
 });
 test('a delayed automatic result cannot cross an account change or restart old polling',async()=>{
   const f=fixture(true,[],{deferRecoveryLists:true});await f.settle();f.respond(0,{connections:[{...connection,state:'active'}]});await f.settle();
