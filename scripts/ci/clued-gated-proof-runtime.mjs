@@ -1,7 +1,7 @@
 // Shared read-only bridge. Platform source metadata is independent of job
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES} from './clued-workflow-profile.mjs';
-export const COMPONENT_VERSION = "1.0.0";
+export const COMPONENT_VERSION = "1.0.1";
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
 import fs from 'node:fs';
@@ -19,6 +19,7 @@ const safePath=name=>typeof name==='string' && name.length>0 && name.length<=409
 const SNAPSHOT_FILES=['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
   'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py',
   'config/merge-admission-policy.json'];
+const trustedSourceByteLimit=file=>file===SNAPSHOT_FILES[0]?1048576:524288;
 export function loadProofSnapshot(workspace,tip,workflows) {
   const checkout=execFileSync('git',['rev-parse','HEAD'],{cwd:workspace,encoding:'utf8',maxBuffer:1024}).trim();
   const dirty=execFileSync('git',['status','--porcelain','--untracked-files=no'],{cwd:workspace,encoding:'utf8',maxBuffer:65536});
@@ -26,7 +27,10 @@ export function loadProofSnapshot(workspace,tip,workflows) {
   const files={},texts={};
   for(const file of SNAPSHOT_FILES) {
     const bytes=fs.readFileSync(path.join(workspace,file)),text=bytes.toString('utf8');
-    if(bytes.length>524288 || !Buffer.from(text,'utf8').equals(bytes))throw Error('trusted snapshot file exceeds bounds');
+    // Complete registered workflow sources retain their historical choices.
+    // Only that registry may grow to 1 MiB; every other snapshot input keeps
+    // its 512 KiB limit. Source identity, UTF-8 and checkout checks are unchanged.
+    if(bytes.length>trustedSourceByteLimit(file) || !Buffer.from(text,'utf8').equals(bytes))throw Error('trusted snapshot file exceeds bounds');
     files[file]=workflowBlob(text);texts[file]=text;
   }
   return {tip,checkout,files,profiles:JSON.parse(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),
@@ -240,7 +244,7 @@ export function explicitNonPrWorkflow(text) {
 function decodedWorkflow(content,file,blob) {
   if(content?.type!=='file' || content.path!==file || content.sha!==blob || content.encoding!=='base64' ||
     typeof content.content!=='string' || !/^[A-Za-z0-9+/=\r\n]*$/.test(content.content) ||
-    !Number.isSafeInteger(content.size) || content.size<1 || content.size>524288)return null;
+    !Number.isSafeInteger(content.size) || content.size<1 || content.size>trustedSourceByteLimit(file))return null;
   const bytes=Buffer.from(content.content.replace(/[\r\n]/g,''),'base64'),text=bytes.toString('utf8');
   return bytes.length===content.size && Buffer.from(text,'utf8').equals(bytes) && workflowBlob(text)===blob?text:null;
 }
