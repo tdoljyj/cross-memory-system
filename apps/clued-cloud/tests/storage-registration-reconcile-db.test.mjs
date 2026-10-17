@@ -242,10 +242,16 @@ test('registration reconciliation: actual program authority, independent of the 
    // qualification, never a claim that the original before-state survived.
    f.storage.files.get(f.target.rootId).version='10';f.storage.files.get(f.target.trackId).version='20';
    f.storage.files.get(source.provider_file_id).version='30';
+   // Physical children stay outside this metadata-only registration. Neither
+   // their content nor their separate sharing is adopted or rewritten.
+   const unmanagedChild={id:'unmanaged-'+uuid(),name:'owner-child',parents:[source.provider_file_id],version:'1',
+    trashed:false,mimeType:'text/plain',shared:true};
+   f.storage.files.set(unmanagedChild.id,unmanagedChild);const childBefore=structuredClone(unmanagedChild);
    const load=await currentRpc({...job.reference,action:'registration_current_load'});
    const metadata=createGoogleDriveMetadataApi({registration_details:true,
     get_credential:async()=>({access_token:ctx.access_token,scope:scopeString('full')}),fetch:f.storage.fetch});
    const observations=await createGoogleDriveRegistrationRecovery({metadata}).observe(load.registration_plan);
+   assert.equal(observations.first_observation.target.empty,false);assert.equal(observations.second_observation.target.empty,false);
    const commit={...job.reference,action:'registration_current_commit',base_version:load.base_version,
     source_receipt_id:load.source_receipt_id,registration_authority:load.registration_authority,
     registration_plan:load.registration_plan,...observations};
@@ -261,6 +267,9 @@ test('registration reconciliation: actual program authority, independent of the 
     receiptCount=await scalar('select count(*)::integer v from public.clued_audit_receipts');
    });
    for(const [name,mutate,pattern] of [
+    ['missing child-presence fact',input=>delete input.second_observation.target.empty,/proof_invalid/],
+    ['null child-presence fact',input=>input.second_observation.target.empty=null,/proof_invalid/],
+    ['string child-presence fact',input=>input.second_observation.target.empty='false',/proof_invalid/],
     ['missing permission evidence',input=>delete input.second_observation.target.owner_permission_id,/proof_invalid/],
     ['numeric permission identity',input=>input.second_observation.target.owner_permission_id=123,/proof_invalid/],
     ['numeric provider version',input=>input.second_observation.target.provider_file_version=30,/proof_invalid/],
@@ -343,6 +352,8 @@ test('registration reconciliation: actual program authority, independent of the 
     assert.deepEqual(await currentRpc(commit),result);assert.deepEqual(await currentRpc({...job.reference,action:'registration_current_load'}),result);
     assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),total);
     assert.equal(await scalar('select count(*)::integer v from clued_private.storage_current_registration_results_v1 where intent_id=$1',[original.id]),1);
+    assert.deepEqual(f.storage.files.get(unmanagedChild.id),childBefore);
+    assert.equal(await scalar('select count(*)::int v from clued_private.resource_center_artifacts_v1 where profile_id=$1 and provider_file_id=$2',[f.target.profile,unmanagedChild.id]),0);
     const oldBefore=baseline,newAfter=updated;
     assert.equal(await scalar(`select clued_private.storage_registration_artifact_permitted_v1(
      jsonb_populate_record(null::clued_private.resource_center_artifacts_v1,$1::jsonb),

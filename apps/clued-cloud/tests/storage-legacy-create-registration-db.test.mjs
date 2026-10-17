@@ -246,16 +246,39 @@ test('legacy create: current registration, original unresolved history and no re
     const f=await make();assert.equal((await f.recover(true)).status,'committed');
     assert.equal(await scalar('select count(*)::int v from clued_private.storage_current_registration_results_v1 where intent_id=$1',[f.original.id]),0);
    });
-   for(const fault of ['missing_intent_tag','wrong_request_tag','wrong_content','wrong_parent','external_name_slot','shared','nonempty_directory'])await t.test(fault+' never registers or resolves the original isolation',async()=>{
-    const f=await make(fault==='nonempty_directory'?'directory':'file');
+   for(const fault of ['missing_intent_tag','wrong_request_tag','wrong_content','wrong_parent','external_name_slot','shared'])await t.test(fault+' never registers or resolves the original isolation',async()=>{
+    const f=await make('file');
     if(fault==='missing_intent_tag')delete f.file.appProperties.clued_intent_id;
     if(fault==='wrong_request_tag')f.file.appProperties.clued_request_sha256='f'.repeat(64);
     if(fault==='wrong_content')f.file.sha256Checksum='f'.repeat(64);
     if(fault==='wrong_parent')f.file.parents=[f.target.rootId];
     if(fault==='external_name_slot')f.storage.files.set('external-'+uuid(),{...f.file,id:'external-object',appProperties:{}});
     if(fault==='shared')f.file.shared=true;
-    if(fault==='nonempty_directory')f.storage.files.set('unmanaged-child',{id:'unmanaged-child',name:'owner-file',parents:[f.file.id],version:'1',trashed:false,mimeType:'text/plain'});
     assert.notEqual((await f.recover()).status,'resolved');await untouched(f);
+   });
+   for(const trashed of [false,true])await t.test('real legacy NULL nonempty directory registers only itself; '+(trashed?'trashed':'active')+' child remains unmanaged',async()=>{
+    const f=await make('directory',{legacy:true}),child={id:'unmanaged-'+uuid(),name:'owner-file',parents:[f.file.id],version:'1',trashed,mimeType:'text/plain'};
+    f.storage.files.set(child.id,child);const before=structuredClone(child);
+    assert.equal(await f.snapshot(),null);
+    const result=await f.recover();assert.equal(result.status,'resolved',JSON.stringify(result));
+    assert.equal(result.resolution,'automatically_registered_current_state');assert.equal(await f.snapshot(),null);
+    const row=await ctx.journal(f.job);assert.equal(row.state,'conflict');assert.equal(row.verified_result_v2,null);
+    assert.deepEqual(row.provider_attempt,f.original.provider_attempt);assert.equal(row.receipt_id,f.closed.receipt_id);
+    await assertRegistrationReceipt(f,result);
+    const saved=await scalar('select observations v from clued_private.storage_current_registration_results_v1 where intent_id=$1',[f.original.id]);
+    assert.equal(saved.first_observation.target.empty,false);assert.equal(saved.second_observation.target.empty,false);
+    assert.equal(await scalar('select count(*)::int v from clued_private.resource_center_artifacts_v1 where profile_id=$1 and provider_file_id=$2',[f.target.profile,child.id]),0);
+    assert.deepEqual(f.storage.files.get(child.id),before);
+    assert.ok(f.oldProofErrors.length>0&&f.oldProofErrors.every(x=>/^storage_[a-z0-9_]+$/.test(x)));
+    assert.ok(f.requests.every(x=>x.method==='GET'));assert.equal(f.storage.patches,0);assert.equal(f.storage.deletes,0);
+   });
+   for(const invalid of [null,'false',undefined])await t.test('SQL rejects nonboolean or absent current child-presence fact '+String(invalid),async()=>{
+    const f=await make('directory'),d=await f.load(),o=await f.observe(d);
+    for(const point of ['first_observation','second_observation']){
+     const bad=structuredClone(o);
+     if(invalid===undefined)delete bad[point].target.empty;else bad[point].target.empty=invalid;
+     await assert.rejects(f.commit(d,bad),/storage_current_registration_proof_invalid/);await untouched(f);
+    }
    });
    await t.test('the independent base-create switch denies adoption while modify alone remains enabled',async()=>{
     const f=await make();

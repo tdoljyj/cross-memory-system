@@ -30,6 +30,7 @@ const storageLegacyDirectoryMigration = '20261017074657_storage_legacy_directory
 const storageCurrentRegistrationMigration = '20261017102500_storage_registration_reconcile_v1.sql';
 const imprintBulkMigration = '20261017121706_imprint_bulk_backfill_v1.sql';
 const storageLegacyCreateMigration = '20261017131000_storage_legacy_create_adoption_v1.sql';
+const storageDirectoryCurrentRegistrationMigration = '20261017160500_storage_directory_current_registration_v2.sql';
 const imprintClassifierScanMigration = '20261017142000_imprint_classifier_scan_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
@@ -90,7 +91,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && name !== imprintClassifierScanMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && name !== storageDirectoryCurrentRegistrationMigration && name !== imprintClassifierScanMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -691,6 +692,21 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
         for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
           assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false);
       }
+    });
+    await t.test('nonempty directory registration follows both deferred helpers and preserves every caller and private function catalog', async () => {
+      const beforeCallers = await snapshotAuthorizationCallerBoundary(admin);
+      const privateCatalog = async () => (await admin.query(`select oid::text,proname,prosrc,
+        pg_get_userbyid(proowner) owner,prosecdef,provolatile,proparallel,proconfig,proacl::text
+        from pg_proc where pronamespace='clued_private'::regnamespace order by oid`)).rows;
+      const before = await privateCatalog();
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageDirectoryCurrentRegistrationMigration), 'utf8'));
+      const expected = before.map(row => ['storage_current_registration_observation_v1', 'storage_legacy_create_registration_observation_v1'].includes(row.proname)
+        ? { ...row, prosrc: row.prosrc.replace("p_observation->'target'->'empty' is distinct from 'true'::jsonb",
+          "jsonb_typeof(p_observation->'target'->'empty') is distinct from 'boolean'") } : row);
+      assert.equal(expected.filter((row, index) => row.prosrc !== before[index].prosrc).length, 2);
+      assert.deepEqual(await privateCatalog(), expected, 'only the two current directory child-presence predicates change');
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), beforeCallers);
+      await assertGatewayCloseoutBoundary(admin);
     });
     await t.test('classifier successor follows deferred bulk without changing function identity or caller privileges', async () => {
       const beforeCallers = await snapshotAuthorizationCallerBoundary(admin);
