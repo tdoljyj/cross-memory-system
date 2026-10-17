@@ -18,11 +18,50 @@ const safePath=name=>typeof name==='string' && name.length>0 && name.length<=409
   !/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(name) && !name.startsWith('/') &&
   !name.split('/').some(part=>!part || part==='.' || part==='..');
 
+const PUBLISHER_SNAPSHOT_FILES=Object.freeze({
+  publisherRegistry:PUBLISHER_SOURCE_PATH,publisherCompiler:'scripts/ci/clued-production-publisher-source.mjs',
+  qualificationRegistry:PUBLISHER_PR_QUALIFICATION_PATH,qualificationCompiler:'scripts/ci/clued-publisher-qualification-source.mjs',
+});
 const SNAPSHOT_FILES=['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
   'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py',
-  'config/merge-admission-policy.json',PUBLISHER_SOURCE_PATH,'scripts/ci/clued-production-publisher-source.mjs',
-  PUBLISHER_PR_QUALIFICATION_PATH,'scripts/ci/clued-publisher-qualification-source.mjs'];
+  'config/merge-admission-policy.json',...Object.values(PUBLISHER_SNAPSHOT_FILES)];
 const trustedSourceByteLimit=file=>file===SNAPSHOT_FILES[0]?1048576:524288;
+export const PUBLISHER_SNAPSHOT_QUERY=`query CluedPublisherSnapshot($owner:String!,$name:String!,$publisherRegistry:String!,$publisherCompiler:String!,$qualificationRegistry:String!,$qualificationCompiler:String!) {
+  repository(owner:$owner,name:$name) { nameWithOwner
+    publisherRegistry:object(expression:$publisherRegistry) { ...CluedPublisherBlob }
+    publisherCompiler:object(expression:$publisherCompiler) { ...CluedPublisherBlob }
+    qualificationRegistry:object(expression:$qualificationRegistry) { ...CluedPublisherBlob }
+    qualificationCompiler:object(expression:$qualificationCompiler) { ...CluedPublisherBlob }
+  }
+}
+fragment CluedPublisherBlob on Blob { __typename oid byteSize text isBinary isTruncated }`;
+
+// Fetch the same four immutable path/commit identities together. Each initial
+// and final barrier still reads fresh bytes and validates every Blob, keeping
+// the original 160-callback and 90-second whole-observation limits unchanged.
+export async function readPublisherSourceSnapshot({graphRead,repository,tip,files}) {
+  if(typeof graphRead!=='function'||!REPO.test(repository??'')||!SHA.test(tip??''))return null;
+  const [owner,name]=repository.split('/');
+  try {
+    const result=await graphRead(PUBLISHER_SNAPSHOT_QUERY,{owner,name,
+      ...Object.fromEntries(Object.entries(PUBLISHER_SNAPSHOT_FILES).map(([alias,file])=>[alias,`${tip}:${file}`]))});
+    if(result?.errors!==undefined&&(!Array.isArray(result.errors)||result.errors.length))return null;
+    const repo=result?.data?.repository;if(repo?.nameWithOwner!==repository)return null;
+    const texts={};
+    for(const [alias,file] of Object.entries(PUBLISHER_SNAPSHOT_FILES)) {
+      const node=repo[alias],limit=trustedSourceByteLimit(file);
+      if(node?.__typename!=='Blob'||node.isBinary!==false||node.isTruncated!==false||
+        !SHA.test(files?.[file]??'')||node.oid!==files[file]||!Number.isSafeInteger(node.byteSize)||
+        node.byteSize<1||node.byteSize>limit||typeof node.text!=='string'||node.text.length>limit)return null;
+      const bytes=Buffer.from(node.text,'utf8');
+      if(bytes.length!==node.byteSize||bytes.toString('utf8')!==node.text)return null;
+      const text=decodedWorkflow({type:'file',path:file,sha:node.oid,size:node.byteSize,
+        encoding:'base64',content:bytes.toString('base64')},file,files[file]);
+      if(text===null)return null;texts[file]=text;
+    }
+    return texts;
+  } catch {return null;}
+}
 export function loadProofSnapshot(workspace,tip,workflows) {
   const checkout=execFileSync('git',['rev-parse','HEAD'],{cwd:workspace,encoding:'utf8',maxBuffer:1024}).trim();
   const dirty=execFileSync('git',['status','--porcelain','--untracked-files=no'],{cwd:workspace,encoding:'utf8',maxBuffer:65536});
@@ -109,14 +148,20 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
     const tipRoute=`/repos/${repository}/branches/${encodeURIComponent(diff.descriptor.default_branch)}`;
     const snapshotCurrent=async()=>{
       if((await read(tipRoute))?.commit?.sha!==snapshot.tip)return false;
+      const publisherTexts=await readPublisherSourceSnapshot({graphRead,repository,tip:snapshot.tip,files:snapshot.files});
+      if(!publisherTexts)return false;
       for(const file of SNAPSHOT_FILES) {
+        if(Object.hasOwn(publisherTexts,file)) {
+          const text=publisherTexts[file];
+          if(file===PUBLISHER_SOURCE_PATH&&JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.publisherSources))return false;
+          if(file===PUBLISHER_PR_QUALIFICATION_PATH&&JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.qualificationSources))return false;
+          continue;
+        }
         const content=await read(`/repos/${repository}/contents/${file}?ref=${snapshot.tip}`);
         const text=decodedWorkflow(content,file,snapshot.files[file]);
         if(text===null)return false;
         if(file===SNAPSHOT_FILES[0] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.profiles))return false;
         if(file===SNAPSHOT_FILES[1] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.roleSpecs))return false;
-        if(file===PUBLISHER_SOURCE_PATH && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.publisherSources))return false;
-        if(file===PUBLISHER_PR_QUALIFICATION_PATH && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.qualificationSources))return false;
       }
       return true;
     };

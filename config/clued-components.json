@@ -211,7 +211,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "a4a775590b386fc1ad2e20468599f3aabef9c50207096b3bffc43f60dbd506f0",
+      "content_sha256": "cc752a42ef1bb139ea0c76da969c5dc646c7b0f73ed0b38e4fac910aa81227e4",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"

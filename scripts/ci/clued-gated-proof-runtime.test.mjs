@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange,
   explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution,githubAttemptLogReader,
-  loadProofSnapshot} from './clued-gated-proof-runtime.mjs';
+  loadProofSnapshot,readPublisherSourceSnapshot,PUBLISHER_SNAPSHOT_QUERY} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +30,15 @@ const qualificationPath='scripts/ci/clued-publisher-qualification-sources.json';
 const emptyQualificationSources={schema:'clued.publisher-pr-qualification-sources/1',repository,default_branch:'main',workflows:{},roles:{}};
 const publisherFixtureTexts={[publisherPath]:JSON.stringify(emptyPublisherSources),'scripts/ci/clued-production-publisher-source.mjs':'trusted publisher compiler',
   [qualificationPath]:JSON.stringify(emptyQualificationSources),'scripts/ci/clued-publisher-qualification-source.mjs':'trusted PR qualification compiler'};
+const publisherFixtureAliases={publisherRegistry:publisherPath,publisherCompiler:'scripts/ci/clued-production-publisher-source.mjs',
+  qualificationRegistry:qualificationPath,qualificationCompiler:'scripts/ci/clued-publisher-qualification-source.mjs'};
+function publisherGraphFixture(query,variables,tip,texts=publisherFixtureTexts) {
+  assert.equal(query,PUBLISHER_SNAPSHOT_QUERY);
+  assert.deepEqual(variables,{owner:'o',name:'r',
+    ...Object.fromEntries(Object.entries(publisherFixtureAliases).map(([alias,file])=>[alias,`${tip}:${file}`]))});
+  return {data:{repository:{nameWithOwner:repository,...Object.fromEntries(Object.entries(publisherFixtureAliases).map(([alias,file])=>[alias,
+    {__typename:'Blob',oid:workflowBlob(texts[file]),byteSize:Buffer.byteLength(texts[file]),text:texts[file],isBinary:false,isTruncated:false}]))}}};
+}
 const snapshotFixtureFiles={
   [snapshotProfile]:JSON.stringify({schema:'clued.gated-proof-profiles/2',workflows:{}}),
   'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify({schema:'clued.gated-proof-role-specs/2',workflows:{}}),
@@ -53,6 +62,67 @@ function withSnapshotFixture(overrides,check) {
   } finally {fs.rmSync(workspace,{recursive:true,force:true});}
 }
 const paddedSnapshot=(file,bytes)=>snapshotFixtureFiles[file]+' '.repeat(bytes-Buffer.byteLength(snapshotFixtureFiles[file]));
+
+test('publisher snapshot batches only four fixed immutable identities and verifies all original UTF-8 bytes',async()=>{
+  const tip='c'.repeat(40),texts={...publisherFixtureTexts,[publisherFixtureAliases.publisherCompiler]:'compiler: 中文\r\n'};
+  const files=Object.fromEntries(Object.entries(texts).map(([file,text])=>[file,workflowBlob(text)]));
+  const calls=[];
+  const graphRead=async(query,variables)=>{calls.push({query,variables});return publisherGraphFixture(query,variables,tip,texts);};
+  for(let n=0;n<2;n++)assert.deepEqual(await readPublisherSourceSnapshot({graphRead,repository,tip,files}),texts);
+  assert.equal(calls.length,2,'a new invocation always fetches all four bytes afresh');
+  assert.deepEqual(calls[0],calls[1]);
+});
+
+test('publisher snapshot rejects every partial, binary, truncated, malformed or differently bound Blob',async()=>{
+  const tip='c'.repeat(40),files=Object.fromEntries(Object.entries(publisherFixtureTexts).map(([file,text])=>[file,workflowBlob(text)]));
+  const response=()=>publisherGraphFixture(PUBLISHER_SNAPSHOT_QUERY,{owner:'o',name:'r',
+    ...Object.fromEntries(Object.entries(publisherFixtureAliases).map(([alias,file])=>[alias,`${tip}:${file}`]))},tip);
+  const call=graphRead=>readPublisherSourceSnapshot({graphRead,repository,tip,files});
+  for(const alias of Object.keys(publisherFixtureAliases))for(const change of [
+    node=>node.__typename='Tree',node=>node.oid='f'.repeat(40),node=>node.byteSize++,node=>node.byteSize=0,
+    node=>node.byteSize=1.5,node=>node.byteSize=Number.MAX_SAFE_INTEGER+1,node=>node.byteSize=524289,
+    node=>node.isBinary=true,node=>node.isBinary=null,node=>node.isTruncated=true,node=>delete node.isTruncated,
+    node=>node.text=null,node=>node.text='x'.repeat(node.byteSize),node=>node.text+='\ud800']){
+    const body=response();change(body.data.repository[alias]);
+    assert.equal(await call(async()=>body),null,alias+': exact independently pinned bytes are required');
+  }
+  for(const change of [b=>b.errors=[{message:'provider unavailable'}],b=>b.errors={},b=>delete b.data,
+    b=>b.data.repository=null,b=>b.data.repository.nameWithOwner='other/r',
+    ...Object.keys(publisherFixtureAliases).map(alias=>b=>delete b.data.repository[alias])]){
+    const body=response();change(body);assert.equal(await call(async()=>body),null);
+  }
+  assert.equal(await call(async()=>{throw Error('provider unavailable');}),null);
+  let calls=0;const graphRead=async()=>{calls++;return response();};
+  for(const extra of [{repository:'https://outside.invalid/r'},{tip:'main'},{tip:'A'.repeat(40)}])
+    assert.equal(await readPublisherSourceSnapshot({graphRead,repository,tip,files,...extra}),null);
+  assert.equal(calls,0,'invalid selectors cannot cause a provider call');
+});
+
+test('publisher snapshot preserves the 512 KiB per-source bound with no REST fallback',async()=>{
+  const tip='c'.repeat(40),file=publisherFixtureAliases.publisherCompiler;
+  for(const size of [524288,524289]){
+    const texts={...publisherFixtureTexts,[file]:'a'.repeat(size)};
+    const files=Object.fromEntries(Object.entries(texts).map(([name,text])=>[name,workflowBlob(text)]));
+    const out=await readPublisherSourceSnapshot({repository,tip,files,
+      graphRead:async(query,variables)=>publisherGraphFixture(query,variables,tip,texts)});
+    assert.equal(out!==null,size===524288);
+  }
+});
+
+test('whole execution refuses catalogue assertion and every initial or final publisher source drift',async()=>{
+  for(const phase of [1,2])for(const alias of Object.keys(publisherFixtureAliases)){
+    const world=executionWorld(),original=world.graphRead;let calls=0;
+    world.graphRead=async(query,variables)=>{
+      const body=await original(query,variables);
+      if(query===PUBLISHER_SNAPSHOT_QUERY&&++calls===phase)body.data.repository[alias].text+='\n';
+      return body;
+    };
+    const result=await qualifyPrExecution(world);
+    assert.equal(result.state,'unknown');assert.equal(calls,phase,`fresh ${alias} barrier ${phase} was actually reached`);
+  }
+  const mismatch=executionWorld();mismatch.snapshot.qualificationSources={...emptyQualificationSources,schema:'caller assertion'};
+  assert.equal((await qualifyPrExecution(mismatch)).state,'unknown');
+});
 
 test('exact registered dispatch publisher remains outside the PR test catalogue; unknown bytes or registry stay refused',async()=>{
   const registry=JSON.parse(fs.readFileSync(new URL('./clued-production-publisher-sources.json',import.meta.url),'utf8'));
@@ -159,7 +229,8 @@ function executionWorld({conclusion='success',moveTip=false,moveSource=false,cha
     if(route.endsWith('/actions/runs/7'))return native;
     throw Error('unexpected read');
   };
-  const graphRead=async()=>{
+  const graphRead=async(query,variables)=>{
+    if(query===PUBLISHER_SNAPSHOT_QUERY)return publisherGraphFixture(query,variables,tip);
     const p=payload();graphs++;if(graphs>1)late=true;
     p.data.node.file.repositoryFileUrl=`https://github.com/${repository}/blob/${graphs>1&&moveSource?base:sourceSha}/${file}`;return p;
   };
@@ -191,6 +262,9 @@ test('authenticated snapshot revalidation applies the same exact-path profile ca
     const original=await read(route),source=Buffer.from(original.content,'base64').toString('utf8');
     const text=source+' '.repeat(bytes-Buffer.byteLength(source)),blob=workflowBlob(text);
     world.snapshot.files[file]=blob;
+    const graphRead=world.graphRead;
+    world.graphRead=async(query,variables)=>query===PUBLISHER_SNAPSHOT_QUERY?
+      publisherGraphFixture(query,variables,world.snapshot.tip,{...publisherFixtureTexts,[file]:text}):graphRead(query,variables);
     world.read=async route=>route.includes(`/contents/${file}?`)?{
       ...original,sha:blob,size:bytes,content:Buffer.from(text).toString('base64'),
     }:read(route);
@@ -446,7 +520,9 @@ function futureExecutionWorld({trustedFuture=true,acceptance='accepted',critical
     if(route.endsWith('/actions/runs/7'))return native;
     return baseRead(route);
   };
-  w.graphRead=async(query,{node})=>{
+  w.graphRead=async(query,variables)=>{
+    if(query===PUBLISHER_SNAPSHOT_QUERY)return publisherGraphFixture(query,variables,w.snapshot.tip);
+    const {node}=variables;
     if(node!=='WFR_future')return payload();
     return {data:{node:{databaseId:17,runAttempt:2,event:'pull_request',file:{path:entry.file,repositoryName:repository,
       repositoryFileUrl:`https://github.com/${repository}/blob/${head}/${entry.file}`,run:{databaseId:17,runAttempt:2}}}}};
@@ -554,7 +630,7 @@ function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) 
     content:Buffer.from(text).toString('base64')});
   const pr={number:5,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
     base:{sha:base,ref:'main',repo:{full_name:repository,default_branch:'main'}},changed_files:changedFiles.length,commits:1};
-  let reads=0,graphs=0,logs=0,branches=0;const sourceContentReads=new Map();
+  let reads=0,graphs=0,publisherGraphs=0,logs=0,branches=0;const sourceContentReads=new Map();
   const read=async route=>{
     reads++;
     if(route.endsWith('/pulls/5'))return pr;
@@ -574,7 +650,9 @@ function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) 
     if(route.includes('/attempts/'))return {total_count:jobs.get(id).length,jobs:jobs.get(id)};
     return runs.find(native=>native.id===id);
   };
-  const graphRead=async(query,{node})=>{
+  const graphRead=async(query,variables)=>{
+    if(query===PUBLISHER_SNAPSHOT_QUERY){publisherGraphs++;return publisherGraphFixture(query,variables,tip);}
+    const {node}=variables;
     graphs++;const native=runs.find(value=>value.node_id===node);
     return {data:{node:{databaseId:native.id,runAttempt:2,event:'pull_request',file:{path:native.path,repositoryName:repository,
       repositoryFileUrl:`https://github.com/${repository}/blob/${head}/${native.path}`,run:{databaseId:native.id,runAttempt:2}}}}};
@@ -586,7 +664,7 @@ function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) 
     else text=`[command]/usr/bin/git checkout --progress --force refs/remotes/pull/5/merge\n[command]/usr/bin/git log -1 --format=%H\n${merge}`;
     return {complete:true,text,job_id:job.id,run_id:native.id,run_attempt:2};
   };
-  return {repository,head,prNumber:5,snapshot,read,graphRead,readLog,sourceContentReads,counts:()=>({reads,graphs,logs,total:reads+graphs+logs})};
+  return {repository,head,prNumber:5,snapshot,read,graphRead,readLog,sourceContentReads,counts:()=>({reads,graphs,publisherGraphs,logs,total:reads+graphs+publisherGraphs+logs})};
 }
 
 test('inactive External2 arrays preserve predecessor-only worlds; malformed or mixed enrollment still refuses',()=>{
@@ -648,6 +726,7 @@ test('all seven future consumers and five existing workflows fit the unchanged r
   assert.equal(proof.passed,true,JSON.stringify({proof,counts:w.counts()}));
   assert.equal(proof.observation_context.workflow_files.length,12);
   assert.equal(w.counts().logs,12);assert.equal(w.counts().graphs,24,'platform Source identity is re-read for every final run');
+  assert.equal(w.counts().publisherGraphs,2,'publisher bytes are fetched freshly at both barriers');
   assert.ok(w.counts().total<=160);
   t.diagnostic(JSON.stringify({guarded_reads:w.counts(),applicable_workflows:12,empty_memberships:12}));
   const gateReads=[...w.sourceContentReads].filter(([route])=>route.endsWith('/contents/scripts/ci/clued-work-admission.mjs?ref='+'d'.repeat(40)));
