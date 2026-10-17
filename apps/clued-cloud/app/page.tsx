@@ -481,15 +481,22 @@ export default function Home() {
     const selection = projectSelectionToken;
     const current = () => !cancelled && !controller.signal.aborted && projectReadGeneration.current === readGeneration
       && projectActor.current.epoch === epoch && projectActor.current.subject === subject && projectActor.current.token === token;
-    void runNativeRead("projects.list", async ({ signal }) => {
+    void runNativeRead("projects.list", async ({ signal, traceId, observe }) => {
       const response = await fetch("/v1/projects", {
-        headers: { authorization: `Bearer ${token}` }, cache: "no-store", signal,
+        headers: { authorization: `Bearer ${token}`, ...(traceId ? { "x-kooyumi-read-trace": traceId } : {}) }, cache: "no-store", signal,
       });
+      let responseTraceMatched: boolean | undefined;
+      try {
+        if (traceId) responseTraceMatched = response.headers.get("x-kooyumi-read-trace") === traceId;
+      } catch { /* Echo inspection is diagnostic only, never a read precondition. */ }
+      observe("response_headers", response.status, responseTraceMatched);
       const result = await readNativeJson(response) as { projects?: Project[] } | null;
+      observe("json_decoded", response.status);
       if (!result || !Array.isArray(result.projects) || !result.projects.every(project => project
         && typeof project.id === "string" && typeof project.name === "string")) {
         throw new NativeReadFailure({ category: "payload", phase: "payload", status: response.status, type: "PayloadError" });
       }
+      observe("payload_validated", response.status);
       return result.projects;
     }, { isCurrent: current, signal: controller.signal })
       .then(rows => {

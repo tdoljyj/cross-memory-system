@@ -3,11 +3,13 @@ export type NativeReadOperation = "projects.list" | "imprints.read" | "imprints.
 export type NativeReadCategory = "transport" | "http" | "payload" | "semantic" | "cancelled" | "stale";
 export type NativeReadPhase = "request" | "transport" | "body" | "http" | "payload" | "semantic" | "guard";
 export type NativeReadFailureType = "TypeError" | "AbortError" | "HttpError" | "PayloadError" | "SemanticError" | "Unknown";
+export type NativeReadMilestone = "response_headers" | "json_decoded" | "payload_validated";
 
 const OPERATIONS = new Set<string>(["projects.list", "imprints.read", "imprints.source"]);
 const CATEGORIES = new Set<string>(["transport", "http", "payload", "semantic", "cancelled", "stale"]);
 const PHASES = new Set<string>(["request", "transport", "body", "http", "payload", "semantic", "guard"]);
 const TYPES = new Set<string>(["TypeError", "AbortError", "HttpError", "PayloadError", "SemanticError", "Unknown"]);
+const MILESTONES = new Set<string>(["response_headers", "json_decoded", "payload_validated"]);
 const RETRY_DELAYS = [250, 750] as const;
 let nextReadId = 0;
 
@@ -46,20 +48,24 @@ export class NativeReadFailure extends Error {
 export interface NativeReadDiagnostic {
   /** Correlation only within this module's lifetime; never persisted. */
   readId: number;
+  /** Anonymous, cryptorandom and unique to one projects.list attempt; never persisted. */
+  traceId: string | null;
   startedAt: number;
   operation: NativeReadOperation | "invalid-operation";
   attempt: number;
   timestamp: number;
   elapsed: number;
   status: number | null;
-  type: NativeReadFailureType | "Success" | "Start" | "Lifecycle";
-  phase: NativeReadPhase | "complete" | "backoff";
+  type: NativeReadFailureType | "Success" | "Start" | "Lifecycle" | "Milestone";
+  phase: NativeReadPhase | "complete" | "backoff" | NativeReadMilestone;
   category: NativeReadCategory | null;
-  outcome: "start" | "retry" | "failed" | "success" | "lifecycle";
+  outcome: "start" | "retry" | "failed" | "success" | "lifecycle" | "milestone";
   callerAbort: boolean;
   stale: boolean;
   lifecycle?: NativeReadLifecycle;
   visibility?: NativeReadVisibility;
+  /** Only an equality result is retained; never the received header. */
+  responseTraceMatched?: boolean | null;
 }
 
 export interface NativeReadOptions {
@@ -72,8 +78,21 @@ export interface NativeReadOptions {
 
 export interface NativeReadAttempt {
   attempt: number;
+  traceId: string | null;
+  /** Fixed safe milestones only. Observation cannot affect the read result. */
+  observe: (stage: NativeReadMilestone, status?: number, responseTraceMatched?: boolean) => void;
   /** Also aborts when isCurrent becomes false while the request is pending. */
   signal: AbortSignal;
+}
+
+function newTraceId(operation: NativeReadOperation | "invalid-operation"): string | null {
+  if (operation !== "projects.list") return null;
+  try {
+    // No weak fallback, identity, storage or reusable logical-read key.
+    const value = crypto.randomUUID();
+    return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+      ? value : null;
+  } catch { return null; }
 }
 
 function errorType(error: unknown): NativeReadFailureType {
@@ -193,19 +212,23 @@ export async function runNativeRead<T>(
   const readId = ++nextReadId;
   const controller = new AbortController();
   const label = OPERATIONS.has(operation) ? operation : "invalid-operation";
-  function emit(attempt: number, failure: NativeReadFailure | null, outcome: NativeReadDiagnostic["outcome"],
-    observation?: LifecycleObservation, pendingPhase: "request" | "backoff" = "request") {
-    const timestamp = Date.now();
-    const event: NativeReadDiagnostic = {
-      readId, startedAt: started, operation: label, attempt, timestamp, elapsed: Math.max(0, timestamp - started),
-      status: failure?.status ?? null,
-      type: failure?.type ?? (outcome === "start" ? "Start" : outcome === "lifecycle" ? "Lifecycle" : "Success"),
-      phase: failure?.phase ?? (outcome === "start" || outcome === "lifecycle" ? pendingPhase : "complete"),
-      category: failure?.category ?? null, outcome, callerAbort: options.signal?.aborted === true,
-      stale: failure?.category === "stale",
-      ...(observation ? { lifecycle: observation.lifecycle, visibility: observation.visibility } : {}),
-    };
+  function emit(attempt: number, traceId: string | null, failure: NativeReadFailure | null, outcome: NativeReadDiagnostic["outcome"],
+    observation?: LifecycleObservation, pendingPhase: "request" | "backoff" = "request",
+    milestone?: { stage: NativeReadMilestone; status?: number; responseTraceMatched?: boolean }) {
     try {
+      const timestamp = Date.now();
+      const event: NativeReadDiagnostic = {
+        readId, traceId, startedAt: started, operation: label, attempt, timestamp, elapsed: Math.max(0, timestamp - started),
+        status: failure?.status ?? (Number.isInteger(milestone?.status) && (milestone?.status as number) >= 0
+          && (milestone?.status as number) <= 599 ? milestone?.status as number : null),
+        type: failure?.type ?? (outcome === "start" ? "Start" : outcome === "lifecycle" ? "Lifecycle" : outcome === "milestone" ? "Milestone" : "Success"),
+        phase: failure?.phase ?? milestone?.stage ?? (outcome === "start" || outcome === "lifecycle" ? pendingPhase : "complete"),
+        category: failure?.category ?? null, outcome, callerAbort: options.signal?.aborted === true,
+        stale: failure?.category === "stale",
+        ...(observation ? { lifecycle: observation.lifecycle, visibility: observation.visibility } : {}),
+        ...(milestone?.stage === "response_headers" ? { responseTraceMatched:
+          typeof milestone.responseTraceMatched === "boolean" ? milestone.responseTraceMatched : null } : {}),
+      };
       if (options.diagnostic) options.diagnostic(event);
       else console.info(JSON.stringify(event));
     } catch {
@@ -214,28 +237,36 @@ export async function runNativeRead<T>(
   }
   if (label === "invalid-operation") {
     const failure = new NativeReadFailure({ category: "semantic", phase: "guard", type: "SemanticError" });
-    emit(0, failure, "failed");
+    emit(0, null, failure, "failed");
     throw failure;
   }
   for (let attempt = 1; attempt <= 3; attempt++) {
+    let traceId: string | null = null;
+    let pending = true;
     try {
       const value = await guarded(() => {
-        emit(attempt, null, "start");
-        return read({ attempt, signal: controller.signal });
-      }, options, controller, observation => emit(attempt, null, "lifecycle", observation));
-      emit(attempt, null, "success");
+        traceId = newTraceId(label);
+        emit(attempt, traceId, null, "start");
+        return read({ attempt, traceId, signal: controller.signal, observe(stage, status, responseTraceMatched) {
+          if (label !== "projects.list" || !pending || controller.signal.aborted || !MILESTONES.has(stage)) return;
+          emit(attempt, traceId, null, "milestone", undefined, "request", { stage, status, responseTraceMatched });
+        } });
+      }, options, controller, observation => emit(attempt, traceId, null, "lifecycle", observation));
+      pending = false;
+      emit(attempt, traceId, null, "success");
       return value;
     } catch (error) {
+      pending = false;
       const failure = inactivity(options) ?? normalizedFailure(error);
       const retry = failure.category === "transport" && (failure.status === 0 || failure.status === null) && attempt < 3;
-      emit(attempt, failure, retry ? "retry" : "failed");
+      emit(attempt, traceId, failure, retry ? "retry" : "failed");
       if (!retry) throw failure;
       try {
         await guarded(() => delay(RETRY_DELAYS[attempt - 1], controller.signal), options, controller,
-          observation => emit(attempt, null, "lifecycle", observation, "backoff"));
+          observation => emit(attempt, traceId, null, "lifecycle", observation, "backoff"));
       } catch (error) {
         const stopped = inactivity(options) ?? normalizedFailure(error);
-        emit(attempt, stopped, "failed");
+        emit(attempt, traceId, stopped, "failed");
         throw stopped;
       }
     }

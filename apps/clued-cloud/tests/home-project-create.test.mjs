@@ -33,15 +33,18 @@ const compiled = ts.transpileModule([handler, updateHandler, clearHandler, obser
   compilerOptions: { target: ts.ScriptTarget.ES2020 },
 }).outputText;
 // Standard host globals and the real read helper are injected into this AST fixture.
-const recoveryExports = {};
-vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../app/native-read-recovery.ts', import.meta.url), 'utf8'), {
+const recoveryCompiled = ts.transpileModule(readFileSync(new URL('../app/native-read-recovery.ts', import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-}).outputText, { exports: recoveryExports, AbortController, setInterval, clearInterval, setTimeout, clearTimeout, Date,
-  console: { info() {} } });
+}).outputText;
 const project = { id: '11111111-1111-4111-8111-111111111111', name: 'Test project', progress_status: 'not_started', version: 1 };
-function fixture({ response = { status: 'committed', supplemental: { project } }, status = 200, fail = false, session = { user: { id: 'fixture-subject-A' }, access_token: 'fixture-human' }, name = '  Test project  ' } = {}) {
+function fixture({ response = { status: 'committed', supplemental: { project } }, status = 200, fail = false, session = { user: { id: 'fixture-subject-A' }, access_token: 'fixture-human' }, name = '  Test project  ', traceCrypto } = {}) {
   const state = { projects: [{ id: 'existing', name: 'Existing' }], name, busy: false, error: false, recordTitle: 'Draft', recordContent: 'Body' };
   const calls = [];
+  const readEvents = [], recoveryExports = {};
+  let traceCount = 0;
+  vm.runInNewContext(recoveryCompiled, { exports: recoveryExports, AbortController, setInterval, clearInterval, setTimeout, clearTimeout, Date,
+    crypto: traceCrypto ?? { randomUUID: () => '55555555-5555-4555-8555-' + String(++traceCount).padStart(12, '0') },
+    console: { info(value) { readEvents.push(JSON.parse(value)); } } });
   const network = { response, status, fail };
   let uuidCount = 0;
   const context = {
@@ -68,7 +71,9 @@ function fixture({ response = { status: 'committed', supplemental: { project } }
       if (network.wait) await network.wait;
       if (network.fail) throw new TypeError('fixture connection failure');
       const value = url.includes('?limit=') || (url === '/v1/projects' && !options.method) ? network.listing : network.response;
-      return { ok: network.status >= 200 && network.status < 300, status: network.status, json: async () => value };
+      return { ok: network.status >= 200 && network.status < 300, status: network.status,
+        headers: { get() { if (network.echoFailure) throw Error('PRIVATE_ECHO_FAILURE'); return network.echoMismatch ? 'PRIVATE_UNTRUSTED_ECHO' : options.headers['x-kooyumi-read-trace'] ?? null; } },
+        json: async () => { if (network.bodyFailure) throw new TypeError('PRIVATE_BODY_INTERRUPTED'); return value; } };
     },
   };
   vm.runInNewContext(compiled, context);
@@ -78,7 +83,7 @@ function fixture({ response = { status: 'committed', supplemental: { project } }
   }
   refreshSelection(); context.projectsOwner = context.projectSelectionToken;
   Object.defineProperty(state, 'readError', { get: () => context.projectReadFailed });
-  return { state, calls, pending: context.pendingProjectCreate, setNetwork: value => Object.assign(network, value),
+  return { state, calls, readEvents, pending: context.pendingProjectCreate, setNetwork: value => Object.assign(network, value),
     changeName: value => context.setProjectName(value),
     changeSession: value => {
       context.observeProjectSession(value); context.session = value;
@@ -299,7 +304,45 @@ test('actual project effect recovers only transport with original JWT and no-sto
   assert.equal(f.calls.length, 2); assert.equal(f.visible()[0].id, project.id); assert.equal(f.state.readError, false);
   assert.ok(f.calls.every(call => call.options.cache === 'no-store'
     && call.options.headers.authorization === 'Bearer fixture-human' && call.options.signal instanceof AbortSignal));
+  const traces = f.calls.map(call => call.options.headers['x-kooyumi-read-trace']);
+  assert.ok(traces.every(trace => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(trace)));
+  assert.equal(new Set(traces).size, 2, 'each actual retry has its own anonymous trace');
+  for (const event of f.readEvents) assert.equal(event.traceId, traces[event.attempt - 1], 'header and diagnostic match exactly');
+  assert.deepEqual(f.readEvents.filter(event => event.outcome === 'milestone').map(event => event.phase),
+    ['response_headers', 'json_decoded', 'payload_validated']);
+  assert.equal(f.readEvents.find(event => event.phase === 'response_headers').responseTraceMatched, true);
   cleanup();
+});
+
+test('actual project effect preserves header, JSON and validation failure boundaries', async () => {
+  for (const [network, milestones, phase] of [
+    [{ status: 401 }, ['response_headers'], 'http'],
+    [{ bodyFailure: true }, ['response_headers'], 'body'],
+    [{ listing: { projects: 'PRIVATE_MALFORMED_PAYLOAD' } }, ['response_headers', 'json_decoded'], 'payload'],
+  ]) {
+    const f = fixture(); f.setNetwork(network); const cleanup = f.readProjects();
+    await settle(); cleanup(); await settle();
+    assert.deepEqual(f.readEvents.filter(event => event.outcome === 'milestone').map(event => event.phase), milestones);
+    assert.equal(f.readEvents.find(event => event.outcome === 'retry' || event.outcome === 'failed').phase, phase);
+    assert.doesNotMatch(JSON.stringify(f.readEvents), /PRIVATE_MALFORMED_PAYLOAD|PRIVATE_BODY_INTERRUPTED|fixture-human|fixture-subject/);
+  }
+});
+
+test('actual project echo inspection and unavailable crypto never affect the read or mutations', async () => {
+  for (const network of [{ echoFailure: true }, { echoMismatch: true }]) {
+    const f = fixture(); f.setNetwork({ listing: { projects: [project] }, ...network }); f.readProjects(); await settle();
+    assert.equal(f.calls.length, 1); assert.equal(f.visible()[0].id, project.id);
+    assert.equal(f.readEvents.find(event => event.phase === 'response_headers').responseTraceMatched, network.echoFailure ? null : false);
+    assert.doesNotMatch(JSON.stringify(f.readEvents), /PRIVATE_ECHO_FAILURE|PRIVATE_UNTRUSTED_ECHO/);
+  }
+  const f = fixture({ traceCrypto: { randomUUID() { throw Error('PRIVATE_CRYPTO_FAILURE'); } } });
+  f.setNetwork({ listing: { projects: [project] } }); f.readProjects(); await settle();
+  assert.equal(f.visible()[0].id, project.id); assert.equal(f.calls[0].options.headers['x-kooyumi-read-trace'], undefined);
+  assert.ok(f.readEvents.every(event => event.traceId === null));
+  await f.submit(); await f.update(project, 'set_progress', { progress_status: 'active' });
+  assert.deepEqual(f.calls.map(call => call.options.method ?? 'GET'), ['GET', 'POST', 'PATCH']);
+  assert.ok(f.calls.every(call => call.options.headers['x-kooyumi-read-trace'] === undefined));
+  assert.equal(JSON.parse(f.calls[1].options.body).idempotency_key, '33333333-3333-4333-8333-333333333333');
 });
 test('actual project effect cleanup aborts a pending transport and prevents retry', async () => {
   const f = fixture(); const wait = deferred(); f.setNetwork({ wait: wait.promise, listing: { projects: [project] } });

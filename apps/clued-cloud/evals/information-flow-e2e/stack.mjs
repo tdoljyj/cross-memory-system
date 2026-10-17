@@ -32,6 +32,10 @@ export const FORBIDDEN_ENV = [/^SUPABASE_ACCESS_TOKEN$/, /^SUPABASE_DB_PASSWORD$
 
 export function supabaseCommand() {
   if (process.env.IFE2E_SUPABASE_BIN) return [process.env.IFE2E_SUPABASE_BIN, []];
+  if (process.platform === 'linux' && process.env.GITHUB_ACTIONS === 'true') {
+    return ['npx', ['--yes', '--offline', `--package=supabase@${SUPABASE_CLI_VERSION}`,
+      `--package=@supabase/cli-linux-x64@${SUPABASE_CLI_VERSION}`, 'supabase']];
+  }
   return [process.platform === 'win32' ? 'npx.cmd' : 'npx', ['--yes', `supabase@${SUPABASE_CLI_VERSION}`]];
 }
 

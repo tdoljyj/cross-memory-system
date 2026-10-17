@@ -168,22 +168,49 @@ export async function testAccountRefresh(t, admin, server, user, decision) {
         assert.equal((await admin.query('select count(*) n from public.clued_audit_receipts')).rows[0].n,before);
       } finally {await admin.query('drop trigger reject_default_fixture on clued_private.storage_refresh_delegations_v1; drop function clued_private.reject_default_fixture()');}
     });
-    await t.test("refresh is explicit account delegation, not a device session or context write grant",async()=>{
+    await t.test("refresh is explicit account delegation, not a device session or context write grant",async(child)=>{
       const f=await setup(), req=claim(f.connection);
       await assert.rejects(worker(req),/storage_refresh_denied/);
       await assert.rejects(worker(req,hash("wrong")),/storage_refresh_denied/);
       await assert.rejects(background.query("select public.clued_storage_refresh_manage_v1('{}')"),/permission denied/);
       await manage(f.connection,"enable");
-      await admin.query("delete from auth.sessions where id=$1",[session]);
-      const acquired=await worker(req); assert.equal(acquired.status,"acquired");
-      assert.ok(acquired.credential_envelope); assert.equal((await worker(req)).credential_envelope,undefined);
-      await assert.rejects(worker(claim(f.connection)),/storage_refresh_not_due/);
-      const input=commit(req), result=await worker(input); assert.equal(result.status,"committed");
-      assert.deepEqual(await worker(input),result);
-      await assert.rejects(worker({...input,expires_at:new Date(Date.now()+2000000).toISOString()}),/storage_refresh_denied/);
-      assert.equal((await admin.query("select credential_version from clued_private.storage_connections_v1 where id=$1",[f.connection])).rows[0].credential_version,"2");
-      assert.equal(JSON.stringify(result).includes("ciphertext"),false);
-      await admin.query("insert into auth.sessions(id,user_id) values($1,$2)",[session,user]);
+      const observeEligibility=async stage=>{
+        try {
+          const row=(await admin.query("with observed as materialized (select clock_timestamp() at) select observed.at db_observed_at,count(d.connection_id)::int delegation_rows,case when count(d.connection_id)=1 then bool_or(d.failures>=3) end failures_limit_hit,case when count(d.connection_id)=1 then bool_or(d.next_refresh_at>observed.at) end future_due_hit,max(extract(epoch from(d.next_refresh_at-observed.at))*1000)::double precision next_refresh_delta_ms,(select count(*)::int from clued_private.storage_refresh_attempts_v1 x where x.connection_id=$1 and x.state='claimed') claimed_attempts from observed left join clued_private.storage_refresh_delegations_v1 d on d.connection_id=$1 group by observed.at",[f.connection])).rows[0];
+          child.diagnostic(JSON.stringify({kind:"refresh_claim_eligibility",stage,available:true,
+            db_observed_at:row.db_observed_at,delegation_rows:row.delegation_rows,
+            failures_limit_hit:row.failures_limit_hit,future_due_hit:row.future_due_hit,
+            next_refresh_delta_ms:row.next_refresh_delta_ms,claimed_attempts:row.claimed_attempts}));
+        } catch { try {child.diagnostic(JSON.stringify({kind:"refresh_claim_eligibility",stage,available:false}));} catch {} }
+      };
+      await observeEligibility("before_session_removal");
+      const removed=await admin.query("delete from auth.sessions as original where id=$1 returning to_jsonb(original) snapshot",[session]);
+      let primaryFailure;
+      try {
+        assert.equal(removed.rowCount,1,"remove exactly the fixture Native session");
+        let acquired;
+        try {acquired=await worker(req);} catch(error) {await observeEligibility("first_claim_failed");throw error;}
+        assert.equal(acquired.status,"acquired");
+        assert.ok(acquired.credential_envelope); assert.equal((await worker(req)).credential_envelope,undefined);
+        await assert.rejects(worker(claim(f.connection)),/storage_refresh_not_due/);
+        const input=commit(req), result=await worker(input); assert.equal(result.status,"committed");
+        assert.deepEqual(await worker(input),result);
+        await assert.rejects(worker({...input,expires_at:new Date(Date.now()+2000000).toISOString()}),/storage_refresh_denied/);
+        assert.equal((await admin.query("select credential_version from clued_private.storage_connections_v1 where id=$1",[f.connection])).rows[0].credential_version,"2");
+        assert.equal(JSON.stringify(result).includes("ciphertext"),false);
+      } catch(error) {primaryFailure=error;throw error;}
+      finally {
+        if(removed.rowCount===1) {
+          try {
+            const restored=await admin.query("insert into auth.sessions as restored select (jsonb_populate_record(null::auth.sessions,$1::jsonb)).* returning to_jsonb(restored)=$1::jsonb snapshot_matches",[JSON.stringify(removed.rows[0].snapshot)]);
+            assert.equal(restored.rowCount,1,"restore exactly the removed fixture session");
+            assert.equal(restored.rows[0].snapshot_matches,true,"restore the exact session snapshot");
+          } catch(error) {
+            if(!primaryFailure)throw error;
+            try {child.diagnostic(JSON.stringify({kind:"refresh_session_restoration",failed:true}));} catch {}
+          }
+        }
+      }
     });
     await t.test("disable rejects in-flight refresh commit; re-enable cannot erase uncertain attempt; new consent can recover",async()=>{
       const f=await setup(); await manage(f.connection,"enable"); const req=claim(f.connection); await worker(req);
