@@ -7,6 +7,8 @@ import {createHash,generateKeyPairSync} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {registerHooks} from 'node:module';
 import {execFileSync} from 'node:child_process';
+import {gzipSync} from 'node:zlib';
+import {decodeSourceHistoryFixture,loadSourceHistoryFixture} from './hosted-migration-source-history.fixture.mjs';
 import {createNaturalRecorder,formatNaturalPayload,observeEvaluation,admissionEnvelopeInput,operationEnvelopeInput,observeMutation,exportNaturalArtifact,readNaturalArtifact,NATURAL_EVENT_SCHEMA} from './merge-admission-source-producer.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url)),stage=path.resolve(here,'../..');
 const repo=process.env.CLUED_PRODUCER_TEST_REPO_ROOT??stage;
@@ -326,6 +328,10 @@ test('default runtime entry actually reads immutable main configuration and neve
 });
 test('runtime loader validates the current Source registry against actual bytes and retains the complete old main admission template',async()=>{
   const cfg=JSON.parse(fs.readFileSync(path.join(repo,R9_RUNTIME_CONFIG),'utf8')),f=runtimeFixture(null,cfg);
+  // The sealed exact predecessor is available in fresh shallow checkouts.
+  // Its complete bytes and immutable commit are independently pinned by the
+  // fixture loader, rather than recreated from today's descriptors.
+  const previous=JSON.parse(loadSourceHistoryFixture().predecessor_config);
   for(const name of fs.readdirSync(path.join(repo,'.github/workflows')))if(fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
     f.files.set('.github/workflows/'+name,fs.readFileSync(path.join(repo,'.github/workflows',name),'utf8'));
   const r=await loadIndependentR9RuntimeInputs({request:f.request,budget:{source:'app',deadline:null,stopped:null},repository:env.GITHUB_REPOSITORY,
@@ -336,8 +342,11 @@ test('runtime loader validates the current Source registry against actual bytes 
     assert.deepEqual(Object.keys(d.source_blobs).sort(),[...d.source_paths].sort());
     for(const p of d.source_paths)assert.equal(d.source_blobs[p],gitBlob(fs.readFileSync(path.join(repo,p))));
     assert.equal(Object.hasOwn(d,'previous_source_blobs'),false);assert.equal(Object.hasOwn(d,'previous_job_name'),false);
-    assert.equal(d.previous_source_versions.length,4);
-    assert.deepEqual(d.previous_source_versions.map(v=>v.job_name),d.job_id==='clued-work-admission'
+    assert.equal(d.previous_source_versions.length,5);
+    const old=previous.natural_producers.find(p=>p.workflow_path===d.workflow_path&&p.job_id===d.job_id);
+    assert.ok(old);assert.deepEqual(d.previous_source_versions.slice(0,4),old.previous_source_versions);
+    assert.deepEqual(d.previous_source_versions[4],{job_name:old.job_name,source_blobs:old.source_blobs});
+    assert.deepEqual(d.previous_source_versions.slice(0,4).map(v=>v.job_name),d.job_id==='clued-work-admission'
       ?['clued-work-admission','clued-work-admission','clued-work-admission','kooyumi-work-admission']:Array(4).fill(d.job_name));
   }
   // These regression-only digests come from immutable main 462f74c3, before
@@ -345,12 +354,15 @@ test('runtime loader validates the current Source registry against actual bytes 
   // clock/epoch/receipts remain byte-identical; they grant no Source qualification.
   const oldDescriptors=cfg.natural_producers.map(d=>{
     const {previous_source_versions,...base}=d;
-    return previous_source_versions.map(v=>({...base,job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path],source_blobs:v.source_blobs}));
+    return previous_source_versions.slice(0,4).map(v=>({...base,job_name:v.job_name,workflow_blob:v.source_blobs[d.workflow_path],source_blobs:v.source_blobs}));
   });
   assert.equal(sha256(JSON.stringify(oldDescriptors)),'15e90b3554151f0daaeaa3f32a02e5d9dbf9038cca6dc8a6dd547693542a8d97');
   assert.equal(sha256(JSON.stringify(cfg.previous_admission_sources.slice(0,-1))),'3441f3d86af8ad00a270128a89812922e242d1a5c2f11f7cc608cf977a153cf5');
   const unchanged=Object.fromEntries(Object.entries(cfg).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers'].includes(key)));
-  assert.equal(sha256(JSON.stringify(unchanged)),'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
+  assert.deepEqual(Object.fromEntries(Object.entries(unchanged).filter(([key])=>!['execution_source','previous_execution_sources'].includes(key))),
+    Object.fromEntries(Object.entries(previous).filter(([key])=>!['admission_source','previous_admission_sources','natural_producers','execution_source','previous_execution_sources'].includes(key))));
+  assert.equal(sha256(JSON.stringify({...unchanged,execution_source:previous.execution_source,previous_execution_sources:previous.previous_execution_sources})),
+    'a7011398d87dbfdb907d583765ef9b899fb149eaa47dd8ecad58da8772188fe0');
   assert.deepEqual(cfg.previous_admission_sources.at(-1),{...cfg.admission_source,
     script_blob:'112b737c54893f78eedb1deacc678777e5f16138',source_checkout_sha:'462f74c34d74b7dea65a0120eabbd4feb1ebc0ce',default_branch:'main'});
   assert.equal(cfg.execution_source.profiles_sha256,sha256(fs.readFileSync(path.join(repo,'scripts/ci/clued-gated-proof-profiles.json'))));
@@ -384,6 +396,22 @@ test('runtime loader validates the current Source registry against actual bytes 
   assert.equal(f.calls,oldFixture.calls,'history templates and current snapshot add no HTTP reads');
   for(const s of cfg.previous_execution_sources)assert.equal(f.routes.some(route=>route.includes(s.source_checkout_sha)),false,'history bytes are delegated to intake');
   assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
+test('sealed Source history rejects changed metadata, corrupted bytes and decompression beyond its fixed raw bound',()=>{
+  const document=JSON.parse(fs.readFileSync(new URL('./fixtures/hosted-migration-source-history.v1.json',import.meta.url),'utf8'));
+  const raw=loadSourceHistoryFixture();
+  assert.equal(Buffer.byteLength(raw.predecessor_config),33363);
+  for(const [label,mutate]of [
+    ['commit',d=>{d.inputs.predecessor_config.commit='a'.repeat(40);}],
+    ['byte count',d=>{d.inputs.historical_profiles.bytes++;}],
+    ['expected hash',d=>{d.inputs.historical_roles.sha256='a'.repeat(64);}],
+    ['corrupted exact-size bytes',d=>{d.inputs.predecessor_config.gzip_base64=gzipSync(Buffer.alloc(33363)).toString('base64');}],
+    ['oversized decompression',d=>{d.inputs.historical_profiles.gzip_base64=gzipSync(Buffer.alloc(468323)).toString('base64');}],
+    ['invalid base64',d=>{d.inputs.historical_roles.gzip_base64+='!';}],
+  ]){
+    const changed=structuredClone(document);mutate(changed);assert.throws(()=>decodeSourceHistoryFixture(changed),undefined,label);
+  }
 });
 
 test('runtime execution history requires a bounded unique list of exact checkout and profile/role hash selectors before clock use',async()=>{

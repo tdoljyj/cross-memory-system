@@ -7,6 +7,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {registerHooks} from 'node:module';
+import {loadSourceHistoryFixture} from './hosted-migration-source-history.fixture.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url)),repo=process.env.CLUED_PRODUCER_TEST_REPO_ROOT??path.resolve(here,'../..');
 registerHooks({resolve(s,c,next){if(s.startsWith('./')&&c.parentURL?.startsWith(pathToFileURL(here).href)){
   const own=path.join(here,s),real=path.join(repo,'scripts/ci',s);if(!fs.existsSync(own)&&fs.existsSync(real))return {url:pathToFileURL(real).href,shortCircuit:true};}return next(s,c);}});
@@ -146,7 +147,7 @@ function intakeVersionFixture({succession=false,renamed=false}={}){
   return {paths,runtimePath,sourcePaths,oldMap,middleMap,currentMap,oldDescriptor,middleDescriptor,currentDescriptor,descriptor,oldTexts,middleTexts,currentTexts,textsByCommit,records,native,selection,routes,request,collect};
 }
 
-function namedSuccessorFixture(){
+function namedSuccessorFixture({capacitySuccessor=false}={}){
   const f=intakeVersionFixture({succession:true,renamed:true}),pins=texts=>Object.fromEntries(f.sourcePaths.map(p=>[p,blob(texts[p])])),
     thirdTexts={...f.middleTexts,[f.paths.script]:'// reviewed third legacy script\n'},
     successorTexts={...f.currentTexts,[f.paths.script]:'// reviewed Kooyumi successor script\n'},
@@ -157,6 +158,8 @@ function namedSuccessorFixture(){
       {run:'44',artifact:'11',commit:head,texts:f.currentTexts,name:'kooyumi-work-admission'},
       {run:'50',artifact:'17',commit:'e'.repeat(40),texts:successorTexts,name:'kooyumi-work-admission'}
     ];
+  if(capacitySuccessor)rows.push({run:'52',artifact:'19',commit:'f'.repeat(40),
+    texts:{...successorTexts,[f.paths.script]:'// reviewed profile-capacity successor script\n'},name:'kooyumi-work-admission'});
   for(const row of rows){
     row.map=pins(row.texts);f.textsByCommit[row.commit]=row.texts;
     row.descriptor={...f.currentDescriptor,job_name:row.name,workflow_blob:row.map[f.paths.workflow],source_blobs:row.map};
@@ -202,11 +205,19 @@ test('explicit Source versions retain three legacy generations and both Kooyumi 
   assert.equal(JSON.stringify(f.selection),before);assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
 });
 
+test('a fifth exact historical generation preserves every prior descriptor and cache identity',async()=>{
+  const f=namedSuccessorFixture({capacitySuccessor:true}),r=await f.collect();
+  assert.equal(f.descriptor.previous_source_versions.length,5);
+  assert.equal(r.status,'NATIVE_ORIGIN_BOUND',JSON.stringify(r.gaps));assert.equal(r.entries.length,6);
+  for(const [i,row]of f.rows.entries())assert.equal(r.entries[i].descriptor_digest,h(JSON.stringify(row.descriptor)));
+  assert.equal(r.source_authenticated,false);assert.equal(r.official_metric,false);assert.equal(r.t0,null);
+});
+
 test('explicit Source histories reject ambiguous formats, names, incomplete maps and duplicates before HTTP',async()=>{
   const f=namedSuccessorFixture(),copy=()=>structuredClone(f.descriptor),without=(m,p)=>Object.fromEntries(Object.entries(m).filter(([k])=>k!==p)),
     changes=[
       ['non-array',d=>d.previous_source_versions={}],
-      ['over bound',d=>d.previous_source_versions.push({...d.previous_source_versions[0]})],
+      ['over bound',d=>d.previous_source_versions.push({...d.previous_source_versions[0]},{...d.previous_source_versions[0]})],
       ['mixed old maps',d=>d.previous_source_blobs=[]],
       ['mixed old name',d=>d.previous_job_name='clued-work-admission'],
       ['missing current',d=>delete d.source_blobs],
@@ -464,26 +475,28 @@ function historicalAssemblyRowsRemain(packet,prepared){
     assert.deepEqual(x.jobs,n.jobs.map(j=>({...j,id:Number(j.id)})));}
 }
 
-test('v2 actual 595 old22 replay preserves ac90 while current a258 selects exact registered b8 FullRole; unknown and mixed pairs retain the full population',async()=>{
+test('v2 actual 595 old22 replay preserves ac90 while current Source selects exact registered b8 FullRole; unknown and mixed pairs retain the full population',async()=>{
   const oldTip='59522b4158322e833ef152472a924c5fb40e0b24',currentTip='a258436c364304d4a69de4fff64b825f7801d2c3',
+    sealed=loadSourceHistoryFixture(),
     file='.github/workflows/clued-handover-external-qualification.yml',current=fixture(),currentRegistry=JSON.parse(current.runtime.proof_profiles_raw),
-    currentRoles=JSON.parse(current.runtime.role_specs_raw),oldRegistry=structuredClone(currentRegistry),oldRoles=structuredClone(currentRoles),
-    wrapper=oldRegistry.workflows[file],future=wrapper.accepted_sources;
+    currentRoles=JSON.parse(current.runtime.role_specs_raw),profilesRaw=sealed.historical_profiles,
+    rolesRaw=sealed.historical_roles,oldRegistry=JSON.parse(profilesRaw),oldRoles=JSON.parse(rolesRaw),
+    wrapper=oldRegistry.workflows[file],future=currentRegistry.workflows[file].accepted_sources;
   assert.equal(wrapper.workflow_blob,'ac90bc2f7e34a94be3c50c4581ba49cc139b3980');assert.equal(future.length,1);
-  assert.equal(future[0].workflow_blob,'b8fee41077d854e906244b9fa2d374f058dbd4a3');delete wrapper.accepted_sources;
-  delete oldRoles.workflows[file].sources[future[0].workflow_blob];
-  let profilesRaw=JSON.stringify(oldRegistry,null,2)+'\n',rolesRaw=JSON.stringify(oldRoles,null,2)+'\n',
-    directory=fs.readdirSync(path.join(repo,'.github/workflows')).filter(name=>fs.statSync(path.join(repo,'.github/workflows',name)).isFile())
-      .map(name=>{const relative='.github/workflows/'+name;return {path:relative,sha:relative===file?blob(wrapper.source_yaml):blob(fs.readFileSync(path.join(repo,relative))),type:'blob',mode:'100644'};});
-  // Default CI derives exact reviewed bytes without depending on Git objects.
-  // Only this explicit exact-ref offline observation enables bounded git show.
+  assert.equal(future[0].workflow_blob,'b8fee41077d854e906244b9fa2d374f058dbd4a3');assert.equal(wrapper.accepted_sources,undefined);
+  assert.equal(oldRoles.workflows[file].sources[future[0].workflow_blob],undefined);
+  // Later exact Source additions cannot reconstruct a historical snapshot by
+  // deleting one entry from today's registry. Replay the sealed immutable tree
+  // without needing remote access or historical objects in a shallow checkout.
+  const directory=sealed.historical_workflow_tree.trim().split('\n').map(line=>{
+    const m=/^(\d{6}) (blob) ([a-f0-9]{40})\t(.+)$/.exec(line);assert.ok(m);return {path:m[4],sha:m[3],type:m[2],mode:m[1]};});
   if(Object.hasOwn(process.env,'CLUED_NATURAL_FRAME_HISTORY_COMMIT')){
     assert.match(process.env.CLUED_NATURAL_FRAME_HISTORY_COMMIT,/^[a-f0-9]{40}$/);assert.equal(process.env.CLUED_NATURAL_FRAME_HISTORY_COMMIT,oldTip);
-    const {execFileSync}=await import('node:child_process'),show=relative=>execFileSync('git',['show',oldTip+':'+relative],{cwd:repo,encoding:'utf8'}),
-      actualProfiles=show('scripts/ci/clued-gated-proof-profiles.json'),actualRoles=show('scripts/ci/clued-gated-proof-role-specs.json');
-    assert.equal(profilesRaw,actualProfiles);assert.equal(rolesRaw,actualRoles);profilesRaw=actualProfiles;rolesRaw=actualRoles;
-    directory=execFileSync('git',['ls-tree','-r',oldTip,'--','.github/workflows'],{cwd:repo,encoding:'utf8'}).trim().split('\n').map(line=>{
-      const m=/^(\d{6}) (blob) ([a-f0-9]{40})\t(.+)$/.exec(line);assert.ok(m);return {path:m[4],sha:m[3],type:m[2],mode:m[1]};});
+    const {execFileSync}=await import('node:child_process'),
+      show=relative=>execFileSync('git',['show',oldTip+':'+relative],{cwd:repo,encoding:'utf8',windowsHide:true,maxBuffer:2097152});
+    assert.equal(profilesRaw,show('scripts/ci/clued-gated-proof-profiles.json'));
+    assert.equal(rolesRaw,show('scripts/ci/clued-gated-proof-role-specs.json'));
+    assert.equal(sealed.historical_workflow_tree,execFileSync('git',['ls-tree','-r',oldTip,'--','.github/workflows'],{cwd:repo,encoding:'utf8',windowsHide:true}));
   }
   const cfg=JSON.parse(fs.readFileSync(path.join(repo,'scripts/ci/merge-admission-r9-source.json'),'utf8')),
     reviewed=cfg.previous_execution_sources.find(s=>s.source_checkout_sha===oldTip);assert.ok(reviewed);
