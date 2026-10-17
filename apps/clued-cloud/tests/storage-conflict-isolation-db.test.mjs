@@ -110,33 +110,76 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
   const file='file-'+id(),filePath=root+'/docs/original.zip';
   await register({action:'artifact_register',profile_id:profile,path:filePath,provider_file_id:file,provider_file_version:'2',target_kind:'file',governance_class:'ordinary',delete_authority:false});
   const receipt=async()=> (await db.query("insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata) values($1,'global','resource_center_journal','system',$2,'{}') returning id",[owner,id()])).rows[0].id;
-  const seed=async({state='started',operation='replace',target_kind='file',age='3 hours',providerAttempt=true,destination=filePath,source=null}={})=>{
-   const intent=id(),r=await receipt(),syntheticParent=target_kind==='directory'?'isolated-parent-'+id():parent,before={root_folder_id:rootId,root_parent_id:'my-drive',destination_file_id:destination===filePath?file:'unrelated-'+id(),destination_parent_id:syntheticParent,
-    source_file_id:source?(source===root+'/docs'?file:'unrelated-directory-'+id()):null,source_parent_id:source?syntheticParent:null,ancestors:[{id:rootId},{id:syntheticParent}]};
+  const seed=async({state='started',operation='replace',target_kind='file',age='3 hours',providerAttempt=true,destination=filePath,source=null,fixtureProfile=profile,fixtureRoot=rootId,fixtureParent=parent}={})=>{
+   const intent=id(),r=await receipt(),syntheticParent=target_kind==='directory'?'isolated-parent-'+id():fixtureParent,before={root_folder_id:fixtureRoot,root_parent_id:'my-drive',destination_file_id:destination===filePath?file:'unrelated-'+id(),destination_parent_id:syntheticParent,
+    source_file_id:source?(source===root+'/docs'?file:'unrelated-directory-'+id()):null,source_parent_id:source?syntheticParent:null,ancestors:[{id:fixtureRoot},{id:syntheticParent}]};
    const mutation={operation,target_kind,source_path:source,destination_path:destination};
    await db.query(`insert into clued_private.resource_center_mutations_v1(id,user_id,profile_id,request_key,request_sha256,exact_request,authority_request,
     authority_result,authority_token_hash,profile_version,source_decision_id,state,version,expires_at,receipt_id,provider_attempt,provider_attempt_receipt_id)
     values($1,$2,$3,$4,$5,$6,$7,'{}',$5,1,$8,$9,$10,clock_timestamp()-$11::interval,$12,$13,$14)`,
-    [intent,owner,profile,id(),sha(id()),{mutation},{mutation,provider_identity:before},decision,state,state==='prepared'?1:2,age,r,
+    [intent,owner,fixtureProfile,id(),sha(id()),{mutation},{mutation,provider_identity:before},decision,state,state==='prepared'?1:2,age,r,
      providerAttempt?{provider_file_id:file,parent_id:parent}:null,providerAttempt?r:null]);return intent;
   };
   const inspect=async intent=>(await db.query('select state,version,receipt_id,final_result from clued_private.resource_center_mutations_v1 where id=$1',[intent])).rows[0];
   const guard=async(mutation,provider={})=>db.query('select clued_private.storage_conflict_assert_v1($1,$2,$3,$4)',[owner,profile,mutation,provider]);
   const intent=await seed();
-  await t.test('production sweep leaves an unsupported non-job journal untouched',async()=>{
-   assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[intent])).rows[0].v,'outside_delivery_scope');
-   await db.query('select clued_private.storage_conflict_sweep_v1()');assert.equal((await inspect(intent)).state,'started');
-   assert.equal((await db.query('select count(*)::int n from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[intent])).rows[0].n,0);
+  await t.test('production sweep ends an expired non-job journal as conflict with an independent object isolation',async()=>{
+   assert.equal((await db.query('select clued_private.storage_conflict_supported_v1($1) v',[intent])).rows[0].v,true);
+   const result=(await db.query('select clued_private.storage_conflict_sweep_v1() v')).rows[0].v;
+   assert.equal(result.conflicted,1);assert.equal(result.errors,0);assert.equal((await inspect(intent)).state,'conflict');
+   const q=(await db.query('select state,scope_complete,job_id,connection_id,object_ids from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[intent])).rows[0];
+   assert.equal(q.state,'active');assert.equal(q.scope_complete,true);assert.equal(q.job_id,null);assert.equal(q.connection_id,null);
+   assert.ok(q.object_ids.includes(file));
   });
-  // The next synthetic non-job candidate exercises the internal receipt/guard
-  // mechanism in isolation; production only calls it through the supported
-  // cloud-job predicate, proved above and through the real jobs below.
-  await t.test('private candidate mechanism emits an independent conflict receipt, never a second effect',async()=>{
-   assert.equal((await db.query('select clued_private.storage_conflict_close_candidate_v1($1) v',[intent])).rows[0].v,'conflict');
+  await t.test('the original conflict receipt survives repeated public classification without another effect',async()=>{
+   const previous=await inspect(intent);
+   assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[intent])).rows[0].v,'unchanged');
    const m=await inspect(intent);assert.equal(m.state,'conflict');assert.equal(m.version,'3');assert.equal(m.final_result.reason_code,'PROVIDER_STATE_CONFLICT');
    const r=(await db.query('select operation,status,event_ids from public.clued_audit_receipts where id=$1',[m.receipt_id])).rows[0];
    assert.equal(r.operation,'storage_conflict_settle');assert.equal(r.status,'committed');assert.ok(r.event_ids.length);
+   assert.deepEqual(m,previous);
    assert.equal((await db.query('select clued_private.storage_conflict_close_candidate_v1($1) v',[intent])).rows[0].v,'unchanged');
+  });
+  await t.test('prepared non-job work releases only after 60 seconds without inventing an effect or isolation',async()=>{
+   await db.query('begin');try{
+    const pending=await seed({state:'prepared',age:'30 seconds',providerAttempt:false,destination:root+'/docs/prepared.txt'});
+    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[pending])).rows[0].v,'not_due');
+    await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '61 seconds' where id=$1",[pending]);
+    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[pending])).rows[0].v,'cancelled');
+    const row=await inspect(pending);assert.equal(row.state,'cancelled');assert.equal(row.final_result.reason_code,'NO_PROVIDER_ATTEMPT');
+    assert.equal((await db.query('select count(*)::int n from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[pending])).rows[0].n,0);
+   }finally{await db.query('rollback');}
+  });
+  await t.test('a started non-job writer without a database attempt is never inferred to have no provider effect',async()=>{
+   await db.query('begin');try{
+    const pending=await seed({age:'10 minutes',providerAttempt:false,destination:root+'/docs/unknown-effect.txt'});
+    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[pending])).rows[0].v,'not_due');
+    await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '3 hours' where id=$1",[pending]);
+    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[pending])).rows[0].v,'conflict');
+    const row=await inspect(pending);assert.equal(row.final_result.reason_code,'PROVIDER_STATE_CONFLICT');
+    const q=(await db.query('select * from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[pending])).rows[0];
+    const input={action:'conflict_abandon',intent_id:pending,base_version:Number(row.version),source_receipt_id:q.close_receipt_id,idempotency_key:id(),confirmed:true};
+    await db.query('savepoint missing_termination');
+    await assert.rejects(db.query('select clued_private.storage_conflict_abandon_v1($1,$2::jsonb)',[owner,JSON.stringify(input)]),/storage_conflict_termination_evidence_required/);
+    await db.query('rollback to savepoint missing_termination');
+    assert.deepEqual(await inspect(pending),row);
+    assert.equal((await db.query('select state from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[pending])).rows[0].state,'active');
+   }finally{await db.query('rollback');}
+  });
+  await t.test('same-parent legacy rename derives its source slot only from immutable exact paths and destination identity',async()=>{
+   await db.query('begin');try{
+    const pending=await seed({operation:'rename',source:root+'/docs/old-name.txt',destination:root+'/docs/new-name.txt'});
+    await db.query("update clued_private.resource_center_mutations_v1 set authority_request=authority_request#-'{provider_identity,source_parent_id}' where id=$1",[pending]);
+    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[pending])).rows[0].v,'conflict');
+    const q=(await db.query('select scope_complete,slots from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[pending])).rows[0];
+    assert.equal(q.scope_complete,true);assert.deepEqual(q.slots.map(slot=>slot.parent_id),[parent,parent]);
+   }finally{await db.query('rollback');}
+   await db.query('begin');try{
+    const pending=await seed({operation:'rename',source:root+'/unknown/old-name.txt',destination:root+'/docs/new-name.txt'});
+    await db.query("update clued_private.resource_center_mutations_v1 set authority_request=authority_request#-'{provider_identity,source_parent_id}' where id=$1",[pending]);
+    assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[pending])).rows[0].v,'conflict');
+    assert.equal((await db.query('select scope_complete from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[pending])).rows[0].scope_complete,false);
+   }finally{await db.query('rollback');}
   });
   await t.test('unrelated create is admitted while original file, namespace aliases and ancestor directory moves stay fenced',async()=>{
    await guard({operation:'create',target_kind:'file',destination_path:root+'/docs/unrelated.txt'},{destination_parent_id:parent});
@@ -265,6 +308,32 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    const late=await submit({operation:'create',target_kind:'file',destination_path:managedRoot+'/20_P_产品与体验/late.txt',content:'late after metadata proof'});
    assert.equal((await execute(late,true)).status,'unreconciled');assert.ok(withheld,'real verifier reached the withheld receipt boundary');
    let row=await journal(late);assert.equal(row.state,'started');assert.ok(row.provider_attempt_receipt_id);assert.equal(row.verified_result_v2,null);assert.equal(posts,1);
+   await real.test('a historical null-snapshot cloud row closes without rewriting an immutable current job',async()=>{
+    await db.query('begin');try{
+     const legacyRoot='/legacy-'+id()+'/Clued_资料中心',legacyRootId='legacy-root-'+id(),legacyParent='legacy-parent-'+id();
+     const legacyRegistered=await register({action:'profile_register',project_id:project,profile_version:'legacy/'+id(),managed_root:legacyRoot,root_folder_id:legacyRootId,root_parent_id:'my-drive',root_folder_version:'1'});
+     const legacyProfile=legacyRegistered.target_refs.find(ref=>ref.role==='primary').id;
+     await register({action:'artifact_register',profile_id:legacyProfile,path:legacyRoot+'/docs',provider_file_id:legacyParent,provider_file_version:'1',target_kind:'directory',governance_class:'ordinary',delete_authority:false});
+     const legacyIntent=await seed({providerAttempt:false,destination:legacyRoot+'/docs/legacy-unknown.zip',fixtureProfile:legacyProfile,fixtureRoot:legacyRootId,fixtureParent:legacyParent}),legacyJob=id(),legacyReceipt=await receipt(),legacyConnection=id();
+     // Historical insertion-time data, without modifying current authority or
+     // disabling its immutability trigger. A disconnected/unauthenticated
+     // legacy connection cannot prevent ending its expired old journal.
+     await db.query(`insert into clued_private.storage_connections_v1(id,owner_id,profile_id,profile_version,
+      source_decision_id,decision_version,provider,receipt_id) values($1,$2,$3,1,$4,1,'google-drive',$5)`,[legacyConnection,owner,legacyProfile,decision,legacyReceipt]);
+     await db.query(`insert into clued_private.storage_jobs_v1
+      select (jsonb_populate_record(null::clued_private.storage_jobs_v1,to_jsonb(j)||jsonb_build_object(
+       'job_id',$2::uuid,'intent_id',$3::uuid,'connection_id',$5::uuid,'authority_snapshot_v2',null,'cloud_writer_binding_id',null,
+       'request_digest',$6::text,'mutation',(select m.exact_request->'mutation' from clued_private.resource_center_mutations_v1 m where m.id=$3::uuid))))
+       .* from clued_private.storage_jobs_v1 j where j.owner_id=$1 and j.job_id=$4`,[owner,legacyJob,legacyIntent,late.reference.job_id,legacyConnection,sha(id())]);
+     assert.equal((await db.query('select clued_private.storage_conflict_supported_v1($1) v',[legacyIntent])).rows[0].v,true);
+     assert.equal((await db.query('select clued_private.storage_conflict_close_v1($1) v',[legacyIntent])).rows[0].v,'conflict');
+     const closed=await journal({reference:{job_id:legacyJob}});assert.equal(closed.state,'conflict');assert.equal(closed.final_result.reason_code,'PROVIDER_STATE_CONFLICT');
+     assert.equal(closed.verified_result_v2,null);assert.equal(posts,1);
+     const q=(await db.query('select state,job_id,connection_id,scope_complete from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[legacyIntent])).rows[0];
+     assert.deepEqual(q,{state:'active',job_id:legacyJob,connection_id:legacyConnection,scope_complete:true});
+     assert.equal((await journal(late)).state,'started');
+    }finally{await db.query('rollback');}
+   });
    const prequeuedOverlap=await submit({...late.mutation,content:'queued before isolation publication'});
    const stagingPredicate=async(name,deleted)=>(await db.query(`select clued_private.${name}(jsonb_populate_record(null::clued_private.storage_staging_v1,$1::jsonb)) v`,[JSON.stringify({owner_id:owner,job_id:late.reference.job_id,state:'consumed',bytes_received:true,object_deleted_at:deleted?new Date(Date.now()-86400000).toISOString():null,created_at:new Date(Date.now()-8*86400000).toISOString()})])).rows[0].v;
    assert.equal(await stagingPredicate('storage_staging_deletable_v1',false),false,'running uploads retain staging');
@@ -582,7 +651,7 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
     assert.equal((await db.query('select count(*)::int n from clued_private.storage_automatic_reconcile_checks_v1 where intent_id=$1',[job.closed.id])).rows[0].n,0);
    });
 
-   // Batching fixtures below deliberately seed old, unsupported non-job
+   // Directory moves remain an explicit I9 exception even for old non-job
    // journals. They exercise scanner ordering, never claim provider authority.
    for(let index=0;index<51;index++){
     const prefixRoot='/ineligible-'+id()+'/Clued_资料中心',prefixRootId='prefix-'+id();
