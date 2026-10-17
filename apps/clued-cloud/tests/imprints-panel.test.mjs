@@ -856,3 +856,137 @@ test('removal is an explicit metadata operation; inaccessible links never render
   assert.equal(model.normalizeRecord(associationSource({ associations: [{ ...link, source_kind: 'development' }] })), null);
   assert.equal(model.normalizeRecord(associationSource({ associations: [link], association_version: undefined })), null);
 });
+
+const bulkPlan = (extra = {}) => {
+  const value = { status: 'ok', complete: true, authoritative: false, max_batch_size: 100,
+  digest: 'a'.repeat(64), rules_version: 'imprint-explicit-local.v2', selection: { scope: 'all' },
+  counts: { total: 3, characters: 100, ineligible: 1, protected: 1, needs_review: 0, ready: 1,
+    personal: 3, profile: 0, project: 0, current: 3, history: 0, other_currentness: 0,
+    automatic_marked: 0, manual_or_unspecified_marked: 1, unmarked: 2, ready_characters: 20, review_characters: 0 },
+  items: [{ record_id: ID, record_version: 2, title: 'Existing old note', domains: ['learning'] }],
+  review_sample: [], ...extra };
+  const { ready, needs_review, ready_characters, review_characters, ...base } = value.counts;
+  const classifiable = ready + needs_review;
+  const samples = value.review_sample.length || !needs_review ? value.review_sample : [{ record_id: OTHER, title: 'Needs individual review' }];
+  return { ...value, inventory_counts: { ...base, classifiable }, ready_characters, review_characters,
+    review_sample: samples, page: { cursor: 0, scanned: classifiable, next_cursor: null, complete: true },
+    proof: { mac: 'b'.repeat(64), payload: { owner_id: 'owner', selection: value.selection, digest: value.digest,
+      rules_version: value.rules_version, cursor: classifiable, classifiable, ready, needs_review, ready_characters, review_characters,
+      expires_at: new Date(Date.now() + 3600000).toISOString(), items: value.items.map(({ title, ...item }) => item) } } };
+};
+const bulkBatch = (extra = {}) => ({ status: 'ok', available: true, batch_id: EVIDENCE, version: 1,
+  state: 'running', selection: { scope: 'all' }, rules_version: 'imprint-explicit-local.v2', preview_digest: 'a'.repeat(64),
+  items: [{ record_id: ID, record_version: 2, domains: ['learning'], state: 'pending', ordinal: 1,
+    receipt_id: null, organization_version: null, undo_receipt_id: null }], ...extra });
+const bulkWrite = batch => ({ status: 'committed', receipt_id: OTHER, supplemental: { batch } });
+
+test('bulk preview remains read-only and explicit plan confirmation does not run label mutations', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('盘点并预演（不修改内容）'); assert.equal(f.calls[1].name, 'clued_imprint_bulk_preview_v1');
+  await f.respond(1, bulkPlan()); await f.untilCalls(3); await f.respond(2, { status: 'ok', available: false });
+  assert.ok(f.text().includes('完整盘点 3 条')); assert.ok(f.text().includes('待逐条核对 0')); assert.equal(f.calls.length, 3);
+  f.click('确认这1条，保存首批计划'); await f.untilCalls(4);
+  assert.equal(f.calls[3].args.p_input.action, 'begin'); assert.equal(f.calls[3].args.p_input.digest, 'a'.repeat(64));
+  await f.respond(3, bulkWrite(bulkBatch())); assert.ok(f.text().includes('尚未修改标签')); assert.equal(f.calls.length, 4);
+});
+test('bulk unknown write never retries automatically; resume reconciles durable progress before another step', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('读取已保存进度'); await f.respond(1, bulkBatch()); f.click('继续处理首批');
+  await f.respond(2, bulkBatch()); await f.untilCalls(4);
+  assert.equal(f.calls[3].args.p_input.action, 'advance'); await f.fail(3);
+  assert.equal(f.calls.length, 4); assert.ok(f.text().includes('结果尚未确认'));
+  f.click('读取已保存进度'); assert.equal(f.calls[4].name, 'clued_imprint_bulk_status_v1');
+  await f.respond(4, bulkBatch({ version: 2, state: 'completed', items: [{ ...bulkBatch().items[0], state: 'applied', organization_version: 1, receipt_id: OTHER }] }));
+  assert.ok(f.text().includes('已补标签 1')); assert.ok(f.text().includes('撤销本批已补标签')); assert.equal(f.calls.length, 5);
+});
+test('bulk scope/context/account changes fence late previews and prevent the next write', async t => {
+  const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('盘点并预演（不修改内容）'); assert.equal(f.calls[1].args.p_input.context_id, OTHER);
+  f.setDevelopmentContext(EVIDENCE); await f.respond(1, bulkPlan());
+  assert.ok(!f.text().includes('Existing old note')); assert.equal(f.calls.length, 3);
+  await f.respond(2, page()); f.click('读取已保存进度'); await f.respond(3, bulkBatch());
+  f.click('继续处理首批'); f.setSession(session('replacement'));
+  await f.respond(4, bulkBatch()); assert.equal(f.calls.length, 6, 'only the replacement list read was added');
+  assert.ok(!f.text().includes('已补标签 1')); assert.equal(f.calls.filter(c => c.name === 'clued_imprint_bulk_mutate_v1').length, 0);
+});
+test('zero and malformed bulk previews cannot fabricate success or expose a write control', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('盘点并预演（不修改内容）'); await f.respond(1, bulkPlan({ counts: { ...bulkPlan().counts, total: 1, personal: 1, current: 1,
+    characters: 20, ineligible: 0, protected: 0, needs_review: 1, ready: 0, manual_or_unspecified_marked: 0, unmarked: 1, ready_characters: 0, review_characters: 20 }, items: [] }));
+  await f.respond(2, { status: 'ok', available: false }); assert.ok(f.text().includes('没有可可靠自动归类'));
+  assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+  f.click('盘点并预演（不修改内容）'); await f.respond(3, bulkPlan({ items: [bulkPlan().items[0], bulkPlan().items[0]] }));
+  assert.ok(f.text().includes('结果尚未确认')); assert.ok(!f.text().includes('Existing old note'));
+});
+test('a later failed batch-status read invalidates an earlier empty result before enabling begin', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('读取已保存进度'); await f.respond(1, { status: 'ok', available: false });
+  assert.ok(f.text().includes('尚未建立首批计划'));
+  f.click('盘点并预演（不修改内容）'); await f.respond(2, bulkPlan()); await f.untilCalls(4); await f.fail(3);
+  assert.ok(f.text().includes('结果尚未确认')); assert.ok(!f.text().includes('尚未建立首批计划'));
+  const confirm = f.nodes('button').find(b => f.text(b).includes('保存首批计划'));
+  assert.ok(!confirm || confirm.props.disabled);
+});
+test('selection replacement during the write digest prevents dispatch from the unmounted batch panel', async t => {
+  let resumeDigest;
+  const gate = new Promise(resolve => { resumeDigest = resolve; });
+  const crypto = { randomUUID: () => webcrypto.randomUUID(), subtle: { async digest(...args) { await gate; return webcrypto.subtle.digest(...args); } } };
+  const f = fixture(session('owner'), 'zh-CN', undefined, { crypto }); t.after(() => { f.unmount(); resumeDigest(); });
+  await f.respond(0, page()); f.click('盘点并预演（不修改内容）'); await f.respond(1, bulkPlan());
+  await f.respond(2, { status: 'ok', available: false }); f.click('确认这1条，保存首批计划');
+  f.change('查询范围', 'global'); resumeDigest(); await f.settle();
+  assert.equal(f.calls.filter(c => c.name === 'clued_imprint_bulk_mutate_v1').length, 0);
+});
+
+function bulkTwoPages() {
+  const completed = bulkPlan({ counts: { ...bulkPlan().counts, total: 4, personal: 4, current: 4, unmarked: 3,
+    ready: 1, needs_review: 1, review_characters: 40 }, review_sample: [{ record_id: OTHER, title: 'Needs individual review' }] });
+  const first = { ...completed, review_sample: [], ready_characters: 20, review_characters: 0,
+    page: { cursor: 0, scanned: 1, next_cursor: 1, complete: false }, proof: { ...completed.proof,
+      payload: { ...completed.proof.payload, cursor: 1, needs_review: 0, review_characters: 0 } } };
+  const last = { ...completed, items: [], ready_characters: 0, review_characters: 40,
+    page: { cursor: 1, scanned: 1, next_cursor: null, complete: true } };
+  return [first, last];
+}
+test('paged preview requires continuous full coverage and carries the final server proof into begin', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  const [first, last] = bulkTwoPages(); f.click('盘点并预演（不修改内容）'); await f.respond(1, first);
+  assert.ok(f.text().includes('已预演 1/2')); assert.ok(!f.text().includes('完整盘点'));
+  assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+  assert.deepEqual(plain(f.calls[2].args.p_input.proof), first.proof);
+  await f.respond(2, last); await f.respond(3, { status: 'ok', available: false });
+  assert.ok(f.text().includes('完整盘点 4 条')); assert.ok(f.text().includes('待逐条核对 1'));
+  f.click('确认这1条，保存首批计划'); await f.untilCalls(5);
+  assert.deepEqual(plain(f.calls[4].args.p_input.proof), last.proof);
+  assert.equal(f.calls[4].args.p_input.items.length, 1);
+});
+test('a missing, duplicated, drifting or forged-complete page invalidates all accumulated confirmation', async t => {
+  for (const mode of ['transport', 'duplicate', 'digest', 'counts', 'proof', 'cursor']) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page()); const [first, original] = bulkTwoPages();
+    f.click('盘点并预演（不修改内容）'); await f.respond(1, first);
+    const last = JSON.parse(JSON.stringify(original));
+    if (mode === 'transport') await f.fail(2);
+    else {
+      if (mode === 'duplicate') last.review_sample[0].record_id = ID;
+      if (mode === 'digest') last.digest = 'c'.repeat(64);
+      if (mode === 'counts') last.inventory_counts.characters++;
+      if (mode === 'proof') last.proof.payload.ready++;
+      if (mode === 'cursor') last.page.cursor = 10;
+      await f.respond(2, last);
+    }
+    assert.ok(f.text().includes('结果尚未确认'), mode); assert.ok(!f.text().includes('完整盘点'), mode);
+    assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')), mode);
+    assert.equal(f.calls.length, 3, mode);
+  }
+});
+test('stopping or changing account during a classification page cannot fetch a following page or create a batch', async t => {
+  for (const stop of [true, false]) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page()); const [first, last] = bulkTwoPages();
+    f.click('盘点并预演（不修改内容）'); await f.respond(1, first);
+    if (stop) f.click('停止预演'); else f.setSession(session('next-owner'));
+    await f.respond(2, last);
+    assert.equal(f.calls.filter(c => c.name === 'clued_imprint_bulk_status_v1' || c.name === 'clued_imprint_bulk_mutate_v1').length, 0);
+    assert.ok(!f.text().includes('完整盘点'));
+    if (stop) assert.ok(f.text().includes('已停止预演，没有修改标签'));
+  }
+});

@@ -4,13 +4,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent }
 import { type Session } from "@supabase/supabase-js";
 import { supabase } from "../supabase-browser";
 import { DOMAIN_KEYS, RECORD_TYPES, VIEW_KEYS, VIEW_LABELS, SelectionFence, beijingInput, canEditDue, dueIso,
-  evidenceReferences, immediateAuthoritativeRecord, normalizedDomains, object, recordIdentity, relatedReferences, sourceKind, uniqueRecords, uuid,
+  evidenceReferences, immediateAuthoritativeRecord, normalizedDomains, recordIdentity, relatedReferences, sourceKind, uniqueRecords, uuid,
   type Domain, type ImprintRecord, type ImprintView, type Locale, type ReadInput, type ReadPage } from "./imprint-model";
 import { ImprintFailure, mutateRecord, noteInput, organizationInput, prepareWrite, readImprints, readRevision, readSource, setOrganization, taskDueInput,
   type NativeRpc, type PreparedWrite, type SourceRead } from "./imprint-client";
 import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-suggestions";
 import ExistingAssociationEditor from "./ExistingAssociationEditor";
 import MixedContentEditor from "./MixedContentEditor";
+import ImprintBulkPanel from "./ImprintBulkPanel";
 import type { AssociationRead } from "./imprint-associations";
 import { searchRevisions, searchSources, type RevisionRead } from "./imprint-search";
 
@@ -158,6 +159,8 @@ export default function ImprintPanel({ session, projects, locale, developmentCon
     </div>
     <form className="imprints-tools" onSubmit={search}><label>{t.query}<input aria-label={t.query} type="search" maxLength={500} value={searchText} onChange={event => setSearchText(event.target.value)} /></label><button type="submit">{t.search}</button><button type="button" onClick={() => { setSearchText(""); setQuery(""); }}>{t.clearQuery}</button><button type="button" onClick={() => void load()}>{t.refresh}</button></form>
     <p className="context-muted">{labels[view]} · {readScope === "all" ? allScopeLabel : readScope === "global" ? t.global : projects.find(project => "project:" + project.id === readScope)?.name ?? readScope}{query ? ` · ${query}` : ""}</p>
+    <ImprintBulkPanel key={key} rpc={rpc} locale={locale} owner={session.user.id} selection={{ scope: readScope, ...(developmentContextId ? { context_id: developmentContextId } : {}) }}
+      scopeLabel={readScope === "all" ? allScopeLabel : scopeLabel(readScope)} onChanged={() => void load()} onOpenRecord={id => void openRecord(id, "canonical")} />
     <p className="context-muted">{development ? (locale === "zh-CN" ? "搜索当前上下文及所属项目的正文，正式记录的已保存来源也能检索。历史只包含实际留存的版本；候选不自动成为任务或决策。" : "Search this context and its project's bodies, including saved readable sources of accepted records. History contains only retained versions; candidates do not become tasks or decisions.") : t.coverage}</p>
     {!development && <p className="context-muted">{locale === "zh-CN" ? "当前入口覆盖已保存记录与已链接的来源。尚未汇聚未链接的输入片段，也不宣称所有外部聊天和旧正文版本已保存。" : "This entrance covers saved records and linked sources. Unlinked intake segments are not aggregated; external chats and every old body revision are not claimed to be captured."}</p>}
     {!development && <form className="record-form" aria-label={t.noteTitle} onSubmit={saveNote}><h4>{t.noteTitle}</h4>
