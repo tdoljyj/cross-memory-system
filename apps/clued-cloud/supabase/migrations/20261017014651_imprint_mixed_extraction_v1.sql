@@ -167,7 +167,7 @@ end $$;
 -- text, titles, confirmation tokens or somebody else's mapping. This reader
 -- cannot issue a token, relax the source guard or initiate any write.
 create function public.clued_imprint_extraction_status_v1(p_input jsonb)
-returns jsonb language plpgsql stable security definer set search_path='' as $$
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
 declare owner_id uuid:=clued_private.authorization_owner_v12(); result jsonb;
 begin
   if jsonb_typeof(p_input) is distinct from 'object'
