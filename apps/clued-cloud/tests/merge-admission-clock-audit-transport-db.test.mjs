@@ -59,7 +59,9 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // That and 23236e5f...24cf remain in earlier history; R9 registry and epoch
   // pins are separate and unchanged.
   // All C1 behavior/permission assertions below remain exact.
-  assert.equal(hash(workerSource),'9aa56e4fa6e08eeda5011f86d3085163a7a11bc3ae691e1c9e408fb378f9fc43');
+  // Prior storage reader refresh pin: 9aa56e4fa6e08eeda5011f86d3085163a7a11bc3ae691e1c9e408fb378f9fc43.
+  // Current storage-only Native absence adapter; all C1 assertions stay exact.
+  assert.equal(hash(workerSource),'ffde428621829c2af21dba27c61f8494afe65ee6d9fcd50f86ebc08bca9e57f8');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

@@ -1,5 +1,6 @@
 import { createGoogleDriveMetadataApi } from "../../../kernel/host/resource-center-google-drive-metadata.mjs";
 import { ancestorChain, walkAncestorChain } from "../../../kernel/host/resource-center-google-drive-ancestors.mjs";
+import { googleDriveAccessDigest, googleDriveSharingDigest } from "../../../kernel/host/resource-center-google-drive-sharing.mjs";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
@@ -29,13 +30,24 @@ export async function createStorageRecoveryReview(config: {
     if (!object(reference) || Object.keys(reference).sort().join(",") !== "connection_id,job_id" ||
         !uuid.test(reference.connection_id) || !uuid.test(reference.job_id)) fail();
     const d = structuredClone(config.descriptor);
+    const directory = object(d.mutation) && d.mutation.target_kind === "directory";
     if (d.status !== "recovery_only" || d.connection_id !== reference.connection_id || d.job_id !== reference.job_id ||
         !uuid.test(String(d.owner_id)) || !uuid.test(String(d.intent_id)) || d.provider !== "google-drive" || d.oauth_client_id !== config.client_id ||
         !id.test(String(d.provider_subject)) || !Number.isSafeInteger(d.credential_version) || Number(d.credential_version) < 1 ||
         !Number.isSafeInteger(d.version) || Number(d.version) < 1 || !object(d.profile) || typeof d.profile.managed_root !== "string" ||
         !id.test(String(d.root_folder_id)) || !id.test(String(d.root_parent_id)) || !object(d.mutation) || !object(d.provider_before) ||
-        !object(d.attempt) || !id.test(String(d.attempt.provider_file_id)) || d.mutation.target_kind !== "file") fail();
-    if (automatic && (d.mutation.operation !== "replace" || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
+        !object(d.attempt) || !id.test(String(d.attempt.provider_file_id)) ||
+        (!directory && d.mutation.target_kind !== "file") || (directory && !automatic)) fail();
+    if (automatic && directory && (!["delete", "restore"].includes(String(d.mutation.operation)) ||
+        d.attempt.contract !== "clued.storage-destructive-attempt/1" || d.attempt.operation !== d.mutation.operation ||
+        d.attempt.target_kind !== "directory" || d.attempt.content !== null ||
+        d.mutation.destination_path !== undefined || d.attempt.destination_path !== null ||
+        d.attempt.provider_file_id !== d.provider_before.source_file_id ||
+        d.attempt.parent_id !== d.provider_before.source_parent_id || d.attempt.source_path !== d.mutation.source_path ||
+        d.attempt.source_file_version !== d.provider_before.source_file_version ||
+        !object(d.conflict_reconcile) || Object.keys(d.conflict_reconcile).sort().join(",") !== "closed_version,source_receipt_id" ||
+        d.conflict_reconcile.closed_version !== d.version || d.conflict_reconcile.source_receipt_id !== config.source_receipt_id)) fail();
+    if (automatic && !directory && (d.mutation.operation !== "replace" || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
         d.attempt.operation !== "replace" || !object(d.conflict_reconcile) ||
         Object.keys(d.conflict_reconcile).sort().join(",") !== "closed_version,source_receipt_id" ||
         d.conflict_reconcile.closed_version !== d.version || d.conflict_reconcile.source_receipt_id !== config.source_receipt_id ||
@@ -75,7 +87,7 @@ export async function createStorageRecoveryReview(config: {
         return { access_token: secret.access_token, scope: secret.scope };
       };
       let targetStatus = 0;
-      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, transient_retries: 2,
+      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, transient_retries: 2, semantic_details: directory,
         fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
           const url = new URL(String(input));
           if (init?.method !== "GET" || init.body != null || url.origin !== "https://www.googleapis.com" || url.username || url.password || url.hash ||
@@ -84,7 +96,18 @@ export async function createStorageRecoveryReview(config: {
           if (url.pathname === `/drive/v3/files/${targetId}`) targetStatus = response.status;
           return response;
         } });
-      const getFile = (fileId: string) => bounded(metadata.getFile(fileId, { signal: controller.signal })) as Promise<Data>;
+      const getFile = async (fileId: string): Promise<Data> => {
+        const value = await bounded(metadata.getFile(fileId, { signal: controller.signal })) as Data;
+        if (directory && Array.isArray(before.ancestors)) {
+          const link = before.ancestors.find((entry: unknown) => object(entry) && entry.id === fileId);
+          if (object(link) && link.match === "access" && googleDriveAccessDigest(value) !== link.value)
+            fail("DRIVE_POSTCONDITION_ANCESTOR_CHANGED");
+          if (object(link) && link.match === "sharing" && googleDriveSharingDigest(
+              await bounded(metadata.getSharing(fileId, { signal: controller.signal }))) !== link.value)
+            fail("DRIVE_POSTCONDITION_ANCESTOR_CHANGED");
+        }
+        return value;
+      };
       const list = (parentId: string, name: string) => bounded(metadata.listChildren({ parent_id: parentId, name }, { signal: controller.signal })) as Promise<Data[]>;
       const folder = (file: Data, fileId: string, name: string, parentId: string) => {
         if (file.id !== fileId || file.name !== name || file.trashed !== false || file.mimeType !== folderType ||
@@ -129,14 +152,15 @@ export async function createStorageRecoveryReview(config: {
         }
         if (file.id !== targetId || !safeName(file.name) || !Array.isArray(file.parents) || file.parents.length !== 1 ||
             typeof file.trashed !== "boolean" || typeof file.version !== "string" || !/^[1-9]\d{0,39}$/.test(file.version) ||
-            typeof file.mimeType !== "string" || file.mimeType.length > 255 || file.mimeType === folderType) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
+            typeof file.mimeType !== "string" || file.mimeType.length > 255 || (file.mimeType === folderType) !== directory) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
         const location = locations.find(location => file!.name === location.name && file!.parents instanceof Array && file!.parents[0] === location.parentId);
         let boundary = "qualified";
+        let observedParent: Data | null = null;
         if (!location) {
           if (!automatic) fail("DRIVE_POSTCONDITION_IDENTITY_MISMATCH");
           boundary = "identity_changed";
         } else {
-          try { await parent(location); }
+          try { observedParent = await parent(location); }
           catch (error) {
             if (!automatic || !(error instanceof Error) || !["DRIVE_POSTCONDITION_ANCESTOR_CHANGED", "DRIVE_POSTCONDITION_PARENT_AMBIGUOUS"].includes(error.message)) throw error;
             boundary = "ancestor_changed";
@@ -149,23 +173,42 @@ export async function createStorageRecoveryReview(config: {
             }
           }
         }
-        if (automatic && file.trashed === true) boundary = "identity_changed";
+        if (automatic && !directory && file.trashed === true) boundary = "identity_changed";
         if (file.size != null && (typeof file.size !== "string" || !/^(0|[1-9]\d{0,19})$/.test(file.size)) ||
             file.sha256Checksum != null && (typeof file.sha256Checksum !== "string" || !/^[0-9a-f]{64}$/.test(file.sha256Checksum)) ||
             file.headRevisionId != null && (typeof file.headRevisionId !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(file.headRevisionId))) fail("DRIVE_METADATA_RESPONSE_INVALID");
         let state = "changed";
         const old = object(attempt.content_before) ? attempt.content_before : null, after = object(attempt.content_after) ? attempt.content_after : null;
         const beforeVersion = before.destination_file_id === targetId ? before.destination_file_version : before.source_file_version;
+        const directoryFacts = directory ? { access_digest: googleDriveAccessDigest(file),
+          sharing_digest: googleDriveSharingDigest(await bounded(metadata.getSharing(targetId, { signal: controller.signal }))),
+          parent_access_digest: observedParent ? googleDriveAccessDigest(observedParent) : null,
+          parent_sharing_digest: observedParent ? googleDriveSharingDigest(await bounded(metadata.getSharing(
+            String(observedParent.id), { signal: controller.signal }))) : null,
+          empty: !(await bounded(metadata.hasChildren(targetId, { signal: controller.signal }))) } : null;
+        if (directory && (!directoryFacts?.access_digest || file.size != null || file.sha256Checksum != null ||
+            file.headRevisionId != null || typeof file.explicitlyTrashed !== "boolean" || file.explicitlyTrashed !== file.trashed))
+          fail("DRIVE_METADATA_RESPONSE_INVALID");
         const oldMatches = !old || (!Object.hasOwn(old, "size") || file.size === old.size) &&
           (!Object.hasOwn(old, "sha256") || file.sha256Checksum === old.sha256) &&
           (!Object.hasOwn(old, "head_revision_id") || file.headRevisionId === old.head_revision_id);
         if (automatic && boundary !== "qualified") state = "changed";
+        else if (directory) {
+          const beforeTrashed = mutation.operation === "restore";
+          if (directoryFacts?.empty && file.version === beforeVersion && file.trashed === beforeTrashed &&
+              (!before.source_access_digest || before.source_access_digest === directoryFacts.access_digest) &&
+              (!before.source_sharing_digest || before.source_sharing_digest === directoryFacts.sharing_digest) &&
+              (!before.source_parent_access_digest || before.source_parent_access_digest === directoryFacts.parent_access_digest) &&
+              (!before.source_parent_sharing_digest || before.source_parent_sharing_digest === directoryFacts.parent_sharing_digest)) state = "before";
+          else if (directoryFacts?.empty && file.trashed !== beforeTrashed) state = "after";
+        }
         else if (file.version === beforeVersion && oldMatches && (!automatic || file.trashed === false)) state = "before";
         else if (mutation.operation === "replace" && after && file.trashed === false && file.size === after.size && file.sha256Checksum === after.sha256 && file.headRevisionId !== attempt.pinned_revision_id) state = "after";
         else if ((mutation.operation === "delete" && file.trashed === true) || (mutation.operation === "restore" && file.trashed === false)) state = "after";
         else if (["rename", "move"].includes(String(mutation.operation)) && location?.path === mutation.destination_path && file.trashed === false) state = "after";
         return { observed_state: state, provider_file_id: targetId, provider_file_version: file.version, parent_id: file.parents[0], name: file.name,
           trashed: file.trashed, mime_type: file.mimeType, size: file.size ?? null, sha256: file.sha256Checksum ?? null, head_revision_id: file.headRevisionId ?? null,
+          ...(directory ? { explicitly_trashed: file.explicitlyTrashed, ...directoryFacts } : {}),
           ...(automatic ? { boundary_status: boundary } : {}) };
       };
       const first = await observe(), firstObservedAt = new Date(clock()).toISOString();

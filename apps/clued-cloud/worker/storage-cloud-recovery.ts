@@ -235,7 +235,8 @@ export async function createStorageCloudRecovery(config: {
       // credential remain in force; unchanged metadata must not exhaust the
       // after verifier's budget before reconciliation can run.
       if (config.verified && d.conflict_reconcile !== undefined && d.semantic_recovery === undefined) {
-        if (!replace || !object(d.conflict_reconcile) || !uuid.test(String(d.conflict_reconcile.source_receipt_id))) throw denied();
+        const directoryBefore = destructive && d.mutation.target_kind === "directory";
+        if ((!replace && !directoryBefore) || !object(d.conflict_reconcile) || !uuid.test(String(d.conflict_reconcile.source_receipt_id))) throw denied();
         stage = "verification";
         const review = await bounded(createStorageRecoveryReview({ client_id: config.client_id, vault: config.vault,
           descriptor: d, source_receipt_id: String(d.conflict_reconcile.source_receipt_id), clock,
@@ -306,7 +307,20 @@ export async function createStorageCloudRecovery(config: {
         if (!proof) throw error;
         stage = "settlement";
         const settled = await bounded(config.absent.rpc({ action: "settle_absent", ...pinned, intent_id: d.intent_id,
-          base_version: d.version, request_sha256: d.request_sha256, proof })); check();
+          base_version: d.version, request_sha256: d.request_sha256, proof,
+          ...(object(reader) ? { credential_version: d.credential_version, ...readContext } : {}) })); check();
+        if (settled.status === "resolved" && settled.state === "conflict" &&
+            settled.resolution === "automatically_reconciled_before" && settled.automatic_recovery === "resolved" &&
+            settled.intent_id === d.intent_id && settled.connection_id === pinned.connection_id && settled.job_id === pinned.job_id &&
+            settled.base_version === d.version && uuid.test(String(settled.receipt_id)) && settled.execution_permitted === false &&
+            object(reader) && object(d.conflict_absence) && d.conflict_absence.closed_version === d.version &&
+            uuid.test(String(d.conflict_absence.source_receipt_id)) && settled.source_receipt_id === d.conflict_absence.source_receipt_id &&
+            settled.receipt_id !== settled.source_receipt_id) {
+          return { status: "resolved", connection_id: pinned.connection_id, job_id: pinned.job_id,
+            intent_id: d.intent_id, receipt_id: String(settled.receipt_id),
+            source_receipt_id: String(settled.source_receipt_id), base_version: d.version,
+            resolution: "automatically_reconciled_before", automatic_recovery: "resolved", execution_permitted: false };
+        }
         if (settled.status !== "committed" || settled.state !== "cancelled" || settled.intent_id !== d.intent_id ||
             settled.connection_id !== pinned.connection_id || settled.job_id !== pinned.job_id ||
             !uuid.test(String(settled.receipt_id)) || settled.execution_permitted !== false) throw denied();

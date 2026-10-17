@@ -52,7 +52,7 @@ export function createGoogleDriveCreateAbsenceProbe({
     if (exact.status !== 404) fail("DRIVE_ABSENCE_UNPROVEN");
     const tagged = new URL(DRIVE_API);
     tagged.searchParams.set("q", `appProperties has { key='clued_intent_id' and value='${intentId}' }`);
-    tagged.searchParams.set("fields", "files(id),nextPageToken");
+    tagged.searchParams.set("fields", "files(id),nextPageToken,incompleteSearch");
     tagged.searchParams.set("pageSize", "10");
     tagged.searchParams.set("supportsAllDrives", "true");
     tagged.searchParams.set("includeItemsFromAllDrives", "true");
@@ -60,7 +60,9 @@ export function createGoogleDriveCreateAbsenceProbe({
     if (!search.ok) fail("DRIVE_ABSENCE_UNPROVEN");
     let page;
     try { page = await search.json(); } catch { return fail("DRIVE_ABSENCE_UNPROVEN"); }
-    if (!page || typeof page !== "object" || !Array.isArray(page.files) || page.nextPageToken !== undefined) fail("DRIVE_ABSENCE_UNPROVEN");
+    if (!page || typeof page !== "object" || !Array.isArray(page.files) || page.nextPageToken !== undefined ||
+        page.incompleteSearch === true || (page.incompleteSearch !== undefined && typeof page.incompleteSearch !== "boolean"))
+      fail("DRIVE_ABSENCE_UNPROVEN");
     if (page.files.length) return null;
     signal?.throwIfAborted();
     return Object.freeze({ contract: CREATE_ABSENT_CONTRACT, provider_file_id: fileId, parent_id: parentId, intent_id: intentId });
