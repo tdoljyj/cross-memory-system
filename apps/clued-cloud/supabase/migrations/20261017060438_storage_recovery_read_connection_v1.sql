@@ -14,6 +14,22 @@ end $$;
 revoke all on function clued_private.storage_recovery_client_guard_v1(uuid,uuid)
  from public,anon,authenticated,service_role,clued_worker_gateway;
 
+create function clued_private.storage_recovery_client_input_guard_v1(p_input jsonb) returns void
+language plpgsql security definer set search_path='' as $$
+declare connection_ref uuid;job_ref uuid;
+begin
+ -- Accept every UUID representation PostgreSQL accepts, so a casing or
+ -- formatting variation cannot skip serialization. Invalid references go to
+ -- the original entry's closed-code validation without exposing a cast error.
+ begin
+  connection_ref:=(p_input->>'connection_id')::uuid;job_ref:=(p_input->>'job_id')::uuid;
+ exception when invalid_text_representation then return;
+ end;
+ perform clued_private.storage_recovery_client_guard_v1(connection_ref,job_ref);
+end $$;
+revoke all on function clued_private.storage_recovery_client_input_guard_v1(jsonb)
+ from public,anon,authenticated,service_role,clued_worker_gateway;
+
 create function clued_private.storage_recovery_reader_v1(
  p_issuer_identity text,p_original_connection uuid,p_job uuid,p_selected uuid default null) returns jsonb
 language plpgsql security definer set search_path='' as $$
@@ -336,7 +352,7 @@ begin
   body:=pg_get_functiondef(target.signature::regprocedure);
   at:=strpos(body,E'\nbegin\n');
   if at=0 then raise exception 'storage_reader_guard_entry_mismatch: %',target.signature;end if;
-  statement:=format(E' perform clued_private.storage_recovery_client_guard_v1((%I->>''connection_id'')::uuid,(%I->>''job_id'')::uuid);\n',target.input_name,target.input_name);
+  statement:=format(E' perform clued_private.storage_recovery_client_input_guard_v1(%I);\n',target.input_name);
   body:=overlay(body placing E'\nbegin\n'||statement from at for length(E'\nbegin\n'));
   execute body;
  end loop;

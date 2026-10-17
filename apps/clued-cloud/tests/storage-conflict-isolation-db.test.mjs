@@ -776,6 +776,12 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
      assert.ok((await listCurrent()).jobs.some(value=>value.job_id===afterJob.reference.job_id),'list does not wait on a recovering predecessor job');
      assert.equal((await blocker.query("select pg_try_advisory_xact_lock(hashtextextended($1||':'||$2,0)) available",[owner,cloudRoot])).rows[0].available,true,'list holds no execution root lock');
     }finally{await native.query('rollback');await blocker.query('rollback');}
+    for(const representation of [value=>value.toUpperCase(),value=>value.replaceAll('-','')]){
+     await blocker.query('begin');try{
+      await blocker.query('select clued_private.storage_recovery_client_input_guard_v1($1::jsonb)',[JSON.stringify({connection_id:representation(connection),job_id:representation(beforeJob.reference.job_id)})]);
+      assert.equal((await db.query("select pg_try_advisory_xact_lock(hashtextextended('storage-client:'||$1||':'||$2,0)) available",[owner,lineage])).rows[0].available,false,'a valid noncanonical UUID cannot bypass the lineage guard');
+     }finally{await blocker.query('rollback');}
+    }
     const input={...automaticInput(beforeJob),credential_version:2,recovery_reader:descriptor.recovery_reader};
     await assert.rejects(rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{...input,recovery_reader:{...input.recovery_reader,connection_version:input.recovery_reader.connection_version+1}}),/storage_automatic_reconcile_conflict|storage_recovery_reader_changed/);
     for(const fault of ['root','client','credential','subject','client_id','policy']){

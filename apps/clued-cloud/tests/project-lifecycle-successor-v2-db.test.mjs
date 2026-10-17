@@ -581,6 +581,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
       await assertGatewayCloseoutBoundary(admin);
       assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_reader_v1(text,uuid,uuid,uuid)','execute') allowed")).rows[0].allowed, false);
+      assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_client_input_guard_v1(jsonb)','execute') allowed")).rows[0].allowed, false);
     });
     await t.test('Native predecessor recovery listing follows the read-connection migration with unchanged caller grants', async () => {
       const before = await snapshotAuthorizationCallerBoundary(admin);
