@@ -203,7 +203,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -211,7 +211,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "9be93c9acc9bd850d6815ff7b660f98fe3e89969644b33ffaa966c52e2aed978",
+      "content_sha256": "a4a775590b386fc1ad2e20468599f3aabef9c50207096b3bffc43f60dbd506f0",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
@@ -355,6 +355,43 @@
         "apps/clued-cloud/tests/storage-zip-packaging.test.mjs"
       ],
       "content_sha256": "504084360302d49a2f6a4dc803fd6f83e9abfd111da11c8157938623f8baf09c"
+    },
+    {
+      "id": "script.production-publisher-source",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Exact production publisher Source and Role registration with preserved admission-source history.",
+      "root": ".",
+      "files": [
+        "scripts/ci/clued-production-publisher-source.mjs",
+        "scripts/ci/clued-production-publisher-source.test.mjs",
+        "scripts/ci/clued-production-publisher-sources.json",
+        "scripts/ci/production-publisher-source-history.fixture.mjs",
+        "scripts/ci/fixtures/production-publisher-source-history.v1.json",
+        "apps/clued-cloud/tests/production-publisher-source.test.mjs"
+      ],
+      "version_marker": {
+        "file": "scripts/ci/clued-production-publisher-source.mjs",
+        "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      },
+      "content_sha256": "68731f9dff3ebcbe478bf78d5ad5c102d33a9085b3dd3192ce85b8e0d190a10f"
+    },
+    {
+      "id": "script.publisher-pr-qualification-source",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Bounded nonproduction Host and Guest PR qualification Sources, separate from required application CI.",
+      "root": ".",
+      "files": [
+        "scripts/ci/clued-publisher-qualification-source.mjs",
+        "scripts/ci/clued-publisher-qualification-source.test.mjs",
+        "scripts/ci/clued-publisher-qualification-sources.json"
+      ],
+      "version_marker": {
+        "file": "scripts/ci/clued-publisher-qualification-source.mjs",
+        "pattern": "export const COMPONENT_VERSION='{version}';"
+      },
+      "content_sha256": "a959297dd7cb49436caa2269cd2cddb800e236351092af06c4392ff2194db47e"
     }
   ]
 }
