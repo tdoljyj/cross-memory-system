@@ -115,6 +115,9 @@ export async function createStorageGoogleProbe(config: {
       if (!object(secret) || secret.token_type !== "Bearer" || typeof secret.access_token !== "string" || secret.access_token.length < 16 ||
         scopeProfile(secret.scope) === null ||
         !Number.isFinite(secret.expires_at_ms) || Number(secret.expires_at_ms) < deadline + 10000) fail();
+      // Only the exact, vault-authenticated scope set can cover existing files.
+      // Caller input and descriptor labels cannot supply this authority.
+      const credentialScopeProfile = scopeProfile(secret.scope);
       const accessToken = secret.access_token;
       const checkTime = () => { const now = clock(); if (!Number.isFinite(now) || now < started || now >= deadline) fail(); return now; };
       // One budget covers identity lookup, every metadata page, and final reads.
@@ -152,6 +155,7 @@ export async function createStorageGoogleProbe(config: {
       // endpoint. The identity GET allowlist above is deliberately not widened.
       const metadata = createStorageGoogleMetadataBatch({ access_token: accessToken, fetch: fetcher, signal });
       const observation = await createGoogleDriveDirectoryProbe({ trusted_layout: trustedLayout,
+        trusted_scope_profile: credentialScopeProfile,
         get_files: metadata.getFiles, list_folders: metadata.listFolders, get_sharings: metadata.getSharings, clock,
         timeout_ms: Math.max(1, Math.floor(deadline-checkTime())) })();
       checkTime(); signal.throwIfAborted();

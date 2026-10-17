@@ -20,6 +20,25 @@ test("root, track and topic require independent application access; observation 
   assert.equal(Object.hasOwn(result,"admission"),false);
 });
 
+test("sealed full scope covers existing directories without an app-opened marker, with all capability and identity checks",async()=>{
+  const f=fixture();f.config.trusted_scope_profile="full";
+  for(const file of f.files)file.isAppAuthorized=false;
+  assert.equal((await f.run()).status,"metadata_observed");
+  delete f.files[3].isAppAuthorized;
+  assert.equal((await f.run()).execution_permitted,false);
+  f.files[3].capabilities.canAddChildren=false;
+  await assert.rejects(f.run(),/DIRECTORY_NOT_WRITABLE/);
+  f.files[3].capabilities.canAddChildren=true;f.files[3].parents=["outside"];
+  await assert.rejects(f.run(),/DIRECTORY_CHANGED/);
+});
+
+test("legacy and normal still require per-file application access; unknown scope profiles cannot relax qualification",async()=>{
+  for(const profile of ["legacy","normal"]){const f=fixture();f.config.trusted_scope_profile=profile;
+    f.files[3].isAppAuthorized=false;await assert.rejects(f.run(),/DIRECTORY_NOT_APP_AUTHORIZED/);}
+  for(const profile of [null,"drive",{},true]){const f=fixture();f.config.trusted_scope_profile=profile;
+    assert.throws(()=>createGoogleDriveDirectoryProbe(f.config),/SCOPE_PROFILE_INVALID/);}
+});
+
 test("all trusted directories are classified before denying, with false distinct from missing",async()=>{
   const f=fixture();f.files[1].isAppAuthorized=false;delete f.files[2].isAppAuthorized;
   f.files[3].capabilities.canAddChildren=false;

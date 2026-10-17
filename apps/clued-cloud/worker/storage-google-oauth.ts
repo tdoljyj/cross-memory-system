@@ -221,7 +221,7 @@ export async function createStorageGoogleOAuth(configuration: {
         stage = "root_identity_mismatch";
         if (root.id !== d.root_folder_id || root.mimeType !== "application/vnd.google-apps.folder" || root.trashed !== false) fail();
         stage = "root_not_authorized";
-        if (root.isAppAuthorized !== true) fail();
+        if (granted !== "full" && root.isAppAuthorized !== true) fail();
         stage = "root_not_writable";
         if ((root.capabilities as RecordValue)?.canAddChildren !== true) fail();
         stage = "root_parent_mismatch";
