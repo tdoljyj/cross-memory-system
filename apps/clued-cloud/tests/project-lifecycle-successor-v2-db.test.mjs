@@ -28,6 +28,7 @@ const storageRecoveryReaderMigration = '20261017060438_storage_recovery_read_con
 const storageRecoveryNativeMigration = '20261017063317_storage_recovery_native_coverage_v1.sql';
 const storageLegacyDirectoryMigration = '20261017074657_storage_legacy_directory_recovery_v1.sql';
 const storageCurrentRegistrationMigration = '20261017102500_storage_registration_reconcile_v1.sql';
+const imprintBulkMigration = '20261017121706_imprint_bulk_backfill_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -87,7 +88,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -639,6 +640,37 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
           assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed", [role, table])).rows[0].allowed, false, table+' '+role);
           assert.equal((await admin.query("select has_any_column_privilege($1,$2,'SELECT,INSERT,UPDATE,REFERENCES') allowed", [role, table])).rows[0].allowed, false, table+' '+role);
         }
+      }
+    });
+    await t.test('bounded imprint rehearsal installs after its real lifecycle dependency without widening existing callers', async () => {
+      // This historical scenario deliberately defers recognized-project helpers.
+      // Install the actual migration once, after every original assertion and
+      // predecessor; the ordinary full-chain test keeps timestamp order.
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', imprintBulkMigration), 'utf8'));
+      const after = await snapshotAuthorizationCallerBoundary(admin);
+      assert.deepEqual(after.filter(row => !row.signature.replace(/^public\./, '').startsWith('clued_imprint_bulk_')), before);
+      assert.equal(after.length, before.length + 3);
+      await assertGatewayCloseoutBoundary(admin);
+      const nativeSignatures = ['public.clued_imprint_bulk_preview_v1(jsonb)', 'public.clued_imprint_bulk_status_v1()',
+        'public.clued_imprint_bulk_mutate_v1(jsonb,text)'];
+      for (const signature of nativeSignatures) for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+        assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, signature])).rows[0].allowed, role === 'authenticated');
+      const helpers = (await admin.query(`select proname,oid::regprocedure::text signature,pg_get_userbyid(proowner) owner,prosecdef,proconfig
+        from pg_proc where pronamespace='clued_private'::regnamespace and proname like 'imprint_bulk_%' order by proname`)).rows;
+      assert.equal(helpers.length, 7);
+      for (const helper of helpers) {
+        assert.equal(helper.owner, 'postgres'); assert.deepEqual(helper.proconfig, ['search_path=""']);
+        assert.equal(helper.prosecdef, helper.proname !== 'imprint_bulk_domains_v1');
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false);
+      }
+      for (const table of ['imprint_bulk_batches_v1', 'imprint_bulk_items_v1', 'imprint_bulk_proof_key_v1']) {
+        const catalog = (await admin.query(`select pg_get_userbyid(c.relowner) owner,c.relrowsecurity,
+          not exists(select 1 from aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where a.grantee<>c.relowner or a.grantor<>c.relowner) owner_only,
+          not exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and a.attacl is not null) no_column_grants,
+          not exists(select 1 from pg_policy p where p.polrelid=c.oid) no_policies from pg_class c where c.oid=$1::regclass`, ['clued_private.' + table])).rows[0];
+        assert.deepEqual(catalog, { owner: 'postgres', relrowsecurity: true, owner_only: true, no_column_grants: true, no_policies: true });
       }
     });
   } finally {

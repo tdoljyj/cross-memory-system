@@ -265,7 +265,8 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
     });
     await t.test('one-source rehearsal and metadata-only begin stay within the real Native statement budget for long bodies', async () => {
       const isolated = await isolatedOwner('bulk-performance');
-      const bodies = [('普通旧记录。'.repeat(1300)).slice(0, 7928), '。；!? \n'.repeat(1100).slice(0, 7900), 'a。'.repeat(3950)];
+      const bodies = [('普通旧记录。'.repeat(1300)).slice(0, 7928), '。；!? \n'.repeat(1100).slice(0, 7900), 'a。'.repeat(3950),
+        '用途：我的学习\n' + '。'.repeat(7980)];
       for (const body of bodies) await legacy(body, 'global', isolated.client);
       await isolated.client.query("set statement_timeout='8s'");
       let proof, pages = 0;
@@ -274,8 +275,15 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
         assert.equal(value.page.scanned, 1); proof = value.proof; pages++;
         if (value.page.complete) break;
       } while (pages < bodies.length + 1);
-      assert.equal(pages, 3); assert.equal(proof.payload.cursor, 3); assert.equal(proof.payload.ready, 0);
+      assert.equal(pages, 4); assert.equal(proof.payload.cursor, 4); assert.equal(proof.payload.ready, 1);
       assert.equal(proof.payload.needs_review, 3);
+      // This is an exact algorithm-preservation check, not a second classifier:
+      // removing the one empty-segment guard restores the prior shared body.
+      const prior = await fs.readFile(path.join(root, 'supabase/migrations/20261016124233_imprint_auto_domains_v1.sql'), 'utf8');
+      const oldBody = /create function clued_private\.imprint_auto_domains_v1[\s\S]*?as \$\$([\s\S]*?)end \$\$;/.exec(prior)[1] + 'end ';
+      const currentBody = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].prosrc;
+      const normalize = value => value.replaceAll('\r\n', '\n');
+      assert.equal(normalize(currentBody).replace("      if segment='' then continue; end if;\n", ''), normalize(oldBody));
     });
     await t.test('ordinary same-child Native idempotency takes priority without reversing source lock order', async () => {
       const isolated = await isolatedOwner('bulk-lock'), a = isolated.client, b = await actor(isolated.id);
