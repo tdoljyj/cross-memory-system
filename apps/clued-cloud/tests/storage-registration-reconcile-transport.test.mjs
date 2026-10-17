@@ -64,6 +64,23 @@ test('ancestor version can advance; exact identity and ACL are compared across o
  assert.equal(result.second_observation.target.provider_file_version,'1');
 });
 
+for(const mode of ['refresh_directory','adopt_create'])for(const trashed of [false,true])
+ test(mode+' observes a nonempty directory without adopting or changing its '+(trashed?'trashed':'active')+' child',async()=>{
+  const f=fixture(mode);
+  f.files.set('unmanaged-child',{id:'unmanaged-child',parents:['target'],name:'owner-file',trashed});
+  const before=structuredClone([...f.files]),plan=structuredClone(f.plan);
+  const result=await f.observe();
+  assert.equal(result.first_observation.target.empty,false);assert.equal(result.second_observation.target.empty,false);
+  assert.deepEqual([...f.files],before);assert.deepEqual(f.plan,plan);
+  assert.ok(f.calls.every(c=>c.init.method==='GET'&&c.url.pathname!=='/drive/v3/files/unmanaged-child'));
+ });
+
+test('changing child presence between the two reads is not a stable current qualification',async()=>{
+ const f=fixture();let reads=0;
+ f.versions.set('target',()=>{if(++reads===2)f.files.set('new-child',{id:'new-child',parents:['target'],name:'new',trashed:false});return 1;});
+ await assert.rejects(f.observe(),/OBSERVATION_CHANGED/);
+});
+
 for(const [name,change,reason] of [
  ['metadata-only list visibility',f=>f.track.capabilities.canListChildren=false,'NAMESPACE_UNPROVEN'],
  ['missing canShare/full ACL visibility',f=>delete f.track.capabilities.canShare,'OWNERSHIP_UNPROVEN'],
@@ -79,7 +96,6 @@ for(const [name,change,reason] of [
  ['permission IDs disagree',f=>f.target.permissionIds=['other-owner'],'OWNERSHIP_UNPROVEN'],
  ['known access baseline mismatch',f=>f.plan.parents[0].access_digest='b'.repeat(64),'ACL_CHANGED'],
  ['known sharing baseline mismatch',f=>f.plan.target.sharing_digest='b'.repeat(64),'ACL_CHANGED'],
- ['folder has a trashed child',f=>f.files.set('trashed',{id:'trashed',parents:['target'],name:'old',trashed:true}),'DIRECTORY_NOT_EMPTY'],
  ['duplicate target name',f=>f.files.set('duplicate',{id:'duplicate',parents:['track'],name:'Topic',trashed:false}),'NAMESPACE_CONFLICT'],
  ['moved target',f=>f.target.parents=['elsewhere'],'IDENTITY_CHANGED'],
  ['multiple parents',f=>f.target.parents.push('elsewhere'),'IDENTITY_CHANGED'],

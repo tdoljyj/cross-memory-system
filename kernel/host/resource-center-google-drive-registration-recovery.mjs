@@ -132,7 +132,9 @@ export function createGoogleDriveRegistrationRecovery({ metadata, clock = Date.n
         if (file.capabilities?.canListChildren !== true) fail("NAMESPACE_UNPROVEN");
         if (file.size != null || file.sha256Checksum != null || file.headRevisionId != null) fail("IDENTITY_CHANGED");
         empty = !(await metadata.hasChildren(target.provider_file_id, { signal }));
-        if (!empty) fail("DIRECTORY_NOT_EMPTY");
+        // This is new current metadata for this directory only. Preserve the
+        // observed child-presence fact; children are neither adopted nor
+        // changed, and the old mutation's typed proof is not being rebuilt.
       }
       if (pinned.mode === "adopt_create") {
         if (!object(file.appProperties) || file.appProperties.clued_intent_id !== pinned.intent_id ||

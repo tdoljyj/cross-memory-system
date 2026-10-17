@@ -550,3 +550,15 @@ Owner 原生恢复接口与后台调度均接入相同的只读缺失探测和�
 
 本节为源码候选，须经真实 PostgreSQL 路由与 Worker 测试、独立源码审核、正常 PR/当前 CI、合并和正式生产发布，再按数据库先于页面的顺序验收。旧 typed 路径仍可正常 committed 的情况，与新当前登记路径分别测试；故障注入的旧证明路由不可用不能冒称真实 null-snapshot 历史链已验证。真实历史入口、现有刷新分支、并发、回执失败回滚与权限反例的覆盖结论分别记录。目录其他状态、目录移动、非 job I12 和暂停范围不因本候选宣告完成。
 
+## 25. Active 非空目录自身的当前资格（e91 后继候选）
+
+本节仅修订 §23/24 中“独立当前登记”对物理空目录的要求，不修改原操作的 typed proof、原 before/after 判据或其优先结算机会。当前程序可以资格化仍为 active、ordinary、固定身份/位置的目录自身，即使该目录现在包含用户的文件或回收站子项。现有 plan 对 root/track、已登记 active/trashed 后代、已撤销对象及完整原 I9/attempt/Receipt 的限制继续适用。
+
+目标与连续父链仍需完整当前程序授权、封存 full scope、私有且完整 ACL、唯一名称槽、目标版本与登记 CAS，以及 30 秒内的两次真实只读观察。`empty` 是本次实际观察到的布尔事实，可以为 true 或 false；缺失、null、字符串或两次不同仍拒绝。父链 incidental version 的现有语义、原明确权限基线和各项 scope/I11 保护不变。
+
+资格只更新目录自身和原合同允许的缺失摘要父行；旧创建只插入该固定目录的一个 ordinary、delete_authority=false Artifact。目录中的物理子项均 **未被纳管**：不登记其 Artifact、不读正文、不改内容、位置或分享、不授予对其写入权，也不以目录资格声称完整子树已核对。现有在途/verified 依赖、其他对象隔离及 metadata-only permit 原边界仍生效。原 journal、NULL snapshot、attempt、旧 Receipt 和未确认历史不修改，不重发任何 Drive 写入。
+
+实现采用带原精确函数体哈希和属性校验的前向迁移，仅把两个私有 current-registration validator 的空目录真值断言改为实际布尔事实校验；函数 OID、Owner、ACL、SECURITY DEFINER、volatility 和 search_path 必须保持。其他旧证明验证器、计划、提交事务及 I11 permit 不改。
+
+本节尚为候选：真实 PostgreSQL/Worker 场景须覆盖 existing directory 与真实 legacy NULL create，active/trashed 物理子项不变且无子 Artifact，双观察变化与伪造事实拒绝，原有效 typed proof 优先、Receipt 失败回滚、并发及其他隔离不变。源码/CI、合并、迁移、同批部署、数据库先于页面及独立审核全部通过后才接受。目标自身的 trashed 状态、目录移动和非 job I12 仍未由本节交付。
+
