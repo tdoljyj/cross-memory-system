@@ -1,4 +1,5 @@
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
+import { setWorkerGatewayCaller } from './worker-gateway-caller-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -20,7 +21,7 @@ const TRACK = "20_P_产品与体验";
 // StorageFullCapability.v0.1 P4: replace, revision protection and revert
 // through the real cloud executor (verified-result mode) against disposable
 // PostgreSQL and an in-memory Drive with revisions. Never Google, never a disk.
-export async function testStorageReplace(t, admin, server, user, decision) {
+export async function testStorageReplace(t, admin, server, user, decision, options = {}) {
   await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
@@ -34,6 +35,7 @@ export async function testStorageReplace(t, admin, server, user, decision) {
     return database;
   };
   const native = await connect("authenticated"), caller = await connect("anon"), competing = await connect("anon"), operator = await connect();
+  if (options.gateway) { await setWorkerGatewayCaller(caller);await setWorkerGatewayCaller(competing); }
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, user]);
   await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
     [user, JSON.stringify({ sub: user, session_id: session })]);
@@ -91,7 +93,10 @@ export async function testStorageReplace(t, admin, server, user, decision) {
     } catch (error) { await admin.query("rollback"); throw error; }
     return { ...target, policy };
   };
-  const cloud = async (input, database = caller) => (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value;
+  const cloud = async (input, database = caller) => {
+    try { return (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value; }
+    catch (error) { options.on_cloud_error?.(error, input);throw error; }
+  };
   const submit = async (target, client, suffix = randomUUID()) => {
     const reference = { connection_id: target.connection, job_id: randomUUID() };
     const mutation = { operation: "create", target_kind: "file", destination_path: target.root + `/20_P_产品与体验/${suffix}.txt`, content: "isolated account cloud UTF-8 fixture" };
@@ -125,7 +130,7 @@ export async function testStorageReplace(t, admin, server, user, decision) {
   const jobRow = async job => (await admin.query("select * from clued_private.storage_jobs_v1 where owner_id=$1 and job_id=$2", [user, job.reference.job_id])).rows[0];
   const journal = async job => (await admin.query("select m.* from clued_private.storage_jobs_v1 j join clued_private.resource_center_mutations_v1 m on m.id=j.intent_id where j.owner_id=$1 and j.job_id=$2", [user, job.reference.job_id])).rows[0];
   const provider = target => {
-    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, mimeType: "application/vnd.google-apps.folder" });
+    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, explicitlyTrashed: false, permissions: [{ id: "fixture-owner", type: "user", role: "owner" }], mimeType: "application/vnd.google-apps.folder" });
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
       [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, "20_P_产品与体验", target.rootId)],
       // The Owner's own Clued-named doc beside the root (StorageNormalUse §3.1): listed, not app-authorized.
@@ -156,9 +161,21 @@ export async function testStorageReplace(t, admin, server, user, decision) {
           revision.keepForever = JSON.parse(init.body).keepForever;
           return Response.json({ id: revision.id, keepForever: revision.keepForever });
         }
-        assert.equal(u.pathname.startsWith("/upload/drive/v3/files/"), true); assert.equal(u.searchParams.get("uploadType"), "media");
+        assert.equal(u.pathname.startsWith("/upload/drive/v3/files/"), true);
         const file = files.get(id);
-        newRevision(file, Buffer.from(init.body));
+        let bytes = Buffer.from(init.body);
+        if (u.searchParams.get("uploadType") === "multipart") {
+          const boundary = /boundary=(.+)$/.exec(new Headers(init.headers).get("content-type"))?.[1];assert.ok(boundary);
+          const metadataStart = bytes.indexOf("\r\n\r\n") + 4, metadataEnd = bytes.indexOf(`\r\n--${boundary}`, metadataStart);
+          assert.ok(metadataStart >= 4 && metadataEnd > metadataStart);
+          const metadata = JSON.parse(bytes.subarray(metadataStart, metadataEnd).toString("utf8"));
+          const mediaStart = bytes.indexOf("\r\n\r\n", metadataEnd + 4) + 4, mediaEnd = bytes.lastIndexOf(`\r\n--${boundary}--`);
+          assert.ok(mediaStart > metadataEnd && mediaEnd >= mediaStart);
+          if (metadata.mimeType) file.mimeType = metadata.mimeType;
+          if (metadata.appProperties) file.appProperties = { ...file.appProperties, ...metadata.appProperties };
+          bytes = bytes.subarray(mediaStart, mediaEnd);
+        } else assert.equal(u.searchParams.get("uploadType"), "media");
+        newRevision(file, bytes);
         file.version = String(Number(file.version) + 2); // Drive may jump by more than one.
         if (state.loseUpload) throw new Error("synthetic lost provider response");
         return Response.json(file);
@@ -168,7 +185,7 @@ export async function testStorageReplace(t, admin, server, user, decision) {
         const raw = init.body, match = /\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw), metadata = JSON.parse(match?.[0] ?? raw);
         const boundary = /boundary=(.+)$/.exec(new Headers(init.headers).get("content-type"))[1];
         const media = raw.split(`--${boundary}`)[2], text = media.slice(media.indexOf("\r\n\r\n") + 4, media.lastIndexOf("\r\n"));
-        const created = { ...metadata, version: "1", trashed: false };
+        const created = { ...metadata, version: "1", trashed: false, explicitlyTrashed: false };
         newRevision(created, Buffer.from(text, "utf8"));
         files.set(metadata.id, created);
         return Response.json(created);
@@ -197,9 +214,10 @@ export async function testStorageReplace(t, admin, server, user, decision) {
     };
     return state;
   };
-  const executor = (target, storage, database = caller, observe = async () => {}, staged = null) => {
+  const executor = (target, storage, database = caller, observe = async () => {}, staged = null, { semantic = false } = {}) => {
     let loaded;
     return createResourceCenterCloudExecutor({ verified_result_mode: true,
+      ...(semantic ? { semantic_recovery_client_id: oauthClient } : {}),
       // Binary replace (Decision 06aba6c5): the staged bytes are handed to the executor directly (never R2).
       ...(staged ? { load_staged_content: async ({ content_ref }) => bytesContentSource(staged(content_ref), content_ref) } : {}),
       load_job: async ref => {
@@ -284,6 +302,9 @@ export async function testStorageReplace(t, admin, server, user, decision) {
   const sheet = text => Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from(text)]);
 
   try {
+    if (options.extra_cases) await options.extra_cases({ setup, createFile, cloud, submitJob, replace, executor, journal, artifact, pins,
+      oauth_client_id: oauthClient, provider_subject: "replace-exec-subject", access_token: "fixture-replace-exec-access" });
+    if (options.only_extra) return;
     await t.test("replace keeps the previous revision forever, uploads the new text and settles the same Artifact", async () => {
       const { target, client, storage } = await setup();
       const created = await createFile(target, client, storage, "notes.txt");

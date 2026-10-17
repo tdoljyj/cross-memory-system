@@ -406,3 +406,41 @@ Google 请求只查询状态与元数据，不盲重试未知非幂等写入；�
 
 本节的测试、独立审核、Owner 对具体后继的正式接受、合并与生产验收是分别记录的事件；尚未发生的步骤不得标为完成。本轮只修复 §17.1 的常规恢复链，不替代 r10.1 的其他交付，也不宣布 B 的并发目标达成。
 
+## 18. 新 cloud attempt 的完整语义恢复（Task `e91a8ebc`）
+
+本增量落实 §4.3 的新建、改名、文件移动、替换、单个文件或空目录的回收站操作。启用点是服务端从原 sealed credential context 取得的实际 OAuth client；不是工具参数、显示名称或浏览器传来的权限。目录移动、认领与既有无新证据的 attempt 沿用原恢复路径。
+
+### 18.1 原子记录与一次效果
+
+- 原 provider attempt 及其 Receipt 不变。首次 `provider_attempt` 成功时，同一数据库事务另存不可变的 `clued.storage-semantic-attempt/1`、原 attempt Receipt/digest、完整 before、服务端重新计算的 after 谓词和实际 client。任一验证失败，两份记录一起回滚；重放不补录历史证据，也不允许再执行效果。
+- 新建沿用预生成 ID 与原 private marker；其余操作在原本的一次 PATCH 或替换 multipart 请求内设置 `appProperties.clued_intent_id`。不增加一次事后标记请求，不重派回复未知的原效果。
+- 普通成功与后台恢复都先取得 fresh 同 client 的两次稳定目标观察、前后完整祖先身份及名称槽观察。目录目标的 before 同时保存同一元数据响应中的完整权限摘要；权限缺失不能作为相等。
+- 观察不续签、不授权、不调用模型或 Drive 写入。每个读取有超时，整个观察有截止；权限、限流、网络和格式失败保持真实原因并由原调度退避继续。
+
+### 18.2 数据库重新判定
+
+私有结算入口重新验证 Owner、原 job/intent/request、client、原回执、当前凭证与授权、完整 scope、观察时效及版本，独立推导结论，不接受 Worker 的分类字符串作为证明。
+
+| 当前观察 | 程序处理 |
+| --- | --- |
+| 完整 after、自己的 marker、稳定版本与名称槽 | 与原类型核验 proof 同事务保存独立验证链接，再走原 `settle_verified`；I9 结算也必须有此链接。 |
+| 完整 before、名称槽一致、已过 I2 | 原在途 journal 取消为 `PROVIDER_EFFECT_ABSENT`；原 I9 冲突则保留历史 conflict，通过独立自动恢复 Receipt 与 I11 permit 解除该对象保护。 |
+| 新建 ID 返回 404 | 仅是缺失观察，仍须同 client、具备命名空间读取能力的 private marker 搜索也为空；401/403/5xx 不解释为缺失。 |
+| 同名外部对象、权限或内容改变等真实差异 | 该对象继续真实 conflict；不改外部文件，不显示“已恢复”，不占用无关对象的写入资格。 |
+
+I2 未到时，只有完整 after 可以结算。名称槽有变化的两次读取、祖先变化或证据不完整时不产生结论。旧 attempt 不由本增量倒推历史 no-effect。
+
+### 18.3 恢复后可继续使用
+
+before 的语义相同可能伴随 Drive version 前进。仅在原登记行身份、路径、类型、状态和旧版本 CAS 均成立时，与恢复出口同一 Receipt 更新该行版本。目录还须与记录 before 时的完整权限摘要相同；不能用内容/名称相同接受新的权限基线。并发恢复最多提交一张出口 Receipt，重放只返回已提交结果。
+
+替换的 before 核验另外读取原 revision 的真实 `keepForever` 与内容元数据，只登记实际存在的 pin；不重新上传、不解除 Owner 保留。已存 after proof 优先，任何失败不得清除原 proof、Receipt 或隔离。
+
+Native 的 `resolved` 响应包含精确 connection/job、新 Receipt、不同的原 `source_receipt_id`、正 `base_version` 与 `automatically_reconciled_before`。页面只展示程序结果，正常恢复不增加用户确认步骤。
+
+### 18.4 验收与后继边界
+
+本增量要求先真实 PostgreSQL 路由回归，再核原生页面与接口；合并、迁移及同 cohort 全量发布分别保留证据。回退可关闭新语义尝试，原不可变 sidecar/Receipt、I11、安全出口与已提交恢复结果保留，不重派旧效果。
+
+Task `e91a8ebc` 继续承担 legacy/null-snapshot 与非 job I9/I12 完整出口、替代合法只读连接和其余非目录移动目录复核范围；这些不由本增量的测试宣告完成。Task `2e439b59`、`300dcbd0`、`f5609ce7`、`e58aca14` 分别保留 §6 的续传、授权纪元、级别切换及 B 并发范围。已暂停的新域验收与退旧域保持暂停。
+

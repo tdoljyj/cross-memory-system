@@ -31,7 +31,7 @@ export function fixture(options={}){
       managed_root:root,allowed_root_children:['track']},root_folder_id:'root',root_parent_id:'parent',scan_roots:[{folder_id:'parent',path:'G:/My Drive'}]};
   const authority={artifact_id:null,artifact_role:'clued_resource',governance_class:'ordinary',delete_authority:false,
     authority_version:'authority/1',currentness_identity:'decision/1',workspace_version:'workspace/1'};
-  let currentRequest;
+  let currentRequest, semanticAttempt;
   const config={clock:()=>now,
     load_job:async()=>{loads++;return structuredClone({...descriptor,status});},
     get_credential:async()=>({owner_id:ids.owner,connection_id:ids.connection,provider_subject:'subject',credential_version:1,
@@ -53,7 +53,15 @@ export function fixture(options={}){
         if(options.failAttempt)throw new Error('durable store unavailable');
         if(options.replayedAttempt)return {status:'replayed',attempt_recorded:false,execution_permitted:false,receipt_id:ids.receipt};
         if(options.expireAdmission)now+=60000;
-        return {status:'committed',attempt_recorded:true,receipt_id:ids.receipt,attempt:input.attempt};
+        if(input.semantic_attempt){
+          assert.equal(input.semantic_attempt.observed_file_version,null);
+          assert.equal(input.semantic_attempt.evidence.before.exists,false);
+          assert.equal(input.semantic_attempt.evidence.before.provider_file_id,input.attempt.provider_file_id);
+          semanticAttempt=structuredClone(input.semantic_attempt.evidence);
+        }
+        return {status:'committed',attempt_recorded:true,receipt_id:ids.receipt,attempt:input.attempt,
+          ...(semanticAttempt?{semantic_attempt_receipt_id:ids.receipt,semantic_recovery:{receipt_id:ids.receipt,
+            evidence:semanticAttempt,no_effect_after_ms:now+700000}}:{})};
       }
       assert.equal(input.action,'finalize');assert.equal(posts,1);assert.equal(input.postcondition.provider_file_id,'new-id');
       if(options.lostFinalize)throw new Error('lost receipt');
@@ -73,6 +81,15 @@ export function fixture(options={}){
         assert.equal(status,'started');assert.ok(trace.includes('provider_attempt'));posts++;trace.push('provider-post');
         files.set('new-id',{id:'new-id',name:'new.txt',parents:['track'],version:'1',trashed:false,mimeType:'text/plain',
           size:String(Buffer.byteLength(mutation.content)),sha256Checksum:sha(mutation.content)});
+        if(semanticAttempt){
+          // Model the metadata in the actual multipart request, rather than
+          // inventing a matching marker for the postcondition observer.
+          assert.equal(typeof init.body,'string');
+          const metadata=JSON.parse(/\r\n\r\n(\{[^\r\n]*\})\r\n/.exec(init.body)?.[1]??'null');
+          assert.equal(metadata.id,'new-id');assert.equal(metadata.appProperties.clued_intent_id,ids.intent);
+          Object.assign(files.get('new-id'),{explicitlyTrashed:false,headRevisionId:'new-revision',
+            appProperties:metadata.appProperties});
+        }
         if(options.lostPost)throw new Error('lost provider response');
         return Response.json(files.get('new-id'));
       }

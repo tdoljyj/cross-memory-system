@@ -35,13 +35,14 @@ function abortableSleep(ms, signal) {
 }
 
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
-/** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean, transient_retries?: number, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>, random?: () => number}} config */
+/** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean, semantic_details?: boolean, transient_retries?: number, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>, random?: () => number}} config */
 export function createGoogleDriveMetadataApi({
   get_access_token: getAccessToken,
   get_credential: getCredential,
   fetch: fetchImpl = globalThis.fetch,
   timeout_ms: timeoutMs = 5000,
   authorization_details: authorizationDetails = false,
+  semantic_details: semanticDetails = false,
   transient_retries: transientRetries = 0,
   sleep = abortableSleep,
   random = Math.random,
@@ -54,11 +55,13 @@ export function createGoogleDriveMetadataApi({
     throw new TypeError("timeout_ms must be 1..10000.");
   }
   if (typeof authorizationDetails !== "boolean") throw new TypeError("authorization_details must be boolean.");
+  if (typeof semanticDetails !== "boolean") throw new TypeError("semantic_details must be boolean.");
   if (!Number.isInteger(transientRetries) || transientRetries < 0 || transientRetries > 3 ||
     typeof sleep !== "function" || typeof random !== "function") {
     throw new TypeError("transient_retries must be 0..3.");
   }
-  const fields = FIELDS + (authorizationDetails ? ",isAppAuthorized,capabilities(canAddChildren)" : "");
+  const fields = FIELDS + (authorizationDetails ? ",isAppAuthorized,capabilities(canAddChildren)" : "") +
+    (semanticDetails ? ",explicitlyTrashed,appProperties,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)" : "");
 
   async function credential(requireNamespace) {
     // The token and its granted scope must be obtained together from the
@@ -80,10 +83,10 @@ export function createGoogleDriveMetadataApi({
   // retried up to transient_retries times, waiting min(2^n s + up to 1 s, 32 s)
   // as Google's Drive error guide recommends. Off by default; an abort, a
   // subrequest limit or any other status is never retried.
-  async function read(url, token, signal) {
+  async function read(url, token, signal, allowMissing = false) {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await readOnce(url, token, signal);
+        return await readOnce(url, token, signal, allowMissing);
       } catch (error) {
         if (attempt >= transientRetries || !(error instanceof TransientReadError)) {
           throw error instanceof TransientReadError ? new Error(error.message) : error;
@@ -94,7 +97,7 @@ export function createGoogleDriveMetadataApi({
     }
   }
 
-  async function readOnce(url, token, signal) {
+  async function readOnce(url, token, signal, allowMissing) {
     signal?.throwIfAborted();
     let response;
     try {
@@ -117,6 +120,9 @@ export function createGoogleDriveMetadataApi({
     }
     signal?.throwIfAborted();
     if (!response.ok) {
+      // An exact-ID 404 is an observation, never namespace absence proof.
+      // Only the explicitly opted-in semantic target read may return it.
+      if (allowMissing && response.status === 404) return null;
       if (response.status === 429 || response.status >= 500 || (response.status === 403 && await rateLimited(response))) {
         throw new TransientReadError("DRIVE_METADATA_UNAVAILABLE");
       }
@@ -131,7 +137,9 @@ export function createGoogleDriveMetadataApi({
     }
   }
 
-  async function getFile(id, {signal} = {}) {
+  /** @param {string} id @param {{signal?: AbortSignal, allow_missing?: boolean}} [options] */
+  async function getFile(id, {signal, allow_missing: allowMissing = false} = {}) {
+    if (typeof allowMissing !== "boolean") throw new TypeError("allow_missing must be boolean.");
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]+$/.test(id)) {
       throw new TypeError("Invalid Drive file ID.");
     }
@@ -139,7 +147,8 @@ export function createGoogleDriveMetadataApi({
     url.searchParams.set("fields", fields);
     url.searchParams.set("supportsAllDrives", "true");
     signal?.throwIfAborted();
-    const result = await read(url.href, await credential(false), signal);
+    const result = await read(url.href, await credential(false), signal, allowMissing);
+    if (allowMissing && result === null) return null;
     if (!result || result.id !== id) throw new Error("DRIVE_METADATA_MISMATCH");
     return result;
   }

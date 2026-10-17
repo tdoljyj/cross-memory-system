@@ -22,6 +22,7 @@ const storageReconnectRefreshMigration = '20261012033722_storage_reconnect_refre
 const storageConflictMigration = '20261016040000_storage_conflict_isolation_v1.sql';
 const storageAutomaticReconcileMigration = '20261016090000_storage_automatic_reconcile_v1.sql';
 const storageRegistrationRecoveryMigration = '20261016133429_storage_registration_recovery_v1.sql';
+const storageSemanticRecoveryMigration = '20261017043050_storage_semantic_recovery_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -80,7 +81,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
     const migrationNames = (await fs.readdir(path.join(root, 'supabase/migrations')))
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
-      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
+      name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
       !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
@@ -552,6 +553,18 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       assert.equal(sidecar.owner,'postgres');assert.equal(sidecar.relrowsecurity,true);
       for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
         assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed",[role,table])).rows[0].allowed,false,table+' '+role);
+    });
+    await t.test('semantic recovery installs after the real gateway and I9 prerequisites without widening caller access', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageSemanticRecoveryMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      for (const table of ['storage_semantic_attempts_v1', 'storage_semantic_verifications_v1']) {
+        const signature = 'clued_private.' + table;
+        assert.equal((await admin.query('select relrowsecurity enabled from pg_class where oid=$1::regclass', [signature])).rows[0].enabled, true);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed", [role, signature])).rows[0].allowed, false);
+      }
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
