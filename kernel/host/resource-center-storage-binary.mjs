@@ -11,16 +11,19 @@
  * - `validateStagedContent(source, mime)`: the post-staging (`validating`) checks. `source` is
  *   either the bytes or a range reader `{ size, readRange(offset, length) }`, so the Worker never
  *   needs the whole object in memory: the zip reader's range mode reads the tail, the central
- *   directory (capped) and only the XML parts inspected below.
- *   zip / OOXML / ODF: entries named `vbaProject.bin` and ODF `Basic/` / `Scripts/` folders are
+ *   directory (capped), entry headers/names and only the XML content parts inspected below.
+ *   zip / OOXML / ODF: non-ASCII entry names require valid UTF-8 and bit 11 in both headers;
+ *   local and central names must match, and comments covered by bit 11 must also be valid UTF-8.
+ *   This validation never rewrites the uploaded bytes or their declared digest.
+ *   Entries named `vbaProject.bin` and ODF `Basic/` / `Scripts/` folders are
  *   refused; `[Content_Types].xml` and every `.rels` part is decoded strictly (UTF-8 only, BOM
  *   or declaration naming anything else refused, UTF-16 refused, no DOCTYPE / entity
  *   declarations, no character references, only the five predefined entities, which are
  *   resolved), then any content type or relationship type naming a VBA project, VBA data,
  *   ActiveX, a macro sheet, key-map customizations or a macro-enabled main type refuses the
  *   file whatever the part is called. At most RELS_PARTS_MAX `.rels` parts are read (more refuses
- *   the file), and they are read in local-header order so a range reader with a small window
- *   cache fetches each window of the archive at most once.
+ *   the file), and all entry headers and inspected XML parts are read in local-header order
+ *   so a range reader with a small window cache fetches each data window at most once.
  *
  * Every refusal is the fixed code `content_type_mismatch`. */
 import { openZip } from "./resource-center-zip-reader.mjs";
@@ -199,15 +202,21 @@ async function checkZip(source, mimeType) {
   // Every OOXML package has exactly one content types part.
   if (mimeType.startsWith(OOXML) && !contentTypes) fail();
   if (rels.length > RELS_PARTS_MAX) fail();
-  // Archive order: consecutive reads stay inside the range reader's cached windows.
-  rels.sort((a, b) => a.local_header_offset - b.local_header_offset);
+  // Check every filename, including directories and non-XML files. Interleave header and
+  // XML reads in archive order so a small range window cache needs only one data-area pass.
+  const inspected = new Set(rels.map(entry => entry.index));
+  if (contentTypes) inspected.add(contentTypes.index);
+  const ordered = [...zip.entries].sort((a, b) => a.local_header_offset - b.local_header_offset);
   const read = async (entry) => {
     try { return await zip.readEntry(entry, { maxBytes: XML_PART_MAX_BYTES }); } catch { return fail(); }
   };
-  if (contentTypes) refuseActiveContent(decodePackageXml(await read(contentTypes)));
-  for (const entry of rels) {
+  for (const entry of ordered) {
+    try { await zip.validateEntryName(entry); } catch { fail(); }
+    if (!inspected.has(entry.index)) continue;
+    const xml = decodePackageXml(await read(entry));
+    if (entry === contentTypes) { refuseActiveContent(xml); continue; }
     // Relationship targets are data (e.g. hyperlinks); the Type / Id / TargetMode carry the meaning.
-    const text = decodePackageXml(await read(entry)).replace(/\bTarget\s*=\s*(?:"[^"]*"|'[^']*')/g, "Target=\"\"");
+    const text = xml.replace(/\bTarget\s*=\s*(?:"[^"]*"|'[^']*')/g, "Target=\"\"");
     refuseActiveContent(text);
   }
 }
