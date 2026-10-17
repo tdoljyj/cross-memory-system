@@ -31,8 +31,18 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    let previousClassifierBody;
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort()) {
-      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      try {
+        const successor = name === '20261017142000_imprint_classifier_scan_v1.sql';
+        const identity = async () => (await admin.query(`select oid::text,pg_get_userbyid(proowner) owner,
+          prosecdef,provolatile,proparallel,proconfig,proacl::text from pg_proc
+          where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure`)).rows[0];
+        const before = successor ? await identity() : null;
+        if (successor) previousClassifierBody = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].prosrc;
+        await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+        if (successor) assert.deepEqual(await identity(), before, 'performance successor preserves function identity and privileges');
+      }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     const owner = uuid(), other = uuid(), project = uuid();
@@ -74,8 +84,8 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
     const projectInput = { operation: 'create', project_schema_version: 2, canonical_project_id: project, idempotency_key: uuid(),
       mutation: { name: 'Synthetic bulk project', progress_status: 'active' } };
     assert.equal((await call('clued_user_project_mutate_v2', projectInput, human, true)).status, 'committed');
-    async function legacy(content = '用途：我的学习', scope = 'global', client = human) {
-      const id = uuid(), base = { id, record_type: 'note', record_schema_version: 1, lifecycle_status: 'active', scope,
+    async function legacy(content = '用途：我的学习', scope = 'global', client = human, id = uuid()) {
+      const base = { id, record_type: 'note', record_schema_version: 1, lifecycle_status: 'active', scope,
         authority: 'user_explicit', user_confirmed: true, confidence_reason: 'Isolated synthetic bulk fixture' };
       const created = await call('clued_user_record_mutate', { ...base, operation: 'create', idempotency_key: uuid(),
         source_refs: [], source_unavailable_reason: 'Isolated synthetic source',
@@ -263,6 +273,139 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
           assert.equal((await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') v", [role, signature])).rows[0].v, false);
       }
     });
+    await t.test('cached classification preserves prior outputs for quotes, fences, uncertain lines and all existing rule forms', async () => {
+      assert.equal(typeof previousClassifierBody, 'string');
+      await admin.query(`create function clued_private.imprint_previous_classifier_test_v1(p_content text)
+        returns text[] language plpgsql immutable parallel safe set search_path='' as $previous$${previousClassifierBody}$previous$`);
+      const bodies = ['用途：工作交付、我的学习、家庭预算、创作、兴趣爱好。', '客户Logo方案。', '给客户设计Logo。',
+        '我正在复习线性代数，用这本教材。', '我今天整理家庭预算。', '继续写小说第二章。', '安排周末徒步路线。',
+        'Purpose: personal budget, creative writing and hobbies.', 'I am studying linear algebra.',
+        '客户Logo设计教程。', '客户要求我设计Logo。', '如果保存用途：学习英语。', '用途：不用来学习英语。',
+        '用途：我的工作\n“引文”', '客户请求：\n用途：我的工作\n\n用途：家庭预算。',
+        '~~~text\n用途：我的工作\n~~~\n用途：我的学习', '````\n```\n用途：我的工作\n```\n````',
+        '原文：\n用途：我的工作\n> 朋友说：\n用途：我的学习', 'a。；!?\n用途：我的学习'];
+      const inputs = new Set(bodies);
+      for (const text of bodies) for (const prefix of ['> ', '原文：\n', '客户说：', '```\n', '`', '可能', '如果']) inputs.add(prefix + text);
+      for (const text of bodies) for (const quote of ['"', "'", '“', '”', '‘', '’', '「', '」', '『', '』']) inputs.add(text + quote);
+      const ordinary = ['用途：我的学习', '用途：我的工作', '原文：', '客户请求：', '客户说：', '可能学习', '> 用途：我的学习', '用', '学'];
+      for (const first of ordinary) for (const second of ordinary) {
+        inputs.add([first, second, '', first, second].join('\n'));
+        inputs.add([first, '```', second, '```', first, '', second].join('\n'));
+      }
+      const overCache = Array.from({ length: 132 }, (_, i) => `普通独立行${i}`).join('\n');
+      for (const suffix of ['用途：我的学习\n用途：我的学习', '原文：\n用途：我的学习\n\n原文：\n用途：我的工作',
+        '用途：我的学习\n“引用”', '```\n“引用”\n```\n用途：我的学习']) inputs.add(overCache + '\n' + suffix);
+      for (const text of inputs) {
+        const value = (await admin.query(`select clued_private.imprint_auto_domains_v1($1) actual,
+          clued_private.imprint_previous_classifier_test_v1($1) previous`, [text])).rows[0];
+        assert.deepEqual(value.actual, value.previous, text.slice(0, 100));
+      }
+      assert.deepEqual((await admin.query("select clued_private.imprint_auto_domains_v1($1) v", ['用途：我的学习'])).rows[0].v, ['learning']);
+      console.log('CLASSIFIER_EQUIVALENCE', inputs.size, 'synthetic sources; same rule catalog and sorted domains');
+    });
+    await t.test('negative guard conservatively falls back for flags, backreferences, prefixes and invalid unused rules', async () => {
+      const original = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_rules_v1()'::regprocedure")).rows[0].prosrc;
+      const catalog = (await admin.query('select clued_private.imprint_auto_rules_v1() v')).rows[0].v;
+      const install = async body => admin.query(`create or replace function clued_private.imprint_auto_rules_v1()
+        returns jsonb language sql immutable parallel safe set search_path='' as $guard_test$${body}$guard_test$`);
+      const setPattern = async pattern => {
+        const modified = structuredClone(catalog); modified.activities = [{ domain: 'learning', patterns: [pattern] }];
+        await install("select '" + JSON.stringify(modified).replaceAll("'", "''") + "'::jsonb");
+      };
+      try {
+        for (const [pattern, text] of [['(?i)^XYZ$', 'XYZ'], ['^(ab)\\1$', 'abab'], ['***:^zebra$', 'zebra']]) {
+          await setPattern(pattern);
+          const value = (await admin.query(`select clued_private.imprint_auto_domains_v1($1) actual,
+            clued_private.imprint_previous_classifier_test_v1($1) previous`, [text])).rows[0];
+          assert.deepEqual(value.actual, ['learning']); assert.deepEqual(value.actual, value.previous);
+        }
+        await setPattern('[');
+        // The original context guard never reaches this invalid activity rule.
+        for (const name of ['imprint_auto_domains_v1', 'imprint_previous_classifier_test_v1']) {
+          assert.deepEqual((await admin.query(`select clued_private.${name}($1) v`, ['不是我的承诺'])).rows[0].v, []);
+          assert.deepEqual((await admin.query(`select clued_private.${name}($1) v`, ['“引文”'])).rows[0].v, []);
+          await assert.rejects(admin.query(`select clued_private.${name}($1)`, ['ordinary']), error => error.code === '2201B');
+        }
+      } finally { await install(original); }
+      assert.deepEqual((await admin.query('select clued_private.imprint_auto_rules_v1() v')).rows[0].v, catalog);
+    });
+    await t.test('maximum shared-classifier input and legal8000-character Native records fit the real8s budget', async () => {
+      const isolated = await isolatedOwner('bulk-real-scale');
+      const body = '普通存量记录。'.repeat(200);
+      const target = '00000000-0000-4000-8000-000000000001';
+      await legacy(body, 'global', isolated.client, target);
+      await admin.query(`insert into public.clued_memories
+        (id,user_id,title,content,scope,record_type,status,record_schema_version,lifecycle_status,canonical_scope,
+          type_fields,relations,source_refs,authority,confidence,confidence_reason,content_hash)
+        select extensions.gen_random_uuid(),$1,'Synthetic scale record',$2,'global','task','active',1,'active','global',
+          '{"execution_bucket":"later"}'::jsonb,'{}'::jsonb,'{}'::uuid[],'user_explicit',1,'Isolated synthetic fixture',
+          encode(extensions.digest(convert_to($2,'UTF8'),'sha256'),'hex') from generate_series(1,1799) sample`, [isolated.id, body]);
+      const shapes = [
+        ['quoted-long-line', 'x'.repeat(60000) + ' “用途：我的学习”', []],
+        ['dense-CJK-sentences', '普通旧记录。'.repeat(9000), []],
+        ['many-short-sentences', 'a。'.repeat(32000), []],
+        ['ready-long-source', '用途：我的学习\n' + '普通旧记录。'.repeat(9000), ['learning']],
+        ['quote-in-code-does-not-abstain', '用途：我的学习\n```\n' + '“原文”'.repeat(12000) + '\n```', ['learning']],
+        ['repeated-short-lines', '用\n'.repeat(32768), []],
+        ['alternating-short-lines', '用\n学\n'.repeat(16384), []],
+        ['purpose-and-short-lines', '用途：我的学习\n' + '用\n学\n'.repeat(16382), ['learning']],
+      ];
+      await admin.query("set statement_timeout='8s'");
+      for (const [label, text, expected] of shapes) {
+        assert.ok([...text].length <= 65536);
+        const start = performance.now();
+        assert.deepEqual((await admin.query('select clued_private.imprint_auto_domains_v1($1) v', [text])).rows[0].v, expected);
+        console.log('CLASSIFIER_MAX_INPUT', JSON.stringify({ label, characters: [...text].length, elapsed_ms: Math.round(performance.now() - start) }));
+      }
+      await admin.query("set statement_timeout='30s'");
+      const nativeShapes = [
+        ['quoted-long-line', 'x'.repeat(7900) + ' “用途：我的学习”', []],
+        ['dense-CJK-sentences', '普通旧记录。'.repeat(1300), []],
+        ['many-short-sentences', 'a。'.repeat(3950), []],
+        ['ready-long-source', '用途：我的学习\n' + '普通旧记录。'.repeat(1300), ['learning']],
+        ['quote-in-code-does-not-abstain', '用途：我的学习\n```\n' + '“原文”'.repeat(1900) + '\n```', ['learning']],
+        ['repeated-short-lines', '用\n'.repeat(4000), []],
+        ['alternating-short-lines', '用\n学\n'.repeat(2000), []],
+        ['purpose-and-short-lines', '用途：我的学习\n' + '用\n学\n'.repeat(1998), ['learning']],
+        ['over-cache-capacity', Array.from({ length: 132 }, (_, i) => `普通独立行${i}\n`).join('') + '用\n学\n'.repeat(1500), []],
+        ['FIFO-all-misses-129', Array.from({ length: 4000 }, (_, i) => String.fromCodePoint(0x4e00 + i % 129) + '\n').join(''), []],
+        ['purpose-and-FIFO-all-misses-129', '用途：我的学习\n' + Array.from({ length: 3996 }, (_, i) => String.fromCodePoint(0x4e00 + i % 129) + '\n').join(''), ['learning']],
+      ];
+      await isolated.client.query("set statement_timeout='8s'");
+      for (const [label, text, expected] of nativeShapes) {
+        assert.ok([...text].length <= 8000);
+        await admin.query('update public.clued_memories set content=$2,content_hash=$3 where id=$1', [target, text, hash(text)]);
+        const start = performance.now();
+        const first = await previewPage({}, isolated.client);
+        assert.equal(first.inventory_counts.total, 1800); assert.equal(first.inventory_counts.classifiable, 1800);
+        assert.equal(first.page.scanned, 1); assert.equal(first.page.complete, false);
+        assert.deepEqual(first.items[0]?.domains ?? [], expected);
+        console.log('NATIVE_LARGE_INVENTORY', JSON.stringify({ label, records: 1800, characters: [...text].length,
+          page_ms: Math.round(performance.now() - start), ready: first.proof.payload.ready, review: first.proof.payload.needs_review }));
+        const next = await previewPage({ proof: first.proof }, isolated.client);
+        assert.equal(next.page.cursor, 1); assert.equal(next.page.scanned, 1);
+      }
+      await admin.query(`insert into public.clued_memories
+        (id,user_id,title,content,scope,record_type,status,record_schema_version,lifecycle_status,canonical_scope,
+          type_fields,relations,source_refs,authority,confidence,confidence_reason,content_hash)
+        select extensions.gen_random_uuid(),$1,'Synthetic scale record',$2,'global','task','active',1,'active','global',
+          '{"execution_bucket":"later"}'::jsonb,'{}'::jsonb,'{}'::uuid[],'user_explicit',1,'Isolated synthetic fixture',
+          encode(extensions.digest(convert_to($2,'UTF8'),'sha256'),'hex') from generate_series(1,2200)`, [isolated.id, body]);
+      for (const [label, text, expected] of nativeShapes.slice(-6)) {
+        assert.ok([...text].length <= 8000);
+        // Target stays an actual Native-created/updated current legacy Record;
+        // only its test body changes, with no organization or saved batch.
+        await admin.query('update public.clued_memories set content=$2,content_hash=$3 where id=$1', [target, text, hash(text)]);
+        const start = performance.now(), first = await previewPage({}, isolated.client);
+        assert.equal(first.inventory_counts.total, 4000); assert.equal(first.inventory_counts.classifiable, 4000);
+        assert.equal(first.page.scanned, 1); assert.deepEqual(first.items[0]?.domains ?? [], expected);
+        const next = await previewPage({ proof: first.proof }, isolated.client);
+        assert.equal(next.page.cursor, 1); assert.equal(next.page.scanned, 1);
+        console.log('NATIVE_SHORT_LINES_4000', JSON.stringify({ label, characters: [...text].length,
+          two_pages_ms: Math.round(performance.now() - start) }));
+      }
+      assert.equal((await status(isolated.client)).available, false, 'large rehearsal has zero saved batches or label writes');
+    });
     await t.test('one-source rehearsal and metadata-only begin stay within the real Native statement budget for long bodies', async () => {
       const isolated = await isolatedOwner('bulk-performance');
       const bodies = [('普通旧记录。'.repeat(1300)).slice(0, 7928), '。；!? \n'.repeat(1100).slice(0, 7900), 'a。'.repeat(3950),
@@ -281,7 +424,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       // removing the one empty-segment guard restores the prior shared body.
       const prior = await fs.readFile(path.join(root, 'supabase/migrations/20261016124233_imprint_auto_domains_v1.sql'), 'utf8');
       const oldBody = /create function clued_private\.imprint_auto_domains_v1[\s\S]*?as \$\$([\s\S]*?)end \$\$;/.exec(prior)[1] + 'end ';
-      const currentBody = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].prosrc;
+      const currentBody = previousClassifierBody;
       const normalize = value => value.replaceAll('\r\n', '\n');
       assert.equal(normalize(currentBody).replace("      if segment='' then continue; end if;\n", ''), normalize(oldBody));
     });
