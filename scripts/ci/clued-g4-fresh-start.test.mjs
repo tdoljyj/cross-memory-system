@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:net';
 import { pathToFileURL } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 const { identity, freshConfig, requireUnused, verifyHistory, migrationSources, verifySourceState, verifyContainer,
@@ -422,7 +422,7 @@ test('unproved startup lock and malformed Docker publishing cannot prepare a pro
   } finally { f.dispose(); }
 });
 
-function cleanupWorld(f, { foreignLabel = false, stopFails = false, stopStaysRunning = false, networkFails = false } = {}) {
+function cleanupWorld(f, { foreignLabel = false, stopFails = false, stopError, stopStaysRunning = false, networkFails = false } = {}) {
   const project = f.e.CLUED_G4_FRESH_PROJECT;
   const own = { container: [{ id: 'a'.repeat(64), name: `supabase_db_${project}`, project, running: true }],
     network: [{ id: 'b'.repeat(64), name: `supabase_network_${project}`, project: foreignLabel ? 'foreign' : project }],
@@ -442,7 +442,8 @@ function cleanupWorld(f, { foreignLabel = false, stopFails = false, stopStaysRun
       return JSON.stringify({ ...row, name: (kind === 'container' ? '/' : '') + row.name });
     }
     if (args[0] === 'stop') {
-      mutations.push(args); if (stopFails) throw Error('private docker failure must not become a diagnostic');
+      mutations.push(args); if (stopError) throw stopError;
+      if (stopFails) throw Error('private docker failure must not become a diagnostic');
       if (!stopStaysRunning) own.container.find(row => row.id === args.at(-1)).running = false;
       return args.at(-1);
     }
@@ -492,6 +493,86 @@ test('failed or unproven container exit preserves the resources and a fixed safe
       assert.equal(world.own.network.length, 1); assert.equal(world.own.volume.length, 1);
       const marker = fs.readFileSync(path.join(f.root, 'clued-g4-fresh-129-1.json'), 'utf8');
       assert.equal(JSON.parse(marker).cleanup.reason_code, reason); assert.doesNotMatch(marker, /private docker failure/);
+    } finally { f.dispose(); }
+  }
+});
+
+test('cleanup distinguishes bounded child failures without disclosing Docker output or accepting untrusted fields', async () => {
+  const cases = [
+    [{ status: 1 }, { status: 1 }],
+    [{ status: null, signal: 'SIGTERM', code: 'ETIMEDOUT' }, { signal: 'SIGTERM', code: 'ETIMEDOUT' }],
+    [{ status: null, signal: 'SIGKILL' }, { signal: 'SIGKILL' }],
+    [{ code: 'ENOENT' }, { code: 'ENOENT' }],
+    [{ status: '1', signal: 'PRIVATE_SIGNAL', code: 'PRIVATE_CODE' }, undefined],
+    [{ status: -1, code: 'PRIVATE_CODE' }, undefined],
+    [{ status: 256 }, undefined],
+    [{ child_failure: { status: 2, stderr: 'PRIVATE_STDERR', token: 'PRIVATE_TOKEN' } }, { status: 2 }],
+  ];
+  for (const [fields, expected] of cases) {
+    const f = workflowFixture(132);
+    try {
+      await prepare(f.e, f.runtime);
+      const stopError = Object.assign(Error('PRIVATE_MESSAGE'), {
+        stdout: 'PRIVATE_STDOUT', stderr: 'PRIVATE_STDERR', spawnargs: ['PRIVATE_ARGUMENT'], ...fields,
+      });
+      const world = cleanupWorld(f, { stopError });
+      assert.throws(() => cleanup(f.e, world.runtime), /fresh_cleanup_container_stop_failed/);
+      const marker = fs.readFileSync(path.join(f.root, 'clued-g4-fresh-132-1.json'), 'utf8');
+      const failure = JSON.parse(marker).cleanup;
+      assert.equal(failure.status, 'failed');
+      assert.equal(failure.reason_code, 'fresh_cleanup_container_stop_failed');
+      assert.deepEqual(failure.child_failure, expected);
+      assert.doesNotMatch(marker, /PRIVATE_/);
+      assert.equal(world.mutations.length, 1, 'no retry, forced removal or later cleanup follows a failed stop');
+      assert.deepEqual(Object.values(world.own).map(rows => rows.length), [1, 1, 1]);
+    } finally { f.dispose(); }
+  }
+});
+
+test('diagnostic metadata never executes accessors or lets reflection failures replace the fixed error', async () => {
+  const accessorError = key => Object.defineProperty(Error('private_sensitive_message'), key,
+    { get() { throw Error('fresh_private_sensitive_getter'); } });
+  const nested = Error('private_sensitive_message');
+  nested.child_failure = Object.defineProperty({}, 'status', { get() { throw Error('fresh_private_sensitive_getter'); } });
+  const proxy = Error('private_sensitive_message');
+  proxy.child_failure = new Proxy({}, { getOwnPropertyDescriptor() { throw Error('fresh_private_sensitive_proxy'); } });
+  for (const stopError of ['child_failure', 'status', 'signal', 'code'].map(accessorError).concat([nested, proxy])) {
+    const f = workflowFixture(134);
+    try {
+      await prepare(f.e, f.runtime);
+      const world = cleanupWorld(f, { stopError });
+      assert.throws(() => cleanup(f.e, world.runtime), /fresh_cleanup_container_stop_failed/);
+      const marker = fs.readFileSync(path.join(f.root, 'clued-g4-fresh-134-1.json'), 'utf8');
+      assert.deepEqual(JSON.parse(marker).cleanup, { status: 'failed', reason_code: 'fresh_cleanup_container_stop_failed' });
+      assert.doesNotMatch(marker, /private_sensitive|child_failure/);
+      assert.equal(world.mutations.length, 1);
+    } finally { f.dispose(); }
+  }
+});
+
+test('actual child exit and timeout reach cleanup diagnostics without retaining private output', async () => {
+  for (const timeout of [false, true]) {
+    let childError;
+    try {
+      execFileSync(process.execPath, ['-e', timeout
+        ? "process.stderr.write('PRIVATE_REAL_STDERR');setInterval(()=>{},50)"
+        : "process.stderr.write('PRIVATE_REAL_STDERR');process.exit(7)"],
+      { stdio: 'pipe', timeout: timeout ? 150 : 3000, windowsHide: true });
+    } catch (error) { childError = error; }
+    assert.ok(childError);
+    if (timeout) assert.equal(childError.code, 'ETIMEDOUT');
+    else assert.equal(childError.status, 7);
+    const f = workflowFixture(133);
+    try {
+      await prepare(f.e, f.runtime);
+      const world = cleanupWorld(f, { stopError: childError });
+      assert.throws(() => cleanup(f.e, world.runtime), /fresh_cleanup_container_stop_failed/);
+      const marker = fs.readFileSync(path.join(f.root, 'clued-g4-fresh-133-1.json'), 'utf8');
+      const detail = JSON.parse(marker).cleanup.child_failure;
+      if (timeout) assert.equal(detail.code, 'ETIMEDOUT');
+      else assert.equal(detail.status, 7);
+      assert.doesNotMatch(marker, /PRIVATE_REAL_STDERR|spawnargs|stderr|stdout/);
+      assert.equal(world.mutations.length, 1);
     } finally { f.dispose(); }
   }
 });
