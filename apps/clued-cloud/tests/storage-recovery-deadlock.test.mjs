@@ -157,8 +157,9 @@ test("an I9 create absence reply binds the actual reader, closed version and ori
   const settled = { status: "resolved", state: "conflict", resolution: "automatically_reconciled_before",
     automatic_recovery: "resolved", base_version: 2, source_receipt_id: sourceReceipt };
   const f = await recovery({ reader: true, sourceReceipt, receipt, settled });
-  assert.deepEqual(await f.run.run(f.reference), { status: "resolved", job_id: f.reference.job_id, receipt_id: receipt,
-    automatic_recovery: "resolved", execution_permitted: false });
+  assert.deepEqual(await f.run.run(f.reference), { status: "resolved", ...f.reference, intent_id: INTENT,
+    receipt_id: receipt, source_receipt_id: sourceReceipt, base_version: 2,
+    resolution: "automatically_reconciled_before", automatic_recovery: "resolved", execution_permitted: false });
   assert.equal(f.settles.length, 1); assert.equal(f.settles[0].credential_version, 4);
   assert.equal(f.settles[0].recovery_reader.connection_id, f.reference.connection_id);
   for (const changed of [{ base_version: 99 }, { source_receipt_id: randomUUID() }, { state: "cancelled" },

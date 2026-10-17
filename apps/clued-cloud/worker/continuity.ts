@@ -3550,7 +3550,13 @@ async function handleContinuityRequestInner(
               body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
             }) as Record<string, unknown> : rpc(value),
           report_expiring:true, report_diagnostic: reportRecoveryDiagnostic,
-          ...(accountDescriptor?.status === "recovery_only" ? { verified: { descriptor: accountDescriptor, rpc: verifiedRpc } } : {}) });
+          ...(accountDescriptor?.status === "recovery_only" ? {
+            verified: { descriptor: accountDescriptor, rpc: verifiedRpc },
+            absent: { rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_recovery_absent_v1", {
+              method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
+              body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
+            }) as Record<string, unknown> },
+          } : {}) });
         return recovery.run(reference);
         };
         let recovered=await recoveryAttempt();
@@ -3561,6 +3567,11 @@ async function handleContinuityRequestInner(
             if(["committed","cancelled","denied","resolved"].includes(String(freshOwnerStatus.status)))
               return json(freshOwnerStatus,200,headers);
             recovered=await recoveryAttempt();
+        }
+        if (recovered.status === "released_not_effected") {
+          // The absence RPC preserves its legacy internal result. Return the
+          // current Owner-visible state of this same job after it commits.
+          return json(await inspectOriginalRecovery(), 200, headers);
         }
         if (["inspection_required", "credential_expiring"].includes(recovered.status)) {
           // Recording a verified result or diagnostic may have committed even
