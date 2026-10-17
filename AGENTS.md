@@ -97,6 +97,14 @@ Superseded and archived facts remain in Canonical history. Do not delete them to
 - GitHub/API connector writes follow `development/contracts/repository/GitConnectorWriteContract.v0.1.md`: bind the exact remote head, write through a branch with blob-SHA CAS, fail closed on conflict, review the exact diff, and open a PR. Connector-authored commits are identified by the authenticated GitHub actor rather than a fabricated `AI@machine` author.
 - `artifacts/clued-two-level-snapshots/published/{snapshot_version}` is immutable. Formal readers follow `artifacts/clued-two-level-snapshots/current.json`; repository `memory/` must byte-match that pointed Bundle at its cutover commit.
 
+## Development costs and execution
+
+Existing and future development, CI, checks, merge/release controls and operations follow the [cost and migration rules in the Runner Runbook, section 2.4](docs/maintenance/runner-configuration-and-operations.md#24-现有与未来任务的费用原则迁移与防回流). Read that section before adding or changing an execution route, automation, artifact, cache, package, storage or transfer dependency.
+
+New jobs must use qualified self-hosted resources. Prefer self-owned or verified non-billable alternatives for every potentially chargeable official capability; never silently fall back to paid execution because of queues or failures. Existing hosted routes are migration debt, and historical hosted-only notes do not authorize new charges. Any unavoidable paid item needs its specific reason, cost and explicit prior Owner authorization under that Runbook.
+
+Keep development, checks, merge, release, recovery, isolation and retained evidence working while migrating. Complete the affected validation before retiring the old path or setting budgets to zero; this policy does not itself grant production, billing or Source/Role changes.
+
 ## External document placement
 
 - Git 只承载与代码、协议/合同、ADR、Schema/Migration、测试/Fixture、Runbook、Skill、当前执行控制和可复现机器证据直接绑定的工程资料。
