@@ -223,6 +223,67 @@ Reject { Get-ProbeGitHubContext } '.' 'malformed actual event refused'
   assert.equal(report.checks.length, 39);
 });
 
+test('loaded profile guard requires exact own metadata and actual Boolean values', { skip: !windows }, () => {
+  const report = runCase(String.raw`
+$profile=[pscustomobject]@{profile_api_path='C:\Users\clued-runner';row_count=1;row_sid=$script:ExpectedSid;loaded=$true;special=$false;local_path='C:\Users\clued-runner';profilelist_path='C:\Users\clued-runner';hku_present=$true;profile_owner_sid=$script:ExpectedSid;no_reparse_chain=$true;ancestor_owner_acl_safe=$true;profile_acl_safe=$true}
+Check (Test-ProbeLoadedProfile $profile) 'complete synthetic profile matches; no target positive implied'
+foreach($field in @('profile_api_path','row_sid','local_path','profilelist_path','profile_owner_sid')) {
+    $bad=$profile|ConvertTo-Json|ConvertFrom-Json;$bad.$field='wrong'
+    Check (-not (Test-ProbeLoadedProfile $bad)) ('profile identity mismatch refused: '+$field)
+    $bad.$field=@($profile.$field,'unexpected-extra-value')
+    Check (-not (Test-ProbeLoadedProfile $bad)) ('matching member of a multi-value array refused: '+$field)
+    $bad.$field=@($profile.$field)
+    Check (-not (Test-ProbeLoadedProfile $bad)) ('single-element array refused: '+$field)
+    $bad.$field=42
+    Check (-not (Test-ProbeLoadedProfile $bad)) ('non-string identity refused: '+$field)
+    $bad.$field=$null
+    Check (-not (Test-ProbeLoadedProfile $bad)) ('missing string identity refused: '+$field)
+}
+foreach($value in @(0,2,'1',[long]1)) {
+    $bad=$profile|ConvertTo-Json|ConvertFrom-Json;$bad.row_count=$value
+    Check (-not (Test-ProbeLoadedProfile $bad)) 'row count must be exactly one Int32'
+}
+foreach($field in @('loaded','hku_present','no_reparse_chain','ancestor_owner_acl_safe','profile_acl_safe')) {
+    foreach($value in @($false,'true',$null)) {
+        $bad=$profile|ConvertTo-Json|ConvertFrom-Json;$bad.$field=$value
+        Check (-not (Test-ProbeLoadedProfile $bad)) ('missing, false or coerced profile fact refused: '+$field)
+    }
+}
+foreach($value in @($true,'false',$null)) {
+    $bad=$profile|ConvertTo-Json|ConvertFrom-Json;$bad.special=$value
+    Check (-not (Test-ProbeLoadedProfile $bad)) 'special profile flag must be Boolean false'
+}
+`);
+  assert.equal(report.checks.length, 48);
+});
+
+test('loaded profile observer refuses a wrong-actor fixture before any metadata read', { skip: !windows }, () => {
+  const report = runCase(String.raw`
+$script:metadataCalls=0
+function Get-ProbeIdentity { return [ordered]@{host=$script:ExpectedHost;sid='S-1-0-0';session_id=0;administrator_token_member=$false;hyper_v_token_member=$false} }
+function Get-CimInstance { $script:metadataCalls++; throw 'UNEXPECTED_PROFILE_METADATA_QUERY' }
+$result=Get-ProbeLoadedProfileEvidence
+Check ($result.result -ceq 'UNKNOWN') 'wrong actor remains UNKNOWN'
+Check ($result.error.error_id -ceq 'WRONG_WINDOWS_PRINCIPAL') 'original identity refusal retained'
+Check ($script:metadataCalls -eq 0) 'no target CIM query follows wrong-actor fixture'
+Check (-not $result.production_qualified -and -not $result.target_operations_authorized) 'observation grants no execution authority'
+`);
+  assert.equal(report.checks.length, 4);
+});
+
+test('loaded profile observation is an Inventory prerequisite without adding mutating or callback paths', { skip: !windows }, () => {
+  const report = runCase(String.raw`
+$observer=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-ProbeLoadedProfileEvidence'},$true))
+Check ($observer.Count -eq 1) 'one profile observer definition'
+$calls=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Get-ProbeLoadedProfileEvidence'},$true))
+Check ($calls.Count -eq 1) 'one main Inventory call, no callback/S4U call'
+$text=[IO.File]::ReadAllText($sourcePath)
+Check ($text.Contains('$observed = ($profile.result -ceq ''OBSERVED''') -and $text.Contains('loaded_profile = $profile;')) 'Inventory verdict depends on and returns profile evidence'
+Check ($observer[0].Extent.Text.Contains('timeout_is_hard_deadline = $false') -and -not ($observer[0].Extent.Text -match 'CreateSubKey|Set-Acl|WriteAllText|LoadUserProfile')) 'read-only metadata with honest CIM timeout boundary'
+`);
+  assert.equal(report.checks.length, 4);
+});
+
 test('qualification files are bounded, write-once, source-bound, and phase reports cannot claim production', { skip: !windows }, () => {
   const report = runCase(String.raw`
 $id=[guid]::NewGuid();$folder=Get-QualificationFolder $id

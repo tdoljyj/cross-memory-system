@@ -65,6 +65,80 @@ function Assert-ProbeIdentity($Identity) {
     if ($Identity.administrator_token_member -or $Identity.hyper_v_token_member) { throw 'PRIVILEGED_CI_TOKEN_REFUSED' }
     if ($Identity.session_id -ne 0) { throw 'ACTUAL_CI_SESSION_ZERO_REQUIRED' }
 }
+function Test-ProbeLoadedProfile($Value) {
+    $path = 'C:\Users\clued-runner'
+    return ($Value.profile_api_path -is [string] -and $Value.profile_api_path -ceq $path -and $Value.row_count -is [int] -and $Value.row_count -eq 1 -and
+        $Value.row_sid -is [string] -and $Value.row_sid -ceq $script:ExpectedSid -and $Value.loaded -is [bool] -and $Value.loaded -and
+        $Value.special -is [bool] -and -not $Value.special -and $Value.local_path -is [string] -and $Value.local_path -ceq $path -and
+        $Value.profilelist_path -is [string] -and $Value.profilelist_path -ceq $path -and $Value.hku_present -is [bool] -and $Value.hku_present -and
+        $Value.profile_owner_sid -is [string] -and $Value.profile_owner_sid -ceq $script:ExpectedSid -and $Value.no_reparse_chain -is [bool] -and $Value.no_reparse_chain -and
+        $Value.ancestor_owner_acl_safe -is [bool] -and $Value.ancestor_owner_acl_safe -and
+        $Value.profile_acl_safe -is [bool] -and $Value.profile_acl_safe)
+}
+function Get-ProbeLoadedProfileEvidence {
+    # This read-only observer is called only by the actual Inventory entry after
+    # token/Session0/PR gates. A path or Host-side WMI row is not token evidence.
+    $result = [ordered]@{ result = 'UNKNOWN'; reason = 'ACTUAL_LOADED_PROFILE_NOT_ESTABLISHED'
+        observed_utc = [DateTime]::UtcNow.ToString('o'); source = 'actual_inventory_token_and_local_metadata'
+        target_operations_authorized = $false; distro_import = 'NOT_TESTED'; supervision = 'NOT_TESTED'
+        production_qualified = $false; cim_timeout_requested_seconds = 3; timeout_is_hard_deadline = $false }
+    try {
+        $actor = Get-ProbeIdentity
+        Assert-ProbeIdentity $actor
+        $result.actor_sid = $actor.sid; $result.actor_session_id = $actor.session_id
+        $systemPs = [IO.Path]::Combine([Environment]::GetFolderPath('System'), 'WindowsPowerShell\v1.0')
+        $windowsRoot = [IO.Path]::GetDirectoryName([Environment]::GetFolderPath('System'))
+        foreach ($name in @('Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Security', 'CimCmdlets')) {
+            $manifest = [IO.Path]::Combine($systemPs, ('Modules\' + $name + '\' + $name + '.psd1'))
+            $allowed = @($manifest)
+            if ($name -ceq 'CimCmdlets') {
+                $allowed += [IO.Path]::Combine($windowsRoot, 'Microsoft.NET\assembly\GAC_MSIL\Microsoft.Management.Infrastructure.CimCmdlets\v4.0_1.0.0.0__31bf3856ad364e35\Microsoft.Management.Infrastructure.CimCmdlets.dll')
+            }
+            foreach ($loaded in @(Get-Module -Name $name)) { if ($allowed -inotcontains $loaded.Path) { throw 'PROFILE_MODULE_PIN_REFUSED' } }
+            Import-Module -Name $manifest -Scope Global -ErrorAction Stop
+            $loaded = @(Get-Module -Name $name)
+            if ($loaded.Count -ne 1 -or $allowed -inotcontains $loaded[0].Path) { throw 'PROFILE_MODULE_PIN_REFUSED' }
+        }
+        $path = 'C:\Users\clued-runner'
+        $rows = @(Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='" + $script:ExpectedSid + "'") -Property SID,LocalPath,Loaded,Special -OperationTimeoutSec 3)
+        if ($rows.Count -ne 1) { $result.row_count = $rows.Count; return $result }
+        $profileListKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(('SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\' + $script:ExpectedSid), $false)
+        if ($null -eq $profileListKey) { throw 'PROFILELIST_OBSERVATION_UNKNOWN' }
+        try { $profileList = [Environment]::ExpandEnvironmentVariables([string]$profileListKey.GetValue('ProfileImagePath')) }
+        finally { $profileListKey.Dispose() }
+        $hive = [Microsoft.Win32.Registry]::Users.OpenSubKey($script:ExpectedSid, $false)
+        $hku = $null -ne $hive; if ($null -ne $hive) { $hive.Dispose() }
+        $trusted = @($script:ExpectedSid, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+        $noReparse = $true; $ancestorSafe = $true; $profileSafe = $true; $owner = $null; $paths = @()
+        foreach ($location in @('C:\', 'C:\Users', $path)) {
+            $item = Get-Item -LiteralPath $location -Force
+            $plain = ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0
+            if (-not $plain) { $noReparse = $false }
+            $acl = Get-Acl -LiteralPath $location
+            $own = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if ($location -ceq $path) { $owner = $own }
+            if ($own -notin $trusted) { $ancestorSafe = $false }
+            foreach ($rule in @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))) {
+                if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                    $rule.IdentityReference.Value -in $trusted -or
+                    ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+                $replace = [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::Delete -bor
+                    [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+                if (($rule.FileSystemRights -band $replace) -ne 0) { $ancestorSafe = $false }
+                if ($location -ceq $path -and ($rule.FileSystemRights -band ($replace -bor [Security.AccessControl.FileSystemRights]::Write)) -ne 0) { $profileSafe = $false }
+            }
+            $paths += [ordered]@{ path = $location; owner_sid = $own; protected = $acl.AreAccessRulesProtected; no_reparse = $plain }
+        }
+        $observation = [ordered]@{ profile_api_path = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+            row_count = [int]$rows.Count; row_sid = $rows[0].SID; loaded = $rows[0].Loaded; special = $rows[0].Special
+            local_path = $rows[0].LocalPath; profilelist_path = $profileList; hku_present = $hku; profile_owner_sid = $owner
+            no_reparse_chain = $noReparse; ancestor_owner_acl_safe = $ancestorSafe; profile_acl_safe = $profileSafe; paths = $paths
+            staging_owner_acl = 'SEPARATE_STRICT_OBSERVATION_REQUIRED' }
+        $result.observation = $observation
+        if (Test-ProbeLoadedProfile $observation) { $result.result = 'OBSERVED'; $result.reason = 'ACTUAL_LOADED_PROFILE_CONSISTENT' }
+    } catch { $result.reason = 'ACTUAL_LOADED_PROFILE_METADATA_UNKNOWN'; $result.error = Get-ErrorEvidence $_ }
+    return $result
+}
 function Get-ProbeGitHubBindingFields {
     return @('repository', 'run_id', 'run_attempt', 'job_key', 'provider_job_id', 'sha', 'workflow_ref', 'runner_name',
         'event_name', 'ref', 'repository_owner', 'actor', 'triggering_actor', 'pull_request_author',
@@ -617,20 +691,21 @@ try {
         Write-ProbeResult $result
         if ($result.result -ne 'S4U_AND_WSL_VERSION_OBSERVED') { exit 2 }; exit 0
     }
+    $profile = Get-ProbeLoadedProfileEvidence
     $version = Get-WslVersionEvidence
     $status = $(if ($version.result -eq 'OBSERVED') { Invoke-FixedProcess $script:WslPath '--status' -UnicodeOutput } else { [ordered]@{ result = 'UNKNOWN'; reason = 'VERSION_NOT_OBSERVED' } })
     $list = $(if ($version.result -eq 'OBSERVED') { Invoke-FixedProcess $script:WslPath '--list --verbose' -UnicodeOutput } else { [ordered]@{ result = 'UNKNOWN'; reason = 'VERSION_NOT_OBSERVED' } })
     $registrations = Get-OwnWslRegistrations
     $canary = Get-PublicCanaryReadEvidence $IsolationCanaryId
     $vm = Get-BoundedExactVmReadEvidence $ExpectedQualificationVm $QualificationId
-    $observed = ($version.result -eq 'OBSERVED' -and $status.result -eq 'OBSERVED' -and $status.exit_code -eq 0 -and
+    $observed = ($profile.result -ceq 'OBSERVED' -and $version.result -eq 'OBSERVED' -and $status.result -eq 'OBSERVED' -and $status.exit_code -eq 0 -and
         $list.result -eq 'OBSERVED' -and $list.exit_code -eq 0 -and $registrations.result -eq 'OBSERVED')
     $badProbe = ($canary.result -eq 'FAIL' -or $vm.result -eq 'FAIL')
     $unknownProbe = ($canary.result -eq 'UNKNOWN' -or $vm.result -eq 'UNKNOWN')
     Write-ProbeResult ([ordered]@{ schema = ($script:SchemaPrefix + '.inventory/1'); mode = $Mode
         qualification_id = $QualificationId.ToString('D'); result = $(if ($badProbe) { 'FAIL' } elseif ($observed -and -not $unknownProbe) { 'INVENTORY_OBSERVED' } else { 'UNKNOWN' })
         identity = $identity; github = $github; source_sha256 = (Get-ProbeSha256 $script:SourcePath)
-        wsl_version = $version; wsl_status = $status; wsl_list = $list; own_wsl_registrations = $registrations
+        loaded_profile = $profile; wsl_version = $version; wsl_status = $status; wsl_list = $list; own_wsl_registrations = $registrations
         public_canary_read = $canary; exact_vm_read = $vm; side_effects = $false; distro_import = 'NOT_TESTED'
         s4u_start = 'NOT_TESTED'; serial_ipc = 'NOT_TESTED'; production_qualified = $false
         elapsed_milliseconds = $script:Budget.ElapsedMilliseconds })

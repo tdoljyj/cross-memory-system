@@ -41,6 +41,8 @@ Task `d745ea6e` 的第一阶段只核实际主体、WSL 可见能力和自己的
 
 默认模式仅输出 JSON，读取自己 HKCU 的 WSL 注册以及固定 `--version`、`--status`、`--list --verbose`。它不启动发行版，不写报告目录，不注册任务。没有发行版可见、跨 SID 元数据拒绝或未知错误，不可被解释为 import/启动成功。注册读取只针对当前用户，不回退其他人的 hive 或凭据。
 
+Inventory 还须在既有实际 token、Session 0 和 PR 条件通过后，读取自己的唯一 `Win32_UserProfile` 行，确认 `Loaded=true`、`Special=false` 均为布尔值，且系统 profile API、LocalPath、自己的 ProfileList 和已加载 HKU SID 一致。父目录与 profile 的 owner、ACL、重解析检查分别返回；后续私有 staging 仍需独立严格 ACL 检查。任一读数缺失、拒绝或不一致都保留 UNKNOWN，不能由 Host 侧的 WMI 旁证补成成功。CIM 的 3 秒 OperationTimeoutSec 只是请求值，不是硬截止保证；原工作流预算继续适用。该观察不授予 WSL import、持续监督或生产执行权限，也不改变 S4U 与内部 callback 路径。
+
 可选公开文件路径固定为：
 
 `D:/CluedProductionPublisher/isolation-canaries/<Guid>/public-canary.json`
