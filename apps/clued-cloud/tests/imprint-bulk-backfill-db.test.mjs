@@ -84,8 +84,8 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
     const projectInput = { operation: 'create', project_schema_version: 2, canonical_project_id: project, idempotency_key: uuid(),
       mutation: { name: 'Synthetic bulk project', progress_status: 'active' } };
     assert.equal((await call('clued_user_project_mutate_v2', projectInput, human, true)).status, 'committed');
-    async function legacy(content = '用途：我的学习', scope = 'global', client = human) {
-      const id = uuid(), base = { id, record_type: 'note', record_schema_version: 1, lifecycle_status: 'active', scope,
+    async function legacy(content = '用途：我的学习', scope = 'global', client = human, id = uuid()) {
+      const base = { id, record_type: 'note', record_schema_version: 1, lifecycle_status: 'active', scope,
         authority: 'user_explicit', user_confirmed: true, confidence_reason: 'Isolated synthetic bulk fixture' };
       const created = await call('clued_user_record_mutate', { ...base, operation: 'create', idempotency_key: uuid(),
         source_refs: [], source_unavailable_reason: 'Isolated synthetic source',
@@ -287,6 +287,14 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       const inputs = new Set(bodies);
       for (const text of bodies) for (const prefix of ['> ', '原文：\n', '客户说：', '```\n', '`', '可能', '如果']) inputs.add(prefix + text);
       for (const text of bodies) for (const quote of ['"', "'", '“', '”', '‘', '’', '「', '」', '『', '』']) inputs.add(text + quote);
+      const ordinary = ['用途：我的学习', '用途：我的工作', '原文：', '客户请求：', '客户说：', '可能学习', '> 用途：我的学习', '用', '学'];
+      for (const first of ordinary) for (const second of ordinary) {
+        inputs.add([first, second, '', first, second].join('\n'));
+        inputs.add([first, '```', second, '```', first, '', second].join('\n'));
+      }
+      const overCache = Array.from({ length: 132 }, (_, i) => `普通独立行${i}`).join('\n');
+      for (const suffix of ['用途：我的学习\n用途：我的学习', '原文：\n用途：我的学习\n\n原文：\n用途：我的工作',
+        '用途：我的学习\n“引用”', '```\n“引用”\n```\n用途：我的学习']) inputs.add(overCache + '\n' + suffix);
       for (const text of inputs) {
         const value = (await admin.query(`select clued_private.imprint_auto_domains_v1($1) actual,
           clued_private.imprint_previous_classifier_test_v1($1) previous`, [text])).rows[0];
@@ -299,18 +307,22 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       const isolated = await isolatedOwner('bulk-real-scale');
       const body = '普通存量记录。'.repeat(200);
       const target = '00000000-0000-4000-8000-000000000001';
+      await legacy(body, 'global', isolated.client, target);
       await admin.query(`insert into public.clued_memories
         (id,user_id,title,content,scope,record_type,status,record_schema_version,lifecycle_status,canonical_scope,
           type_fields,relations,source_refs,authority,confidence,confidence_reason,content_hash)
-        select case when sample=1 then $3::uuid else extensions.gen_random_uuid() end,$1,'Synthetic scale record',$2,'global','task','active',1,'active','global',
+        select extensions.gen_random_uuid(),$1,'Synthetic scale record',$2,'global','task','active',1,'active','global',
           '{"execution_bucket":"later"}'::jsonb,'{}'::jsonb,'{}'::uuid[],'user_explicit',1,'Isolated synthetic fixture',
-          encode(extensions.digest(convert_to($2,'UTF8'),'sha256'),'hex') from generate_series(1,1800) sample`, [isolated.id, body, target]);
+          encode(extensions.digest(convert_to($2,'UTF8'),'sha256'),'hex') from generate_series(1,1799) sample`, [isolated.id, body]);
       const shapes = [
         ['quoted-long-line', 'x'.repeat(60000) + ' “用途：我的学习”', []],
         ['dense-CJK-sentences', '普通旧记录。'.repeat(9000), []],
         ['many-short-sentences', 'a。'.repeat(32000), []],
         ['ready-long-source', '用途：我的学习\n' + '普通旧记录。'.repeat(9000), ['learning']],
         ['quote-in-code-does-not-abstain', '用途：我的学习\n```\n' + '“原文”'.repeat(12000) + '\n```', ['learning']],
+        ['repeated-short-lines', '用\n'.repeat(32768), []],
+        ['alternating-short-lines', '用\n学\n'.repeat(16384), []],
+        ['purpose-and-short-lines', '用途：我的学习\n' + '用\n学\n'.repeat(16382), ['learning']],
       ];
       await admin.query("set statement_timeout='8s'");
       for (const [label, text, expected] of shapes) {
@@ -326,6 +338,10 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
         ['many-short-sentences', 'a。'.repeat(3950), []],
         ['ready-long-source', '用途：我的学习\n' + '普通旧记录。'.repeat(1300), ['learning']],
         ['quote-in-code-does-not-abstain', '用途：我的学习\n```\n' + '“原文”'.repeat(1900) + '\n```', ['learning']],
+        ['repeated-short-lines', '用\n'.repeat(4000), []],
+        ['alternating-short-lines', '用\n学\n'.repeat(2000), []],
+        ['purpose-and-short-lines', '用途：我的学习\n' + '用\n学\n'.repeat(1998), ['learning']],
+        ['over-cache-capacity', Array.from({ length: 132 }, (_, i) => `普通独立行${i}\n`).join('') + '用\n学\n'.repeat(1500), []],
       ];
       await isolated.client.query("set statement_timeout='8s'");
       for (const [label, text, expected] of nativeShapes) {
@@ -340,6 +356,25 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
           page_ms: Math.round(performance.now() - start), ready: first.proof.payload.ready, review: first.proof.payload.needs_review }));
         const next = await previewPage({ proof: first.proof }, isolated.client);
         assert.equal(next.page.cursor, 1); assert.equal(next.page.scanned, 1);
+      }
+      await admin.query(`insert into public.clued_memories
+        (id,user_id,title,content,scope,record_type,status,record_schema_version,lifecycle_status,canonical_scope,
+          type_fields,relations,source_refs,authority,confidence,confidence_reason,content_hash)
+        select extensions.gen_random_uuid(),$1,'Synthetic scale record',$2,'global','task','active',1,'active','global',
+          '{"execution_bucket":"later"}'::jsonb,'{}'::jsonb,'{}'::uuid[],'user_explicit',1,'Isolated synthetic fixture',
+          encode(extensions.digest(convert_to($2,'UTF8'),'sha256'),'hex') from generate_series(1,2200)`, [isolated.id, body]);
+      for (const [label, text, expected] of nativeShapes.slice(-4)) {
+        assert.ok([...text].length <= 8000);
+        // Target stays an actual Native-created/updated current legacy Record;
+        // only its test body changes, with no organization or saved batch.
+        await admin.query('update public.clued_memories set content=$2,content_hash=$3 where id=$1', [target, text, hash(text)]);
+        const start = performance.now(), first = await previewPage({}, isolated.client);
+        assert.equal(first.inventory_counts.total, 4000); assert.equal(first.inventory_counts.classifiable, 4000);
+        assert.equal(first.page.scanned, 1); assert.deepEqual(first.items[0]?.domains ?? [], expected);
+        const next = await previewPage({ proof: first.proof }, isolated.client);
+        assert.equal(next.page.cursor, 1); assert.equal(next.page.scanned, 1);
+        console.log('NATIVE_SHORT_LINES_4000', JSON.stringify({ label, characters: [...text].length,
+          two_pages_ms: Math.round(performance.now() - start) }));
       }
       assert.equal((await status(isolated.client)).available, false, 'large rehearsal has zero saved batches or label writes');
     });

@@ -2,6 +2,10 @@
 -- immutable rule arrays once per call instead of issuing SQL in every sentence
 -- loop. Quote abstention may return before the line guards: both paths return
 -- the same empty result for the whole source. No source is truncated.
+-- A bounded memo of ordinary lines avoids repeated matching of identical lines.
+-- Only external_block=false inputs are cached, along with their resulting block
+-- state. Their domains already contributed to the final distinct result. Special
+-- lines keep their original order and are always processed before this memo.
 create or replace function clued_private.imprint_auto_domains_v1(p_content text)
 returns text[] language plpgsql immutable parallel safe set search_path='' as $$
 declare rules jsonb:=clued_private.imprint_auto_rules_v1(); line text; segment text; piece text;
@@ -10,6 +14,7 @@ declare rules jsonb:=clued_private.imprint_auto_rules_v1(); line text; segment t
   reported_patterns text[]; uncertain_patterns text[]; purpose_patterns text[];
   activities jsonb[]; domain_rules jsonb[]; pattern_index integer;
   context_blocked boolean; material_blocked boolean;
+  line_cache jsonb:='{}'; line_cache_keys text[]:='{}'; line_cache_cursor integer:=1;
 begin
   if p_content is null or char_length(p_content)>65536 then return domains; end if;
   reported_patterns:=array(select jsonb_array_elements_text(rules->'reported'));
@@ -29,6 +34,8 @@ begin
     if code_fence is not null or line ~ '`' then continue; end if;
     if btrim(line)='' then external_block:=false; continue; end if;
     if line ~ '[“”‘’「」『』"'']' then return '{}'::text[]; end if;
+    if external_block then continue; end if;
+    if line_cache ? line then external_block:=(line_cache->>line)::boolean; continue; end if;
     if line ~* '^\s*(以下(是|为))?(客户(请求|要求|说|原话|邮件|消息)|对方(说|要求)|文章(说|内容)|原文|引用|转述|摘录|示例|例子|quoted text|client request|article says|example)\s*[:：]'
       then external_block:=true; end if;
     excluded:=external_block or line ~ '^\s*>';
@@ -41,6 +48,12 @@ begin
     foreach pattern in array uncertain_patterns loop
       excluded:=excluded or line ~* pattern;
     end loop;
+    if cardinality(line_cache_keys)=128 then
+      line_cache:=line_cache-line_cache_keys[line_cache_cursor];
+      line_cache_keys[line_cache_cursor]:=line;
+      line_cache_cursor:=line_cache_cursor%128+1;
+    else line_cache_keys:=array_append(line_cache_keys,line); end if;
+    line_cache:=line_cache || jsonb_build_object(line,external_block);
     if excluded then continue; end if;
     context_blocked:=line ~* (rules->>'activity_context_block');
     material_blocked:=line ~* (rules->>'activity_material_block');
