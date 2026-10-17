@@ -38,7 +38,9 @@ function drive(options = {}) {
     }
     if (u.pathname === "/drive/v3/files" && u.searchParams.get("q")?.startsWith("appProperties has")) {
       if (options.searchStatus) return new Response("{}", { status: options.searchStatus });
-      return Response.json({ files: options.tagged ? [{ id: "elsewhere0000001" }] : [], ...(options.nextPage ? { nextPageToken: "more" } : {}) });
+      assert.ok(u.searchParams.get("fields").split(",").includes("incompleteSearch"));
+      return Response.json({ files: options.tagged ? [{ id: "elsewhere0000001" }] : [], ...(options.nextPage ? { nextPageToken: "more" } : {}),
+        ...(Object.hasOwn(options, "incompleteSearch") ? { incompleteSearch: options.incompleteSearch } : {}) });
     }
     // BUG-20261008-002: the registered folders exist and are unchanged, so the verifier
     // finds them and keeps polling for the missing file instead of failing at once.
@@ -68,7 +70,8 @@ test("a present or tagged file is not absent; errors and partial pages are not p
   for (const options of [{ exists: true }, { tagged: true }]) {
     assert.equal(await createGoogleDriveCreateAbsenceProbe({ get_credential: credential(), fetch: drive(options).fetch })(target), null);
   }
-  for (const options of [{ byIdStatus: 403 }, { byIdStatus: 500 }, { searchStatus: 500 }, { nextPage: true }, { fail: true }]) {
+  for (const options of [{ byIdStatus: 403 }, { byIdStatus: 500 }, { searchStatus: 500 }, { nextPage: true },
+    { incompleteSearch: true }, { incompleteSearch: "false" }, { incompleteSearch: null }, { fail: true }]) {
     await assert.rejects(createGoogleDriveCreateAbsenceProbe({ get_credential: credential(), fetch: drive(options).fetch })(target),
       /DRIVE_ABSENCE_(UNPROVEN|REQUEST_FAILED)/);
   }

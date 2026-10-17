@@ -235,7 +235,8 @@ export async function createStorageCloudRecovery(config: {
       // credential remain in force; unchanged metadata must not exhaust the
       // after verifier's budget before reconciliation can run.
       if (config.verified && d.conflict_reconcile !== undefined && d.semantic_recovery === undefined) {
-        if (!replace || !object(d.conflict_reconcile) || !uuid.test(String(d.conflict_reconcile.source_receipt_id))) throw denied();
+        const directoryBefore = destructive && d.mutation.target_kind === "directory";
+        if ((!replace && !directoryBefore) || !object(d.conflict_reconcile) || !uuid.test(String(d.conflict_reconcile.source_receipt_id))) throw denied();
         stage = "verification";
         const review = await bounded(createStorageRecoveryReview({ client_id: config.client_id, vault: config.vault,
           descriptor: d, source_receipt_id: String(d.conflict_reconcile.source_receipt_id), clock,

@@ -470,3 +470,15 @@ before 仍经原双 GET、I2/I9、登记与 I11 出口；新 reader 及实际凭
 
 此候选仍须正式源审核、合并、生产迁移与数据库先于页面的验收；非 job I12 的完整 Native 出口和剩余目录复核仍须分别交付与验证。生产 PR864 的应用时间版本 `20261017061135`、源文件 `20261017043050_storage_semantic_recovery_v1.sql` 与文本哈希在台账中如实绑定。不能把候选本地测试、台账补记或已上线 PR864 表述为整个 e91 完成。
 
+## 21. 旧 P5 目录的程序基线核对（e91 有限后继候选）
+
+没有 §18 语义 sidecar 的原 cloud writer 目录 trash/untrash，可由程序核对原 before 基线并解除该旧操作的 I9 隔离。原 job 必须仍绑定原 Owner、profile、writer、完整隔离、单一固定 Drive ID、journal/I9 回执与 CAS；完整原 attempt 必须精确等于既有 `storage_destructive_attempt_v1` 推导值。先校验当前只读 reader，保留 §20 的原 job/实际 reader 及单次续签桥，不能把空历史 snapshot 回填成一张新授权。
+
+程序做两轮真实 GET，逐轮检查原 ID、父目录与祖先、名称槽、trash/explicit-trash、目录类型、完整访问摘要、分享摘要及包括回收站子项的空目录状态。目录没有文件内容大小、内容哈希或 revision。原权限摘要存在就比较；缺失时不猜旧 ACL，before 仍要求 Drive 版本精确等于原版本。delete-before 是原 active、未入回收站且名称槽唯一指向原 ID 的目录；restore-before 是按 ID 读取的原 trashed 目录且恢复名称槽为空。restore-before 恢复的是正常使用能力，不能显示成已经将目录移出回收站。
+
+提交事务继续按 client → job → root 进入，重新检查实际 reader、凭据、原 profile/Decision、I2/I9 时限，以及源 Artifact 的原 ID、状态、路径、provider version、authority version 和当前 Decision。root、track 的路径与物理身份均不允许，active/trashed 登记后代也不允许；不新增目录移动、非空目录删除或跨目录改名能力。列表不取得执行锁，I9 扫描保持原非阻塞策略。
+
+before 成立时只用独立 `storage_automatic_reconcile` Receipt 和同事务出口 permit 解除原隔离，原 conflict 状态、原 attempt/I9 Receipt、源 Artifact 及回收站状态均保留。并发两次核对只提交一张独立回执；回执失败全部回滚。after 仍需原 typed verifier/admission/proof/Receipt 完整结算，不能仅凭观察到 trash 位变化记为成功。changed 只记录具体核验冲突，不套单文件登记逻辑或改写后代路径。
+
+本有限候选未覆盖 I9 后旧 create 的 absence 出口、目录 Native 当前状态取舍、空历史 snapshot 的 after 完整链，以及非 job I12 的可信终止/本地效果/同步队列证明链。这些仍由 e91 后继分别实现和验收，不用合成 booleans、通过 before 的测试或本候选归档宣告完成。G 盘后备和暂停范围不因此启用。
+

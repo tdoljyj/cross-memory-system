@@ -26,6 +26,7 @@ const storageSemanticRecoveryMigration = '20261017043050_storage_semantic_recove
 const storageRecoveryCoverageMigration = '20261017053535_storage_recovery_coverage_v1.sql';
 const storageRecoveryReaderMigration = '20261017060438_storage_recovery_read_connection_v1.sql';
 const storageRecoveryNativeMigration = '20261017063317_storage_recovery_native_coverage_v1.sql';
+const storageLegacyDirectoryMigration = '20261017074657_storage_legacy_directory_recovery_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -85,7 +86,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== storageLegacyDirectoryMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -593,6 +594,14 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
       await assertGatewayCloseoutBoundary(admin);
       assert.equal((await admin.query("select has_function_privilege('clued_worker_gateway','clued_private.storage_recovery_native_visible_v1(uuid,uuid,uuid,text)','execute') allowed")).rows[0].allowed, false);
+    });
+    await t.test('legacy directory before recovery installs after I9 and the actual reader without widening callers', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageLegacyDirectoryMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+        assert.equal((await admin.query("select has_function_privilege($1,'clued_private.storage_legacy_directory_reconcile_v1(text,jsonb)','execute') allowed", [role])).rows[0].allowed, false);
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
