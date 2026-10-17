@@ -232,9 +232,22 @@ revalidates the exact owned VM, devices and reserved configuration directory.
 It uses the standard local `root/virtualization/v2` provider's
 `Msvm_VirtualSystemManagementService.DestroySystem` against that VM UUID.
 A synchronous success or a correctly bound completed asynchronous job is
-followed by **both** CIM absence and independent `Get-VM -Id` absence checks.
+followed by CIM absence, independent `Get-VM -Id` absence, and absence of the
+exact VM GUID configuration footprint. The configuration check uses the
+owned VM's `Virtual Machines` directory and matches the complete GUID,
+including a GUID directory or any extension. A residual configuration file
+cannot be hidden by provider absence. Build disks, seeds, logs and unrelated
+GUIDs remain untouched; retirement never deletes the instance directory to
+manufacture this result.
 Only after verified VM removal is the exact instance's `job.vhdx` deleted and
 its absence verified. The manifest and provider retirement evidence remain.
+
+`Start` requires both the requested and saved purpose to be `qualification`,
+and the saved `production_qualified` value to be an explicit false Boolean.
+The lifecycle uses an owner/ACL-checked `Global` mutex shared by Windows
+sessions. Its protected ACL permits only the exact controller SID, SYSTEM
+and Administrators. An existing mutex with a different owner or ACL is
+refused rather than adopted.
 
 Do not regard a deletion request, provider timeout, missing output or a
 catch-all `Get-VM` exception as successful removal. The recognized exact
@@ -315,6 +328,52 @@ rejected. The original partial image remains failed; preparation must run on
 a new build rather than repair sudo/hosts or call the partial image fresh.
 Report each later milestone only from its actual evidence. Retain the
 original failure, diagnostic response, correction and any successful retry.
+
+The fourth clean build, instance `65b47415-38f6-4916-b9f4-80bf9ddaf15f`,
+completed preparation, the separate read-only eight-check inspection and
+known-path sanitization, then powered off. The Host read back the original
+manifest/check/sanitization bytes from its exact VM serial endpoint and
+separately checked the Off VM, owned devices and stopped disk. Nonproduction
+base `e1740f7c-f4bf-4faa-9989-ebbfa4423d34` was sealed and read back read-only;
+its disk SHA-256 is
+`3ced3cc4e8765c9a57cd4e01ea7cd04b7296c940b103bbd1023220ea05db8771`.
+This establishes a baseline image, not publisher qualification. Ordinary CI
+still has the recorded same-Windows-principal isolation failure. The actual
+cross-session lock canary was also not qualified: the one current-user S4U
+attempt returned access denied, its exact task was confirmed absent, and no
+Session 0 callback was observed. Two real processes in Session 1 verified
+mutual exclusion, which does not substitute for a cross-session observation.
+
+The next new build passed the corrected sudo predicate and stopped later at
+the service-file absence check. Its filtered `systemctl list-unit-files
+actions.runner.*.service --no-legend --no-pager` returned code `1` with empty
+stdout/stderr. A separate read-only diagnostic observed the complete service
+inventory returning code `0`, empty stderr, 235 successfully parsed rows and
+no Actions runner unit. The complete stdout was hashed inside the Guest;
+unrelated service names were not emitted. Neither result authorized treating
+an arbitrary code `1` or an empty failed command as safe absence.
+
+Both preparation and final observation now call the same strict service
+guard. It reads the complete `--type=service --no-legend --no-pager --full`
+inventory with fixed locale and no colors, requires code `0`, empty stderr,
+a nonempty parseable set of service rows and no `actions.runner.*.service`
+match. Timeout, output over 64 KiB, malformed/duplicate rows, unknown state or
+preset, and any real command failure reject. This replaces both the shell
+precheck that previously tested only empty stdout and the later Python
+`check_output` that incorrectly treated the known zero-match status as an
+exception. Preserve the failed build and its diagnostic evidence; qualify
+the correction on a new instance rather than rerunning partial preparation.
+
+The same bounded helper also makes the fresh-account precondition explicit:
+`getent passwd clued-release-runner` must return the documented missing-key
+code `2` with empty stdout/stderr. Code `0` means an existing account and is
+refused; other codes, warnings, timeouts or excess output remain unknown and
+are refused. This closes the earlier shell negation that accepted every
+nonzero result. The [Linux man-pages getent exit-status contract](https://man7.org/linux/man-pages/man1/getent.1.html#EXIT_STATUS)
+distinguishes missing keys from invalid arguments/databases. The account
+precondition and service inventory each have a ten-second command deadline;
+account stdout and all stderr are capped at 4 KiB. This check does not query
+shadow data or create/repair an account.
 
 ## Handoff and evidence retention
 

@@ -128,14 +128,89 @@ denied = {'9p', 'virtiofs', 'drvfs', 'cifs', 'smb3', 'nfs', 'nfs4', 'vboxsf', 'f
 require(not (set(mounts) & denied), 'Host-share or network-mounted filesystem refused')
 PY
 }
+
+assert_runner_absence() {
+  python3 - "$1" "$RUNNER_USER" <<'PY'
+import os, re, selectors, subprocess, sys, time
+def check_getent_account_absence(returncode, stdout, stderr):
+    return type(returncode) is int and returncode == 2 and stdout == '' and stderr == ''
+
+def check_service_inventory_absence(returncode, stdout, stderr):
+    if type(returncode) is not int or returncode != 0 or stderr != '': return False
+    if not isinstance(stdout, str) or not stdout.strip(): return False
+    if any((ord(char) < 32 and char not in '\t\n') or ord(char) > 126 for char in stdout): return False
+    states = {'enabled', 'enabled-runtime', 'linked', 'linked-runtime', 'alias', 'masked',
+              'masked-runtime', 'static', 'disabled', 'indirect', 'generated', 'transient', 'bad'}
+    presets = {'enabled', 'disabled', 'ignored', '-', 'n/a'}
+    seen = set()
+    for line in stdout.splitlines():
+        if not line.strip(): continue
+        if any((ord(char) < 32 and char != '\t') or ord(char) > 126 for char in line): return False
+        fields = line.split()
+        if len(fields) != 3: return False
+        unit, state, preset = fields
+        if not re.fullmatch(r'[A-Za-z0-9:_.@\\-]{1,247}\.service', unit): return False
+        if state not in states or preset not in presets or unit in seen: return False
+        if re.fullmatch(r'actions\.runner\..*\.service', unit): return False
+        seen.add(unit)
+    return bool(seen)
+
+def bounded_read(command, stdout_limit):
+    environment = {**os.environ, 'LC_ALL': 'C', 'LANG': 'C', 'SYSTEMD_COLORS': '0', 'SYSTEMD_PAGER': 'cat'}
+    buffers = {'stdout': bytearray(), 'stderr': bytearray()}
+    limits = {'stdout': stdout_limit, 'stderr': 4096}
+    selector = selectors.DefaultSelector()
+    process = None
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+        selector.register(process.stdout, selectors.EVENT_READ, 'stdout')
+        selector.register(process.stderr, selectors.EVENT_READ, 'stderr')
+        deadline = time.monotonic() + 10
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise TimeoutError('absence inventory command timed out')
+            for key, _ in selector.select(min(remaining, 0.2)):
+                name = key.data
+                chunk = os.read(key.fileobj.fileno(), min(4096, limits[name] - len(buffers[name]) + 1))
+                if not chunk:
+                    selector.unregister(key.fileobj); continue
+                available = limits[name] - len(buffers[name])
+                if len(chunk) > available: raise ValueError('absence inventory exceeded its output bound')
+                buffers[name].extend(chunk)
+        returncode = process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        return returncode, buffers['stdout'].decode('utf-8', errors='replace'), buffers['stderr'].decode('utf-8', errors='replace')
+    finally:
+        selector.close()
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=1)
+            process.stdout.close(); process.stderr.close()
+
+try:
+    if sys.argv[1] == 'prepare':
+        # getent documents 2 as a missing key. Other failures are not absence.
+        if not check_getent_account_absence(*bounded_read(['getent', 'passwd', sys.argv[2]], 4096)):
+            raise ValueError('fresh runner account absence was not verified')
+    elif sys.argv[1] != 'baseline':
+        raise ValueError('unknown absence inspection mode')
+    # A filtered zero-match list exits 1 on the pinned systemd version. Query
+    # the complete inventory; empty output alone never proves absence.
+    command = ['systemctl', 'list-unit-files', '--type=service', '--no-legend', '--no-pager', '--full']
+    if not check_service_inventory_absence(*bounded_read(command, 65536)):
+        raise ValueError('service inventory failed, was unparseable, or contains an Actions runner unit')
+except Exception:
+    # Never log unrelated unit/account names or unknown command diagnostics.
+    raise SystemExit('Runner account/service absence could not be verified') from None
+PY
+}
 validate_guest_and_apt
 
 if [[ "$MODE" == prepare ]]; then
   [[ ! -e "$BASE_ROOT" && ! -L "$BASE_ROOT" ]] || die 'base path already exists; use a fresh guest.'
   [[ ! -e "$RUNNER_ROOT" && ! -L "$RUNNER_ROOT" ]] || die 'runner path already exists; use a fresh guest.'
-  ! getent passwd "$RUNNER_USER" >/dev/null || die 'runner account already exists; use a fresh guest.'
   [[ ! -e "/home/$RUNNER_USER" && ! -L "/home/$RUNNER_USER" ]] || die 'runner home already exists.'
-  [[ -z "$(systemctl list-unit-files 'actions.runner.*.service' --no-legend --no-pager)" ]] || die 'existing runner service refused.'
+  assert_runner_absence prepare
   install -d -m 0755 "$BASE_ROOT"
   # An interrupted preparation intentionally leaves this marker. Never resume a
   # partially modified image as though it were a newly verified base.
@@ -160,6 +235,8 @@ if [[ "$MODE" == prepare ]]; then
   chmod 0400 "$ARCHIVE"
   systemctl enable --now docker.service >/dev/null
 fi
+
+assert_runner_absence baseline
 
 # This code performs live, read-only validation in both modes. In check-only it
 # never executes a runner binary, starts services, downloads, or rewrites files.
@@ -234,7 +311,6 @@ checked('runner-locked-no-sudo-exact-groups')
 for relative in ('.ssh', '.aws', '.azure', '.kube', '.config/gcloud', '.docker/config.json', '.git-credentials', '.netrc', '.npmrc'):
     target = pathlib.Path(account.pw_dir) / relative
     require(not target.exists() and not target.is_symlink(), 'unexpected runner credential/configuration path')
-require(not output(['systemctl', 'list-unit-files', 'actions.runner.*.service', '--no-legend', '--no-pager']), 'runner service already exists')
 for process in ('Runner.Listener', 'Runner.Worker'):
     result = subprocess.run(['pgrep', '-x', process], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     require(result.returncode == 1, 'runner process exists or process inventory failed')

@@ -261,6 +261,27 @@ function Test-ExactVmAbsent([guid]$VmId) {
         throw
     }
 }
+function Get-ExactVmConfigurationAbsence($Manifest) {
+    $id = [guid]$Manifest.vm_id
+    if ($id -eq [guid]::Empty) { throw 'A concrete VM ID is required for configuration verification.' }
+    $folder = Get-InstanceFolder ([guid]$Manifest.instance_id)
+    $configDirectory = Assert-SafePath (Join-Path (Join-Path $folder $Manifest.vm_name) 'Virtual Machines')
+    $residualPaths = @()
+    if (Test-Path -LiteralPath $configDirectory) {
+        if (-not (Get-Item -LiteralPath $configDirectory -Force).PSIsContainer) { throw 'VM configuration boundary is not a directory.' }
+        foreach ($entry in @(Get-ChildItem -LiteralPath $configDirectory -Force -ErrorAction Stop)) {
+            # Match this complete GUID only, including unknown extensions or a
+            # GUID directory. Keep logs, disks, seed files, and other GUIDs.
+            if ($entry.Name -ieq $id.ToString('D') -or $entry.Name.StartsWith($id.ToString('D') + '.', [StringComparison]::OrdinalIgnoreCase)) {
+                $residualPaths += Assert-SafePath $entry.FullName -MustExist
+            }
+        }
+    }
+    return [pscustomobject][ordered]@{
+        vm_id = $id.ToString('D'); checked_directory = $configDirectory
+        observed_utc = [DateTime]::UtcNow.ToString('o'); absent = ($residualPaths.Count -eq 0); residual_paths = $residualPaths
+    }
+}
 function Remove-ManagedVmProvider($Manifest, [ValidateRange(1, 60)][int]$ObservationTimeoutSeconds = 60) {
     # The standard local provider is the chosen implementation, not a fallback
     # that changes principal, bypasses a denial, or repairs the host service.
@@ -273,6 +294,7 @@ function Remove-ManagedVmProvider($Manifest, [ValidateRange(1, 60)][int]$Observa
         observed_utc = [DateTime]::UtcNow.ToString('o'); namespace = $namespace
         method = 'Msvm_VirtualSystemManagementService.DestroySystem'; return_value = $null
         job_instance_id = $null; job_observations = @(); cim_absent = $false; vm_absent = $false
+        configuration_absent = $false; configuration_footprint = $null
         result = 'UNKNOWN'; failure_stage = $null; evidence_path = $null
     }
     $stage = 'managed_identity'
@@ -327,7 +349,10 @@ function Remove-ManagedVmProvider($Manifest, [ValidateRange(1, 60)][int]$Observa
         $remainingCim = @(Get-CimInstance -Namespace $namespace -ClassName Msvm_ComputerSystem -Filter "Name='$($id.ToString('D'))'" -ErrorAction Stop)
         $report.cim_absent = ($remainingCim.Count -eq 0)
         $report.vm_absent = Test-ExactVmAbsent $id
-        if (-not $report.cim_absent -or -not $report.vm_absent) { throw 'VM removal was not independently verified.' }
+        $stage = 'configuration_absence'
+        $report.configuration_footprint = Get-ExactVmConfigurationAbsence $Manifest
+        $report.configuration_absent = $report.configuration_footprint.absent
+        if (-not $report.cim_absent -or -not $report.vm_absent -or -not $report.configuration_absent) { throw 'VM removal and exact configuration absence were not independently verified.' }
         $report.result = 'VERIFIED_REMOVED'
         $stage = 'evidence_persistence'
         $report.evidence_path = Save-ProviderRetirementEvidence $report $Manifest.folder
@@ -394,12 +419,55 @@ function Get-Artifact([string]$Path, [string]$Sha, [string]$Extension) {
     if ((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash -ine $Sha) { throw 'Artifact SHA-256 mismatch.' }
     return $p
 }
+function Assert-QualificationStart($Manifest, [string]$RequestedPurpose) {
+    if ($RequestedPurpose -ine 'qualification' -or $null -eq $Manifest.PSObject.Properties['purpose'] -or
+        $Manifest.purpose -ine 'qualification' -or $null -eq $Manifest.PSObject.Properties['production_qualified'] -or
+        $Manifest.production_qualified -isnot [bool] -or $Manifest.production_qualified -ne $false) {
+        throw 'Start requires qualification purpose in both request and saved manifest, with an explicit unqualified boolean.'
+    }
+}
+function Enter-HostLifecycleLock(
+    [ValidatePattern('^Global\\CluedProductionPublisherLifecycle\.DESK-W-591(?:\.test\.[a-f0-9]{32})?$')]
+    [string]$LockName = 'Global\CluedProductionPublisherLifecycle.DESK-W-591'
+) {
+    $security = New-Object Security.AccessControl.MutexSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner((New-Object Security.Principal.SecurityIdentifier($actorSid)))
+    foreach ($sid in $allowedSids) {
+        $rule = New-Object Security.AccessControl.MutexAccessRule(
+            (New-Object Security.Principal.SecurityIdentifier($sid)), 'FullControl', 'Allow')
+        $security.AddAccessRule($rule)
+    }
+    $created = $false
+    $mutex = New-Object Threading.Mutex($false, $LockName, [ref]$created, $security)
+    $owned = $false
+    try {
+        # A constructor does not replace the ACL of an existing named mutex.
+        # Verify it before waiting; never adopt an object with a different owner.
+        $actual = $mutex.GetAccessControl()
+        if (-not $actual.AreAccessRulesProtected -or $actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $actorSid) { throw 'Host lifecycle lock ownership or ACL protection did not match.' }
+        $seen = @{}
+        foreach ($ace in $actual.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($ace.AccessControlType -ne 'Allow' -or $allowedSids -notcontains $ace.IdentityReference.Value -or
+                $ace.MutexRights -ne [Security.AccessControl.MutexRights]::FullControl) { throw 'Host lifecycle lock contains an unapproved ACL entry.' }
+            $seen[$ace.IdentityReference.Value] = $true
+        }
+        foreach ($sid in $allowedSids) { if (-not $seen.ContainsKey($sid)) { throw 'Host lifecycle lock ACL is incomplete.' } }
+        try { $owned = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { throw 'Another host lifecycle operation is in progress.' }
+        return $mutex
+    } catch {
+        if ($owned) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+        throw
+    }
+}
+function Exit-HostLifecycleLock([System.Threading.Mutex]$Mutex) {
+    try { $Mutex.ReleaseMutex() } finally { $Mutex.Dispose() }
+}
 
-$lifecycleMutex = New-Object Threading.Mutex($false, 'Local\CluedProductionPublisherLifecycle.DESK-W-591')
-$lifecycleLocked = $false
+$lifecycleMutex = Enter-HostLifecycleLock
 try {
-    try { $lifecycleLocked = $lifecycleMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $lifecycleLocked = $true }
-    if (-not $lifecycleLocked) { throw 'Another publisher lifecycle operation is in progress.' }
 
 if ($Action -eq 'CreateBuild') { Write-Result (New-ManagedVm 'build' 'qualification'); return }
 if ($Action -eq 'NewJob') {
@@ -500,8 +568,8 @@ if ($Action -in @('PrepareBuildVM', 'AttachBase')) {
     return
 }
 if ($Action -eq 'Start') {
+    Assert-QualificationStart $m $Purpose
     if (-not $m.disk_path -or @(Get-VMHardDiskDrive -VM $vm).Count -ne 1) { throw 'One owned boot disk is required.' }
-    if ($m.purpose -eq 'production') { throw 'Production execution is not qualified in this revision.' }
     try { Start-VM -VM $vm | Out-Null; $m.status = 'started'; Save-Manifest $m $m.folder; Write-Result $m }
     catch { Mark-Quarantined $m 'start_failed' -BestEffort; throw }
     return
@@ -593,6 +661,9 @@ if ($Action -eq 'RetireBuild') {
                 throw 'Build retirement did not verify preservation of every retained artifact.'
             }
         }
+        $configurationAfterRetention = Get-ExactVmConfigurationAbsence $m
+        if (-not $configurationAfterRetention.absent) { throw 'Build retirement left the exact VM configuration footprint behind.' }
+        $m | Add-Member -NotePropertyName configuration_after_retention -NotePropertyValue $configurationAfterRetention -Force
         $m.status = 'retired'; Save-Manifest $m $m.folder
         Write-Result $m
     } catch { Mark-Quarantined $m 'build_retirement_not_verified' -BestEffort; throw }
@@ -618,6 +689,5 @@ if ($Action -eq 'RetireJob') {
 }
 throw 'Unsupported lifecycle transition.'
 } finally {
-    if ($lifecycleLocked) { $lifecycleMutex.ReleaseMutex() }
-    $lifecycleMutex.Dispose()
+    Exit-HostLifecycleLock $lifecycleMutex
 }

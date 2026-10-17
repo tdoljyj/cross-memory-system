@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
@@ -489,16 +489,169 @@ foreach ($mode in @('provider-error', 'residual-vm', 'changed-artifact')) {
   assert.equal(report.checks.length, 14);
 });
 
+test('Windows provider and build retirement refuse every exact-GUID configuration residue after API absence', { skip: !windows }, () => {
+  const report = runWindowsCase(buildRetirementFixture + String.raw`
+$configDirectory=Join-Path $config 'Virtual Machines'
+[IO.Directory]::CreateDirectory($configDirectory)|Out-Null
+$foreign=Join-Path $configDirectory ([guid]::NewGuid().ToString('D')+'.vmcx')
+$log=Join-Path $configDirectory 'retained.log'
+[IO.File]::WriteAllText($foreign,'foreign-guid-file');[IO.File]::WriteAllText($log,'keep-log')
+$boundary=Get-ExactVmConfigurationAbsence $manifest
+Check ($boundary.absent -and (Test-Path -LiteralPath $foreign) -and (Test-Path -LiteralPath $log)) 'foreign GUID and ordinary logs remain preserved without claiming this VM residue'
+foreach($suffix in @('.vmcx','.vmrs','.vmgs','.unknown','.vmcx.bak','')) {
+    $residue=Join-Path $configDirectory ($manifest.vm_id.ToUpperInvariant()+$suffix)
+    if($suffix -ceq '') {[IO.Directory]::CreateDirectory($residue)|Out-Null} else {[IO.File]::WriteAllText($residue,'exact-guid-residue')}
+    $boundary=Get-ExactVmConfigurationAbsence $manifest
+    Check (-not $boundary.absent -and $boundary.residual_paths -contains $residue) ('exact GUID footprint detected: '+$suffix)
+    $script:destroyCalls=0
+    Reject { Remove-ManagedVmProvider $manifest } 'configuration absence were not independently verified' ('CIM/Get-VM absence cannot hide exact configuration residue: '+$suffix)
+    Check (Test-Path -LiteralPath $residue) ('verification never deletes residue to manufacture absence: '+$suffix)
+    # Remove only this exact generated work fixture entry between cases.
+    if($suffix -ceq '') {[IO.Directory]::Delete($residue,$false)} else {[IO.File]::Delete($residue)}
+}
+$residue=Join-Path $configDirectory ($manifest.vm_id+'.vmcx')
+[IO.File]::WriteAllText($residue,'retained-build-residue')
+$script:destroyCalls=0
+Reject { Invoke-Expression $retireBuild } 'configuration absence were not independently verified' 'build cannot retire on API absence while exact configuration remains'
+$saved=Get-Content -LiteralPath (Join-Path $folder 'manifest.json') -Raw|ConvertFrom-Json
+Check ($saved.status -ceq 'quarantined' -and $saved.status -cne 'retired') 'configuration residue persists quarantine rather than a retired result'
+Check ((Test-Path -LiteralPath $residue) -and (Test-Path -LiteralPath $diskPath) -and $script:deleteCalls -eq 0) 'configuration failure preserves build artifacts and exact residual evidence'
+`);
+  assert.equal(report.checks.length, 22);
+});
+
+test('Windows Start requires qualification in both the request and the persisted manifest before invoking Hyper-V', { skip: !windows }, () => {
+  const report=runWindowsCase(String.raw`
+$Action='Start';$branch=Load-Action 'Start'
+$folder=Join-Path $rootPath 'start-purpose';[IO.Directory]::CreateDirectory($folder)|Out-Null
+$disk=Join-Path $folder 'build.vhdx';[IO.File]::WriteAllText($disk,'start-fixture')
+$script:starts=0
+function Start-VM {param($VM) $script:starts+=1}
+function Get-VMHardDiskDrive {param($VM) [pscustomobject]@{Path=$disk}}
+$vm=[pscustomobject]@{State='Off'}
+foreach($mode in @('request-production','persisted-production','missing-purpose','qualified-true','qualified-null','qualified-string','qualified-missing')) {
+    $Purpose='qualification'
+    $m=[pscustomobject]@{purpose='qualification';production_qualified=$false;status='prepared';quarantine_reason=$null;disk_path=$disk;folder=$folder;updated_utc=$null}
+    switch($mode) {
+        request-production {$Purpose='production'}
+        persisted-production {$m.purpose='production'}
+        missing-purpose {$m.PSObject.Properties.Remove('purpose')}
+        qualified-true {$m.production_qualified=$true}
+        qualified-null {$m.production_qualified=$null}
+        qualified-string {$m.production_qualified='false'}
+        qualified-missing {$m.PSObject.Properties.Remove('production_qualified')}
+    }
+    Reject { Invoke-Expression $branch } 'qualification purpose in both request and saved manifest' ('unsafe Start request refused: '+$mode)
+    Check ($script:starts -eq 0) ('unsafe Start makes zero Hyper-V start calls: '+$mode)
+}
+$Purpose='qualification'
+$m=[pscustomobject]@{purpose='qualification';production_qualified=$false;status='prepared';quarantine_reason=$null;disk_path=$disk;folder=$folder;updated_utc=$null}
+Invoke-Expression $branch|Out-Null
+Check ($script:starts -eq 1 -and $m.status -ceq 'started') 'double qualification with explicit false permits one mocked Start'
+`);
+  assert.equal(report.checks.length,15);
+});
+
+test('Windows host-wide lock rejects non-test names and unsafe existing ACLs, and releases on exit', { skip: !windows },()=>{
+  const report=runWindowsCase(String.raw`
+$actorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowedSids=@($actorSid,'S-1-5-18','S-1-5-32-544')|Select-Object -Unique
+$name='Global\CluedProductionPublisherLifecycle.DESK-W-591.test.'+[guid]::NewGuid().ToString('N')
+$mutex=Enter-HostLifecycleLock $name
+Check ($mutex.GetAccessControl().AreAccessRulesProtected) 'actual test mutex has a protected DACL'
+Exit-HostLifecycleLock $mutex
+$mutex=Enter-HostLifecycleLock $name
+Check ($null -ne $mutex) 'released lock can be reacquired'
+Exit-HostLifecycleLock $mutex
+Reject { Enter-HostLifecycleLock 'Local\CluedProductionPublisherLifecycle.DESK-W-591' } '.' 'session-local mutex name refused'
+Reject { Enter-HostLifecycleLock ('Global\CluedProductionPublisherLifecycle.DESK-W-591.test.invalid') } '.' 'arbitrary global mutex name refused'
+$weakName='Global\CluedProductionPublisherLifecycle.DESK-W-591.test.'+[guid]::NewGuid().ToString('N')
+$security=New-Object Security.AccessControl.MutexSecurity
+$security.SetAccessRuleProtection($true,$false)
+$security.SetOwner((New-Object Security.Principal.SecurityIdentifier($actorSid)))
+foreach($sid in @($allowedSids)+@('S-1-1-0')) {$security.AddAccessRule((New-Object Security.AccessControl.MutexAccessRule((New-Object Security.Principal.SecurityIdentifier($sid)),'FullControl','Allow')))}
+$created=$false
+$weak=New-Object Threading.Mutex($false,$weakName,[ref]$created,$security)
+try {Reject { Enter-HostLifecycleLock $weakName } 'unapproved ACL entry' 'existing globally accessible mutex cannot be adopted'} finally {$weak.Dispose()}
+`);
+  assert.equal(report.checks.length,5);
+});
+
+function lockProcessScript(lockName,ready,release) {
+  return `
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
+$sourcePath=${psQuote(hostPath)}
+if((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne ${psQuote(sourceSha256)}){throw 'Host source changed'}
+$tokens=$null;$errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($sourcePath,[ref]$tokens,[ref]$errors)
+if($errors.Count -ne 0){throw 'Host source parse failed'}
+foreach($definition in $ast.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Enter-HostLifecycleLock','Exit-HostLifecycleLock')},$true)){Invoke-Expression $definition.Extent.Text}
+$actorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$allowedSids=@($actorSid,'S-1-5-18','S-1-5-32-544')|Select-Object -Unique
+$mutex=$null
+try{
+    $mutex=Enter-HostLifecycleLock ${psQuote(lockName)}
+    $value=@{result='ACQUIRED';source_sha256=${psQuote(sourceSha256)};sid=$actorSid;session_id=[Diagnostics.Process]::GetCurrentProcess().SessionId}
+    [IO.File]::WriteAllText(${psQuote(ready)},($value|ConvertTo-Json -Compress))
+    ${release ? `$watch=[Diagnostics.Stopwatch]::StartNew();while(-not [IO.File]::Exists(${psQuote(release)}) -and $watch.Elapsed.TotalSeconds -lt 12){[Threading.Thread]::Sleep(50)}` : ''}
+}catch{
+    $value=@{result='REFUSED';source_sha256=${psQuote(sourceSha256)};sid=$actorSid;session_id=[Diagnostics.Process]::GetCurrentProcess().SessionId;error=$_.Exception.Message}
+    [IO.File]::WriteAllText(${psQuote(ready)},($value|ConvertTo-Json -Compress))
+}finally{if($null -ne $mutex){Exit-HostLifecycleLock $mutex}}
+`;
+}
+
+test('Windows independent processes cannot enter the same host-wide lifecycle test lock concurrently', {skip:!windows},async()=>{
+  const parent=path.resolve(path.dirname(hostPath),'../../../cause/trace-20261018/vm-tests');
+  fs.mkdirSync(parent,{recursive:true});
+  const folder=fs.mkdtempSync(path.join(parent,'mutex-'));
+  const lockName=`Global\\CluedProductionPublisherLifecycle.DESK-W-591.test.${createHash('sha256').update(folder).digest('hex').slice(0,32)}`;
+  const held=path.join(folder,'held.json');const release=path.join(folder,'release');
+  const holderPath=path.join(folder,'holder.ps1');const challengerPath=path.join(folder,'challenger.ps1');const challenged=path.join(folder,'challenger.json');
+  fs.writeFileSync(holderPath,lockProcessScript(lockName,held,release));
+  fs.writeFileSync(challengerPath,lockProcessScript(lockName,challenged,null));
+  const holder=spawn('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',holderPath],{env:windowsPowerShellEnv(),windowsHide:true,stdio:'pipe'});
+  let holderError='';holder.stderr.on('data',chunk=>{holderError+=chunk.toString();});
+  const holderExit=new Promise(resolve=>holder.once('close',code=>resolve(code)));
+  let holderResult;
+  try{
+    const deadline=Date.now()+8000;
+    while(!fs.existsSync(held)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,30));
+    assert.ok(fs.existsSync(held),holderError);
+    const first=JSON.parse(fs.readFileSync(held,'utf8'));
+    assert.equal(first.result,'ACQUIRED');
+    const child=spawnSync('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',challengerPath],{env:windowsPowerShellEnv(),encoding:'utf8',timeout:8000,windowsHide:true});
+    assert.equal(child.error,undefined);assert.equal(child.status,0,child.stderr);
+    const second=JSON.parse(fs.readFileSync(challenged,'utf8'));
+    assert.equal(second.result,'REFUSED');assert.match(second.error,/Another host lifecycle operation is in progress/u);
+    assert.equal(first.source_sha256,sourceSha256);assert.equal(second.source_sha256,sourceSha256);
+    assert.equal(first.sid,second.sid);
+    // This case proves real process contention. Different-session execution is
+    // an explicitly invoked separate canary, never fabricated by this assertion.
+    fs.writeFileSync(path.join(folder,'contention.json'),JSON.stringify({first,second,cross_session_observed:first.session_id!==second.session_id},null,2));
+  }finally{
+    fs.writeFileSync(release,'release');
+    holderResult=await Promise.race([holderExit,new Promise(resolve=>setTimeout(()=>resolve('timeout'),5000))]);
+    if(holderResult==='timeout'){
+      holder.kill();
+      await Promise.race([holderExit,new Promise(resolve=>setTimeout(resolve,1000))]);
+    }
+  }
+  assert.equal(holderResult,0,holderError);
+});
+
 test('guest sudo predicate accepts only a complete target-user denial, including the observed exit-zero form', () => {
   const python = process.platform === 'win32' ? 'python.exe' : 'python3';
   const code = String.raw`
 import ast, hashlib, json, pathlib, re, sys
 source = pathlib.Path(sys.argv[1]).read_bytes()
 blocks = re.findall(r"<<'PY'\r?\n(.*?)\r?\nPY", source.decode('utf-8'), re.S)
-assert len(blocks) == 2, 'Unexpected embedded Python layout'
+assert blocks, 'Missing embedded Python blocks'
 for index, block in enumerate(blocks):
     compile(block, '<guest-embedded-' + str(index) + '>', 'exec')
-nodes = [node for node in ast.parse(blocks[1]).body if isinstance(node, ast.FunctionDef) and node.name == 'check_sudo_denial']
+nodes = [node for block in blocks for node in ast.parse(block).body if isinstance(node, ast.FunctionDef) and node.name == 'check_sudo_denial']
 assert len(nodes) == 1, 'Expected exactly one actual pure denial predicate'
 namespace = {'re': re}
 exec(compile(ast.Module(body=nodes, type_ignores=[]), '<actual-sudo-predicate>', 'exec'), namespace)
@@ -536,5 +689,72 @@ print(json.dumps({'cases': len(cases), 'passed': len(cases), 'guest_source_sha25
   const report = JSON.parse(result.stdout.trim());
   assert.equal(report.cases, 19);
   assert.equal(report.passed, 19);
+  assert.equal(report.guest_source_sha256, createHash('sha256').update(fs.readFileSync(guestPath)).digest('hex'));
+});
+
+test('guest absence predicates require a complete valid service inventory and an explicit getent key miss', () => {
+  const python = process.platform === 'win32' ? 'python.exe' : 'python3';
+  const code = String.raw`
+import ast, hashlib, json, pathlib, re, sys
+source=pathlib.Path(sys.argv[1]).read_bytes()
+blocks=re.findall(r"<<'PY'\r?\n(.*?)\r?\nPY",source.decode('utf-8'),re.S)
+assert len(blocks)==3, 'Unexpected current embedded Python layout'
+names={'check_service_inventory_absence','check_getent_account_absence'}
+definitions={}
+namespace={'re':re}
+for block in blocks:
+    tree=ast.parse(block)
+    compile(tree,'<actual-guest-block>','exec')
+    for node in tree.body:
+        if isinstance(node,ast.FunctionDef) and node.name in names:
+            assert node.name not in definitions, 'Duplicate actual predicate'
+            definitions[node.name]=node
+            exec(compile(ast.Module(body=[node],type_ignores=[]),'<actual-absence-predicate>','exec'),namespace)
+assert definitions.keys()==names, 'Missing actual predicate'
+valid='cron.service enabled enabled\nsystemd-journald.service static -\nsshd.service alias -\n'
+service_cases=[
+    ('normal-no-actions',0,valid,'',True),
+    ('templates-and-runtime-units',0,'example@.service indirect disabled\nexample.service enabled-runtime enabled\n','',True),
+    ('pattern-code-one-empty-is-not-inventory',1,'','',False),
+    ('empty-code-zero',0,'','',False),
+    ('command-failure',5,valid,'',False),
+    ('stderr-warning',0,valid,'warning\n',False),
+    ('masked-actions-runner',0,valid+'actions.runner.repo.worker.service masked disabled\n','',False),
+    ('unexpected-header',0,'UNIT FILE STATE PRESET\n'+valid,'',False),
+    ('unexpected-footer',0,valid+'3 unit files listed.\n','',False),
+    ('truncated-row',0,'cron.service enabled\n','',False),
+    ('unknown-state',0,'cron.service unknown enabled\n','',False),
+    ('unknown-preset',0,'cron.service enabled unknown\n','',False),
+    ('duplicate-unit',0,valid+'cron.service enabled enabled\n','',False),
+    ('non-service-unit',0,'cron.timer enabled enabled\n','',False),
+    ('ansi-control',0,'\x1b[31mcron.service enabled enabled\n','',False),
+    ('nontext',0,None,'',False),
+    ('boolean-return',False,valid,'',False),
+    ('unexpected-crlf',0,valid.replace('\n','\r\n'),'',False),
+    ('vertical-tab',0,valid+'\v','',False),
+]
+account_cases=[
+    ('explicit-key-not-found',2,'','',True),
+    ('successful-getent-is-not-absence',0,'','',False),
+    ('bad-database',1,'','',False),
+    ('unsupported-enumeration',3,'','',False),
+    ('not-found-with-output',2,'unexpected','',False),
+    ('not-found-with-warning',2,'','warning',False),
+    ('signal',-15,'','',False),
+    ('missing-return-code',None,'','',False),
+]
+for name,status,stdout,stderr,expected in service_cases:
+    assert namespace['check_service_inventory_absence'](status,stdout,stderr) is expected,name
+for name,status,stdout,stderr,expected in account_cases:
+    assert namespace['check_getent_account_absence'](status,stdout,stderr) is expected,name
+print(json.dumps({'service_cases':len(service_cases),'account_cases':len(account_cases),'blocks_compiled':len(blocks),'guest_source_sha256':hashlib.sha256(source).hexdigest()}))
+`;
+  const result = spawnSync(python, ['-I', '-c', code, guestPath], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout.trim());
+  assert.equal(report.service_cases, 19);
+  assert.equal(report.account_cases, 8);
+  assert.equal(report.blocks_compiled, 3);
   assert.equal(report.guest_source_sha256, createHash('sha256').update(fs.readFileSync(guestPath)).digest('hex'));
 });
