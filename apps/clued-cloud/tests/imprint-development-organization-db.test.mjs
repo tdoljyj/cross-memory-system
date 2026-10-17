@@ -527,6 +527,57 @@ test('Development Imprint: exact Owner namespace, shared Canonical tasks, immuta
         assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') v', ['authenticated', signature])).rows[0].v, false);
       }
     });
+    await t.test('mixed raw extraction uses only explicit text slots, exact Context ownership and Native S3 confirmation', async () => {
+      // Formal creation uses an actual Native-recognized project, not the
+      // earlier deliberately evidence-only projection fixtures.
+      const extractionProject = uuid();
+      const createProject = { operation: 'create', canonical_project_id: extractionProject, project_schema_version: 2,
+        idempotency_key: uuid(), mutation: { name: 'Mixed extraction fixture', progress_status: 'active', aliases: [] },
+        recognition: { confidence: 1, reason: 'Synthetic Native owner project', source: 'v2_explicit_create', source_refs: [] } };
+      const createdProject = await call(human, 'clued_user_project_mutate_v2', createProject, hash(JSON.stringify(createProject)));
+      assert.equal(createdProject.status, 'committed', JSON.stringify(createdProject));
+      const extractionContext = await space(owner, extractionProject);
+      const text = '😀原文\r\n周五交方案。已经决定采用A，因为成本低。', quote = '周五交方案';
+      const id = await put({ contextId: extractionContext, body: { title: 'Mixed raw source', content: text, metadata: '我将删除资料。' } });
+      const original = (await admin.query('select to_jsonb(r) v from clued_private.development_records_v14 r where id=$1', [id])).rows[0].v;
+      const jwt = { sub: owner, role: 'authenticated', session_id: 'extraction-native', amr: [{ method: 'password', timestamp: Math.floor(Date.now()/1000) }] };
+      const native = await actor(jwt), request = { idempotency_key: uuid(), owner_text_confirmed: true, source: {
+        source_kind: 'development', context_id: extractionContext, environment: 'preview', record_id: id, record_version: 1,
+        slot: 'content', start: [...text.slice(0, text.indexOf(quote))].length, end: [...text.slice(0, text.indexOf(quote)+quote.length)].length,
+        text_hash: hash(text), quote, kind: 'task' } };
+      const prepare = (input, client = native) => call(client, 'clued_imprint_extraction_prepare_v1', input, hash(JSON.stringify(input)));
+      const first = await prepare(request); assert.equal(first.status, 'committed', JSON.stringify(first));
+      assert.equal(first.supplemental.scope, `project:${extractionProject}`);
+      const alternate = { ...request, idempotency_key: uuid(), source: { ...request.source, record_id: id.toUpperCase() } }; delete alternate.source.environment;
+      assert.equal((await prepare(alternate)).supplemental.candidate_id, first.supplemental.candidate_id, 'equivalent namespace spelling and omitted environment dedup');
+      await assert.rejects(prepare({ ...request, idempotency_key: uuid(), source: { ...request.source, context_id: production, environment: 'production' } }), /source_unavailable/);
+      await assert.rejects(prepare({ ...request, idempotency_key: uuid(), source: { ...request.source, environment: 'production' } }), /environment_denied/);
+      await assert.rejects(prepare({ ...request, idempotency_key: uuid(), source: { ...request.source, slot: 'metadata' } }), /source_invalid/);
+      await assert.rejects(prepare({ ...request, idempotency_key: uuid(), source: { ...request.source, source_kind: 'canonical' } }), /source_unavailable/);
+      const foreignActor = await actor({ ...jwt, sub: other }); await assert.rejects(prepare(request, foreignActor), /context_access_denied/);
+      const issueInput = { tier: 'information', candidate_id: first.supplemental.candidate_id, base_version: 1, authority: 'user_explicit',
+        confidence: null, confidence_reason: 'Native owner confirmed own raw words', native_type_fields: { execution_bucket: 'later' } };
+      const view = await call(native, 'clued_candidate_confirmation_issue_v1', issueInput); assert.equal(view.status, 'issued', JSON.stringify(view));
+      const promote = { tier: 'information', candidate_id: view.candidate_id, base_version: 1, confirmation_token: view.confirmation_token,
+        view_digest: view.view_digest, idempotency_key: uuid() };
+      const saved = await call(native, 'clued_candidate_promote_v1', promote, hash(JSON.stringify(promote)));
+      assert.equal(saved.status, 'committed', JSON.stringify(saved));
+      assert.equal(saved.supplemental.outcome, 'promoted', JSON.stringify(saved));
+      assert.deepEqual((await admin.query('select to_jsonb(r) v from clued_private.development_records_v14 r where id=$1', [id])).rows[0].v, original);
+      const rawView = (await read({ context_id: extractionContext, id, source_kind: 'development' })).records[0]; assert.equal(rawView.record_currentness, 'UNKNOWN'); assert.equal(rawView.authoritative, false);
+      assert.equal((await call(native, 'clued_imprint_read_v1', { view: 'task', scope: `project:${extractionProject}`, id: view.record_id })).records[0].content, quote);
+      const textId = await put({ contextId: extractionContext, body: { text, title: 'Alternative text slot' } });
+      const textRequest = { ...request, idempotency_key: uuid(), source: { ...request.source, record_id: textId, slot: 'text' } };
+      const c = (await prepare(textRequest)).supplemental;
+      const v = await call(native, 'clued_candidate_confirmation_issue_v1', { ...issueInput, candidate_id: c.candidate_id }); assert.equal(v.status, 'issued');
+      await admin.query("update clued_private.development_records_v14 set lifecycle_status='REVOKED',version=version+1 where id=$1", [textId]);
+      assert.equal((await call(native, 'clued_candidate_confirmation_issue_v1', { ...issueInput, candidate_id: c.candidate_id })).status, 'rejected');
+      const p = { ...promote, candidate_id: c.candidate_id, confirmation_token: v.confirmation_token, view_digest: v.view_digest, idempotency_key: uuid() };
+      assert.equal((await call(native, 'clued_candidate_promote_v1', p, hash(JSON.stringify(p)))).status, 'rejected');
+      assert.equal((await admin.query('select consumed_at is not null v from clued_private.candidate_confirmation_tokens where id=$1', [v.token_id])).rows[0].v, true);
+      const reject = { tier: 'information', candidate_id: c.candidate_id, base_version: 1, idempotency_key: uuid() };
+      assert.equal((await call(native, 'clued_candidate_reject_v1', reject, hash(JSON.stringify(reject)))).status, 'committed');
+    });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     await server.stop().catch(() => {});

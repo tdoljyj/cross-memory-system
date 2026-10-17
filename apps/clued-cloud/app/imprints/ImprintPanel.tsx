@@ -10,6 +10,7 @@ import { ImprintFailure, mutateRecord, noteInput, organizationInput, prepareWrit
   type NativeRpc, type PreparedWrite, type SourceRead } from "./imprint-client";
 import { suggestImprintOrganization, type ImprintSuggestions } from "./imprint-suggestions";
 import ExistingAssociationEditor from "./ExistingAssociationEditor";
+import MixedContentEditor from "./MixedContentEditor";
 import type { AssociationRead } from "./imprint-associations";
 
 const COPY = {
@@ -250,6 +251,8 @@ function ImprintCard({ record, selection, owner, rpc, locale, attempts, onCommit
       {Object.keys(record.relations).length > 0 && <div><h5>{t.relations}</h5>{relations.map(id => <button type="button" key={id} onClick={() => void onRelated(id, development ? sourceKind(record) ?? undefined : undefined)}>{t.related}: {id}</button>)}<details><summary>{t.relations}</summary><pre>{JSON.stringify(record.relations, null, 2)}</pre></details></div>}
       <ExistingAssociationEditor record={record} selection={selection} owner={owner} rpc={rpc} locale={locale}
         contextId={developmentContextId} prepare={(signature, make) => attempt(attempts, signature, make)} onCommitted={onCommitted} onRelated={onRelated} />
+      <MixedContentEditor record={record} selection={selection} owner={owner} rpc={rpc} locale={locale}
+        contextId={developmentContextId} onCommitted={onCommitted} onRelated={onRelated} />
       <h5>{t.source}</h5>{development && sourceKind(record) !== "canonical" ? <p>{locale === "zh-CN" ? "此上下文原始记录的来源读取尚未接入。当前显示自身完整正文及实际返回的历史，不借用用户来源接口。" : "Source reading is not connected for this original development record. Its own full body and returned history are readable; user source APIs are not used."}</p> : sources.length ? sources.map(id => <button type="button" key={id} onClick={() => void sourceRead(id)}>{t.sourceButton}: {id}</button>) : <p>{t.noSource}</p>}
       {record.source_refs.length > 0 && <details><summary>{t.sourceMetadata}</summary><pre>{JSON.stringify(record.source_refs, null, 2)}</pre></details>}
       {source && <div className="imprints-source">{source.loading && <p role="status">{t.loading}</p>}{source.error && <p role="alert">{source.error}</p>}{source.value && <>{source.value.historical && <p className="notice">{locale === "zh-CN" ? "历史／诊断来源阅读，不能作为当前输入。" : "Historical / diagnostic source reading; never eligible as current input."}{source.value.evidenceStatus === "withdrawn" ? (locale === "zh-CN" ? "已撤回。" : " Withdrawn.") : source.value.evidenceStatus === "invalidated" ? (locale === "zh-CN" ? "已失效。" : " Invalidated.") : ""}</p>}{source.value.available && source.value.content !== null ? <><h5>{t.sourceBody}</h5><pre className="imprints-content">{source.value.content}</pre></> : <p>{source.value.reason === "stale_record_version" ? t.conflict : source.value.available ? t.locatorOnly : t.sourceMissing}</p>}{source.value.evidence && <details><summary>{t.sourceMetadata}</summary><pre>{JSON.stringify(source.value.evidence, null, 2)}</pre></details>}</>}</div>}

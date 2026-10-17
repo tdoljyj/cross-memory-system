@@ -9,7 +9,7 @@ export class ImprintFailure extends Error {
 }
 const CONFLICT_CODES = new Set(["record_version_conflict", "organization_version_conflict", "association_version_conflict", "development_record_version_conflict",
   "context_version_conflict", "stale_base_version", "IDEMPOTENCY_KEY_CONFLICT"]);
-async function call(rpc: NativeRpc, name: string, args: Json): Promise<Json> {
+export async function call(rpc: NativeRpc, name: string, args: Json): Promise<Json> {
   try {
     const result = await rpc(name, args);
     if (result.error) throw new ImprintFailure(CONFLICT_CODES.has(result.error.message ?? "") || result.error.code === "40001" ? "conflict" : "unavailable", result.error.message ?? result.error.code ?? "");
