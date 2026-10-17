@@ -8,6 +8,40 @@ const getCredential = async () => ({
   scope: "https://www.googleapis.com/auth/drive.metadata.readonly",
 });
 
+test('registration permission reads paginate the actual GET endpoint with published permissions and no write capability', async () => {
+  const calls = [], owner = { id: 'owner', type: 'user', role: 'owner' }, reader = { id: 'reader', type: 'user', role: 'reader' };
+  const api = createGoogleDriveMetadataApi({ registration_details: true, get_credential: getCredential,
+    fetch: async (input, init) => {
+      const url = new URL(input); calls.push({ url, init });
+      return Response.json(url.searchParams.has('pageToken') ? { permissions: [reader] } : { permissions: [owner], nextPageToken: 'next' });
+    } });
+  assert.deepEqual(await api.listPermissions('trashed-folder'), [owner, reader]);
+  assert.equal(calls.length, 2);
+  for (const { url, init } of calls) {
+    assert.equal(url.pathname, '/drive/v3/files/trashed-folder/permissions');
+    assert.equal(url.searchParams.get('includePermissionsForView'), 'published');
+    assert.equal(url.searchParams.has('useDomainAdminAccess'), false);
+    assert.ok(url.searchParams.get('fields').includes('pendingOwner,view'));
+    assert.equal(init.method, 'GET'); assert.equal(init.body, undefined); assert.equal(init.redirect, 'error');
+  }
+  assert.equal(calls[1].url.searchParams.get('pageToken'), 'next');
+});
+
+test('permission pagination never accepts incomplete, malformed, duplicate or looping responses', async () => {
+  for (const body of [{}, { permissions: null }, { permissions: [], nextPageToken: '' }, { permissions: [], nextPageToken: false },
+    { permissions: [null] }, { permissions: [{ id: 'owner' }, { id: 'owner' }] },
+    { permissions: [], nextPageToken: 'repeated' }]) {
+    const api = createGoogleDriveMetadataApi({ registration_details: true, get_credential: getCredential, fetch: async () => Response.json(body) });
+    await assert.rejects(api.listPermissions('folder'), /DRIVE_PERMISSIONS_INVALID/);
+  }
+  let calls = 0;
+  const lower = createGoogleDriveMetadataApi({ registration_details: true,
+    get_credential: async () => ({ access_token: 'file-scoped-test-token', scope: 'https://www.googleapis.com/auth/drive.file' }),
+    fetch: async () => { calls++; return Response.json({ permissions: [] }); } });
+  await assert.rejects(lower.listPermissions('folder'), /DRIVE_NAMESPACE_VISIBILITY_UNPROVEN/); assert.equal(calls, 0);
+  await assert.rejects(createGoogleDriveMetadataApi({ get_credential: getCredential }).listPermissions('folder'), /Registration permission read/);
+});
+
 test("exact-ID missing target requires opt-in and never hides authorization or transient failures", async () => {
   for (const status of [404, 403, 401, 500]) {
     const api = createGoogleDriveMetadataApi({ get_credential: getCredential,

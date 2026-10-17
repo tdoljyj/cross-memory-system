@@ -20,14 +20,19 @@ function fixture(mode='refresh_directory'){
  const root=add('root','Root','outside'),track=add('track','assets','root'),target=add('target','Topic','track');
  const node=(file,path)=>({artifact_id:crypto.randomUUID(),artifact_version:1,path,provider_file_id:file.id,parent_id:file.parents[0],
   access_digest:null,sharing_digest:null});
- const targetNode=mode==='refresh_directory'?node(target,'G:/Root/assets/Topic'):
+ const targetNode=['refresh_directory','refresh_directory_state'].includes(mode)?node(target,'G:/Root/assets/Topic'):
   {path:'G:/Root/assets/Topic',provider_file_id:'target',parent_id:'track',target_kind:'directory',mime_type:folder,size:null,sha256:null};
+ if(mode==='refresh_directory_state')targetNode.registered_state='active';
  target.appProperties={clued_intent_id:intent,clued_request_sha256:hash};
  const plan={contract:'clued.storage-registration-plan/1',mode,managed_root:'G:/Root',root_folder_id:'root',root_parent_id:'outside',
   intent_id:intent,request_sha256:hash,parents:[node(root,'G:/Root'),node(track,'G:/Root/assets')],target:targetNode};
  const fetch=async(input,init)=>{
   const url=new URL(input);calls.push({url,init});
   assert.equal(url.origin,'https://www.googleapis.com');assert.equal(init.method,'GET');assert.equal(init.body,undefined);
+  if(url.pathname.endsWith('/permissions')){
+   const id=url.pathname.split('/').at(-2),file=files.get(id);
+   return file?Response.json({permissions:file.permissions}):Response.json({error:{code:404}},{status:404});
+  }
   if(url.pathname!=='/drive/v3/files'){
    if(url.searchParams.get('fields').includes('canListChildren'))assert.equal(url.searchParams.get('includePermissionsForView'),'published');
    const id=url.pathname.split('/').at(-1),file=files.get(id);
@@ -46,6 +51,63 @@ function fixture(mode='refresh_directory'){
  return {files,calls,versions,root,track,target,plan,fetch,
   observe:()=>createGoogleDriveRegistrationRecovery({metadata}).observe(plan)};
 }
+
+for(const registered of ['active','trashed'])for(const current of ['active','trashed'])
+ test('directory state '+registered+' -> '+current+' observes the target without changing Drive',async()=>{
+  const f=fixture('refresh_directory_state');f.plan.target.registered_state=registered;
+  f.target.trashed=current==='trashed';f.target.explicitlyTrashed=f.target.trashed;
+  if(f.target.trashed)f.target.capabilities.canListChildren=false;
+  const before=structuredClone([...f.files]),result=await f.observe();
+  assert.equal(result.second_observation.target.current_state,current);
+  assert.equal(result.second_observation.target.registered_state,registered);
+  assert.equal(result.second_observation.target.empty,current==='trashed'?null:true);
+  assert.deepEqual([...f.files],before);
+  assert.ok(f.calls.every(c=>c.init.method==='GET'));
+  if(current==='trashed')assert.equal(f.calls.some(c=>c.url.searchParams.get('q')?.startsWith("'target' in parents")),false);
+ });
+
+test('a trashed target does not claim or adopt the active same-name slot',async()=>{
+ const f=fixture('refresh_directory_state');f.target.trashed=true;f.target.explicitlyTrashed=true;
+ f.files.set('foreign',{id:'foreign',name:'Topic',parents:['track'],trashed:false});
+ const before=structuredClone([...f.files]);
+ assert.equal((await f.observe()).second_observation.target.current_state,'trashed');
+ assert.deepEqual([...f.files],before);assert.equal(f.calls.some(c=>c.url.pathname.endsWith('/foreign')),false);
+});
+
+test('a non-shareable trashed owner directory obtains a real complete permission list without changing canShare',async()=>{
+ const f=fixture('refresh_directory_state');f.target.trashed=true;f.target.explicitlyTrashed=true;f.target.capabilities.canShare=false;
+ f.target.capabilities.canListChildren=false;const before=structuredClone([...f.files]);
+ assert.equal((await f.observe()).second_observation.target.current_state,'trashed');
+ assert.deepEqual([...f.files],before);
+ assert.equal(f.calls.filter(c=>c.url.pathname==='/drive/v3/files/target/permissions').length,2);
+ assert.equal(f.target.capabilities.canShare,false);
+});
+
+for(const [name,change,reason] of [
+ ['inherited trash',f=>{f.target.trashed=true;f.target.explicitlyTrashed=false;},'IDENTITY_CHANGED'],
+ ['contradictory explicit trash',f=>{f.target.trashed=false;f.target.explicitlyTrashed=true;},'IDENTITY_CHANGED'],
+ ['missing trash flag',f=>delete f.target.trashed,'IDENTITY_CHANGED'],
+ ['missing explicit flag',f=>delete f.target.explicitlyTrashed,'IDENTITY_CHANGED'],
+ ['string trash flag',f=>{f.target.trashed='true';f.target.explicitlyTrashed='true';},'IDENTITY_CHANGED'],
+ ['trashed parent',f=>{f.track.trashed=true;f.track.explicitlyTrashed=true;},'IDENTITY_CHANGED'],
+ ['unknown registered state',f=>f.plan.target.registered_state='removed','PLAN_INVALID'],
+ ['missing registered state',f=>delete f.plan.target.registered_state,'PLAN_INVALID'],
+ ['invented parent state',f=>f.plan.parents[0].registered_state='active','PLAN_INVALID'],
+ ['trash incomplete ACL',f=>{f.target.trashed=true;f.target.explicitlyTrashed=true;f.target.capabilities.canShare=false;delete f.target.permissions;},'PERMISSIONS_INVALID'],
+])test('current state rejects '+name,async()=>{
+ const f=fixture('refresh_directory_state');change(f);await assert.rejects(f.observe(),new RegExp(reason));
+});
+
+test('trash state changing between two reads cannot be registered',async()=>{
+ const f=fixture('refresh_directory_state');let reads=0;
+ f.versions.set('target',()=>{if(++reads===2){f.target.trashed=true;f.target.explicitlyTrashed=true;}return 1;});
+ // The returned file is cloned before the synthetic mutation; force it on
+ // the second actual GET, rather than substituting a proposed state.
+ const metadata=createGoogleDriveMetadataApi({registration_details:true,
+  get_credential:async()=>({access_token:'synthetic-current-token',scope:'https://www.googleapis.com/auth/drive'}),
+  fetch:async(input,init)=>{if(new URL(input).pathname.endsWith('/target')&&reads===1){f.target.trashed=true;f.target.explicitlyTrashed=true;}return f.fetch(input,init);}});
+ await assert.rejects(createGoogleDriveRegistrationRecovery({metadata}).observe(f.plan),/OBSERVATION_CHANGED/);
+});
 
 test('current qualification reads complete owner ACL; parents may contain unrelated children',async()=>{
  const f=fixture();f.files.set('unrelated',{id:'unrelated',name:'Other',parents:['track'],trashed:false});
@@ -168,8 +230,8 @@ const bundled=await build({entryPoints:[fileURLToPath(new URL('../worker/storage
  bundle:true,platform:'node',format:'esm',write:false});
 const {createStorageCurrentRegistrationRecovery}=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].text).toString('base64'));
 stop();
-async function programFixture(scope=scopeString('full')){
- const f=fixture(),reference={connection_id:crypto.randomUUID(),job_id:crypto.randomUUID()},owner=crypto.randomUUID(),readerId=crypto.randomUUID();
+async function programFixture(scope=scopeString('full'),mode='refresh_directory'){
+ const f=fixture(mode),reference={connection_id:crypto.randomUUID(),job_id:crypto.randomUUID()},owner=crypto.randomUUID(),readerId=crypto.randomUUID();
  const source=crypto.randomUUID(),receipt=crypto.randomUUID(),keys={current_key_id:'synthetic',keys:{synthetic:crypto.randomBytes(32).toString('base64url')}};
  const vault=await createStorageCredentialVault(keys),client='registration-client';
  const context={owner_id:owner,connection_id:readerId,provider:'google-drive',provider_subject:'oauth-subject-separate-from-permission-id',
@@ -198,6 +260,19 @@ test('Worker uses a current program actor, real sealed full scope, GET-only read
  assert.equal(commit.first_observation.target.provider_file_id,'target');
  assert.equal(commit.second_observation.target.owner_permission_id,'drive-permission-owner');
  assert.equal(Object.hasOwn(commit,'confirmed'),false);assert.ok(f.calls.every(c=>c.init.method==='GET'));
+});
+
+test('Worker carries a trashed state only with its exact observed independent settlement',async()=>{
+ const f=await programFixture(scopeString('full'),'refresh_directory_state');
+ f.target.trashed=true;f.target.explicitlyTrashed=true;f.target.capabilities.canListChildren=false;f.target.capabilities.canShare=false;
+ f.result.current_artifact_state='trashed';
+ assert.deepEqual(await (await f.adapter()).run(f.reference,intent),f.result);
+ assert.equal(f.rpcCalls[1].second_observation.target.empty,null);
+ for(const returned of ['active','deleted',undefined]){
+  const g=await programFixture(scopeString('full'),'refresh_directory_state');g.target.trashed=true;g.target.explicitlyTrashed=true;
+  if(returned!==undefined)g.result.current_artifact_state=returned;
+  await assert.rejects((await g.adapter()).run(g.reference,intent),/storage_current_registration_unavailable/);
+ }
 });
 
 test('DB full label cannot substitute for a lower sealed scope or wrong credential identity',async()=>{
