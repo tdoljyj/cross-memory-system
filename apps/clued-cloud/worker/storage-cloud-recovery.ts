@@ -314,7 +314,8 @@ export async function createStorageCloudRecovery(config: {
             settled.intent_id === d.intent_id && settled.connection_id === pinned.connection_id && settled.job_id === pinned.job_id &&
             settled.base_version === d.version && uuid.test(String(settled.receipt_id)) && settled.execution_permitted === false &&
             object(reader) && object(d.conflict_absence) && d.conflict_absence.closed_version === d.version &&
-            uuid.test(String(d.conflict_absence.source_receipt_id)) && settled.source_receipt_id === d.conflict_absence.source_receipt_id) {
+            uuid.test(String(d.conflict_absence.source_receipt_id)) && settled.source_receipt_id === d.conflict_absence.source_receipt_id &&
+            settled.receipt_id !== settled.source_receipt_id) {
           return { status: "resolved", connection_id: pinned.connection_id, job_id: pinned.job_id,
             intent_id: d.intent_id, receipt_id: String(settled.receipt_id),
             source_receipt_id: String(settled.source_receipt_id), base_version: d.version,

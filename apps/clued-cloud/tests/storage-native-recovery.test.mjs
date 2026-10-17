@@ -96,7 +96,7 @@ for (const expiredReader of [false, true]) test("Native semantic recovery resolv
   assert.doesNotMatch(JSON.stringify(value), /credential_envelope|access_token|semantic_attempt|confirmed/);
 });
 
-for (const targetKind of ["file", "directory"]) for (const outcome of ["resolved", "wrong_receipt", "legacy_cancelled"])
+for (const targetKind of ["file", "directory"]) for (const outcome of ["resolved", "wrong_receipt", "same_receipt", "legacy_cancelled"])
 test(`Native ${targetKind} create absence uses the original job and live read authority: ${outcome}`, async t => {
   const origin = "https://clued.example.invalid", ref = { connection_id: randomUUID(), job_id: randomUUID() };
   const owner = randomUUID(), intent = randomUUID(), source = randomUUID(), receipt = randomUUID();
@@ -158,7 +158,7 @@ test(`Native ${targetKind} create absence uses the original job and live read au
         assert.deepEqual(input.recovery_reader, descriptor.recovery_reader); assert.equal(input.credential_version, 4);
       }
       settled = true;
-      return Response.json({ ...ref, intent_id: intent, receipt_id: receipt, execution_permitted: false,
+      return Response.json({ ...ref, intent_id: intent, receipt_id: outcome === "same_receipt" ? source : receipt, execution_permitted: false,
         ...(outcome === "legacy_cancelled" ? { status: "committed", state: "cancelled" } : {
           status: "resolved", state: "conflict", resolution: "automatically_reconciled_before", automatic_recovery: "resolved",
           base_version: 3, source_receipt_id: outcome === "wrong_receipt" ? randomUUID() : source }) });

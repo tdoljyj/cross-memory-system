@@ -162,7 +162,7 @@ test("an I9 create absence reply binds the actual reader, closed version and ori
     resolution: "automatically_reconciled_before", automatic_recovery: "resolved", execution_permitted: false });
   assert.equal(f.settles.length, 1); assert.equal(f.settles[0].credential_version, 4);
   assert.equal(f.settles[0].recovery_reader.connection_id, f.reference.connection_id);
-  for (const changed of [{ base_version: 99 }, { source_receipt_id: randomUUID() }, { state: "cancelled" },
+  for (const changed of [{ base_version: 99 }, { source_receipt_id: randomUUID() }, { receipt_id: sourceReceipt }, { state: "cancelled" },
     { automatic_recovery: "pending" }, { execution_permitted: true }]) {
     const bad = await recovery({ reader: true, sourceReceipt, settled: { ...settled, ...changed } });
     assert.deepEqual(await bad.run.run(bad.reference), { status: "inspection_required", execution_permitted: false });
