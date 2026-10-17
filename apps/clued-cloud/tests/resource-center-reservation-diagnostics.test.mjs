@@ -171,15 +171,15 @@ for (const mode of ["provider_identity", "begin_rpc", "begin_result", "begin_kno
   });
 }
 
-test("the actual Worker bridge reports a safe begin diagnosis without replaying a lost durable start", async t => {
+test("the actual Worker bridge inspects a receipt-backed durable start without replaying its lost reply", async t => {
   const { outputFiles } = await build({ stdin: { contents: `
-    export { fixture } from './tests/resource-center-cloud-executor.fixture.mjs';
+    export { fixture, ids } from './tests/resource-center-cloud-executor.fixture.mjs';
     export { createStorageCloudWorker } from './worker/storage-cloud-executor.ts';
     export { createStorageCredentialVault } from './worker/storage-credential-vault.ts';`,
     resolveDir: fileURLToPath(new URL("../", import.meta.url)), sourcefile: "prepare-diagnostic-worker-fixture.mjs" },
     bundle: true, platform: "node", format: "esm", write: false });
   stop();
-  const { fixture, createStorageCloudWorker, createStorageCredentialVault } = await import(
+  const { fixture, ids, createStorageCloudWorker, createStorageCredentialVault } = await import(
     "data:text/javascript;base64," + Buffer.from(outputFiles[0].text).toString("base64"));
   const f = fixture({ lostBegin: true, redirect: "manual" }), descriptor = await f.config.load_job(f.reference);
   const credential = await f.config.get_credential(), keys = { current_key_id: "fixture", keys: { fixture: Buffer.alloc(32, 7).toString("base64url") } };
@@ -198,13 +198,13 @@ test("the actual Worker bridge reports a safe begin diagnosis without replaying 
         // The begin response was lost after commit. The original journal wins;
         // reporting a fixed diagnosis must not turn that journal into a denial.
         assert.equal(f.info().status, "started");
-        return { ...f.reference, status: "started", execution_permitted: false };
+        return { ...f.reference, request_digest: descriptor.request_digest, status: "started",
+          intent_id: ids.intent, receipt_id: ids.receipt, execution_permitted: false };
       }
       return f.config.rpc(input);
     } });
   const result = await bridge.run(f.reference);
-  assert.equal(result.error_code, "DURABLE_WRITE_RESERVATION_FAILED");
-  assert.deepEqual(result.reservation_diagnostic, { stage: "begin_rpc", reason_code: "RESERVATION_BEGIN_RPC_UNAVAILABLE", reservation_status: "unknown" });
+  assert.deepEqual(result, { status: "inspection_required", job_id: f.reference.job_id, execution_permitted: false });
   assert.deepEqual(reports, [{ status: "denied", reason: { code: "RESERVATION_BEGIN_RPC_UNAVAILABLE" } }]);
   assert.equal(calls.filter(action => action === "begin").length, 1); assert.equal(f.info().starts, 1); assert.equal(f.info().posts, 0);
   assert.equal(f.info().status, "started"); assert.doesNotMatch(JSON.stringify({ result, reports }), /lost begin|synthetic-cloud-token/);
