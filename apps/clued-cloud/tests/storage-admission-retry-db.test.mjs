@@ -7,10 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import crypto from 'node:crypto';
-import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import EmbeddedPostgres from 'embedded-postgres';
 import {build} from 'esbuild';
+import {stopOwnedPostgres} from './model-domain-postgres-lifecycle.fixture.mjs';
 import {batchRequests,batchReply} from './google-batch-fixture.mjs';
 import {createStorageCredentialVault} from '../worker/storage-credential-vault.ts';
 import {scopeString} from '../worker/storage-google-scopes.ts';
@@ -24,11 +24,31 @@ async function port(){const s=net.createServer();await new Promise(r=>s.listen(0
 
 test('admission rollback recovery: real PostgreSQL and private Worker',{timeout:240000},async t=>{
  const parent=await fs.realpath(os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'kooyumi-registration-db-'));
- const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:uuid(),port:await port(),persistent:true,
+ const databaseDir=path.join(directory,'database'),runId=uuid();
+ const ownership={run_id:runId,parent,directory,database_dir:databaseDir};
+ await fs.writeFile(path.join(directory,'Ownership.json'),JSON.stringify(ownership)+'\n',{flag:'wx'});
+ const ownedBoundary=async()=>{
+  assert.equal(await fs.realpath(parent),parent);
+  const actual=await fs.realpath(directory);
+  assert.equal(actual,directory);assert.equal(path.dirname(actual),parent);
+  assert.ok(path.basename(actual).startsWith('kooyumi-registration-db-'));
+  assert.equal((await fs.lstat(directory)).isSymbolicLink(),false);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(actual,'Ownership.json'),'utf8')),ownership);
+  return actual;
+ };
+ const server=new EmbeddedPostgres({databaseDir,user:'postgres',password:uuid(),port:await port(),persistent:true,
   postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
- let db,native,started=false;
+ let db,native,retainedChild,startAttempted=false,initialiseSettled=false;
  try{
-  await server.initialise();await server.start();started=true;db=server.getPgClient();await db.connect();
+  try{await server.initialise();}finally{initialiseSettled=true;}
+  startAttempted=true;
+  try{await server.start();}finally{
+   retainedChild=server.process;
+   if(retainedChild?.pid)await fs.writeFile(path.join(directory,'OwnProcess.json'),JSON.stringify({
+    run_id:runId,pid:retainedChild.pid,database_dir:databaseDir,port:server.options.port})+'\n',{flag:'wx'});
+  }
+  assert.ok(retainedChild?.pid,'Retain the exact owned PostgreSQL child');
+  db=server.getPgClient();await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;
    create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;
    create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,banned_until timestamptz,deleted_at timestamptz);
@@ -222,17 +242,49 @@ test('admission rollback recovery: real PostgreSQL and private Worker',{timeout:
    }finally{await blocker.query('rollback');await caller.end();await blocker.end();}
   }});
  }finally{
-  if(native)await native.end();if(db)await db.end();
-  if(started){
-   // embedded-postgres.stop resolves on exit, before its Windows stdio has
-   // necessarily closed. Wait for producer close before deleting its scratch.
-   const producer=server.process,closed=producer?once(producer,'close'):Promise.resolve();
-   await server.stop();
-   producer?.stdin?.destroy();producer?.stdout?.destroy();producer?.stderr?.destroy();
-   await closed;
+  if(native){try{await native.end();}catch{}}if(db){try{await db.end();}catch{}}
+  let cleanup=false,diagnostic={stage:'ownership',code:'OWNED_DIRECTORY_NOT_VERIFIED',
+   exit_code:retainedChild?.exitCode??null,signal_code:retainedChild?.signalCode??null};
+  try{
+   await ownedBoundary();
+   if(retainedChild){
+    const result=await stopOwnedPostgres({server,child:retainedChild,timeoutMs:15000,verifyIdentity:async()=>{
+     await ownedBoundary();
+     assert.equal(await fs.realpath(databaseDir),databaseDir);
+     assert.equal((await fs.lstat(databaseDir)).isSymbolicLink(),false);
+     assert.deepEqual(JSON.parse(await fs.readFile(path.join(directory,'OwnProcess.json'),'utf8')),
+      {run_id:runId,pid:retainedChild.pid,database_dir:databaseDir,port:server.options.port});
+     const postmaster=(await fs.readFile(path.join(databaseDir,'postmaster.pid'),'utf8')).split(/\r?\n/)[0];
+     assert.equal(Number(postmaster),retainedChild.pid);
+    }});
+    cleanup=result.cleanup;diagnostic=result.diagnostic;
+   }else{
+    cleanup=!startAttempted&&initialiseSettled;
+    diagnostic={stage:'initialise',code:cleanup?'NO_POSTGRES_START_ATTEMPT':'POSTGRES_CHILD_NOT_RETAINED',
+     exit_code:null,signal_code:null};
+   }
+  }catch{
+   // An ownership error never authorizes a signal or recursive deletion.
   }
-  const actual=await fs.realpath(directory);assert.equal(path.dirname(actual).toLowerCase(),parent.toLowerCase());
-  assert.ok(path.basename(actual).startsWith('kooyumi-registration-db-'));
-  await fs.rm(actual,{recursive:true,force:false,maxRetries:5,retryDelay:100});
+  let sdkProcessReferenceCleared=false;
+  // An already-exited child skips SDK stop. Prevent its global exit hook
+  // from stopping that same old PID later; never clear a new or live child.
+  if(cleanup&&retainedChild&&server.process===retainedChild&&
+   (typeof retainedChild.exitCode==='number'||typeof retainedChild.signalCode==='string')){
+   server.process=undefined;sdkProcessReferenceCleared=true;
+  }
+  if(cleanup){
+   retainedChild?.stdin?.destroy();retainedChild?.stdout?.destroy();retainedChild?.stderr?.destroy();
+   const actual=await ownedBoundary();
+   await fs.rm(actual,{recursive:true,force:false,maxRetries:5,retryDelay:100});
+   await assert.rejects(fs.lstat(actual),{code:'ENOENT'});
+   console.log(JSON.stringify({fixture_cleanup:'OWN_PROCESS_EXIT_AND_OWN_DIRECTORY_REMOVAL_PROVEN',
+    fixture_directory:directory,retained_child_pid:retainedChild?.pid??null,...diagnostic,directory_removed:true,
+    postgres_stop_timeout_ms:15000,sdk_process_reference_cleared:sdkProcessReferenceCleared}));
+  }else{
+   console.error(JSON.stringify({fixture_cleanup:'NO_CLEANUP',fixture_directory:directory,
+    retained_child_pid:retainedChild?.pid??null,...diagnostic,directory_removed:false,postgres_stop_timeout_ms:15000}));
+   throw Error('NO_CLEANUP: '+diagnostic.code+'; preserve owned PostgreSQL directory '+directory);
+  }
  }
 });

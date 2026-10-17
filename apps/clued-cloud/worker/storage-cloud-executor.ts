@@ -24,6 +24,16 @@ const rolledBackAdmission = (error: unknown) => {
     code === "55P03" && error.message === "canceling statement due to lock timeout" ||
     code === "40P01" && error.message === "deadlock detected";
 };
+const authorityCancellationCause = (error: unknown) => !rolledBackAdmission(error) ? null
+  : (error as Error & {details: Data}).details.code === "57014" ? "AUTHORITY_STATEMENT_TIMEOUT"
+  : (error as Error & {details: Data}).details.code === "55P03" ? "AUTHORITY_LOCK_TIMEOUT" : "AUTHORITY_DEADLOCK";
+const sameQueuedDescriptor = (current: Data, previous: Data) =>
+  object(current) && current.contract === "clued.storage-job-execution/1" && current.status === "queued" &&
+  current.intent_id == null && current.attempt == null && current.dispatch_outcome == null &&
+  ["owner_id","connection_id","job_id","request_digest","provider","provider_subject","credential_version",
+    "oauth_client_id","mutation","profile","root_folder_id","root_parent_id","ancestor_match","scan_roots",
+    "registered_sibling_roots","staging","revision_releases","restore","untrash_source","subtree_sample",
+    "registration_recovery"].every(key => isDeepStrictEqual(current[key],previous[key]));
 const currentAdmissionRefusal = (error: unknown) => error instanceof Error && object(error) &&
   object(error.details) && [400,403,404,409].includes(Number(error.status)) &&
   ["42501","22023","P0002","40001"].includes(String(error.details.code));
@@ -63,13 +73,58 @@ export async function createStorageCloudWorker(config: {
 }) {
   if (!/^[A-Za-z0-9._-]{1,255}$/.test(config.client_id)) throw denied();
   const vault = await createStorageCredentialVault(config.vault);
-  const fetcher = createStorageFetch(config.fetch);
+  const providerFetch = createStorageFetch(config.fetch);
   return Object.freeze({ async run(reference: Reference) {
     let loaded: Data | null = null;
     let recoveryMode=false, refreshed=false;
     let registrationRecovery: Data | null = null;
     let admissionDeferred = false, beginUnknown = false;
-    let recoveredStatus: Data | null = null;
+    let recoveredStatus: Data | null = null, deferredCurrentUnusable = false;
+    const clock = config.clock ?? Date.now;
+    // One allowance for pre-begin authority and begin recovery, measured
+    // from this run's start. A fresh executor must not open another 25 s window.
+    const retryUntil = clock() + 25000, wallRetryUntil = Date.now() + 25000;
+    let retries = 0, retryActive = false, retryExpired = false, admissionStarted = false, closed = false;
+    let durableAdmissionDispatched = false, beginDispatched = false, admissionCause: string | null = null;
+    let authorityRollbackPhase: "initial" | "revalidation" | null = null, reloadExpected: Data | null = null;
+    const retryAbort = new AbortController();
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let expireRetry!: (error: Error) => void;
+    const expired = new Promise<never>((_, reject) => { expireRetry = reject; });
+    void expired.catch(() => {});
+    const remaining = () => Math.min(retryUntil - clock(),wallRetryUntil - Date.now());
+    const expire = () => {
+      if (retryExpired || admissionStarted) return;
+      retryExpired = true; retryAbort.abort();
+      expireRetry(new Error("STORAGE_ADMISSION_RETRY_EXPIRED"));
+    };
+    const check = () => {
+      if (retryActive && !admissionStarted && remaining() <= 0) expire();
+      if (closed || retryExpired) throw new Error("STORAGE_ADMISSION_RETRY_EXPIRED");
+    };
+    const activateRetry = () => {
+      if (!retryActive) {
+        retryActive = true;
+        if (remaining() <= 0) expire();
+        else retryTimer = setTimeout(expire,remaining());
+      }
+    };
+    const bounded = async <T>(work: () => Promise<T>): Promise<T> => {
+      check();
+      const value = await (retryActive && !admissionStarted ? Promise.race([work(),expired]) : work());
+      check();
+      return value;
+    };
+    const fetcher: typeof fetch = (input,init) => bounded(() => providerFetch(input,
+      retryActive && !admissionStarted ? {...init,signal:AbortSignal.any([retryAbort.signal,...(init?.signal ? [init.signal] : [])])} : init));
+    const pauseForRetry = async () => {
+      activateRetry();
+      if (retries >= 2 || retryExpired) return false;
+      const delay = 200 * 2 ** retries++ + Math.floor(Math.random() * 100);
+      try { await bounded(() => new Promise<void>(resolve => setTimeout(resolve,Math.min(delay,Math.max(0,remaining()))))); }
+      catch { return false; }
+      return true;
+    };
     // Each rejection below carries a fixed label so post-write diagnostics can name
     // the credential step. Outcomes are unchanged: every branch still fails closed.
     const reject = (code: string) => new Error(code);
@@ -101,109 +156,160 @@ export async function createStorageCloudWorker(config: {
       }
       return {...expected,access_token:token.access_token,scope:token.scope,expires_at_ms:token.expires_at_ms};
     };
-    const executionRpc = config.account_policy_v2 === true ? createRegistrationRecoveryRpc({
-      rpc: config.rpc, descriptor: () => loaded, clock: config.clock,
-      on_recovery: result => { registrationRecovery = result; },
-      get_file: async id => {
-        if (!loaded) throw denied();
-        const descriptor = loaded;
-        const metadata = createGoogleDriveMetadataApi({
-          get_credential: () => credential({owner_id:String(descriptor.owner_id),connection_id:String(descriptor.connection_id),
-            provider_subject:String(descriptor.provider_subject),credential_version:Number(descriptor.credential_version)}),
-          fetch: async (url, init) => {
-            if (init?.method !== "GET") throw denied();
-            return fetcher(url, init);
-          },
-        });
-        return await metadata.getFile(id);
-      },
-    }) : config.rpc;
-    const executor = createResourceCenterCloudExecutor({
-      clock: config.clock ?? Date.now, drive_fetch: fetcher,
-      // The boundary scan reads a whole folder level per request, so one run
-      // stays within the Worker's per-invocation subrequest budget.
-      metadata_batch: ({ access_token }: { access_token: string }) =>
-        createStorageGoogleMetadataBatch({ access_token, fetch: config.fetch, signal: AbortSignal.timeout(60000) }),
-      verified_result_mode: config.account_policy_v2 === true,
-      ...(config.account_policy_v2 === true ? { semantic_recovery_client_id: config.client_id } : {}),
-      ...(config.load_staged_content ? { load_staged_content: config.load_staged_content } : {}),
-      load_job: async (ref: Reference) => {
-        if (config.credential_preflight && (await config.credential_preflight(ref)).status !== "ready")
-          throw reject("STORAGE_CREDENTIAL_REFRESH_PENDING");
-        // BUG-20261008-001: a refused load leaves the job queued (the scheduled sweep
-        // dispatches it again); name the fixed cause in the diagnostic instead of UNSPECIFIED.
-        let result: Data;
-        try { result = await config.rpc({...ref, action:"load"}); }
-        catch (error) {
-          throw reject(error instanceof Error && error.message === "storage_object_under_review" ? "STORAGE_OBJECT_UNDER_REVIEW"
-            : error instanceof Error && error.message === "storage_root_has_unresolved_mutation"
-            ? "STORAGE_ROOT_BUSY" : "STORAGE_JOB_LOAD_REFUSED");
-        }
-        // The database can settle an already queued overlap before issuing a
-        // writer. Preserve that terminal cause without reporting a second result.
-        if (result.contract === "clued.storage-job-execution/1" && result.status === "denied" &&
-            result.reason_code === "STORAGE_OBJECT_UNDER_REVIEW" && result.execution_permitted === false &&
-            result.connection_id === ref.connection_id && result.job_id === ref.job_id && result.intent_id === null &&
-            typeof result.receipt_id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(result.receipt_id) &&
-            typeof result.request_digest === "string" && /^[0-9a-f]{64}$/.test(result.request_digest))
-          throw reject("STORAGE_OBJECT_UNDER_REVIEW");
-        if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
-        loaded = result;
-        const descriptor = {...result}; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
-        return descriptor;
-      },
-      get_credential: credential,
-      rpc: async (input: Data) => {
-        if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
-        const {connection_id, job_id, action, ...body} = input;
-        try {
-          const request = {connection_id, job_id, action,
-            ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
-            ...(action==="finalize" ? {finish:{action,...body}} : body)};
-          if (action !== "begin" || config.account_policy_v2 !== true) return await executionRpc(request);
-          const retryUntil = (config.clock ?? Date.now)() + 25000;
-          for (let retry = 0; ; retry++) {
-            try {
-              const result = await executionRpc(structuredClone(request));
-              beginUnknown = false;
-              return result;
-            } catch (error) {
-              beginUnknown = true;
-              if (!rolledBackAdmission(error)) throw error;
-              if (retry >= 2 || (config.clock ?? Date.now)() >= retryUntil) {
-                admissionDeferred = true;
-                throw error;
-              }
-              await new Promise(resolve => setTimeout(resolve, 200 * 2 ** retry + Math.floor(Math.random() * 100)));
-              if ((config.clock ?? Date.now)() >= retryUntil) { admissionDeferred = true; throw error; }
-              let current: Data;
-              try { current = await config.rpc({...reference,action:"load"}); }
-              catch (readError) {
-                if (currentAdmissionRefusal(readError)) throw readError;
-                admissionDeferred = true; throw error;
-              }
-              // A real load returns this full descriptor only while the same
-              // original job has no intent/outcome and all current gates pass.
-              // It must still identify the original request and credential;
-              // never manufacture a new job/key or reuse stale authority.
-              const unchanged = object(current) && current.contract === "clued.storage-job-execution/1" && current.status === "queued" &&
-                current.intent_id == null && ["owner_id","connection_id","job_id","request_digest","provider",
-                  "provider_subject","credential_version","oauth_client_id","mutation","profile","root_folder_id",
-                  "root_parent_id","ancestor_match"].every(key => isDeepStrictEqual(current[key],loaded?.[key]));
-              if (!unchanged) {
-                recoveredStatus = originalStatus(current,reference,loaded.request_digest);
-                admissionDeferred = true;
-                throw error;
-              }
-              if ((config.clock ?? Date.now)() >= retryUntil) { admissionDeferred = true; throw error; }
-            }
+    const createExecutor = () => {
+      // The kernel's seen set is per instance. Only a proven pre-begin, zero-effect
+      // rollback may replace it; each old instance is permanently closed first.
+      const attempt = {closed:false,authorities:0};
+      const attemptCheck = () => { check(); if (attempt.closed) throw denied(); };
+      const attemptBounded = async <T>(work: () => Promise<T>): Promise<T> => {
+        attemptCheck(); const value = await bounded(work); attemptCheck(); return value;
+      };
+      const attemptFetch: typeof fetch = (input,init) => attemptBounded(() => fetcher(input,init));
+      const canonicalRpc = async (input: Data) => {
+        attemptCheck();
+        let phase: "initial" | "revalidation" | null = null;
+        try { return await attemptBounded(() => {
+          // Set these synchronously at the actual dispatch boundary, after
+          // every deadline check and before invoking any potentially durable RPC.
+          if (input.action === "authority") {
+            const ordinal = attempt.authorities++;
+            if (ordinal < 2 && !durableAdmissionDispatched && !beginDispatched && !admissionStarted && !registrationRecovery)
+              phase = ordinal === 0 ? "initial" : "revalidation";
           }
-        } catch (error) {
-          if (error instanceof Error && error.message === "storage_object_under_review") throw reject("STORAGE_OBJECT_UNDER_REVIEW");
+          if (input.action === "begin") beginDispatched = true;
+          if (input.action === "begin" || String(input.action).startsWith("registration_")) durableAdmissionDispatched = true;
+          return config.rpc(input);
+        }); }
+        catch (error) {
+          // Registration helper authority calls share this bridge. Its actual
+          // registration_* dispatch permanently disqualifies a fresh attempt.
+          const cause = phase && !durableAdmissionDispatched && !beginDispatched && !admissionStarted && !registrationRecovery &&
+            config.account_policy_v2 === true ? authorityCancellationCause(error) : null;
+          if (cause) { authorityRollbackPhase = phase; admissionCause = cause; }
           throw error;
         }
-      },
-    });
+      };
+      const executionRpc = config.account_policy_v2 === true ? createRegistrationRecoveryRpc({
+        rpc: canonicalRpc, descriptor: () => loaded, clock: config.clock,
+        on_recovery: result => { registrationRecovery = result; },
+        get_file: async id => {
+          if (!loaded) throw denied();
+          const descriptor = loaded;
+          const metadata = createGoogleDriveMetadataApi({
+            get_credential: () => credential({owner_id:String(descriptor.owner_id),connection_id:String(descriptor.connection_id),
+              provider_subject:String(descriptor.provider_subject),credential_version:Number(descriptor.credential_version)}),
+            fetch: async (url, init) => {
+              if (init?.method !== "GET") throw denied();
+              return attemptFetch(url, init);
+            },
+          });
+          return await metadata.getFile(id);
+        },
+      }) : canonicalRpc;
+      const executor = createResourceCenterCloudExecutor({
+        clock, drive_fetch: attemptFetch,
+        // The boundary scan reads a whole folder level per request, so one run
+        // stays within the Worker's per-invocation subrequest budget.
+        metadata_batch: ({ access_token }: { access_token: string }) =>
+          createStorageGoogleMetadataBatch({ access_token, fetch: attemptFetch, signal: AbortSignal.any([AbortSignal.timeout(60000),retryAbort.signal]) }),
+        verified_result_mode: config.account_policy_v2 === true,
+        ...(config.account_policy_v2 === true ? { semantic_recovery_client_id: config.client_id } : {}),
+        ...(config.load_staged_content ? { load_staged_content: (input: Data) => attemptBounded(() => config.load_staged_content!(input)) } : {}),
+        load_job: async (ref: Reference) => {
+          if (config.credential_preflight && (await attemptBounded(() => config.credential_preflight!(ref))).status !== "ready")
+            throw reject("STORAGE_CREDENTIAL_REFRESH_PENDING");
+          // BUG-20261008-001: a refused load leaves the job queued (the scheduled sweep
+          // dispatches it again); name the fixed cause in the diagnostic instead of UNSPECIFIED.
+          let result: Data;
+          try { result = await attemptBounded(() => config.rpc({...ref, action:"load"})); }
+          catch (error) {
+            // After a proven pre-begin rollback, an unreadable current job is no
+            // permission to retry or to replace its durable queued state.
+            if (reloadExpected && !currentAdmissionRefusal(error)) admissionDeferred = true;
+            throw reject(error instanceof Error && error.message === "storage_object_under_review" ? "STORAGE_OBJECT_UNDER_REVIEW"
+              : error instanceof Error && error.message === "storage_root_has_unresolved_mutation"
+              ? "STORAGE_ROOT_BUSY" : "STORAGE_JOB_LOAD_REFUSED");
+          }
+          if (reloadExpected && !sameQueuedDescriptor(result,reloadExpected)) {
+            recoveredStatus = originalStatus(result,reference,reloadExpected.request_digest);
+            deferredCurrentUnusable = true;
+            admissionDeferred = true;
+            throw reject("STORAGE_ADMISSION_DESCRIPTOR_CHANGED");
+          }
+          // The database can settle an already queued overlap before issuing a
+          // writer. Preserve that terminal cause without reporting a second result.
+          if (result.contract === "clued.storage-job-execution/1" && result.status === "denied" &&
+              result.reason_code === "STORAGE_OBJECT_UNDER_REVIEW" && result.execution_permitted === false &&
+              result.connection_id === ref.connection_id && result.job_id === ref.job_id && result.intent_id === null &&
+              typeof result.receipt_id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(result.receipt_id) &&
+              typeof result.request_digest === "string" && /^[0-9a-f]{64}$/.test(result.request_digest))
+            throw reject("STORAGE_OBJECT_UNDER_REVIEW");
+          if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
+          loaded = result;
+          const descriptor = {...result}; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
+          return descriptor;
+        },
+        get_credential: (expected: Omit<StorageCredentialContext,"provider"|"oauth_client_id">) => attemptBounded(() => credential(expected)),
+        rpc: async (input: Data) => {
+          if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
+          const {connection_id, job_id, action, ...body} = input;
+          try {
+            const request: Data = {connection_id, job_id, action,
+              ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
+              ...(action==="finalize" ? {finish:{action,...body}} : body)};
+            if (action !== "begin" || config.account_policy_v2 !== true) return await executionRpc(request);
+            for (;;) {
+              try {
+                const result = await executionRpc(structuredClone(request));
+                beginUnknown = false;
+                // Only an on-time, fully matched durable start ends admission's
+                // deadline. A late/invalid start remains an unknown original.
+                if (result.status === "committed" && result.state === "started" && result.execution_permitted === true &&
+                    originalReceiptId(result.intent_id) && result.job_id === reference.job_id &&
+                    result.job_request_digest === loaded.request_digest && object(request.prepare) &&
+                    result.request_sha256 === request.prepare.request_sha256 && Number.isSafeInteger(result.version)) {
+                  admissionStarted = true;
+                  clearTimeout(retryTimer);
+                }
+                return result;
+              } catch (error) {
+                beginUnknown = true;
+                if (!rolledBackAdmission(error)) throw error;
+                if (!await pauseForRetry()) {
+                  admissionDeferred = true;
+                  throw error;
+                }
+                let current: Data;
+                try { current = await attemptBounded(() => config.rpc({...reference,action:"load"})); }
+                catch (readError) {
+                  if (currentAdmissionRefusal(readError)) throw readError;
+                  admissionDeferred = true; throw error;
+                }
+                // A real load returns this full descriptor only while the same
+                // original job has no intent/outcome and all current gates pass.
+                // It must still identify the original request and credential;
+                // never manufacture a new job/key or reuse stale authority.
+                const unchanged = sameQueuedDescriptor(current,loaded);
+                if (!unchanged) {
+                  recoveredStatus = originalStatus(current,reference,loaded.request_digest);
+                  deferredCurrentUnusable = true;
+                  admissionDeferred = true;
+                  throw error;
+                }
+                if (remaining() <= 0) { expire(); admissionDeferred = true; throw error; }
+              }
+            }
+          } catch (error) {
+            if (error instanceof Error && error.message === "storage_object_under_review") throw reject("STORAGE_OBJECT_UNDER_REVIEW");
+            throw error;
+          }
+        },
+      });
+      return {async run() {
+        try { return await attemptBounded(() => executor.run(reference)); }
+        finally { attempt.closed = true; }
+      }};
+    };
     try {
       if (config.account_policy_v2 === true) {
         // Read the original journal before any provider access. A recorded proof
@@ -258,7 +364,24 @@ export async function createStorageCloudWorker(config: {
           return {status:"committed",job_id:reference.job_id,receipt_id:done.receipt_id,execution_permitted:false};
         } catch { return {status:"inspection_required",execution_permitted:false}; }
       }
-      const result=await executor.run(reference);
+      let result: Data;
+      for (;;) {
+        authorityRollbackPhase = null;
+        try { result = await createExecutor().run(); }
+        catch {
+          if (!retryExpired) throw denied();
+          if (!beginDispatched) admissionDeferred = true;
+          else beginUnknown = true;
+          result = {status:"unavailable",execution_permitted:false};
+        }
+        const expectedFailure = authorityRollbackPhase === "initial" ? "ARTIFACT_AUTHORITY_RESOLUTION_FAILED"
+          : authorityRollbackPhase === "revalidation" ? "ARTIFACT_AUTHORITY_REVALIDATION_FAILED" : null;
+        if (!expectedFailure || durableAdmissionDispatched || beginDispatched || admissionStarted || registrationRecovery ||
+            result.status !== "deny" || result.error_code !== expectedFailure || result.side_effects !== 0) break;
+        if (!await pauseForRetry()) { admissionDeferred = true; break; }
+        reloadExpected = loaded ? structuredClone(loaded) : null;
+        if (!reloadExpected) { admissionDeferred = true; break; }
+      }
       const reservationDiagnostic = sanitizeReservationDiagnostic("reservation_diagnostic" in result ? result.reservation_diagnostic : undefined);
       if (reservationDiagnostic?.reservation_status === "unknown" &&
           ["begin_rpc","begin_result"].includes(reservationDiagnostic.stage)) beginUnknown = true;
@@ -270,13 +393,27 @@ export async function createStorageCloudWorker(config: {
           registration_recovery: registrationRecovery, execution_permitted: false};
       }
       if (admissionDeferred) {
-        if (recoveredStatus) return inspectOriginal(reference,recoveredStatus);
-        // This run never obtained a successful start. Do not terminally deny
-        // the original job or claim that a concurrent/original effect cannot
-        // exist. The existing durable queued sweep/expiry owns its next step.
-        return {status:"unavailable",job_id:reference.job_id,error_code:"STORAGE_ADMISSION_RETRY_PENDING",execution_permitted:false};
+        const descriptor = loaded as Data | null;
+        const inspect = () => ({...inspectOriginal(reference),...(admissionCause ? {reason_code:admissionCause} : {})});
+        if (recoveredStatus) {
+          const original = inspectOriginal(reference,recoveredStatus);
+          return original.status === "inspection_required" ? inspect() : original;
+        }
+        if (deferredCurrentUnusable || retryExpired || !descriptor) return inspect();
+        // Only a current, matching Canonical queued descriptor qualifies this
+        // unavailable result for the existing durable sweep/backoff/expiry.
+        // A lost/late read or a concurrent intent is inspection, never NoEffect.
+        let current: Data;
+        try { current = await bounded(() => config.rpc({...reference,action:"load"})); }
+        catch { return inspect(); }
+        if (!sameQueuedDescriptor(current,descriptor)) {
+          const original = inspectOriginal(reference,originalStatus(current,reference,descriptor.request_digest));
+          return original.status === "inspection_required" ? inspect() : original;
+        }
+        return {status:"unavailable",job_id:reference.job_id,error_code:"STORAGE_ADMISSION_RETRY_PENDING",
+          ...(admissionCause ? {reason_code:admissionCause} : {}),execution_permitted:false};
       }
-      if (loaded && ["deny","unavailable","unreconciled"].includes(result.status)) {
+      if (loaded && ["deny","unavailable","unreconciled"].includes(String(result.status))) {
         // Account-policy mode stores the fixed reason (and, for a boundary denial, the
         // scan's finding paths) in the Owner's private job row. It is never logged. A
         // server that predates the reason, or refuses its shape, still gets the plain outcome.
@@ -301,6 +438,6 @@ export async function createStorageCloudWorker(config: {
       }
       return result;
     }
-    finally { loaded = null; }
+    finally { closed = true; clearTimeout(retryTimer); retryAbort.abort(); loaded = null; }
   }});
 }
