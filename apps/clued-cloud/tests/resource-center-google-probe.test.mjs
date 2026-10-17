@@ -16,6 +16,7 @@ async function load(name) {
 const {createStorageGoogleProbe,storageProbeDiagnostic}=await load("storage-google-probe");
 const {createStorageCredentialVault}=await load("storage-credential-vault");
 const scope="https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly";
+const fullScope=scope+" https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive";
 async function fixture(options={}) {
   const root="/drive/Clued_资料中心", connection=randomUUID(), attempt=randomUUID(), receipt=randomUUID();
   const vaultConfig={current_key_id:"k1",keys:{k1:randomBytes(32).toString("base64url")}};
@@ -40,6 +41,7 @@ async function fixture(options={}) {
     }
   }
   if(options.parentlessBoundary)delete files[0].parents;
+  if(options.existingDirectories)for(const file of files.slice(1))file.isAppAuthorized=false;
   if(options.sibling)files.push({...item('sibling',options.sibling,'parent'),mimeType:'text/plain'});
   if(options.siblingRoot)files.push(item('n0','Clued_N0验收_新建','parent'),item('n0track','资料','n0'));
   if(options.nestedIsland)files.push(item('external','ordinary','parent'),{...item('island','Clued_notes.md','external'),mimeType:'text/plain'});
@@ -111,6 +113,18 @@ test("server directory observation uses pinned secret, fixed GET-only batches an
   for(const directory of f.rpcs[1].observation.directories)assert.match(directory.provider_access_digest,/^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(f.rpcs[1]).includes("synthetic-private"),false);
   assert.equal(JSON.stringify(result).includes("credential"),false);
+});
+
+test("full-scope observation derives existing-directory access only from the sealed credential",async()=>{
+  const f=await fixture({secret:{scope:fullScope},existingDirectories:true,fullSize:true});
+  assert.equal((await f.probe.run({connection_id:f.connection})).status,"metadata_observed");
+  assert.equal(f.rpcs.length,2);assert.equal(f.rpcs[1].observation.execution_permitted,false);
+  const forged=await fixture({descriptor:{provider_scope_profile:"full"},unauthorized:"topic"});
+  await assert.rejects(forged.probe.run({connection_id:forged.connection}));
+  assert.equal(forged.rpcs.length,1);
+  const denied=await fixture({secret:{scope:fullScope},changeMetadata:file=>{if(file.id==="topic")file.capabilities.canAddChildren=false;}});
+  await assert.rejects(denied.probe.run({connection_id:denied.connection}),error=>storageProbeDiagnostic(error).reason==="DIRECTORY_NOT_WRITABLE");
+  assert.equal(denied.rpcs.length,1);
 });
 
 test("server observes a parentless outer boundary without adding a writable root or relaxing topic grants",async()=>{
