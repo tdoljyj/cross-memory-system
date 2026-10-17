@@ -19,6 +19,8 @@ export type SuggestionOptions = {
   /** This is provenance supplied by the caller, never inferred from the body. */
   sourceKind?: "owner_text" | "external_material" | "unknown";
   locale?: Locale;
+  /** Explicitly requested mixed-content review; never used by automatic domains. */
+  mixedContent?: boolean;
 };
 export type ImprintSuggestions = {
   status: "candidate";
@@ -166,6 +168,17 @@ function decisionStatement(text: string): boolean {
   return ZH_DECISION.test(text) || ZH_CHOICE.test(text) || EN_DECISION.test(text);
 }
 
+function mixedTaskStatement(text: string): boolean {
+  if (PAST_TASK_ZH.test(text) || PAST_TASK_EN.test(text)) return false;
+  const anchor = new RegExp("^(?:待办\\s*[:：]\\s*|(?:我)?(?:需要|要|记得|计划|准备)(?:在|于)?(?:" + ZH_TIME + ")?[，,\\s]*|(?:在|于)?" + ZH_TIME + "[，,\\s]*)(.+)$", "u").exec(text);
+  return !!anchor && (ZH_ACTION.test(anchor[1]) || /^交\s*\S[\s\S]*$/u.test(anchor[1]));
+}
+
+function mixedDecisionStatement(text: string): boolean {
+  return decisionStatement(text) || decisionStatement("我" + text)
+    || /^(?:decision|decided)\s*:\s*(?:use|adopt|reject|keep|replace|stop using)\s+\S[\s\S]*$/iu.test(text);
+}
+
 /**
  * Local, deterministic, read-only suggestions. Returns source-bound candidates;
  * never writes, makes model/network calls, creates tasks or supplies authority.
@@ -217,17 +230,18 @@ export function suggestImprintOrganization(content: string, options: SuggestionO
         }
       }
       if (options.sourceKind !== "owner_text") return;
-      if (taskStatement(body)) result.fragments.push({ ...candidate(source, "fragment.owner-future-action",
+      if (taskStatement(body) || (options.mixedContent && mixedTaskStatement(body))) result.fragments.push({ ...candidate(source, "fragment.owner-future-action",
         english ? "A first-person commitment names a concrete future action. This is only a candidate for review."
           : "第一人称承诺写出了具体未来行动，仅作为待确认片段。"), kind: "task" });
-      if (decisionStatement(body)) result.fragments.push({ ...candidate(source, "fragment.owner-choice",
+      if (decisionStatement(body) || (options.mixedContent && mixedDecisionStatement(body))) result.fragments.push({ ...candidate(source, "fragment.owner-choice",
         english ? "A first-person statement explicitly adopts, rejects or chooses an option. This is only a candidate for review."
           : "第一人称语句明确采用、拒绝或选择了选项，仅作为待确认片段。"), kind: "decision" });
     };
     for (let i = 0; i < line.length; i++) {
       if (!mask[lineStart + i] && /[。！？.!?；;]/u.test(line[i])) { process(i); segmentStart = i + 1; }
       // Split a compound action/choice only when the next clause itself names I/我.
-      else if (!mask[lineStart + i] && /[，,]/u.test(line[i]) && /^\s*(?:我|I\s)/u.test(line.slice(i + 1))) {
+      else if (!mask[lineStart + i] && /[，,]/u.test(line[i]) && (/^\s*(?:我|I\s)/u.test(line.slice(i + 1))
+        || (options.mixedContent && /^\s*(?:(?:已(?:经)?|最终)?(?:决定|确定|选择)|待办[:：]|(?:需要|记得)|(?:今天|明天|后天|本周|下周|周[一二三四五六日天]|星期[一二三四五六日天]))/u.test(line.slice(i + 1))))) {
         process(i); segmentStart = i + 1;
       }
     }

@@ -17,6 +17,28 @@ const owner = { sourceKind: 'owner_text' };
 const types = text => suggest(text, owner).fragments.map(item => item.kind);
 const domains = text => suggest(text).domains.map(item => item.domain);
 
+test('mixed-content review is opt-in, source-bound and leaves explanations in the original', () => {
+  const text = '周五交方案，已经决定采用A，因为成本低。';
+  const result = suggest(text, { ...owner, mixedContent: true });
+  assert.deepEqual(result.fragments.map(x => x.kind), ['task', 'decision']);
+  assert.equal(result.fragments[0].source.text, '周五交方案');
+  assert.equal(result.fragments[1].source.text, '已经决定采用A，因为成本低');
+  for (const item of result.fragments) assert.equal(text.slice(item.source.start, item.source.end), item.source.text);
+  assert.deepEqual(suggest(text, owner).fragments, []);
+  assert.deepEqual(suggest(text, { sourceKind: 'external_material', mixedContent: true }).fragments, []);
+  assert.deepEqual(suggest(text, { mixedContent: true }).fragments, []);
+});
+test('mixed review retains quote positions with emoji/CRLF/repeated clauses and rejects noncommitments', () => {
+  const text = '😀说明\r\n周五交方案。\r\n周五交方案。';
+  const result = suggest(text, { ...owner, mixedContent: true });
+  assert.equal(result.fragments.length, 2);
+  assert.notEqual(result.fragments[0].source.start, result.fragments[1].source.start);
+  for (const item of result.fragments) assert.equal(text.slice(item.source.start, item.source.end), item.source.text);
+  for (const body of ['客户说：周五交方案。', '“周五交方案。”', '> 周五交方案。', '```\n周五交方案。\n```',
+    '周五交方案吗？', '如果周五交方案。', '不需要周五交方案。', '周五已经交完方案。', '可能已经决定采用A。'])
+    assert.deepEqual(suggest(body, { ...owner, mixedContent: true }).fragments, [], body);
+});
+
 test('explicit saved uses can suggest multiple domains from one unchanged body', () => {
   const text = '保存用途：工作汇报、课程学习、创作游戏剧情。';
   const result = suggest(text);
