@@ -226,7 +226,7 @@ jobs:
             image_source=fallback-pull
             docker pull "$image"
           fi
-          printf 'PostgreSQL17 backup image: %s (%s)\\n' "$image" "$image_source"
+          printf 'PostgreSQL17 backup image: %s (%s)\n' "$image" "$image_source"
           docker info --format 'Backup verification daemon: {{.ID}} / {{.Name}}'
           CLUED_BACKUP_TEST_IMAGE="$image" node scripts/run-tests.mjs --test tests/production-backup-scope-db.test.mjs
 
@@ -362,7 +362,7 @@ jobs:
             image_source=fallback-pull
             docker pull "$image"
           fi
-          printf 'PostgreSQL17 backup image: %s (%s)\\n' "$image" "$image_source"
+          printf 'PostgreSQL17 backup image: %s (%s)\n' "$image" "$image_source"
           docker info --format 'Backup verification daemon: {{.ID}} / {{.Name}}'
           CLUED_BACKUP_TEST_IMAGE="$image" node scripts/run-tests.mjs --test tests/production-backup-scope-db.test.mjs
 
