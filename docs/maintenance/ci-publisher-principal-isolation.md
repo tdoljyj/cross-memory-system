@@ -29,9 +29,11 @@ Task `d745ea6e` 的第一阶段只核实际主体、WSL 可见能力和自己的
 - 机器为 DESK-W-591，SID 精确匹配 1005；
 - token 中不存在 Administrators 或 Hyper-V Administrators 成员关系；
 - 进程实际处于 Session 0；
-- 固定公司 runner 名称、Windows/X64、仓库、main、workflow_dispatch 和严格格式的 GitHub run/attempt/job key/Source/workflow_ref。
+- 固定公司 runner 名称、Windows/X64、仓库与严格格式的 run/attempt/job key；入口仅接受 Owner 发起、作者同为 Owner、同仓库指向 main 的真实 pull_request。
 
-GitHub 字段来自受审工作流的真实上下文并与 runtime 环境绑定。这些字段只是观测，不能自行证明 GitHub 准入、Source 接受或签发生产资格。provider job ID 仍需由正式执行记录补齐；不能将 job key 冒充数字 job ID。
+从实际 GITHUB_EVENT_PATH 读取最多 1 MiB 的事件，交叉核 repository id/owner/fork、作者/sender、PR number、base/head ref/SHA 和 merge_commit_sha。GITHUB_REF 与 workflow_ref 绑定真实 refs/pull/<number>/merge；GITHUB_SHA 保持执行 merge SHA，候选 checkout 单列真实 PR head SHA，不能用 head 覆盖 merge。旧 workflow_dispatch/main 上下文不再接受。
+
+这些 GitHub 字段只是作业内观测，不能自行证明 GitHub 准入、Source 接受或签发生产资格。provider job ID 仍需由正式执行记录补齐；不能将 job key 冒充数字 job ID。S4U request/子阶段保留并验证原事件观测和准确 run/attempt/merge/head/base/作者绑定；计划任务不继承 Actions 环境，不能把转交的 request 描述成独立认证。
 
 当前预期直接 WSL 入口为 `C:/Program Files/WSL/wsl.exe`，版本 2.7.13.0。版本变化返回 UNKNOWN，须重新核定受查对象，不自动安装、升级或改用其他入口。
 
@@ -75,6 +77,22 @@ cleanup 必须同时验证本次“准确任务原先不存在”的注册 inten
 
 三个阶段报告须匹配原 Guid、Source hash、同一 run/attempt/job/workflow 及当前实际 Windows 身份。callback 只有同时含准确 WSL 入口/版本、OBSERVED 子调用、整数零退出码和对应版本输出才可汇总为已观测；嵌套 WSL UNKNOWN 不得被顶层 OBSERVED 掩盖。scheduler 还必须证实先前不存在、实际注册、ownership 校验、run、实例 Guid 和零任务结果；cleanup 须证实本次 intent、实际任务存在、ownership、准确删除和随后不存在，缺任何事实都不能汇总成功。
 
+## 两个真实 PR 资格入口与固定 case
+
+本节尚未完成的 Source/compiler/role 接合、可信 pre-job hook、Host 单作业 consumer、真实执行/取消/回收与独立资格验证，全部继续归原 Task d745ea6e；逐项保留真实阻断与恢复条件，不新建替代 Task，也不把文稿或 fixture 通过当作完成。
+
+入口为 [Host qualification](../../.github/workflows/clued-production-publisher-host-qualification.yml) 和 [Guest qualification](../../.github/workflows/clued-production-publisher-guest-qualification.yml)，均为实际 pull_request → main，沿用原 canonical G4 admission-gate（可信 base checkout），通过准入后才将候选 checkout 固定到准确 head.sha。两个入口各只有一个 primary，分别为固定公司 Windows 路由的 host-principal-probe 和独占 run/attempt 标签的 qualify。purpose 为 production_publisher_nonproduction_PR_qualification，classification 为 qualification_only；正式 Source/role/compiler 登记由对应治理流程处理，YAML 注释不代替登记。旧合并 dispatch 入口已删除。
+
+两入口仅运行固定 CLI：run-publisher-qualification-case.mjs --kind host 或 --kind guest。脚本只读取自身目录的 publisher-qualification-case.json，schema 为 clued.publisher-qualification-case/1，精确字段为 schema、purpose、classification、qualification_id、host、guest。host 仅允许 mode=Inventory|S4UCanary；isolation_canary_id 固定为 90612814-c769-4d3f-bfcc-5821261016e3，expected_qualification_vm 固定为 bd7d78d0-7936-4b33-8176-ea7afd57faaf。guest 仅有 case=success|failure|cancel。拒绝额外命令、脚本、路径或任意目标参数；实际公开 canary/VM 是否仍存在由 Host 独立确认，不能从源码 UUID 推断。
+
+初始公开 qualification_id 为 510acfb6-1698-4227-893b-0cc3fbd84099，与 runner/VM UUID 无关。Inventory 不创建结果目录；每次实际 S4UCanary 必须在受审 case 中分配新的 qualification_id，保留旧失败和清理证据，不覆盖旧目录。每 PR 的较新 head 会取消旧验证；这种取消不能直接算作 cancel case 已验证。父进程取消后的 S4U 精确任务清理仍适用上文 UNKNOWN 限制。
+
+Guest **硬前置条件**仍为另行安装、独立受审的不可变 pre-job hook 和可信 Host 单作业启动/回收 consumer：必须在任何 step（包括 checkout）之前准入实际 run/attempt/job/Source/runner/case。当前 case runner 只做作业内观察，不能提供该前置能力，不能先运行步骤再补造可信 launch。
+
+观察器要求 /opt/clued-production-publisher/launch.json 是 root 所有、clued-release-runner 组、0640 的常规文件；schema=clued.production-vm-launch/1、purpose=qualification、production_qualified=false，qualification_id 和 qualification_case 精确匹配。repository、run_id、run_attempt、job_name、sha（真实 merge）、ref、workflow_ref、runner_name、pull_request_number、pull_request_head_sha、pull_request_base_sha 均为精确字符串绑定。它核实际非 root runner 身份后，以排他方式建立自己的无秘密 marker；旧 marker、未知身份或绑定失配均拒绝。
+
+success 退出 0，failure 固定退出 23，cancel 最多等待 600 秒供可信控制器执行并观测真实取消；等待结束退出 24，不能算取消成功。failure/cancel 保持在 requiredSuccess 之外，仍须独立核原生 job 结论、准确 VM 生命周期与回收。两个 workflow 不使用生产环境/秘密，不上传 artifact/cache；本地 fixture 测试通过不意味着真实资格通过。
+
 ## 后续迁移与完整验收顺序
 
 以下工作归 Task `d745ea6e`，按实际证据推进，不以本 Runbook 的存在视为已做：
@@ -87,7 +105,7 @@ cleanup 必须同时验证本次“准确任务原先不存在”的注册 inten
 6. **真实否定证据。** 实际 Windows CI token 与新 Linux runner（包括 Docker root 等效威胁）对发布私有 canary 读/写、控制器/运行时、底盘/子盘、凭据、准确非生产 VM 管理和串口/IPC 的权限均须验证。只读拒绝、无直接组成员或标签不能替代这些证据。
 7. **恢复调度与资格。** 先一新 slot 隔离真实 job，核 run/attempt/job/head/runner、钩子、能力和清理，再其余三 slot。确认旧 SID 1000 的 Linux Listener/Worker 没有继续接活；按适用范围完成故障、登出、冷启动及恢复验收。主机重启不是跳过运行负载排空的理由。
 
-新增/修改的 Source、资格 workflow、部署资源和实际 CI 都按现行精确 Claim/受保护准入/非 PR Source 接合流程办理。新入口不关闭门禁，不隐式切换付费托管机；也不修改别的会话持有的 profile/workflow。
+新增/修改的 Source、两份真实 PR 资格 workflow、部署资源和实际 CI 都按现行精确 Claim、对应 Source 接合和受保护准入流程办理。新入口不关闭门禁，不隐式切换付费托管机；也不修改别的会话持有的 profile/workflow。
 
 ## 回退与收口
 

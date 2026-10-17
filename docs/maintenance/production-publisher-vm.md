@@ -275,6 +275,47 @@ These are bounded Host observations, not production acceptance.
 
 ## Qualification and release remain separate gates
 
+All unfinished integration, trusted pre-job/Host consumers, real execution,
+cancellation, retirement and independent qualification described below remain
+within original Task d745ea6e. Preserve their actual blockers and recovery
+conditions there; this runbook does not open replacement Tasks or claim that
+offline fixture results complete those operations.
+
+The nonproduction PR consumers are now separate
+[Host qualification](../../.github/workflows/clued-production-publisher-host-qualification.yml)
+and [Guest qualification](../../.github/workflows/clued-production-publisher-guest-qualification.yml)
+workflows. Both preserve the canonical G4 admission gate, accept only an
+Owner-authored same-repository pull request to main, and check out its exact
+candidate head after admission from trusted base source. Their shared fixed
+[case](../../scripts/ci/self-hosted/publisher-qualification-case.json) and
+[runner](../../scripts/ci/self-hosted/run-publisher-qualification-case.mjs)
+have no arbitrary executable, script, path or target input. Their Source
+purpose is production_publisher_nonproduction_PR_qualification and their
+classification is qualification_only; actual compiler/role registration and
+protected admission remain separate requirements. The former dispatch-only
+combined workflow was removed.
+
+An immutable installed pre-job hook and trusted Host one-job registration,
+launch and retirement consumer remain **hard external prerequisites** before
+any Guest step, including checkout. The job-side observer does not implement
+or replace them. It requires a root-owned, runner-group 0640 launch record
+binding exact run/attempt/job/runner, qualification UUID and finite case,
+actual execution merge SHA/ref/workflow_ref, and separate PR number/head/base
+SHAs. It never changes GITHUB_SHA to pretend the merge is the candidate head.
+The Host principal probe likewise reads and cross-checks the real bounded PR
+event; its S4U child reports preserve the original observed context instead
+of claiming a new authenticated runtime observation.
+
+The fixed Guest cases return success (0), synthetic failure (23), or wait at
+most ten minutes for the Host to request and independently observe native job
+cancellation. A completed wait returns 24 and fails the cancellation trial.
+Failure/cancellation are qualification evidence, outside requiredSuccess.
+Per-PR concurrency cancellation of stale source is not, by itself, the
+controlled cancellation proof. No production environment, secret, artifact
+or cache upload is used. See the
+[principal isolation runbook](ci-publisher-principal-isolation.md#两个真实-pr-资格入口与固定-case)
+for exact public target UUIDs, case fields and S4U cleanup limitations.
+
 The current repository production entry remains
 [`clued-cloud-production-release.yml`](../../.github/workflows/clued-cloud-production-release.yml).
 It still declares GitHub-hosted `ubuntu-24.04`; this foundation does not silently

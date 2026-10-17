@@ -184,7 +184,7 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "clued-merge-slot-ci.yml": {
-        "control_sha256": "37a77780d1e5ed937bd135061e838308ef087a41264c75b3da47d76265d54bff",
+        "control_sha256": "004f96edaf2552b256bed691d6f320e5eccfe2c2e045a5329ab4b53abcc983dd",
         "jobs": {
             "report": "13d032eddeef15d56c9b98d7e74cc09325e6b40fbbe190820bd9aa86a2f41089"
         }
@@ -362,8 +362,8 @@ EXISTING_SELF_HOSTED_MATRIX_ROUTES = {
 # boundary instead of the general pool's trust-internal label. Only this exact
 # workflow/job and complete route are recognized; the run/attempt label cannot
 # select a hosted runner. Recognition grants no dispatch, Source or production
-# authority and does not change the workflow's admission/main/Owner gates.
-PUBLISHER_QUALIFICATION_WORKFLOW = "clued-production-publisher-qualification.yml"
+# authority and does not change the workflow's admission/PR/Owner gates.
+PUBLISHER_QUALIFICATION_WORKFLOW = "clued-production-publisher-guest-qualification.yml"
 PUBLISHER_QUALIFICATION_JOB = "qualify"
 PUBLISHER_QUALIFICATION_RUN_LABEL = "${{ format('clued-publisher-{0}-{1}', github.run_id, github.run_attempt) }}"
 PUBLISHER_QUALIFICATION_ROUTE = (

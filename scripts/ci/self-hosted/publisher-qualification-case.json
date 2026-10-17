@@ -1,0 +1,14 @@
+{
+  "schema": "clued.publisher-qualification-case/1",
+  "purpose": "production_publisher_nonproduction_PR_qualification",
+  "classification": "qualification_only",
+  "qualification_id": "510acfb6-1698-4227-893b-0cc3fbd84099",
+  "host": {
+    "mode": "Inventory",
+    "isolation_canary_id": "90612814-c769-4d3f-bfcc-5821261016e3",
+    "expected_qualification_vm": "bd7d78d0-7936-4b33-8176-ea7afd57faaf"
+  },
+  "guest": {
+    "case": "success"
+  }
+}

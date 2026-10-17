@@ -65,25 +65,97 @@ function Assert-ProbeIdentity($Identity) {
     if ($Identity.administrator_token_member -or $Identity.hyper_v_token_member) { throw 'PRIVILEGED_CI_TOKEN_REFUSED' }
     if ($Identity.session_id -ne 0) { throw 'ACTUAL_CI_SESSION_ZERO_REQUIRED' }
 }
-function Get-ProbeGitHubContext {
-    # These values are observations supplied by the reviewed workflow/runtime.
-    # They do not authenticate a workflow or replace its external admission.
-    if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_REPOSITORY -cne 'tdoljyj/cross-memory-system' -or
-        $env:RUNNER_NAME -cne 'clued-ci-company-win-01' -or $env:RUNNER_OS -cne 'Windows' -or
-        $env:RUNNER_ARCH -cne 'X64' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or
-        $env:GITHUB_REF -cne 'refs/heads/main' -or $env:GITHUB_RUN_ID -cnotmatch '^[1-9][0-9]{0,19}$' -or
-        $env:GITHUB_RUN_ATTEMPT -cnotmatch '^[1-9][0-9]{0,5}$' -or
-        $env:GITHUB_JOB -cnotmatch '^[A-Za-z_][A-Za-z0-9_-]{0,99}$' -or
-        $env:GITHUB_SHA -cnotmatch '^[0-9a-fA-F]{40}$' -or
-        $env:GITHUB_WORKFLOW_REF -cnotmatch '^tdoljyj/cross-memory-system/\.github/workflows/[a-z0-9][a-z0-9-]{0,79}\.ya?ml@refs/heads/main$') {
+function Get-ProbeGitHubBindingFields {
+    return @('repository', 'run_id', 'run_attempt', 'job_key', 'provider_job_id', 'sha', 'workflow_ref', 'runner_name',
+        'event_name', 'ref', 'repository_owner', 'actor', 'triggering_actor', 'pull_request_author',
+        'pull_request_number', 'pull_request_head_sha', 'pull_request_base_sha', 'pull_request_base_ref',
+        'pull_request_head_ref', 'provenance')
+}
+function Assert-ProbeGitHubObservation($Context) {
+    if ($null -eq $Context) { throw 'FIXED_COMPANY_WORKFLOW_CONTEXT_REQUIRED' }
+    $fields = $(if ($Context -is [Collections.IDictionary]) { @($Context.Keys) } else { @($Context.PSObject.Properties.Name) })
+    foreach ($name in (Get-ProbeGitHubBindingFields)) {
+        if ($fields -cnotcontains $name -or $Context.$name -isnot [string] -or [string]::IsNullOrEmpty($Context.$name)) {
+            throw 'FIXED_COMPANY_WORKFLOW_CONTEXT_REQUIRED'
+        }
+    }
+    if ($Context.repository -cne 'tdoljyj/cross-memory-system' -or $Context.repository_owner -cne 'tdoljyj' -or
+        $Context.actor -cne 'tdoljyj' -or $Context.triggering_actor -cne 'tdoljyj' -or $Context.pull_request_author -cne 'tdoljyj' -or
+        $Context.runner_name -cne 'clued-ci-company-win-01' -or $Context.event_name -cne 'pull_request' -or
+        $Context.job_key -cne 'host-principal-probe' -or $Context.provider_job_id -cne 'UNKNOWN' -or
+        $Context.run_id -cnotmatch '^[1-9][0-9]{0,19}$' -or $Context.run_attempt -cnotmatch '^[1-9][0-9]{0,5}$' -or
+        $Context.pull_request_number -cnotmatch '^[1-9][0-9]{0,9}$' -or $Context.sha -cnotmatch '^[0-9a-f]{40}$' -or
+        $Context.pull_request_head_sha -cnotmatch '^[0-9a-f]{40}$' -or $Context.pull_request_base_sha -cnotmatch '^[0-9a-f]{40}$' -or
+        $Context.pull_request_base_ref -cne 'main' -or $Context.pull_request_head_ref.Length -gt 255 -or
+        $Context.ref -cne ('refs/pull/' + $Context.pull_request_number + '/merge') -or
+        $Context.workflow_ref -cne ('tdoljyj/cross-memory-system/.github/workflows/clued-production-publisher-host-qualification.yml@' + $Context.ref) -or
+        $Context.provenance -cne 'workflow_environment_and_event_observation; not cryptographic admission') {
         throw 'FIXED_COMPANY_WORKFLOW_CONTEXT_REQUIRED'
     }
-    return [ordered]@{
-        repository = $env:GITHUB_REPOSITORY; run_id = $env:GITHUB_RUN_ID; run_attempt = $env:GITHUB_RUN_ATTEMPT
-        job_key = $env:GITHUB_JOB; provider_job_id = 'UNKNOWN'; sha = $env:GITHUB_SHA.ToLowerInvariant()
-        workflow_ref = $env:GITHUB_WORKFLOW_REF; runner_name = $env:RUNNER_NAME
-        provenance = 'workflow_environment_observation; not cryptographic admission'
+}
+function Read-ProbePullRequestEvent {
+    if ([string]::IsNullOrEmpty($env:GITHUB_EVENT_PATH) -or -not [IO.Path]::IsPathRooted($env:GITHUB_EVENT_PATH)) {
+        throw 'ACTUAL_PULL_REQUEST_EVENT_PATH_REQUIRED'
     }
+    if (([IO.File]::GetAttributes($env:GITHUB_EVENT_PATH) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'PULL_REQUEST_EVENT_REPARSE_POINT_REFUSED'
+    }
+    $stream = [IO.File]::Open($env:GITHUB_EVENT_PATH, 'Open', 'Read', 'Read')
+    try {
+        if ($stream.Length -le 0 -or $stream.Length -gt 1048576) { throw 'PULL_REQUEST_EVENT_SIZE_INVALID' }
+        $buffer = New-Object byte[] 1048577
+        $count = 0
+        while ($count -lt $buffer.Length) {
+            $read = $stream.Read($buffer, $count, $buffer.Length - $count)
+            if ($read -eq 0) { break }; $count += $read
+        }
+        if ($count -le 0 -or $count -gt 1048576) { throw 'PULL_REQUEST_EVENT_SIZE_INVALID' }
+        $encoding = New-Object Text.UTF8Encoding($false, $true)
+        return ($encoding.GetString($buffer, 0, $count) | ConvertFrom-Json)
+    } finally { $stream.Dispose() }
+}
+function Get-ProbeGitHubContext {
+    # Observe the real PR event and execution merge separately from the checked-
+    # out candidate head. Neither observation authenticates Source or admission.
+    if ($env:GITHUB_ACTIONS -cne 'true' -or $env:GITHUB_REPOSITORY -cne 'tdoljyj/cross-memory-system' -or
+        $env:GITHUB_REPOSITORY_OWNER -cne 'tdoljyj' -or $env:GITHUB_ACTOR -cne 'tdoljyj' -or
+        $env:GITHUB_TRIGGERING_ACTOR -cne 'tdoljyj' -or $env:RUNNER_NAME -cne 'clued-ci-company-win-01' -or
+        $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or $env:GITHUB_EVENT_NAME -cne 'pull_request' -or
+        $env:GITHUB_JOB -cne 'host-principal-probe' -or $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$') {
+        throw 'FIXED_COMPANY_WORKFLOW_CONTEXT_REQUIRED'
+    }
+    $event = Read-ProbePullRequestEvent
+    $pr = $event.pull_request
+    if (($event.number -isnot [int] -and $event.number -isnot [long]) -or
+        ($pr.number -isnot [int] -and $pr.number -isnot [long]) -or $event.number -le 0 -or
+        $event.number -gt 9999999999 -or $event.number -ne $pr.number -or
+        @('opened', 'synchronize', 'reopened', 'ready_for_review') -cnotcontains $event.action -or
+        $event.repository.full_name -cne $env:GITHUB_REPOSITORY -or $event.repository.owner.login -cne 'tdoljyj' -or
+        $event.repository.fork -isnot [bool] -or $event.repository.fork -ne $false -or
+        ($event.repository.id -isnot [int] -and $event.repository.id -isnot [long]) -or $event.repository.id -le 0 -or
+        $pr.user.login -cne 'tdoljyj' -or $event.sender.login -cne $env:GITHUB_ACTOR) { throw 'OWNER_SAME_REPOSITORY_PR_EVENT_REQUIRED' }
+    foreach ($side in @('head', 'base')) {
+        if ($pr.$side.repo.full_name -cne $env:GITHUB_REPOSITORY -or
+            ($pr.$side.repo.id -isnot [int] -and $pr.$side.repo.id -isnot [long]) -or $pr.$side.repo.id -ne $event.repository.id -or
+            $pr.$side.repo.owner.login -cne 'tdoljyj' -or $pr.$side.repo.fork -isnot [bool] -or $pr.$side.repo.fork -ne $false -or
+            $pr.$side.sha -cnotmatch '^[0-9a-f]{40}$') { throw 'OWNER_SAME_REPOSITORY_PR_SOURCE_REQUIRED' }
+    }
+    if ($pr.base.ref -cne 'main' -or $env:GITHUB_BASE_REF -cne 'main' -or $pr.head.ref -isnot [string] -or
+        [string]::IsNullOrEmpty($pr.head.ref) -or $pr.head.ref -cne $env:GITHUB_HEAD_REF -or
+        $pr.merge_commit_sha -cne $env:GITHUB_SHA) { throw 'PULL_REQUEST_HEAD_BASE_MERGE_BINDING_REQUIRED' }
+    $context = [ordered]@{
+        repository = $env:GITHUB_REPOSITORY; run_id = $env:GITHUB_RUN_ID; run_attempt = $env:GITHUB_RUN_ATTEMPT
+        job_key = $env:GITHUB_JOB; provider_job_id = 'UNKNOWN'; sha = $env:GITHUB_SHA
+        workflow_ref = $env:GITHUB_WORKFLOW_REF; runner_name = $env:RUNNER_NAME
+        event_name = $env:GITHUB_EVENT_NAME; ref = $env:GITHUB_REF; repository_owner = $env:GITHUB_REPOSITORY_OWNER
+        actor = $env:GITHUB_ACTOR; triggering_actor = $env:GITHUB_TRIGGERING_ACTOR; pull_request_author = $pr.user.login
+        pull_request_number = $event.number.ToString([Globalization.CultureInfo]::InvariantCulture)
+        pull_request_head_sha = $pr.head.sha; pull_request_base_sha = $pr.base.sha
+        pull_request_base_ref = $pr.base.ref; pull_request_head_ref = $pr.head.ref
+        provenance = 'workflow_environment_and_event_observation; not cryptographic admission'
+    }
+    Assert-ProbeGitHubObservation $context
+    return $context
 }
 function Get-ProbeSha256([string]$Path) {
     $algorithm = [Security.Cryptography.SHA256]::Create()
@@ -252,6 +324,9 @@ function Read-QualificationRequest([guid]$Id) {
     if ($request.schema -cne ($script:SchemaPrefix + '.request/1') -or $request.qualification_id -cne $Id.ToString('D') -or
         $request.expected_sid -cne $script:ExpectedSid -or $request.production_qualified -ne $false -or
         $request.source_sha256 -cne (Get-ProbeSha256 $script:SourcePath)) { throw 'QUALIFICATION_REQUEST_MISMATCH' }
+    # S4U does not inherit the Actions job environment. Preserve and validate the
+    # original observed PR binding; do not fabricate a second runtime observation.
+    Assert-ProbeGitHubObservation $request.github
     $age = [DateTime]::UtcNow - [DateTime]::Parse($request.created_utc).ToUniversalTime()
     if ($age.TotalSeconds -lt -5 -or $age.TotalMinutes -gt 10) { throw 'QUALIFICATION_REQUEST_EXPIRED' }
     return $request
@@ -264,7 +339,9 @@ function Assert-PhaseReport($Value, [string]$Phase, [guid]$Id, [string]$SourceHa
         $Value.qualification_id -cne $Id.ToString('D') -or $SourceHash -cnotmatch '^[0-9a-f]{64}$' -or
         $Value.source_sha256 -cne $SourceHash -or $Value.production_qualified -isnot [bool] -or
         $Value.production_qualified -ne $false) { throw 'PHASE_REPORT_BINDING_MISMATCH' }
-    foreach ($name in @('repository', 'run_id', 'run_attempt', 'job_key', 'provider_job_id', 'sha', 'workflow_ref', 'runner_name', 'provenance')) {
+    Assert-ProbeGitHubObservation $GitHub
+    Assert-ProbeGitHubObservation $Value.github
+    foreach ($name in (Get-ProbeGitHubBindingFields)) {
         if ($null -eq $Value.github -or $null -eq $Value.github.PSObject.Properties[$name] -or
             [string]::IsNullOrEmpty($GitHub[$name]) -or $Value.github.$name -cne $GitHub[$name]) { throw 'PHASE_GITHUB_BINDING_MISMATCH' }
     }

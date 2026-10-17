@@ -38,7 +38,7 @@ $script:QualificationRoot = ${quote(folder)}
 $script:PowerShellPath = [IO.Path]::Combine($PSHOME, 'powershell.exe')
 $script:SourcePath = $sourcePath
 $script:Budget = [Diagnostics.Stopwatch]::StartNew()
-$fixtureGitHub=[ordered]@{repository='tdoljyj/cross-memory-system';run_id='12345';run_attempt='1';job_key='host-principal-probe';provider_job_id='UNKNOWN';sha=('a'*40);workflow_ref='tdoljyj/cross-memory-system/.github/workflows/clued-production-publisher-qualification.yml@refs/heads/main';runner_name='clued-ci-company-win-01';provenance='workflow_environment_observation; not cryptographic admission'}
+$fixtureGitHub=[ordered]@{repository='tdoljyj/cross-memory-system';run_id='12345';run_attempt='1';job_key='host-principal-probe';provider_job_id='UNKNOWN';sha=('a'*40);workflow_ref='tdoljyj/cross-memory-system/.github/workflows/clued-production-publisher-host-qualification.yml@refs/pull/42/merge';runner_name='clued-ci-company-win-01';event_name='pull_request';ref='refs/pull/42/merge';repository_owner='tdoljyj';actor='tdoljyj';triggering_actor='tdoljyj';pull_request_author='tdoljyj';pull_request_number='42';pull_request_head_sha=('b'*40);pull_request_base_sha=('c'*40);pull_request_base_ref='main';pull_request_head_ref='qualification-fixture';provenance='workflow_environment_and_event_observation; not cryptographic admission'}
 $fixtureIdentity=[ordered]@{host=$script:ExpectedHost;account='fixture-account';sid=$script:ExpectedSid;session_id=0;administrator_token_member=$false;hyper_v_token_member=$false}
 function New-PhaseFixture([string]$Phase,[string]$Result,[guid]$Id) {
     return ([ordered]@{schema=$script:SchemaPrefix+'.'+$Phase+'/1';qualification_id=$Id.ToString('D');result=$Result;production_qualified=$false;source_sha256=$expectedSha;github=$fixtureGitHub;identity=$fixtureIdentity}|ConvertTo-Json -Depth 14|ConvertFrom-Json)
@@ -77,22 +77,28 @@ ${body}
   return report;
 }
 
-test('dispatch-only qualification workflow stays on self-owned runners with read-only credentials and finite jobs', () => {
+test('two exact Owner PR workflows preserve the canonical admission gate and isolated qualification routes', () => {
   const require = createRequire(new URL('../../../apps/clued-cloud/package.json', import.meta.url));
   const yaml = require('yaml');
-  const workflow = yaml.parse(fs.readFileSync(new URL('../../../.github/workflows/clued-production-publisher-qualification.yml', import.meta.url), 'utf8'));
-  assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
-  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  const workflows = ['host', 'guest'].map(kind => yaml.parse(fs.readFileSync(new URL(`../../../.github/workflows/clued-production-publisher-${kind}-qualification.yml`, import.meta.url), 'utf8')));
+  assert.deepEqual(workflows[0].jobs['admission-gate'], workflows[1].jobs['admission-gate']);
+  assert.equal(fs.existsSync(new URL('../../../.github/workflows/clued-production-publisher-qualification.yml', import.meta.url)), false);
+  for (const workflow of workflows) {
+  assert.deepEqual(Object.keys(workflow.on), ['pull_request']);
+  assert.deepEqual(workflow.on.pull_request.branches, ['main']);
+  assert.equal(workflow.concurrency['cancel-in-progress'], true);
   assert.deepEqual(workflow.permissions, { contents: 'read' });
-  assert.equal(workflow.on.workflow_dispatch.inputs.admission_run_id.required, true);
-  assert.equal(workflow.on.workflow_dispatch.inputs.qualification_id.required, true);
-  assert.deepEqual(workflow.on.workflow_dispatch.inputs.probe_mode.options, ['Inventory', 'S4UCanary']);
+  assert.equal(Object.keys(workflow.jobs).length, 2);
   for (const [name, job] of Object.entries(workflow.jobs)) {
     assert.ok(Array.isArray(job['runs-on']) && job['runs-on'].includes('self-hosted'), name);
     assert.ok(Number.isInteger(job['timeout-minutes']) && job['timeout-minutes'] <= 12, name);
     assert.equal(job.environment, undefined, name);
     if (name !== 'admission-gate') {
-      assert.match(job.if, /github\.ref == 'refs\/heads\/main'/u, name);
+      assert.match(job.if, /github\.event_name == 'pull_request'/u, name);
+      assert.match(job.if, /pull_request\.base\.ref == 'main'/u, name);
+      assert.match(job.if, /pull_request\.head\.repo\.full_name == github\.repository/u, name);
+      assert.match(job.if, /pull_request\.base\.repo\.full_name == github\.repository/u, name);
+      assert.match(job.if, /pull_request\.user\.login == github\.repository_owner/u, name);
       assert.match(job.if, /github\.actor == github\.repository_owner/u, name);
       assert.match(job.if, /github\.triggering_actor == github\.repository_owner/u, name);
       assert.equal(job.needs, 'admission-gate');
@@ -103,12 +109,16 @@ test('dispatch-only qualification workflow stays on self-owned runners with read
       assert.ok(!step.uses?.includes('upload-artifact') && !step.uses?.includes('cache'), name);
       assert.doesNotMatch(JSON.stringify(step), /secrets\.|SUPABASE_SERVICE_ROLE|CLOUDFLARE_API_TOKEN/u);
       if (step.uses?.startsWith('actions/checkout@')) assert.equal(step.with['persist-credentials'], false);
+      if (name !== 'admission-gate' && step.uses?.startsWith('actions/checkout@')) assert.equal(step.with.ref, '${{ github.event.pull_request.head.sha }}');
     }
   }
   const gateCheckout = workflow.jobs['admission-gate'].steps.find(step => step.uses?.startsWith('actions/checkout@'));
   assert.equal(gateCheckout.with.ref, '${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}');
-  assert.ok(workflow.jobs['host-principal-probe']['runs-on'].includes('site-company'));
-  assert.ok(workflow.jobs.qualify['runs-on'].some(label => label.includes('github.run_id') && label.includes('github.run_attempt')));
+  }
+  assert.equal(workflows[0].name, 'Clued production publisher Host qualification');
+  assert.equal(workflows[1].name, 'Clued production publisher Guest qualification');
+  assert.ok(workflows[0].jobs['host-principal-probe']['runs-on'].includes('site-company'));
+  assert.ok(workflows[1].jobs.qualify['runs-on'].some(label => label.includes('github.run_id') && label.includes('github.run_attempt')));
 });
 
 test('actual interactive principal is refused at the complete entrypoint before CI or scheduler work', { skip: !windows }, context => {
@@ -157,26 +167,54 @@ foreach ($field in @('host','sid','session_id','administrator_token_member','hyp
 }
 $valid = @{
     GITHUB_ACTIONS='true';GITHUB_REPOSITORY='tdoljyj/cross-memory-system';RUNNER_NAME='clued-ci-company-win-01';RUNNER_OS='Windows';RUNNER_ARCH='X64'
-    GITHUB_EVENT_NAME='workflow_dispatch';GITHUB_REF='refs/heads/main';GITHUB_RUN_ID='12345';GITHUB_RUN_ATTEMPT='1';GITHUB_JOB='host-principal-probe'
-    GITHUB_SHA=('a'*40);GITHUB_WORKFLOW_REF='tdoljyj/cross-memory-system/.github/workflows/clued-production-publisher-qualification.yml@refs/heads/main'
+    GITHUB_EVENT_NAME='pull_request';GITHUB_REF='refs/pull/42/merge';GITHUB_RUN_ID='12345';GITHUB_RUN_ATTEMPT='1';GITHUB_JOB='host-principal-probe'
+    GITHUB_REPOSITORY_OWNER='tdoljyj';GITHUB_ACTOR='tdoljyj';GITHUB_TRIGGERING_ACTOR='tdoljyj';GITHUB_BASE_REF='main';GITHUB_HEAD_REF='qualification-fixture'
+    GITHUB_SHA=('a'*40);GITHUB_WORKFLOW_REF='tdoljyj/cross-memory-system/.github/workflows/clued-production-publisher-host-qualification.yml@refs/pull/42/merge'
+    GITHUB_EVENT_PATH=[IO.Path]::Combine($script:QualificationRoot,'event.json')
 }
+$repository=[ordered]@{id=123;full_name='tdoljyj/cross-memory-system';owner=@{login='tdoljyj'};fork=$false}
+$validEvent=[ordered]@{action='synchronize';number=42;repository=$repository;sender=@{login='tdoljyj'};pull_request=@{number=42;user=@{login='tdoljyj'};merge_commit_sha=('a'*40);head=@{sha=('b'*40);ref='qualification-fixture';repo=$repository};base=@{sha=('c'*40);ref='main';repo=$repository}}}
+[IO.File]::WriteAllText($valid.GITHUB_EVENT_PATH,($validEvent|ConvertTo-Json -Depth 10))
 foreach ($key in $valid.Keys) { [Environment]::SetEnvironmentVariable($key,$valid[$key],'Process') }
 $context = Get-ProbeGitHubContext
-Check ($context.sha -ceq ('a'*40) -and $context.provider_job_id -ceq 'UNKNOWN' -and $context.provenance -match 'not cryptographic admission') 'context remains an observation without provider job ID or authentication claim'
+Check ($context.sha -ceq ('a'*40) -and $context.pull_request_head_sha -ceq ('b'*40) -and $context.pull_request_base_sha -ceq ('c'*40) -and $context.provider_job_id -ceq 'UNKNOWN' -and $context.provenance -match 'not cryptographic admission') 'actual merge, head and base remain separate observations without authentication claim'
 foreach ($key in $valid.Keys) {
     [Environment]::SetEnvironmentVariable($key,'invalid value','Process')
-    Reject { Get-ProbeGitHubContext } 'FIXED_COMPANY_WORKFLOW_CONTEXT_REQUIRED' ('workflow context mismatch refused: ' + $key)
+    Reject { Get-ProbeGitHubContext } '.' ('workflow context mismatch refused: ' + $key)
     [Environment]::SetEnvironmentVariable($key,$valid[$key],'Process')
 }
+foreach($mode in @('fork','repository-id','author','sender','pr-number','base-ref','head-ref','head-source','merge-source','action','missing-pr','string-fork')) {
+    $copy=$validEvent|ConvertTo-Json -Depth 10|ConvertFrom-Json
+    switch($mode) {
+        fork {$copy.pull_request.head.repo.fork=$true}
+        repository-id {$copy.pull_request.head.repo.id=456}
+        author {$copy.pull_request.user.login='another-user'}
+        sender {$copy.sender.login='another-user'}
+        pr-number {$copy.pull_request.number=43}
+        base-ref {$copy.pull_request.base.ref='other'}
+        head-ref {$copy.pull_request.head.ref='other'}
+        head-source {$copy.pull_request.head.sha='wrong'}
+        merge-source {$copy.pull_request.merge_commit_sha='b'*40}
+        action {$copy.action='closed'}
+        missing-pr {$copy.PSObject.Properties.Remove('pull_request')}
+        string-fork {$copy.pull_request.head.repo.fork='false'}
+    }
+    [IO.File]::WriteAllText($valid.GITHUB_EVENT_PATH,($copy|ConvertTo-Json -Depth 10))
+    Reject { Get-ProbeGitHubContext } '.' ('actual PR event mismatch refused: '+$mode)
+}
+[IO.File]::WriteAllText($valid.GITHUB_EVENT_PATH,('x'*1048577))
+Reject { Get-ProbeGitHubContext } 'EVENT_SIZE_INVALID' 'oversized actual event refused before parsing'
+[IO.File]::WriteAllText($valid.GITHUB_EVENT_PATH,'not-json')
+Reject { Get-ProbeGitHubContext } '.' 'malformed actual event refused'
 `);
-  assert.equal(report.checks.length, 19);
+  assert.equal(report.checks.length, 39);
 });
 
 test('qualification files are bounded, write-once, source-bound, and phase reports cannot claim production', { skip: !windows }, () => {
   const report = runCase(String.raw`
 $id=[guid]::NewGuid();$folder=Get-QualificationFolder $id
 [IO.Directory]::CreateDirectory($folder)|Out-Null
-$request=[pscustomobject]@{schema=$script:SchemaPrefix+'.request/1';qualification_id=$id.ToString('D');expected_sid=$script:ExpectedSid;production_qualified=$false;source_sha256=(Get-ProbeSha256 $script:SourcePath);created_utc=[DateTime]::UtcNow.ToString('o')}
+$request=[pscustomobject]@{schema=$script:SchemaPrefix+'.request/1';qualification_id=$id.ToString('D');expected_sid=$script:ExpectedSid;production_qualified=$false;source_sha256=(Get-ProbeSha256 $script:SourcePath);created_utc=[DateTime]::UtcNow.ToString('o');github=$fixtureGitHub}
 Write-NewQualificationJson $folder 'request.json' $request
 Check ((Read-QualificationRequest $id).qualification_id -ceq $id.ToString('D')) 'exact current source-bound request accepted'
 Reject { Write-NewQualificationJson $folder 'request.json' $request } '.' 'write-once request cannot be overwritten'
@@ -205,11 +243,15 @@ $callback=New-PhaseFixture 'callback' 'OBSERVED' $id
 $callback|Add-Member -NotePropertyName wsl_version -NotePropertyValue ([pscustomobject]@{result='OBSERVED';executable=$script:WslPath;file_version=$script:ExpectedWslVersion;invocation=[pscustomobject]@{result='OBSERVED';exit_code=0;stdout=('WSL version: '+$script:ExpectedWslVersion);stderr=''}})
 Assert-PhaseReport $callback 'callback' $id $expectedSha $fixtureGitHub $fixtureIdentity
 Check $true 'fully bound callback version observation accepted'
-foreach($mode in @('source','run-attempt','identity-session','identity-bool-type','qualified-string','wsl-unknown','wrong-executable','wrong-version','invocation-unknown','exit-string','missing-version-output')) {
+foreach($mode in @('source','run-attempt','pr-head','pr-base','pr-ref','pr-author','identity-session','identity-bool-type','qualified-string','wsl-unknown','wrong-executable','wrong-version','invocation-unknown','exit-string','missing-version-output')) {
     $value=$callback|ConvertTo-Json -Depth 14|ConvertFrom-Json
     switch($mode) {
         source {$value.source_sha256='b'*64}
         run-attempt {$value.github.run_attempt='2'}
+        pr-head {$value.github.pull_request_head_sha='d'*40}
+        pr-base {$value.github.pull_request_base_sha='d'*40}
+        pr-ref {$value.github.ref='refs/pull/43/merge'}
+        pr-author {$value.github.pull_request_author='another-user'}
         identity-session {$value.identity.session_id=1}
         identity-bool-type {$value.identity.administrator_token_member='False'}
         qualified-string {$value.production_qualified='False'}
@@ -220,7 +262,7 @@ foreach($mode in @('source','run-attempt','identity-session','identity-bool-type
         exit-string {$value.wsl_version.invocation.exit_code='0'}
         missing-version-output {$value.wsl_version.invocation.stdout='no pinned version'}
     }
-    Reject { Assert-PhaseReport $value 'callback' $id $expectedSha $fixtureGitHub $fixtureIdentity } 'MISMATCH|INVALID|NOT_OBSERVED' ('incomplete callback stays non-success: '+$mode)
+    Reject { Assert-PhaseReport $value 'callback' $id $expectedSha $fixtureGitHub $fixtureIdentity } 'MISMATCH|INVALID|NOT_OBSERVED|CONTEXT_REQUIRED' ('incomplete callback stays non-success: '+$mode)
 }
 $scheduler=New-PhaseFixture 'scheduler' 'OBSERVED' $id
 Reject { Assert-PhaseReport $scheduler 'scheduler' $id $expectedSha $fixtureGitHub $fixtureIdentity } 'FACT_NOT_PROVEN' 'scheduler OBSERVED without actual task facts refused'
@@ -237,7 +279,7 @@ foreach($name in @('registration_intent_verified','task_was_present','task_owner
 Assert-PhaseReport $cleanup 'cleanup' $id $expectedSha $fixtureGitHub $fixtureIdentity
 Check $true 'complete owned task cleanup observation accepted'
 `);
-  assert.equal(report.checks.length, 17);
+  assert.equal(report.checks.length, 21);
 });
 
 test('public canary read evidence distinguishes readable, absent, and actual access-denied files', { skip: !windows }, () => {

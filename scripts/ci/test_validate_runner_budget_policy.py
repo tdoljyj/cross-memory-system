@@ -214,7 +214,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         self.assert_rejected(self.evaluate({filename: renamed}), "unknown, dynamic")
 
     def test_actual_disposable_publisher_qualification_route_passes(self):
-        filename = "clued-production-publisher-qualification.yml"
+        filename = "clued-production-publisher-guest-qualification.yml"
         text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
         self.assert_pass(self.evaluate({filename: text}))
         _, jobs, _ = policy.split_workflow(text)
@@ -225,9 +225,10 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
         self.assertNotIn("trust-internal", labels)
 
     def test_disposable_publisher_route_cannot_move_workflow_or_job(self):
-        filename = "clued-production-publisher-qualification.yml"
+        filename = "clued-production-publisher-guest-qualification.yml"
         text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
-        for other in ["other.yml", "clued-production-publisher-qualification.yaml"]:
+        for other in ["other.yml", "clued-production-publisher-qualification.yml",
+                      "clued-production-publisher-guest-qualification.yaml"]:
             with self.subTest(workflow=other):
                 self.assert_rejected(self.evaluate({other: text}), "unknown, dynamic")
         for other in ["qualify-shadow", "host-principal-probe-renamed"]:
@@ -236,7 +237,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                 self.assert_rejected(self.evaluate({filename: changed}), "unknown, dynamic")
 
     def test_disposable_publisher_route_requires_exact_labels_and_expression(self):
-        filename = "clued-production-publisher-qualification.yml"
+        filename = "clued-production-publisher-guest-qualification.yml"
         text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
         original = policy.job_fields(policy.split_workflow(text)[1]["qualify"])["runs-on"]
         changes = [
@@ -260,7 +261,7 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                 self.assert_rejected(self.evaluate({filename: text.replace(original, changed)}), "unknown, dynamic")
 
     def test_disposable_publisher_route_does_not_authorize_reusable_or_hosted_jobs(self):
-        filename = "clued-production-publisher-qualification.yml"
+        filename = "clued-production-publisher-guest-qualification.yml"
         text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
         original = policy.job_fields(policy.split_workflow(text)[1]["qualify"])["runs-on"]
         self.assert_rejected(self.evaluate({filename: text.replace(original, "ubuntu-latest")}),
