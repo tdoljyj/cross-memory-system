@@ -206,6 +206,20 @@ export async function testStorageDestructive(t, admin, server, user, decision, o
     assert.equal(enabled.status, "committed", JSON.stringify(enabled));
     return { target, client, storage };
   };
+  // Genuine legacy constructor: account grant + unchanged public submit path.
+  // Tests may later perform the reviewed Native policy transition; this does
+  // not seed account-policy rows or alter an immutable job snapshot.
+  const setupLegacy = async () => {
+    const target = await createRoot(), client = await bind(target), storage = provider(target);
+    const connection = (await admin.query("select version from clued_private.storage_connections_v1 where id=$1", [target.connection])).rows[0];
+    const authorization = (await admin.query("select version from clued_private.authorizations_v12 where binding_id=$1", [client.id])).rows[0];
+    const payload = { action: "grant_client", connection_id: target.connection, binding_id: client.id,
+      base_version: Number(connection.version), authorization_version: Number(authorization.version),
+      actions: ["inspect", "create_file", "create_topic"], expires_at: new Date(Date.now() + 3600000).toISOString(), idempotency_key: randomUUID() };
+    const granted = await account(payload); assert.equal(granted.status, "committed", JSON.stringify(granted));
+    target.history = [{ receipt_id: granted.receipt_id, payload }];
+    return { target, client, storage };
+  };
   const versionOf = (storage, item) => storage.files.get(item.provider_file_id).version;
   const trash = (item, version = item.provider_file_version, path = item.path) => ({ operation: "delete", target_kind: item.target_kind,
     source_path: path, source_file_version: version, source_file_id: item.provider_file_id });
@@ -219,7 +233,7 @@ export async function testStorageDestructive(t, admin, server, user, decision, o
   };
 
   try {
-    if (options.extra_cases) await options.extra_cases({ setup, createFile, cloud, submitJob, trash, untrash, trashed, directoryIn, executor, journal, artifact, artifactById,
+    if (options.extra_cases) await options.extra_cases({ setup, setupLegacy, createFile, cloud, submitJob, trash, untrash, trashed, directoryIn, executor, journal, artifact, artifactById,
       oauth_client_id: oauthClient, provider_subject: "destructive-subject", access_token: "fixture-destructive-access" });
     if (options.only_extra) return;
     await t.test("the destructive level has its own disclosure and replaces the policy like modify and overwrite", async () => {
