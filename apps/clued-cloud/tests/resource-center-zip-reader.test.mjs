@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyEntryName, openZip, ZIP_LIMITS, ZipReaderError } from "../../../kernel/host/resource-center-zip-reader.mjs";
+import { classifyEntryName, crc32, openZip, ZIP_LIMITS, ZipReaderError } from "../../../kernel/host/resource-center-zip-reader.mjs";
 import { buildZip, deflateRaw } from "./resource-center-zip.fixture.mjs";
 
 const MiB = 1024 * 1024;
@@ -49,6 +49,49 @@ test("in-memory mode lists and reads stored and deflate entries, CJK names and c
   await rejectsWith(zip.readEntry("dir/"), "entry_not_found");
   await rejectsWith(zip.readEntry("missing"), "entry_not_found");
   assert.equal(zip.consumedBytes, 5 + new TextEncoder().encode("中文内容，日本語、한국어").byteLength);
+});
+
+test("portable upload names require UTF-8 flags while historical unflagged reads remain compatible", async () => {
+  const legacy = await openZip({ bytes: await buildZip([{ name: "资料/主标.svg", data: "logo", lie: { flags: 0 } }]) });
+  assert.equal(legacy.entries[0].name, "资料/主标.svg");
+  assert.equal(text(await legacy.readEntry(0)), "logo");
+  await rejectsWith(legacy.validateEntryName(0), "archive_invalid");
+
+  const ascii = await openZip({ bytes: await buildZip([{ name: "logo.svg", data: "logo", lie: { flags: 0 } }]) });
+  assert.equal(await ascii.validateEntryName(0), true);
+  assert.equal(text(await ascii.readEntry(0)), "logo");
+
+  const archive = await buildZip([{ name: "资料/主标.svg", data: "logo", rawComment: new TextEncoder().encode("定稿"), zip64: true }]);
+  const before = archive.slice();
+  const { calls, input } = rangeSource(archive);
+  const good = await openZip(input);
+  assert.equal(await good.validateEntryName(0), true);
+  assert.equal(await good.validateEntryName(0), true, "validated header is reused");
+  assert.equal(text(await good.readEntry(0)), "logo");
+  assert.equal(calls.length, 4, "tail, central directory, local header/name and data only");
+  assert.deepEqual(archive, before, "validation preserves declared upload bytes");
+});
+
+test("portable name validation refuses invalid UTF-8, conflicting local metadata, and Unicode-extra-only names", async () => {
+  const enc = new TextEncoder(), rawName = enc.encode("主标.svg");
+  const unicodeExtra = new Uint8Array(9 + rawName.byteLength);
+  const extraView = new DataView(unicodeExtra.buffer);
+  extraView.setUint16(0, 0x7075, true); extraView.setUint16(2, 5 + rawName.byteLength, true);
+  unicodeExtra[4] = 1; extraView.setUint32(5, crc32(rawName), true); unicodeExtra.set(rawName, 9);
+  const cases = [
+    { name: "bad", rawName: new Uint8Array([0xc3, 0x28]) },
+    { name: "good", rawComment: new Uint8Array([0xff]) },
+    { name: "主标.svg", lie: { localFlags: 0 } },
+    { name: "logo.svg", localRawName: enc.encode("evil.svg") },
+    { name: "logo.svg", localRawName: enc.encode("different-length.svg") },
+    // This extra field is legal ZIP metadata, but does not meet the Windows filename
+    // interoperability requirement without bit 11 on the non-ASCII main filename.
+    { name: "主标.svg", rawName, extra: unicodeExtra, lie: { flags: 0 } },
+  ];
+  for (const entry of cases) {
+    const zip = await openZip({ bytes: await buildZip([{ ...entry, data: "logo", method: 0 }]) });
+    await rejectsWith(zip.validateEntryName(0), "archive_invalid");
+  }
 });
 
 test("range mode reads the tail (≤ 64 KiB), the central directory and one entry by offset", async () => {
