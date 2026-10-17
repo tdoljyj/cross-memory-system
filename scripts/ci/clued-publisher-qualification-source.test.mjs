@@ -6,18 +6,15 @@ import {compilePublisherPrQualificationSource,registeredPublisherPrQualification
   PUBLISHER_PR_QUALIFICATION_SCHEMA,PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_CONDITION,
   PUBLISHER_PR_QUALIFICATION_PATH} from './clued-publisher-qualification-source.mjs';
 import {roleDefinitionDigest,workflowBlob,compileRegisteredWorkflow} from './clued-workflow-profile.mjs';
-import {workflowJobs,gateFindings} from './clued-work-admission.mjs';
+import {gateFindings} from './clued-work-admission.mjs';
 import {ciWorkflows} from './clued-merge-slot-ci.mjs';
 import {boundWorkflowCatalog} from './clued-gated-proof-runtime.mjs';
 const yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
 const parseYaml=text=>{const d=yaml.parseDocument(text,{uniqueKeys:true});if(d.errors.length)throw d.errors[0];return d.toJS({maxAliasCount:0});};
-const prod=JSON.parse(fs.readFileSync(new URL('./clued-production-publisher-sources.json',import.meta.url),'utf8'));
-const gate=workflowJobs(prod.workflows['.github/workflows/clued-cloud-production-release.yml'].sources.find(s=>s.gated).source_yaml)
-  .find(j=>j.name==='admission-gate').lines.join('\n');
+const actual=JSON.parse(fs.readFileSync(new URL('./clued-publisher-qualification-sources.json',import.meta.url),'utf8'));
 const roles=value=>Object.keys(value.jobs).sort().map(job_id=>({job_id,definition_sha256:roleDefinitionDigest(value.jobs[job_id])}));
 const fixture=file=>{
-  const d=PUBLISHER_PR_QUALIFICATION_FILES[file];
-  const text=`name: Nonproduction PR qualification fixture\non:\n  pull_request:\n    branches: [main]\n    paths: [${file}]\npermissions:\n  contents: read\njobs:\n${gate}\n  ${d.primary}:\n    needs: admission-gate\n    if: >-\n      ${PUBLISHER_PR_QUALIFICATION_CONDITION}\n    runs-on: ${JSON.stringify(d.labels)}\n    timeout-minutes: ${d.minutes}\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: \${{ github.event.pull_request.head.sha }}\n          persist-credentials: false\n      - name: Synthetic qualification only\n        run: echo qualification\n`;
+  const text=actual.workflows[file].sources[0].source_yaml;
   const value=parseYaml(text),accepted_roles=roles(value),profile=compilePublisherPrQualificationSource(file,text,{parseYaml,accepted_roles});
   return {text,value,profile,accepted_roles,registry:{schema:PUBLISHER_PR_QUALIFICATION_SCHEMA,
     repository:'tdoljyj/cross-memory-system',default_branch:'main',
@@ -47,12 +44,33 @@ test('PR qualification compiler refuses forks/dispatch/other branches, generic r
       v=>v.jobs[id].environment='clued-release',v=>v.jobs[id].strategy={matrix:{case:['success','failure']}},
       v=>v.jobs[id]['timeout-minutes']=30,v=>v.permissions.actions='write',
       v=>v.jobs[id].steps[0].with.ref='main',v=>v.jobs[id].steps[0].with['persist-credentials']=true,
+      v=>v.jobs[id].steps[0].uses='actions/checkout@v4',v=>v.jobs[id].steps[0].with['fetch-depth']=0,
+      v=>v.jobs[id].steps[1].uses='./.github/actions/other',
+      v=>v.jobs[id].steps[2].uses='actions/setup-node@v4',v=>v.jobs[id].steps[2].with['node-version']='latest',
+      v=>v.jobs[id].steps[3].run+=' --command arbitrary',
+      v=>v.on.pull_request.types.push('edited'),v=>v.on.pull_request.paths.push('**'),
       v=>v.jobs.extra={steps:[]},v=>v.jobs['admission-gate'].if='true']) {
       const value=structuredClone(f.value);mutate(value);
       assert.throws(()=>compilePublisherPrQualificationSource(file,f.text,{parseYaml:()=>value,accepted_roles:roles(value)}));
     }
-    const secret=f.text.replace('echo qualification','echo ${{ secrets.CLUED_TOKEN }}');
+    const secret=f.text.replace('run-publisher-qualification-case.mjs','run-publisher-qualification-case.mjs ${{ secrets.CLUED_TOKEN }}');
     assert.throws(()=>compilePublisherPrQualificationSource(file,secret,{parseYaml,accepted_roles:roles(parseYaml(secret))}));
+  }
+});
+
+test('actual reviewed 229d consumers retain their complete Source, canonical gate and stronger Owner checks',()=>{
+  const expected={
+    '.github/workflows/clued-production-publisher-host-qualification.yml':['bb9646649efcc981db6e126728ff20d6acc5483c','9e39a08f9b0d3792c5b91907af02f93d9dca7d3f9e7f219311dc8fdd8414f5bc'],
+    '.github/workflows/clued-production-publisher-guest-qualification.yml':['3ea7bf00470a1ca52d0e1688358d4b1658b18f65','2c96918d9a14bbadca4a5e247bafcf741290a3ee2c75d13e2acacc800b04ad44'],
+  };
+  for(const [file,[blob,sha]] of Object.entries(expected)) {
+    const text=actual.workflows[file].sources[0].source_yaml;
+    const checked=registeredPublisherPrQualificationSource(actual,file,text);
+    assert.equal(checked.passed,true,checked.reason);
+    assert.equal(checked.profile.workflow_blob,blob);assert.equal(checked.profile.source_sha256,sha);
+    assert.equal(checked.profile.workflow_definition.jobs[checked.profile.primary_ids[0]].if.trim(),PUBLISHER_PR_QUALIFICATION_CONDITION);
+    assert.deepEqual(gateFindings(text,null),[]);
+    assert.equal(checked.profile.role_digests['admission-gate'],'a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd');
   }
 });
 

@@ -11,15 +11,24 @@ export const PUBLISHER_PR_QUALIFICATION_FILES=Object.freeze({
   '.github/workflows/clued-production-publisher-host-qualification.yml':{primary:'host-principal-probe',labels:PUBLISHER_PROBE_LABELS,minutes:5},
   '.github/workflows/clued-production-publisher-guest-qualification.yml':{primary:'qualify',labels:PUBLISHER_LABELS,minutes:12},
 });
-export const PUBLISHER_PR_QUALIFICATION_CONDITION="needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner)";
-const GATE_ROLE='a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd';
-const QUALIFICATION_PATHS=new Set([
-  ...Object.keys(PUBLISHER_PR_QUALIFICATION_FILES),
-  'scripts/ci/self-hosted/qualify-publisher-host-principal.ps1',
-  'scripts/ci/self-hosted/production-publisher-qualification-case.json',
+export const PUBLISHER_PR_QUALIFICATION_CONDITION="needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request') && (github.event.pull_request.base.ref == 'main') && (github.event.pull_request.base.repo.full_name == github.repository) && (github.event.pull_request.head.repo.full_name == github.repository) && (github.event.pull_request.user.login == github.repository_owner) && (github.actor == github.repository_owner) && (github.triggering_actor == github.repository_owner))";
+export const PUBLISHER_PR_QUALIFICATION_TYPES=Object.freeze(['opened','synchronize','reopened','ready_for_review']);
+export const PUBLISHER_PR_QUALIFICATION_TRIGGER_PATHS=Object.freeze([
+  '.github/workflows/clued-production-publisher-*-qualification.yml',
+  'scripts/ci/self-hosted/publisher-qualification-case.json',
+  'scripts/ci/self-hosted/run-publisher-qualification-case*',
+  'scripts/ci/self-hosted/qualify-publisher-host-principal*',
   'scripts/ci/self-hosted/production-publisher-profile.json',
-  'scripts/runner/clued-production-vm.ps1','scripts/runner/clued-production-guest-init.sh',
+  'scripts/runner/clued-production-vm*',
+  'scripts/runner/clued-runner-job-started*',
+  'scripts/ci/clued-gated-proof-*',
+  '.github/actions/ci-temporary-storage/**',
+  'docs/maintenance/ci-publisher-principal-isolation.md',
+  'docs/maintenance/production-publisher-vm.md',
 ]);
+const GATE_ROLE='a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd';
+const CHECKOUT='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
+const SETUP_NODE='actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020';
 const hash=text=>createHash('sha256').update(text).digest('hex');
 const plain=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const canonical=x=>Array.isArray(x)?x.map(canonical):plain(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
@@ -38,9 +47,9 @@ export function compilePublisherPrQualificationSource(file,text,{parseYaml,accep
     /\r(?!\n)|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u0085\u2028\u2029]/.test(text)||
     !['install_workflow','modify_workflow'].includes(operation))bad('identity/parser/operation');
   const value=parseYaml(text),trigger=value?.on?.pull_request;
-  if(!plain(value)||!keys(value.on,['pull_request'])||!keys(trigger,['branches','paths'])||
-    !same(trigger.branches,['main'])||!Array.isArray(trigger.paths)||!trigger.paths.includes(file)||
-    new Set(trigger.paths).size!==trigger.paths.length||trigger.paths.some(p=>!QUALIFICATION_PATHS.has(p))||
+  if(!plain(value)||!keys(value.on,['pull_request'])||!keys(trigger,['branches','types','paths'])||
+    !same(trigger.branches,['main'])||!same(trigger.types,PUBLISHER_PR_QUALIFICATION_TYPES)||
+    !same(trigger.paths,PUBLISHER_PR_QUALIFICATION_TRIGGER_PATHS)||
     !keys(value.jobs,['admission-gate',d.primary])||
     !keys(value.permissions,['contents'])||value.permissions.contents!=='read')bad('exact PR qualification form');
   if(Object.values(value.jobs).some(j=>!plain(j)||j.environment!==undefined)||/\bsecrets\s*(?:\.|\[)/i.test(text))
@@ -56,21 +65,33 @@ export function compilePublisherPrQualificationSource(file,text,{parseYaml,accep
     !Number.isInteger(job['timeout-minutes'])||job['timeout-minutes']<1||job['timeout-minutes']>d.minutes||
     !Array.isArray(job.steps)||!job.steps.length||job.permissions!==undefined&&
       (!keys(job.permissions,['contents'])||job.permissions.contents!=='read'))bad('one primary/route/PR condition');
-  const commands={},checkouts=[];
-  for(const step of job.steps) {
-    if(!plain(step)||(step.run===undefined)===(step.uses===undefined))bad('concrete step');
-    if(step.uses!==undefined) {
-      if(!/^actions\/checkout@(?:v4|[a-f0-9]{40})$/.test(step.uses)||!plain(step.with)||
-        Object.keys(step.with).some(k=>!['ref','persist-credentials','fetch-depth'].includes(k))||
+  const commands={},kind=d.primary==='host-principal-probe'?'host':'guest';
+  if(job.steps.length!==4)bad('four concrete qualification steps');
+  for(const [index,step] of job.steps.entries()) {
+    if(!plain(step))bad('concrete step');
+    if(index===0) {
+      if(!keys(step,['uses','with'])||step.uses!==CHECKOUT||!keys(step.with,['ref','persist-credentials','fetch-depth'])||
         step.with.ref!=="${{ github.event.pull_request.head.sha }}"||step.with['persist-credentials']!==false||
-        step.with['fetch-depth']!==undefined&&step.with['fetch-depth']!==1)bad('exact PR checkout');
-      checkouts.push(step);continue;
+        step.with['fetch-depth']!==1)bad('exact PR checkout');
+      continue;
     }
+    if(index===1) {
+      if(!keys(step,['name','uses'])||step.name!=='Configure job temporary storage'||
+        step.uses!=='./.github/actions/ci-temporary-storage')bad('canonical temporary storage');
+      continue;
+    }
+    if(index===2) {
+      if(!keys(step,['uses','with'])||step.uses!==SETUP_NODE||!keys(step.with,['node-version'])||
+        step.with['node-version']!=='24.19.0')bad('pinned Node setup');
+      continue;
+    }
+    if(!keys(step,['name','run'])||step.run!==`node scripts/ci/self-hosted/run-publisher-qualification-case.mjs --kind ${kind}`)
+      bad('fixed public qualification case');
     const name=step.name??('Run '+String(step.run).split('\n')[0]);
     if(typeof step.run!=='string'||!step.run.trim()||typeof name!=='string'||!name||name.includes('${{'))bad('primary command');
     (commands[name]??=[]).push(hash(step.run.replace(/\r\n/g,'\n').trimEnd()));
   }
-  if(checkouts.length!==1||!Object.keys(commands).length)bad('checkout and executed qualification command required');
+  if(!Object.keys(commands).length)bad('executed qualification command required');
   return {registration_status:'registered',purpose:PUBLISHER_PR_QUALIFICATION_PURPOSE,
     proof_classification:'qualification_only',operation,workflow_blob:workflowBlob(text),source_sha256:hash(text),
     source_yaml:text,workflow_definition:value,primary_ids:[d.primary],gated:true,

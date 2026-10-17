@@ -71,10 +71,16 @@ no environment or stored Secrets, and a checkout of the exact same-repository
 Owner PR head without persisted credentials. Its only trigger is a PR into main,
 with paths limited to the named qualification sources. Production stays dispatch-only.
 
-Its fixed catalogue starts empty. Full workflow bytes and independently reviewed
-roles must become trusted protected default-branch data before a consumer PR can
-install them. A candidate cannot enroll itself. This does not reuse the seven
-handover registrations or change the PR profile/role raw hashes or capacity.
+The catalogue binds the full Host and Guest bytes from
+`229d8fb84df17feca9568d7821e7e62e907b1b86`, including every job's complete Role.
+Registration requires the four normal PR event types, the exact finite affected
+path filters, the same-repository base and head plus Owner author and actors,
+and the canonical job temporary-storage action. Node setup and checkout use the
+reviewed full action SHAs; the only command invokes the fixed public case CLI.
+Those Source and Role entries must become trusted protected default-branch data
+before a consumer PR can install them. A candidate cannot enroll itself. This
+does not reuse the seven handover registrations or change PR profile/role raw
+hashes or capacity. Source registration is not actual Host/Guest qualification.
 
 Both complete catalogue consumers authenticate these sources, but classify them
 as `qualification_only`. Existing required application CI remains required and
