@@ -381,8 +381,10 @@ export async function createStorageCloudRecovery(config: {
     const d = config.verified?.descriptor;
     if (!registration || !d || !object(d.mutation) || !object(d.attempt) || !uuid.test(String(d.intent_id)) ||
         d.connection_id !== reference?.connection_id || d.job_id !== reference?.job_id ||
-        d.mutation.target_kind !== "directory" || !["delete", "restore"].includes(String(d.mutation.operation)) ||
-        d.attempt.contract !== "clued.storage-destructive-attempt/1" ||
+        !((d.mutation.target_kind === "directory" && ["delete", "restore"].includes(String(d.mutation.operation)) &&
+            d.attempt.contract === "clued.storage-destructive-attempt/1") ||
+          (["file", "directory"].includes(String(d.mutation.target_kind)) && d.mutation.operation === "create" &&
+            d.attempt.contract === "clued.resource-center-provider-attempt/1")) ||
         !["inspection_required", "attention_required", "credential_expiring"].includes(String(result.status))) return result;
     try { return await registration.run(reference, String(d.intent_id)); }
     catch (error) {

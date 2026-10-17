@@ -526,3 +526,27 @@ Owner 原生恢复接口与后台调度均接入相同的只读缺失探测和�
 
 本节未交付 legacy create-after 的 SQL adopt、trashed/非空目录当前登记、目录移动或非 job I12 的真实 executor 终止、逐路径效果与同步队列完整出口。create observer 的双私有标签/内容身份检查只是基础，不能当这些出口已实现。e91 整体仍须逐项交付验收，暂停的新域、旧域退役、G 后备和独立 backlog 不因本增量恢复。
 
+## 24. 旧创建的独立当前登记（e91 源码候选）
+
+程序先保留既有完整 typed proof 的正常结算机会。旧任务不能按原证明完成时，可以尝试新的当前登记资格；这不是对旧创建的授权或成功补签。原 journal 的 conflict、未 verified、原 snapshot（包括 null）、原请求、attempt 与原 Receipt 保留。程序不重新发送创建、覆盖或移动请求，也不新增用户确认步骤。
+
+### 24.1 原任务与新权限分别核对
+
+本出口仅针对固定原生成 Drive ID 的 cloud create、完整 I9 隔离和已过 132 分钟窗口的文件或空目录。服务端重新推导完整原 attempt，核对原 request、binding、内容身份、provider-attempt Receipt 的 canonical request hash、received hash、Event、I9 关闭版本与原定位。不能用目前的 policy、可变 grant 或调用者的布尔参数填回历史授权。
+
+新登记使用当前真实 issuer generation、当前同 Owner/subject/client/root 的合法 reader、封存的 full scope、modify 与对应 create_file/create_topic 类别、runtime qualification 和当前 Decision。创建总开关 create_enabled/allow_base_create 单独检查；write_enabled 不能替代它。真实 clock 在等待之后重新检查。失效、撤销、换账号或策略变化时不登记。
+
+目标是当前未被登记、处于 active 的固定对象；同 ID 在任何登记状态已存在时拒绝，不能借自动恢复重新接管撤销的对象。直接父目录须为已登记 ordinary 目录，目标不能为 root 或 track。两轮 GET 同时核对完整连续父链、名称槽唯一性、私有完整 ACL、稳定目标版本、两项私有 intent/request 标签，以及 MIME、大小和 SHA256；目录还须证明为空。原始读取前开始的整个观察与提交窗口不超过 30 秒。
+
+### 24.2 原子登记与原历史分离
+
+缺少 ACL 的现有父链仍经精确 metadata-only UPDATE permit 和原依赖保护核对；已有 typed proof 或在途操作依赖该祖先时退避。新目标通过普通 Artifact INSERT 护栏，不增加通用插入旁路。仅本 intent 在本事务 pending 独立 Receipt 下取得 I11 出口许可；其他对象、名称槽、子树和未知范围保护继续有效。
+
+新对象固定为 ordinary、delete_authority=false。目录按现有模型保存目录权限摘要；文件的目录专属摘要列继续为 null，完整本次 ACL 证据保存在观察与回执中，不放宽数据库约束。新目标没有伪造的 before row：它在 Event 中有真实 created_target_id 和 after row，在回执中明确以新 Canonical ID 的 base 0、committed 1 与 target ref 关联；已存在父行仍保留自己的真实 before/after 和版本。
+
+新对象、父链资格、Event、独立 Receipt、结果表和本任务隔离出口同事务提交。失败全部回滚；两个真实数据库会话只能提交一个新对象和一个恢复结果。丢失响应只查询原 job/intent 和已提交结果，不重派 Drive 效果。对外结果仍为 automatically_registered_current_state，不能显示原 create committed。
+
+### 24.3 交付与验收边界
+
+本节为源码候选，须经真实 PostgreSQL 路由与 Worker 测试、独立源码审核、正常 PR/当前 CI、合并和正式生产发布，再按数据库先于页面的顺序验收。旧 typed 路径仍可正常 committed 的情况，与新当前登记路径分别测试；故障注入的旧证明路由不可用不能冒称真实 null-snapshot 历史链已验证。真实历史入口、现有刷新分支、并发、回执失败回滚与权限反例的覆盖结论分别记录。目录其他状态、目录移动、非 job I12 和暂停范围不因本候选宣告完成。
+

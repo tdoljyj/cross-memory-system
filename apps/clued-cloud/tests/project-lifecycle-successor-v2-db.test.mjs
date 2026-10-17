@@ -29,6 +29,7 @@ const storageRecoveryNativeMigration = '20261017063317_storage_recovery_native_c
 const storageLegacyDirectoryMigration = '20261017074657_storage_legacy_directory_recovery_v1.sql';
 const storageCurrentRegistrationMigration = '20261017102500_storage_registration_reconcile_v1.sql';
 const imprintBulkMigration = '20261017121706_imprint_bulk_backfill_v1.sql';
+const storageLegacyCreateMigration = '20261017131000_storage_legacy_create_adoption_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -88,7 +89,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -671,6 +672,23 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
           not exists(select 1 from pg_attribute a where a.attrelid=c.oid and a.attnum>0 and a.attacl is not null) no_column_grants,
           not exists(select 1 from pg_policy p where p.polrelid=c.oid) no_policies from pg_class c where c.oid=$1::regclass`, ['clued_private.' + table])).rows[0];
         assert.deepEqual(catalog, { owner: 'postgres', relrowsecurity: true, owner_only: true, no_column_grants: true, no_policies: true });
+      }
+    });
+    await t.test('legacy create registration follows its actual deferred registry dependencies without widening callers', async () => {
+      const before = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', storageLegacyCreateMigration), 'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), before);
+      await assertGatewayCloseoutBoundary(admin);
+      const names = ['storage_legacy_create_registration_authority_v1', 'storage_legacy_create_registration_plan_v1',
+        'storage_legacy_create_registration_observation_v1', 'storage_legacy_create_registration_v1', 'storage_registration_before_create_v1'];
+      const helpers = (await admin.query(`select proname,oid::regprocedure::text signature,
+        pg_get_userbyid(proowner) owner,prosecdef,proconfig from pg_proc
+        where pronamespace='clued_private'::regnamespace and proname=any($1::text[]) order by proname`, [names])).rows;
+      assert.deepEqual(helpers.map(row => row.proname), [...names].sort());
+      for (const helper of helpers) {
+        assert.equal(helper.owner, 'postgres');assert.equal(helper.prosecdef, true);assert.deepEqual(helper.proconfig, ['search_path=""']);
+        for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false);
       }
     });
   } finally {

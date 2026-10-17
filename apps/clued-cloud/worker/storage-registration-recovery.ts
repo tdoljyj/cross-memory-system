@@ -58,8 +58,10 @@ export async function createStorageCurrentRegistrationRecovery(config: {
           typeof actor.provider_subject !== "string" || !/^[A-Za-z0-9_-]{1,255}$/.test(actor.provider_subject) ||
           !object(reader) || reader.contract !== "clued.storage-recovery-reader/1" || !uuid.test(String(reader.connection_id)) ||
           actor.connection_id !== reader.connection_id || actor.credential_version !== d.credential_version || reader.credential_version !== d.credential_version ||
-          !object(plan) || plan.contract !== "clued.storage-registration-plan/1" || plan.mode !== "refresh_directory" || plan.intent_id !== intentId ||
+          !object(plan) || plan.contract !== "clued.storage-registration-plan/1" || !["refresh_directory", "adopt_create"].includes(String(plan.mode)) || plan.intent_id !== intentId ||
           actor.root_folder_id !== plan.root_folder_id || actor.root_parent_id !== plan.root_parent_id || actor.managed_root !== plan.managed_root) throw denied();
+      if (plan.mode === "adopt_create" && (!object(plan.target) || !["file", "directory"].includes(String(plan.target.target_kind)) ||
+          !actor.actions.includes(plan.target.target_kind === "directory" ? "create_topic" : "create_file"))) throw denied();
       const secret: unknown = JSON.parse(await bounded(vault.open(d.credential_envelope as StorageCredentialEnvelope, {
         owner_id: String(d.owner_id), connection_id: String(reader.connection_id), provider: "google-drive", provider_subject: actor.provider_subject,
         oauth_client_id: config.client_id, credential_version: Number(d.credential_version),
