@@ -6,6 +6,7 @@ import { createGoogleDriveCreatePostconditionVerifier } from "../../../kernel/ho
 import { createStorageFetch } from "./storage-fetch";
 import { createStorageGoogleMetadataBatch } from "./storage-google-metadata-batch";
 import { scopeProfile } from "./storage-google-scopes";
+import { createRegistrationRecoveryRpc } from "./registration-recovery";
 
 type Data = Record<string, unknown>;
 type Reference = {connection_id: string; job_id: string};
@@ -31,6 +32,7 @@ export async function createStorageCloudWorker(config: {
   return Object.freeze({ async run(reference: Reference) {
     let loaded: Data | null = null;
     let recoveryMode=false, refreshed=false;
+    let registrationRecovery: Data | null = null;
     // Each rejection below carries a fixed label so post-write diagnostics can name
     // the credential step. Outcomes are unchanged: every branch still fails closed.
     const reject = (code: string) => new Error(code);
@@ -62,6 +64,23 @@ export async function createStorageCloudWorker(config: {
       }
       return {...expected,access_token:token.access_token,scope:token.scope,expires_at_ms:token.expires_at_ms};
     };
+    const executionRpc = config.account_policy_v2 === true ? createRegistrationRecoveryRpc({
+      rpc: config.rpc, descriptor: () => loaded, clock: config.clock,
+      on_recovery: result => { registrationRecovery = result; },
+      get_file: async id => {
+        if (!loaded) throw denied();
+        const descriptor = loaded;
+        const metadata = createGoogleDriveMetadataApi({
+          get_credential: () => credential({owner_id:String(descriptor.owner_id),connection_id:String(descriptor.connection_id),
+            provider_subject:String(descriptor.provider_subject),credential_version:Number(descriptor.credential_version)}),
+          fetch: async (url, init) => {
+            if (init?.method !== "GET") throw denied();
+            return fetcher(url, init);
+          },
+        });
+        return await metadata.getFile(id);
+      },
+    }) : config.rpc;
     const executor = createResourceCenterCloudExecutor({
       clock: config.clock ?? Date.now, drive_fetch: fetcher,
       // The boundary scan reads a whole folder level per request, so one run
@@ -69,6 +88,7 @@ export async function createStorageCloudWorker(config: {
       metadata_batch: ({ access_token }: { access_token: string }) =>
         createStorageGoogleMetadataBatch({ access_token, fetch: config.fetch, signal: AbortSignal.timeout(60000) }),
       verified_result_mode: config.account_policy_v2 === true,
+      ...(config.account_policy_v2 === true ? { semantic_recovery_client_id: config.client_id } : {}),
       ...(config.load_staged_content ? { load_staged_content: config.load_staged_content } : {}),
       load_job: async (ref: Reference) => {
         if (config.credential_preflight && (await config.credential_preflight(ref)).status !== "ready")
@@ -78,9 +98,18 @@ export async function createStorageCloudWorker(config: {
         let result: Data;
         try { result = await config.rpc({...ref, action:"load"}); }
         catch (error) {
-          throw reject(error instanceof Error && error.message === "storage_root_has_unresolved_mutation"
+          throw reject(error instanceof Error && error.message === "storage_object_under_review" ? "STORAGE_OBJECT_UNDER_REVIEW"
+            : error instanceof Error && error.message === "storage_root_has_unresolved_mutation"
             ? "STORAGE_ROOT_BUSY" : "STORAGE_JOB_LOAD_REFUSED");
         }
+        // The database can settle an already queued overlap before issuing a
+        // writer. Preserve that terminal cause without reporting a second result.
+        if (result.contract === "clued.storage-job-execution/1" && result.status === "denied" &&
+            result.reason_code === "STORAGE_OBJECT_UNDER_REVIEW" && result.execution_permitted === false &&
+            result.connection_id === ref.connection_id && result.job_id === ref.job_id && result.intent_id === null &&
+            typeof result.receipt_id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(result.receipt_id) &&
+            typeof result.request_digest === "string" && /^[0-9a-f]{64}$/.test(result.request_digest))
+          throw reject("STORAGE_OBJECT_UNDER_REVIEW");
         if (result.status === "queued" && result.oauth_client_id !== config.client_id) throw denied();
         loaded = result;
         const descriptor = {...result}; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
@@ -90,9 +119,14 @@ export async function createStorageCloudWorker(config: {
       rpc: async (input: Data) => {
         if (!loaded || input.connection_id !== loaded.connection_id || input.job_id !== loaded.job_id) throw denied();
         const {connection_id, job_id, action, ...body} = input;
-        return config.rpc({connection_id, job_id, action,
-          ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
-          ...(action==="finalize" ? {finish:{action,...body}} : body)});
+        try {
+          return await executionRpc({connection_id, job_id, action,
+            ...(action==="settle_verified" ? {} : {credential_version:loaded.credential_version}),
+            ...(action==="finalize" ? {finish:{action,...body}} : body)});
+        } catch (error) {
+          if (error instanceof Error && error.message === "storage_object_under_review") throw reject("STORAGE_OBJECT_UNDER_REVIEW");
+          throw error;
+        }
       },
     });
     try {
@@ -150,6 +184,13 @@ export async function createStorageCloudWorker(config: {
         } catch { return {status:"inspection_required",execution_permitted:false}; }
       }
       const result=await executor.run(reference);
+      if (registrationRecovery) {
+        // Only the qualified, pre-intent registration helper sets this value.
+        // Its sidecar/lease is durable; an RPC outage leaves the original job
+        // queued for the existing bounded sweep. Never report this as denied.
+        return {status: "registration_recovery", job_id: reference.job_id,
+          registration_recovery: registrationRecovery, execution_permitted: false};
+      }
       if (loaded && ["deny","unavailable","unreconciled"].includes(result.status)) {
         // Account-policy mode stores the fixed reason (and, for a boundary denial, the
         // scan's finding paths) in the Owner's private job row. It is never logged. A

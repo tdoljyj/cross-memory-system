@@ -93,3 +93,83 @@ test('relation wrapper must bind exact real catalog reference and original ident
   const f=fixture(),row=f.objects[1];row.identity='pg_toast.pg_toast_500_suffix';assert.throws(()=>normalized(f),/RELATION_REFERENCE_IDENTITY_MISMATCH/);
   const g=fixture();g.objects[1].detail=JSON.stringify({relation:'99999',original_detail:'t:'});assert.throws(()=>normalized(g),/UNRESOLVED_CATALOG_REFERENCE/);
 });
+
+// Actual f43 public first-failure envelope, not an invented OID/name.
+// Pure regression checks the producer's TEXT anchor and strict normalizer.
+// A future authorized full readonly capture must verify native TEXT/complete identities.
+import {CATALOG_OBJECTS_SQL} from './clued-handover-external-catalog.mjs';
+const capturedLongIdentity={"schema":"clued.source-normalization-replay-input/1","authority":"none","metadata_only":true,"object":{"kind":"relation","identity":"realtime.subscription_subscription_id_entity_filters_action_fil","owner":"supabase_realtime_admin","detail":"{\"relation\": \"17581\", \"original_detail\": \"i:\"}"},"default_tablespace":"\"pg_default\"","maps":{"relations":[["17581","\"realtime\".\"subscription_subscription_id_entity_filters_action_filter_selec\""]],"physicalRelations":[["17581",{"oid":"17581","schema":"realtime","name":"subscription_subscription_id_entity_filters_action_filter_selec","kind":"i","toast_parent_oid":null,"index_table_oid":"17561"}]],"toastTables":[],"toastIndexes":[],"types":[],"roles":[],"tablespaces":[],"opclasses":[],"collations":[],"functions":[],"operators":[]}};
+test('captured long catalog identity requires a TEXT producer column; truncated and wrong identities still refuse',()=>{
+  const envelope=capturedLongIdentity;
+  const maps=Object.fromEntries(Object.entries(envelope.maps).map(([key,entries])=>[key,new Map(entries)]));
+  maps.defaultTablespace=envelope.default_tablespace;
+  const captured=envelope.object,physical=maps.physicalRelations.get(JSON.parse(captured.detail).relation);
+  const full=physical.schema+'.'+physical.name;
+  assert.equal(Buffer.byteLength(captured.identity,'utf8'),63);
+  assert.equal(Buffer.byteLength(full,'utf8'),72);
+  assert.equal(captured.identity,Buffer.from(full,'utf8').subarray(0,63).toString('utf8'));
+  assert.throws(()=>normalizeCatalogObjects([structuredClone(captured)],maps),/RELATION_REFERENCE_IDENTITY_MISMATCH/);
+  // The exact first UNION branch forces the output column to TEXT before parsing;
+  // do not cast the already truncated outer result or weaken the normalizer.
+  assert.ok(CATALOG_OBJECTS_SQL.startsWith("select 'namespace' kind,n.nspname::text identity,"));
+  const complete={...captured,identity:full};
+  assert.deepEqual(normalizeCatalogObjects([complete],maps),[{...complete,detail:'i:'}]);
+  assert.throws(()=>normalizeCatalogObjects([{...complete,identity:full+'_wrong'}],maps),/RELATION_REFERENCE_IDENTITY_MISMATCH/);
+});
+
+// Offline native-query replies only: actual F46 metadata supplies state/tags
+// and real function references. No database connection or hook body execution.
+import {localCatalog,verifyEmptyCluster,assertSemanticCatalogColumns,SEMANTIC_CATALOG_COLUMNS} from './clued-handover-external-catalog.mjs';
+// Exact metadata-only slice of F46 f21fd4f7; inline so repository CI needs no local artifact.
+const actualHooks=[{"evtname":"issue_graphql_placeholder","evtevent":"sql_drop","event_owner":"supabase_admin","function_oid":"16570","function_identity":"extensions.set_graphql_placeholder()","function_reference":"\"extensions\".\"set_graphql_placeholder\"()","evtenabled":"O","evttags":["DROP EXTENSION"]},{"evtname":"pgrst_ddl_watch","evtevent":"ddl_command_end","event_owner":"supabase_admin","function_oid":"16559","function_identity":"extensions.pgrst_ddl_watch()","function_reference":"\"extensions\".\"pgrst_ddl_watch\"()","evtenabled":"O","evttags":null},{"evtname":"pgrst_drop_watch","evtevent":"sql_drop","event_owner":"supabase_admin","function_oid":"16560","function_identity":"extensions.pgrst_drop_watch()","function_reference":"\"extensions\".\"pgrst_drop_watch\"()","evtenabled":"O","evttags":null},{"evtname":"issue_pg_cron_access","evtevent":"ddl_command_end","event_owner":"supabase_admin","function_oid":"16547","function_identity":"extensions.grant_pg_cron_access()","function_reference":"\"extensions\".\"grant_pg_cron_access\"()","evtenabled":"O","evttags":["CREATE EXTENSION"]},{"evtname":"issue_pg_net_access","evtevent":"ddl_command_end","event_owner":"supabase_admin","function_oid":"16549","function_identity":"extensions.grant_pg_net_access()","function_reference":"\"extensions\".\"grant_pg_net_access\"()","evtenabled":"O","evttags":["CREATE EXTENSION"]},{"evtname":"issue_pg_graphql_access","evtevent":"ddl_command_end","event_owner":"supabase_admin","function_oid":"16568","function_identity":"extensions.grant_pg_graphql_access()","function_reference":"\"extensions\".\"grant_pg_graphql_access\"()","evtenabled":"O","evttags":["CREATE EXTENSION"]}];
+function eventCatalogClient(database='postgres',{change,shift=0,unknownReference=false}={}){
+  const hooks=database==='postgres'?structuredClone(actualHooks):[],calls=[];
+  if(change)Object.assign(hooks.find(h=>h.evtname==='pgrst_ddl_watch'),change);
+  return {calls,async end(){},async query(sql){
+    calls.push(sql);
+    if(sql==="select current_setting('search_path') v")return {rows:[{v:'pg_catalog'}]};
+    if(sql.startsWith('select set_config('))return {rows:[]};
+    if(sql.startsWith('select c.relname catalog,a.attname'))return {rows:Object.entries(SEMANTIC_CATALOG_COLUMNS).flatMap(([catalog,columns])=>columns.map(column=>({catalog,column})))};
+    if(sql.startsWith('select current_setting(\'server_version_num\')'))return {rows:[{v:'170011'}]};
+    if(sql.startsWith('select p.oid::text oid,n.nspname schema,p.proname name'))return {rows:hooks.map(h=>({oid:String(BigInt(h.function_oid)+BigInt(shift)),schema:'extensions',name:/^extensions\.([a-z_]+)\(\)$/.exec(h.function_identity)[1],arguments:[]}))};
+    if(sql.startsWith('select oid::text oid,spcname name'))return {rows:[{oid:'1663',name:'pg_default'}]};
+    if(sql.startsWith('select dattablespace::text oid'))return {rows:[{oid:'1663'}]};
+    if(sql.startsWith('select d.datname,'))return {rows:[{datname:'postgres',datallowconn:true},{datname:'template1',datallowconn:true},{datname:'template0',datallowconn:false}]};
+    if(sql.startsWith('select evtname,evtevent,')){
+      const fields=sql.slice(7,sql.indexOf(' from pg_event_trigger')).split(',');
+      return {rows:hooks.map(h=>({evtname:h.evtname,evtevent:h.evtevent,owner:h.event_owner,
+        function:unknownReference?'99999999':String(BigInt(h.function_oid)+BigInt(shift)),
+        ...Object.fromEntries(['evtenabled','evttags'].filter(field=>fields.includes(field)).map(field=>[field,h[field]]))}))};
+    }
+    return {rows:[]};
+  }};
+}
+async function expectedEventCatalog(){
+  const postgres=await localCatalog(eventCatalogClient()),template=await localCatalog(eventCatalogClient('template1'));
+  const global=['roles','databases','tablespaces'];
+  return {schema:'clued.disposable-cluster-catalog/1',server_version_num:'170011',
+    shared:Object.fromEntries(global.map(key=>[key,postgres.shared[key]])),nonconnectable_databases:['template0'],
+    databases:{postgres:postgres.objects,template1:template.objects},table_counts_by_database:{postgres:[],template1:[]},
+    auxiliary_by_database:Object.fromEntries([['postgres',postgres],['template1',template]].map(([db,value])=>[db,Object.fromEntries(Object.entries(value.shared).filter(([key])=>!global.includes(key)))]))};
+}
+test('event trigger actual enable/tag drift rejects full exact auxiliary comparison, including unrestricted-null versus empty tags',async()=>{
+  const expected=await expectedEventCatalog(),rows=expected.auxiliary_by_database.postgres.event_triggers;
+  assert.deepEqual(rows.map(row=>({name:row.evtname,enabled:row.evtenabled,tags:row.evttags})),actualHooks.map(h=>({name:h.evtname,enabled:h.evtenabled,tags:h.evttags})));
+  const verify=options=>verifyEmptyCluster({admin:eventCatalogClient('postgres',options),connectDatabase:async db=>eventCatalogClient(db),expected,targetDatabase:'postgres'});
+  assert.equal((await verify()).status,'EXACT_EMPTY_CLUSTER_CATALOG');
+  for(const change of [{evtenabled:'D'},{evtenabled:'R'},{evttags:['CREATE EXTENSION']},{evttags:[]}])await assert.rejects(verify({change}),/CATALOG_AUX_postgres_event_triggers/);
+});
+test('event trigger real function references remain stable across physical OID changes and unknown references still reject',async()=>{
+  const first=await localCatalog(eventCatalogClient()),other=await localCatalog(eventCatalogClient('postgres',{shift:500000}));
+  assert.deepEqual(other.shared.event_triggers,first.shared.event_triggers);
+  assert.deepEqual(first.shared.event_triggers.map(row=>row.function),actualHooks.map(h=>h.function_reference));
+  await assert.rejects(localCatalog(eventCatalogClient('postgres',{unknownReference:true})),/UNRESOLVED_CATALOG_REFERENCE/);
+});
+test('event trigger PG17 semantic seven-column contract refuses missing or future extra columns before source normalization',()=>{
+  const official=['oid','evtname','evtevent','evtowner','evtfoid','evtenabled','evttags'];
+  assert.deepEqual(SEMANTIC_CATALOG_COLUMNS.pg_event_trigger,official);
+  const known=Object.entries(SEMANTIC_CATALOG_COLUMNS).flatMap(([catalog,columns])=>columns.map(column=>({catalog,column})));
+  assert.doesNotThrow(()=>assertSemanticCatalogColumns(known));
+  assert.throws(()=>assertSemanticCatalogColumns(known.filter(row=>!(row.catalog==='pg_event_trigger'&&row.column==='evttags'))),/UNSUPPORTED_SEMANTIC_CATALOG_COLUMNS/);
+  assert.throws(()=>assertSemanticCatalogColumns([...known,{catalog:'pg_event_trigger',column:'unknown_future_state'}]),/UNSUPPORTED_SEMANTIC_CATALOG_COLUMNS/);
+});

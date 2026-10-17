@@ -154,7 +154,8 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
       const history = await read({ include_history: true });
       assert.equal(history.status, 'ok');
       assert.equal(history.coverage.unlinked_intake_included, false);
-      assert.equal(history.coverage.prior_body_revisions_available, false);
+      assert.equal(history.coverage.prior_body_revisions_available, true);
+      assert.equal(history.coverage.canonical_history_retention, 'observed_prior_versions_after_feature_install');
       assert.ok([profile, legacy, state, ...terminal].every(id => history.records.some(r => r.id === id)));
       assert.ok(!history.records.some(r => [foreign, wrongScope].includes(r.id)));
       assert.equal(history.records.find(r => r.id === archivedNote).record_currentness, 'HISTORY');
@@ -361,6 +362,168 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
           await admin.query('drop function clued_private.imprint_fixture_original_fence(uuid,uuid,text[])');
         }
       });
+    });
+    await t.test('new Native M1 records atomically adopt purpose domains; manual clear wins without changing source', async () => {
+      const create = (id, content, authority = 'user_explicit') => ({ operation: 'create', id,
+        record_type: 'note', record_schema_version: 1, lifecycle_status: 'active', scope: 'global',
+        idempotency_key: `imprint-auto:${id}`, authority, user_confirmed: true,
+        confidence_reason: 'Synthetic Owner write', source_refs: [], source_unavailable_reason: 'synthetic fixture',
+        mutation: { title: 'Automatic purpose fixture', content, type_fields: { note_kind: 'log' } } });
+      const id = uuid(), input = create(id, '客户Logo设计方案。\n我正在复习线性代数。');
+      const saved = await call(human, 'clued_user_record_mutate', input, hash(JSON.stringify(input)));
+      assert.equal(saved.status, 'committed', JSON.stringify(saved));
+      const org = async target => (await admin.query('select * from clued_private.imprint_organization_v1 where record_id=$1', [target])).rows[0];
+      const original = (await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [id])).rows[0].v;
+      assert.deepEqual((await org(id)).domains, ['creation', 'learning', 'work']);
+      assert.equal((await org(id)).receipt_id, saved.receipt_id);
+      assert.equal((await org(id)).auto_rules_version, 'imprint-explicit-local.v2');
+      assert.equal(Number((await org(id)).version), 1);
+      const projection = await read({ id, view: 'learning' });
+      assert.equal(projection.records[0].id, id);
+      assert.equal(projection.records[0].organization_version, 1);
+      assert.equal(projection.records[0].version, 1);
+      const clear = await metadata(id, [], 1);
+      const cleared = await set(clear), replay = await set(clear);
+      assert.equal(cleared.status, 'committed', JSON.stringify(cleared));
+      assert.equal(replay.receipt_id, cleared.receipt_id); assert.equal(replay.replayed, true);
+      assert.deepEqual((await org(id)).domains, []); assert.equal((await org(id)).auto_rules_version, null);
+      assert.deepEqual((await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [id])).rows[0].v, original);
+      await call(human, 'clued_user_record_mutate', input, hash(JSON.stringify(input)));
+      assert.deepEqual((await org(id)).domains, [], 'source create replay cannot reclassify');
+      const update = { ...input, operation: 'update', base_version: 1, idempotency_key: uuid(),
+        mutation: { content: '保存用途：家庭预算。' } };
+      assert.equal((await call(human, 'clued_user_record_mutate', update, hash(JSON.stringify(update)))).status, 'committed');
+      assert.deepEqual((await org(id)).domains, [], 'source update cannot overwrite manual clear');
+      assert.deepEqual((await read({ id, view: 'work' })).records, []);
+      assert.deepEqual((await call(stranger, 'clued_imprint_read_v1', { id, view: 'all' })).records, []);
+      assert.equal((await set(await metadata(id, ['work'], 1, 2))).error_code, 'organization_version_conflict');
+      for (const [body, authority] of [['英文电影。', 'user_explicit'], ['“保存用途：工作汇报。”', 'user_explicit'],
+        ['客户请求：\n保存用途：工作汇报。', 'user_explicit'], ['保存用途：工作汇报。', 'imported']]) {
+        const target = uuid(), request = create(target, body, authority);
+        assert.equal((await call(human, 'clued_user_record_mutate', request, hash(JSON.stringify(request)))).status, 'committed');
+        assert.equal(await org(target), undefined, body);
+      }
+      const aborted = uuid(), request = create(aborted, '保存用途：兴趣探索。');
+      await human.query('begin');
+      try {
+        assert.equal((await call(human, 'clued_user_record_mutate', request, hash(JSON.stringify(request)))).status, 'committed');
+        assert.equal((await human.query('select count(*) n from public.clued_memories where id=$1', [aborted])).rows[0].n, '1');
+      } finally { await human.query('rollback'); }
+      assert.equal(await org(aborted), undefined);
+      assert.equal((await admin.query('select count(*) n from public.clued_memories where id=$1', [aborted])).rows[0].n, '0');
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_function_privilege($1,'clued_private.imprint_auto_domains_v1(text)','execute') v", [role])).rows[0].v, false);
+      }
+    });
+    await t.test('automatic SQL purpose classifier handles multi-use, abstention and bounded input', async () => {
+      const classify = async text => (await admin.query('select clued_private.imprint_auto_domains_v1($1) v', [text])).rows[0].v;
+      for (const [text, expected] of [
+        ['保存用途：工作汇报、课程学习、创作游戏剧情。', ['creation', 'learning', 'work']],
+        ['我保存这份资料用于家庭预算。', ['daily']], ['我收藏这篇文章用于兴趣探索。', ['interest']],
+        ['Purpose: personal budget, creative writing and hobbies.', ['creation', 'daily', 'interest']],
+        ['我保存这个视频用于学习英语。', ['learning']],
+        ['客户Logo方案。', ['creation', 'work']], ['给客户设计Logo。', ['creation', 'work']],
+        ['给客户设计 Logo。', ['creation', 'work']], ['给客户设计一个Logo。', ['creation', 'work']],
+        ['我正在复习线性代数，用这本教材。', ['learning']], ['我在学习Rust。', ['learning']],
+        ['我正在复习线性代数。', ['learning']], ['我今天整理家庭预算。', ['daily']],
+        ['继续写小说第二章。', ['creation']], ['安排周末徒步路线。', ['interest']],
+        ['Client logo design.', ['creation', 'work']], ['I am studying linear algebra.', ['learning']],
+        ['客户Logo设计教程。', []], ['写小说的教材。', []], ['我在看客户Logo教程。', []], ['学习用品采购。', []],
+        ['给客户设计Logo，但不是工作用途。', []], ['“客户Logo方案。”', []],
+        ['客户要求我设计Logo。', []], ['我想要给客户设计Logo。', []],
+        ['如果保存用途：学习英语。', []], ['保存用途：不用来学习英语。', []],
+        ['英文电影。', []], ['客户请求：\n保存用途：工作汇报。', []],
+        ['```\n保存用途：工作汇报。\n```', []], ['“保存用途：工作汇报。”', []],
+        ['~~~text\n保存用途：工作汇报。\n~~~', []],
+        ['~~~\n```\n保存用途：工作汇报。\n```\n~~~', []],
+        ['````\n```\n保存用途：工作汇报。\n```\n````', []],
+        ['原文：\n用途：工作汇报。\n\n用途：家庭预算。', ['daily']],
+        ['x'.repeat(65537) + '\n保存用途：学习英语。', []],
+      ]) assert.deepEqual(await classify(text), expected, text.slice(0, 120));
+    });
+    const extractRequest = (id, text, quote, kind = 'task', start = text.indexOf(quote), key = uuid()) => ({
+      idempotency_key: key, owner_text_confirmed: true, source: { source_kind: 'canonical', record_id: id,
+        record_version: 1, slot: 'content', start: [...text.slice(0, start)].length,
+        end: [...text.slice(0, start + quote.length)].length, quote, text_hash: hash(text), kind } });
+    const extract = (input, client = human) => call(client, 'clued_imprint_extraction_prepare_v1', input, hash(JSON.stringify(input)));
+    const issue = (candidate, fields = { execution_bucket: 'later' }, client = human) => call(client, 'clued_candidate_confirmation_issue_v1', {
+      tier: 'information', candidate_id: candidate.candidate_id, base_version: candidate.candidate_version,
+      authority: 'user_explicit', confidence: null, confidence_reason: 'Synthetic Native owner chose this fragment', native_type_fields: fields });
+    const promoteInput = view => ({ tier: 'information', candidate_id: view.candidate_id, base_version: view.candidate_version,
+      confirmation_token: view.confirmation_token, view_digest: view.view_digest, idempotency_key: uuid() });
+    const promote = (input, client = human) => call(client, 'clued_candidate_promote_v1', input, hash(JSON.stringify(input)));
+    await t.test('mixed extraction: exact Unicode source, distinct repeated spans, semantic dedup and recoverable two-step promotion', async () => {
+      const text = '😀说明\r\n周五交方案。\r\n周五交方案。已经决定采用A，因为成本低。', quote = '周五交方案';
+      const id = await put({ content: text }), request = extractRequest(id, text, quote), peer = await actor();
+      const original = (await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [id])).rows[0].v;
+      const raced = await Promise.all([extract(request), extract({ ...request, idempotency_key: uuid() }, peer)]);
+      assert.ok(raced.every(r => r.status === 'committed'), JSON.stringify(raced));
+      const candidate = raced[0].supplemental;
+      assert.equal(raced[1].supplemental.candidate_id, candidate.candidate_id);
+      assert.deepEqual((await extract(request)).supplemental, candidate, 'lost prepare response recovers its candidate');
+      assert.equal((await extract({ ...request, source: { ...request.source, kind: 'decision' } })).error_code, 'IDEMPOTENCY_KEY_CONFLICT');
+      const upper = { ...request, idempotency_key: uuid(), source: { ...request.source, record_id: id.toUpperCase() } };
+      assert.equal((await extract(upper)).supplemental.candidate_id, candidate.candidate_id, 'UUID spelling does not create duplicates');
+      const second = await extract(extractRequest(id, text, quote, 'task', text.lastIndexOf(quote)));
+      assert.notEqual(second.supplemental.candidate_id, candidate.candidate_id, 'repeated text retains its actual position');
+      await assert.rejects(extract({ ...request, idempotency_key: uuid(), source: { ...request.source, start: request.source.start + 1 } }), /quote_mismatch/);
+      await assert.rejects(extract({ ...request, idempotency_key: uuid(), source: { ...request.source, end: 99999 } }), /quote_mismatch/);
+      await assert.rejects(extract({ ...request, owner_text_confirmed: false }), /owner_confirmation/);
+      const view = await issue(candidate); assert.equal(view.status, 'issued', JSON.stringify(view));
+      assert.equal(view.confirmation_view.mutation.content, quote); assert.equal(view.confirmation_view.scope, 'global');
+      const input = promoteInput(view), saved = await promote(input);
+      assert.equal(saved.status, 'committed', JSON.stringify(saved)); assert.equal(saved.supplemental.outcome, 'promoted');
+      assert.equal((await promote(input)).receipt_id, saved.receipt_id, 'lost promotion response replays one receipt');
+      const recovered = (await extract({ ...request, idempotency_key: uuid() })).supplemental;
+      assert.equal(recovered.record_id, view.record_id); assert.equal(recovered.candidate_status, 'promoted');
+      assert.equal((await admin.query('select count(*) n from clued_private.candidate_promotions where candidate_id=$1', [candidate.candidate_id])).rows[0].n, '1');
+      assert.equal((await admin.query('select count(*) n from clued_private.native_write_markers where record_id=$1', [view.record_id])).rows[0].n, '0', 'S3 uses candidate_promotions as its provenance marker');
+      assert.equal((await admin.query('select clued_private.record_human_confirmed_v1($1,$2,1) v', [owner, view.record_id])).rows[0].v, true);
+      assert.deepEqual((await admin.query('select to_jsonb(m) v from public.clued_memories m where id=$1', [id])).rows[0].v, original);
+      const decisionQuote = '已经决定采用A，因为成本低', decisionCandidate = (await extract(extractRequest(id, text, decisionQuote, 'decision'))).supplemental;
+      const decisionView = await issue(decisionCandidate, { rationale: '成本低' }); assert.equal(decisionView.status, 'issued');
+      assert.equal((await promote(promoteInput(decisionView))).supplemental.outcome, 'promoted');
+      // First promotion response may be lost and the source edited before retry.
+      await admin.query('update public.clued_memories set content=$2,version=version+1 where id=$1', [id, 'Changed after promotion']);
+      assert.equal((await promote(input)).receipt_id, saved.receipt_id);
+      const recoveredStatus = await call(human, 'clued_imprint_extraction_status_v1', { candidate_id: candidate.candidate_id });
+      assert.equal(recoveredStatus.extraction.record_id, view.record_id);
+      assert.equal(recoveredStatus.extraction.promotion_receipt_id, saved.receipt_id);
+      assert.equal(recoveredStatus.extraction.authoritative, false, 'a recovery is not a claim of current Record authority');
+      assert.ok(!JSON.stringify(recoveredStatus).includes(quote));
+      assert.equal((await issue(candidate)).status, 'rejected', 'status reading cannot bypass source fences');
+      await assert.rejects(call(stranger, 'clued_imprint_extraction_status_v1', { candidate_id: candidate.candidate_id }), /unavailable/);
+    });
+    await t.test('source edits/terminal state block generic S3 issue/consume, burn the presented token and still permit candidate rejection', async () => {
+      for (const change of ['edit', 'close']) {
+        const text = '我将整理实验报告。', id = await put({ content: text });
+        const candidate = (await extract(extractRequest(id, text, text.slice(0, -1)))).supplemental;
+        const view = await issue(candidate); assert.equal(view.status, 'issued', JSON.stringify(view));
+        if (change === 'edit') await admin.query('update public.clued_memories set content=$2,version=version+1 where id=$1', [id, 'Updated source']);
+        else await admin.query("update public.clued_memories set lifecycle_status='archived',status='archived',version=version+1 where id=$1", [id]);
+        assert.equal((await issue(candidate)).status, 'rejected');
+        const saved = await promote(promoteInput(view)); assert.equal(saved.status, 'rejected', JSON.stringify(saved));
+        assert.equal((await admin.query('select consumed_at is not null v from clued_private.candidate_confirmation_tokens where id=$1', [view.token_id])).rows[0].v, true);
+        assert.equal((await admin.query('select count(*) n from public.clued_memories where id=$1', [view.record_id])).rows[0].n, '0');
+        const reject = { tier: 'information', candidate_id: candidate.candidate_id, base_version: 1, idempotency_key: uuid() };
+        const rejected = await call(human, 'clued_candidate_reject_v1', reject, hash(JSON.stringify(reject)));
+        assert.equal(rejected.status, 'committed', JSON.stringify(rejected));
+      }
+      const text = '我将整理实验报告。', id = await put({ content: text }), request = extractRequest(id, text, text.slice(0, -1));
+      await assert.rejects(extract(request, stranger), /source_unavailable/);
+      await assert.rejects(extract(extractRequest(wrongScope, 'Full original Canonical text', 'Full')), /source_unavailable/);
+      const candidate = (await extract(request)).supplemental, view = await issue(candidate);
+      const malformed = { ...promoteInput(view), surprise: true };
+      assert.equal((await promote(malformed)).error_code, 'candidate_promote_unknown_field');
+      assert.equal((await admin.query('select consumed_at is not null v from clued_private.candidate_confirmation_tokens where id=$1', [view.token_id])).rows[0].v, true);
+      const stale = await actor({ ...claims(owner), amr: [{ method: 'password', timestamp: Math.floor(Date.now()/1000)-3600 }] });
+      assert.equal((await issue(candidate, { execution_bucket: 'later' }, stale)).error_code, 'reauthentication_required');
+      for (const role of ['anon', 'service_role', 'clued_worker_gateway']) assert.equal((await admin.query(
+        "select has_function_privilege($1,'public.clued_imprint_extraction_prepare_v1(jsonb,text)','execute') v", [role])).rows[0].v, false);
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_table_privilege($1,'clued_private.imprint_extractions_v1','select') v", [role])).rows[0].v, false);
+        assert.equal((await admin.query("select has_function_privilege($1,'clued_private.imprint_extraction_source_v1(uuid,jsonb)','execute') v", [role])).rows[0].v, false);
+      }
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});

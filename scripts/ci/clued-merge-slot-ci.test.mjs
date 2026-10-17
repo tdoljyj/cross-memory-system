@@ -43,8 +43,8 @@ const fixtureQualification=async pr=>({passed:true,state:'qualified',head:pr.hea
 const ciStateOf=(fetch,env,repo,head,workflows,since=null)=>actualCiStateOf(fetch,env,repo,head,workflows,since,
   {pr:pull(5),qualifyExecution:fixtureQualification});
 const check = (name, extra = {}) => ({ id: CI_REQUIRED_CHECKS.findIndex(row=>row.name===name)+1, name, head_sha: HEAD, status: "completed", conclusion: "success",
-  external_id: name==='clued-admission-verified'?'pr:5:run:9001':undefined,
-  app: { id: name === "clued-admission-verified" ? ADMISSION_APP_ID : 15368 }, ...extra });
+  external_id: name==='kooyumi-admission-verified'?'pr:5:run:9001':undefined,
+  app: { id: name === "kooyumi-admission-verified" ? ADMISSION_APP_ID : 15368 }, ...extra });
 const run = (pathName, status = "in_progress", extra = {}) => ({ id: 7, path: pathName, status, event: "pull_request", head_sha: HEAD, ...extra });
 
 // Routes are matched by prefix; an RPC route answers with a function of its input.
@@ -168,15 +168,15 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
     assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "failed", conclusion);
   }
   // cancelled is not final: an edit cancels the admission run on the same head before the next one posts (review NIT).
-  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-work-admission": [check("clued-work-admission", { conclusion: "cancelled" })] }),
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "kooyumi-work-admission": [check("kooyumi-work-admission", { conclusion: "cancelled" })] }),
     ...runsRoute(HEAD, []) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "skipped" })], trivy: [check("trivy", { conclusion: "neutral" })] }),
     ...runsRoute(HEAD, []) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "idle");
   // A same-named check from another app is not the required check.
-  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [check("clued-admission-verified", { app: { id: 15368 }, conclusion: "failure", id: 99 }),
-    check("clued-admission-verified")] }), ...runsRoute(HEAD, []) });
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "kooyumi-admission-verified": [check("kooyumi-admission-verified", { app: { id: 15368 }, conclusion: "failure", id: 99 }),
+    check("kooyumi-admission-verified")] }), ...runsRoute(HEAD, []) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "green");
   // Running needs the head's workflow file to be the default branch's: a pull request's edited copy does not count.
   fetch = fakeFetch({ ...allGreen(), ...runsRoute(HEAD, [run(QUALITY)]),
@@ -196,11 +196,11 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
     run(QUALITY, "in_progress", { head_sha: OTHER }), run(QUALITY, "completed")]) });
   await assert.rejects(()=>ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS), /invalid workflow_runs snapshot row/);
   // A required check not posted yet, with nothing running: not reported.
-  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "clued-work-admission": [check("clued-work-admission")],
-    "clued-admission-verified": [] }),
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks")], trivy: [check("trivy")], "kooyumi-work-admission": [check("kooyumi-work-admission")],
+    "kooyumi-admission-verified": [] }),
     ...runsRoute(HEAD, []) });
   state = await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS);
-  assert.deepEqual([state.state, state.checks.find((c) => c.name === "clued-admission-verified").status], ["idle", "missing"]);
+  assert.deepEqual([state.state, state.checks.find((c) => c.name === "kooyumi-admission-verified").status], ["idle", "missing"]);
 });
 
 test("contract-placement is an always-run hosted required check, and failures return the merge slot", async () => {
@@ -222,25 +222,25 @@ test("contract-placement is an always-run hosted required check, and failures re
 
 test("ciStateOf: a failure from before the slot was taken is not reported and holds green back (step 4)", async () => {
   const SINCE = Date.parse("2026-10-09T05:00:00Z");
-  const old = check("clued-admission-verified", { conclusion: "failure", completed_at: "2026-10-09T04:59:00Z" });
-  let fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [old] }), ...runsRoute(HEAD, []) });
+  const old = check("kooyumi-admission-verified", { conclusion: "failure", completed_at: "2026-10-09T04:59:00Z" });
+  let fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "kooyumi-admission-verified": [old] }), ...runsRoute(HEAD, []) });
   let state = await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE);
-  assert.deepEqual([state.state, state.reason], ["idle", "clued-admission-verified concluded failure before the slot was taken"]);
+  assert.deepEqual([state.state, state.reason], ["idle", "kooyumi-admission-verified concluded failure before the slot was taken"]);
   // Without the time the slot was taken, or a failure after it, it is failed as before.
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS)).state, "failed");
-  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [{ ...old, completed_at: "2026-10-09T05:01:00Z" }] }) });
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "kooyumi-admission-verified": [{ ...old, completed_at: "2026-10-09T05:01:00Z" }] }) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "failed");
   // Only the admission checks: a gitleaks failure from before the slot is the head's own.
   fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure", completed_at: "2026-10-09T04:59:00Z" })] }) });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "failed");
   // A counted run still reports running, so the holder keeps the slot while CI runs on its new head.
-  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [old] }),
+  fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, { "kooyumi-admission-verified": [old] }),
     ...runsRoute(HEAD, [run(GITLEAKS)]), ...sameAsMain() });
   assert.equal((await ciStateOf(fetch.fetchImpl, env(), REPO, HEAD, WORKFLOWS, SINCE)).state, "running");
   // reportMergeSlots passes the slot's taken_at from Clued.
   fetch = slotWorld({ holders: [{ claim_id: CLAIM, bound_pr: `${REPO}#5`, merge_slot_until: "2026-10-09T05:45:00Z",
     merge_slot_ci: { taken_at: "2026-10-09T05:00:00Z" } }],
-  extra: { ...allGreen(), ...checksRoute(HEAD, { "clued-admission-verified": [old] }), ...runsRoute(HEAD, []) } });
+  extra: { ...allGreen(), ...checksRoute(HEAD, { "kooyumi-admission-verified": [old] }), ...runsRoute(HEAD, []) } });
   const result = await report(fetch);
   assert.deepEqual([result.errors, result.reports[0].ci_state, fetch.calls.some((call) => call.route === `rpc:${TOUCH_RPC}`)],
     [[], "idle", false]);
@@ -273,7 +273,7 @@ test('required green cannot extend a slot with gate-only, unknown, wrong-identit
     assert.equal(result.reports[0].ci_state,'idle');
     assert.equal(fetch.calls.some(call=>call.route===`rpc:${TOUCH_RPC}`),false);
   }
-  const wrong=slotWorld({extra:{...allGreen(),...checksRoute(HEAD,{'clued-admission-verified':[check('clued-admission-verified',{external_id:'pr:6:run:9'})]}),...runsRoute(HEAD,[])}});
+  const wrong=slotWorld({extra:{...allGreen(),...checksRoute(HEAD,{'kooyumi-admission-verified':[check('kooyumi-admission-verified',{external_id:'pr:6:run:9'})]}),...runsRoute(HEAD,[])}});
   assert.equal((await report(wrong)).reports[0].ci_state,'idle');
   const moved=slotWorld({extra:{...allGreen(),...runsRoute(HEAD,[]),[`/repos/${REPO}/pulls/5`]:{...pull(5),head:{sha:OTHER}}}});
   assert.equal((await report(moved)).reports[0].ci_state,'idle');
@@ -297,7 +297,7 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
   fetch = slotWorld({ extra: { ...allGreen(), ...runsRoute(HEAD, []) } });
   result = await report(fetch);
   assert.equal(fetch.calls.find((call) => call.route === `rpc:${TOUCH_RPC}`).input.ci_state, "green");
-  // failed: no hard cap is sent; a returned slot fails the head's clued-merge-slot check (review MAJOR-2).
+  // failed: no hard cap is sent; a returned slot fails the head's kooyumi-merge-slot check (review MAJOR-2).
   fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) } });
   result = await report(fetch);
   assert.deepEqual(fetch.calls.find((call) => call.route === `rpc:${TOUCH_RPC}`).input,
@@ -305,7 +305,7 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
   assert.deepEqual([result.reports[0].ci_state, result.reports[0].returned, result.reports[0].merge_slot_check_run_id], ["failed", true, 5005]);
   const posted = fetch.calls.find((call) => call.method === "POST" && call.route === `/repos/${REPO}/check-runs`).body;
   assert.deepEqual([posted.name, posted.head_sha, posted.conclusion, posted.external_id, posted.output.title],
-    ["clued-merge-slot", HEAD, "failure", "pr:5:run:9001", "Merge slot returned: CI failed"]);
+    ["kooyumi-merge-slot", HEAD, "failure", "pr:5:run:9001", "Merge slot returned: CI failed"]);
   assert.match(posted.output.summary, /^gitleaks concluded failure on this head.*Turn auto-merge off/);
   assert.match(renderSummary(result), /slot returned/);
   assert.match(renderSummary(result), /notified 0 claim\(s\)/);
@@ -315,14 +315,14 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
   assert.deepEqual(noticeResult.reports[0].notified, [CLAIM]);
   assert.match(renderSummary(noticeResult), /notified 1 claim\(s\)/);
   // Nothing returned (already given back) and the newest slot check already failed: no check is posted.
-  const slotCheck = (conclusion) => ({ id: 30, name: "clued-merge-slot", head_sha: HEAD, status: "completed", conclusion, app: { id: ADMISSION_APP_ID } });
+  const slotCheck = (conclusion) => ({ id: 30, name: "kooyumi-merge-slot", head_sha: HEAD, status: "completed", conclusion, app: { id: ADMISSION_APP_ID } });
   const failedCi = { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) };
   const notReturned = () => ({ status: "ok", returned: false, merge_slot_returned: [] });
-  fetch = slotWorld({ extra: { ...failedCi, ...checksRoute(HEAD, { "clued-merge-slot": [slotCheck("failure")] }) }, touch: notReturned });
+  fetch = slotWorld({ extra: { ...failedCi, ...checksRoute(HEAD, { "kooyumi-merge-slot": [slotCheck("failure")] }) }, touch: notReturned });
   result = await report(fetch);
   assert.deepEqual([result.errors, fetch.calls.some((call) => call.method === "POST" && call.route.endsWith("/check-runs"))], [[], false]);
   // ...but a green one left by a run that could not post is failed now (confirmation review NIT-2).
-  fetch = slotWorld({ extra: { ...failedCi, ...checksRoute(HEAD, { "clued-merge-slot": [slotCheck("success")] }) }, touch: notReturned });
+  fetch = slotWorld({ extra: { ...failedCi, ...checksRoute(HEAD, { "kooyumi-merge-slot": [slotCheck("success")] }) }, touch: notReturned });
   result = await report(fetch);
   assert.deepEqual([result.errors, result.reports[0].merge_slot_check_run_id], [[], 5005]);
   // Where the policy does not require the slot (efficiency), the check is not failed (confirmation review MINOR-B).
@@ -339,7 +339,7 @@ test("reportMergeSlots: reports the holder's CI state with the policy's hard cap
   // Without the App key a returned slot is an error: its green check would outlive it.
   fetch = slotWorld({ extra: { ...allGreen(), ...checksRoute(HEAD, { gitleaks: [check("gitleaks", { conclusion: "failure" })] }) } });
   result = await report(fetch, { env: { CLUED_ADMISSION_APP_ID: "", CLUED_ADMISSION_APP_PRIVATE_KEY: "" } });
-  assert.match(result.errors[0], /^#5: the slot was returned but no failing clued-merge-slot check could be posted/);
+  assert.match(result.errors[0], /^#5: the slot was returned but no failing kooyumi-merge-slot check could be posted/);
   // idle: nothing reported.
   fetch = slotWorld({ extra: { ...checksRoute(HEAD, Object.fromEntries(CI_REQUIRED_CHECKS.map(({ name }) => [name, []]))), ...runsRoute(HEAD, []) } });
   result = await report(fetch);
@@ -435,7 +435,7 @@ test("qualification cannot retain old required success or miss a newly queued un
   for(const change of ["required","queued"]){
     let changed=false;
     const fetch=slotWorld({extra:{...allGreen(),
-      [`/repos/${REPO}/commits/${HEAD}/check-runs?check_name=clued-admission-verified&`]:()=>({check_runs:[check("clued-admission-verified",{conclusion:changed&&change==="required"?"failure":"success"})]}),
+      [`/repos/${REPO}/commits/${HEAD}/check-runs?check_name=kooyumi-admission-verified&`]:()=>({check_runs:[check("kooyumi-admission-verified",{conclusion:changed&&change==="required"?"failure":"success"})]}),
       [`/repos/${REPO}/actions/runs?head_sha=${HEAD}`]:()=>({total_count:changed&&change==="queued"?1:0,
         workflow_runs:changed&&change==="queued"?[run(".github/workflows/other.yml","queued")]:[]})}});
     const result=await report(fetch,{qualifyExecution:async pr=>{changed=true;return fixtureQualification(pr)}});
@@ -466,7 +466,7 @@ test('one fresh complete check snapshot per observation preserves newest name/Ap
   assert.equal(seen.state,'failed');assert.match(seen.reason,/trivy/);
   assert.equal(fetch.calls.filter(c=>c.route.includes('/check-runs?')).length,1);
   const wrong=fakeFetch({[snapshotRoute()]:{total_count:5,check_runs:snapshotRows().map(row=>
-    row.name==='clued-admission-verified'?{...row,external_id:'pr:6:run:1'}:row)}});
+    row.name==='kooyumi-admission-verified'?{...row,external_id:'pr:6:run:1'}:row)}});
   assert.equal((await ciStateOf(wrong.fetchImpl,env(),REPO,HEAD,WORKFLOWS)).state,'idle');
 });
 test('complete pagination includes a required failure and an uncounted active run after page one',async()=>{

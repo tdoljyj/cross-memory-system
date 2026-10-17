@@ -51,6 +51,22 @@ function effectFixture(mutation, d = drive(), overrides = {}) {
     request: { mutation, admission: { binding, expires_at_ms: Date.now() + 30000 }, profile_identity: profile } };
 }
 
+test("semantic cloud writes put the intent marker in the same single rename/move update", async () => {
+  for (const mutation of [renameMutation, moveMutation]) {
+    const d = drive(); let body, updates = 0;
+    const f = effectFixture(mutation, d, { intent_marker: true, fetch: async (url, options) => {
+      updates += 1; body = JSON.parse(options.body);
+      assert.deepEqual(body.appProperties, { clued_intent_id: intent });
+      const u = new URL(url), item = d.files.get("file");
+      if (body.name) item.name = body.name;
+      if (u.searchParams.get("addParents")) item.parents = [u.searchParams.get("addParents")];
+      item.version = "7"; return Response.json(item);
+    } });
+    await f.effect(f.request); assert.equal(updates, 1);
+    assert.equal(f.events[0], "persist");
+  }
+});
+
 test("modifyShape accepts only a same-parent rename or a same-name move of one file", () => {
   assert.ok(modifyShape(renameMutation)); assert.ok(modifyShape(moveMutation));
   for (const bad of [{ ...renameMutation, destination_path: TRACK + "/topic/b.txt" }, { ...renameMutation, destination_path: renameMutation.source_path },

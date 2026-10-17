@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import types
 import unittest
+from unittest import mock
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts/model-program"
@@ -83,6 +84,50 @@ def non_token_usage(stdout):
 
 
 class ObservedCompletionResponseTests(unittest.TestCase):
+    def test_four_b_response_rejects_wrong_class_hash_or_legacy_mixed_closure(self):
+        fmt={**binding(),"development_budget_class":RECORDS.FOUR_B_BUDGET_CLASS}
+        self.assertFalse(M._binding(fmt))
+        result=self.adapt(fmt=fmt)
+        self.assertFalse(result["candidate_parsed"])
+        self.assertIn("UNKNOWN_OR_INCOMPATIBLE_FORMAT_BINDING_OR_LIMITS",result["gaps"])
+        with mock.patch.object(M,"FOUR_B_SOURCE_PINS",dict(M.SOURCE_PINS)), \
+                mock.patch.object(M,"FOUR_B_RUNTIME_FILES",dict(M.RUNTIME_FILES)):
+            self.assertFalse(M._binding(fmt),"legacy pins cannot become new-class runtime")
+
+    def test_actual_new_response_runtime_requires_exact_source_class_and_complete_closure(self):
+        fmt={**binding(),**M.FOUR_B_SOURCE_PINS,"development_budget_class":RECORDS.FOUR_B_BUDGET_CLASS,
+             "runtime_files":{name:{"bytes":n,"sha256":sha} for name,(n,sha) in M.FOUR_B_RUNTIME_FILES.items()}}
+        self.assertTrue(M._binding(fmt))
+        result=self.adapt(fmt=fmt)
+        self.assertTrue(result["candidate_parsed"],result["gaps"])
+        for change in (lambda f:f.update(development_budget_class="unknown"),
+                       lambda f:f.update(patch_sha256=M.SOURCE_PINS["patch_sha256"]),
+                       lambda f:f.update(completion_source_sha256="0"*64),
+                       lambda f:f["runtime_files"].update({"ggml-base.dll":{"bytes":M.RUNTIME_FILES["ggml-base.dll"][0],"sha256":M.RUNTIME_FILES["ggml-base.dll"][1]}})):
+            bad=copy.deepcopy(fmt);change(bad);self.assertFalse(M._binding(bad))
+        legacy=copy.deepcopy(fmt);del legacy["development_budget_class"]
+        self.assertFalse(M._binding(legacy))
+
+    def test_four_b_response_exact_new_fixture_binding_keeps_raw_and_1024_actual_records(self):
+        cls=RECORDS.FOUR_B_BUDGET_CLASS
+        pins={**M.SOURCE_PINS,"patch_sha256":"f"*64,"completion_source_sha256":"e"*64}
+        runtime={**M.RUNTIME_FILES,"libllama-completion-impl.dll":(1,"d"*64)}
+        fmt={**binding(),**pins,"development_budget_class":cls,
+             "runtime_files":{name:{"bytes":n,"sha256":sha} for name,(n,sha) in runtime.items()}}
+        limits={"input_tokens":4096,"output_tokens":1024,"total_tokens":5120}
+        frames=[{**input_frame(),"input_tokens":4,"input_limit":4096,"predict_limit":1024,"total_limit":5120}]
+        frames += [sample(i,eog=i==1024) for i in range(1,1025)]+[terminal(4,1024)]
+        source=sidecar(frames)
+        with mock.patch.object(M,"FOUR_B_SOURCE_PINS",pins),mock.patch.object(M,"FOUR_B_RUNTIME_FILES",runtime):
+            self.assertTrue(M._binding(fmt))
+            result=self.adapt(fmt=fmt,limits=limits,raw_sidecar=source)
+            self.assertTrue(result["candidate_parsed"],result["gaps"])
+            self.assertEqual(result["usage"]["output_tokens"],1024)
+            self.assertIs(result["sidecar_raw"],source)
+            self.assertEqual(result["authority_effect"],"NONE")
+            wrong=dict(fmt,development_budget_class="unknown")
+            self.assertFalse(M._binding(wrong))
+
     def adapt(self, stdout=b'{"value":"example"} [end of text]\n\n\n', stderr=b"", raw_sidecar=None,
               fmt=None, limits=None, value=None, validator=machine_validator):
         fmt = binding() if fmt is None else fmt

@@ -98,10 +98,25 @@ test("a committed checkpoint renews the session without a second resume", { time
             ($1,$2,'global','global.__aggregate__','test-worker')`, [workerId, userId]);
     const drainProjections = async () => {
       for (let round = 0; round < 6; round += 1) {
-        await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at=now()
-          where user_id=$1 and status in ('queued','failed')`, [userId]);
+        // Only fixture scheduling is accelerated; real refresh/lease/CAS gates remain.
+        await admin.query(`update clued_private.projection_refresh_jobs set next_attempt_at='-infinity'::timestamptz
+          where user_id=$1 and status in ('queued','retry_wait')`, [userId]);
         const claim = await call(workerToken, "clued_mcp_projection_refresh_claim", {});
-        if (!claim.lease_id) return;
+        if (claim.status === "superseded") continue;
+        if (!claim.lease_id) {
+          assert.equal(claim.status, "idle", JSON.stringify(claim));
+          const pending = await admin.query(`
+            select 'visible' as source,projection_key,invalidation_revision::text,resolved_through_revision::text
+            from clued_private.visible_projection_invalidation_heads
+            where user_id=$1 and target_scope='global' and invalidation_revision>resolved_through_revision
+            union all
+            select 'physical' as source,projection_key,invalidation_revision::text,resolved_through_revision::text
+            from clued_private.projection_invalidation_heads
+            where user_id=$1 and target_scope='global' and invalidation_revision>resolved_through_revision
+            order by source,projection_key`, [userId]);
+          assert.deepEqual(pending.rows, [], JSON.stringify({ claim, pending: pending.rows }));
+          return;
+        }
         const applied = await call(workerToken, "clued_mcp_projection_refresh_apply", {
           projection_key: claim.projection_key, lease_id: claim.lease_id,
           expected_invalidation_revision: claim.expected_invalidation_revision,
@@ -179,7 +194,7 @@ test("a committed checkpoint renews the session without a second resume", { time
     assert.equal("session_renewal" in blocked, false);
     await drainProjections();
     const reconciled = await rpc("clued_mcp_session_reconcile", { context_key: "global", session_token: renewed.session_token });
-    assert.equal(reconciled.admission_eligible, true);
+    assert.equal(reconciled.admission_eligible, true, JSON.stringify(reconciled));
     const afterChange = await checkpoint(renewed.session_token, renewed.version, [], "renewal-replay-key");
     assert.equal(afterChange.status, "committed");
     assert.deepEqual(afterChange.session_renewal.active_constraint_refs, [{ id: constraintId, version: 2 }]);

@@ -69,6 +69,15 @@ function effectFixture(mutation, d = drive({ trashed: mutation.operation === "re
     request: { mutation, admission: { binding, expires_at_ms: Date.now() + 30000 }, profile_identity: profile } };
 }
 
+test("semantic cloud trash and untrash stamp their only update", async () => {
+  for (const mutation of [trashMutation, untrashMutation]) {
+    const f = effectFixture(mutation, undefined, { intent_marker: true });
+    await f.effect(f.request);
+    assert.deepEqual(f.patched().body.appProperties, { clued_intent_id: intent });
+    assert.deepEqual(f.events, ["persist", "patch"]);
+  }
+});
+
 test("destructiveShape: one item by Drive ID, path and version; untrash relocation only as an explicit option", () => {
   for (const good of [trashMutation, untrashMutation, dirMutation, { ...dirMutation, operation: "restore" }, folderMutation, suffixMutation]) {
     assert.ok(destructiveShape(good), JSON.stringify(good));

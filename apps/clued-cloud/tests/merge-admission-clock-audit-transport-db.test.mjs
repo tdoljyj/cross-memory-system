@@ -50,11 +50,20 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   const candidate=await fs.readFile(path.join(cloud,'supabase/migrations',transportMigration),'utf8');await db.query(candidate);
   const workerSource=await fs.readFile(path.join(cloud,'worker/continuity.ts'),'utf8');
   // Bind this current transport regression to the independently reviewed Worker.
-  // The prior 2002e9ec...1142 binding remains in commit 28d57989; R9 registry
-  // and epoch pins are separate and are not changed by this fixture update.
-  // Main dbb82ab includes c2227c54/c90fb46a Kooyumi brand-copy changes from
-  // prior 331d23cd...833e; all C1 behavior/permission assertions remain exact.
-  assert.equal(hash(workerSource),'0b22d181814840c623c446d500db322cb1898af682fad7a0fe6434eaa746256a');
+  // I9 changes only storage recovery routes/scheduler and scoped storage MCP
+  // refusals. The replacement-reader refresh bridge also selects the actual
+  // reader in those storage routes; C1 audit paths are unchanged. Its reviewed
+  // predecessor was ba86106e5e68cf1ddc84cb04455d342a164650b5444e491abf59ad3f2902262f.
+  // The prior OAuth guard binding was
+  // 005e2c10ccff1369b356ca56ad905c2a063f270332860ad905751053e34dd6f4.
+  // That and 23236e5f...24cf remain in earlier history; R9 registry and epoch
+  // pins are separate and unchanged.
+  // All C1 behavior/permission assertions below remain exact.
+  // Prior storage reader refresh pin: 9aa56e4fa6e08eeda5011f86d3085163a7a11bc3ae691e1c9e408fb378f9fc43.
+  // Prior storage-only Native absence pin: ffde428621829c2af21dba27c61f8494afe65ee6d9fcd50f86ebc08bca9e57f8.
+  // Current storage registration wiring adds the authenticated program RPC
+  // in the existing cron and Native recovery routes; C1 assertions stay exact.
+  assert.equal(hash(workerSource),'ce0646006b8da6269ae233214c52dabc7a9d08a5e2c146895767c5288398f0d8');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

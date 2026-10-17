@@ -49,12 +49,14 @@ export function createGoogleDriveNativeModifyEffect({
   resolve_provider_identity: resolveProviderIdentity,
   consume_started_provider: consumeStartedProvider,
   persist_provider_attempt: persistProviderAttempt,
+  intent_marker: intentMarker = false,
   fetch: fetchImpl = globalThis.fetch,
   clock = Date.now,
 } = {}) {
   if (!trustedProfile || typeof getCredential !== "function" || typeof getFile !== "function" ||
     typeof resolveProviderIdentity !== "function" || typeof consumeStartedProvider !== "function" ||
-    typeof persistProviderAttempt !== "function" || typeof fetchImpl !== "function" || typeof clock !== "function") {
+    typeof persistProviderAttempt !== "function" || typeof fetchImpl !== "function" || typeof clock !== "function" ||
+    typeof intentMarker !== "boolean") {
     throw new TypeError("A private native writer and durable attempt store are required.");
   }
   const profile = structuredClone(trustedProfile);
@@ -113,7 +115,9 @@ export function createGoogleDriveNativeModifyEffect({
     if (again.parents[0] !== sourceParent || !isDeepStrictEqual(contentIdentity(again), content)) fail("DRIVE_NATIVE_SOURCE_MISMATCH");
     const url = `${API}/${encodeURIComponent(file.id)}?fields=${FIELDS}` + (shape.operation === "move"
       ? `&addParents=${encodeURIComponent(destinationParent)}&removeParents=${encodeURIComponent(sourceParent)}` : "");
-    const result = await patch(url, shape.operation === "rename" ? { name: shape.destination_name } : {}, admission.expires_at_ms);
+    const body = shape.operation === "rename" ? { name: shape.destination_name } : {};
+    if (intentMarker) body.appProperties = { clued_intent_id: started.intent_id };
+    const result = await patch(url, body, admission.expires_at_ms);
     if (result?.id !== file.id || result.name !== shape.destination_name || result.trashed !== false ||
       !isDeepStrictEqual(result.parents, [destinationParent]) || result.mimeType !== file.mimeType ||
       !/^[1-9]\d*$/.test(result.version ?? "") || !isDeepStrictEqual(contentIdentity(result), content)) fail("DRIVE_NATIVE_RESPONSE_MISMATCH");

@@ -3,7 +3,7 @@ import { createResourceCenterAuthorityClient } from "./resource-center-authority
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
 import { createGoogleDriveProviderIdentityResolver } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveCreatePostconditionVerifier } from "./resource-center-google-drive-postcondition.mjs";
-import { createResourceCenterWriteClient } from "./resource-center-write-client.mjs";
+import { createResourceCenterWriteClient, resourceCenterReservationFailure, resourceCenterReservationDiagnostic } from "./resource-center-write-client.mjs";
 import { createResourceCenterHostAdapter } from "./resource-center-mutation-host.mjs";
 import { createGoogleDriveNativeCreateEffect } from "./resource-center-google-drive-create-effect.mjs";
 import {
@@ -138,14 +138,21 @@ export function createResourceCenterOnlineToolHost({
         typeof reservation.intent_id !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reservation.intent_id) ||
         reservation.request_sha256 !== preflight.admission.binding.request_sha256) {
-        throw new Error("RESERVATION_INVALID");
+        throw resourceCenterReservationFailure("reservation_result");
       }
       reservation = Object.freeze(structuredClone(reservation));
-    } catch {
+    } catch (error) {
+      const diagnostic = resourceCenterReservationDiagnostic(error);
+      if (diagnostic?.reservation_status === "not_started") {
+        // The trusted adapter has not dispatched prepare/start/begin. There is
+        // no Canonical reservation to reconcile and no provider effect to replay.
+        return Object.freeze({ ...deny("DURABLE_WRITE_PREPARATION_FAILED"), reservation_diagnostic: diagnostic });
+      }
       // A lost start response may have consumed the durable reservation. Do
       // not retry the effect or clear it; recovery inspects Canonical state.
       quarantined = true;
-      return deny("DURABLE_WRITE_RESERVATION_FAILED");
+      return Object.freeze({ ...deny("DURABLE_WRITE_RESERVATION_FAILED"),
+        ...(diagnostic ? { reservation_diagnostic: diagnostic } : {}) });
     }
     let effect;
     try {

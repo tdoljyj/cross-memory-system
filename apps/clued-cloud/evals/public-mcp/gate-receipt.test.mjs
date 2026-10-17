@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   GATE_CHECK_RUN_NAME,
   GATE_STATUS_CONTEXT,
   REQUIRED_CHECKS,
   buildReceipt,
+  bootstrapGateProxy,
   checkRunFor,
   commitStatusFor,
   gateApplies,
+  gateFetch,
   evaluateCheckRuns,
   validateCandidate,
   verdictAlreadyAnnounced,
@@ -15,6 +23,109 @@ import {
 } from "./gate-receipt.mjs";
 
 const SHA = "a".repeat(40);
+
+test("gate proxy bootstrap reuses one same-Node child before credential reads", () => {
+  const env = { HTTPS_PROXY: "http://127.0.0.1:18080" };
+  Object.defineProperty(env, "GH_TOKEN", { get() { throw new Error("credential read too early"); } });
+  const calls = [];
+  const status = bootstrapGateProxy({ env, execArgv: [], argv: ["node", "gate-receipt.mjs"],
+    allowedFlags: new Set(["--use-env-proxy"]), spawn: (...args) => { calls.push(args); return { status: 0 }; } });
+  assert.equal(status, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], process.execPath);
+  assert.deepEqual(calls[0][1], ["--use-env-proxy", "gate-receipt.mjs"]);
+  assert.equal(calls[0][2].env, env);
+  assert.equal(calls[0][2].stdio, "inherit");
+});
+
+test("gate proxy bootstrap is a no-op without a proxy or in its proxy-enabled child", () => {
+  const spawn = () => { throw new Error("unexpected child"); };
+  assert.equal(bootstrapGateProxy({ env: {}, spawn }), null);
+  assert.equal(bootstrapGateProxy({ env: { HTTPS_PROXY: "http://127.0.0.1:18080", NODE_USE_ENV_PROXY: "1" },
+    execArgv: [], allowedFlags: new Set(["--use-env-proxy"]), spawn }), null);
+  assert.equal(bootstrapGateProxy({ env: { HTTPS_PROXY: "http://127.0.0.1:18080" },
+    execArgv: ["--use-env-proxy"], allowedFlags: new Set(["--use-env-proxy"]), spawn }), null);
+});
+
+test("gate proxy bootstrap preserves invalid, unsupported and explicit opt-out refusals", () => {
+  let calls = 0;
+  const base = { execArgv: [], allowedFlags: new Set(["--use-env-proxy"]), spawn: () => { calls++; } };
+  assert.throws(() => bootstrapGateProxy({ ...base, env: { HTTPS_PROXY: "private:invalid" } }), /protocol is unsupported/);
+  assert.throws(() => bootstrapGateProxy({ ...base, env: { HTTPS_PROXY: "not a proxy" } }), /proxy is invalid/);
+  assert.throws(() => bootstrapGateProxy({ ...base, env: { HTTPS_PROXY: "http://127.0.0.1:18080" }, allowedFlags: new Set() }), /cannot use/);
+  assert.throws(() => bootstrapGateProxy({ ...base, env: { HTTPS_PROXY: "http://127.0.0.1:18080", NODE_USE_ENV_PROXY: "0" } }), /explicitly disabled/);
+  assert.equal(calls, 0);
+});
+
+test("gate proxy child failure stays a failure without leaking its error", () => {
+  const base = { env: { HTTPS_PROXY: "http://127.0.0.1:18080" }, execArgv: [],
+    argv: ["node", "gate-receipt.mjs"], allowedFlags: new Set(["--use-env-proxy"]) };
+  assert.equal(bootstrapGateProxy({ ...base, spawn: () => ({ status: 7 }) }), 7);
+  assert.equal(bootstrapGateProxy({ ...base, spawn: () => ({ status: null, signal: "SIGTERM" }) }), 1);
+  assert.throws(() => bootstrapGateProxy({ ...base, spawn: () => ({ error: new Error("private credentials") }) }),
+    { message: "GATE_PROXY_PROCESS_START_FAILED" });
+  assert.throws(() => bootstrapGateProxy({ ...base, spawn: () => { throw new Error("private credentials"); } }),
+    { message: "GATE_PROXY_PROCESS_START_FAILED" });
+});
+
+test("GitHub request transport preserves successful and HTTP failure responses unchanged", async () => {
+  const options = { method: "POST", body: "unchanged", signal: AbortSignal.timeout(1000) };
+  const response = { ok: false, status: 403 };
+  let calls = 0;
+  assert.equal(await gateFetch("STATUS_WRITE", "https://example.invalid/status", options, async (url, init) => {
+    calls++; assert.equal(url, "https://example.invalid/status"); assert.equal(init, options); return response;
+  }), response);
+  assert.equal(calls, 1);
+});
+
+test("each failed request reports its bounded phase and cause without retry or secret text", async () => {
+  for (const phase of ["CHECKS_READ", "STATUS_WRITE", "VERDICT_ANNOUNCE"]) {
+    let calls = 0;
+    await assert.rejects(gateFetch(phase, "https://example.invalid/private", {}, async () => {
+      calls++; throw new TypeError("private URL and token", { cause: { code: "ECONNRESET" } });
+    }), { message: `GATE_GITHUB_NETWORK:${phase}:TypeError:ECONNRESET` });
+    assert.equal(calls, 1);
+  }
+  const failure = new Error("private message"); failure.name = "private name"; failure.cause = { code: "private code" };
+  await assert.rejects(gateFetch("CHECKS_READ", "https://example.invalid", {}, async () => { throw failure; }),
+    { message: "GATE_GITHUB_NETWORK:CHECKS_READ:Error:UNKNOWN" });
+  await assert.rejects(gateFetch("private phase", "https://example.invalid", {}, () => { throw new Error("unexpected fetch"); }),
+    { message: "GATE_INVALID_NETWORK_PHASE" });
+});
+
+test("actual gate CLI fails a status POST without announcing PASS or retrying it", async () => {
+  const directory = await fs.mkdtemp(path.join(tmpdir(), "gate-status-failure-"));
+  const output = path.join(directory, "receipt.json"), requests = [];
+  const server = createServer((request, response) => {
+    requests.push([request.method, request.url]);
+    if (request.method === "GET") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ check_runs: runs() }));
+    } else { response.writeHead(503); response.end("fixture unavailable"); }
+  });
+  try {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const env = { ...process.env, GATE_REPOSITORY: "example/repository", CANDIDATE_SHA: SHA, GATE_PR_NUMBER: "1",
+      GATE_MODE: "once", GATE_RECEIPT_OUTPUT: output, GH_TOKEN: "fixture-not-a-real-token",
+      GITHUB_API_URL: `http://127.0.0.1:${server.address().port}` };
+    for (const key of ["NODE_TEST_CONTEXT", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]) delete env[key];
+    const child = spawn(process.execPath, [fileURLToPath(new URL("./gate-receipt.mjs", import.meta.url))],
+      { env, timeout: 5000, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; }); child.stderr.on("data", chunk => { stderr += chunk; });
+    const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
+    assert.equal(code, 1);
+    assert.match(stderr, /GATE_STATUS_API_503/);
+    assert.doesNotMatch(stdout, /PASS/);
+    assert.deepEqual(requests, [["GET", `/repos/example/repository/commits/${SHA}/check-runs?filter=latest&per_page=100`],
+      ["POST", `/repos/example/repository/statuses/${SHA}`]]);
+  } finally {
+    server.closeAllConnections();
+    if (server.listening) await new Promise(resolve => server.close(resolve));
+    await fs.rm(output, { force: true });
+    await fs.rmdir(directory);
+  }
+});
 
 function runs(conclusion = "success") {
   return REQUIRED_CHECKS.map((name, index) => ({

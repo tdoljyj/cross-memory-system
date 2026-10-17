@@ -1,4 +1,4 @@
-# Unified Clued Skill and connection authorization — candidate rollout
+# Unified KooYomi Skill and connection authorization — candidate rollout
 
 Status: implementation candidate. This document does not activate production,
 accept the entire A01–A24 suite, publish a TM19 subject, or restart P6.
@@ -87,23 +87,25 @@ Owner-imported independent ES256 signing key is separate from both issuer secret
 If verification fails, stop that key's cutover. Keep the new generation and the bounded old generation's
 observed state, diagnose once, and repair forward. Do not reactivate a retired generation, recover a proof
 from historical receipts, or return to direct identity-as-proof authentication. Record exact generations,
-Worker deployment and rejection evidence through Clued without storing either secret or proof.
+Worker deployment and rejection evidence through KooYomi without storing either secret or proof.
 
 `skills/clued/SKILL.md` is the single maintained entry, with operation-specific
 references. It grants no privileges. A human retains their existing Supabase
-identity. Each independently consented OAuth grant has its own Clued Binding,
+identity. Each independently consented OAuth grant has its own KooYomi Binding,
 even when the same client identifier is reused. Permissions are exact
 resource/action/environment tuples, and a workflow label never expands them.
 
 The maintained OAuth component is pinned to
 `@cloudflare/workers-oauth-provider` 0.10.3. Human Supabase sessions stay on the
-Clued account/consent path. The component encrypts the per-connection internal
-Binding secret in provider props. Only a hash is stored by the Clued database.
+KooYomi account/consent path. The component encrypts the per-connection internal
+Binding secret in provider props. Only a hash is stored by the KooYomi database.
 
 ## Actual targets and prerequisites
 
-Production is Worker `clued-cloud` at `https://clued.pixelgrav.com`, backed by
-Supabase project `ccxsikzwxlolxqlosril` (`clued-prod`). The repository Sites project
+Production is Worker `clued-cloud`, with its public site at `https://kooyomi.com`, backed by
+Supabase project `ccxsikzwxlolxqlosril` (`clued-prod`). The compatible
+`kooyumi.pixelgrav.com` and `clued.pixelgrav.com` MCP/OAuth origins retain their
+own resource, issuer and Binding identities. The repository Sites project
 `appgprj_6a8a7bff59548191b5250e5c28b8c80c` is a different publishing target.
 Do not deploy this change to Sites as a substitute for the production Worker.
 
@@ -139,7 +141,8 @@ configure these on the same reviewed Worker version:
 | `SUPABASE_PUBLISHABLE_KEY` | Publishable key for that same environment; never a service-role key |
 | `OAUTH_KV` | Dedicated OAuth provider namespace for that environment |
 | `CLUED_AUTHORIZATION_ISSUER_TOKEN` | Fresh server-only random credential, generated and stored through the approved secret channel; never commit it or paste it into chat |
-| Private issuer row | SHA256 of that credential, exact `{origin}/mcp` resource, descriptive name, active status |
+| Private issuer identity | Independent nonsecret 64-hex identity key in `authorization_issuers_v12.token_hash`, exact `{origin}/mcp` resource, descriptive name and active status; never store a new credential proof as its identity |
+| Issuer credential generation | After the identity/credential successor is installed, stage and activate only `cv1:` + SHA256(`clued.credential-verifier.v1:` + SHA256(secret)); use the offline database operator, never an API-role bypass. See [KooYomi provisioning](kooyumi-issuer-provision.md) |
 | `CLUED_DEVELOPMENT_CONTEXT_V14` | Explicitly enable the new development tools; the retired `CONTEXT_OWNERSHIP_V11` flag does not enable them |
 | Auth redirect allowlist | Include the exact approved origin `/?type=recovery` and the reviewed account/invitation verification callbacks |
 
@@ -236,7 +239,7 @@ Restoring Skill files affects instructions only and must never restore revoked
 business permissions. Previously returned data cannot be recalled by revocation.
 
 A standard OAuth token revocation conservatively revokes the entire associated
-Clued connection. The provider validates the client/token first; Clued commits
+KooYomi connection. The provider validates the client/token first; KooYomi commits
 its immediate database denial before KV deletion or a success response. A
 missing trusted grant reference or failed database revocation produces an error,
 not a success acknowledgement. Other independently consented connections remain

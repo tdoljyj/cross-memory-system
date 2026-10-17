@@ -25,6 +25,7 @@ import time
 
 
 MAX_FILES = 64
+FOUR_B_BUDGET_CLASS = "m1_shortlist_4b_bf16_cpu8_v1"
 CLEANUP_RESERVE_SECONDS = 13  # Job 5s, parent 5s, two readers 2s, closing margin.
 RUNNING_CURRENTNESS_INTERVAL_SECONDS = 5.0
 PLAN_FIELDS = {"executable", "working_directory", "model", "prompt", "output_schema",
@@ -48,11 +49,33 @@ def at_deadline(deadline):
         require(time.monotonic() < deadline, "DEADLINE_DURING_VERIFICATION")
 
 
-def file_identity(value, deadline=None):
+def development_budget_policy(plan):
+    """Ceilings only, never authority; exact plan/request/M1 binding stays upstream.
+
+    Missing class is the unchanged legacy policy. A model/profile name cannot
+    select the larger policy, and the new class requires explicit CPU8.
+    """
+    require(type(plan) is dict, "DEVELOPMENT_BUDGET_CLASS")
+    selected = plan.get("development_budget_class")
+    require(selected is None or selected == FOUR_B_BUDGET_CLASS, "DEVELOPMENT_BUDGET_CLASS")
+    if "development_budget_class" in plan:
+        require(selected == FOUR_B_BUDGET_CLASS, "DEVELOPMENT_BUDGET_CLASS")
+        require(type(plan.get("cpu_threads")) is int and plan["cpu_threads"] == 8, "CLASS_CPU_THREADS")
+        return {"model_seconds": 480, "control_seconds": 585, "host_seconds": 600,
+                "output_tokens": 1024, "total_tokens": 5120, "observation_bytes": 147456}
+    return {"model_seconds": 120, "control_seconds": 225, "host_seconds": 240,
+            "output_tokens": 512, "total_tokens": 4608, "observation_bytes": 131072}
+
+
+def file_identity(value, deadline=None, *, model_budget_class=None):
     at_deadline(deadline)
     require(type(value) is dict and set(value) == {"path", "bytes", "sha256"}, "FILE_FIELDS")
     require(type(value["path"]) is str and bool(value["path"]), "FILE_PATH")
-    require(type(value["bytes"]) is int and 0 < value["bytes"] <= 2147483648, "FILE_SIZE")
+    require(model_budget_class in (None, FOUR_B_BUDGET_CLASS), "MODEL_BUDGET_CLASS")
+    # Only the observed caller's explicitly selected model role uses this cap.
+    # No path/name inference, weaker rehash, or larger runtime/prompt/schema cap.
+    maximum = 10 * 1024**3 if model_budget_class == FOUR_B_BUDGET_CLASS else 2147483648
+    require(type(value["bytes"]) is int and 0 < value["bytes"] <= maximum, "FILE_SIZE")
     sha = value["sha256"]
     require(type(sha) is str and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha), "FILE_SHA")
     path = Path(value["path"])
@@ -63,8 +86,9 @@ def file_identity(value, deadline=None):
     return path
 
 
-def verify_file(value, deadline=None):
-    path = file_identity(value, deadline)
+def verify_file(value, deadline=None, *, model_budget_class=None):
+    path = (file_identity(value, deadline, model_budget_class=model_budget_class)
+            if model_budget_class is not None else file_identity(value, deadline))
     observed, count = hashlib.sha256(), 0
     with path.open("rb") as stream:
         while True:

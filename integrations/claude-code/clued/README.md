@@ -1,13 +1,13 @@
-# Kooyumi plugin for Claude Code (private trial)
+# KooYomi plugin for Claude Code (private trial)
 
 Private trial, not published (Task `67c97003`, plugin line S3). It carries:
 
-- the Kooyumi Skill (`skills/clued`), invoked as `/clued:clued` or picked up by its description;
-- the Kooyumi capture guard as a Stop hook: when the agent is about to stop with an
-  Owner decision, a merged PR or a Kooyumi write that has no record or checkpoint after
+- the KooYomi Skill (`skills/clued`), invoked as `/clued:clued` or picked up by its description;
+- the KooYomi capture guard as a Stop hook: when the agent is about to stop with an
+  Owner decision, a merged PR or a KooYomi write that has no record or checkpoint after
   it, the stop is blocked once with the reason (agent contract §3 and §5).
 
-It adds no MCP server. Use the Clued connector you already added on claude.ai; it shows
+It adds no MCP server. Use the authorized connector you already added on claude.ai; it shows
 up in Claude Code when you sign in with that account, and in Cowork and chat.
 
 ## Install

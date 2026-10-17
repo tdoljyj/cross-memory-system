@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-14T17:50:25.047Z",
-  "history_through": "20261014174150",
-  "row_count": 259,
+  "exported_at": "2026-10-17T15:10:47.889Z",
+  "history_through": "20261017151043",
+  "row_count": 281,
   "rows": [
     {
       "version": "20260823154017",
@@ -2075,6 +2075,182 @@
       "statements_md5": "9ac5a46069b7172fdb5925d8328dc798",
       "statements_length": 58296,
       "source": "migrations/20261014132753_task_goal_delivery_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261015024454",
+      "name": "task_goal_delivery_optional_binding_expiry_v1",
+      "statements_md5": "adee9d0c0dfe67aa916f4cb385d54c39",
+      "statements_length": 1116,
+      "source": "migrations/20261014184303_task_goal_delivery_optional_binding_expiry_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261015032319",
+      "name": "all_contexts_authorization_v2",
+      "statements_md5": "39d693f4425a24997d8cb27dc0acc2a1",
+      "statements_length": 140382,
+      "source": "migrations/20261014044323_all_contexts_authorization_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261015032327",
+      "name": "all_contexts_serialization_v2",
+      "statements_md5": "31fe9790fc7402695344d79e5d28db8e",
+      "statements_length": 29710,
+      "source": "migrations/20261014045157_all_contexts_serialization_v2.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261015104946",
+      "name": "raw_context_business_conflict_http409",
+      "statements_md5": "339ee00caed90171d1b75d088904bb29",
+      "statements_length": 2104,
+      "source": "migrations/20261015052000_raw_context_business_conflict_http409.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261015152015",
+      "name": "integration_status_lookup_indexes",
+      "statements_md5": "ef978798f5e02749856b0144c07d0aaa",
+      "statements_length": 1071,
+      "source": "migrations/20261015144000_integration_status_lookup_indexes.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261015183338",
+      "name": "consent_future_owned_policies",
+      "statements_md5": "9bf092fd9d8f4df8cb906f485c21e3d1",
+      "statements_length": 15261,
+      "source": "migrations/20261015172722_consent_future_owned_policies.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261015194138",
+      "name": "imprint_query_owner_scope",
+      "statements_md5": "6c2d3bcf4943a3ffb6101604b24d0694",
+      "statements_length": 2709,
+      "source": "migrations/20261015190450_imprint_query_owner_scope.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261016072405",
+      "name": "storage_conflict_isolation_v1",
+      "statements_md5": "811aeadb8a7deb9ec14919a9cd34493a",
+      "statements_length": 82091,
+      "source": "migrations/20261016040000_storage_conflict_isolation_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261016122733",
+      "name": "storage_automatic_reconcile_v1",
+      "statements_md5": "8d3cc4c599c797256a929a488f5baefd",
+      "statements_length": 26891,
+      "source": "migrations/20261016090000_storage_automatic_reconcile_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261016141012",
+      "name": "imprint_auto_domains_v1",
+      "statements_md5": "0147e82b25e0fb3199445f3351f0207b",
+      "statements_length": 13884,
+      "source": "migrations/20261016124233_imprint_auto_domains_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261016155058",
+      "name": "storage_registration_recovery_v1",
+      "statements_md5": "101d30591800c5e533c2de00267b70e5",
+      "statements_length": 44939,
+      "source": "migrations/20261016133429_storage_registration_recovery_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261016163345",
+      "name": "imprint_existing_association_v1",
+      "statements_md5": "fb7ee637212240aec3d40ebc873520a2",
+      "statements_length": 15756,
+      "source": "migrations/20261016151033_imprint_existing_association_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017033441",
+      "name": "imprint_mixed_extraction_v1",
+      "statements_md5": "573835f0e17408291609d67c61cc331c",
+      "statements_length": 16087,
+      "source": "migrations/20261017014651_imprint_mixed_extraction_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017061135",
+      "name": "storage_semantic_recovery_v1",
+      "statements_md5": "1281c938a60c99d638cbfa0cfd8b7d54",
+      "statements_length": 55920,
+      "source": "migrations/20261017043050_storage_semantic_recovery_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017084823",
+      "name": "imprint_source_history_v1",
+      "statements_md5": "bd20a622c82e9e7c64d14eab5e137fa0",
+      "statements_length": 32861,
+      "source": "migrations/20261017065932_imprint_source_history_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017094308",
+      "name": "storage_recovery_coverage_v1",
+      "statements_md5": "bd9cf311eee146c7a3f3a49f4b098e8d",
+      "statements_length": 1956,
+      "source": "migrations/20261017053535_storage_recovery_coverage_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017094315",
+      "name": "storage_recovery_read_connection_v1",
+      "statements_md5": "7f512649c7929ba6ee5ba202d0ccc862",
+      "statements_length": 33014,
+      "source": "migrations/20261017060438_storage_recovery_read_connection_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017094322",
+      "name": "storage_recovery_native_coverage_v1",
+      "statements_md5": "3f304b3c7f46e2799184048e599241b8",
+      "statements_length": 2720,
+      "source": "migrations/20261017063317_storage_recovery_native_coverage_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017104328",
+      "name": "storage_legacy_directory_recovery_v1",
+      "statements_md5": "376e08e2392876d36fde700ad8be9435",
+      "statements_length": 31805,
+      "source": "migrations/20261017074657_storage_legacy_directory_recovery_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017125610",
+      "name": "storage_registration_reconcile_v1",
+      "statements_md5": "a23c14b82a5979bdaea4fbd41f72a5c7",
+      "statements_length": 46823,
+      "source": "migrations/20261017102500_storage_registration_reconcile_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017134141",
+      "name": "imprint_bulk_backfill_v1",
+      "statements_md5": "f547f7ffcbc5e631c1f02e8a1c7d0584",
+      "statements_length": 32785,
+      "source": "migrations/20261017121706_imprint_bulk_backfill_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017151043",
+      "name": "storage_legacy_create_adoption_v1",
+      "statements_md5": "6795fb2a430f9f6835ac90088c1190ee",
+      "statements_length": 32732,
+      "source": "migrations/20261017131000_storage_legacy_create_adoption_v1.sql",
       "transform": "identical"
     }
   ],

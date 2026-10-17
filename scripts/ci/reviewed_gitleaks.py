@@ -13,7 +13,7 @@ import tomllib
 
 PREFIX = "# clued-reviewed-finding: "
 COUNT_PREFIX = "# clued-reviewed-count: "
-EXPECTED_COUNT = 493
+EXPECTED_COUNT = 533
 REVIEW_DOCUMENT_PATH = "development/contracts/context-authorization/evidence/all-contexts-security-code-review-r2.json"
 REVIEW_DOCUMENT_COMMIT = "4d05eb04d64fb8655cbe522a3dfcecf0d3c74904"
 REVIEW_DOCUMENT_SHA256 = "d223d30902ead65ac193a2166cc081a2a2b326d71af3e8a898994427e72e1d21"
@@ -64,6 +64,12 @@ PATCH_METADATA_LINES = {
     46: {"prefix": " ", "constant": "REVIEW_DOCUMENT_COMMIT", "object": REVIEW_DOCUMENT_COMMIT, "helper_line": 18},
     52: {"prefix": "+", "constant": "FINAL_EVIDENCE_COMMIT", "object": FINAL_EVIDENCE_COMMIT, "helper_line": 24},
 }
+HANDOVER_ACCEPTANCE_PATH = "config/clued-handover-external-acceptance.json"
+HANDOVER_ORIGINAL_COMMIT = "f42974c666885855b2c55d28dbe47767a77c2d9e"
+HANDOVER_DIGEST_LINES = {
+    32, 40, 82, 99, 110, 119, 132, 140, 165, 210,
+    230, 236, 242, 574, 1112, 1118, 1119, 1123, 1416, 1419,
+}
 IMAGE = "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 KINDS = {
     "GIT_OBJECT_METADATA", "OWNER_COMMIT_ID", "API_BUNDLE_DIGEST",
@@ -111,7 +117,8 @@ def parse_records(text):
         # The A03 register is admitted by exact path only (reviewed 2026-09-24, PR #330).
         if (not (path.startswith(("artifacts/", "scripts/", "work/", "apps/clued-cloud/tests/"))
                  or path == "development/contracts/information-flow/known-limitations.m0d.v0.1.json"
-                 or path == REVIEW_DOCUMENT_PATH or path in FINAL_EVIDENCE_DOCUMENTS or path == PATCH_DOCUMENT_PATH)
+                 or path == REVIEW_DOCUMENT_PATH or path in FINAL_EVIDENCE_DOCUMENTS or path == PATCH_DOCUMENT_PATH
+                 or path == HANDOVER_ACCEPTANCE_PATH)
                 or any(p in ("", ".", "..") for p in path.split("/"))
                 or any(c in path for c in "\\*?[]\r\n")
                 or not re.fullmatch(r"[1-9][0-9]*", line)):
@@ -136,6 +143,10 @@ def parse_records(text):
                 commit != PATCH_DOCUMENT_COMMIT or rule != "sourcegraph-access-token"
                 or int(line) not in PATCH_METADATA_LINES or record["kinds"] != ["GIT_OBJECT_METADATA"]):
             raise ValueError("Patch metadata exception identity changed")
+        if path == HANDOVER_ACCEPTANCE_PATH and (
+                rule != "generic-api-key" or int(line) not in HANDOVER_DIGEST_LINES
+                or record["kinds"] != ["ARTIFACT_DIGEST"]):
+            raise ValueError("Handover acceptance exception identity changed")
         fingerprints.append(record["fingerprint"])
     if len(set(fingerprints)) != len(fingerprints):
         raise ValueError("Duplicate reviewed fingerprint")
@@ -153,6 +164,14 @@ def parse_records(text):
                     if record["fingerprint"].split(":")[1] == PATCH_DOCUMENT_PATH}
     if actual_patch != expected_patch:
         raise ValueError("Patch metadata exception set changed")
+    handover = [record["fingerprint"] for record in records
+                if record["fingerprint"].split(":")[1] == HANDOVER_ACCEPTANCE_PATH]
+    handover_commits = {fingerprint.split(":")[0] for fingerprint in handover}
+    expected_handover = {f"{commit}:{HANDOVER_ACCEPTANCE_PATH}:generic-api-key:{line}"
+                         for commit in handover_commits for line in HANDOVER_DIGEST_LINES}
+    if (len(handover_commits) != 2 or HANDOVER_ORIGINAL_COMMIT not in handover_commits
+            or set(handover) != expected_handover):
+        raise ValueError("Handover acceptance exact generation set changed")
     return records
 
 
@@ -280,6 +299,60 @@ def verify_patch_git_metadata(repo, text, line_number):
         raise ValueError("Patch metadata object is not an ancestor")
 
 
+def _unique_acceptance_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate acceptance JSON member")
+        result[key] = value
+    return result
+
+
+def verify_handover_acceptance_digest(repo, commit, path, text, line_number):
+    # This proves public artifact metadata only, not Source/runtime acceptance.
+    if (path != HANDOVER_ACCEPTANCE_PATH or line_number not in HANDOVER_DIGEST_LINES
+            or not re.fullmatch(r"[a-f0-9]{40}", commit)):
+        raise ValueError("Unreviewed handover acceptance location")
+    document = json.loads(text, object_pairs_hook=_unique_acceptance_object)
+    source = document.get("source_commit")
+    if (document.get("schema") != "clued.external-qualification-independent-acceptance/1"
+            or document.get("status") != "accepted"
+            or document.get("repository") != "tdoljyj/cross-memory-system"
+            or document.get("task_id") != "6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8"
+            or not isinstance(source, str) or not re.fullmatch(r"[a-f0-9]{40}", source)
+            or not isinstance(document.get("files"), dict)):
+        raise ValueError("Handover acceptance context changed")
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if line == '  "files": {']
+    if len(starts) != 1:
+        raise ValueError("Handover acceptance files location changed")
+    ends = [i for i in range(starts[0] + 1, len(lines)) if lines[i] in ('  }', '  },')]
+    if not ends or not starts[0] < line_number - 1 < ends[0]:
+        raise ValueError("Handover acceptance digest line is outside files")
+    location = json.loads("{" + lines[line_number - 1].strip().rstrip(",") + "}",
+                          object_pairs_hook=_unique_acceptance_object)
+    if len(location) != 1:
+        raise ValueError("Handover acceptance digest line is not unique")
+    source_path, digest = next(iter(location.items()))
+    if (not source_path or source_path.startswith("/")
+            or any(part in ("", ".", "..") for part in source_path.split("/"))
+            or any(char in source_path for char in "\\:*?[]\r\n")
+            or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            or document["files"].get(source_path) != digest):
+        raise ValueError("Handover acceptance artifact map changed")
+    if run(["git", "cat-file", "blob", f"{commit}:{path}"], cwd=repo).decode("utf-8") != text:
+        raise ValueError("Handover acceptance immutable document changed")
+    if run(["git", "cat-file", "-t", source], cwd=repo).strip() != b"commit":
+        raise ValueError("Handover acceptance source is not a commit")
+    ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", source, commit],
+                              cwd=repo, capture_output=True, check=False)
+    if ancestor.returncode:
+        raise ValueError("Handover acceptance source is not an ancestor")
+    blob = run(["git", "cat-file", "blob", f"{source}:{source_path}"], cwd=repo)
+    if hashlib.sha256(blob).hexdigest() != digest:
+        raise ValueError("Handover acceptance digest differs from immutable artifact")
+
+
 def verify_history(repo, records):
     commits = _ensure_reviewed_commits(repo, records)
     blobs = {}
@@ -295,6 +368,8 @@ def verify_history(repo, records):
             verify_auth_review_digest(repo, text, int(line))
         if path in FINAL_EVIDENCE_DOCUMENTS:
             verify_final_evidence_digest(repo, path, text, int(line))
+        if path == HANDOVER_ACCEPTANCE_PATH:
+            verify_handover_acceptance_digest(repo, commit, path, text, int(line))
         if path == PATCH_DOCUMENT_PATH:
             verify_patch_git_metadata(repo, text, int(line))
         elif rule == "sourcegraph-access-token":
@@ -314,6 +389,62 @@ def verify_history(repo, records):
                                for line in result.stdout.splitlines()):
         raise ValueError("Historical object proof failed")
     return {"commits": len(commits), "files_at_commits": len(blobs), "verified_git_objects": len(object_ids)}
+
+
+def _self_test_handover_acceptance(root):
+    # Separate public-only Git fixture; the original detector probes stay intact.
+    repo = root / "handover-artifact-proof"
+    repo.mkdir()
+    run(["git", "init", "--quiet"], cwd=repo)
+    identity = ["git", "-c", "user.name=Clued CI test", "-c", "user.email=ci-test@example.invalid",
+                "-c", "commit.gpgsign=false"]
+
+    def commit_file(relative, text):
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8", newline="\n")
+        run(["git", "add", "."], cwd=repo)
+        run(identity + ["commit", "--quiet", "-m", "public artifact proof fixture"], cwd=repo)
+        return run(["git", "rev-parse", "HEAD"], cwd=repo).decode().strip()
+
+    source_path = "scripts/ci/controlled-public-artifact.txt"
+    artifact = "controlled public artifact, never a credential\n"
+    source = commit_file(source_path, artifact)
+    digest = hashlib.sha256(artifact.encode()).hexdigest()
+
+    def document(source_commit, artifact_digest):
+        value = {"schema": "clued.external-qualification-independent-acceptance/1", "status": "accepted",
+                 "repository": "tdoljyj/cross-memory-system", "task_id": "6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8",
+                 "source_commit": source_commit, "files": {source_path: artifact_digest}}
+        lines = json.dumps(value, indent=2).splitlines()
+        index = next(i for i, line in enumerate(lines) if line.lstrip().startswith(json.dumps(source_path) + ":"))
+        lines[index:index] = [""] * (32 - index - 1)
+        return "\n".join(lines) + "\n"
+
+    def reject(commit, path, text, line, category):
+        try:
+            verify_handover_acceptance_digest(repo, commit, path, text, line)
+        except ValueError as error:
+            if category in str(error):
+                return
+            raise ValueError("Wrong handover rejection branch") from None
+        raise ValueError("Invalid handover public digest was admitted")
+
+    valid = document(source, digest)
+    accepted_commit = commit_file(HANDOVER_ACCEPTANCE_PATH, valid)
+    verify_handover_acceptance_digest(repo, accepted_commit, HANDOVER_ACCEPTANCE_PATH, valid, 32)
+    forged = document(source, "0" * 64)
+    forged_commit = commit_file(HANDOVER_ACCEPTANCE_PATH, forged)
+    reject(forged_commit, HANDOVER_ACCEPTANCE_PATH, forged, 32, "differs from immutable artifact")
+    tree = run(["git", "rev-parse", source + "^{tree}"], cwd=repo).decode().strip()
+    unrelated = run(identity + ["commit-tree", tree, "-m", "unrelated public source fixture"], cwd=repo).decode().strip()
+    wrong_ancestor = document(unrelated, digest)
+    wrong_ancestor_commit = commit_file(HANDOVER_ACCEPTANCE_PATH, wrong_ancestor)
+    reject(wrong_ancestor_commit, HANDOVER_ACCEPTANCE_PATH, wrong_ancestor, 32, "not an ancestor")
+    reject(accepted_commit, HANDOVER_ACCEPTANCE_PATH, valid, 31, "Unreviewed handover acceptance location")
+    reject(accepted_commit, "config/other-acceptance.json", valid, 32, "Unreviewed handover acceptance location")
+    return {"actual_git_artifact_passes": True, "forged_digest_rejected": True,
+            "valid_nonancestor_rejected": True, "wrong_line_rejected": True, "wrong_path_rejected": True}
 
 
 def self_test(config, production_ignore):
@@ -371,7 +502,8 @@ def self_test(config, production_ignore):
         raise ValueError("New commits or different paths were incorrectly suppressed")
     return {"baseline_detection": True, "exact_history_only": True,
             "new_commit_detection": True, "different_path_detection": True,
-            "synthetic_test_repository": str(test_repo)}
+            "synthetic_test_repository": str(test_repo),
+            "handover_acceptance_artifact_proof": _self_test_handover_acceptance(root)}
 
 
 def main():

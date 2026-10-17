@@ -4,6 +4,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { qualifyResourceCenterHost } from "./resource-center-host-qualification.mjs";
 import { RESOURCE_CENTER_MUTATION_TOOL, RESOURCE_CENTER_BOUNDARY_SCAN_TOOL } from "./resource-center-governed-tool-surface.mjs";
+import { isUnreservedPreparationFailure } from "./resource-center-write-client.mjs";
 
 const fail = (code) => { throw new Error(code); };
 const keys = (value, allowed) => value && typeof value === "object" && !Array.isArray(value) &&
@@ -12,6 +13,7 @@ const uncertainDenials = new Set(["DURABLE_WRITE_RESERVATION_FAILED", "POST_WRIT
 const safeDenials = new Set(["UNAUTHORIZED_WORKSPACE_MUTATION", "ARTIFACT_AUTHORITY_RESOLUTION_FAILED", "ARTIFACT_AUTHORITY_REVALIDATION_FAILED", "WRITER_OPERATION_NOT_QUALIFIED", "CONTROLLED_TOOL_ARGUMENTS_INVALID", "POST_WRITE_CANONICAL_RECEIPT_UNAVAILABLE", "DURABLE_WRITE_RESERVATION_UNAVAILABLE"]);
 function safelyFinished(result) {
   return Array.isArray(result) || result?.status === "committed" ||
+    isUnreservedPreparationFailure(result) ||
     (result?.status === "deny" && safeDenials.has(result.error_code) && !uncertainDenials.has(result.error_code) && result.side_effects !== "unknown" && !(result.side_effects > 0));
 }
 export function parseDailyLedger(text) {

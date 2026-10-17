@@ -1,12 +1,12 @@
 {
   "schema": "clued.components/1",
-  "about": "Every self-developed Clued component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
+  "about": "Every self-developed KooYomi component and its version. Content-bound: scripts/clued_components.py check fails when a component's files change without a version bump. The service reports these versions in /.well-known/clued-continuity and clued_session_resume; scripts/hooks/clued_version_check.py compares them with this machine. Task 6dfd7560.",
   "components": [
     {
       "id": "product",
       "kind": "product",
       "version": "1.6",
-      "description": "Clued product version (root VERSION).",
+      "description": "KooYomi product version (root VERSION).",
       "root": ".",
       "files": [
         "VERSION"
@@ -20,13 +20,13 @@
     {
       "id": "skill.clued",
       "kind": "skill",
-      "version": "1.0.20",
-      "description": "The Clued Skill package (SKILL.md and references/), installed on Claude, Codex and other hosts.",
+      "version": "1.0.24",
+      "description": "The KooYomi Skill package (SKILL.md, agents/ and references/), installed on Claude, Codex and other hosts.",
       "root": "skills/clued",
       "files": [
         "**/*"
       ],
-      "content_sha256": "645400187ff54c7652383b28d9b0b3ec476a3222d046968ea3e655dfb30a99d1",
+      "content_sha256": "35dc5890818c22e2ed1de8db49d7f02c5944bed2999ab4d79fc20bc09c92f89a",
       "version_marker": {
         "file": "SKILL.md",
         "pattern": "  version: \"{version}\""
@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "49",
+      "version": "50",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "49a387a32f8b52eb362c57ef8a9df1c339fc7fc6708dbd58dbd2dbd51f557cad",
+      "content_sha256": "7cc8c46b4d1abf8ef7b8757a1938b724594e09907cad998e3698e90f0965897c",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"
@@ -50,8 +50,8 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.6.6",
-      "description": "Clued MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
+      "version": "0.8.4",
+      "description": "KooYomi MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit."
     },
     {
       "id": "hook.runner-job-started",
@@ -71,13 +71,13 @@
     {
       "id": "hook.capture-guard",
       "kind": "hook",
-      "version": "1.0.1",
-      "description": "Claude Code Stop hook enforcing Clued capture.",
+      "version": "1.0.3",
+      "description": "Claude Code Stop hook enforcing KooYomi capture.",
       "root": "scripts/hooks",
       "files": [
         "clued_capture_guard.py"
       ],
-      "content_sha256": "9bc24c569f67b64ba5b7047745a8c3b89a3b6f96a56918389c62a3cf80322bbe",
+      "content_sha256": "d33038791c4aa6f05c2d17df85b995456c5a727723375fda4165ed9077aeda19",
       "version_marker": {
         "file": "clued_capture_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -86,13 +86,13 @@
     {
       "id": "hook.work-claim-guard",
       "kind": "hook",
-      "version": "1.1.4",
+      "version": "1.1.6",
       "description": "Claude Code work-claim hooks.",
       "root": "scripts/hooks",
       "files": [
         "clued_work_claim_guard.py"
       ],
-      "content_sha256": "2cd752247e9aa9d9707e5cc16d5edf193ea020bdb2dd82b42b6ba83d4890ee78",
+      "content_sha256": "4e1f82e3cd86cd8270184492fa90726246e041b8da85ab416f10bab7b46a4d64",
       "version_marker": {
         "file": "clued_work_claim_guard.py",
         "pattern": "__version__ = \"{version}\""
@@ -101,13 +101,13 @@
     {
       "id": "hook.version-check",
       "kind": "hook",
-      "version": "1.0.1",
+      "version": "1.0.3",
       "description": "Claude Code hook comparing component versions with the service.",
       "root": "scripts/hooks",
       "files": [
         "clued_version_check.py"
       ],
-      "content_sha256": "58138bd1000b02b9c95a49140634ebab92d73d09c24e7ae5d1aab515dc100c19",
+      "content_sha256": "3faf65def3d30609930d51161ed4ec7732f98b24e1f281e90d90d08e69628462",
       "version_marker": {
         "file": "clued_version_check.py",
         "pattern": "__version__ = \"{version}\""
@@ -116,13 +116,13 @@
     {
       "id": "hook.run-python",
       "kind": "hook",
-      "version": "1.0.0",
+      "version": "1.0.2",
       "description": "Python launcher used by every Claude Code hook.",
       "root": "scripts/hooks",
       "files": [
         "run_python.sh"
       ],
-      "content_sha256": "9d6af1f74aa5b92e5da04af0a86ae0df39c440bc28bb0ae87646e32845134c9d",
+      "content_sha256": "e4da4a4a3d2575a8489fb771e61cd3d977ddae555ba2cb9e183631b4dbb59b52",
       "version_marker": {
         "file": "run_python.sh",
         "pattern": "# Version: {version}"
@@ -157,13 +157,13 @@
     {
       "id": "script.components",
       "kind": "script",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Component manifest tool (this manifest's checker).",
       "root": "scripts",
       "files": [
         "clued_components.py"
       ],
-      "content_sha256": "d50a82a6915f840b533d6549a0790d22c533430e0943e23f673fced575b3147b",
+      "content_sha256": "5acd577f147a29a9c67a9ce52646bad951aed1fa44e15963aec18d5834d48741",
       "version_marker": {
         "file": "clued_components.py",
         "pattern": "__version__ = \"{version}\""
@@ -172,13 +172,13 @@
     {
       "id": "script.update-clued-skills",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Installer for the Clued Skill on Codex endpoints.",
+      "version": "1.0.1",
+      "description": "Installer for the KooYomi Skill on Codex endpoints.",
       "root": "scripts",
       "files": [
         "update_clued_skills.py"
       ],
-      "content_sha256": "604c10131081a75431713561c42a01a07483ca8b265b47e329d0766271b0c824",
+      "content_sha256": "23f683142adcfa3e9250421fff5263fddd08899c6282fc7d3056c1130a7f368b",
       "version_marker": {
         "file": "update_clued_skills.py",
         "pattern": "__version__ = \"{version}\""
@@ -220,61 +220,79 @@
     {
       "id": "script.handover-external-driver",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
-      "root": "scripts/ci",
+      "version": "1.0.2",
+      "description": "Canonical External2 driver and supporting modules; exact Source acceptance remains required for execution.",
+      "root": ".",
       "files": [
-        "clued-handover-external-driver.late-idle-source3-v1.mjs"
+        "scripts/ci/clued-handover-external-driver.mjs",
+        "scripts/ci/clued-handover-external-provider.mjs",
+        "scripts/ci/clued-handover-external-bootstrap.mjs",
+        "scripts/ci/clued-handover-external-fixture-locator.mjs",
+        "scripts/ci/clued-handover-external-fixture-locator.test.mjs",
+        "scripts/ci/clued-handover-external-gate-evidence.mjs",
+        "scripts/ci/clued-handover-external-gate-evidence.fixture.mjs",
+        "scripts/ci/clued-handover-external-gate-evidence.test.mjs",
+        "scripts/ci/clued-handover-external-pg-transport.mjs",
+        "scripts/ci/clued-handover-external-pg-transport.test.mjs",
+        "scripts/ci/clued-handover-external-provider.integration.test.mjs",
+        "scripts/ci/resources/supabase-official-prod-ca-2021.crt",
+        "apps/clued-cloud/tests/handover-external-ci.test.mjs"
       ],
-      "content_sha256": "15b97ddf636c6b469486f7058883df9bc80a8e5c1204b9e1bccfddb10f07c3a3",
+      "content_sha256": "3e7420fc35e027ab25c8f406dbd709ad0074bb77f9750f61a722532324cd58cc",
       "version_marker": {
-        "file": "clued-handover-external-driver.late-idle-source3-v1.mjs",
+        "file": "scripts/ci/clued-handover-external-driver.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
     {
       "id": "script.handover-external-source-check",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
-      "root": "scripts/ci",
+      "version": "1.0.1",
+      "description": "Canonical External2 accepted-source guard and pinned migration bundle.",
+      "root": ".",
       "files": [
-        "clued-handover-external-source-check.late-idle-source3-v1.mjs"
+        "scripts/ci/clued-handover-external-source-check.mjs",
+        "scripts/ci/clued-handover-external-source-pins.json"
       ],
-      "content_sha256": "bb309d2c49e1cb6742756f6a196bb3ba946e34f4d43fe261e271a2a335d95c4e",
+      "content_sha256": "12f1a07fc577109ffa50ce9175a355027c3663334cef2e4f596a228790c18d7a",
       "version_marker": {
-        "file": "clued-handover-external-source-check.late-idle-source3-v1.mjs",
+        "file": "scripts/ci/clued-handover-external-source-check.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
     {
       "id": "script.handover-external-journal",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
+      "version": "1.0.1",
+      "description": "Canonical External2 original-idle and cancellation journal.",
       "root": "scripts/ci",
       "files": [
-        "clued-handover-external-journal.late-idle-source3-v1.mjs"
+        "clued-handover-external-journal.mjs"
       ],
-      "content_sha256": "861bc80d12a473cb3701df29439f9527682e74793aeeb15435169c07181ec444",
+      "content_sha256": "91857388a38077e415c80f81ef29ce8b2be42f6cca83b81c3cfb7984e7ff1594",
       "version_marker": {
-        "file": "clued-handover-external-journal.late-idle-source3-v1.mjs",
+        "file": "clued-handover-external-journal.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
     {
       "id": "script.handover-external-register",
       "kind": "script",
-      "version": "1.0.0",
-      "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
-      "root": "scripts/ci",
+      "version": "1.0.1",
+      "description": "Canonical External2 operator registration, catalog, profile and exact registration DDL.",
+      "root": ".",
       "files": [
-        "clued-handover-external-register.late-idle-source3-v1.mjs",
-        "fixtures/clued-handover-operator-registration.late-idle-source3-v1.sql"
+        "scripts/ci/clued-handover-external-register.mjs",
+        "scripts/ci/clued-handover-external-catalog.mjs",
+        "scripts/ci/clued-handover-external-catalog-identities.mjs",
+        "scripts/ci/clued-handover-external-catalog-identities.test.mjs",
+        "scripts/ci/fixtures/clued-handover-operator-registration.sql",
+        "config/clued-handover-external-catalog.json",
+        "config/clued-handover-external-profile.json"
       ],
-      "content_sha256": "a996f2c20ae988dccd296c8ac59ef931bf2d7ea50e232102cdd2714a56764752",
+      "content_sha256": "48bb78e5c92b561b6cda8f4e68ff17fa33496d91461e89400f49a8209eb18012",
       "version_marker": {
-        "file": "clued-handover-external-register.late-idle-source3-v1.mjs",
+        "file": "scripts/ci/clued-handover-external-register.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
       }
     },
@@ -291,6 +309,37 @@
       "version_marker": {
         "file": "clued-workflow-profile.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
+      }
+    },
+    {
+      "id": "script.kooyumi-plugin-bundle",
+      "kind": "script",
+      "version": "1.0.1",
+      "description": "Build and verify the private registered KooYomi App plugin with the canonical Skill; no direct MCP or new account connection.",
+      "root": "plugins/kooyumi",
+      "files": [
+        "**/*"
+      ],
+      "content_sha256": "70afca67848ad55f2611591ac46b7205e2364b9c4877bbbf488c2f7b57893a22",
+      "version_marker": {
+        "file": "build_bundle.py",
+        "pattern": "__version__ = \"{version}\""
+      }
+    },
+    {
+      "id": "script.storage-google-redirect-cutover",
+      "kind": "script",
+      "version": "1.0.0",
+      "description": "Generate bounded, exact-client CAS configuration SQL for the original Google Storage callback cutover; no credential access.",
+      "root": "apps/clued-cloud",
+      "files": [
+        "scripts/storage-google-redirect-cutover.mjs",
+        "tests/storage-google-redirect-cutover.test.mjs"
+      ],
+      "content_sha256": "84d033529b8fc691d81262df37ec224a7b1c84c3ce284c724bd03aee104e7496",
+      "version_marker": {
+        "file": "scripts/storage-google-redirect-cutover.mjs",
+        "pattern": "export const VERSION = '{version}';"
       }
     }
   ]

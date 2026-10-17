@@ -1,0 +1,208 @@
+--- a/common/common.h
++++ b/common/common.h
+@@ -449,0 +450,4 @@
++    // Source candidate; no path/environment or admission supplied here.
++    std::string completion_observation_handle = "";
++    int32_t completion_observation_input_limit = 0;
++    int32_t completion_observation_total_limit = 0;
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -1481,0 +1482,15 @@
++        {"--clued-observation-handle"}, "UINTPTR",
++        "Candidate: Host-precreated dedicated inherited Windows disk handle",
++        [](common_params & p, const std::string & v) { p.completion_observation_handle = v; }
++    ).set_examples({LLAMA_EXAMPLE_COMPLETION}));
++    add_opt(common_arg(
++        {"--clued-input-token-limit"}, "N",
++        "Candidate: approved normalized input ceiling, 1..4096",
++        [](common_params & p, int v) { p.completion_observation_input_limit = v; }
++    ).set_examples({LLAMA_EXAMPLE_COMPLETION}));
++    add_opt(common_arg(
++        {"--clued-total-token-limit"}, "N",
++        "Candidate: approved input plus sampled-token ceiling, 1..4608",
++        [](common_params & p, int v) { p.completion_observation_total_limit = v; }
++    ).set_examples({LLAMA_EXAMPLE_COMPLETION}));
++    add_opt(common_arg(
+--- a/tools/completion/completion.cpp
++++ b/tools/completion/completion.cpp
+@@ -17,0 +18,2 @@
++#include <cstdint>
++#include <limits>
+@@ -85,0 +88,131 @@
++// Candidate observation only, not admission. The qualified Host must consume
++// this attempt BEFORE model load and provide approved ceilings + dedicated handle.
++// Sampled IDs can reconstruct output: treat this as private raw-output artifact.
++class completion_observation {
++public:
++    bool requested = false;
++    bool input_observed = false;
++    uint64_t input_count = 0, sampled_count = 0; // Includes every returned EOG.
++    int32_t input_limit = 0, total_limit = 0, predict_limit = 0;
++
++    bool configure(const common_params & p) {
++        requested = !p.completion_observation_handle.empty() ||
++            p.completion_observation_input_limit != 0 || p.completion_observation_total_limit != 0;
++        if (!requested) return true;
++        input_limit = p.completion_observation_input_limit;
++        total_limit = p.completion_observation_total_limit;
++        predict_limit = p.n_predict;
++#ifdef _WIN32
++        const std::string & value = p.completion_observation_handle;
++        if (value.empty() || value.size() > 20) return false;
++        uint64_t number = 0;
++        const uint64_t maximum = static_cast<uint64_t>(std::numeric_limits<uintptr_t>::max());
++        for (char c : value) {
++            if (c < '0' || c > '9' || number > (maximum - (c - '0')) / 10) return false;
++            number = number * 10 + (c - '0');
++        }
++        const HANDLE candidate = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(number));
++        // Validation never owns/closes a rejected caller handle, including stdio.
++        if (!candidate || candidate == INVALID_HANDLE_VALUE || GetFileType(candidate) != FILE_TYPE_DISK ||
++            candidate == GetStdHandle(STD_INPUT_HANDLE) || candidate == GetStdHandle(STD_OUTPUT_HANDLE) ||
++            candidate == GetStdHandle(STD_ERROR_HANDLE)) return false;
++        BY_HANDLE_FILE_INFORMATION info = {};
++        LARGE_INTEGER size = {}, position = {}, zero = {};
++        if (!GetFileInformationByHandle(candidate, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
++            info.nNumberOfLinks != 1 || !GetFileSizeEx(candidate, &size) || size.QuadPart != 0 ||
++            !SetFilePointerEx(candidate, zero, &position, FILE_CURRENT) || position.QuadPart != 0) return false;
++        // Only now transfer ownership of the dedicated inherited handle.
++        // Its inheritedness/new-only creation/namespace/ACL/provenance remain Host obligations.
++        handle = candidate;
++        if (input_limit < 1 || input_limit > 4096 || total_limit < 1 || total_limit > 5120 ||
++            predict_limit < 1 || predict_limit > 1024 || p.warmup || p.interactive || p.interactive_first ||
++            p.conversation_mode != COMMON_CONVERSATION_MODE_DISABLED || !p.path_prompt_cache.empty() ||
++            !p.antiprompt.empty() || p.grp_attn_n != 1 || p.embedding) {
++            finish("unsupported_configuration", false);
++            return false;
++        }
++        return true;
++#else
++        return false; // No path, environment, pipe or POSIX fallback.
++#endif
++    }
++
++    bool input(size_t count, int32_t context_size, bool has_encoder) {
++        if (!requested) return true;
++        input_count = count; // After normalization, tokenization and empty-BOS fallback.
++        input_observed = true;
++        if (!record("\"kind\":\"input\",\"input_tokens\":" + std::to_string(input_count) +
++            ",\"input_limit\":" + std::to_string(input_limit) +
++            ",\"predict_limit\":" + std::to_string(predict_limit) +
++            ",\"total_limit\":" + std::to_string(total_limit))) return false;
++        if (has_encoder || input_count > static_cast<uint64_t>(input_limit) ||
++            input_count + static_cast<uint64_t>(predict_limit) > static_cast<uint64_t>(total_limit) ||
++            context_size < 4 || input_count + static_cast<uint64_t>(predict_limit) >
++                static_cast<uint64_t>(context_size - 4)) {
++            finish("input_or_total_or_context_limit", false);
++            return false; // No prompt decode/encode or sampling.
++        }
++        return true;
++    }
++
++    bool before_sample() {
++        if (!requested) return true;
++        if (sampled_count >= static_cast<uint64_t>(predict_limit) ||
++            input_count + sampled_count >= static_cast<uint64_t>(total_limit)) {
++            finish("sample_budget_limit", false);
++            return false;
++        }
++        return true;
++    }
++
++    bool sample(llama_token id, bool eog) {
++        if (!requested) return true;
++        ++sampled_count; // Returned sample counted even if later accept/decode fails.
++        return record("\"kind\":\"sample\",\"sampled_ordinal\":" + std::to_string(sampled_count) +
++            ",\"token_id\":" + std::to_string(id) + ",\"eog\":" + (eog ? "true" : "false"));
++    }
++
++    bool finish(const char * reason, bool normal_loop_exit) {
++        if (!requested) return true;
++        if (!record("\"kind\":\"terminal\",\"reason\":\"" + std::string(reason) +
++            "\",\"normal_loop_exit\":" + (normal_loop_exit ? "true" : "false") +
++            ",\"input_tokens\":" + (input_observed ? std::to_string(input_count) : "null") +
++            ",\"sampled_tokens_including_eog\":" + std::to_string(sampled_count))) return false;
++#ifdef _WIN32
++        if (!CloseHandle(handle)) return false;
++        handle = INVALID_HANDLE_VALUE;
++#endif
++        return true;
++    }
++
++    ~completion_observation() {
++#ifdef _WIN32
++        if (handle && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
++#endif
++    }
++private:
++    uint64_t event_seq = 0, bytes_written = 0;
++    static constexpr uint64_t byte_limit = 147456;
++#ifdef _WIN32
++    HANDLE handle = INVALID_HANDLE_VALUE;
++#endif
++    bool record(const std::string & body) {
++#ifdef _WIN32
++        if (!handle || handle == INVALID_HANDLE_VALUE) return false;
++        const std::string line = "{\"event_seq\":" + std::to_string(++event_seq) +
++            ",\"monotonic_ms\":" + std::to_string(GetTickCount64()) + "," + body + "}\n";
++        if (bytes_written + line.size() > byte_limit) return false;
++        size_t offset = 0;
++        while (offset < line.size()) {
++            DWORD written = 0;
++            if (!WriteFile(handle, line.data() + offset, static_cast<DWORD>(line.size() - offset),
++                &written, nullptr) || written == 0) return false;
++            offset += written; bytes_written += written;
++        }
++        return FlushFileBuffers(handle) != 0; // No retry/new target/stdout fallback.
++#else
++        (void) body; return false;
++#endif
++    }
++};
++
+@@ -96,0 +230,7 @@
++
++    completion_observation observation;
++    if (!observation.configure(params)) {
++        LOG_ERR("runtime observation configuration/write refused\n");
++        return 1;
++    }
++    const char * observation_stop_reason = nullptr;
+@@ -297,0 +438,8 @@
++    }
++
++    // This is post-consumption/pre-decode enforcement, NOT the previous
++    // wrapper's pre-consumption input observation. Model load already required
++    // approved scope/CPU/time/memory and consumed this exact attempt.
++    if (!observation.input(embd_inp.size(), n_ctx, llama_model_has_encoder(model))) {
++        LOG_ERR("runtime observation input limit/write refused\n");
++        return 1;
+@@ -667,0 +816,4 @@
++            if (!observation.before_sample()) {
++                LOG_ERR("runtime observation sample budget/write refused\n");
++                return 1;
++            }
+@@ -668,0 +821,5 @@
++            if (!observation.sample(id, llama_vocab_is_eog(vocab, id))) {
++                LOG_ERR("runtime observation sample write/flush failed\n");
++                return 1;
++            }
++
+@@ -929,0 +1087 @@
++            observation_stop_reason = "eog";
+@@ -941,0 +1100,10 @@
++    if (observation.requested && observation_stop_reason == nullptr) {
++        if (n_remain == 0 && observation.sampled_count == static_cast<uint64_t>(params.n_predict) && !is_antiprompt) {
++            observation_stop_reason = "predict";
++        } else {
++            observation.finish("other_loop_exit", false);
++            LOG_ERR("runtime observation not EOG/exact-predict loop exit\n");
++            return 1;
++        }
++    }
++
+@@ -954,0 +1123,4 @@
++    if (observation.requested && !observation.finish(observation_stop_reason, true)) {
++        LOG_ERR("runtime observation terminal write/flush/close failed\n");
++        return 1;
++    }

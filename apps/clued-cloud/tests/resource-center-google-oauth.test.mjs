@@ -303,6 +303,14 @@ test("re-consent: a busy root or the refresh-token limit is a fixed reason, neve
 
 // StorageFullCapability P7 (Decisions 746fd078, 6dc1cf20): re-consent to the full set.
 const FULL_DISCLOSURE = "clued.storage-full-scope-disclosure/1";
+test("full credential recovery accepts an existing root while lower scopes still require its app grant",async()=>{
+  for(const [profile,granted,ok] of [["full",fullScope,true],["normal",normalScope,false],["legacy",scope,false]]){
+    const f=await fixture({descriptor:{purpose:"credential_recovery",provider_scope_profile:profile},tokens:{scope:granted},root:{isAppAuthorized:false}});
+    const state=new URL((await f.oauth.start(d.connection_id)).authorization_url).searchParams.get("state");
+    if(ok){assert.equal((await f.oauth.complete({state,code:"fixture-code"})).status,"completed");assert.equal(f.complete().provider_scope_profile,"full");}
+    else {await assert.rejects(f.oauth.complete({state,code:"fixture-code"}),error=>error.reason==="root_not_authorized");assert.equal(f.complete(),undefined);}
+  }
+});
 test("full scope: a full start binds the full set and the confirmed disclosure, never normal use", async () => {
   const f = await fixture({ descriptor: { provider_scope_profile: "normal" } });
   const url = new URL((await f.oauth.start(d.connection_id, false, "full", { disclosure_version: FULL_DISCLOSURE })).authorization_url);

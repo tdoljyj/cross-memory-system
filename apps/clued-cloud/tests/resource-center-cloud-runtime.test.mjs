@@ -30,7 +30,9 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
             bridged.config.rpc(input.action==='finalize'?{...input.finish,connection_id:input.connection_id,job_id:input.job_id}:input)});
         const bridgedResult=await bridge.run(bridged.reference);
         const v2=fixture({redirect:'manual'}),v2Descriptor=await v2.config.load_job(v2.reference);
-        let v2Finish=null;
+        v2Descriptor.ancestor_match=[{path:v2Descriptor.profile.managed_root,provider_file_id:'root',match:'version'},
+          {path:v2Descriptor.profile.managed_root+'/track',provider_file_id:'track',match:'version'}];
+        let v2Finish=null,v2SemanticObservation=null;
         const v2Bridge=await createStorageCloudWorker({client_id:'test-client',vault:keys,account_policy_v2:true,
           clock:v2.config.clock,fetch:v2.config.drive_fetch,rpc:async input=>{
             if(input.action==='verified_inspect') return {status:'none',connection_id:v2.reference.connection_id,
@@ -38,6 +40,8 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
             if(input.action==='load') return {...v2Descriptor,credential_envelope:envelope,oauth_client_id:'test-client'};
             if(input.action==='verified_record'){
               if(input.credential_version!==1 || input.proof?.contract!=='clued.storage-create-verified/2') throw Error('proof shape');
+              if(input.semantic_observation?.contract!=='clued.storage-semantic-observation/1') throw Error('semantic proof shape');
+              v2SemanticObservation=input.semantic_observation;
               v2Finish=input.finish;
               return {status:'verified',intent_id:input.finish.intent_id,verified_receipt_id:bridged.reference.job_id,
                 verified_digest:'a'.repeat(64),version:3,execution_permitted:false};
@@ -61,7 +65,7 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
           }});
         const recoveredResult=await recovered.run(bridged.reference);
         return Response.json({result,good:good.info(),first,restart,lost:lost.info(),bridgedResult,bridgedPosts:bridged.info().posts,bridgedBatches:bridged.info().batches,
-          v2Result,v2Posts:v2.info().posts,
+          v2Result,v2Posts:v2.info().posts,v2SemanticObservation,
           recoveredResult,replayCalls});
       }};`, resolveDir: fileURLToPath(new URL("../", import.meta.url)), sourcefile: "cloud-runtime-fixture.mjs" },
     bundle: true, platform: "node", format: "esm", write: false,
@@ -94,6 +98,9 @@ test("cloud executor runs in workerd; unknown provider effects survive executor 
     assert.ok(body.bridgedBatches>0);
     assert.equal(body.v2Result.status,"committed");
     assert.equal(body.v2Posts,1);
+    assert.equal(body.v2SemanticObservation.contract,"clued.storage-semantic-observation/1");
+    assert.equal(body.v2SemanticObservation.first.state.marker,"50000000-0000-4000-8000-000000000001");
+    assert.deepEqual(body.v2SemanticObservation.first.state,body.v2SemanticObservation.second.state);
     assert.equal(body.recoveredResult.status,"committed");
     assert.deepEqual(body.replayCalls,["verified_inspect","settle_verified"]);
     assert.equal(outbound, 0);

@@ -1,20 +1,23 @@
 // Candidate integration destination: scripts/ci/clued-handover-external-driver.mjs.
 // No production Binding/Supabase/Worker transport exists in this driver.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.0";
+export const COMPONENT_VERSION = "1.0.2";
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {createRequire} from 'node:module';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {fixtureEnvironment,guardedProvider,publishWithSource,revokeWithSource}
+import {fixtureEnvironment,guardedProvider,publishWithSource,revokeWithSource,projectRegisteredRuntimeProfile}
   from './clued-handover-external-provider.mjs';
 import {postAppCheckCore} from './clued-work-admission.mjs';
-import {acceptedSourceCheck} from './clued-handover-external-source-check.mjs';
+import {acceptedSourceCheck,acceptedGateSourcePins} from './clued-handover-external-source-check.mjs';
+import {readCanonicalGate,createEvidenceReaders,createImmutableSourceReaderCache} from './clued-handover-external-gate-evidence.mjs';
+import {resolveFixtureLocator} from './clued-handover-external-fixture-locator.mjs';
 import {verifyEmptyCluster} from './clued-handover-external-catalog.mjs';
 import {platformDescriptor,verifySupabasePlatform} from './clued-handover-external-bootstrap.mjs';
-import {cancellationJournal,validateCompleted,assertIdleSelectionPolicy,assertQualifierRun,registrationCompletion,makeIdleBinding,assertBoundIdleObservation,providerGetBudget}
+import {preparePgTransport,makePgClientConfig,PG_IDENTITY_SQL,assertPgIdentity} from './clued-handover-external-pg-transport.mjs';
+import {cancellationJournal,validateCompleted,assertIdleSelectionPolicy,assertEarlyFixtureLocators,applyFixtureLocator,assertCanonicalClaimMatch,assertQualifierRun,makeIdleBinding,assertBoundIdleObservation,providerGetBudget}
   from './clued-handover-external-journal.mjs';
 
 const sha = value=>crypto.createHash('sha256').update(value).digest('hex');
@@ -30,10 +33,13 @@ const boundedRealFetch=(url,init={})=>{
   if((init.method??'GET')==='GET')getBudget.take();
   return fetch(url,init);
 };
+const sourceCache=createImmutableSourceReaderCache({repository:'tdoljyj/cross-memory-system'});
+const evidenceReaders=createEvidenceReaders({repository:'tdoljyj/cross-memory-system',
+  token:process.env.GITHUB_TOKEN,realFetch:boundedRealFetch,sourceCache});
 function safeSummary(phase,body) {
   return {schema:'clued.disposable-external-qualification-evidence.candidate/1',
     fixture_only:true,canonical_authority:'none',production_qualified:false,
-    phase,observed_at:new Date().toISOString(),...body};
+    phase,observed_at:new Date().toISOString(),provider_get_count:getBudget.count,...body};
 }
 async function saveSafe(name,value) {
   const encoded=JSON.stringify(value,null,2);
@@ -48,9 +54,7 @@ async function loadProfile() {
   platformDescriptor(p);
   assert.equal(p.project_id,'0597aa60-9b98-4da6-a4ab-63d7705b632f');
   assert.equal(p.engineering_task_id,'6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8');
-  assert.ok(numeric(p.pr_number)&&String(p.pr_number)!=='771');
-  assert.match(p.head_sha,/^[0-9a-f]{40}$/);
-  assert.equal(p.idle_run_id,null,'EARLY_IDLE_ID_PROHIBITED');
+  assertEarlyFixtureLocators(p);
   assertIdleSelectionPolicy(p);
   const selected=process.env.QUALIFICATION_IDLE_RUN_ID??'';
   if(process.env.QUALIFICATION_PHASE==='publish'){
@@ -58,7 +62,7 @@ async function loadProfile() {
   }else assert.equal(selected,'','REVOKE_IDLE_RESELECTION_PROHIBITED');
   assert.equal(Number(process.env.GITHUB_RUN_ATTEMPT),1);
   assert.ok(Date.parse(p.valid_until)>Date.now());
-  return {...p,idle_run_id:selected||null,profile_hash:verified.profile_sha256,runtime_source_commit:verified.source_commit,
+  return {...p,idle_run_id:selected||null,gate_source_pins:acceptedGateSourcePins(verified),profile_hash:verified.profile_sha256,runtime_source_commit:verified.source_commit,
     accepted_source_commit:verified.accepted_source_commit,acceptance_sha256:verified.acceptance_sha256};
 }
 function testCiProof() {
@@ -91,19 +95,17 @@ async function observeHostRun(p,id,{completed=false,successful=true}={}) {
 }
 async function openFixture(p,phase) {
   assert.equal(p.fixture_mode,'continuous','RECOVERY_UNSUPPORTED');
+  const transport=preparePgTransport(p);
   const req=createRequire(path.join(workspace,'apps/clued-cloud/package.json'));
   const Pg=(await import(pathToFileURL(req.resolve('pg')).href)).default;
-  const raw=process.env.QUALIFICATION_DISPOSABLE_PG_URL??'',u=new URL(raw);
-  assert.ok(['postgres:','postgresql:'].includes(u.protocol));
-  assert.equal(u.hostname,p.database_host);assert.equal(decodeURIComponent(u.pathname.slice(1)),p.database_name);
-  assert.equal(u.search,'');assert.equal(decodeURIComponent(u.username),p.provisioner_role);
-  assert.equal(Number(u.port||5432),p.database_port);
+  const raw=process.env.QUALIFICATION_DISPOSABLE_PG_URL??'';
   const clients=[];
-  const makeClient=database=>{
-    const target=new URL(raw);target.pathname='/'+encodeURIComponent(database);
-    return new Pg.Client({connectionString:target.toString(),ssl:{rejectUnauthorized:true}});
+  const connectVerified=async database=>{
+    const c=new Pg.Client(makePgClientConfig(transport,raw,{database}));
+    try{await c.connect();assertPgIdentity(await c.query(PG_IDENTITY_SQL),database);return c;}
+    catch{await c.end().catch(()=>{});throw new Error('PG_CLIENT_CONNECTION_OR_IDENTITY_REJECTED');}
   };
-  async function client(database=p.database_name){const c=makeClient(database);await c.connect();clients.push(c);return c;}
+  async function client(database=p.database_name){const c=await connectVerified(database);clients.push(c);return c;}
   const admin=await client();
   try{
   const expected=JSON.parse(await fs.readFile(path.join(workspace,'config/clued-handover-external-catalog.json'),'utf8'));
@@ -117,7 +119,7 @@ async function openFixture(p,phase) {
   assert.equal(row.source_baseline,p.source_baseline);assert.equal(row.source_pins_sha256,p.source_pins_sha256);
   assert.equal((await admin.query('select current_database() d')).rows[0].d,p.database_name);
   if(phase==='publish')await verifyEmptyCluster({admin,connectDatabase:async name=>{
-    const c=makeClient(name);await c.connect();return c;
+    return connectVerified(name);
   },expected:expected.before_bootstrap,targetDatabase:p.database_name});
   const empty=(await admin.query("select to_regclass('public.clued_memories') is null as empty")).rows[0].empty;
   if(phase==='publish')assert.equal(empty,true,'fixture is not fresh');
@@ -140,7 +142,7 @@ async function openFixture(p,phase) {
   }
   async function close(){for(const c of clients)await c.end().catch(()=>{});}
   assert.match(row.registered_run_id,/^[1-9][0-9]{0,19}$/);
-  return {admin,client,close,sourceFixtures,prepare,registration_run_id:row.registered_run_id};
+  return {admin,client,close,sourceFixtures,prepare,registration_run_id:row.registered_run_id,registration_rows:registry};
   }catch(error){
     for(const c of clients)await c.end().catch(()=>{});
     throw error;
@@ -194,8 +196,17 @@ async function seedFixture(h,p,ciProof) {
   const db=h.admin,owner=uuid(),holderHash=sha(crypto.randomBytes(32));
   assert.equal((await db.query('select count(*)::int n from auth.users')).rows[0].n,0);
   await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'isolated-handover@example.invalid',now())",[owner]);
+  await db.query('begin isolation level read committed');
+  try{
+    await db.query('select clued_private.authorization_writer_guard_v2($1)',[owner]);
+    await db.query('select clued_private.authorization_writer_lock_fanout_v2($1)',[owner]);
   await db.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at) "+
     "values($1,$2,'Synthetic external fixture','synthetic external fixture',$3,'confirmed',now())",[p.project_id,owner,'project:'+p.project_id]);
+    await db.query('commit');
+  }catch(error){
+    await db.query('rollback').catch(()=>{});
+    throw error;
+  }
   await db.query("insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status,"+
     "record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason) "+
     "values($1,$2,'SYNTHETIC Task617 replica','Fixture realm only','project',$3,'task','active',1,'active',$4,"+
@@ -279,7 +290,7 @@ async function main(){
   let category='SOURCE_ACCEPTANCE',h=null,partial=null;
   try{
     assert.ok(['publish','revoke'].includes(phase));
-    const p=await loadProfile();
+    let p=await loadProfile();
     if(process.argv.includes('--preflight-only')){
       await saveSafe('preflight.json',safeSummary(phase,{status:'EXACT_ACCEPTED_SOURCE_BYTES',
         source_commit:p.runtime_source_commit,accepted_source_commit:p.accepted_source_commit,
@@ -291,6 +302,10 @@ async function main(){
     category='HOST_RUN_IDENTITY';
     assert.equal(Number(process.env.CLUED_ADMISSION_APP_ID),5164952);
     await observeHostRun(p,process.env.GITHUB_RUN_ID);
+    category='CURRENT_MAIN_CANONICAL_GATE';
+    const mainGateFact=await readCanonicalGate({profile:p,runId:String(process.env.GITHUB_RUN_ID),
+      targetWorkflow:p.qualifier_workflow,targetRef:'main',targetHead:p.runtime_source_commit,
+      ...evidenceReaders,realFetch:boundedRealFetch});
     let producer=null;
     if(phase==='revoke'){
       assert.ok(numeric(publisherId(p)));assert.notEqual(String(publisherId(p)),process.env.GITHUB_RUN_ID);
@@ -301,21 +316,28 @@ async function main(){
     category='COMPLETED_OPERATOR_REGISTRATION';
     const registrationRun=await api('/repos/'+p.repository+'/actions/runs/'+p.registration_run_id);
     const registrationJobs=await api('/repos/'+p.repository+'/actions/runs/'+p.registration_run_id+'/jobs?per_page=100&page=1');
-    registrationCompletion(p,{run:registrationRun,jobs:registrationJobs});
+    p=projectRegisteredRuntimeProfile(p,{registrationRows:h.registration_rows,run:registrationRun,jobs:registrationJobs});
     let idleBefore,journal;
     if(phase==='publish'){
       category='LATE_REAL_IDLE_SELECTION';
       const run=await api('/repos/'+p.repository+'/actions/runs/'+p.idle_run_id);
       const jobs=await api('/repos/'+p.repository+'/actions/runs/'+p.idle_run_id+'/jobs?per_page=100&page=1');
-      const content=await api('/repos/'+p.repository+'/contents/.github/workflows/'+p.fixture_idle_workflow+'?ref='+p.head_sha);
-      const binding=makeIdleBinding(p,{run,jobs,content,registrationRun,registrationJobs});
+      const idleGateFact=await readCanonicalGate({profile:p,runId:p.idle_run_id,
+        targetWorkflow:p.fixture_idle_workflow,targetRef:run.head_branch,targetHead:run.head_sha,
+        ...evidenceReaders,realFetch:boundedRealFetch});
+      const locator=await resolveFixtureLocator({profile:p,idleGateFact,mainGateFact,api});
+      p=applyFixtureLocator(p,locator);
+      const content=await evidenceReaders.api('/repos/'+p.repository+'/contents/.github/workflows/'+p.fixture_idle_workflow+'?ref='+p.head_sha);
+      const binding=makeIdleBinding(p,{run,jobs,content,registrationRun,registrationJobs,locator,mainGateFact});
       idleBefore=binding.started_fact;
       await h.prepare();journal=await cancellationJournal(h.admin,p);
       category='ORIGINAL_IDLE_BINDING_CAS';await journal.bindIdle(binding);
     }else{
       await h.prepare();journal=await cancellationJournal(h.admin,p);
       const prior=await journal.read();assert.ok(prior?.started_fact,'original idle journal missing');
+      p=applyFixtureLocator(p,prior.binding_fact.fixture_locator);
       p.idle_run_id=prior.run_id;
+      assertCanonicalClaimMatch(p,prior.binding_fact.fixture_locator.canonical_gate_fact,mainGateFact);
       category='ORIGINAL_IDLE_READ_ONLY_RECOVERY';idleBefore=await observeIdle(p,{prior});
       if(idleBefore.run_status==='completed')await journal.rememberCompleted(idleBefore);
     }
@@ -337,12 +359,12 @@ async function main(){
       assert.equal(missing.posted,false);assert.equal(mutations,0);
       trace.push({kind:'missing_app_negative',network_calls:0,posted:false});
       category='ACTUAL_PUBLICATION_BEGIN_FINISH';
-      const happy=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal,realFetch:boundedRealFetch});
+      const happy=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal,realFetch:boundedRealFetch,sourceCache});
       const successful=await publishWithSource({env,profile:p,boundary:happy,title:'QUALIFICATION: actual successful publication'});
       assert.equal(successful.posted,true);assert.equal(successful.conclusion,'success');
       assert.ok(successful.publication_observation?.begin_receipt_id&&successful.publication_observation?.finish_receipt_id);
       category='ACTUAL_UNCERTAIN_PUBLICATION';
-      const uncertain=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,loseNextCheckPostResponse:true,trace,journal,realFetch:boundedRealFetch});
+      const uncertain=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,loseNextCheckPostResponse:true,trace,journal,realFetch:boundedRealFetch,sourceCache});
       const lost=await publishWithSource({env,profile:p,boundary:uncertain,title:'QUALIFICATION: actual reply loss'});
       assert.equal(lost.posted,false);
       assert.ok(trace.some(t=>t.kind==='controlled_response_loss'&&t.provider_accepted));
@@ -365,7 +387,7 @@ async function main(){
       await saveSafe('publish.json',result);
     }else{
       category='EXTERNAL_REVOKER';
-      const boundary=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal,realFetch:boundedRealFetch});
+      const boundary=await guardedProvider({env,profile:runtimeProfile,fixture:state,ciClient:ci,trace,journal,realFetch:boundedRealFetch,sourceCache});
       let swept;
       for(let attempt=1;attempt<=12;attempt++){
         try{swept=await revokeWithSource({env,boundary});if(swept.pending===0)break;}

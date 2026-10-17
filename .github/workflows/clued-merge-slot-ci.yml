@@ -6,7 +6,7 @@ name: clued-merge-slot-ci
 # state of each open pull request that holds a merge slot
 # (scripts/ci/clued-merge-slot-ci.mjs, clued_work_merge_slot_touch_v1):
 # running keeps the slot 90 minutes, green 30 minutes, failed returns it and
-# fails the head's clued-merge-slot check. The hourly report is a step of
+# fails the head's kooyumi-merge-slot check. The hourly report is a step of
 # clued-work-admission-reverify.yml, which runs anyway, so it costs no extra
 # hosted run. The holder no longer renews its claim to keep the slot.
 # The final step calls the executor in this same job, after a successful
@@ -32,7 +32,7 @@ on:
     workflows:
       - gitleaks
       - trivy
-      - clued-work-admission
+      - kooyumi-work-admission
       - clued-cloud-node22-install
       - clued-cloud-quality
       - clued-components

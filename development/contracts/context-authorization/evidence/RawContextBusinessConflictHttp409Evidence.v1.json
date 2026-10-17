@@ -1,0 +1,68 @@
+{
+  "schema": "clued.raw-context-business-conflict-http409-evidence.v1",
+  "authority_effect": "NONE",
+  "status": "LOCAL_PG_PASS_REQUIRES_INDEPENDENT_REVIEW_AND_FORMAL_GATES",
+  "task_id": "d5dee826-27d7-452b-8948-48fe8ae8a961",
+  "claim_id": "d7d142ee-fe18-4b1a-b216-f3a19087405d",
+  "fence": 10,
+  "scope_receipt": "6a2adc74-3ac2-47bd-a75a-7596dc9a0224",
+  "accepted_main": "1535c8fd749befee5994ab33038bdc5c08f029bd",
+  "implementation": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20261015052000_raw_context_business_conflict_http409.sql",
+      "sha256": "a50e185549a130eb3db7ccca7a7b0e0057d65513fb5fe06652f12ef88c32639c",
+      "bytes": 2104
+    },
+    {
+      "path": "apps/clued-cloud/tests/all-contexts-authorization-db.test.mjs",
+      "sha256": "2aa51ad74dda7f4be052bce0c2e4aacf960c211e458d0cd8aae5c611802ac9c3",
+      "bytes": 98220
+    }
+  ],
+  "delta": "Only the two record_version_conflict business raises in the shared v14 kernel change from SQLSTATE 40001 to PT409; genuine engine serialization failures and all other guards remain unchanged.",
+  "observed_runtime_failure": {
+    "source": "fdd1910e17f20e7d6701dba9e45eb4fb66667d63",
+    "mcp": "-32603 request timed out on one stale-base raw write; later read retained v2 and original hash",
+    "qualification": "Not a demonstrated HTTP409; exact HTTP request to PG PID mapping is unproven."
+  },
+  "local_test": {
+    "complete_parent": "all-contexts-authorization-db.test.mjs",
+    "pass": 47,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "todo": 0,
+    "exit_code": 0,
+    "elapsed_ms": 36150.467,
+    "new_cases": [
+      "owner stale put and revoke return PT409 with exact message and unchanged full raw projection",
+      "member stale put and revoke return PT409 with exact message and unchanged full raw projection"
+    ],
+    "catalog_guards": [
+      "same function OID",
+      "all pg_proc metadata excluding prosrc identical",
+      "exact two literal replacements only",
+      "exact replay no-op"
+    ],
+    "not_claimed": [
+      "PostgREST HTTP test",
+      "deployed migration",
+      "production recovery",
+      "Native full acceptance",
+      "archive readiness"
+    ]
+  },
+  "evidence": [
+    {
+      "path": "work/eight_implementation/ui-acceptance/raw-cas-http409-candidate/raw-context-business-conflict-http409-implementation-r1.json",
+      "sha256": "fce562039d96db90640f2c6f50662559962c192fd702ecf367a988430445be64"
+    },
+    {
+      "path": "work/eight_implementation/ui-acceptance/raw-cas-http409-candidate/all-contexts-authorization-db-full-r1.log",
+      "sha256": "ef6117f7f55491ac0b482b1d24c79a9bfd4cd6ed00de61fddf1d14c7de6727e7"
+    }
+  ],
+  "artifact_path_deviation": "Author initially wrote work/ui-acceptance/raw-cas-http409-candidate outside the declared artifact path; original files preserved and read-only copied into the declared work/eight_implementation/ui-acceptance path. This does not retroactively admit the earlier writes.",
+  "prior_ci": "bb4 original isolated parent timeout remains failed; its sole failed-only rerun was incorrectly dispatched and refused before tests because admission did not rerun. No old-head extra retry or gate bypass.",
+  "original_lineage_evidence": "IntegrationFixtureLineageR1BoundedEvidence.v1.json remains historical evidence for its exact 89990-byte fixture, not the new 98220-byte file."
+}

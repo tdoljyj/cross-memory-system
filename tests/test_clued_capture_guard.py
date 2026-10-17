@@ -143,7 +143,7 @@ class CaptureGuardTest(GuardHarness):
         steps = [self.merge_turn(),
                  [call("w1", MUTATE, ABOUT_PR_7), result("w1", {"status": "rejected"})],
                  [call("w2", MUTATE, {"mutation": {"content": "unrelated"}}), result("w2", COMMITTED)]]
-        expected = ["no Clued write after it", "did not commit", "none names PR #7"]
+        expected = ["no KooYomi write after it", "did not commit", "none names PR #7"]
         entries: list[dict] = []
         for step, text in zip(steps, expected):
             entries += step
@@ -227,13 +227,15 @@ class CaptureGuardTest(GuardHarness):
         self.assertNotIn("PR #1 with", proc.stderr)
 
     def test_own_reminder_logged_as_user_entry_is_not_a_decision(self):
-        feedback = ("Stop hook feedback:\nClued capture guard (protocol/agent/agent-contract.md §3 "
-                    "and §5):\n- The Clued write after it did not commit (rejected: authority_escalation_forbidden).")
-        entries = self.merge_turn() + [
-            call("w1", MUTATE, ABOUT_PR_7), result("w1", COMMITTED), call("c1", CHECKPOINT),
-            result("c1", {"status": "committed"}),
-            {"type": "user", "uuid": "fb1", "message": {"role": "user", "content": feedback}}]
-        self.assertEqual(self.run_hook(entries).returncode, 0)
+        for brand in ("KooYomi", "Kooyumi", "Clued"):
+            with self.subTest(brand=brand):
+                feedback = (f"Stop hook feedback:\n{brand} capture guard (protocol/agent/agent-contract.md §3 "
+                            f"and §5):\n- The {brand} write after it did not commit (rejected: authority_escalation_forbidden).")
+                entries = self.merge_turn() + [
+                    call("w1", MUTATE, ABOUT_PR_7), result("w1", COMMITTED), call("c1", CHECKPOINT),
+                    result("c1", {"status": "committed"}),
+                    {"type": "user", "uuid": "fb1", "message": {"role": "user", "content": feedback}}]
+                self.assertEqual(self.run_hook(entries).returncode, 0)
 
     def test_subjectless_outcomes_are_settled_by_any_committed_write(self):
         for command in ("gh pr merge --merge", "git push origin HEAD:main"):

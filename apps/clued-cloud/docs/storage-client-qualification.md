@@ -33,7 +33,7 @@ schema changes fail closed and need review; missing metadata is not invented.
 
 Review the source, supported `clued.storage-agent/1` behavior, and exact target
 before ingesting the JSON as private Evidence through the existing authenticated
-Clued contract. Hash the **original UTF-8 bytes including the final LF** and
+KooYomi contract. Hash the **original UTF-8 bytes including the final LF** and
 record byte size. The source document is valid for initial register/link for
 30 minutes, with at most 60 seconds of future clock skew. This freshness check
 is not a user storage permission lifetime.

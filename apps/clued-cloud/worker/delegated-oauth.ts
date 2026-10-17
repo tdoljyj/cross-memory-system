@@ -1,4 +1,4 @@
-/** OAuth protocol is delegated to the maintained provider; Clued retains live grants. */
+/** OAuth protocol is delegated to the maintained provider; KooYomi retains live grants. */
 import { OAuthProvider, OAuthError, GrantType, type AuthRequest, type OAuthHelpers } from '@cloudflare/workers-oauth-provider';
 import { handleContinuityRequest, publicToolPolicies, type ContinuityEnv } from './continuity';
 import { databaseGatewayToken } from './database-gateway';
@@ -7,6 +7,7 @@ import { storageReadTool, storageContentTool } from './storage-read-agent';
 import { storageConnectionsTool } from './storage-connections';
 import { OWNER_REQUEST_TOOL } from './owner-requests';
 import { permissionDenial, permissionDenialResult } from './permission-guidance';
+import { mcpProfileEmailSnapshot, mcpProfileTool, type McpProfile } from './mcp-profile';
 
 const SCOPES = ['context:read', 'context:write', 'audit:read'];
 const PENDING_TTL = 600;
@@ -17,11 +18,19 @@ export interface DelegatedOAuthEnv extends ContinuityEnv {
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_AUTHORIZATION_ISSUER_TOKEN?: string;
   OAUTH_KV?: KVNamespace;
+  KOOYUMI_OAUTH_ORIGIN?: string;
+  KOOYUMI_AUTHORIZATION_ISSUER_TOKEN?: string;
+  KOOYUMI_OAUTH_KV?: KVNamespace;
   OAUTH_PROVIDER?: OAuthHelpers;
 }
 // narrowed: false only on an access token whose scopes are the whole grant's
 // (no refresh downscoping); absent on tokens issued before it existed.
-interface AuthProps { userId: string; bindingId: string; bindingToken: string; scopes: string[]; expiresAt: string; narrowed?: boolean }
+interface AuthProps {
+  userId: string; bindingId: string; bindingToken: string; scopes: string[]; expiresAt: string; narrowed?: boolean;
+  // Optional for old tokens; new approvals may carry a verified display snapshot.
+  // Refresh preserves it. Email changes are reflected only by a new authorization.
+  profileSnapshot?: Pick<McpProfile, 'id' | 'email'>;
+}
 interface Pending { auth: AuthRequest; clientName: string; cookieHash: string; createdAt: number }
 type Json = Record<string, unknown>;
 class AuthorizationFailure extends Error {
@@ -41,7 +50,7 @@ function originOf(env: DelegatedOAuthEnv) {
 }
 function userToken(request: Request) {
   const token = request.headers.get('Authorization')?.match(/^Bearer (\S+)$/)?.[1];
-  if (!token) throw new AuthorizationFailure(401, '请先登录 Kooyumi。');
+  if (!token) throw new AuthorizationFailure(401, '请先登录 KooYomi。');
   return token;
 }
 function transient(status: number) { return status === 429 || status >= 500; }
@@ -88,12 +97,12 @@ async function bindingRpc(env: DelegatedOAuthEnv, name: string, bindingToken: st
     body: JSON.stringify({ p_token_hash: await hash(bindingToken) }), signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) {
-    if (transient(response.status)) throw new OAuthError('temporarily_unavailable', { description: 'Kooyumi authorization service is temporarily unavailable.', statusCode: 503 });
+    if (transient(response.status)) throw new OAuthError('temporarily_unavailable', { description: 'KooYomi authorization service is temporarily unavailable.', statusCode: 503 });
     const problem = await response.json().catch(() => null) as { code?: unknown } | null;
     if (response.status === 401 && typeof problem?.code === 'string' && /^PGRST30[123]$/.test(problem.code)) {
-      throw new OAuthError('temporarily_unavailable', { description: 'Kooyumi authorization service is temporarily unavailable.', statusCode: 503 });
+      throw new OAuthError('temporarily_unavailable', { description: 'KooYomi authorization service is temporarily unavailable.', statusCode: 503 });
     }
-    throw new OAuthError('invalid_grant', { description: 'Kooyumi authorization is revoked or unavailable to this connection.' });
+    throw new OAuthError('invalid_grant', { description: 'KooYomi authorization is revoked or unavailable to this connection.' });
   }
   return await response.json() as Json;
 }
@@ -104,9 +113,9 @@ async function bindingRpc(env: DelegatedOAuthEnv, name: string, bindingToken: st
 // the flag existed, never exceeds its own scopes.
 async function checkBinding(env: DelegatedOAuthEnv, props: AuthProps): Promise<readonly string[]> {
   const expiry = Date.parse(props?.expiresAt);
-  if (!props || !/^clued_bnd_[a-f0-9]{64}$/.test(props.bindingToken) || !Array.isArray(props.scopes) || !Number.isFinite(expiry) || expiry <= Date.now()) throw new OAuthError('invalid_grant', { description: 'Kooyumi authorization is expired or revoked.' });
+  if (!props || !/^clued_bnd_[a-f0-9]{64}$/.test(props.bindingToken) || !Array.isArray(props.scopes) || !Number.isFinite(expiry) || expiry <= Date.now()) throw new OAuthError('invalid_grant', { description: 'KooYomi authorization is expired or revoked.' });
   const status = await bindingRpc(env, 'clued_authorization_status_v12', props.bindingToken);
-  if (status.active !== true || status.binding_id !== props.bindingId) throw new OAuthError('invalid_grant', { description: 'Kooyumi authorization is expired or revoked.' });
+  if (status.active !== true || status.binding_id !== props.bindingId) throw new OAuthError('invalid_grant', { description: 'KooYomi authorization is expired or revoked.' });
   const live = status.scopes;
   if (!Array.isArray(live) || !live.every(scope => typeof scope === 'string')) return props.scopes;
   return props.narrowed === false ? live as string[] : props.scopes.filter(scope => live.includes(scope));
@@ -251,10 +260,12 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
   // The provider encrypts props. Neither the human identity token nor this internal
   // binding secret is included in the browser response or sent to the MCP client.
   try {
+    const profileSnapshot = mcpProfileEmailSnapshot(user);
     const result = await env.OAUTH_PROVIDER!.completeAuthorization({
       request: pending.auth, userId: user.id, metadata: { bindingId: approved.binding_id, clientName: pending.clientName },
       scope: approved.granted_scopes as string[], revokeExistingGrants: false,
-      props: { userId: user.id, bindingId: approved.binding_id, bindingToken, scopes: approved.granted_scopes, expiresAt } satisfies AuthProps,
+      props: { userId: user.id, bindingId: approved.binding_id, bindingToken, scopes: approved.granted_scopes, expiresAt,
+        ...(profileSnapshot.email ? { profileSnapshot } : {}) } satisfies AuthProps,
     });
     await env.OAUTH_KV!.delete(`clued:pending:${id}`);
     return json({ redirect_url: result.redirectTo });
@@ -266,6 +277,8 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
   }
 }
 export function requiredToolScopes(name: string, args: Json = {}): readonly string[] | null {
+  // Identity display requires the live OAuth Binding, not business-memory scope.
+  if (name === mcpProfileTool.name) return [];
   // Storage authority is a separate native-Owner grant, not context:write.
   // scopedApi still checks the live v12 Binding before the storage RPC performs
   // its exact connection/action grant check. This does not issue any grant.
@@ -292,9 +305,11 @@ export function requiredToolScopes(name: string, args: Json = {}): readonly stri
 async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthProps, ctx: ExecutionContext): Promise<Response> {
   const scopes = await checkBinding(env, props);
   if (request.method === 'POST') {
-    const payload = await request.clone().json() as Json;
+    let payload: Json | null = null;
+    try { payload = await request.clone().json() as Json; }
+    catch { /* Let the MCP transport return its standard parse-error response. */ }
     if (Array.isArray(payload)) return json({ error: 'batch_not_supported' }, 400);
-    if (payload.method === 'tools/call') {
+    if (payload && typeof payload === 'object' && payload.jsonrpc === '2.0' && payload.method === 'tools/call') {
       const params = payload.params as Json | undefined;
       const required = requiredToolScopes(String(params?.name), (params?.arguments || {}) as Json);
       // A tool error, not an HTTP 403: Hosts drop the body of a 403, and the
@@ -306,9 +321,17 @@ async function scopedApi(request: Request, env: DelegatedOAuthEnv, props: AuthPr
       }
     }
   }
+  const account = mcpProfileEmailSnapshot({ id: props.userId });
+  const authenticatedMcpAccount = props.profileSnapshot === undefined ? account
+    : mcpProfileEmailSnapshot(props.profileSnapshot, account.id);
   const headers = new Headers(request.headers);
   headers.set('Authorization', `Bearer ${props.bindingToken}`);
-  const response = await handleContinuityRequest(new Request(request, { headers }), env, ctx);
+  const response = await handleContinuityRequest(new Request(request, { headers }), env, {
+    waitUntil: promise => ctx.waitUntil(promise),
+    // The provider encrypted this Auth user ID when consent was approved.
+    // checkBinding above revalidates that same grant on every MCP request.
+    authenticatedMcpAccount,
+  });
   return response || json({ error: 'not_found' }, 404);
 }
 /** The feature remains disabled until its database migration and issuer are configured. */
@@ -328,7 +351,7 @@ export async function handleDelegatedOAuth(request: Request, env: DelegatedOAuth
       authorizeEndpoint: '/oauth/authorize', tokenEndpoint: '/oauth/token', clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: SCOPES, clientIdMetadataDocumentEnabled: false, allowPlainPKCE: false, allowImplicitFlow: false,
       accessTokenTTL: 900, refreshTokenTTL: 365 * 86400,
-      resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'Kooyumi' },
+      resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin], scopes_supported: SCOPES, resource_name: 'KooYomi' },
       tokenExchangeCallback: async ({ grantType, props, scope, requestedScope }) => {
         await checkBinding(env, props);
         const narrowed = scope.some(item => !requestedScope.includes(item));

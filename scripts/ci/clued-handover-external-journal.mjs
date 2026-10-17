@@ -1,7 +1,8 @@
 // Persistent PG journal for this exact approved disposable cancellation only.
 import assert from 'node:assert/strict';
-export const COMPONENT_VERSION = "1.0.0";
+export const COMPONENT_VERSION = "1.0.1";
 import crypto from 'node:crypto';
+import {assertCanonicalGateFact} from './clued-handover-external-gate-evidence.mjs';
 export function validateStarted(fact,runId){
   assert.equal(fact.run_id,String(runId));assert.equal(fact.gate_conclusion,'success');
   assert.ok(fact.gate_job_id&&fact.idle_job_id&&fact.idle_started_at);
@@ -115,7 +116,67 @@ const hash64=value=>assert.match(value,/^[0-9a-f]{64}$/);
 const hash40=value=>assert.match(value,/^[0-9a-f]{40}$/);
 const POLICY_KEYS=['mode','workflow','workflow_blob','source_sha256','primary_definition_sha256',
   'qualifier_actor_id','qualifier_triggering_actor_id','idle_actor_id','idle_triggering_actor_id'];
+const FIXTURE_POLICY_KEYS=['mode','task_id','scope','repository','target_branch','branch_prefix','pr_state',
+  'draft','auto_merge','unique_match','claim_relation','log_download_policy'];
+export function assertFixtureSelectionPolicy(profile,{unqualified=false}={}){
+  const policy=profile.fixture_selection_policy;
+  assert.ok(policy&&typeof policy==='object'&&!Array.isArray(policy),'FIXTURE_SELECTION_POLICY_MISSING');
+  assert.deepEqual(Object.keys(policy).sort(),[...FIXTURE_POLICY_KEYS].sort(),'FIXTURE_SELECTION_POLICY_FIELDS');
+  assert.equal(policy.mode,'derive_from_admitted_idle_v1');
+  assert.equal(policy.task_id,'6176fdcc-c5b0-46c9-9769-d5e0bc0ce4f8');
+  assert.equal(profile.engineering_task_id,policy.task_id);
+  assert.equal(policy.scope,'project:0597aa60-9b98-4da6-a4ab-63d7705b632f');
+  assert.equal(policy.scope,'project:'+profile.project_id);
+  assert.equal(policy.repository,'tdoljyj/cross-memory-system');assert.equal(profile.repository,policy.repository);
+  assert.equal(policy.target_branch,'main');assert.equal(profile.target_branch,policy.target_branch);
+  assert.equal(policy.branch_prefix,'clued-handover-disposable-');
+  assert.equal(policy.pr_state,'open');assert.equal(policy.draft,true);assert.equal(policy.auto_merge,null);
+  assert.equal(policy.unique_match,true);assert.equal(policy.claim_relation,'single_canonical_claim');
+  assert.equal(policy.log_download_policy,'github_native_job_log_single_redirect_v1');
+  assert.ok(Array.isArray(profile.fixture_paths)&&(unqualified||profile.fixture_paths.length>0),'EXACT_FIXTURE_PATHS_REQUIRED');
+  assert.equal(new Set(profile.fixture_paths).size,profile.fixture_paths.length,'DUPLICATE_FIXTURE_PATH');
+  for(const file of profile.fixture_paths)assert.match(file,/^work\/handover-protection\/disposable-fixture\/[A-Za-z0-9_.-]+$/);
+  assert.match(profile.fixture_claim_id,/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+  return policy;
+}
+export function assertEarlyFixtureLocators(profile){
+  for(const field of ['pr_number','head_sha','disposable_branch','idle_run_id'])assert.equal(profile[field],null,'EARLY_FIXTURE_LOCATOR_PROHIBITED:'+field);
+  for(const field of ['canonical_claim_id','canonical_scope','canonical_fence','canonical_bound_pr','fixture_locator'])
+    assert.equal(Object.hasOwn(profile,field),false,'CANONICAL_RUNTIME_FACT_IN_SOURCE:'+field);
+}
+const LOCATOR_KEYS=['schema','pr_number','head_sha','branch','canonical_gate_fact'];
+export function assertRuntimeFixtureLocator(profile,locator){
+  assertFixtureSelectionPolicy(profile);assert.equal(locator?.schema,'clued.fixture-locator-from-admitted-idle/1');
+  assert.deepEqual(Object.keys(locator).sort(),[...LOCATOR_KEYS].sort(),'RUNTIME_LOCATOR_FIELDS');
+  assert.ok(numericId(locator.pr_number));assert.notEqual(locator.pr_number,'771');hash40(locator.head_sha);
+  assert.match(locator.branch,/^clued-handover-disposable-[A-Za-z0-9_.-]+$/);
+  const fact=assertCanonicalGateFact(profile,locator.canonical_gate_fact,{fresh:false});
+  assert.equal(fact.workflow,profile.fixture_idle_workflow);assert.equal(fact.ref,locator.branch);assert.equal(fact.head_sha,locator.head_sha);
+  assert.equal(fact.bound_pr,profile.repository+'#'+locator.pr_number,'CANONICAL_BOUND_PR_MISMATCH');
+  assert.notEqual(fact.canonical_claim_id,profile.fixture_claim_id,'SYNTHETIC_CLAIM_IS_NOT_CANONICAL_AUTHORITY');
+  return locator;
+}
+export function applyFixtureLocator(profile,locator){
+  assertRuntimeFixtureLocator(profile,locator);return {...profile,fixture_locator:structuredClone(locator),
+    pr_number:locator.pr_number,head_sha:locator.head_sha,disposable_branch:locator.branch,
+    canonical_claim_id:locator.canonical_gate_fact.canonical_claim_id,canonical_scope:locator.canonical_gate_fact.scope,
+    canonical_fence:locator.canonical_gate_fact.fence,canonical_bound_pr:locator.canonical_gate_fact.bound_pr};
+}
+export function assertCanonicalClaimMatch(profile,original,current){
+  assertCanonicalGateFact(profile,original,{fresh:false});assertCanonicalGateFact(profile,current,{fresh:true});
+  for(const field of ['repository','canonical_claim_id','task_id','scope','fence','bound_pr'])
+    assert.equal(current[field],original[field],'CANONICAL_GATE_CONTEXT_CHANGED:'+field);
+  return current;
+}
+export function fixtureClaimDomains(profile,fixture){
+  const locator=assertRuntimeFixtureLocator(profile,profile.fixture_locator),fact=locator.canonical_gate_fact;
+  assert.equal(profile.pr_number,locator.pr_number);assert.equal(profile.head_sha,locator.head_sha);assert.equal(profile.disposable_branch,locator.branch);
+  assert.equal(fixture.claim_id,profile.fixture_claim_id);assert.equal(fixture.scope,'project:'+profile.project_id);
+  return {canonical_claim_id:fact.canonical_claim_id,canonical_scope:fact.scope,
+    synthetic_claim_id:fixture.claim_id,synthetic_scope:fixture.scope};
+}
 export function assertIdleSelectionPolicy(profile){
+  assertFixtureSelectionPolicy(profile);
   const policy=profile.idle_selection_policy;
   assert.ok(policy&&typeof policy==='object'&&!Array.isArray(policy),'IDLE_SELECTION_POLICY_MISSING');
   assert.deepEqual(Object.keys(policy).sort(),[...POLICY_KEYS].sort(),'IDLE_SELECTION_POLICY_FIELDS');
@@ -128,8 +189,7 @@ export function assertIdleSelectionPolicy(profile){
   for(const field of POLICY_KEYS.filter(k=>k.endsWith('_actor_id')))assert.ok(numericId(policy[field]),'ACTUAL_ACTOR_ACCEPTANCE_REQUIRED:'+field);
   assert.equal(profile.repository,'tdoljyj/cross-memory-system');
   assert.equal(profile.qualifier_workflow,'clued-handover-external-qualification.yml');
-  assert.match(profile.disposable_branch,/^clued-handover-disposable-[A-Za-z0-9_.-]+$/);
-  hash40(profile.head_sha);assert.ok(dateMs(profile.valid_until)>Date.now(),'IDLE_SELECTION_EXPIRED');
+  assert.ok(dateMs(profile.valid_until)>Date.now(),'IDLE_SELECTION_EXPIRED');
   return policy;
 }
 export function assertQualifierRun(profile,run,{id,completed=false}={}){
@@ -176,13 +236,16 @@ export function bindingIdentity(profile){
   assert.ok(numericId(profile.registration_run_id),'ACTUAL_REGISTRATION_RUN_REQUIRED');
   return {profile_sha256:profile.profile_hash,acceptance_sha256:profile.acceptance_sha256,
     accepted_source_commit:profile.accepted_source_commit,runtime_source_commit:profile.runtime_source_commit,
-    repository:profile.repository,fixture_head_sha:profile.head_sha,fixture_branch:profile.disposable_branch,
+    repository:profile.repository,synthetic_claim_id:profile.fixture_claim_id,synthetic_scope:'project:'+profile.project_id,
+    fixture_paths:[...profile.fixture_paths],fixture_selection_policy:structuredClone(profile.fixture_selection_policy),
     qualifier_workflow:profile.qualifier_workflow,operator_authority_receipt:profile.operator_authority_receipt,
     registration:profile.disposable_pg_registration,registration_run_id:profile.registration_run_id,
     idle_selection_policy:structuredClone(profile.idle_selection_policy)};
 }
-export function makeIdleBinding(profile,{run,jobs,content,registrationRun,registrationJobs}){
+export function makeIdleBinding(profile,{run,jobs,content,registrationRun,registrationJobs,locator,mainGateFact}){
   const policy=assertIdleSelectionPolicy(profile);
+  assertRuntimeFixtureLocator(profile,locator);assertCanonicalClaimMatch(profile,locator.canonical_gate_fact,mainGateFact);
+  assert.equal(profile.pr_number,locator.pr_number);assert.equal(profile.head_sha,locator.head_sha);assert.equal(profile.disposable_branch,locator.branch);
   const registered=registrationCompletion(profile,{run:registrationRun,jobs:registrationJobs});
   const runId=publicId(run.id);assert.equal(runId,publicId(profile.idle_run_id));
   assert.notEqual(runId,profile.registration_run_id);
@@ -218,14 +281,27 @@ export function makeIdleBinding(profile,{run,jobs,content,registrationRun,regist
   const started={run_id:runId,run_status:'in_progress',run_conclusion:null,
     gate_job_id:publicId(gate[0].id),gate_conclusion:'success',idle_job_id:publicId(idle[0].id),
     idle_started_at:idle[0].started_at,idle_completed_at:null,idle_conclusion:null};
-  const binding={schema:'clued.external2-idle-binding/1',identity:bindingIdentity(profile),started_fact:started,
+  const binding={schema:'clued.external2-idle-binding/2',identity:bindingIdentity(profile),started_fact:started,
+    fixture_locator:structuredClone(locator),publisher_gate_fact:structuredClone(mainGateFact),
     idle_created_at:run.created_at,idle_process_started_at:steps[0].started_at,
     registration_completed_at:registered.completed_at,registration_job_id:registered.job_id};
   assertIdleBinding(profile,binding);return binding;
 }
 export function assertIdleBinding(profile,binding){
-  assert.equal(binding.schema,'clued.external2-idle-binding/1');
-  assert.deepEqual(Object.keys(binding).sort(),['schema','identity','started_fact','idle_created_at','idle_process_started_at','registration_completed_at','registration_job_id'].sort());
+  assert.equal(binding.schema,'clued.external2-idle-binding/2');
+  assert.deepEqual(Object.keys(binding).sort(),['schema','identity','started_fact','fixture_locator','publisher_gate_fact',
+    'idle_created_at','idle_process_started_at','registration_completed_at','registration_job_id'].sort());
+  assertRuntimeFixtureLocator(profile,binding.fixture_locator);
+  assertCanonicalGateFact(profile,binding.publisher_gate_fact,{fresh:false});
+  for(const field of ['repository','canonical_claim_id','task_id','scope','fence','bound_pr'])
+    assert.equal(binding.publisher_gate_fact[field],binding.fixture_locator.canonical_gate_fact[field],'ORIGINAL_CANONICAL_BINDING_CHANGED:'+field);
+  assert.equal(binding.publisher_gate_fact.workflow,profile.qualifier_workflow);
+  assert.equal(binding.fixture_locator.canonical_gate_fact.run_id,binding.started_fact.run_id,'ORIGINAL_CANONICAL_IDLE_RUN_MISMATCH');
+  assert.equal(binding.fixture_locator.canonical_gate_fact.gate_job_id,binding.started_fact.gate_job_id,'ORIGINAL_CANONICAL_IDLE_GATE_JOB_MISMATCH');
+  assert.equal(binding.fixture_locator.canonical_gate_fact.created_at,binding.idle_created_at,'ORIGINAL_CANONICAL_IDLE_CREATED_AT_MISMATCH');
+  if(profile.pr_number!==null)assert.equal(String(profile.pr_number),binding.fixture_locator.pr_number,'ORIGINAL_FIXTURE_PR_REPLACEMENT');
+  if(profile.head_sha!==null)assert.equal(profile.head_sha,binding.fixture_locator.head_sha,'ORIGINAL_FIXTURE_HEAD_REPLACEMENT');
+  if(profile.disposable_branch!==null)assert.equal(profile.disposable_branch,binding.fixture_locator.branch,'ORIGINAL_FIXTURE_BRANCH_REPLACEMENT');
   publicId(binding.registration_job_id);
   assert.deepEqual(binding.identity,bindingIdentity(profile),'ORIGINAL_IDLE_BINDING_CONTEXT_CHANGED');
   assert.deepEqual(Object.keys(binding.started_fact).sort(),['run_id','run_status','run_conclusion','gate_job_id','gate_conclusion','idle_job_id','idle_started_at','idle_completed_at','idle_conclusion'].sort());

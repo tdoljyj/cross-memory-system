@@ -45,6 +45,19 @@ test('local signer fails closed on missing secret, non-loopback origin and exces
   }
 });
 
+test('the same local configuration signs a fresh Phase B token after the Phase A token expires', () => {
+  const phaseAToken = createLocalGatewayToken(status, { now, ttlSeconds: 1 });
+  const phaseBNow = now + 2;
+  assert.throws(() => assertLocalGatewayConfig({ gatewayOrigin: status.apiUrl, gatewayToken: phaseAToken }, phaseBNow), /short-lived/);
+  const phaseBToken = createLocalGatewayToken(status, { now: phaseBNow, ttlSeconds: 900 });
+  assert.notEqual(phaseBToken, phaseAToken);
+  assert.doesNotThrow(() => assertLocalGatewayConfig({ gatewayOrigin: status.apiUrl, gatewayToken: phaseBToken }, phaseBNow));
+  const [header, payload, signature] = phaseBToken.split('.');
+  assert.deepEqual(JSON.parse(Buffer.from(payload, 'base64url')),
+    { role: 'clued_worker_gateway', iat: phaseBNow, exp: phaseBNow + 900 });
+  assert.equal(signature, createHmac('sha256', status.jwtSecret).update(`${header}.${payload}`).digest('base64url'));
+});
+
 test('Worker configuration refuses absent, expired, long-lived and anon/service_role gateway tokens', () => {
   const token = createLocalGatewayToken(status, { now, ttlSeconds: 900 });
   const [header, payload, signature] = token.split('.');
