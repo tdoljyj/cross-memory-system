@@ -154,7 +154,8 @@ test('Native Imprint: one identity, terminal metadata, isolated CAS, source and 
       const history = await read({ include_history: true });
       assert.equal(history.status, 'ok');
       assert.equal(history.coverage.unlinked_intake_included, false);
-      assert.equal(history.coverage.prior_body_revisions_available, false);
+      assert.equal(history.coverage.prior_body_revisions_available, true);
+      assert.equal(history.coverage.canonical_history_retention, 'observed_prior_versions_after_feature_install');
       assert.ok([profile, legacy, state, ...terminal].every(id => history.records.some(r => r.id === id)));
       assert.ok(!history.records.some(r => [foreign, wrongScope].includes(r.id)));
       assert.equal(history.records.find(r => r.id === archivedNote).record_currentness, 'HISTORY');

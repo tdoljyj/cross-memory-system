@@ -51,7 +51,10 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   const workerSource=await fs.readFile(path.join(cloud,'worker/continuity.ts'),'utf8');
   // Bind this current transport regression to the independently reviewed Worker.
   // I9 changes only storage recovery routes/scheduler and scoped storage MCP
-  // refusals; C1 audit paths are unchanged. The prior OAuth guard binding was
+  // refusals. The replacement-reader refresh bridge also selects the actual
+  // reader in those storage routes; C1 audit paths are unchanged. Its reviewed
+  // predecessor was ba86106e5e68cf1ddc84cb04455d342a164650b5444e491abf59ad3f2902262f.
+  // The prior OAuth guard binding was
   // 005e2c10ccff1369b356ca56ad905c2a063f270332860ad905751053e34dd6f4.
   // That and 23236e5f...24cf remain in earlier history; R9 registry and epoch
   // pins are separate and unchanged.

@@ -163,6 +163,10 @@ jobs:
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
+        # This suite uses the bundled CPU runtime; avoid the optional CUDA
+        # installer and its independent, unbounded external download.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci --cache "$HOME/.npm" --prefer-offline
 
       - name: Isolate local Supabase ports
@@ -294,6 +298,8 @@ jobs:
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Install application dependencies
+        env:
+          ONNXRUNTIME_NODE_INSTALL: 'skip'
         run: npm ci
 
       - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)

@@ -201,6 +201,16 @@
             "job_id": "e2e-untrusted-hosted",
             "definition_sha256": "c91a95c9d1e4b0bdef409c0e5e3836b1b8512569fc2be6fa2e730eba426927db"
           }
+        ],
+        "18c48c7e20cc3ff6b9ff7aae953eb2d829a22f4f": [
+          {
+            "job_id": "e2e-trusted-self-hosted",
+            "definition_sha256": "20b7acbe7bd085c58b88b14de0fe20ff5bc666315c23dca12f86bd7738f040b6"
+          },
+          {
+            "job_id": "e2e-untrusted-hosted",
+            "definition_sha256": "9953c379eaf83bb1ca9d5b194c04b2f095b2ac8b3883ab7455cd39af0c02d8c2"
+          }
         ]
       }
     },

@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-10-17T06:17:55.521Z",
-  "history_through": "20261017061135",
-  "row_count": 273,
+  "exported_at": "2026-10-17T09:57:35.096Z",
+  "history_through": "20261017094322",
+  "row_count": 277,
   "rows": [
     {
       "version": "20260823154017",
@@ -2187,6 +2187,38 @@
       "statements_md5": "1281c938a60c99d638cbfa0cfd8b7d54",
       "statements_length": 55920,
       "source": "migrations/20261017043050_storage_semantic_recovery_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017084823",
+      "name": "imprint_source_history_v1",
+      "statements_md5": "bd20a622c82e9e7c64d14eab5e137fa0",
+      "statements_length": 32861,
+      "source": "migrations/20261017065932_imprint_source_history_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017094308",
+      "name": "storage_recovery_coverage_v1",
+      "statements_md5": "bd9cf311eee146c7a3f3a49f4b098e8d",
+      "statements_length": 1956,
+      "source": "migrations/20261017053535_storage_recovery_coverage_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017094315",
+      "name": "storage_recovery_read_connection_v1",
+      "statements_md5": "7f512649c7929ba6ee5ba202d0ccc862",
+      "statements_length": 33014,
+      "source": "migrations/20261017060438_storage_recovery_read_connection_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261017094322",
+      "name": "storage_recovery_native_coverage_v1",
+      "statements_md5": "3f304b3c7f46e2799184048e599241b8",
+      "statements_length": 2720,
+      "source": "migrations/20261017063317_storage_recovery_native_coverage_v1.sql",
       "transform": "identical"
     }
   ],
