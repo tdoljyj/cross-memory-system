@@ -1,0 +1,28 @@
+{
+  "schema": "clued.production-publisher.host-profile/1",
+  "version": "1.0.0",
+  "host_name": "DESK-W-591",
+  "root": "D:\\CluedProductionPublisher",
+  "owner": "clued-production-publisher-v1",
+  "vm_name_prefix": "clued-publisher-",
+  "generation": 2,
+  "processor_count": 4,
+  "memory_bytes": 8589934592,
+  "disk_bytes": 68719476736,
+  "switch_name": "Default Switch",
+  "runner_route": "clued-production-publisher-v1",
+  "guest_manifest_schema": "clued.production-vm-guest-base/1",
+  "guest_manifest_path": "/opt/clued-production-publisher/base-manifest.json",
+  "production_qualified": false,
+  "qualification": null,
+  "network_status": "UNVERIFIED",
+  "isolation": {
+    "new_vm_per_job": true,
+    "new_differencing_disk_per_job": true,
+    "host_directory_mounts": false,
+    "host_container_socket": false,
+    "persistent_runner_registration": false,
+    "automatic_runner_registration": false,
+    "automatic_production_credentials": false
+  }
+}
