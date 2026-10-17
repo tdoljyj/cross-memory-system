@@ -21,6 +21,18 @@ const providerId = /^[A-Za-z0-9_-]{1,160}$/;
 const denied = () => new Error("storage_recovery_unavailable");
 const EXPIRING = "storage_recovery_credential_expiring";
 
+/** Internal refresh receiver only. The database independently rechecks this
+ * original job and current reader before its single token exchange. */
+export function storageRecoveryRefreshReference(descriptor: Data, original: Reference): Reference {
+  if (descriptor.status !== "recovery_only" || descriptor.connection_id !== original.connection_id ||
+      descriptor.job_id !== original.job_id || !uuid.test(original.connection_id) || !uuid.test(original.job_id)) throw denied();
+  const reader = descriptor.recovery_reader;
+  if (reader === undefined) return { ...original };
+  if (!object(reader) || reader.contract !== "clued.storage-recovery-reader/1" ||
+      !uuid.test(String(reader.connection_id)) || reader.credential_version !== descriptor.credential_version) throw denied();
+  return { connection_id: String(reader.connection_id), job_id: original.job_id };
+}
+
 /** Private settlement-only composition. The trusted RPC must independently
  * authenticate and pin the original job, intent and provider attempt on BOTH
  * calls. This is not an authorization surface and never substitutes for that

@@ -466,5 +466,7 @@ before 仍经原双 GET、I2/I9、登记与 I11 出口；新 reader 及实际凭
 
 当前连接的原生作业列表可列出同 Owner、同 profile/subject/client 且当前只读资格仍成立的旧连接作业。每行保留原 `connection_id`、job 和 Receipt；单独的 `read_connection_id` 只绑定当前页面上下文。页面继续只轮询状态，原作业的真正冲突取舍仍发送原 connection/job 与原 CAS；页面刷新、换账号、上下文变化或旧版本消失均作废已展示的选择。列表不向页面公开凭证或 reader 内部授权细节，旧授权不因列出而恢复。
 
+实际 reader 的凭据过期时，恢复程序以原 job 产生续签需求，复用既有 recovery-only 单次 token exchange、凭据 CAS 和回执，不等待该连接碰巧出现新作业或 30 天 idle keepalive。刷新接收者是私有 descriptor 指明的当前 reader，`recovery_job_id` 仍指原作业。服务端重新加载原恢复资格，将原 connection/job/intent/request/attempt 与完整 reader 版本和策略摘要一并钉在 refresh attempt digest；claim 与 commit 均校验这条侧链。当前 delegation 停用、Owner/root/client/read 拒绝或版本变化仍拒绝；不重开旧连接或开启续签，不重试不确定的 token exchange。续签后重新加载原 job descriptor，再走原只读核对与结算。刷新入口也先取得原 client/job 锁，避免先持 root 再等待原 job。
+
 此候选仍须正式源审核、合并、生产迁移与数据库先于页面的验收；非 job I12 的完整 Native 出口和剩余目录复核仍须分别交付与验证。生产 PR864 的应用时间版本 `20261017061135`、源文件 `20261017043050_storage_semantic_recovery_v1.sql` 与文本哈希在台账中如实绑定。不能把候选本地测试、台账补记或已上线 PR864 表述为整个 e91 完成。
 

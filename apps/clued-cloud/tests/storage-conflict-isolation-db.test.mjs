@@ -730,7 +730,7 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    await db.query('select clued_private.storage_conflict_assert_v1($1,$2,$3)',[owner,profileId,releaseMutation]);await submit(releaseMutation);
    assert.deepEqual({posts,writes},beforeIncompleteExit);assert.deepEqual(files.get(prior.id),incompleteProviderState);assert.equal((await db.query('select count(*)::int n from clued_private.resource_center_writer_bindings_v1')).rows[0].n,incompleteWriters,'Owner withdrawal neither calls the provider nor grants a new writer');
    await real.test('a replacement legitimate read connection completes before and after recovery without reviving the old connection',async()=>{
-    const beforeJob=await automaticJob('replacement-reader-before'),afterJob=await automaticJob('replacement-reader-after');
+    const beforeJob=await automaticJob('replacement-reader-before'),afterJob=await automaticJob('replacement-reader-after'),refreshJob=await automaticJob('replacement-reader-expired');
     // Historical OAuth connection retirement, distinct from an Owner root
     // stop: the latter is tested below and must continue to deny recovery.
     await db.query('begin');try{
@@ -852,6 +852,65 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
     const settled=await recovery.run(afterJob.reference);assert.equal(settled.status,'committed',JSON.stringify({settled,readerTrace}));
     assert.equal(typedProofChallenged,true);
     const afterJournal=await journal(afterJob);assert.equal(afterJournal.state,'committed');assert.deepEqual(afterJournal.verified_result_v2.recovery_reader,afterDescriptor.recovery_reader);
+    // No queued job belongs to the new reader. Idle discovery has already
+    // observed this credential and is not a substitute for recovery demand.
+    const {scopeString}=await loadWorker('storage-google-scopes'),{createStorageGoogleRefresh}=await loadWorker('storage-google-refresh');
+    const {storageRecoveryRefreshReference}=await loadWorker('storage-cloud-recovery');stop();
+    const readerRow=(await db.query('select provider_scope_profile from clued_private.storage_connections_v1 where id=$1',[readerConnection])).rows[0];
+    const refreshScope=scopeString(readerRow.provider_scope_profile),expiredEnvelope=await vault.seal(JSON.stringify({token_type:'Bearer',access_token:'synthetic-expired-reader-access',refresh_token:'synthetic-reader-refresh-token',scope:refreshScope,expires_at_ms:Date.now()-60000}),
+     {owner_id:owner,connection_id:readerConnection,provider:'google-drive',provider_subject:'conflict-fixture-subject',oauth_client_id:oauthClient,credential_version:2});
+    await db.query('update clued_private.storage_connections_v1 set credential_envelope=$2 where id=$1',[readerConnection,expiredEnvelope]);
+    await db.query(`insert into clued_private.storage_refresh_delegations_v1(connection_id,issuer_hash,enabled,receipt_id)
+     values($1,$2,false,$3) on conflict(connection_id) do update set enabled=false,failures=0,next_refresh_at=clock_timestamp(),version=clued_private.storage_refresh_delegations_v1.version+1`,[readerConnection,cloudIssuer,registration.receipt_id]);
+    await db.query(`insert into clued_private.storage_refresh_activity_v1(connection_id,credential_version,credential_expires_at,last_successful_exchange_at,keepalive_anchor_at)
+     values($1,2,clock_timestamp()-interval '1 minute',clock_timestamp(),clock_timestamp())
+     on conflict(connection_id) do update set credential_version=2,credential_expires_at=excluded.credential_expires_at,last_successful_exchange_at=excluded.last_successful_exchange_at,keepalive_anchor_at=excluded.keepalive_anchor_at`,[readerConnection]);
+    const refreshInputs=[],refreshProvider=[];
+    const refresher=await createStorageGoogleRefresh({client_id:oauthClient,client_secret:'synthetic-reader-client-secret',vault:vaultConfig,
+     rpc:input=>{refreshInputs.push(input);return rpc('clued_storage_refresh_worker_v1',cloudIssuer,input);},fetch:async(url,init)=>{
+      const parsed=new URL(String(url));refreshProvider.push({path:parsed.pathname,method:init.method??'GET'});
+      if(parsed.origin==='https://oauth2.googleapis.com'){
+       assert.equal(init.method,'POST');assert.equal(new URLSearchParams(init.body).get('refresh_token'),'synthetic-reader-refresh-token');
+       return Response.json({token_type:'Bearer',access_token:'synthetic-renewed-reader-access',expires_in:3600});
+      }
+      assert.equal(parsed.origin,'https://www.googleapis.com');assert.equal(init.method,undefined);
+      if(parsed.pathname.endsWith('/about'))return Response.json({user:{me:true,permissionId:'conflict-fixture-subject'}});
+      assert.equal(parsed.pathname,'/drive/v3/files/'+cloudRoot);
+      return Response.json({id:cloudRoot,parents:[cloudParent],mimeType:'application/vnd.google-apps.folder',trashed:false,isAppAuthorized:true,capabilities:{canAddChildren:true}});
+     }});
+    let expiredDescriptor=await load(refreshJob),refreshReference=storageRecoveryRefreshReference(expiredDescriptor,refreshJob.reference);
+    assert.deepEqual(refreshReference,{connection_id:readerConnection,job_id:refreshJob.reference.job_id});
+    assert.equal((await refresher.run(refreshReference.connection_id,refreshReference.job_id)).status,'unavailable','a disabled current delegation is never enabled by recovery');
+    assert.equal(refreshProvider.length,0);
+    await db.query('update clued_private.storage_refresh_delegations_v1 set enabled=true,version=version+1 where connection_id=$1',[readerConnection]);
+    const idle=await rpc('clued_storage_refresh_worker_v1',cloudIssuer,{action:'due_demand'});
+    assert.equal(idle.connections.some(row=>row.connection_id===readerConnection),false,'idle discovery misses this already-observed reader without its own queued job');
+    await blocker.query('begin');await recovering.query('begin');
+    try{
+     await blocker.query("select pg_advisory_xact_lock(hashtextextended('storage-client:'||$1||':'||$2,0))",[owner,lineage]);
+     await recovering.query("set local statement_timeout='1500ms'");
+     pending=rpc('clued_storage_refresh_worker_v1',cloudIssuer,{action:'claim',connection_id:readerConnection,recovery_job_id:refreshJob.reference.job_id,attempt_id:id()},recovering).then(value=>({value}),error=>({error}));
+     await blocked(recoveringPid);
+     assert.equal((await db.query("select pg_try_advisory_xact_lock(hashtextextended($1||':'||$2,0)) available",[owner,cloudRoot])).rows[0].available,true,'reader refresh waits at the original lineage before taking root');
+     await blocker.query('commit');const result=await pending;assert.ifError(result.error);assert.equal(result.value.status,'acquired');
+    }finally{await blocker.query('rollback');await pending;await recovering.query('rollback');}
+    const expiredRecovery=await createStorageCloudRecovery({client_id:oauthClient,vault:vaultConfig,fetch:drive,report_expiring:true,
+     rpc:value=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,value),verified:{descriptor:expiredDescriptor,rpc:cloudRpc}});
+    assert.equal((await expiredRecovery.run(refreshJob.reference)).status,'credential_expiring');
+    const refreshAttemptsBefore=(await db.query('select count(*)::int n from clued_private.storage_refresh_attempts_v1')).rows[0].n;
+    assert.equal((await refresher.run(refreshReference.connection_id,refreshReference.job_id)).status,'committed',JSON.stringify(refreshInputs));
+    assert.equal(refreshProvider.filter(row=>row.method==='POST').length,1,'the original recovery demand causes exactly one token exchange');
+    const refreshAttempt=(await db.query('select connection_id,recovery_job_id,recovery_intent_id,recovery_attempt_digest,state from clued_private.storage_refresh_attempts_v1 where connection_id=$1',[readerConnection])).rows;
+    assert.equal(refreshAttempt.length,1);assert.equal(refreshAttempt[0].state,'committed');assert.equal(refreshAttempt[0].connection_id,readerConnection);
+    assert.equal(refreshAttempt[0].recovery_job_id,refreshJob.reference.job_id);assert.equal(refreshAttempt[0].recovery_intent_id,refreshJob.closed.id);
+    assert.match(refreshAttempt[0].recovery_attempt_digest,/^[0-9a-f]{64}$/);
+    assert.equal((await db.query('select count(*)::int n from clued_private.storage_refresh_attempts_v1')).rows[0].n,refreshAttemptsBefore+1);
+    const refreshedDescriptor=await load(refreshJob);assert.equal(refreshedDescriptor.credential_version,3);assert.equal(refreshedDescriptor.connection_id,connection);
+    assert.equal(refreshedDescriptor.recovery_reader.connection_id,readerConnection);
+    const refreshedReview=await createStorageRecoveryReview({client_id:oauthClient,vault:vaultConfig,descriptor:refreshedDescriptor,source_receipt_id:refreshJob.closed.receipt_id,fetch:drive,
+     rpc:value=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,value)});
+    assert.equal((await refreshedReview.reconcile(refreshJob.reference)).status,'resolved');
+    assert.equal((await journal(refreshJob)).state,'conflict','refresh and before reconciliation never forge the old overwrite result');
     assert.equal((await db.query('select state from clued_private.storage_connections_v1 where id=$1',[connection])).rows[0].state,'revoked');
     assert.deepEqual({posts,writes},beforeEffects);assert.equal((await db.query('select count(*)::int n from clued_private.resource_center_writer_bindings_v1')).rows[0].n,writerCount);
    });

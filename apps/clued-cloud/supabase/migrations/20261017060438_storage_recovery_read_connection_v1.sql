@@ -358,4 +358,85 @@ begin
  end loop;
 end $guards$;
 
+-- Reuse the existing single-exchange recovery refresh attempt. Its receiver
+-- may now be the current reader; the original job/intent/attempt stay pinned.
+create function clued_private.storage_recovery_reader_refresh_v1(
+ p_connection uuid,p_owner uuid,p_profile uuid,p_job uuid,p_claim boolean,
+ p_attempt_job uuid,p_attempt_intent uuid,p_attempt_digest text)
+returns table(intent_id uuid,attempt_digest text)
+language plpgsql security definer set search_path='' as $$
+declare j clued_private.storage_jobs_v1;m clued_private.resource_center_mutations_v1;
+ identity text;reader jsonb;descriptor jsonb;digest text;
+begin
+ select * into j from clued_private.storage_jobs_v1 where owner_id=p_owner and job_id=p_job;
+ select * into m from clued_private.resource_center_mutations_v1 where id=j.intent_id and user_id=p_owner;
+ select d.issuer_hash into identity from clued_private.storage_refresh_delegations_v1 d
+  where d.connection_id=p_connection and d.enabled;
+ if j.job_id is null or j.connection_id=p_connection or m.id is null or m.profile_id is distinct from p_profile
+ or identity is null or m.provider_attempt is null or m.provider_attempt_receipt_id is null
+ or j.cloud_writer_binding_id is null or m.writer_binding_id is distinct from j.cloud_writer_binding_id then
+  raise exception 'storage_refresh_denied' using errcode='42501';end if;
+ reader:=clued_private.storage_recovery_reader_v1(identity,j.connection_id,j.job_id,p_connection);
+ if p_claim then
+  descriptor:=clued_private.ii_pub_clued_storage_scheduled_recovery_v2(identity,
+   jsonb_build_object('action','load','connection_id',j.connection_id,'job_id',j.job_id));
+  if descriptor->>'status' is distinct from 'recovery_only'
+  or descriptor->>'intent_id' is distinct from m.id::text
+  or descriptor->>'request_sha256' is distinct from m.request_sha256
+  or descriptor->>'version' is distinct from m.version::text
+  or descriptor->'recovery_reader' is distinct from reader->'recovery_reader'
+  or m.state not in ('started','uncertain','conflict') then
+   raise exception 'storage_refresh_denied' using errcode='42501';end if;
+ end if;
+ digest:=clued_private.m1_sha256(jsonb_build_object('original_connection_id',j.connection_id,
+  'job_id',j.job_id,'intent_id',m.id,'request_sha256',m.request_sha256,'provider_attempt',m.provider_attempt,
+  'provider_attempt_receipt_id',m.provider_attempt_receipt_id,'recovery_reader',reader->'recovery_reader'));
+ if not p_claim and (p_attempt_job is distinct from j.job_id or p_attempt_intent is distinct from m.id
+  or p_attempt_digest is distinct from digest or m.state not in ('started','uncertain','conflict','committed','cancelled')) then
+  raise exception 'storage_refresh_denied' using errcode='42501';end if;
+ return query select m.id,digest;
+end $$;
+revoke all on function clued_private.storage_recovery_reader_refresh_v1(uuid,uuid,uuid,uuid,boolean,uuid,uuid,text)
+ from public,anon,authenticated,service_role,clued_worker_gateway;
+
+-- Refresh used to take root before inspecting its original recovery job. Take
+-- that job's lineage/job locks first, including when the receiver is different.
+create function clued_private.storage_recovery_refresh_input_guard_v1(p_input jsonb) returns void
+language plpgsql security definer set search_path='' as $$
+declare receiver uuid;job uuid;j clued_private.storage_jobs_v1;
+begin
+ begin receiver:=(p_input->>'connection_id')::uuid;job:=(p_input->>'recovery_job_id')::uuid;
+ exception when invalid_text_representation then return;end;
+ if receiver is null or job is null then return;end if;
+ select sj.* into j from clued_private.storage_jobs_v1 sj
+  join clued_private.storage_connections_v1 c on c.owner_id=sj.owner_id and c.id=receiver where sj.job_id=job;
+ if j.job_id is null then return;end if;
+ perform clued_private.storage_recovery_client_guard_v1(j.connection_id,j.job_id);
+ perform pg_advisory_xact_lock(hashtextextended('storage-job:'||j.owner_id::text||':'||j.job_id::text,0));
+end $$;
+revoke all on function clued_private.storage_recovery_refresh_input_guard_v1(jsonb)
+ from public,anon,authenticated,service_role,clued_worker_gateway;
+
+do $refresh_reader$
+declare body text;at integer;
+begin
+ body:=pg_get_functiondef('clued_private.storage_account_recovery_refresh_v1(uuid,uuid,uuid,uuid,boolean,uuid,uuid,text)'::regprocedure);
+ at:=strpos(body,E'\nbegin\n');
+ if at=0 then raise exception 'storage_reader_refresh_entry_mismatch';end if;
+ body:=overlay(body placing E'\nbegin\n'||$r$ if exists(select 1 from clued_private.storage_jobs_v1 sj where sj.owner_id=p_owner
+  and sj.job_id=p_job and sj.connection_id<>p_connection) then
+  return query select * from clued_private.storage_recovery_reader_refresh_v1(
+   p_connection,p_owner,p_profile,p_job,p_claim,p_attempt_job,p_attempt_intent,p_attempt_digest);
+  return;
+ end if;
+$r$ from at for length(E'\nbegin\n'));
+ execute body;
+ body:=pg_get_functiondef('clued_private.ii_pub_clued_storage_refresh_worker_v1(text,jsonb)'::regprocedure);
+ at:=strpos(body,E'\nbegin\n');
+ if at=0 then raise exception 'storage_reader_refresh_guard_entry_mismatch';end if;
+ body:=overlay(body placing E'\nbegin\n perform clued_private.storage_recovery_refresh_input_guard_v1(p_input);\n'
+  from at for length(E'\nbegin\n'));
+ execute body;
+end $refresh_reader$;
+
 notify pgrst,'reload schema';
