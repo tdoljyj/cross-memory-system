@@ -88,6 +88,7 @@ export async function createStorageCloudWorker(config: {
       metadata_batch: ({ access_token }: { access_token: string }) =>
         createStorageGoogleMetadataBatch({ access_token, fetch: config.fetch, signal: AbortSignal.timeout(60000) }),
       verified_result_mode: config.account_policy_v2 === true,
+      ...(config.account_policy_v2 === true ? { semantic_recovery_client_id: config.client_id } : {}),
       ...(config.load_staged_content ? { load_staged_content: config.load_staged_content } : {}),
       load_job: async (ref: Reference) => {
         if (config.credential_preflight && (await config.credential_preflight(ref)).status !== "ready")

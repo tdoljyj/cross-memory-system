@@ -4,6 +4,7 @@ import { createResourceCenterOnlineToolHost } from "./resource-center-online-too
 import { resourceCenterReservationFailure, sanitizeReservationDiagnostic } from "./resource-center-write-client.mjs";
 import { createGoogleDriveMetadataApi } from "./resource-center-google-drive-metadata.mjs";
 import { scopeProfile, scopeProfileCovers } from "./resource-center-google-scopes.mjs";
+import { createGoogleDriveSemanticAttempt, observeGoogleDriveSemanticAttempt } from "./resource-center-google-drive-semantic-recovery.mjs";
 import { createGoogleDriveProviderIdentityResolver, ancestorMatchShape } from "./resource-center-google-drive-identity.mjs";
 import { createGoogleDriveBoundaryScanner } from "./resource-center-google-drive-boundary.mjs";
 import { createGoogleDriveNativeCreateEffect, contentRefShape, contentSourceShape } from "./resource-center-google-drive-create-effect.mjs";
@@ -137,15 +138,17 @@ const logPostWriteFailure = (stage,error) => {
  * load_staged_content, when supplied, opens a binary create job's staged object (StorageNormalUse
  * §6.2) as a bounded-memory source {size, sha256, verify(), stream()}; the executor runs verify()
  * (full decrypt + sha256) before any reservation. Without it binary jobs are refused.
- * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean, metadata_batch?: Function, load_staged_content?: Function}} config
+ * @param {{load_job: Function, rpc: Function, get_credential: Function, drive_fetch?: typeof fetch, clock?: () => number, verified_result_mode?: boolean, metadata_batch?: Function, load_staged_content?: Function, semantic_recovery_client_id?: string}} config
  */
 export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_credential:getCredential,
   drive_fetch:driveFetch=globalThis.fetch,clock=Date.now,verified_result_mode:verifiedResultMode=false,
-  metadata_batch:metadataBatch,load_staged_content:loadStagedContent}={}){
+  metadata_batch:metadataBatch,load_staged_content:loadStagedContent,semantic_recovery_client_id:semanticClient}={}){
   if([loadJob,rpc,getCredential,driveFetch,clock].some(fn=>typeof fn!=="function") ||
     (metadataBatch!==undefined && typeof metadataBatch!=="function") ||
     (loadStagedContent!==undefined && typeof loadStagedContent!=="function") ||
-    typeof verifiedResultMode!=="boolean") throw new TypeError("Private server dependencies required.");
+    typeof verifiedResultMode!=="boolean" ||
+    (semanticClient!==undefined && (!verifiedResultMode || !/^[A-Za-z0-9._-]{1,255}$/.test(semanticClient))))
+      throw new TypeError("Private server dependencies required.");
   const seen=new Set();
   return Object.freeze({async run(reference){
     if(!reference || Object.keys(reference).sort().join(",")!=="connection_id,job_id" ||
@@ -245,7 +248,8 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         ancestorMatch=ancestorMatchShape(descriptor.ancestor_match,profile.managed_root);
         if(ancestorMatch===null) fail("CLOUD_DESCRIPTOR_INVALID");
       }
-      const metadata=createGoogleDriveMetadataApi({get_credential:credential,fetch:driveFetch});
+      const semanticEnabled=semanticClient!==undefined && !subtree && !adopt;
+      const metadata=createGoogleDriveMetadataApi({get_credential:credential,fetch:driveFetch,semantic_details:semanticEnabled});
       const resolveProvider=createGoogleDriveProviderIdentityResolver({managed_root:profile.managed_root,root_folder_id:descriptor.root_folder_id,
         root_parent_id:descriptor.root_parent_id,get_file:metadata.getFile,list_children:metadata.listChildren,
         get_sharing:metadata.getSharing,
@@ -349,14 +353,30 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
         }
         return Object.freeze({...result.authority,workspace_version:"provider+canonical:"+hash([result.authority.workspace_version,request.provider_identity])});
       };
-      let startedProvider=null, saved=null, scopeRefusal=null;
-      const effectConfig={trusted_profile:profile,get_credential:credential,resolve_provider_identity:resolveProvider,
+      let startedProvider=null, saved=null, scopeRefusal=null, semanticRecovery=null, semanticProviderAttempt=null;
+      const effectConfig={trusted_profile:profile,get_credential:credential,resolve_provider_identity:resolveProvider,intent_marker:semanticEnabled,
         fetch:driveFetch,clock,consume_started_provider:binding=>{
           const current=startedProvider;startedProvider=null;
           return current?.request_sha256===binding.request_sha256?current:null;
         },persist_provider_attempt:async attempt=>{
-          const result=await invoke({action:"provider_attempt",attempt});
+          let semanticPacket;
+          if(semanticEnabled){
+            const current=await metadata.getFile(attempt.provider_file_id,{allow_missing:mutation.operation==="create"});
+            if(mutation.operation==="create" ? current!==null
+              : !current || current.version!==(attempt.source_file_version??attempt.destination_file_version))
+              fail("CLOUD_SEMANTIC_BEFORE_CHANGED");
+            semanticPacket={evidence:createGoogleDriveSemanticAttempt({oauth_client_id:semanticClient,mutation,attempt,file:current}),
+              observed_file_version:current?.version??null};
+          }
+          const result=await invoke({action:"provider_attempt",attempt,...(semanticPacket?{semantic_attempt:semanticPacket}:{})});
           if(result?.status!=="committed" || result.attempt_recorded!==true || !uuid(result.receipt_id) || !isDeepStrictEqual(result.attempt,attempt)) fail();
+          if(semanticPacket){
+            const semantic=result.semantic_recovery;
+            if(!semantic || !uuid(semantic.receipt_id) || semantic.receipt_id!==result.semantic_attempt_receipt_id ||
+              !Number.isSafeInteger(semantic.no_effect_after_ms) || !isDeepStrictEqual(semantic.evidence,semanticPacket.evidence))
+                fail("CLOUD_SEMANTIC_ATTEMPT_UNCONFIRMED");
+            semanticRecovery=structuredClone(semantic);semanticProviderAttempt=structuredClone(attempt);
+          }
         }};
       // The replacement bytes are fixed before any reservation: the new text,
       // or a restored revision read back and checked against its pin.
@@ -477,7 +497,17 @@ export function createResourceCenterCloudExecutor({load_job:loadJob,rpc,get_cred
               stage="proof";
               if(proof?.contract!==proofContract) fail();
               stage="verified_record_rpc";
-              const recorded=await invoke({action:"verified_record",finish,proof});
+              let semanticObservation;
+              if(semanticRecovery){
+                const observed=await observeGoogleDriveSemanticAttempt({semantic:semanticRecovery,oauth_client_id:semanticClient,
+                  mutation:input,provider_attempt:semanticProviderAttempt,provider_before:saved.provider,profile,
+                  root_folder_id:descriptor.root_folder_id,root_parent_id:descriptor.root_parent_id,
+                  get_file:metadata.getFile,list_children:metadata.listChildren,clock});
+                if(observed.outcome!=="after" || observed.proof.second.provider_file_version!==proof.provider_file_version)
+                  fail("CLOUD_SEMANTIC_AFTER_UNCONFIRMED");
+                semanticObservation=observed.proof;
+              }
+              const recorded=await invoke({action:"verified_record",finish,proof,...(semanticObservation?{semantic_observation:semanticObservation}:{})});
               stage="verified_record_result";
               if(recorded?.status!=="verified" || recorded.intent_id!==reservation.intent_id ||
                 !uuid(recorded.verified_receipt_id) || !/^[0-9a-f]{64}$/.test(recorded.verified_digest??"") ||

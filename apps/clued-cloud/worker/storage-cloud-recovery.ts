@@ -6,6 +6,7 @@ import { createGoogleDriveDestructivePostconditionVerifier } from "../../../kern
 import { DESTRUCTIVE_PROOF_CONTRACTS } from "../../../kernel/host/resource-center-google-drive-destructive-effect.mjs";
 import { createGoogleDriveDirectoryMovePostconditionVerifier } from "../../../kernel/host/resource-center-google-drive-directory-move-postcondition.mjs";
 import { createGoogleDriveCreateAbsenceProbe } from "../../../kernel/host/resource-center-google-drive-absence.mjs";
+import { observeGoogleDriveSemanticAttempt } from "../../../kernel/host/resource-center-google-drive-semantic-recovery.mjs";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
@@ -142,7 +143,8 @@ export async function createStorageCloudRecovery(config: {
       };
       // Storage step 1 (Task ce5c725e): a rate-limited or failed read is retried twice
       // with backoff inside the budget instead of waiting for the next listing.
-      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, fetch: metadataFetch, transient_retries: 2 });
+      const metadata = createGoogleDriveMetadataApi({ get_credential: credential, fetch: metadataFetch, transient_retries: 2,
+        semantic_details: d.semantic_recovery !== undefined });
       // Rename and file move (P3) settle only through the verified record.
       const operation = String(d.mutation.operation);
       // A directory move (P6) settles only through the verified record, and
@@ -161,11 +163,59 @@ export async function createStorageCloudRecovery(config: {
       if (replace && (!config.verified || d.attempt.contract !== "clued.storage-replace-attempt/1" ||
           d.attempt.operation !== "replace")) throw denied();
       if ("content_ref" in d.mutation && !config.verified) throw denied();
+      let semanticObservation: Data | undefined;
+      if (d.semantic_recovery !== undefined) {
+        if (!config.verified || subtree || !object(d.semantic_recovery)) throw denied();
+        stage = "verification";
+        const semantic = await bounded(observeGoogleDriveSemanticAttempt({
+          semantic: d.semantic_recovery, oauth_client_id: config.client_id, mutation: d.mutation,
+          provider_attempt: d.attempt, provider_before: d.provider_before, profile: d.profile,
+          root_folder_id: d.root_folder_id, root_parent_id: d.root_parent_id,
+          get_file: metadata.getFile, list_children: metadata.listChildren, clock,
+          timeout_ms: Math.min(timeout, 30000), signal: abort.signal,
+        })); check();
+        semanticObservation = semantic.proof;
+        if (semantic.outcome === "deferred") throw new Error("DRIVE_POSTCONDITION_SYNC_TIMEOUT");
+        if (semantic.outcome !== "after") {
+          let absenceProof: unknown, revisionObservation: unknown;
+          if (semantic.outcome === "absence_probe_required") {
+            absenceProof = await bounded(createGoogleDriveCreateAbsenceProbe({ get_credential: credential,
+              fetch: (input: RequestInfo | URL, init?: RequestInit) => metadataFetch(input, init) })(
+              { provider_file_id: String(d.attempt.provider_file_id), parent_id: String(d.attempt.parent_id), intent_id: String(d.intent_id) },
+              { signal: abort.signal }));check();
+            if (!absenceProof) throw denied();
+          }
+          if (replace && semantic.outcome === "before") {
+            const revision = await bounded(metadata.getRevision(String(d.attempt.provider_file_id), String(d.attempt.pinned_revision_id), { signal: abort.signal }));check();
+            if (!revision) throw denied();
+            revisionObservation = { id: revision.id, keepForever: revision.keepForever,
+              size: revision.size ?? null, md5Checksum: revision.md5Checksum ?? null };
+          }
+          stage = "settlement";
+          const settled = await bounded(config.verified.rpc({ ...pinned, action: "semantic_settle", intent_id: d.intent_id,
+            base_version: d.version, request_sha256: d.request_sha256, credential_version: d.credential_version,
+            observation: semanticObservation, ...(absenceProof ? { absence_proof: absenceProof } : {}),
+            ...(revisionObservation ? { revision_observation: revisionObservation } : {}) }));check();
+          if (!["committed", "resolved", "attention_required"].includes(String(settled.status)) ||
+              settled.intent_id !== d.intent_id || settled.connection_id !== pinned.connection_id || settled.job_id !== pinned.job_id ||
+              !uuid.test(String(settled.receipt_id)) || settled.execution_permitted !== false ||
+              (settled.status === "committed" && settled.state !== "cancelled") ||
+              (settled.status === "attention_required" && settled.state !== "conflict") ||
+              (settled.status === "resolved" && (!Number.isSafeInteger(settled.base_version) || Number(settled.base_version) < 1 ||
+                !uuid.test(String(settled.source_receipt_id)) || settled.source_receipt_id === settled.receipt_id))) throw denied();
+          const status = settled.status === "committed" ? "released_not_effected"
+            : settled.status === "resolved" ? "resolved" : "attention_required";
+          return { status, connection_id: pinned.connection_id, job_id: pinned.job_id, receipt_id: String(settled.receipt_id),
+            ...(status === "resolved" ? { resolution: "automatically_reconciled_before", automatic_recovery: "resolved",
+              base_version: Number(settled.base_version), source_receipt_id: String(settled.source_receipt_id) } : {}),
+            execution_permitted: false };
+        }
+      }
       // I9 has already fenced this exact replace and released its running slot.
       // Observe before-state first, while the original deadline and read-only
       // credential remain in force; unchanged metadata must not exhaust the
       // after verifier's budget before reconciliation can run.
-      if (config.verified && d.conflict_reconcile !== undefined) {
+      if (config.verified && d.conflict_reconcile !== undefined && d.semantic_recovery === undefined) {
         if (!replace || !object(d.conflict_reconcile) || !uuid.test(String(d.conflict_reconcile.source_receipt_id))) throw denied();
         stage = "verification";
         const review = await bounded(createStorageRecoveryReview({ client_id: config.client_id, vault: config.vault,
@@ -256,11 +306,14 @@ export async function createStorageCloudRecovery(config: {
         if (!object(verifiedPost) || !object(verifiedPost.verified_proof) ||
             verifiedPost.verified_proof.contract !== contract) throw denied();
         const { verified_proof: proof, ...post } = verifiedPost;
+        if (semanticObservation && (!object(semanticObservation.second) ||
+          semanticObservation.second.provider_file_version !== proof.provider_file_version)) throw denied();
         const finish = { action: "finalize", intent_id: d.intent_id, base_version: d.version,
           request_sha256: d.request_sha256, idempotency_key: `account-job:${pinned.job_id}:finalize`, postcondition: post };
         stage = "verified_record";
         const recorded = await bounded(config.verified.rpc({ ...pinned, action: "verified_record",
-          credential_version: d.credential_version, finish, proof })); check();
+          credential_version: d.credential_version, finish, proof,
+          ...(semanticObservation ? { semantic_observation: semanticObservation } : {}) })); check();
         if (recorded.status !== "verified" || recorded.intent_id !== d.intent_id ||
           recorded.version !== d.version || !uuid.test(String(recorded.verified_receipt_id)) ||
           !/^[0-9a-f]{64}$/.test(String(recorded.verified_digest)) || recorded.execution_permitted !== false) throw denied();

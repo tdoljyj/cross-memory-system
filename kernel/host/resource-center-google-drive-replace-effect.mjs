@@ -53,6 +53,7 @@ export function createGoogleDriveNativeReplaceEffect({
   get_revision: getRevision, resolve_provider_identity: resolveProviderIdentity,
   consume_started_provider: consumeStartedProvider,
   persist_provider_attempt: persistProviderAttempt,
+  intent_marker: intentMarker = false,
   replacement, release_revision_ids: releaseRevisionIds,
   fetch: fetchImpl = globalThis.fetch,
   clock = Date.now,
@@ -60,6 +61,7 @@ export function createGoogleDriveNativeReplaceEffect({
   if (!trustedProfile || typeof getCredential !== "function" || typeof getFile !== "function" ||
     typeof getRevision !== "function" || typeof resolveProviderIdentity !== "function" || typeof consumeStartedProvider !== "function" ||
     typeof persistProviderAttempt !== "function" || typeof fetchImpl !== "function" || typeof clock !== "function" ||
+    typeof intentMarker !== "boolean" ||
     !(replacement instanceof Uint8Array) || replacement.byteLength > BINARY_REPLACE_MAX_BYTES ||
     !Array.isArray(releaseRevisionIds) || releaseRevisionIds.length > 200 ||
     releaseRevisionIds.some((id) => typeof id !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(id))) {
@@ -143,12 +145,13 @@ export function createGoogleDriveNativeReplaceEffect({
     // so replacing it with its own bytes corrects the type in place.
     const mimeType = file.mimeType === "text/plain" ? textCreateMimeType(file.name) : file.mimeType;
     let result;
-    if (mimeType === file.mimeType) {
+    if (mimeType === file.mimeType && !intentMarker) {
       result = await write(`${UPLOAD}/${encodeURIComponent(file.id)}?uploadType=media&fields=${FIELDS}`,
         { body: replacement, contentType: file.mimeType }, admission.expires_at_ms);
     } else {
       const boundary = `clued_${randomUUID()}`, encoder = new TextEncoder();
-      const prefix = encoder.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ mimeType })}\r\n` +
+      const metadata = { mimeType, ...(intentMarker ? { appProperties: { clued_intent_id: started.intent_id } } : {}) };
+      const prefix = encoder.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
         `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`), suffix = encoder.encode(`\r\n--${boundary}--\r\n`);
       const body = new Uint8Array(prefix.byteLength + replacement.byteLength + suffix.byteLength);
       body.set(prefix); body.set(replacement, prefix.byteLength); body.set(suffix, prefix.byteLength + replacement.byteLength);

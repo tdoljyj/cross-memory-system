@@ -1,4 +1,5 @@
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
+import { setWorkerGatewayCaller } from './worker-gateway-caller-fixture.mjs';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createResourceCenterCloudExecutor } from "../../../kernel/host/resource-center-cloud-executor.mjs";
@@ -17,7 +18,7 @@ const TRACK = "20_P_产品与体验";
 // StorageFullCapability.v0.1 P5: trash and untrash through the real cloud
 // executor (verified-result mode) against disposable PostgreSQL and an
 // in-memory Drive. Never Google, never a disk.
-export async function testStorageDestructive(t, admin, server, user, decision) {
+export async function testStorageDestructive(t, admin, server, user, decision, options = {}) {
   await allowTestIssuerCredentials(admin);
   const issuerSecret = randomUUID() + randomUUID();
   const clients = [], session = randomUUID(), issuer = sha(issuerSecret), clientIssuer = sha(randomUUID());
@@ -30,6 +31,7 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
     return database;
   };
   const native = await connect("authenticated"), caller = await connect("anon");
+  if (options.gateway) await setWorkerGatewayCaller(caller);
   await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, user]);
   await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
     [user, JSON.stringify({ sub: user, session_id: session })]);
@@ -87,14 +89,17 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
     } catch (error) { await admin.query("rollback"); throw error; }
     return { ...target, policy };
   };
-  const cloud = async (input, database = caller) => (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value;
+  const cloud = async (input, database = caller) => {
+    try { return (await database.query(`select ${CLOUD}($1,$2::jsonb) value`, [issuer, JSON.stringify(input)])).rows[0].value; }
+    catch (error) { options.on_cloud_error?.(error, input);throw error; }
+  };
   const counters = async () => (await admin.query(`select
     (select count(*)::int from clued_private.storage_jobs_v1) jobs,
     (select count(*)::int from clued_private.resource_center_mutations_v1) intents`)).rows[0];
   const journal = async job => (await admin.query("select m.* from clued_private.storage_jobs_v1 j join clued_private.resource_center_mutations_v1 m on m.id=j.intent_id where j.owner_id=$1 and j.job_id=$2", [user, job.reference.job_id])).rows[0];
   const provider = target => {
-    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false,
-      mimeType: "application/vnd.google-apps.folder", ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } });
+    const directory = (id, name, parent) => ({ id, name, parents: parent ? [parent] : [], version: "1", trashed: false, explicitlyTrashed: false,
+      permissions: [{ id: "fixture-owner", type: "user", role: "owner" }], mimeType: "application/vnd.google-apps.folder", ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } });
     const files = new Map([[target.parentId, directory(target.parentId, target.root.split("/").at(-2))],
       [target.rootId, directory(target.rootId, "Clued_资料中心", target.parentId)], [target.trackId, directory(target.trackId, TRACK, target.rootId)]]);
     const state = { patches: 0, deletes: 0, losePatch: false, files, directory };
@@ -107,9 +112,11 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
         const id = u.pathname.split("/").at(-1), file = files.get(id), body = JSON.parse(init.body || "{}");
         const recorded = (await admin.query("select count(*)::int n from clued_private.resource_center_mutations_v1 where state='started' and provider_attempt->>'provider_file_id'=$1 and provider_attempt->>'contract'='clued.storage-destructive-attempt/1'", [id])).rows[0].n;
         assert.equal(recorded, 1, "the exact attempt is durable before the update");
-        assert.ok(Object.keys(body).every(key => key === "trashed" || key === "name"));
+        assert.ok(Object.keys(body).every(key => ["trashed", "name", "appProperties"].includes(key)));
         file.trashed = body.trashed;
+        file.explicitlyTrashed = body.trashed;
         if (body.name) file.name = body.name;
+        if (body.appProperties) file.appProperties = { ...file.appProperties, ...body.appProperties };
         if (u.searchParams.get("addParents")) { assert.deepEqual(file.parents, [u.searchParams.get("removeParents")]); file.parents = [u.searchParams.get("addParents")]; }
         file.version = String(Number(file.version) + 3); // Drive may jump by more than one.
         if (state.losePatch) throw new Error("synthetic lost provider response");
@@ -118,7 +125,7 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       if (init.method === "POST") {
         const raw = init.body, match = /\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw), metadata = JSON.parse(match?.[0] ?? raw);
         const attempt = (await admin.query("select provider_attempt from clued_private.resource_center_mutations_v1 where id=$1", [metadata.appProperties.clued_intent_id])).rows[0].provider_attempt;
-        const created = { ...metadata, version: "1", trashed: false, size: attempt.size, sha256Checksum: attempt.sha256,
+        const created = { ...metadata, version: "1", trashed: false, explicitlyTrashed: false, size: attempt.size, sha256Checksum: attempt.sha256,
           md5Checksum: "f".repeat(32), headRevisionId: "rev-" + randomUUID(), ownedByMe: true, capabilities: { canTrash: true, canUntrash: true } };
         files.set(metadata.id, created);
         return Response.json(created);
@@ -138,9 +145,10 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
     };
     return state;
   };
-  const executor = (target, storage) => {
+  const executor = (target, storage, observe = async () => {}, { semantic = false } = {}) => {
     let loaded;
     return createResourceCenterCloudExecutor({ verified_result_mode: true,
+      ...(semantic ? { semantic_recovery_client_id: oauthClient } : {}),
       load_job: async ref => {
         loaded = await cloud({ action: "load", ...ref });
         const descriptor = { ...loaded }; delete descriptor.credential_envelope; delete descriptor.oauth_client_id;
@@ -150,8 +158,9 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
       drive_fetch: storage.fetch,
       rpc: async input => {
         const { connection_id, job_id, action, ...body } = input;
-        return cloud({ connection_id, job_id, action, ...(action === "settle_verified" ? {} : { credential_version: loaded.credential_version }),
-          ...(action === "finalize" ? { finish: { action, ...body } } : body) });
+        const request = { connection_id, job_id, action, ...(action === "settle_verified" ? {} : { credential_version: loaded.credential_version }),
+          ...(action === "finalize" ? { finish: { action, ...body } } : body) };
+        await observe(request);return cloud(request);
       },
     });
   };
@@ -210,6 +219,9 @@ export async function testStorageDestructive(t, admin, server, user, decision) {
   };
 
   try {
+    if (options.extra_cases) await options.extra_cases({ setup, createFile, cloud, submitJob, trash, untrash, trashed, directoryIn, executor, journal, artifact, artifactById,
+      oauth_client_id: oauthClient, provider_subject: "destructive-subject", access_token: "fixture-destructive-access" });
+    if (options.only_extra) return;
     await t.test("the destructive level has its own disclosure and replaces the policy like modify and overwrite", async () => {
       const initial = await createRoot(), target = await activate(initial);
       const status = await writeStatus(target);
