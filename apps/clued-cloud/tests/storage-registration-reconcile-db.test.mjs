@@ -55,7 +55,20 @@ test('registration reconciliation: actual program authority, independent of the 
   await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[owner,JSON.stringify({sub:owner,session_id:session})]);
   const scalar=async(sql,args)=>(await db.query(sql,args)).rows[0].v;
   await testStorageDestructive(t,db,server,owner,decision,{gateway:true,only_extra:true,extra_cases:async ctx=>{
-   const f=await ctx.setup(),source=await ctx.directoryIn(f.target,f.storage,'registered-'+uuid());
+   const f=await ctx.setup();let source=await ctx.directoryIn(f.target,f.storage,'registered-'+uuid());
+   // A real independent Artifact Decision L sorts below master Decision H.
+   // Register it through the actual admin receipt, before any job exists.
+   const artifactDecision='00000000-0000-4000-8000-000000000001';
+   assert.ok(artifactDecision<decision);
+   await db.query(`insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status,record_schema_version,lifecycle_status,
+    canonical_scope,type_fields,relations,source_refs,authority,confidence_reason) values($1,$2,'Synthetic Artifact approval','Disposable only','project',$3,'decision','active',1,'active',
+    $4,'{"rationale":"independent Artifact Decision"}','{}','{}','user_explicit','Owner confirmed')`,[artifactDecision,owner,project,'project:'+project]);
+   const qualified=await scalar('select public.clued_resource_center_admin_v1($1,$2::jsonb) v',[owner,JSON.stringify({
+    action:'artifact_update',profile_id:f.target.profile,artifact_id:source.id,base_version:source.version,
+    path:source.path,provider_file_id:source.provider_file_id,provider_file_version:source.provider_file_version,
+    governance_class:source.governance_class,delete_authority:source.delete_authority,
+    source_decision_id:artifactDecision,idempotency_key:uuid()})]);
+   assert.equal(qualified.status,'committed',JSON.stringify(qualified));source=await ctx.artifactById(source.id);
    const job=await ctx.submitJob(f.target,f.client,ctx.trash(source));
    const engine=ctx.executor(f.target,f.storage,async request=>{
     if(request.action==='provider_attempt'){await ctx.cloud(request);throw Error('synthetic lost original attempt acknowledgement');}
@@ -138,6 +151,28 @@ test('registration reconciliation: actual program authority, independent of the 
      [issuer,JSON.stringify({...job.reference,action:'registration_current_load'})]);
     assert.equal(loaded.status,'registration_required');assert.equal(loaded.intent_id,original.id);
     assert.equal(loaded.registration_plan.target.provider_file_id,source.provider_file_id);
+   });
+   await t.test('independent lower Decision contention aborts registration and releases its higher master lock',async()=>{
+    const blocker=server.getPgClient();await blocker.connect();
+    const snapshot=async()=>scalar(`select jsonb_build_object(
+     'receipts',(select count(*) from public.clued_audit_receipts),
+     'permits',(select count(*) from clued_private.storage_registration_artifact_permits_v1),
+     'results',(select count(*) from clued_private.storage_current_registration_results_v1),
+     'artifacts',(select jsonb_agg(to_jsonb(a) order by a.id) from clued_private.resource_center_artifacts_v1 a where a.user_id=$1)) v`,[owner]);
+    const before=await snapshot();
+    try{
+     await blocker.query('begin');await blocker.query("set local lock_timeout='1000ms'");
+     await blocker.query('select id from public.clued_memories where id=$1 for update',[artifactDecision]);
+     // The real wrapper first takes H in its master snapshot, then reaches L.
+     // A server-side timeout bounds a regression without rescuing the lock.
+     await db.query("set statement_timeout='1500ms'");
+     try{await assert.rejects(scalar('select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) v',
+      [issuer,JSON.stringify({...job.reference,action:'registration_current_load'})]),error=>error.code==='55P03');}
+     finally{await db.query('set statement_timeout=0');}
+     // The competing replacement order L -> H can now finish immediately.
+     assert.equal((await blocker.query('select id from public.clued_memories where id=$1 for update',[decision])).rowCount,1);
+     assert.deepEqual(await snapshot(),before);
+    }finally{await blocker.query('rollback');await blocker.end();}
    });
    await t.test('a credential that expires while waiting on the actual root lock cannot authorize the program',async()=>{
     const blocker=server.getPgClient(),inspector=server.getPgClient();await blocker.connect();await inspector.connect();

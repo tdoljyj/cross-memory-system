@@ -233,13 +233,17 @@ begin
  -- Artifact Decisions can differ from the current connection/profile
  -- Decision. Serialize their archival/replacement, not only the account
  -- policy's authorization, before validating the registry qualification.
+ -- The master snapshot already holds a subset of these Decision locks.
+ -- A replacement transaction can hold a lower Artifact Decision while it
+ -- waits for that subset. Never wait here while retaining the subset: abort
+ -- this entire qualification transaction and let scheduled recovery back off.
  perform 1 from public.clued_memories decision where decision.user_id=j.owner_id and decision.id in (
   select p.source_decision_id union select (reader->'registration_authority'->>'source_decision_id')::uuid
   union select artifact.source_decision_id from clued_private.resource_center_artifacts_v1 artifact
    where artifact.user_id=j.owner_id and artifact.profile_id=p.id and artifact.path=j.mutation->>'source_path'
   union select ancestor.source_decision_id from clued_private.resource_center_ancestor_rows_v1(p.id,j.owner_id,
    array[regexp_replace(j.mutation->>'source_path','/[^/]+$','')]) ancestor)
-  order by decision.id for share;
+  order by decision.id for share nowait;
  select * into a from clued_private.resource_center_artifacts_v1 where user_id=j.owner_id and profile_id=p.id
   and provider_file_id=q.object_ids[1] and path=j.mutation->>'source_path' for share;
  parent_path:=regexp_replace(a.path,'/[^/]+$','');

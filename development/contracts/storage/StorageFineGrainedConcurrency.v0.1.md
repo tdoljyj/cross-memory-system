@@ -512,7 +512,7 @@ Owner 原生恢复接口与后台调度均接入相同的只读缺失探测和�
 
 ### 23.2 原子登记、并发与失败恢复
 
-提交在 issuer/app → 原 lineage → job → root/account 后重读 Actor、完整计划、原 I9 回执和关闭版本，并以稳定顺序锁定相关 Artifact/Decision。任何锁等待后用真实 wall clock 重检凭据、策略和观察时限。仅目标及缺少 access 摘要的父链登记行发生资格更新；已有明确 access 摘要的无关父行不重写。scope digest 的路径/ID、grant、原 snapshot、原 attempt、原 conflict 状态和原回执不改。
+提交在 issuer/app → 原 lineage → job → root/account 后重读 Actor、完整计划、原 I9 回执和关闭版本，并以稳定顺序锁定相关 Artifact/Decision。master 已取得部分 Decision 锁后，其余全集必须使用 NOWAIT；遇占用使整个资格事务回滚并由程序退避，不能持有较高 ID 的锁等待较低 ID、与 Decision 替换事务形成锁环。任何锁等待后用真实 wall clock 重检凭据、策略和观察时限。仅目标及缺少 access 摘要的父链登记行发生资格更新；已有明确 access 摘要的无关父行不重写。scope digest 的路径/ID、grant、原 snapshot、原 attempt、原 conflict 状态和原回执不改。
 
 元数据专用 permit 只能由私有提交路径在本事务的新 pending Receipt 下产生，精确绑定 transaction ID、Artifact ID、Owner/profile、完整 before/after row hash。触发器允许的差量仅为权限摘要、provider version、资格时间/缺失标记、Receipt、精确加一的登记版本和更新时间。跨事务、换对象、改路径、身份、状态、governance 或 delete authority 均不能借此豁免。它只排除“该目录恰好是另一个隔离对象的祖先”造成的元数据扩大冲突；其他隔离的同 ID、路径、名称槽、实际包含关系的 subtree 和未知 scope/I12 保护仍生效。
 
