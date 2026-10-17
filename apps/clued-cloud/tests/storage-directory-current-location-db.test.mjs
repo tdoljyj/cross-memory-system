@@ -59,21 +59,25 @@ test('current location: real Native exact-plan atomic registration and lost-repl
   const scalar=async(sql,args)=>(await db.query(sql,args)).rows[0].v;
   await testStorageDestructive(t,db,server,owner,decision,{gateway:true,only_extra:true,extra_cases:async ctx=>{
 
-   const prepare=async(initial='active',moved=true,{oldParentInactive=false,inflightCurrentParent=false,inflightNewSlot=false}={})=>{
+   const prepare=async(initial='active',moved=true,{oldParentInactive=false,inflightCurrentParent=false,inflightNewSlot=false,
+    captureOriginalProof=false,recordOriginalProof=false,skipPlan=false}={})=>{
     const f=await ctx.setup();
     const parent=await ctx.directoryIn(f.target,f.storage,'new-parent-'+uuid());
     const oldParent=oldParentInactive?await ctx.directoryIn(f.target,f.storage,'old-parent-'+uuid()):null;
     let source=await ctx.directoryIn(f.target,f.storage,'old-topic-'+uuid(),oldParent?.path,oldParent?.provider_file_id);
     if(initial==='trashed')source=await ctx.trashed(f.target,f.client,f.storage,source);
     const job=await ctx.submitJob(f.target,f.client,initial==='active'?ctx.trash(source):ctx.untrash(source));
+    let withheldProof;
     const engine=ctx.executor(f.target,f.storage,async input=>{
-     if(input.action==='provider_attempt'){await ctx.cloud(input);throw Error('synthetic lost original acknowledgement');}
+     if(input.action==='verified_record'&&captureOriginalProof){withheldProof=structuredClone(input);throw Error('synthetic delayed verified record');}
+     if(input.action==='provider_attempt'&&!captureOriginalProof){await ctx.cloud(input);throw Error('synthetic lost original acknowledgement');}
     });
     assert.equal((await engine.run(job.reference)).status,'unreconciled');
+    if(recordOriginalProof){assert.ok(withheldProof);assert.equal((await ctx.cloud(withheldProof)).status,'verified');}
     const original=await ctx.journal(job);
     await db.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '3 hours' where id=$1",[original.provider_attempt_receipt_id]);
     await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '3 hours' where id=$1",[original.id]);
-    assert.equal(await scalar('select clued_private.storage_conflict_close_v1($1) v',[original.id]),'conflict');
+    assert.equal(await scalar('select clued_private.storage_conflict_close_v1($1) v',[original.id]),recordOriginalProof?'committed':'conflict');
     const issuer=await scalar('select issuer_hash v from clued_private.storage_oauth_apps_v1 where oauth_client_id=$1',[ctx.oauth_client_id]);
     const vaultConfig={current_key_id:'synthetic',keys:{synthetic:crypto.randomBytes(32).toString('base64url')}};
     const vault=await createStorageCredentialVault(vaultConfig);
@@ -124,6 +128,7 @@ test('current location: real Native exact-plan atomic registration and lost-repl
      f.storage.files.get(oldParent.provider_file_id).trashed=true;
     }
     const rpc=input=>scalar('select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) v',[issuer,JSON.stringify(input)]);
+    if(skipPlan)return {f,parent,source,job,original,issuer,target,rpc,withheldProof};
     const load=await rpc({...job.reference,action:'registration_location_load'});
     const metadata=createGoogleDriveMetadataApi({registration_details:true,
      get_credential:async()=>({access_token:ctx.access_token,scope:scopeString('full')}),fetch:f.storage.fetch});
@@ -132,7 +137,7 @@ test('current location: real Native exact-plan atomic registration and lost-repl
     const plan=await rpc({...job.reference,action:'registration_location_plan',base_version:load.base_version,
      source_receipt_id:load.source_receipt_id,registration_authority:load.registration_authority,
      registration_seed:load.registration_seed,location_hint:hint});
-    return {f,parent,oldParent,inflight,source,job,original,issuer,vaultConfig,target,load,hint,plan,observer,rpc};
+    return {f,parent,oldParent,inflight,source,job,original,issuer,vaultConfig,target,load,hint,plan,observer,rpc,withheldProof};
    };
    const commit=async x=>({...x.job.reference,action:'registration_location_commit',base_version:x.plan.base_version,
     source_receipt_id:x.plan.source_receipt_id,registration_authority:x.plan.registration_authority,
@@ -147,6 +152,26 @@ test('current location: real Native exact-plan atomic registration and lost-repl
     'receipts',(select count(*) from public.clued_audit_receipts),
     'events',(select count(*) from public.clued_context_events)) v`);
    const baselineLockTimeout=await scalar("select current_setting('lock_timeout') v");
+   await t.test('an actual verified_record recorded before expiry keeps typed-result priority over location recovery',async()=>{
+    const x=await prepare('active',true,{captureOriginalProof:true,recordOriginalProof:true,skipPlan:true});
+    assert.ok(x.original.verified_result_v2);const before=await snapshot();
+    await assert.rejects(x.rpc({...x.job.reference,action:'registration_location_load'}),/storage_current_(?:location|registration)/);
+    assert.deepEqual(await snapshot(),before);
+   });
+   await t.test('a real delayed verified_record after independent location settlement cannot overwrite current registration',async()=>{
+    const x=await prepare('active',true,{captureOriginalProof:true});assert.ok(x.withheldProof);
+    const before=await snapshot();
+    await assert.rejects(ctx.cloud(x.withheldProof),error=>error.code==='42501'&&error.message==='storage_verified_denied');
+    assert.deepEqual(await snapshot(),before);
+    const result=await x.rpc(await commit(x));assert.equal(result.status,'resolved');
+    const artifact=await ctx.artifactById(x.source.id),journal=await ctx.journal(x.job);
+    const isolation=await scalar('select to_jsonb(q) v from clued_private.storage_conflict_isolations_v1 q where intent_id=$1',[x.original.id]);
+    await assert.rejects(ctx.cloud(x.withheldProof),error=>error.code==='40001'&&error.message==='storage_verified_conflict');
+    assert.deepEqual(await ctx.artifactById(x.source.id),artifact);
+    assert.deepEqual(await ctx.journal(x.job),journal);
+    assert.deepEqual(await scalar('select to_jsonb(q) v from clued_private.storage_conflict_isolations_v1 q where intent_id=$1',[x.original.id]),isolation);
+    assert.deepEqual(await x.rpc({...x.job.reference,action:'registration_location_load'}),result);
+   });
    for(const initial of ['active','trashed'])for(const moved of [false,true])
     await t.test(initial+' original registration: current '+(moved?'parent move':'rename')+' is a fresh bounded plan',async()=>{
      const x=await prepare(initial,moved),before=await ctx.artifactById(x.source.id),journal=await ctx.journal(x.job);
@@ -314,6 +339,44 @@ test('current location: real Native exact-plan atomic registration and lost-repl
      await db.query('rollback');await blocker.query("update clued_private.resource_center_profiles_v1 set state='active' where id=$1",[alias]);
      const before=await snapshot();await assert.rejects(y.rpc(await commit(y)),/storage_current_location_alias/);assert.deepEqual(await snapshot(),before);
     }finally{await db.query('rollback');await blocker.query('rollback');await blocker.query('delete from clued_private.resource_center_profiles_v1 where id=$1',[alias]);await blocker.end();}
+   });
+   await t.test('two connections: installed Artifact INSERT guards serialize a new-path child in both commit orders',async()=>{
+    const y=await prepare(),blocker=server.getPgClient();await blocker.connect();const child=uuid();
+    const insert=`insert into clued_private.resource_center_artifacts_v1 select (jsonb_populate_record(null::clued_private.resource_center_artifacts_v1,
+     to_jsonb(a)||jsonb_build_object('id',$2::text,'path',$3::text,'provider_file_id',$4::text,'target_kind','file'))).*
+     from clued_private.resource_center_artifacts_v1 a where id=$1`;
+    const args=[y.parent.id,child,y.plan.registration_plan.target.path+'/child','insert-child-'+uuid()];
+    try{
+     // Real relation INSERT with all installed triggers, not a mocked guard or
+     // a disabled-trigger fixture. Its provider identity/path are synthetic.
+     await db.query('begin');assert.equal((await y.rpc(await commit(y))).status,'resolved');
+     await blocker.query("set statement_timeout='250ms'");
+     await assert.rejects(blocker.query(insert,args),error=>error.code==='57014');
+     await blocker.query('set statement_timeout=0');await db.query('rollback');
+     assert.equal(await scalar('select count(*)::int v from clued_private.resource_center_artifacts_v1 where id=$1',[child]),0);
+     await blocker.query('begin');await blocker.query(insert,args);
+     assert.equal((await y.rpc(await commit(y))).status,'pending');await blocker.query('commit');
+     const before=await snapshot();await assert.rejects(y.rpc(await commit(y)),/storage_current_location/);
+     assert.deepEqual(await snapshot(),before);
+     await blocker.query('delete from clued_private.resource_center_artifacts_v1 where id=$1',[child]);
+     assert.equal((await y.rpc(await commit(y))).status,'resolved');
+    }finally{await db.query('rollback');await blocker.query('rollback');
+     await blocker.query('set statement_timeout=0');await blocker.query('delete from clued_private.resource_center_artifacts_v1 where id=$1',[child]);await blocker.end();}
+   });
+   await t.test('two connections: a true cross-profile Artifact identity INSERT cannot slip past an active isolation or location transaction',async()=>{
+    const y=await prepare(),other=await ctx.setup(),blocker=server.getPgClient();await blocker.connect();const alias=uuid();
+    const insert=`insert into clued_private.resource_center_artifacts_v1 select (jsonb_populate_record(null::clued_private.resource_center_artifacts_v1,
+     to_jsonb(a)||jsonb_build_object('id',$2::text,'profile_id',$3::text,'path',$4::text))).*
+     from clued_private.resource_center_artifacts_v1 a where id=$1`;
+    const args=[y.source.id,alias,other.target.profile,other.target.root+'/alias-'+uuid()];
+    try{
+     await assert.rejects(blocker.query(insert,args),/storage_object_under_review/);
+     await db.query('begin');assert.equal((await y.rpc(await commit(y))).status,'resolved');
+     await blocker.query("set statement_timeout='250ms'");
+     await assert.rejects(blocker.query(insert,args),error=>error.code==='57014');
+     await blocker.query('set statement_timeout=0');await db.query('rollback');
+     assert.equal(await scalar('select count(*)::int v from clued_private.resource_center_artifacts_v1 where id=$1',[alias]),0);
+    }finally{await db.query('rollback');await blocker.query('rollback');await blocker.query('set statement_timeout=0');await blocker.end();}
    });
    await t.test('two connections: concurrent same-intent commits produce one independent result and exact replay',async()=>{
     const y=await prepare(),input=await commit(y),second=server.getPgClient();await second.connect();
