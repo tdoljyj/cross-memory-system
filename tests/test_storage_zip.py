@@ -59,6 +59,8 @@ class StorageZipTests(unittest.TestCase):
         result = packaging.create_archive(self.source, self.archive)
         self.assertEqual(result, {"entries": 4, "files": 2, "utf8_names": 3})
         with zipfile.ZipFile(self.archive) as package:
+            self.assertEqual(set(package.namelist()),
+                             {"主标😀/", "主标😀/定稿.txt", "空目录/", "ascii.txt"})
             self.assertEqual(package.read("主标😀/定稿.txt"), b"logo bytes")
             self.assertIn("空目录/", package.namelist())
             self.assertTrue(package.getinfo("主标😀/定稿.txt").flag_bits & 0x800)
@@ -88,6 +90,16 @@ class StorageZipTests(unittest.TestCase):
         self.patch_headers(local_name=b"evil.txt")
         with self.assertRaisesRegex(packaging.PackageError, "names differ"):
             packaging.check_archive(self.archive)
+
+    def test_local_compression_method_must_match_central(self):
+        self.write_member("file.txt")
+        data = bytearray(self.archive.read_bytes())
+        struct.pack_into("<H", data, 8, zipfile.ZIP_DEFLATED)
+        self.archive.write_bytes(data)
+        original = self.archive.read_bytes()
+        with self.assertRaisesRegex(packaging.PackageError, "compression methods differ"):
+            packaging.check_archive(self.archive)
+        self.assertEqual(self.archive.read_bytes(), original)
 
     def test_invalid_utf8_is_rejected(self):
         self.write_member("file.txt")
@@ -204,6 +216,74 @@ class StorageZipTests(unittest.TestCase):
                 self.patch_headers(local_name=name.encode(), central_name=name.encode())
                 with self.assertRaisesRegex(packaging.PackageError, "Unsafe archive name"):
                     packaging.check_archive(self.archive)
+
+    def test_windows_incompatible_names_are_rejected_without_changing_bytes(self):
+        for name in ("AUX.txt", "con", "COM1.log", "lpt².txt", "NUL .txt",
+                     "a?.txt", "a*.txt", 'a".txt', "a|.txt", "a<.txt", "a>.txt",
+                     "trailing ", "trailing.", "dir./file.txt", "dir /file.txt",
+                     "control\x01.txt", "control\x7f.txt"):
+            with self.subTest(name=name):
+                encoded = name.encode("utf-8")
+                self.write_member("x" * len(encoded))
+                self.patch_headers(local_flags=0x800, central_flags=0x800,
+                                   local_name=encoded, central_name=encoded)
+                original = self.archive.read_bytes()
+                with self.assertRaisesRegex(packaging.PackageError, "Unsafe Windows archive name"):
+                    packaging.check_archive(self.archive)
+                self.assertEqual(self.archive.read_bytes(), original)
+
+    def test_duplicate_archive_names_are_rejected(self):
+        with zipfile.ZipFile(self.archive, "w") as package:
+            package.writestr("file.txt", b"first")
+            with self.assertWarns(UserWarning):
+                package.writestr("file.txt", b"second")
+        with self.assertRaisesRegex(packaging.PackageError, "Duplicate archive name"):
+            packaging.check_archive(self.archive)
+
+    def test_utf16_component_length_boundaries_for_ascii_chinese_and_emoji(self):
+        for name, accepted in (("a" * 251 + ".txt", True),
+                               ("a" * 252 + ".txt", False),
+                               ("a" * 256 + ".txt", False),
+                               ("中" * 251 + ".txt", True),
+                               ("中" * 252 + ".txt", False),
+                               ("😀" * 125 + "a.txt", True),
+                               ("😀" * 126 + ".txt", False),
+                               ("中" * 255 + "/file.txt", True),
+                               ("😀" * 128 + "/file.txt", False)):
+            with self.subTest(name=name, accepted=accepted):
+                self.write_member(name)
+                original = self.archive.read_bytes()
+                if accepted:
+                    self.assertEqual(packaging.check_archive(self.archive)["entries"], 1)
+                else:
+                    with self.assertRaisesRegex(packaging.PackageError, "exceeds 255 UTF-16 code units"):
+                        packaging.check_archive(self.archive)
+                self.assertEqual(self.archive.read_bytes(), original)
+
+    def test_casefold_and_file_directory_layout_collisions_are_rejected(self):
+        for names in (("file", "file/"), ("file/", "file"),
+                      ("file", "file/child.txt"), ("file/child.txt", "file"),
+                      ("FILE", "file/child.txt"), ("file/child.txt", "FILE"),
+                      ("File.txt", "file.txt"), ("file.txt", "File.txt"),
+                      ("Dir/file.txt", "dir/FILE.txt")):
+            with self.subTest(names=names):
+                with zipfile.ZipFile(self.archive, "w") as package:
+                    for name in names:
+                        package.writestr(name, b"" if name.endswith("/") else b"content")
+                original = self.archive.read_bytes()
+                with self.assertRaisesRegex(packaging.PackageError, "collision|ancestor"):
+                    packaging.check_archive(self.archive)
+                self.assertEqual(self.archive.read_bytes(), original)
+
+    def test_shared_directory_and_implicit_directory_layouts_remain_valid(self):
+        for names in (("dir/first.txt", "dir/", "dir/second.txt"),
+                      ("dir/first.txt", "dir/second.txt")):
+            with self.subTest(names=names):
+                with zipfile.ZipFile(self.archive, "w") as package:
+                    for name in names:
+                        package.writestr(name, b"" if name.endswith("/") else b"content")
+                self.assertEqual(packaging.check_archive(self.archive),
+                                 {"entries": len(names), "files": 2, "utf8_names": 0})
 
     def test_failed_creation_removes_only_its_own_new_output(self):
         (self.source / "file.txt").write_bytes(b"content")

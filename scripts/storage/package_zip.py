@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create and verify ZIPs whose Unicode names work in Windows extractors."""
+"""Create and check UTF-8 ZIP names with conservative Windows path rules."""
 
 from __future__ import annotations
 
@@ -15,6 +15,11 @@ import zlib
 UTF8_FLAG = 1 << 11
 CENTRAL_HEADER = struct.Struct("<4s6H3I5H2I")
 LOCAL_HEADER = struct.Struct("<4s5H3I2H")
+WINDOWS_FORBIDDEN = frozenset('<>:"\\|?*')
+WINDOWS_DEVICES = frozenset({"con", "prn", "aux", "nul"} | {
+    f"{prefix}{number}" for prefix in ("com", "lpt")
+    for number in (*"123456789", "¹", "²", "³")
+})
 
 
 class PackageError(ValueError):
@@ -26,6 +31,15 @@ def _safe_name(name: str) -> None:
     if (not name or name.startswith("/") or "\\" in name or ":" in name
             or "\0" in name or any(part in ("", ".", "..") for part in parts)):
         raise PackageError(f"Unsafe archive name: {name!r}")
+    for part in parts:
+        # Non-BMP characters occupy two UTF-16 code units in a Windows path.
+        if sum(2 if ord(character) > 0xFFFF else 1 for character in part) > 255:
+            raise PackageError(f"Archive name component exceeds 255 UTF-16 code units: {name!r}")
+        device = part.partition(".")[0].rstrip(" ").casefold()
+        if (part.endswith((".", " ")) or device in WINDOWS_DEVICES
+                or any(character in WINDOWS_FORBIDDEN or ord(character) < 32
+                       or 0x7F <= ord(character) <= 0x9F for character in part)):
+            raise PackageError(f"Unsafe Windows archive name: {name!r}")
 
 
 def _is_link(path: Path) -> bool:
@@ -63,6 +77,7 @@ def check_archive(archive: str | Path) -> dict[str, int]:
         with Path(archive).open("rb") as raw, zipfile.ZipFile(raw) as package:
             central_position = package.start_dir
             names: set[str] = set()
+            paths: dict[tuple[str, ...], bool] = {}
             utf8_names = 0
             files = 0
             for member in package.infolist():
@@ -101,6 +116,11 @@ def check_archive(archive: str | Path) -> dict[str, int]:
                 if name in names:
                     raise PackageError(f"Duplicate archive name: {name!r}")
                 names.add(name)
+                # Conservative portability check, not Windows' full Unicode comparison.
+                key = tuple(part.casefold() for part in name.removesuffix("/").split("/"))
+                if key in paths:
+                    raise PackageError(f"Archive path collision: {name!r}")
+                paths[key] = name.endswith("/")
                 files += not name.endswith("/")
 
                 raw.seek(member.header_offset)
@@ -112,8 +132,16 @@ def check_archive(archive: str | Path) -> dict[str, int]:
                     raise PackageError(f"Invalid local ZIP header: {name!r}")
                 if (local[2] ^ flags) & UTF8_FLAG:
                     raise PackageError(f"Local/central UTF-8 flags differ: {name!r}")
+                if local[3] != central[4]:
+                    raise PackageError(f"Local/central compression methods differ: {name!r}")
                 if raw.read(local[9]) != name_bytes:
                     raise PackageError(f"Local/central names differ: {name!r}")
+
+            # Check the complete inventory so reverse archive order cannot hide a file
+            # used as another member's parent. An explicit directory is optional.
+            for key in paths:
+                if any(paths.get(key[:length]) is False for length in range(1, len(key))):
+                    raise PackageError(f"Archive file used as an ancestor: {'/'.join(key)!r}")
 
             corrupt = package.testzip()
             if corrupt is not None:
