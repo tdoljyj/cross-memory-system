@@ -6,6 +6,13 @@ import {randomUUID} from 'node:crypto';
 import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
+import {build,stop} from 'esbuild';
+import {fileURLToPath} from 'node:url';
+
+const bundled=await build({entryPoints:[fileURLToPath(new URL('../worker/storage-recovery-diagnostics.ts',import.meta.url))],
+ bundle:true,platform:'node',format:'esm',write:false});
+const {storageRecoveryListResult,storageRecoveryOwnerResult}=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].text).toString('base64'));
+stop();
 
 const page=readFileSync(new URL('../app/storage/admin/page.tsx',import.meta.url),'utf8');
 const source=ts.transpileModule(page+'\nexport const recoveryTestApi={recoveryView,recoveryTitle,recoveryExplanation};',{
@@ -37,7 +44,24 @@ test('active current registration and earlier accepted responses keep their reco
  assert.equal(recoveryTitle(recoveryView(legacy)),'已自动恢复使用');
 });
 
-for(const bad of ['deleted','true',true,null,{},[]])test('unsupported directory state '+JSON.stringify(bad)+' cannot become a recovery result',()=>{
+test('real Native list and inspect sanitizers preserve trash state through the actual page parser',()=>{
+ const raw={...response('trashed'),connection_id:randomUUID(),execution_permitted:false};
+ const inspected=storageRecoveryOwnerResult(raw,{connection_id:raw.connection_id,job_id:raw.job_id});
+ const listed=storageRecoveryListResult({status:'ok',connection_id:raw.connection_id,jobs:[raw],execution_permitted:false},raw.connection_id);
+ for(const result of [inspected,...listed.jobs]){
+  assert.equal(result.current_artifact_state,'trashed');
+  const view=recoveryView(result);assert.ok(view);assert.match(recoveryTitle(view),/Google 回收站/);
+  assert.doesNotMatch(recoveryTitle(view),/恢复使用/);
+ }
+ for(const change of [v=>v.current_artifact_state='deleted',v=>v.current_artifact_state=null,
+  v=>v.resolution='automatically_reconciled_before',v=>{v.status='conflict';v.automatic_recovery='pending';}]){
+  const bad=structuredClone(raw);change(bad);
+  assert.throws(()=>storageRecoveryOwnerResult(bad,{connection_id:bad.connection_id,job_id:bad.job_id}),/storage_recovery_response_invalid/);
+  assert.throws(()=>storageRecoveryListResult({status:'ok',connection_id:bad.connection_id,jobs:[bad],execution_permitted:false},bad.connection_id),/storage_recovery_response_invalid/);
+ }
+});
+
+for(const bad of ['deleted','true',true,null,{},[],['trashed'],['active']])test('unsupported directory state '+JSON.stringify(bad)+' cannot become a recovery result',()=>{
  assert.equal(recoveryView(response(bad)),null);
 });
 

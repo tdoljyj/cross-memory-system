@@ -17,7 +17,7 @@ function resolution(value: Data, reference: Reference, intentId: string, base?: 
       !uuid.test(String(value.receipt_id)) || !uuid.test(String(value.source_receipt_id)) || value.receipt_id === value.source_receipt_id ||
       !Number.isSafeInteger(value.base_version) || Number(value.base_version) < 1 ||
       base && (value.base_version !== base.base_version || value.source_receipt_id !== base.source_receipt_id) ||
-      value.current_artifact_state !== undefined && !["active", "trashed"].includes(String(value.current_artifact_state)) ||
+      value.current_artifact_state !== undefined && (typeof value.current_artifact_state !== "string" || !["active", "trashed"].includes(value.current_artifact_state)) ||
       observedState !== undefined && value.current_artifact_state !== observedState) throw denied();
   return { status: "resolved", resolution: "automatically_registered_current_state", automatic_recovery: "resolved",
     ...reference, intent_id: intentId, receipt_id: value.receipt_id, source_receipt_id: value.source_receipt_id,

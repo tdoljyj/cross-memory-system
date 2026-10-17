@@ -59,7 +59,7 @@ function recoveryView(value: unknown): RecoveryView | null {
     }
     view.resolution = String(value.resolution);
     if (value.current_artifact_state !== undefined) {
-      if (value.resolution !== "automatically_registered_current_state" || !["active", "trashed"].includes(String(value.current_artifact_state))) return null;
+      if (value.resolution !== "automatically_registered_current_state" || typeof value.current_artifact_state !== "string" || !["active", "trashed"].includes(value.current_artifact_state)) return null;
       view.current_artifact_state = value.current_artifact_state as RecoveryView["current_artifact_state"];
     }
   }

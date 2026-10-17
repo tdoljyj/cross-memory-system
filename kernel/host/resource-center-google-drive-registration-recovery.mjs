@@ -58,7 +58,7 @@ function validatePlan(plan) {
 // permission IDs and provider_subject are different contracts: never compare
 // an OAuth subject to a permission ID to manufacture an ownership proof.
 function privateAccess(file, listedPermissions) {
-  const permissions = listedPermissions ?? file.permissions;
+  const permissions = listedPermissions === undefined ? file.permissions : listedPermissions;
   if (file.ownedByMe !== true || listedPermissions === undefined && file.capabilities?.canShare !== true || file.driveId != null ||
       file.shared !== false || !Array.isArray(permissions) || permissions.length !== 1 ||
       !Array.isArray(file.permissionIds) || file.permissionIds.length !== 1) fail("OWNERSHIP_UNPROVEN");
