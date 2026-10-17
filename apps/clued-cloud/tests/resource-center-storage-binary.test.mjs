@@ -155,6 +155,52 @@ const docx = (parts = {}) => buildZip(Object.entries({ "[Content_Types].xml": TY
   "word/_rels/document.xml.rels": docRels(), ...parts }).filter(([, data]) => data !== null).map(([name, data]) => ({ name, data })));
 const utf16 = (text, bom = true) => { const body = Buffer.from(text, "utf16le"); return new Uint8Array(bom ? Buffer.concat([Buffer.from([0xff, 0xfe]), body]) : body); };
 
+test("ZIP validation rejects ambiguous or inconsistent entry-name encodings before upload, without rewriting bytes", async () => {
+  const clean = await buildZip([{ name: "Kooyumi/主标.svg", data: "logo" }, { name: "资料/", method: 0 }]);
+  const before = clean.slice(), digest = sha(clean);
+  assert.equal(await validateStagedContent(clean, "application/zip"), true);
+  assert.equal(sha(clean), digest);
+  assert.deepEqual(clean, before);
+  assert.equal(await validateStagedContent(await buildZip([{ name: "logo.svg", data: "logo", lie: { flags: 0 } }]), "application/zip"), true);
+  const refused = [
+    { name: "Kooyumi/主标.svg", lie: { flags: 0 } },
+    { name: "资料/", method: 0, lie: { flags: 0 } },
+    { name: "Kooyumi/主标.svg", lie: { localFlags: 0 } },
+    { name: "logo.svg", localRawName: new TextEncoder().encode("evil.svg") },
+    { name: "bad", rawName: new Uint8Array([0xe4, 0xb8]) },
+    { name: "logo.svg", rawComment: new Uint8Array([0xff]) },
+  ];
+  for (const entry of refused) {
+    const archive = await buildZip([{ data: "logo", ...entry }]);
+    await assert.rejects(validateStagedContent(archive, "application/zip"), /content_type_mismatch/);
+    await assert.rejects(validateStagedContent({ size: archive.length,
+      readRange: async (offset, length) => archive.subarray(offset, offset + length) }, "application/zip"), /content_type_mismatch/);
+  }
+  // Office containers use the same filename gate, including non-XML assets never inflated.
+  const badOffice = await buildZip([{ name: "[Content_Types].xml", data: TYPES },
+    { name: "word/media/图.png", data: pngBytes(), method: 0, lie: { flags: 0 } }]);
+  await assert.rejects(validateStagedContent(badOffice, DOCX), /content_type_mismatch/);
+});
+
+test("staging keeps an ambiguously named ZIP rejected and never marks it ready", async () => {
+  const archive = await buildZip([{ name: "主标.svg", data: "logo", lie: { flags: 0 } }]);
+  const context = ids(), calls = [], bucket = memoryBucket();
+  const rt = await staging.createStagingRuntime({ bucket, url_key: b64url(Buffer.alloc(32, 9)),
+    staging_keys: JSON.stringify({ current_key_id: "k1", keys: { k1: b64url(Buffer.alloc(32, 3)) } }),
+    rpc: async input => {
+      calls.push([input.action, input.outcome ?? null, input.reason ?? null]);
+      if (input.action === "receive") return { ...context, size: archive.length, sha256: sha(archive),
+        mime_type: "application/zip", key_id: "k1", key_salt: SALT, state: "receiving" };
+      return { staging_id: context.staging_id, state: input.outcome };
+    } });
+  const claims = { ...context, binding_id: randomUUID(), sha256: sha(archive), size: archive.length,
+    mime_type: "application/zip", exp: Math.floor(Date.now() / 1000) + 600 };
+  await assert.rejects(staging.receiveStaged(rt, claims, archive), e => e.code === "content_type_mismatch");
+  assert.deepEqual(calls, [["receive", null, null], ["received", "validating", null],
+    ["validated", "rejected", "content_type_mismatch"]]);
+  assert.equal(bucket.objects.has("staging/" + context.staging_id), false, "rejected bytes are discarded");
+});
+
 test("validating stage: zip/OOXML/ODF macro parts, content types and relationships are refused; clean files pass", async () => {
   const clean = await docx();
   assert.equal(await validateStagedContent(clean, DOCX), true);
