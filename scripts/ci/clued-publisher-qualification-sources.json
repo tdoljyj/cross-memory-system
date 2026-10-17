@@ -1,0 +1,341 @@
+{
+  "schema": "clued.publisher-pr-qualification-sources/1",
+  "repository": "tdoljyj/cross-memory-system",
+  "default_branch": "main",
+  "workflows": {
+    ".github/workflows/clued-production-publisher-host-qualification.yml": {
+      "registration_status": "registered",
+      "sources": [
+        {
+          "registration_status": "registered",
+          "purpose": "production_publisher_nonproduction_PR_qualification",
+          "proof_classification": "qualification_only",
+          "operation": "install_workflow",
+          "workflow_blob": "bb9646649efcc981db6e126728ff20d6acc5483c",
+          "source_sha256": "9e39a08f9b0d3792c5b91907af02f93d9dca7d3f9e7f219311dc8fdd8414f5bc",
+          "source_yaml": "name: Clued production publisher Host qualification\n\non:\n  pull_request:\n    branches: [main]\n    types: [opened, synchronize, reopened, ready_for_review]\n    paths:\n      - '.github/workflows/clued-production-publisher-*-qualification.yml'\n      - 'scripts/ci/self-hosted/publisher-qualification-case.json'\n      - 'scripts/ci/self-hosted/run-publisher-qualification-case*'\n      - 'scripts/ci/self-hosted/qualify-publisher-host-principal*'\n      - 'scripts/ci/self-hosted/production-publisher-profile.json'\n      - 'scripts/runner/clued-production-vm*'\n      - 'scripts/runner/clued-runner-job-started*'\n      - 'scripts/ci/clued-gated-proof-*'\n      - '.github/actions/ci-temporary-storage/**'\n      - 'docs/maintenance/ci-publisher-principal-isolation.md'\n      - 'docs/maintenance/production-publisher-vm.md'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: clued-publisher-host-qualification-${{ github.event.pull_request.number }}\n  cancel-in-progress: true\n\n# purpose: production_publisher_nonproduction_PR_qualification\n# classification: qualification_only\n# This job cannot grant production authority. Failure and cancellation cases\n# remain qualification observations, outside requiredSuccess.\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  host-principal-probe:\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'pull_request') &&\n      (github.event.pull_request.base.ref == 'main') &&\n      (github.event.pull_request.base.repo.full_name == github.repository) &&\n      (github.event.pull_request.head.repo.full_name == github.repository) &&\n      (github.event.pull_request.user.login == github.repository_owner) &&\n      (github.actor == github.repository_owner) &&\n      (github.triggering_actor == github.repository_owner))\n    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312, cap-node24, site-company]\n    timeout-minutes: 5\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          fetch-depth: 1\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.head.sha }}\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Observe the actual Windows CI principal with the fixed public case\n        run: node scripts/ci/self-hosted/run-publisher-qualification-case.mjs --kind host\n",
+          "workflow_definition": {
+            "name": "Clued production publisher Host qualification",
+            "on": {
+              "pull_request": {
+                "branches": [
+                  "main"
+                ],
+                "types": [
+                  "opened",
+                  "synchronize",
+                  "reopened",
+                  "ready_for_review"
+                ],
+                "paths": [
+                  ".github/workflows/clued-production-publisher-*-qualification.yml",
+                  "scripts/ci/self-hosted/publisher-qualification-case.json",
+                  "scripts/ci/self-hosted/run-publisher-qualification-case*",
+                  "scripts/ci/self-hosted/qualify-publisher-host-principal*",
+                  "scripts/ci/self-hosted/production-publisher-profile.json",
+                  "scripts/runner/clued-production-vm*",
+                  "scripts/runner/clued-runner-job-started*",
+                  "scripts/ci/clued-gated-proof-*",
+                  ".github/actions/ci-temporary-storage/**",
+                  "docs/maintenance/ci-publisher-principal-isolation.md",
+                  "docs/maintenance/production-publisher-vm.md"
+                ]
+              }
+            },
+            "permissions": {
+              "contents": "read"
+            },
+            "concurrency": {
+              "group": "clued-publisher-host-qualification-${{ github.event.pull_request.number }}",
+              "cancel-in-progress": true
+            },
+            "jobs": {
+              "admission-gate": {
+                "name": "admission-gate",
+                "runs-on": [
+                  "self-hosted",
+                  "Linux",
+                  "X64",
+                  "clued",
+                  "pool-general",
+                  "trust-internal"
+                ],
+                "timeout-minutes": 10,
+                "permissions": {
+                  "actions": "read",
+                  "checks": "read",
+                  "contents": "read",
+                  "pull-requests": "read"
+                },
+                "outputs": {
+                  "admitted": "${{ steps.gate.outputs.admitted }}",
+                  "enforced": "${{ steps.gate.outputs.enforced }}",
+                  "verdict": "${{ steps.gate.outputs.verdict }}"
+                },
+                "steps": [
+                  {
+                    "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                    "with": {
+                      "persist-credentials": false,
+                      "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                    }
+                  },
+                  {
+                    "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                    "with": {
+                      "node-version": "24.19.0"
+                    }
+                  },
+                  {
+                    "name": "Configure job temporary storage",
+                    "uses": "./.github/actions/ci-temporary-storage"
+                  },
+                  {
+                    "id": "gate",
+                    "env": {
+                      "GITHUB_TOKEN": "${{ github.token }}"
+                    },
+                    "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+                  }
+                ]
+              },
+              "host-principal-probe": {
+                "needs": "admission-gate",
+                "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request') && (github.event.pull_request.base.ref == 'main') && (github.event.pull_request.base.repo.full_name == github.repository) && (github.event.pull_request.head.repo.full_name == github.repository) && (github.event.pull_request.user.login == github.repository_owner) && (github.actor == github.repository_owner) && (github.triggering_actor == github.repository_owner))",
+                "runs-on": [
+                  "self-hosted",
+                  "Windows",
+                  "X64",
+                  "clued",
+                  "pool-general",
+                  "trust-internal",
+                  "cap-python312",
+                  "cap-node24",
+                  "site-company"
+                ],
+                "timeout-minutes": 5,
+                "steps": [
+                  {
+                    "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                    "with": {
+                      "fetch-depth": 1,
+                      "persist-credentials": false,
+                      "ref": "${{ github.event.pull_request.head.sha }}"
+                    }
+                  },
+                  {
+                    "name": "Configure job temporary storage",
+                    "uses": "./.github/actions/ci-temporary-storage"
+                  },
+                  {
+                    "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                    "with": {
+                      "node-version": "24.19.0"
+                    }
+                  },
+                  {
+                    "name": "Observe the actual Windows CI principal with the fixed public case",
+                    "run": "node scripts/ci/self-hosted/run-publisher-qualification-case.mjs --kind host"
+                  }
+                ]
+              }
+            }
+          },
+          "primary_ids": [
+            "host-principal-probe"
+          ],
+          "gated": true,
+          "role_digests": {
+            "admission-gate": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd",
+            "host-principal-probe": "cde4ab1320b95227bb57f0c92d18cae9b44925b28918a9f8d90ea4126900a8c4"
+          },
+          "command_digests": {
+            "host-principal-probe": {
+              "Observe the actual Windows CI principal with the fixed public case": [
+                "19d84e11b715b96b3de0802daffa02d1c5521d3309a3ebd01ca2bcfa97dce821"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    ".github/workflows/clued-production-publisher-guest-qualification.yml": {
+      "registration_status": "registered",
+      "sources": [
+        {
+          "registration_status": "registered",
+          "purpose": "production_publisher_nonproduction_PR_qualification",
+          "proof_classification": "qualification_only",
+          "operation": "install_workflow",
+          "workflow_blob": "3ea7bf00470a1ca52d0e1688358d4b1658b18f65",
+          "source_sha256": "2c96918d9a14bbadca4a5e247bafcf741290a3ee2c75d13e2acacc800b04ad44",
+          "source_yaml": "name: Clued production publisher Guest qualification\n\non:\n  pull_request:\n    branches: [main]\n    types: [opened, synchronize, reopened, ready_for_review]\n    paths:\n      - '.github/workflows/clued-production-publisher-*-qualification.yml'\n      - 'scripts/ci/self-hosted/publisher-qualification-case.json'\n      - 'scripts/ci/self-hosted/run-publisher-qualification-case*'\n      - 'scripts/ci/self-hosted/qualify-publisher-host-principal*'\n      - 'scripts/ci/self-hosted/production-publisher-profile.json'\n      - 'scripts/runner/clued-production-vm*'\n      - 'scripts/runner/clued-runner-job-started*'\n      - 'scripts/ci/clued-gated-proof-*'\n      - '.github/actions/ci-temporary-storage/**'\n      - 'docs/maintenance/ci-publisher-principal-isolation.md'\n      - 'docs/maintenance/production-publisher-vm.md'\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: clued-publisher-guest-qualification-${{ github.event.pull_request.number }}\n  cancel-in-progress: true\n\n# purpose: production_publisher_nonproduction_PR_qualification\n# classification: qualification_only\n# This job cannot grant production authority. Failure and cancellation cases\n# remain qualification observations, outside requiredSuccess.\njobs:\n  admission-gate:\n    name: admission-gate\n    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]\n    timeout-minutes: 10\n    permissions:\n      actions: read\n      checks: read\n      contents: read\n      pull-requests: read\n    outputs:\n      admitted: ${{ steps.gate.outputs.admitted }}\n      enforced: ${{ steps.gate.outputs.enforced }}\n      verdict: ${{ steps.gate.outputs.verdict }}\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run: node scripts/ci/clued-work-admission.mjs --mode gate\n\n  qualify:\n    needs: admission-gate\n    if: >-\n      needs.admission-gate.outputs.admitted == 'true' &&\n      ((github.event_name == 'pull_request') &&\n      (github.event.pull_request.base.ref == 'main') &&\n      (github.event.pull_request.base.repo.full_name == github.repository) &&\n      (github.event.pull_request.head.repo.full_name == github.repository) &&\n      (github.event.pull_request.user.login == github.repository_owner) &&\n      (github.actor == github.repository_owner) &&\n      (github.triggering_actor == github.repository_owner))\n    runs-on: [self-hosted, Linux, X64, clued-production-publisher-v1, \"${{ format('clued-publisher-{0}-{1}', github.run_id, github.run_attempt) }}\"]\n    timeout-minutes: 12\n    steps:\n      # HARD EXTERNAL PREREQUISITE: an immutable installed pre-job hook and\n      # trusted Host controller must bind this exact run/attempt/job/merge/head/\n      # base/runner/case before ANY step. The observer below cannot supply it.\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n        with:\n          fetch-depth: 1\n          persist-credentials: false\n          ref: ${{ github.event.pull_request.head.sha }}\n      - name: Configure job temporary storage\n        uses: ./.github/actions/ci-temporary-storage\n      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0\n        with:\n          node-version: 24.19.0\n      - name: Observe the fixed credential-free Guest case\n        run: node scripts/ci/self-hosted/run-publisher-qualification-case.mjs --kind guest\n",
+          "workflow_definition": {
+            "name": "Clued production publisher Guest qualification",
+            "on": {
+              "pull_request": {
+                "branches": [
+                  "main"
+                ],
+                "types": [
+                  "opened",
+                  "synchronize",
+                  "reopened",
+                  "ready_for_review"
+                ],
+                "paths": [
+                  ".github/workflows/clued-production-publisher-*-qualification.yml",
+                  "scripts/ci/self-hosted/publisher-qualification-case.json",
+                  "scripts/ci/self-hosted/run-publisher-qualification-case*",
+                  "scripts/ci/self-hosted/qualify-publisher-host-principal*",
+                  "scripts/ci/self-hosted/production-publisher-profile.json",
+                  "scripts/runner/clued-production-vm*",
+                  "scripts/runner/clued-runner-job-started*",
+                  "scripts/ci/clued-gated-proof-*",
+                  ".github/actions/ci-temporary-storage/**",
+                  "docs/maintenance/ci-publisher-principal-isolation.md",
+                  "docs/maintenance/production-publisher-vm.md"
+                ]
+              }
+            },
+            "permissions": {
+              "contents": "read"
+            },
+            "concurrency": {
+              "group": "clued-publisher-guest-qualification-${{ github.event.pull_request.number }}",
+              "cancel-in-progress": true
+            },
+            "jobs": {
+              "admission-gate": {
+                "name": "admission-gate",
+                "runs-on": [
+                  "self-hosted",
+                  "Linux",
+                  "X64",
+                  "clued",
+                  "pool-general",
+                  "trust-internal"
+                ],
+                "timeout-minutes": 10,
+                "permissions": {
+                  "actions": "read",
+                  "checks": "read",
+                  "contents": "read",
+                  "pull-requests": "read"
+                },
+                "outputs": {
+                  "admitted": "${{ steps.gate.outputs.admitted }}",
+                  "enforced": "${{ steps.gate.outputs.enforced }}",
+                  "verdict": "${{ steps.gate.outputs.verdict }}"
+                },
+                "steps": [
+                  {
+                    "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                    "with": {
+                      "persist-credentials": false,
+                      "ref": "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}"
+                    }
+                  },
+                  {
+                    "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                    "with": {
+                      "node-version": "24.19.0"
+                    }
+                  },
+                  {
+                    "name": "Configure job temporary storage",
+                    "uses": "./.github/actions/ci-temporary-storage"
+                  },
+                  {
+                    "id": "gate",
+                    "env": {
+                      "GITHUB_TOKEN": "${{ github.token }}"
+                    },
+                    "run": "node scripts/ci/clued-work-admission.mjs --mode gate"
+                  }
+                ]
+              },
+              "qualify": {
+                "needs": "admission-gate",
+                "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'pull_request') && (github.event.pull_request.base.ref == 'main') && (github.event.pull_request.base.repo.full_name == github.repository) && (github.event.pull_request.head.repo.full_name == github.repository) && (github.event.pull_request.user.login == github.repository_owner) && (github.actor == github.repository_owner) && (github.triggering_actor == github.repository_owner))",
+                "runs-on": [
+                  "self-hosted",
+                  "Linux",
+                  "X64",
+                  "clued-production-publisher-v1",
+                  "${{ format('clued-publisher-{0}-{1}', github.run_id, github.run_attempt) }}"
+                ],
+                "timeout-minutes": 12,
+                "steps": [
+                  {
+                    "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                    "with": {
+                      "fetch-depth": 1,
+                      "persist-credentials": false,
+                      "ref": "${{ github.event.pull_request.head.sha }}"
+                    }
+                  },
+                  {
+                    "name": "Configure job temporary storage",
+                    "uses": "./.github/actions/ci-temporary-storage"
+                  },
+                  {
+                    "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                    "with": {
+                      "node-version": "24.19.0"
+                    }
+                  },
+                  {
+                    "name": "Observe the fixed credential-free Guest case",
+                    "run": "node scripts/ci/self-hosted/run-publisher-qualification-case.mjs --kind guest"
+                  }
+                ]
+              }
+            }
+          },
+          "primary_ids": [
+            "qualify"
+          ],
+          "gated": true,
+          "role_digests": {
+            "admission-gate": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd",
+            "qualify": "4d66c95f7019402a21aa8f70b1fea739d72fe24f79ee72373a5e7af666fd7e3b"
+          },
+          "command_digests": {
+            "qualify": {
+              "Observe the fixed credential-free Guest case": [
+                "8c6395f36411e47ff5288269be4660eb2224024fa5efff671c97cc8d82e0447d"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "roles": {
+    ".github/workflows/clued-production-publisher-host-qualification.yml": {
+      "bb9646649efcc981db6e126728ff20d6acc5483c": [
+        {
+          "job_id": "admission-gate",
+          "definition_sha256": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd"
+        },
+        {
+          "job_id": "host-principal-probe",
+          "definition_sha256": "cde4ab1320b95227bb57f0c92d18cae9b44925b28918a9f8d90ea4126900a8c4"
+        }
+      ]
+    },
+    ".github/workflows/clued-production-publisher-guest-qualification.yml": {
+      "3ea7bf00470a1ca52d0e1688358d4b1658b18f65": [
+        {
+          "job_id": "admission-gate",
+          "definition_sha256": "a38d818cac3e095f0747700e9d206a65a395c3af97728f3230743748b548a1bd"
+        },
+        {
+          "job_id": "qualify",
+          "definition_sha256": "4d66c95f7019402a21aa8f70b1fea739d72fe24f79ee72373a5e7af666fd7e3b"
+        }
+      ]
+    }
+  }
+}

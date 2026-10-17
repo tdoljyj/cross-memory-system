@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createImmutableWorkflowSourceReader} from './clued-gated-proof-runtime.mjs';
+import {createImmutableWorkflowSourceReader,PUBLISHER_SNAPSHOT_QUERY} from './clued-gated-proof-runtime.mjs';
 assert.equal(typeof createImmutableWorkflowSourceReader,'function','candidate exposes the pure reader factory');
 
 const repository='public-fixture/example';
@@ -246,6 +246,10 @@ const portablePrNumber=800;
 const portableSnapshotFiles=['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
   'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py',
   'config/merge-admission-policy.json'];
+const portablePublisherFiles={publisherRegistry:'scripts/ci/clued-production-publisher-sources.json',
+  publisherCompiler:'scripts/ci/clued-production-publisher-source.mjs',
+  qualificationRegistry:'scripts/ci/clued-publisher-qualification-sources.json',
+  qualificationCompiler:'scripts/ci/clued-publisher-qualification-source.mjs'};
 const portableGraphTarget='.github/workflows/clued-handover-external-qualification.yml';
 const portableNonCI=['.github/workflows/clued-merge-slot-ci.yml','.github/workflows/clued-work-admission-dispatch.yml'];
 
@@ -280,11 +284,17 @@ function portableWholeWorld() {
   // Both retain an explicit non-PR dispatch boundary, never counted as tests.
   for(const [index,file] of portableNonCI.entries())for(const ref of [portableTip,portableHead])
     put(ref,file,`name: public non CI ${index}\non: workflow_dispatch\njobs:\n  notice:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo public ${ref===portableTip?'before':'after'}\n`);
+  const publisherSources={schema:'clued.production-publisher-sources/1',repository:portableRepo,default_branch:'main',workflows:{},roles:{}};
+  const qualificationSources={schema:'clued.publisher-pr-qualification-sources/1',repository:portableRepo,default_branch:'main',workflows:{},roles:{}};
   const snapshotTexts={
     [portableSnapshotFiles[0]]:JSON.stringify(profiles),[portableSnapshotFiles[1]]:JSON.stringify(roleSpecs),
-    ...Object.fromEntries(portableSnapshotFiles.slice(2).map(file=>[file,JSON.stringify({public_synthetic_fixture:true,authority:'NONE',file})]))};
+    ...Object.fromEntries(portableSnapshotFiles.slice(2).map(file=>[file,JSON.stringify({public_synthetic_fixture:true,authority:'NONE',file})])),
+    [portablePublisherFiles.publisherRegistry]:JSON.stringify(publisherSources),
+    [portablePublisherFiles.qualificationRegistry]:JSON.stringify(qualificationSources),
+    [portablePublisherFiles.publisherCompiler]:'public synthetic publisher compiler',
+    [portablePublisherFiles.qualificationCompiler]:'public synthetic qualification compiler'};
   for(const [file,text] of Object.entries(snapshotTexts))put(portableTip,file,text);
-  const snapshot={tip:portableTip,checkout:portableTip,profiles,roleSpecs,workflows:defaultWorkflows,
+  const snapshot={tip:portableTip,checkout:portableTip,profiles,roleSpecs,publisherSources,qualificationSources,workflows:defaultWorkflows,
     files:Object.fromEntries(Object.entries(snapshotTexts).map(([file,text])=>[file,portableWorkflowBlob(text)]))};
   const content=(ref,file)=>{
     const raw=bytes.get(`${ref}:${file}`);assert.ok(raw,`unexpected public content fixture: ${file} at ${ref}`);
@@ -357,7 +367,21 @@ async function runPortableWholeQualificationCase(name='positive',qualify=portabl
       }else throw Error('unrequested public fixture route');
       assert.ok(value,`missing public fixture response: ${route}`);return structuredClone(value);
     },
-    graphRead:async(_query,{node})=>{
+    graphRead:async(query,variables)=>{
+      if(query===PUBLISHER_SNAPSHOT_QUERY){
+        trace.push({kind:'PUBLISHER_SNAPSHOT',variables});const n=count('publisher-snapshot');
+        const [owner,repositoryName]=portableRepo.split('/');
+        assert.deepEqual(variables,{owner,name:repositoryName,
+          ...Object.fromEntries(Object.entries(portablePublisherFiles).map(([alias,file])=>[alias,`${portableTip}:${file}`]))});
+        const repo={nameWithOwner:portableRepo};
+        for(const [alias,file] of Object.entries(portablePublisherFiles)){
+          const raw=world.content(portableTip,file);
+          repo[alias]={__typename:'Blob',oid:raw.sha,byteSize:raw.size,text:Buffer.from(raw.content,'base64').toString('utf8'),isBinary:false,isTruncated:false};
+          if(name===`late-${alias}`&&n>1)repo[alias].text+='\n';
+        }
+        return {data:{repository:repo}};
+      }
+      const {node}=variables;
       trace.push({kind:'GRAPH',node});const run=world.runs.find(row=>row.node_id===node);assert.ok(run);
       const n=(graphs.get(node)??0)+1;graphs.set(node,n);const late=n>1&&run.path===portableGraphTarget;
       const sourceCommit=late&&name==='late-source-commit'?portableOther:portableHead;
@@ -372,10 +396,10 @@ async function runPortableWholeQualificationCase(name='positive',qualify=portabl
     original_limits:{max_reads:160,observation_ms:90000,max_bytes:524288},actual_qualification:false,production_actions:0};
 }
 
-test('portable whole qualifyPrExecution finishes eighteen workflows in 157 callbacks',async()=>{
+test('portable whole qualifyPrExecution finishes eighteen workflows and two fresh publisher snapshots in 159 callbacks',async()=>{
   const out=await runPortableWholeQualificationCase();
   assert.equal(out.result.passed,true,out.result.reason);assert.equal(out.result.state,'qualified');
-  assert.equal(out.result.proofs.length,18);assert.equal(out.callbacks,157);
+  assert.equal(out.result.proofs.length,18);assert.equal(out.callbacks,159);
   const frequency=identity=>out.trace.filter(row=>row.route===identity).length;
   assert.equal(frequency(`/repos/${portableRepo}/pulls/${portablePrNumber}`),5);
   assert.equal(frequency(`/repos/${portableRepo}/branches/main`),3);
@@ -384,6 +408,7 @@ test('portable whole qualifyPrExecution finishes eighteen workflows in 157 callb
     assert.equal(frequency(`/repos/${portableRepo}/git/commits/${ref}`),2);
   }
   assert.equal(out.trace.filter(row=>row.kind==='GRAPH').length,36);
+  assert.equal(out.trace.filter(row=>row.kind==='PUBLISHER_SNAPSHOT').length,2);
   assert.equal(out.trace.filter(row=>/\/actions\/runs\/\d+$/.test(row.route??'')).length,36);
   assert.equal(out.trace.filter(row=>row.route?.includes('/actions/runs?')).length,3);
   for(const file of [portableGraphTarget,'.github/workflows/clued-handover-disposable-idle.yml'])
@@ -391,11 +416,15 @@ test('portable whole qualifyPrExecution finishes eighteen workflows in 157 callb
   for(const file of portableNonCI)for(const ref of [portableTip,portableHead])
     assert.equal(frequency(`/repos/${portableRepo}/contents/${file}?ref=${ref}`),1);
   for(const file of portableSnapshotFiles)assert.equal(frequency(`/repos/${portableRepo}/contents/${file}?ref=${portableTip}`),2);
+  for(const file of Object.values(portablePublisherFiles))assert.equal(frequency(`/repos/${portableRepo}/contents/${file}?ref=${portableTip}`),0);
 });
 
 for(const name of ['late-pr','late-main','late-default-directory','late-head-directory','late-new-run',
-  'late-attempt','late-run-state','late-source-commit','late-source-repository','late-trusted-raw'])
+  'late-attempt','late-run-state','late-source-commit','late-source-repository','late-trusted-raw',
+  ...Object.keys(portablePublisherFiles).map(alias=>`late-${alias}`)])
   test(`portable whole qualifier rejects ${name} through its original fresh barrier`,async()=>{
     const out=await runPortableWholeQualificationCase(name);
     assert.equal(out.result.passed,false,out.result.reason);assert.ok(out.callbacks<=160);
+    if(Object.keys(portablePublisherFiles).some(alias=>name===`late-${alias}`))
+      assert.equal(out.trace.filter(row=>row.kind==='PUBLISHER_SNAPSHOT').length,2,'the final barrier was actually exercised');
   });

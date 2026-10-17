@@ -1,3 +1,4 @@
+import {registeredPublisherSource} from './clued-production-publisher-source.mjs';
 // Merge Admission v0.1 §7.3, step 3: the merge slot follows CI
 // (clued-merge-slot-ci.mjs). No network: fetch is mocked.
 import assert from "node:assert/strict";
@@ -31,6 +32,17 @@ const OTHER = "b".repeat(40);
 const CLAIM = "11111111-2222-4333-8444-555555555555";
 const SCOPE = "project:0597aa60-9b98-4da6-a4ab-63d7705b632f";
 const WORKFLOWS = ciWorkflows(ROOT);
+test('default CI enumeration excludes only exact registered dispatch publisher bytes',()=>{
+  const registry=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-production-publisher-sources.json'),'utf8'));
+  const file='.github/workflows/clued-cloud-production-release.yml';
+  const source=registry.workflows[file].sources.find(s=>s.gated).source_yaml;
+  const readFile=p=>Buffer.from(p.endsWith('clued-production-publisher-sources.json')?JSON.stringify(registry):source);
+  assert.equal(ciWorkflows(ROOT,()=>['clued-cloud-production-release.yml'],readFile).size,0);
+  assert.throws(()=>ciWorkflows(ROOT,()=>['clued-cloud-production-release.yml'],p=>p.endsWith('clued-production-publisher-sources.json')?readFile(p):Buffer.from(source+'\n')),
+    /unregistered default publisher/);
+  assert.equal(ciWorkflows(ROOT,()=>['unregistered-dispatch.yml'],readFile).size,1,
+    'an arbitrary gated dispatch is never a basename exclusion');
+});
 const GITLEAKS = ".github/workflows/gitleaks.yml";
 const QUALITY = ".github/workflows/clued-cloud-quality-gate.yml";
 
@@ -93,7 +105,15 @@ test("the CI workflows are gitleaks, trivy and the gated workflows of this branc
   const dir = path.join(ROOT, ".github", "workflows");
   const gated = fs.readdirSync(dir).filter((name) => /\.ya?ml$/.test(name) && workflowIsGated(fs.readFileSync(path.join(dir, name), "utf8")));
   assert.ok(gated.length >= 10, gated.join(", "));
-  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...gated, ...REQUIRED_CHECK_WORKFLOWS].map((name) => `.github/workflows/${name}`).sort());
+  const publisherCatalogue=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/clued-production-publisher-sources.json'),'utf8'));
+  const prGated=gated.filter(name=>{
+    const file='.github/workflows/'+name;
+    if(!Object.hasOwn(publisherCatalogue.workflows,file))return true;
+    const text=fs.readFileSync(path.join(dir,name),'utf8');
+    assert.equal(registeredPublisherSource(publisherCatalogue,file,text).passed,true,'an exact registered dispatch Source is required');
+    return false;
+  });
+  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...prGated, ...REQUIRED_CHECK_WORKFLOWS].map((name) => `.github/workflows/${name}`).sort());
 });
 
 test("the workflow is triggered by every CI workflow's completion, runs default-branch code and is hosted", () => {
