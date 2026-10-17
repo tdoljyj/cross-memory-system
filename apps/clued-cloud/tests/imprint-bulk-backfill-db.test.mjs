@@ -303,6 +303,32 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       assert.deepEqual((await admin.query("select clued_private.imprint_auto_domains_v1($1) v", ['用途：我的学习'])).rows[0].v, ['learning']);
       console.log('CLASSIFIER_EQUIVALENCE', inputs.size, 'synthetic sources; same rule catalog and sorted domains');
     });
+    await t.test('negative guard conservatively falls back for flags, backreferences, prefixes and invalid unused rules', async () => {
+      const original = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_rules_v1()'::regprocedure")).rows[0].prosrc;
+      const catalog = (await admin.query('select clued_private.imprint_auto_rules_v1() v')).rows[0].v;
+      const install = async body => admin.query(`create or replace function clued_private.imprint_auto_rules_v1()
+        returns jsonb language sql immutable parallel safe set search_path='' as $guard_test$${body}$guard_test$`);
+      const setPattern = async pattern => {
+        const modified = structuredClone(catalog); modified.activities = [{ domain: 'learning', patterns: [pattern] }];
+        await install("select '" + JSON.stringify(modified).replaceAll("'", "''") + "'::jsonb");
+      };
+      try {
+        for (const [pattern, text] of [['(?i)^XYZ$', 'XYZ'], ['^(ab)\\1$', 'abab'], ['***:^zebra$', 'zebra']]) {
+          await setPattern(pattern);
+          const value = (await admin.query(`select clued_private.imprint_auto_domains_v1($1) actual,
+            clued_private.imprint_previous_classifier_test_v1($1) previous`, [text])).rows[0];
+          assert.deepEqual(value.actual, ['learning']); assert.deepEqual(value.actual, value.previous);
+        }
+        await setPattern('[');
+        // The original context guard never reaches this invalid activity rule.
+        for (const name of ['imprint_auto_domains_v1', 'imprint_previous_classifier_test_v1']) {
+          assert.deepEqual((await admin.query(`select clued_private.${name}($1) v`, ['不是我的承诺'])).rows[0].v, []);
+          assert.deepEqual((await admin.query(`select clued_private.${name}($1) v`, ['“引文”'])).rows[0].v, []);
+          await assert.rejects(admin.query(`select clued_private.${name}($1)`, ['ordinary']), error => error.code === '2201B');
+        }
+      } finally { await install(original); }
+      assert.deepEqual((await admin.query('select clued_private.imprint_auto_rules_v1() v')).rows[0].v, catalog);
+    });
     await t.test('maximum shared-classifier input and legal8000-character Native records fit the real8s budget', async () => {
       const isolated = await isolatedOwner('bulk-real-scale');
       const body = '普通存量记录。'.repeat(200);
@@ -342,6 +368,8 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
         ['alternating-short-lines', '用\n学\n'.repeat(2000), []],
         ['purpose-and-short-lines', '用途：我的学习\n' + '用\n学\n'.repeat(1998), ['learning']],
         ['over-cache-capacity', Array.from({ length: 132 }, (_, i) => `普通独立行${i}\n`).join('') + '用\n学\n'.repeat(1500), []],
+        ['FIFO-all-misses-129', Array.from({ length: 4000 }, (_, i) => String.fromCodePoint(0x4e00 + i % 129) + '\n').join(''), []],
+        ['purpose-and-FIFO-all-misses-129', '用途：我的学习\n' + Array.from({ length: 3996 }, (_, i) => String.fromCodePoint(0x4e00 + i % 129) + '\n').join(''), ['learning']],
       ];
       await isolated.client.query("set statement_timeout='8s'");
       for (const [label, text, expected] of nativeShapes) {
@@ -363,7 +391,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
         select extensions.gen_random_uuid(),$1,'Synthetic scale record',$2,'global','task','active',1,'active','global',
           '{"execution_bucket":"later"}'::jsonb,'{}'::jsonb,'{}'::uuid[],'user_explicit',1,'Isolated synthetic fixture',
           encode(extensions.digest(convert_to($2,'UTF8'),'sha256'),'hex') from generate_series(1,2200)`, [isolated.id, body]);
-      for (const [label, text, expected] of nativeShapes.slice(-4)) {
+      for (const [label, text, expected] of nativeShapes.slice(-6)) {
         assert.ok([...text].length <= 8000);
         // Target stays an actual Native-created/updated current legacy Record;
         // only its test body changes, with no organization or saved batch.
