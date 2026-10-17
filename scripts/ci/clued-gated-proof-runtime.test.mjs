@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {platformWorkflowSource,workflowSourceOf,githubGraphReader,observeCompletedSource,boundPullDiff,boundDocumentationRange,
-  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution,githubAttemptLogReader} from './clued-gated-proof-runtime.mjs';
+  explicitNonPrWorkflow,boundWorkflowCatalog,boundRunIdentity,boundDocumentationAttempt,qualifyPrExecution,githubAttemptLogReader,
+  loadProofSnapshot} from './clued-gated-proof-runtime.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,7 @@ import {reportMergeSlots} from './clued-merge-slot-ci.mjs';
 import {createHash} from 'node:crypto';
 import {workflowJobs} from './clued-work-admission.mjs';
 import {applicableCI} from './clued-gated-proof.mjs';
+import {execFileSync} from 'node:child_process';
 const repository='o/r',headRepository='fork/r',file='.github/workflows/fixture.yml';
 const sha='a'.repeat(40),head='b'.repeat(40);
 const run={id:7,node_id:'WFR_fixture',run_attempt:2,event:'pull_request',head_sha:head,path:file,
@@ -20,6 +22,69 @@ const payload=()=>({data:{node:{databaseId:7,runAttempt:2,event:'pull_request',f
   run:{databaseId:7,runAttempt:2}}}}});
 const options={repository,headRepository,file,run};
 const pinned='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
+
+const snapshotProfile='scripts/ci/clued-gated-proof-profiles.json';
+const snapshotFixtureFiles={
+  [snapshotProfile]:JSON.stringify({schema:'clued.gated-proof-profiles/2',workflows:{}}),
+  'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify({schema:'clued.gated-proof-role-specs/2',workflows:{}}),
+  'scripts/ci/clued-work-admission.mjs':'trusted gate',
+  'scripts/ci/clued-docs-only.py':'trusted classifier',
+  'scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
+  'config/merge-admission-policy.json':'trusted policy',
+};
+function withSnapshotFixture(overrides,check) {
+  const workspace=fs.mkdtempSync(path.join(os.tmpdir(),'clued-proof-snapshot-bound-'));
+  const git=(...args)=>execFileSync('git',args,{cwd:workspace,encoding:'utf8',windowsHide:true});
+  try {
+    for(const [file,content] of Object.entries({...snapshotFixtureFiles,...overrides})) {
+      fs.mkdirSync(path.dirname(path.join(workspace,file)),{recursive:true});
+      fs.writeFileSync(path.join(workspace,file),content);
+    }
+    git('init','--quiet');git('config','core.autocrlf','false');git('add','.');
+    git('-c','user.name=CI fixture','-c','user.email=ci-fixture@example.invalid','commit','--quiet','-m','snapshot fixture');
+    const tip=git('rev-parse','HEAD').trim();
+    return check({workspace,tip,workflows:new Map([[file,'f'.repeat(40)]])});
+  } finally {fs.rmSync(workspace,{recursive:true,force:true});}
+}
+const paddedSnapshot=(file,bytes)=>snapshotFixtureFiles[file]+' '.repeat(bytes-Buffer.byteLength(snapshotFixtureFiles[file]));
+
+test('trusted snapshot admits the complete profile registry through 1 MiB without changing its raw source binding',()=>{
+  for(const bytes of [524289,1048576]) {
+    const text=paddedSnapshot(snapshotProfile,bytes);
+    withSnapshotFixture({[snapshotProfile]:text},({workspace,tip,workflows})=>{
+      const snapshot=loadProofSnapshot(workspace,tip,workflows);
+      assert.equal(snapshot.profiles.schema,'clued.gated-proof-profiles/2');
+      assert.equal(snapshot.files[snapshotProfile],workflowBlob(text));
+      assert.equal(snapshot.tip,tip);
+    });
+  }
+  withSnapshotFixture({[snapshotProfile]:paddedSnapshot(snapshotProfile,1048577)},({workspace,tip,workflows})=>{
+    assert.throws(()=>loadProofSnapshot(workspace,tip,workflows),/trusted snapshot file exceeds bounds/);
+  });
+});
+
+test('profile capacity successor leaves every other snapshot input bounded at 512 KiB',()=>{
+  for(const file of Object.keys(snapshotFixtureFiles).filter(file=>file!==snapshotProfile)) {
+    withSnapshotFixture({[file]:paddedSnapshot(file,524288)},({workspace,tip,workflows})=>{
+      assert.equal(loadProofSnapshot(workspace,tip,workflows).files[file],workflowBlob(paddedSnapshot(file,524288)),file);
+    });
+    withSnapshotFixture({[file]:paddedSnapshot(file,524289)},({workspace,tip,workflows})=>{
+      assert.throws(()=>loadProofSnapshot(workspace,tip,workflows),/trusted snapshot file exceeds bounds/,file);
+    });
+  }
+});
+
+test('larger profile allowance does not admit invalid UTF-8, a dirty checkout or another main tip',()=>{
+  withSnapshotFixture({[snapshotProfile]:Buffer.from([0xff])},({workspace,tip,workflows})=>{
+    assert.throws(()=>loadProofSnapshot(workspace,tip,workflows),/trusted snapshot file exceeds bounds/);
+  });
+  withSnapshotFixture({},({workspace,tip,workflows})=>{
+    assert.throws(()=>loadProofSnapshot(workspace,'0'.repeat(40),workflows),/trusted default checkout unavailable/);
+    fs.appendFileSync(path.join(workspace,snapshotProfile),' ');
+    assert.throws(()=>loadProofSnapshot(workspace,tip,workflows),/trusted default checkout unavailable/);
+  });
+});
+
 function executionWorld({conclusion='success',moveTip=false,moveSource=false,changedPR=false,lateSourceChange=null}={}) {
   const tip='c'.repeat(40),base='d'.repeat(40),sourceSha='a'.repeat(40);
   const text='name: fixture\non:\n  pull_request:\njobs:\n  main:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Real primary\n        run: node actual-tests.mjs\n';
@@ -79,6 +144,24 @@ test('shared execution bridge binds native full execution to one trusted snapsho
   const mismatch=executionWorld();mismatch.snapshot.profiles={...mismatch.snapshot.profiles,extra:'candidate assertion'};
   assert.equal((await qualifyPrExecution(mismatch)).state,'unknown');
 });
+test('authenticated snapshot revalidation applies the same exact-path profile capacity without widening other source reads',async()=>{
+  async function proofWithSizedSource(file,bytes) {
+    const world=executionWorld(),read=world.read;
+    const route=`/repos/${repository}/contents/${file}?ref=${world.snapshot.tip}`;
+    const original=await read(route),source=Buffer.from(original.content,'base64').toString('utf8');
+    const text=source+' '.repeat(bytes-Buffer.byteLength(source)),blob=workflowBlob(text);
+    world.snapshot.files[file]=blob;
+    world.read=async route=>route.includes(`/contents/${file}?`)?{
+      ...original,sha:blob,size:bytes,content:Buffer.from(text).toString('base64'),
+    }:read(route);
+    return qualifyPrExecution(world);
+  }
+  for(const bytes of [524289,1048576])assert.equal((await proofWithSizedSource(snapshotProfile,bytes)).passed,true,`profile ${bytes}`);
+  assert.equal((await proofWithSizedSource(snapshotProfile,1048577)).state,'unknown');
+  for(const file of Object.keys(snapshotFixtureFiles).filter(file=>file!==snapshotProfile))
+    assert.equal((await proofWithSizedSource(file,524289)).state,'unknown',file);
+});
+
 test('attempt log reader binds native job and follows only provider storage without credential forwarding',async()=>{
   const job={id:8,run_id:7,run_attempt:2,conclusion:'success'};
   const env={GITHUB_REPOSITORY:repository,GITHUB_TOKEN:'mock-private-token'};

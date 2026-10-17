@@ -85,6 +85,16 @@
             "job_id": "isolated-candidate-untrusted-hosted",
             "definition_sha256": "57133a69ff75999c0d64f951a81d4245c7d94631c8c17dc22021f61c51638d92"
           }
+        ],
+        "3d20ba406c8397cfa86bf29be6904bf9fb6ba287": [
+          {
+            "job_id": "isolated-candidate-trusted-self-hosted",
+            "definition_sha256": "f7b6f2b34c1a8e2e6768393d50376d7dbd1e7e91186e9d8140b2440f48c99f9a"
+          },
+          {
+            "job_id": "isolated-candidate-untrusted-hosted",
+            "definition_sha256": "57133a69ff75999c0d64f951a81d4245c7d94631c8c17dc22021f61c51638d92"
+          }
         ]
       }
     },
@@ -149,6 +159,16 @@
             "job_id": "database-gate-untrusted-hosted",
             "definition_sha256": "5165f33fbe7eff4878a7144a20c95f77a95c847b24f92ba65d887c7a75a9f8a1"
           }
+        ],
+        "a09cfc44e506a9672e5221a7fa6737747ddcb787": [
+          {
+            "job_id": "database-gate-trusted-self-hosted",
+            "definition_sha256": "d7f7624fd0e3cb83689f564c856a8776749672e405ab6e1f468498d8390ecbd0"
+          },
+          {
+            "job_id": "database-gate-untrusted-hosted",
+            "definition_sha256": "6e407992a1bb7d813e6889eca118138c80af561e005a51b5c4259fe3686fc3ed"
+          }
         ]
       }
     },
@@ -203,6 +223,16 @@
           }
         ],
         "18c48c7e20cc3ff6b9ff7aae953eb2d829a22f4f": [
+          {
+            "job_id": "e2e-trusted-self-hosted",
+            "definition_sha256": "20b7acbe7bd085c58b88b14de0fe20ff5bc666315c23dca12f86bd7738f040b6"
+          },
+          {
+            "job_id": "e2e-untrusted-hosted",
+            "definition_sha256": "9953c379eaf83bb1ca9d5b194c04b2f095b2ac8b3883ab7455cd39af0c02d8c2"
+          }
+        ],
+        "312e1ef4d963ccf5be13ee9db57b30cdaef6cf99": [
           {
             "job_id": "e2e-trusted-self-hosted",
             "definition_sha256": "20b7acbe7bd085c58b88b14de0fe20ff5bc666315c23dca12f86bd7738f040b6"

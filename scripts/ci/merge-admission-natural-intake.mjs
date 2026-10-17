@@ -26,7 +26,9 @@ function descriptorVariants(d){
     return [d];
   }
   const versions=versioned?d.previous_source_versions:[];
-  if(versioned&&(!Array.isArray(versions)||versions.length>4||!d.source_paths.includes(d.workflow_path)||
+  // The bounded profile-capacity successor retains the four prior exact
+  // generations plus its immediate predecessor. Legacy map-only history stays at four.
+  if(versioned&&(!Array.isArray(versions)||versions.length>5||!d.source_paths.includes(d.workflow_path)||
     versions.some(v=>!object(v)||Object.keys(v).sort().join('|')!=='job_name|source_blobs'||
       typeof v.job_name!=='string'||!v.job_name||v.job_name!==v.job_name.trim()||
       v.job_name!==d.job_name&&!(d.workflow_path==='.github/workflows/clued-work-admission.yml'&&
@@ -34,7 +36,7 @@ function descriptorVariants(d){
     refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   const history=versioned?versions.map(v=>v.source_blobs):hasHistory?d.previous_source_blobs:[];
   if(renamed&&(!history.length||history.some(map=>map?.[d.workflow_path]===d.workflow_blob)))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
-  if(!Array.isArray(history)||history.length>4||new Set(d.source_paths).size!==d.source_paths.length||
+  if(!Array.isArray(history)||history.length>(versioned?5:4)||new Set(d.source_paths).size!==d.source_paths.length||
     d.source_paths.some(path=>typeof path!=='string'))refuse('NATURAL_PRODUCER_SELECTION_INVALID');
   const paths=[...d.source_paths].sort(),maps=[d.source_blobs,...history],seen=new Set();
   if(object(d.source_blobs)&&Object.hasOwn(d.source_blobs,d.workflow_path)&&d.source_blobs[d.workflow_path]!==d.workflow_blob)refuse('NATURAL_PRODUCER_SELECTION_INVALID');

@@ -203,7 +203,7 @@
     {
       "id": "script.gated-proof-runtime",
       "kind": "script",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Bounded CI execution proof runtime and its actual quality unit regression entry.",
       "root": ".",
       "files": [
@@ -211,7 +211,7 @@
         "scripts/ci/clued-gated-proof-runtime.mjs",
         "scripts/ci/clued-reader-budget-cache.test.mjs"
       ],
-      "content_sha256": "7b84491a02edccc1e8de0a257a8f6b51428c8308410977423f210a8737b33d72",
+      "content_sha256": "9be93c9acc9bd850d6815ff7b660f98fe3e89969644b33ffaa966c52e2aed978",
       "version_marker": {
         "file": "scripts/ci/clued-gated-proof-runtime.mjs",
         "pattern": "export const COMPONENT_VERSION = \"{version}\";"
