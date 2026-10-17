@@ -1,6 +1,7 @@
 import { canEditDue, domain, matchesProjection, normalizeRecord, normalizedDomains, object, sourceKind, uniqueRecords, uuid,
   type Domain, type ImprintRecord, type Json, type ReadInput, type ReadPage } from "./imprint-model";
 import { NativeReadFailure, runNativeRead, type NativeReadOperation, type NativeReadOptions } from "../native-read-recovery";
+import { validRevisionRead, validSearchEnvelope, type RevisionRead } from "./imprint-search";
 export type NativeRpc = (name: string, args: Json, signal?: AbortSignal) => PromiseLike<{
   data: unknown; error: { message?: string; code?: string } | null; status?: number;
 }>;
@@ -24,8 +25,9 @@ export async function call(rpc: NativeRpc, name: string, args: Json): Promise<Js
 }
 const READ_OPERATIONS: Record<string, NativeReadOperation> = {
   clued_imprint_read_v1: "imprints.read", clued_development_imprint_read_v1: "imprints.read", clued_imprint_source_v1: "imprints.source",
+  clued_imprint_revision_read_v1: "imprints.source",
 };
-/** Only the three named read RPCs recover. Write calls keep their original single attempt. */
+/** Only the named read RPCs recover. Write calls keep their original single attempt. */
 async function callRead<T>(rpc: NativeRpc, name: string, args: Json, options: NativeReadOptions, validate: (value: Json) => T): Promise<T> {
   const operation = READ_OPERATIONS[name];
   if (!operation) throw new ImprintFailure("unknown", "read_operation_invalid");
@@ -91,7 +93,7 @@ function parseImprintPage(value: Json, input: ReadInput, contextId?: string): Re
   if (value.status !== "ok" || !Array.isArray(value.records) || !object(value.page)
     || typeof value.page.complete !== "boolean" || !(value.page.next_cursor === null || (Number.isSafeInteger(value.page.next_cursor) && Number(value.page.next_cursor) > input.cursor))) throw new ImprintFailure("unknown");
   const records = value.records.map(record => normalizeRecord(record, development));
-  if (records.some(record => !record || !matchesProjection(record, input) || (development && (record.context_id !== contextId
+  if (records.some(record => !record || !matchesProjection(record, input) || !validSearchEnvelope(record, input, contextId) || (development && (record.context_id !== contextId
     || !["canonical", "development"].includes(String(record.source_kind)) || (input.source_kind && record.source_kind !== input.source_kind))))) throw new ImprintFailure("unknown");
   if (input.id && records.length !== 1) throw new ImprintFailure("unknown");
   if (records.some(record => {
@@ -110,23 +112,46 @@ function parseImprintPage(value: Json, input: ReadInput, contextId?: string): Re
     ...(typeof value.selection_complete === "boolean" ? { selection_complete: value.selection_complete } : {}) }; }
   catch { throw new ImprintFailure("unknown"); }
 }
-export type SourceRead = { available: boolean; content: string | null; evidence: Json | null; segment: unknown; reason: string; historical: boolean; evidenceStatus: string };
+export type SourceRead = { available: boolean; content: string | null; evidence: Json | null; segment: unknown; reason: string; historical: boolean; evidenceStatus: string; historicalRecordVersion?: number };
 export async function readSource(rpc: NativeRpc, recordId: string, evidenceId: string, includeHistory = false, recordVersion?: number,
-  options: NativeReadOptions = { isCurrent: () => true }): Promise<SourceRead> {
+  options: NativeReadOptions = { isCurrent: () => true }, historicalRecordVersion?: number): Promise<SourceRead> {
+  if (historicalRecordVersion !== undefined && (!includeHistory || !Number.isSafeInteger(historicalRecordVersion)
+    || historicalRecordVersion < 1 || recordVersion === undefined || historicalRecordVersion >= recordVersion)) throw new ImprintFailure("unknown");
   return await callRead(rpc, "clued_imprint_source_v1", { p_input: { record_id: recordId, evidence_id: evidenceId,
-    include_history: includeHistory, ...(recordVersion !== undefined ? { record_version: recordVersion } : {}) } }, options, value => {
+    include_history: includeHistory, ...(recordVersion !== undefined ? { record_version: recordVersion } : {}),
+    ...(historicalRecordVersion !== undefined ? { historical_record_version: historicalRecordVersion } : {}) } }, options, value => {
     const available = value.status === "available" || (value.status === "ok" && value.available === true);
     const unavailable = value.status === "unavailable" || (value.status === "ok" && value.available === false);
     if (!available && !unavailable) throw new ImprintFailure("unknown");
+    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 131072
+      || (object(value.evidence) && value.evidence.id !== evidenceId)) throw new ImprintFailure("unknown");
+    if (available && (value.record_id !== recordId || !object(value.evidence) || value.evidence.id !== evidenceId
+      || value.complete !== true || typeof value.content !== "string"
+      || value.authoritative !== false || value.current_input_eligible !== false)) throw new ImprintFailure("unknown");
     if (available && recordVersion !== undefined && value.record_version !== recordVersion) throw new ImprintFailure("unknown");
     const historical = value.source_semantics === "historical_evidence";
+    if (available && historicalRecordVersion !== undefined && (!historical || value.historical_record_version !== historicalRecordVersion
+      || value.source_record_version !== historicalRecordVersion)) throw new ImprintFailure("unknown");
     if (available && historical && (value.authoritative !== false || value.current_input_eligible !== false)) throw new ImprintFailure("unknown");
     if (available && (value.evidence_status === "withdrawn" || value.evidence_status === "invalidated")
       && (!includeHistory || !historical || value.authoritative !== false || value.current_input_eligible !== false)) throw new ImprintFailure("unknown");
     return { available, content: available && typeof value.content === "string" ? value.content : null,
       evidence: object(value.evidence) ? value.evidence : null, segment: value.segment ?? null,
       reason: typeof value.unavailable_reason === "string" ? value.unavailable_reason : "", historical,
-      evidenceStatus: typeof value.evidence_status === "string" ? value.evidence_status : "" };
+      evidenceStatus: typeof value.evidence_status === "string" ? value.evidence_status : "",
+      ...(historicalRecordVersion !== undefined ? { historicalRecordVersion } : {}) };
+  });
+}
+export async function readRevision(rpc: NativeRpc, record: ImprintRecord, version: number, contextId?: string,
+  options: NativeReadOptions = { isCurrent: () => true }): Promise<RevisionRead> {
+  if (sourceKind(record) !== "canonical" || !Number.isSafeInteger(version) || version < 1 || version >= record.version
+    || (contextId !== undefined && (!uuid(contextId) || record.context_id !== contextId))) throw new ImprintFailure("unknown");
+  return await callRead(rpc, "clued_imprint_revision_read_v1", { p_input: { record_id: record.id, record_version: record.version,
+    historical_record_version: version, scope: record.scope, ...(contextId !== undefined ? { context_id: contextId } : {}) } }, options, value => {
+    if (value.status === "ok" && value.available === false && typeof value.unavailable_reason === "string")
+      return { available: false, reason: value.unavailable_reason };
+    if (!validRevisionRead(value, record, version, contextId)) throw new ImprintFailure("unknown");
+    return { available: true, reason: "", record: value.record as RevisionRead["record"] };
   });
 }
 export type PreparedWrite = { input: Json; serialized: string; hash: string };
