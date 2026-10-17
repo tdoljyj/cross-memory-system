@@ -7,6 +7,8 @@ import test from 'node:test';
 import {execFileSync} from 'node:child_process';
 import {compileRegisteredWorkflow,workflowBlob,roleDefinitionDigest,rolesForSource,registeredWorkflowSource} from '../../../scripts/ci/clued-workflow-profile.mjs';
 import {ciWorkflows} from '../../../scripts/ci/clued-merge-slot-ci.mjs';
+import {compilePublisherPrQualificationSource,registeredPublisherPrQualificationSource,
+  PUBLISHER_PR_QUALIFICATION_PATH,PUBLISHER_PR_QUALIFICATION_FILES} from '../../../scripts/ci/clued-publisher-qualification-source.mjs';
 // These critical negative cases run through the existing quality unit entry.
 import '../../../scripts/ci/clued-gated-proof.test.mjs';
 import '../../../scripts/ci/clued-workflow-profile.test.mjs';
@@ -45,6 +47,44 @@ test('registered definitions match full YAML bytes and complete explicit primary
     const committed=execFileSync('git',['show',`HEAD:${file}`],{cwd:root,encoding:'utf8',maxBuffer:524288,windowsHide:true});
     assert.ok([record,...(record.accepted_sources??[])].some(entry=>entry.workflow_blob===workflowBlob(committed)),
       `${file}: committed Git bytes have no registration`);
+  }
+});
+
+test('publisher qualification catalogue binds every complete Source and independent role to actual worktree and committed Git bytes',()=>{
+  assert.equal(require('yaml/package.json').version,'2.9.0');
+  const files=[
+    '.github/workflows/clued-production-publisher-host-qualification.yml',
+    '.github/workflows/clued-production-publisher-guest-qualification.yml',
+  ].sort();
+  const catalogue=JSON.parse(fs.readFileSync(path.join(root,PUBLISHER_PR_QUALIFICATION_PATH),'utf8'));
+  assert.deepEqual(Object.keys(PUBLISHER_PR_QUALIFICATION_FILES).sort(),files);
+  assert.deepEqual(Object.keys(catalogue.workflows).sort(),files);
+  assert.deepEqual(Object.keys(catalogue.roles).sort(),files);
+  for(const file of files) {
+    const record=catalogue.workflows[file];
+    assert.equal(record.registration_status,'registered',file);
+    assert.ok(Array.isArray(record.sources)&&record.sources.length>=1&&record.sources.length<=3,
+      `${file}: exact bounded current and accepted Source history required`);
+    assert.deepEqual(Object.keys(catalogue.roles[file]).sort(),record.sources.map(entry=>entry.workflow_blob).sort(),
+      `${file}: missing or orphan independent Source roles`);
+    for(const entry of record.sources) {
+      const derived=compilePublisherPrQualificationSource(file,entry.source_yaml,{parseYaml,
+        accepted_roles:catalogue.roles[file][entry.workflow_blob],operation:entry.operation});
+      assert.deepEqual(entry,derived,`${file}: qualification catalogue omitted or changed raw Source facts`);
+      assert.equal(entry.proof_classification,'qualification_only',`${file}: qualification must not become required success`);
+      assert.equal(registeredPublisherPrQualificationSource(catalogue,file,entry.source_yaml).passed,true,
+        `${file}: historical or current Source is not actually registered`);
+    }
+    const worktree=fs.readFileSync(path.join(root,file),'utf8');
+    const committed=execFileSync('git',['show',`HEAD:${file}`],{cwd:root,encoding:'utf8',maxBuffer:524288,windowsHide:true});
+    for(const [origin,text] of [['worktree',worktree],['committed HEAD',committed]]) {
+      const result=registeredPublisherPrQualificationSource(catalogue,file,text);
+      assert.equal(result.passed,true,`${file}: ${origin} exact Git bytes lack qualification registration (${result.reason??result.state})`);
+      assert.equal(result.state,'qualified',`${file}: ${origin}`);
+      assert.equal(result.scope,'registered_nonproduction_PR_qualification_source_only',`${file}: ${origin}`);
+      assert.equal(result.profile.source_yaml,text,`${file}: ${origin} raw bytes changed`);
+      assert.equal(result.profile.workflow_blob,workflowBlob(text),`${file}: ${origin} blob changed`);
+    }
   }
 });
 
