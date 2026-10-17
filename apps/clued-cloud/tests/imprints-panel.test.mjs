@@ -882,12 +882,28 @@ const bulkWrite = batch => ({ status: 'committed', receipt_id: OTHER, supplement
 
 test('bulk preview remains read-only and explicit plan confirmation does not run label mutations', async t => {
   const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  assert.ok(f.text().includes('全部自有内容（个人资料、个人记录、项目）'));
   f.click('盘点并预演（不修改内容）'); assert.equal(f.calls[1].name, 'clued_imprint_bulk_preview_v1');
   await f.respond(1, bulkPlan()); await f.untilCalls(3); await f.respond(2, { status: 'ok', available: false });
   assert.ok(f.text().includes('完整盘点 3 条')); assert.ok(f.text().includes('待逐条核对 0')); assert.equal(f.calls.length, 3);
   f.click('确认这1条，保存首批计划'); await f.untilCalls(4);
   assert.equal(f.calls[3].args.p_input.action, 'begin'); assert.equal(f.calls[3].args.p_input.digest, 'a'.repeat(64));
   await f.respond(3, bulkWrite(bulkBatch())); assert.ok(f.text().includes('尚未修改标签')); assert.equal(f.calls.length, 4);
+});
+test('failed rehearsal distinguishes timeout and invalidation without retries or raw database details', async t => {
+  for (const [error, expected] of [
+    [{ message: 'canceling statement due to statement timeout', code: '57014' }, '预演超时'],
+    [{ message: 'bulk_preview_changed', code: '40001' }, '本轮预演已失效'],
+  ]) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+    f.click('盘点并预演（不修改内容）'); f.calls[1].resolve({ data: null, error, status: 500 }); await f.settle();
+    assert.ok(f.text().includes(expected)); assert.ok(f.text().includes('没有修改标签'));
+    assert.ok(!f.text().includes('完整盘点')); assert.ok(!f.text().includes('57014'));
+    assert.ok(!f.text().includes('statement timeout')); assert.equal(f.calls.length, 2);
+    assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+    f.click('读取已保存进度'); await f.respond(2, { status: 'ok', available: false });
+    assert.ok(f.text().includes('尚未建立首批计划'));
+  }
 });
 test('bulk unknown write never retries automatically; resume reconciles durable progress before another step', async t => {
   const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
@@ -916,14 +932,14 @@ test('zero and malformed bulk previews cannot fabricate success or expose a writ
   await f.respond(2, { status: 'ok', available: false }); assert.ok(f.text().includes('没有可可靠自动归类'));
   assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
   f.click('盘点并预演（不修改内容）'); await f.respond(3, bulkPlan({ items: [bulkPlan().items[0], bulkPlan().items[0]] }));
-  assert.ok(f.text().includes('结果尚未确认')); assert.ok(!f.text().includes('Existing old note'));
+  assert.ok(f.text().includes('预演未完成')); assert.ok(!f.text().includes('Existing old note'));
 });
 test('a later failed batch-status read invalidates an earlier empty result before enabling begin', async t => {
   const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
   f.click('读取已保存进度'); await f.respond(1, { status: 'ok', available: false });
   assert.ok(f.text().includes('尚未建立首批计划'));
   f.click('盘点并预演（不修改内容）'); await f.respond(2, bulkPlan()); await f.untilCalls(4); await f.fail(3);
-  assert.ok(f.text().includes('结果尚未确认')); assert.ok(!f.text().includes('尚未建立首批计划'));
+  assert.ok(f.text().includes('预演未完成')); assert.ok(!f.text().includes('尚未建立首批计划'));
   const confirm = f.nodes('button').find(b => f.text(b).includes('保存首批计划'));
   assert.ok(!confirm || confirm.props.disabled);
 });
@@ -974,7 +990,7 @@ test('a missing, duplicated, drifting or forged-complete page invalidates all ac
       if (mode === 'cursor') last.page.cursor = 10;
       await f.respond(2, last);
     }
-    assert.ok(f.text().includes('结果尚未确认'), mode); assert.ok(!f.text().includes('完整盘点'), mode);
+    assert.ok(f.text().includes('预演未完成'), mode); assert.ok(!f.text().includes('完整盘点'), mode);
     assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')), mode);
     assert.equal(f.calls.length, 3, mode);
   }

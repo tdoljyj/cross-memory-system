@@ -31,8 +31,18 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
+    let previousClassifierBody;
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort()) {
-      try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
+      try {
+        const successor = name === '20261017142000_imprint_classifier_scan_v1.sql';
+        const identity = async () => (await admin.query(`select oid::text,pg_get_userbyid(proowner) owner,
+          prosecdef,provolatile,proparallel,proconfig,proacl::text from pg_proc
+          where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure`)).rows[0];
+        const before = successor ? await identity() : null;
+        if (successor) previousClassifierBody = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].prosrc;
+        await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
+        if (successor) assert.deepEqual(await identity(), before, 'performance successor preserves function identity and privileges');
+      }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
     const owner = uuid(), other = uuid(), project = uuid();
@@ -263,6 +273,76 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
           assert.equal((await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') v", [role, signature])).rows[0].v, false);
       }
     });
+    await t.test('cached classification preserves prior outputs for quotes, fences, uncertain lines and all existing rule forms', async () => {
+      assert.equal(typeof previousClassifierBody, 'string');
+      await admin.query(`create function clued_private.imprint_previous_classifier_test_v1(p_content text)
+        returns text[] language plpgsql immutable parallel safe set search_path='' as $previous$${previousClassifierBody}$previous$`);
+      const bodies = ['用途：工作交付、我的学习、家庭预算、创作、兴趣爱好。', '客户Logo方案。', '给客户设计Logo。',
+        '我正在复习线性代数，用这本教材。', '我今天整理家庭预算。', '继续写小说第二章。', '安排周末徒步路线。',
+        'Purpose: personal budget, creative writing and hobbies.', 'I am studying linear algebra.',
+        '客户Logo设计教程。', '客户要求我设计Logo。', '如果保存用途：学习英语。', '用途：不用来学习英语。',
+        '用途：我的工作\n“引文”', '客户请求：\n用途：我的工作\n\n用途：家庭预算。',
+        '~~~text\n用途：我的工作\n~~~\n用途：我的学习', '````\n```\n用途：我的工作\n```\n````',
+        '原文：\n用途：我的工作\n> 朋友说：\n用途：我的学习', 'a。；!?\n用途：我的学习'];
+      const inputs = new Set(bodies);
+      for (const text of bodies) for (const prefix of ['> ', '原文：\n', '客户说：', '```\n', '`', '可能', '如果']) inputs.add(prefix + text);
+      for (const text of bodies) for (const quote of ['"', "'", '“', '”', '‘', '’', '「', '」', '『', '』']) inputs.add(text + quote);
+      for (const text of inputs) {
+        const value = (await admin.query(`select clued_private.imprint_auto_domains_v1($1) actual,
+          clued_private.imprint_previous_classifier_test_v1($1) previous`, [text])).rows[0];
+        assert.deepEqual(value.actual, value.previous, text.slice(0, 100));
+      }
+      assert.deepEqual((await admin.query("select clued_private.imprint_auto_domains_v1($1) v", ['用途：我的学习'])).rows[0].v, ['learning']);
+      console.log('CLASSIFIER_EQUIVALENCE', inputs.size, 'synthetic sources; same rule catalog and sorted domains');
+    });
+    await t.test('maximum shared-classifier input and legal8000-character Native records fit the real8s budget', async () => {
+      const isolated = await isolatedOwner('bulk-real-scale');
+      const body = '普通存量记录。'.repeat(200);
+      const target = '00000000-0000-4000-8000-000000000001';
+      await admin.query(`insert into public.clued_memories
+        (id,user_id,title,content,scope,record_type,status,record_schema_version,lifecycle_status,canonical_scope,
+          type_fields,relations,source_refs,authority,confidence,confidence_reason,content_hash)
+        select case when sample=1 then $3::uuid else extensions.gen_random_uuid() end,$1,'Synthetic scale record',$2,'global','task','active',1,'active','global',
+          '{"execution_bucket":"later"}'::jsonb,'{}'::jsonb,'{}'::uuid[],'user_explicit',1,'Isolated synthetic fixture',
+          encode(extensions.digest(convert_to($2,'UTF8'),'sha256'),'hex') from generate_series(1,1800) sample`, [isolated.id, body, target]);
+      const shapes = [
+        ['quoted-long-line', 'x'.repeat(60000) + ' “用途：我的学习”', []],
+        ['dense-CJK-sentences', '普通旧记录。'.repeat(9000), []],
+        ['many-short-sentences', 'a。'.repeat(32000), []],
+        ['ready-long-source', '用途：我的学习\n' + '普通旧记录。'.repeat(9000), ['learning']],
+        ['quote-in-code-does-not-abstain', '用途：我的学习\n```\n' + '“原文”'.repeat(12000) + '\n```', ['learning']],
+      ];
+      await admin.query("set statement_timeout='8s'");
+      for (const [label, text, expected] of shapes) {
+        assert.ok([...text].length <= 65536);
+        const start = performance.now();
+        assert.deepEqual((await admin.query('select clued_private.imprint_auto_domains_v1($1) v', [text])).rows[0].v, expected);
+        console.log('CLASSIFIER_MAX_INPUT', JSON.stringify({ label, characters: [...text].length, elapsed_ms: Math.round(performance.now() - start) }));
+      }
+      await admin.query("set statement_timeout='30s'");
+      const nativeShapes = [
+        ['quoted-long-line', 'x'.repeat(7900) + ' “用途：我的学习”', []],
+        ['dense-CJK-sentences', '普通旧记录。'.repeat(1300), []],
+        ['many-short-sentences', 'a。'.repeat(3950), []],
+        ['ready-long-source', '用途：我的学习\n' + '普通旧记录。'.repeat(1300), ['learning']],
+        ['quote-in-code-does-not-abstain', '用途：我的学习\n```\n' + '“原文”'.repeat(1900) + '\n```', ['learning']],
+      ];
+      await isolated.client.query("set statement_timeout='8s'");
+      for (const [label, text, expected] of nativeShapes) {
+        assert.ok([...text].length <= 8000);
+        await admin.query('update public.clued_memories set content=$2,content_hash=$3 where id=$1', [target, text, hash(text)]);
+        const start = performance.now();
+        const first = await previewPage({}, isolated.client);
+        assert.equal(first.inventory_counts.total, 1800); assert.equal(first.inventory_counts.classifiable, 1800);
+        assert.equal(first.page.scanned, 1); assert.equal(first.page.complete, false);
+        assert.deepEqual(first.items[0]?.domains ?? [], expected);
+        console.log('NATIVE_LARGE_INVENTORY', JSON.stringify({ label, records: 1800, characters: [...text].length,
+          page_ms: Math.round(performance.now() - start), ready: first.proof.payload.ready, review: first.proof.payload.needs_review }));
+        const next = await previewPage({ proof: first.proof }, isolated.client);
+        assert.equal(next.page.cursor, 1); assert.equal(next.page.scanned, 1);
+      }
+      assert.equal((await status(isolated.client)).available, false, 'large rehearsal has zero saved batches or label writes');
+    });
     await t.test('one-source rehearsal and metadata-only begin stay within the real Native statement budget for long bodies', async () => {
       const isolated = await isolatedOwner('bulk-performance');
       const bodies = [('普通旧记录。'.repeat(1300)).slice(0, 7928), '。；!? \n'.repeat(1100).slice(0, 7900), 'a。'.repeat(3950),
@@ -281,7 +361,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       // removing the one empty-segment guard restores the prior shared body.
       const prior = await fs.readFile(path.join(root, 'supabase/migrations/20261016124233_imprint_auto_domains_v1.sql'), 'utf8');
       const oldBody = /create function clued_private\.imprint_auto_domains_v1[\s\S]*?as \$\$([\s\S]*?)end \$\$;/.exec(prior)[1] + 'end ';
-      const currentBody = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].prosrc;
+      const currentBody = previousClassifierBody;
       const normalize = value => value.replaceAll('\r\n', '\n');
       assert.equal(normalize(currentBody).replace("      if segment='' then continue; end if;\n", ''), normalize(oldBody));
     });

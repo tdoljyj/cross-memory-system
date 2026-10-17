@@ -1,7 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import type { NativeRpc } from "./imprint-client";
+import { ImprintFailure, type NativeRpc } from "./imprint-client";
 import { VIEW_LABELS, type Locale } from "./imprint-model";
 import type { Json } from "./imprint-model";
 import { bulkCounts, previewBulk, readBulk, writeBulk, type BulkBatch, type BulkPreview, type BulkSelection } from "./imprint-bulk";
@@ -40,8 +40,13 @@ export default function ImprintBulkPanel({ rpc, locale, selection, scopeLabel, o
       setPreview(value); const saved = await readBulk(rpc);
       if (paused.current) throw new Error("preview_cancelled");
       if (live.current) accept(saved);
-    } catch { if (live.current) { setProgress(""); setPreview(null); failed();
-      if (paused.current) setMessage(zh ? "已停止预演，没有修改标签。" : "Preview stopped. Labels have not changed."); } }
+    } catch (failure) { if (live.current) { setProgress(""); setPreview(null); failed();
+      if (paused.current) setMessage(zh ? "已停止预演，没有修改标签。" : "Preview stopped. Labels have not changed.");
+      else if (failure instanceof ImprintFailure && /statement timeout/i.test(failure.code))
+        setMessage(zh ? "预演超时，本轮未完成，没有修改标签。请读取已保存进度后重新盘点。" : "Preview timed out and is incomplete. Labels have not changed. Read saved progress before restarting the inventory.");
+      else if (failure instanceof ImprintFailure && failure.reason === "conflict")
+        setMessage(zh ? "本轮预演已失效，没有修改标签。请读取已保存进度后重新盘点。" : "This preview is no longer valid. Labels have not changed. Read saved progress before restarting the inventory.");
+      else setMessage(zh ? "预演未完成，没有修改标签。请读取已保存进度后重新盘点。" : "Preview is incomplete. Labels have not changed. Read saved progress before restarting the inventory."); } }
     finally { if (live.current) { setBusy(false); setPreviewing(false); } }
   }
   async function begin() {
@@ -81,7 +86,7 @@ export default function ImprintBulkPanel({ rpc, locale, selection, scopeLabel, o
   const stateLabel: Record<string, string> = zh ? { pending: "待处理", applied: "已补标签", conflict: "冲突未改", undone: "已撤销", undo_conflict: "撤销冲突" } : {};
   return <details className="imprints-card" data-imprint-bulk="first-batch">
     <summary>{zh ? "整理旧印记 · 首批最多100条" : "Organize old imprints · first batch up to 100"}</summary>
-    <p>{zh ? `预演范围：${scopeLabel}。按保存的正文给出领域建议，不受搜索词或当前视图筛选影响。两处入口处理的是同一批记录。` : `Preview scope: ${scopeLabel}. Suggestions use saved bodies, independently of search or view filters. Both entrances share one batch.`}</p>
+    <p>{zh ? `预演范围：${selection.scope === "all" && !selection.context_id ? "全部自有内容（个人资料、个人记录、项目）" : scopeLabel}。按保存的正文给出领域建议，不受搜索词或当前视图筛选影响。两处入口处理的是同一批记录。` : `Preview scope: ${selection.scope === "all" && !selection.context_id ? "all owned content (Profile, personal records and projects)" : scopeLabel}. Suggestions use saved bodies, independently of search or view filters. Both entrances share one batch.`}</p>
     <p>{zh ? "保留已有标签及手动清空的选择；历史、待核对和个人资料不会批量修改。不确定的留待逐条确认。关联和任务／决策提取仍在每条印记内确认。" : "Existing labels and manual empty choices are protected. History, unqualified records and Profile stay unchanged. Uncertain suggestions, associations and extraction require individual review."}</p>
     <p>{zh ? "此批只盘点和整理正式保存的记录，上下文候选不在本批修改范围。" : "This batch inventories accepted saved records. Context candidates are outside its write scope."}</p>
     <button type="button" disabled={busy} onClick={() => void rehearse()}>{zh ? "盘点并预演（不修改内容）" : "Inventory and preview (read only)"}</button>{" "}
@@ -99,7 +104,7 @@ export default function ImprintBulkPanel({ rpc, locale, selection, scopeLabel, o
     </div>}
     {batch && !batch.available && <p>{zh ? "尚未建立首批计划。预演不会占用批次数量。" : "No saved batch. Preview does not use the batch allowance."}</p>}
     {batch?.available && counts && <div data-bulk-batch-id={batch.batch_id} data-bulk-state={batch.state}>
-      <p>{zh ? "原批次范围：" : "Saved batch scope: "}{describeSavedScope(batch.selection)}{batch.selection.context_id ? (zh ? " · 上下文" : " · Context") : ""}</p>
+      <p>{zh ? "原批次范围：" : "Saved batch scope: "}{batch.selection.scope === "all" && !batch.selection.context_id ? (zh ? "全部自有内容" : "all owned content") : describeSavedScope(batch.selection)}{batch.selection.context_id ? (zh ? " · 上下文" : " · Context") : ""}</p>
       <p>{zh ? `同一首批共 ${batch.items.length} 条：待处理 ${counts.pending}，已补标签 ${counts.applied}，冲突未改 ${counts.conflict}，已撤销 ${counts.undone}，撤销冲突 ${counts.undo_conflict}。${batch.state === "running" ? "可继续处理。" : batch.state === "cancelled" ? "已停止后续处理。" : "处理已结束。"}` : `Saved first batch: ${batch.items.length}. Pending ${counts.pending}, applied ${counts.applied}, conflict ${counts.conflict}, undone ${counts.undone}, undo conflict ${counts.undo_conflict}. State: ${batch.state}.`}</p>
       <p>{zh ? "关闭页面或切换范围会暂停；已完成的保存不会丢失。首批最多100个对象，停止、撤销或重开页面不会重新计算额度。" : "Closing the page or switching scope pauses the runner. Saved progress remains. Cancel, Undo and reopening never reset the 100-object allowance."}</p>
       {batch.state === "running" && <><button type="button" disabled={busy} onClick={() => void run("advance")}>{zh ? "继续处理首批" : "Continue batch"}</button>{" "}<button type="button" disabled={busy} onClick={() => void run("cancel")}>{zh ? "停止此批次" : "Stop batch"}</button></>}
