@@ -52,6 +52,7 @@ const ROOT_ID = "drive-root-id";
 const TRACK = ROOT + "/20_P_产品与体验";
 const TRACK_ID = "drive-track-id";
 const tokenHash = crypto.createHash("sha256").update("clued_rcb_test_token").digest("hex");
+const durableEntryMigration = '20261017205505_storage_durable_execution_entry_v1.sql';
 
 // The imported resource fixtures retain historical upgrade and retired-alias
 // assertions. Close that history with the actual current G6 migration, then
@@ -71,6 +72,13 @@ async function qualifyCurrentCallers(t, admin, server, closeoutSql) {
       await admin.query(await fs.readFile(path.join(process.cwd(), "supabase", "migrations", name), "utf8"));
     }
     await assertAuthorizationSuccessorBoundary(admin, authorizationBefore);
+  });
+  await t.test('the actual durable entry upgrade closes historical writer fixtures and preserves current callers', async () => {
+    const before = await snapshotAuthorizationCallerBoundary(admin);
+    await admin.query(await fs.readFile(path.join(process.cwd(),'supabase','migrations',durableEntryMigration),'utf8'));
+    assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),before);
+    await assertGatewayCloseoutBoundary(admin);
+    assert.equal((await admin.query("select count(*)::int n from clued_private.storage_execution_entry_permits_v1")).rows[0].n,0);
   });
   const gateway = server.getPgClient(), native = server.getPgClient(), ci = server.getPgClient();
   await gateway.connect(); await native.connect(); await ci.connect();
@@ -188,7 +196,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     const closeout = await findGatewayCloseoutMigration(process.cwd());
     const closeoutSql = await fs.readFile(path.join(migrationDir, closeout), "utf8");
     let refreshUpgrade;
-    for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
+    for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && name !== durableEntryMigration && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
       try {
         if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
         if (name === "20260927232454_resource_center_binding_expiry_compat_v1.sql" && bindingSchema === "production-no-legacy-expiry") {

@@ -33,6 +33,7 @@ const storageLegacyCreateMigration = '20261017131000_storage_legacy_create_adopt
 const storageDirectoryCurrentRegistrationMigration = '20261017160500_storage_directory_current_registration_v2.sql';
 const storageDirectoryStateMigration = '20261017173000_storage_directory_current_state_v3.sql';
 const storageDirectoryLocationMigration = '20261017200000_storage_directory_current_location_v4.sql';
+const storageDurableEntryMigration = '20261017205505_storage_durable_execution_entry_v1.sql';
 const imprintClassifierScanMigration = '20261017142000_imprint_classifier_scan_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
@@ -93,7 +94,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && name !== storageDirectoryCurrentRegistrationMigration && name !== storageDirectoryStateMigration && name !== storageDirectoryLocationMigration && name !== imprintClassifierScanMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && name !== storageDirectoryCurrentRegistrationMigration && name !== storageDirectoryStateMigration && name !== storageDirectoryLocationMigration && name !== storageDurableEntryMigration && name !== imprintClassifierScanMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -765,6 +766,21 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       const trigger=(await admin.query(`select tgtype::integer kind,tgenabled from pg_trigger where tgrelid='clued_private.resource_center_profiles_v1'::regclass
         and tgname='storage_location_profile_guard_v4' and tgfoid='clued_private.storage_location_profile_guard_v4()'::regprocedure and not tgisinternal`)).rows;
       assert.deepEqual(trigger,[{kind:31,tgenabled:'O'}]);
+    });
+    await t.test('durable execution entry installs after real deferred storage cores without changing callers', async () => {
+      const beforeCallers = await snapshotAuthorizationCallerBoundary(admin);
+      await admin.query(await fs.readFile(path.join(root,'supabase/migrations',storageDurableEntryMigration),'utf8'));
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin),beforeCallers);
+      await assertGatewayCloseoutBoundary(admin);
+      for(const role of ['anon','authenticated','service_role','clued_worker_gateway']) {
+        assert.equal((await admin.query("select has_table_privilege($1,'clued_private.storage_execution_entry_permits_v1','select,insert,update,delete') allowed",[role])).rows[0].allowed,false);
+        for(const signature of ['storage_execution_entry_arm_v1(uuid,uuid,text,jsonb)','storage_execution_entry_check_v1(uuid,jsonb)',
+          'storage_execution_entry_guard_v1()','storage_execution_entry_start_v1(uuid,uuid,jsonb)','storage_execution_entry_complete_v1(uuid,uuid)'])
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed",[role,'clued_private.'+signature])).rows[0].allowed,false);
+      }
+      const trigger=(await admin.query(`select tgtype::integer kind,tgenabled from pg_trigger where tgrelid='clued_private.resource_center_mutations_v1'::regclass
+        and tgname='storage_execution_entry_guard_v1' and tgfoid='clued_private.storage_execution_entry_guard_v1()'::regprocedure and not tgisinternal`)).rows;
+      assert.deepEqual(trigger,[{kind:23,tgenabled:'O'}]);
     });
     await t.test('classifier successor follows deferred bulk without changing function identity or caller privileges', async () => {
       const beforeCallers = await snapshotAuthorizationCallerBoundary(admin);

@@ -358,4 +358,11 @@ test("registration recovery: real PostgreSQL boundary, CAS, receipts and unchang
   assert.equal(await compatible({...saved,credential_generation:generation+10000}),false);
   await db.query("begin");try{await db.query("update clued_private.issuer_credentials_v1 set state='retired',retired_at=$3::timestamptz+interval '1 second' where issuer_id=$1 and generation=$2",[saved.issuer_id,saved.credential_generation,saved.recorded_at]);assert.equal(await compatible(saved),true,"legitimately retired history remains readable");}finally{await db.query("rollback");}
  });
-}));
+ await t.test('historical nonjob fault fixtures close with the actual entry upgrade and a genuine current cloud create',async()=>{
+  const before=(await db.query('select clued_private.m1_sha256(jsonb_agg(to_jsonb(m) order by id)) digest from clued_private.resource_center_mutations_v1 m')).rows[0].digest;
+  await f.installDurableEntry();
+  assert.equal((await db.query('select clued_private.m1_sha256(jsonb_agg(to_jsonb(m) order by id)) digest from clued_private.resource_center_mutations_v1 m')).rows[0].digest,before);
+  assert.equal((await db.query('select count(*)::int n from clued_private.storage_execution_entry_permits_v1')).rows[0].n,0);
+  await f.createOriginal();assert.equal((await db.query('select count(*)::int n from clued_private.storage_execution_entry_permits_v1')).rows[0].n,0);
+ });
+},{historicalNonjobFixtures:true}));

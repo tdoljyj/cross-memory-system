@@ -18,9 +18,10 @@ import {RESOURCE_CENTER_POLICY_VERSION,bindResourceCenterMutation} from "../../.
 import {batchRequests,batchReply} from "./google-batch-fixture.mjs";
 export const id=()=>randomUUID(),sha=v=>createHash("sha256").update(v).digest("hex");
 const cloudRoot=fileURLToPath(new URL("..",import.meta.url));
+const durableEntryMigration='20261017205505_storage_durable_execution_entry_v1.sql';
 async function freePort(){const s=net.createServer();await new Promise(resolve=>s.listen(0,"127.0.0.1",resolve));const p=s.address().port;await new Promise(resolve=>s.close(resolve));return p;}
 
-export async function withRegistrationDatabase(run){
+export async function withRegistrationDatabase(run,{historicalNonjobFixtures=false}={}){
  const temp=await fs.realpath(os.tmpdir()),dir=await fs.mkdtemp(path.join(temp,"kooyumi-registration-db-"));
  const server=new EmbeddedPostgres({databaseDir:dir,user:"postgres",password:sha(id()),port:await freePort(),persistent:true,
   postgresFlags:["-c","listen_addresses=127.0.0.1"],onLog(){},onError(){}}),clients=[];let started=false;
@@ -37,7 +38,7 @@ export async function withRegistrationDatabase(run){
    create schema cron;create table cron.job(jobid bigserial primary key,jobname text unique,schedule text,command text,active boolean default true,database text default current_database(),username text default current_user);
    create function cron.schedule(text,text,text) returns bigint language sql as $$insert into cron.job(jobname,schedule,command) values($1,$2,$3)
     on conflict(jobname) do update set schedule=excluded.schedule,command=excluded.command,active=true returning jobid$$;`);
-  for(const name of (await fs.readdir(path.join(cloudRoot,"supabase/migrations"))).filter(n=>n.endsWith(".sql")).sort()){
+  for(const name of (await fs.readdir(path.join(cloudRoot,"supabase/migrations"))).filter(n=>n.endsWith(".sql")&&(!historicalNonjobFixtures||n!==durableEntryMigration)).sort()){
    try{await db.query(await fs.readFile(path.join(cloudRoot,"supabase/migrations",name),"utf8"));}
    catch(error){throw new Error("Migration "+name+": "+error.message,{cause:error});}
   }
@@ -82,7 +83,7 @@ export async function withRegistrationDatabase(run){
   }catch(error){await db.query("rollback");throw error;}
   const status=(await native.query("select public.clued_storage_write_access_v1($1::jsonb) v",[JSON.stringify({action:"status",connection_id:connection})])).rows[0].v;
   assert.equal((await native.query("select public.clued_storage_write_access_v1($1::jsonb) v",[JSON.stringify({action:"set_classes",connection_id:connection,classes:[...status.classes,"overwrite"].sort(),base_generation:status.policy_generation,disclosure_version:status.overwrite_disclosure_version,idempotency_key:id()})])).rows[0].v.status,"committed");
-  const folder=(id,name,parent)=>({id,name,parents:parent?[parent]:[],version:"1",trashed:false,mimeType:"application/vnd.google-apps.folder",isAppAuthorized:true});
+  const folder=(id,name,parent)=>({id,name,parents:parent?[parent]:[],version:"1",trashed:false,explicitlyTrashed:false,mimeType:"application/vnd.google-apps.folder",isAppAuthorized:true});
   const files=new Map([[parentId,folder(parentId,"registration-"+suffix,null)],[rootId,folder(rootId,"Clued_资料中心",parentId)],[trackId,folder(trackId,track,rootId)]]),revisions=new Map();let writes=0;
   const newRevision=(file,bytes)=>{const revision="revision-"+id(),all=revisions.get(file.id)??new Map();revisions.set(file.id,all);
    all.set(revision,{id:revision,keepForever:false,bytes:Buffer.from(bytes)});Object.assign(file,{headRevisionId:revision,size:String(bytes.length),sha256Checksum:sha(bytes),md5Checksum:createHash("md5").update(bytes).digest("hex")});};
@@ -96,12 +97,24 @@ export async function withRegistrationDatabase(run){
     writes++;const provider=revisionIndex>0?parts[revisionIndex-1]:parts.at(-1);
     assert.equal((await db.query("select count(*)::int n from clued_private.resource_center_mutations_v1 where state='started' and provider_attempt->>'provider_file_id'=$1",[provider])).rows[0].n,1,"provider write follows its durable original attempt");
     if(revisionIndex>0){const revision=revisions.get(provider).get(parts[revisionIndex+1]);revision.keepForever=JSON.parse(init.body).keepForever;return Response.json({id:revision.id,keepForever:revision.keepForever});}
-    assert.equal(u.searchParams.get("uploadType"),"media");const file=files.get(provider);newRevision(file,Buffer.from(init.body));file.version=String(Number(file.version)+2);return Response.json(file);
+    const file=files.get(provider);let bytes=Buffer.from(init.body);
+    if(u.searchParams.get("uploadType")==="multipart"){
+     const boundary=/boundary=([^;]+)$/.exec(new Headers(init.headers).get("content-type"))?.[1];assert.ok(boundary);
+     const separator=Buffer.from("\r\n--"+boundary+"\r\n"),headerEnd=Buffer.from("\r\n\r\n"),jsonStart=bytes.indexOf(headerEnd)+headerEnd.length,
+      jsonEnd=bytes.indexOf(separator,jsonStart),mediaStart=bytes.indexOf(headerEnd,jsonEnd+separator.length)+headerEnd.length,
+      mediaEnd=bytes.lastIndexOf(Buffer.from("\r\n--"+boundary+"--\r\n"));
+     assert.ok(jsonStart>=headerEnd.length&&jsonEnd>jsonStart&&mediaStart>jsonEnd&&mediaEnd>=mediaStart);
+     const metadata=JSON.parse(bytes.subarray(jsonStart,jsonEnd).toString("utf8"));
+     assert.deepEqual(Object.keys(metadata).sort(),["appProperties","mimeType"]);
+     assert.match(metadata.appProperties.clued_intent_id,/^[0-9a-f-]{36}$/);
+     Object.assign(file,metadata);bytes=bytes.subarray(mediaStart,mediaEnd);
+    }else assert.equal(u.searchParams.get("uploadType"),"media");
+    newRevision(file,bytes);file.version=String(Number(file.version)+2);return Response.json(file);
    }
    if((init.method??"GET")==="POST"){
     writes++;const boundary=/boundary=(.+)$/.exec(new Headers(init.headers).get("content-type"))[1],raw=init.body,
      match=/\{[^\r\n]+"appProperties":\{[^\r\n]+\}\}/.exec(raw),metadata=JSON.parse(match?.[0]??raw),media=raw.split("--"+boundary)[2],content=media.slice(media.indexOf("\r\n\r\n")+4,media.lastIndexOf("\r\n"));
-    const created={...metadata,version:"1",trashed:false,isAppAuthorized:true};newRevision(created,Buffer.from(content));files.set(created.id,created);return Response.json(created);
+    const created={...metadata,version:"1",trashed:false,explicitlyTrashed:false,isAppAuthorized:true};newRevision(created,Buffer.from(content));files.set(created.id,created);return Response.json(created);
    }
    assert.equal(init.method??"GET","GET","fixture supports no recovery provider mutation");
    if(u.pathname.endsWith("/generateIds"))return Response.json({ids:["file-"+id()]});
@@ -129,7 +142,7 @@ export async function withRegistrationDatabase(run){
   const addFile=async({registeredVersion="43",observedVersion="45",expectedVersion=observedVersion}={})=>{
    const provider="file-"+id(),name="mapping-"+id()+".json",filePath=root+"/"+track+"/"+name;
    await register({action:"artifact_register",profile_id:profile,path:filePath,provider_file_id:provider,provider_file_version:registeredVersion,target_kind:"file",governance_class:"ordinary",delete_authority:false});
-   const item={id:provider,name,parents:[trackId],version:observedVersion,trashed:false,mimeType:"application/json",isAppAuthorized:true};newRevision(item,Buffer.from("0123456789"));files.set(provider,item);
+   const item={id:provider,name,parents:[trackId],version:observedVersion,trashed:false,explicitlyTrashed:false,mimeType:"application/json",isAppAuthorized:true};newRevision(item,Buffer.from("0123456789"));files.set(provider,item);
    const ref=await submit({operation:"replace",target_kind:"file",destination_path:filePath,destination_file_version:expectedVersion,content:"replacement"}),input=await requestFor(ref);return {ref,input,provider,filePath};};
   const executeWorker=async(ref,observe=async()=>{},options={})=>{const loadModule=async name=>{const out=path.join(dir,name+".mjs");await build({entryPoints:[path.join(cloudRoot,"worker",name+".ts")],outfile:out,bundle:true,platform:"node",format:"esm"});stop();return import(pathToFileURL(out).href);};
    const {createStorageCloudWorker}=await loadModule("storage-cloud-executor"),{createStorageCredentialVault}=await loadModule("storage-credential-vault"),
@@ -142,7 +155,12 @@ export async function withRegistrationDatabase(run){
     rpc:async input=>{await observe(input);return options.rpc?options.rpc(input,cloud):cloud(input);}});
    return actual.run(ref);
   };
-  await run({db,native,worker,connect,server,owner,other,project,decision,session,issuer,client,token,profile,connection,root,rootId,parentId,trackId,track,
+  const installDurableEntry=async()=>{
+   assert.equal(historicalNonjobFixtures,true,'current fixtures install this migration in the initial full chain');
+   await db.query(await fs.readFile(path.join(cloudRoot,'supabase/migrations',durableEntryMigration),'utf8'));
+   await assertGatewayCloseoutBoundary(db);
+  };
+  await run({db,native,worker,connect,server,owner,other,project,decision,session,issuer,client,token,profile,connection,root,rootId,parentId,trackId,track,installDurableEntry,
    cloud,rpc,submit,requestFor,addFile,createOriginal,executeWorker,register,files,metadata,getWrites:()=>writes,
    changeHead:(provider,bytes,version)=>{const item=files.get(provider);newRevision(item,Buffer.from(bytes));item.version=version;}});
  }finally{
