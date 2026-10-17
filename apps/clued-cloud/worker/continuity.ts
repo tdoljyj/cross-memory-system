@@ -1,4 +1,5 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { createNativeReadTrace, type NativeReadTrace } from "./native-read-trace";
 import { withCanonicalMcpError } from "./mcp-error-envelope";
 import { handleMcpProfile, mcpProfileTool, McpProfileError, type McpProfile } from "./mcp-profile";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
@@ -2939,18 +2940,35 @@ async function callUserProjectRpc(
   rpc: "clued_user_project_list_v2" | "clued_user_project_mutate_v2",
   input: Record<string, unknown>,
   receivedPayloadHash?: string,
+  trace?: NativeReadTrace | null,
 ) {
-  const { token } = await requireSupabaseUser(request, env);
-  return await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
-    method: "POST",
-    userToken: token,
-    body: JSON.stringify(receivedPayloadHash
-      ? { p_input: input, p_received_payload_hash: receivedPayloadHash }
-      : { p_input: input }),
-  });
+  let token: string;
+  trace?.stage("auth_started");
+  try {
+    ({ token } = await requireSupabaseUser(request, env));
+    trace?.stage("auth_completed");
+  } catch (error) {
+    trace?.stage("auth_failed");
+    throw error;
+  }
+  trace?.stage("rpc_started");
+  try {
+    const result = await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+      method: "POST",
+      userToken: token,
+      body: JSON.stringify(receivedPayloadHash
+        ? { p_input: input, p_received_payload_hash: receivedPayloadHash }
+        : { p_input: input }),
+    });
+    trace?.stage("rpc_completed");
+    return result;
+  } catch (error) {
+    trace?.stage("rpc_failed");
+    throw error;
+  }
 }
 
-async function handleProjectApi(request: Request, env: ContinuityEnv) {
+async function handleProjectApi(request: Request, env: ContinuityEnv, trace?: NativeReadTrace | null) {
   validateOrigin(request, env);
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders(request) });
@@ -2966,7 +2984,7 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
       if (value !== null) input[key] = key === "limit" ? Number(value) : value;
     }
     if (url.searchParams.get("include_dismissed") === "true") input.include_dismissed = true;
-    return json(await callUserProjectRpc(request, env, "clued_user_project_list_v2", input), 200, corsHeaders(request));
+    return json(await callUserProjectRpc(request, env, "clued_user_project_list_v2", input, undefined, trace), 200, corsHeaders(request));
   }
   if (url.pathname === "/v1/projects" && request.method === "POST") {
     const { input, receivedPayloadHash } = await parseCanonicalBody(request);
@@ -3299,6 +3317,7 @@ async function handleContinuityRequestInner(
   request: Request,
   env: ContinuityEnv,
   ctx?: ContinuityExecutionContext,
+  trace?: NativeReadTrace | null,
 ): Promise<Response | null> {
   const url = new URL(request.url);
   try {
@@ -3964,7 +3983,7 @@ async function handleContinuityRequestInner(
     }
     if (url.pathname in restToolByPath) return await handleRestContinuity(request, env);
     if (url.pathname === "/v1/projects" || url.pathname.startsWith("/v1/projects/")) {
-      return await handleProjectApi(request, env);
+      return await handleProjectApi(request, env, trace);
     }
     if (url.pathname === "/v1/records" || url.pathname.startsWith("/v1/records/") ||
       ["/v1/decisions/supersede", "/v1/evidence", "/v1/events", "/v1/export"].includes(url.pathname)) {
@@ -4008,7 +4027,9 @@ export async function handleContinuityRequest(
   env: ContinuityEnv,
   ctx?: ContinuityExecutionContext,
 ): Promise<Response | null> {
-  const response = await handleContinuityRequestInner(request, env, ctx);
+  const trace = createNativeReadTrace(request);
+  const response = await handleContinuityRequestInner(request, env, ctx, trace);
+  if (response) trace?.complete(response);
   if (response?.ok && ctx && projectionBuilderToken(env) &&
     mayInvalidateApprovedProjection(request)) {
     ctx.waitUntil(runProjectionRefreshPipeline(env));
