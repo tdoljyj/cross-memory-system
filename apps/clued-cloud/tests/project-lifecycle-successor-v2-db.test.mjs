@@ -30,6 +30,7 @@ const storageLegacyDirectoryMigration = '20261017074657_storage_legacy_directory
 const storageCurrentRegistrationMigration = '20261017102500_storage_registration_reconcile_v1.sql';
 const imprintBulkMigration = '20261017121706_imprint_bulk_backfill_v1.sql';
 const storageLegacyCreateMigration = '20261017131000_storage_legacy_create_adoption_v1.sql';
+const imprintClassifierScanMigration = '20261017142000_imprint_classifier_scan_v1.sql';
 const storageDemandRenewalMigrations = [
   '20261012103238_storage_demand_refresh_prepare_v1.sql',
   '20261012113128_storage_demand_refresh_runtime_v1.sql',
@@ -89,7 +90,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
       .filter((name) => name.endsWith('.sql')).sort();
     for (const name of migrationNames.filter((name) =>
       name !== CLOSEOUT_MIGRATION && name !== storageMasterMigration && name !== storageReconnectRetryMigration && name !== storageReconnectRefreshMigration && name !== storageConflictMigration && name !== storageAutomaticReconcileMigration && name !== storageRegistrationRecoveryMigration && name !== storageSemanticRecoveryMigration && name !== storageRecoveryCoverageMigration && name !== storageRecoveryReaderMigration && name !== storageRecoveryNativeMigration && !workClaimHandoverMigrations.includes(name) && name !== migration && name !== currentnessMigration && name !== issuerMigration && name !== gatewayMigration && !storageOwnerLifecycleMigrations.includes(name) &&
-      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
+      name !== storageLegacyDirectoryMigration && name !== storageCurrentRegistrationMigration && name !== imprintBulkMigration && name !== storageLegacyCreateMigration && name !== imprintClassifierScanMigration && !gatewayProbeMigrations.includes(name) && !storageDemandRenewalMigrations.includes(name) && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name))) {
       try { await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8')); }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
     }
@@ -690,6 +691,22 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
         for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway'])
           assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') allowed", [role, helper.signature])).rows[0].allowed, false);
       }
+    });
+    await t.test('classifier successor follows deferred bulk without changing function identity or caller privileges', async () => {
+      const beforeCallers = await snapshotAuthorizationCallerBoundary(admin);
+      const identity = async () => (await admin.query(`select oid::text,pg_get_userbyid(proowner) owner,
+        prosecdef,provolatile,proparallel,proconfig,proacl::text from pg_proc
+        where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure`)).rows[0];
+      const before = await identity();
+      const sql = await fs.readFile(path.join(root, 'supabase/migrations', imprintClassifierScanMigration), 'utf8');
+      await admin.query(sql);
+      assert.deepEqual(await identity(), before);
+      assert.deepEqual(await snapshotAuthorizationCallerBoundary(admin), beforeCallers);
+      await assertGatewayCloseoutBoundary(admin);
+      const installed = (await admin.query("select md5(prosrc) body from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].body;
+      const expected = /as \$\$([\s\S]*)\$\$;/.exec(sql);
+      assert.ok(expected, 'the actual single-function successor is present');
+      assert.equal(installed, crypto.createHash('md5').update(expected[1]).digest('hex'), 'the deferred bulk migration cannot restore an older classifier');
     });
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
