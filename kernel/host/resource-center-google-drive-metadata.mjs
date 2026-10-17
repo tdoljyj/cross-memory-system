@@ -35,7 +35,7 @@ function abortableSleep(ms, signal) {
 }
 
 /** Host-held Drive metadata-only access; never accepts a caller credential. */
-/** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean, semantic_details?: boolean, transient_retries?: number, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>, random?: () => number}} config */
+/** @param {{get_credential?: Function, get_access_token?: Function, fetch?: typeof fetch, timeout_ms?: number, authorization_details?: boolean, semantic_details?: boolean, registration_details?: boolean, transient_retries?: number, sleep?: (ms: number, signal?: AbortSignal) => Promise<void>, random?: () => number}} config */
 export function createGoogleDriveMetadataApi({
   get_access_token: getAccessToken,
   get_credential: getCredential,
@@ -43,6 +43,7 @@ export function createGoogleDriveMetadataApi({
   timeout_ms: timeoutMs = 5000,
   authorization_details: authorizationDetails = false,
   semantic_details: semanticDetails = false,
+  registration_details: registrationDetails = false,
   transient_retries: transientRetries = 0,
   sleep = abortableSleep,
   random = Math.random,
@@ -56,12 +57,21 @@ export function createGoogleDriveMetadataApi({
   }
   if (typeof authorizationDetails !== "boolean") throw new TypeError("authorization_details must be boolean.");
   if (typeof semanticDetails !== "boolean") throw new TypeError("semantic_details must be boolean.");
+  if (typeof registrationDetails !== "boolean") throw new TypeError("registration_details must be boolean.");
   if (!Number.isInteger(transientRetries) || transientRetries < 0 || transientRetries > 3 ||
     typeof sleep !== "function" || typeof random !== "function") {
     throw new TypeError("transient_retries must be 0..3.");
   }
-  const fields = FIELDS + (authorizationDetails ? ",isAppAuthorized,capabilities(canAddChildren)" : "") +
-    (semanticDetails ? ",explicitlyTrashed,appProperties,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted)" : "");
+  const capabilities = [...(authorizationDetails ? ["canAddChildren"] : []),
+    ...(registrationDetails ? ["canListChildren", "canShare"] : [])];
+  // Empty list responses can also mean metadata-only access. Registration
+  // recovery must separately prove ownership, complete ACL visibility and
+  // canListChildren before it interprets a complete scan as an empty folder.
+  // Default callers retain exactly their existing metadata projection.
+  const fields = FIELDS + (authorizationDetails ? ",isAppAuthorized" : "") +
+    (capabilities.length ? `,capabilities(${capabilities.join(",")})` : "") +
+    (semanticDetails || registrationDetails ? `,explicitlyTrashed,appProperties,permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted${registrationDetails ? ",pendingOwner,view" : ""})` : "") +
+    (registrationDetails ? ",shared,permissionIds,ownedByMe,driveId,inheritedPermissionsDisabled" : "");
 
   async function credential(requireNamespace) {
     // The token and its granted scope must be obtained together from the
@@ -145,6 +155,7 @@ export function createGoogleDriveMetadataApi({
     }
     const url = new URL(`${DRIVE_API}/${encodeURIComponent(id)}`);
     url.searchParams.set("fields", fields);
+    if (registrationDetails) url.searchParams.set("includePermissionsForView", "published");
     url.searchParams.set("supportsAllDrives", "true");
     signal?.throwIfAborted();
     const result = await read(url.href, await credential(false), signal, allowMissing);
@@ -329,12 +340,15 @@ export function createGoogleDriveMetadataApi({
       const url = new URL(DRIVE_API);
       url.searchParams.set("q", q);
       url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${withAppAuthorization ? scanFields : fields})`);
+      if (registrationDetails) url.searchParams.set("includePermissionsForView", "published");
       url.searchParams.set("pageSize", "1000");
       url.searchParams.set("supportsAllDrives", "true");
       url.searchParams.set("includeItemsFromAllDrives", "true");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
       const result = await read(url.href, token, signal);
-      if (!Array.isArray(result?.files) || result.incompleteSearch === true) {
+      if (!Array.isArray(result?.files) || result.incompleteSearch === true || registrationDetails &&
+          ((result.incompleteSearch !== undefined && typeof result.incompleteSearch !== "boolean") ||
+           (result.nextPageToken !== undefined && (typeof result.nextPageToken !== "string" || !result.nextPageToken)))) {
         throw new Error("DRIVE_LIST_INVALID");
       }
       matches.push(...result.files);
@@ -362,7 +376,10 @@ export function createGoogleDriveMetadataApi({
     url.searchParams.set("supportsAllDrives", "true");
     url.searchParams.set("includeItemsFromAllDrives", "true");
     const result = await read(url.href, token, signal);
-    if (!Array.isArray(result?.files) || result.incompleteSearch === true) throw new Error("DRIVE_LIST_INVALID");
+    if (!Array.isArray(result?.files) || result.incompleteSearch === true || registrationDetails &&
+        ((result.incompleteSearch !== undefined && typeof result.incompleteSearch !== "boolean") ||
+         (result.nextPageToken !== undefined && (typeof result.nextPageToken !== "string" || !result.nextPageToken))))
+      throw new Error("DRIVE_LIST_INVALID");
     return result.files.length > 0 || (typeof result.nextPageToken === "string" && result.nextPageToken.length > 0);
   }
 

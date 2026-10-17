@@ -498,3 +498,31 @@ Owner 原生恢复接口与后台调度均接入相同的只读缺失探测和�
 
 原 started/uncertain 路径的内部 released_not_effected 结果在原生入口提交后，只再读取同一 Owner、同一原作业的实际状态一次，返回数据库已经提交的取消结果；不以内部标志虚构成功，不重复提交缺失或文件效果。文件和目录分别覆盖真实 Worker HTTP 入口、当前独立 reader、缺失正例、坏回执拒绝和旧取消出口。
 
+## 23. 独立当前资格的程序登记（e91 有限目录增量）
+
+原 before 基线缺失或版本已前进时，不能伪称旧授权、权限或原操作结果已核实。当前合法程序可以取得另一份当前登记资格：实际 issuer proof 的本次 credential generation、未撤销且启用的 app、原 client lineage 与 job/root、当前同 Owner/subject/client/profile/root 的 reader、当前 modify 和 full 策略、当前 Decision、runtime qualification Receipt/Event、账号总开关和 lifecycle 必须完整通过。旧 Agent Binding 过期不妨碍程序自身取得当前资格，也不复活旧 writer。DB 的 full 标记之外，Worker 必须以实际 reader 的完整 vault AAD 解封，并检查封存 scope 确属 full、有效期至少 60 秒。每次 RPC 重新解析 issuer proof；一次事务的 GUC 或上次返回的 JSON 不是下一次认证凭据。
+
+本增量只处理 I9 已完整隔离且 I2/I9 终止窗口已过的原 P5 **active、ordinary、空目录**，保持原固定 Drive ID、路径、名称、单父、类型、governance、delete authority 与 source Decision。root/track 不是目标，active/trashed 登记后代不允许；目标本身和父链都要重新读取。它不移动目录、不恢复回收站对象、不删除文件、不处理非空目录，也不产生新的 provider effect。
+
+### 23.1 从真实元数据建立新资格
+
+从根到目标父目录的注册链必须连续、身份固定、Decision 当前；父链可以包含其他正常子项。两轮读取使用当前封存凭据，只做固定 Google Drive GET；首个读取之前开始计时，整个观察至提交须处于 30 秒窗口。祖先的 incidental provider version 可前进，但身份、路径、权限、名称槽及登记 CAS 必须稳定，目标版本则必须稳定。完整命名空间查询与合法分页是必要条件，不能把 drive.file 可见的空列表解释为空。
+
+新资格暂限当前账号拥有的 My Drive 私有对象：ownedByMe、canShare、完整唯一 user/owner 权限、shared=false、同一个 Drive Permission ID 的 permissionIds 必须一致；明确请求并检查 published view、deleted/pending owner/expiry/domain/discovery 等权限事实。Permission ID 与 provider_subject 不作无合同的字符串等同。目录以 canListChildren=true 证明列举资格后，才可用包括回收站子项的查询证明目标为空；父目录不要求为空。已登记 access/sharing 摘要存在就必须精确匹配，不允许借“重新建立资格”接受明确的旧权限差异。缺失摘要由这次独立当前资格写入，旧缺失原因与旧行保存在新回执的 before_rows，不声称旧基线始终未变。
+
+### 23.2 原子登记、并发与失败恢复
+
+提交在 issuer/app → 原 lineage → job → root/account 后重读 Actor、完整计划、原 I9 回执和关闭版本，并以稳定顺序锁定相关 Artifact/Decision。任何锁等待后用真实 wall clock 重检凭据、策略和观察时限。仅目标及缺少 access 摘要的父链登记行发生资格更新；已有明确 access 摘要的无关父行不重写。scope digest 的路径/ID、grant、原 snapshot、原 attempt、原 conflict 状态和原回执不改。
+
+元数据专用 permit 只能由私有提交路径在本事务的新 pending Receipt 下产生，精确绑定 transaction ID、Artifact ID、Owner/profile、完整 before/after row hash。触发器允许的差量仅为权限摘要、provider version、资格时间/缺失标记、Receipt、精确加一的登记版本和更新时间。跨事务、换对象、改路径、身份、状态、governance 或 delete authority 均不能借此豁免。它只排除“该目录恰好是另一个隔离对象的祖先”造成的元数据扩大冲突；其他隔离的同 ID、路径、名称槽、实际包含关系的 subtree 和未知 scope/I12 保护仍生效。
+
+仍可结算的旧证明优先：prepared/started/uncertain，以及带有效 verified_result_v2 且 active I9 的 conflict，若依赖即将改变的祖先匹配模式或直接 Artifact authority version，则本次资格登记有界退避，先让原证明按原链提交；不得清空证明、重派效果或用全 root quiet 代替依赖检查。资格更新、全部受写 Artifact 的 base/committed versions 和 refs、Event、独立 Receipt、仅本 intent 的 I11 出口一起提交；最终 Receipt 失败使所有修改与 permit 回滚。重放仅返回已经提交且原定位/CAS/观察完全一致的新结果。
+
+新结果为 `automatically_registered_current_state`，与 `automatically_reconciled_before`、原操作 committed 分开。它必须携带原 connection/job/intent、正关闭版本、不同的原 source Receipt 与新 Receipt、automatic_recovery=resolved 以及 execution_permitted=false；Agent、Owner 与页面分别按该合同校验，不能仅凭 resolved 展示成功。后台调度和 Native 使用同一程序，正常恢复没有 confirmed 参数或用户核对步骤。丢失提交响应只检查原作业；不重试 Drive 效果或新建替代作业。
+
+### 23.3 真实验收与未覆盖范围
+
+先真实 PostgreSQL 路由测试权限/撤销/双连接锁等待跨到期、完整 ACL、旧 typed conflict 优先、同父另一对象仍被独立保护、精确 permit 负例及 Receipt 失败回滚，再测 Worker 的封存 scope/AAD、GET-only、坏回执、超时、scheduled/Native HTTP 和页面投影。正常合并、迁移与同 cohort 发布后，先生产数据库、再页面、最后独立验收；本地测试与源码审核不表示上线完成。
+
+本节未交付 legacy create-after 的 SQL adopt、trashed/非空目录当前登记、目录移动或非 job I12 的真实 executor 终止、逐路径效果与同步队列完整出口。create observer 的双私有标签/内容身份检查只是基础，不能当这些出口已实现。e91 整体仍须逐项交付验收，暂停的新域、旧域退役、G 后备和独立 backlog 不因本增量恢复。
+

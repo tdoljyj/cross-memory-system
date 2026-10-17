@@ -45,12 +45,13 @@ function recoveryView(value: unknown): RecoveryView | null {
   if (value.automatic_recovery !== undefined) {
     if (!["pending", "current_state_conflict", "resolved"].includes(String(value.automatic_recovery))) return null;
     view.automatic_recovery = value.automatic_recovery as RecoveryView["automatic_recovery"];
-    if (value.automatic_recovery === "resolved" && (value.status !== "resolved" || value.resolution !== "automatically_reconciled_before")) return null;
+    if (value.automatic_recovery === "resolved" && (value.status !== "resolved" ||
+      !["automatically_reconciled_before", "automatically_registered_current_state"].includes(String(value.resolution)))) return null;
     if (value.automatic_recovery !== "resolved" && ["resolved", "committed", "cancelled", "denied"].includes(value.status)) return null;
   }
   if (value.status === "resolved") {
-    if (!["accepted_current_state", "abandoned_registration", "automatically_reconciled_before"].includes(String(value.resolution))) return null;
-    if (value.resolution === "automatically_reconciled_before") {
+    if (!["accepted_current_state", "abandoned_registration", "automatically_reconciled_before", "automatically_registered_current_state"].includes(String(value.resolution))) return null;
+    if (["automatically_reconciled_before", "automatically_registered_current_state"].includes(String(value.resolution))) {
       if (value.automatic_recovery !== "resolved" || !Number.isSafeInteger(value.base_version) || Number(value.base_version) < 1 ||
         typeof value.source_receipt_id !== "string" || !uuid.test(value.source_receipt_id) || value.source_receipt_id === value.receipt_id) return null;
       view.base_version = Number(value.base_version); view.source_receipt_id = value.source_receipt_id;
@@ -77,11 +78,12 @@ function recoveryView(value: unknown): RecoveryView | null {
 }
 function recoveryTitle(view: RecoveryView) {
   if (view.automatic_recovery === "pending") return "系统正在自动恢复";
-  if (view.resolution === "automatically_reconciled_before") return "已自动恢复使用";
+  if (["automatically_reconciled_before", "automatically_registered_current_state"].includes(String(view.resolution))) return "已自动恢复使用";
   if (view.automatic_recovery === "current_state_conflict") return "当前文件状态存在冲突";
   return recoveryLabels[view.status];
 }
 function recoveryExplanation(view: RecoveryView) {
+  if (view.resolution === "automatically_registered_current_state") return "系统已重新核验当前目录及父级权限，更新登记并恢复使用；原操作结果未确认的历史保留。";
   if (view.resolution === "automatically_reconciled_before") return "当前文件与原登记一致，系统已自动恢复使用；原操作结果未确认的历史保留。";
   if (view.automatic_recovery === "pending") return "系统会自动核验并处理这个原作业，关闭页面后仍会继续。无需手工确认或重新提交。";
   if (view.automatic_recovery === "current_state_conflict") return "当前文件状态与原操作预期不同；其他文件可继续使用。你可以查看文件后选择处理方式。";

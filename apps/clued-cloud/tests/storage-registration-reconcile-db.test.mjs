@@ -15,6 +15,8 @@ import {scopeString} from '../worker/storage-google-scopes.ts';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 import {assertGatewayCloseoutBoundary,setWorkerGatewayCaller} from './worker-gateway-caller-fixture.mjs';
 import {testStorageDestructive} from './resource-center-storage-destructive-db.fixture.mjs';
+import {createGoogleDriveMetadataApi} from '../../../kernel/host/resource-center-google-drive-metadata.mjs';
+import {createGoogleDriveRegistrationRecovery} from '../../../kernel/host/resource-center-google-drive-registration-recovery.mjs';
 const cloud=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
 async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));
@@ -131,10 +133,201 @@ test('registration reconciliation: actual program authority, independent of the 
      assert.equal((await program(nextProof)).registration_authority.issuer_credential_generation,2);
     }finally{await db.query('rollback');}
    });
+   await t.test('the current registration descriptor traverses the actual original journal and parent registry',async()=>{
+    const loaded=await scalar(`select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) v`,
+     [issuer,JSON.stringify({...job.reference,action:'registration_current_load'})]);
+    assert.equal(loaded.status,'registration_required');assert.equal(loaded.intent_id,original.id);
+    assert.equal(loaded.registration_plan.target.provider_file_id,source.provider_file_id);
+   });
+   await t.test('a credential that expires while waiting on the actual root lock cannot authorize the program',async()=>{
+    const blocker=server.getPgClient(),inspector=server.getPgClient();await blocker.connect();await inspector.connect();
+    let work;const expiringProof=crypto.createHash('sha256').update(uuid()).digest('hex');
+    try{
+     await blocker.query('begin');await blocker.query("select pg_advisory_xact_lock(hashtextextended($1,0))",[owner+':'+f.target.rootId]);
+     await db.query(`insert into clued_private.issuer_credentials_v1(issuer_id,generation,verifier,state,activated_at,valid_until)
+      select id,2,'cv1:'||encode(extensions.digest('clued.credential-verifier.v1:'||$2,'sha256'),'hex'),'active',clock_timestamp(),clock_timestamp()+interval '2 seconds'
+      from clued_private.issuer_identities_v1 where kind='storage' and legacy_key=$1`,[issuer,expiringProof]);
+     work=program(expiringProof);void work.catch(()=>{});
+     let blocked=false;
+     for(let i=0;i<100;i++){
+      const row=(await inspector.query('select wait_event from pg_stat_activity where pid=$1',[db.processID])).rows[0];
+      if(row?.wait_event==='advisory'){blocked=true;break;}
+      await new Promise(resolve=>setTimeout(resolve,10));
+     }
+     assert.equal(blocked,true,'the authenticated call really waited on another connection');
+     await new Promise(resolve=>setTimeout(resolve,2100));await blocker.query('commit');
+     await assert.rejects(work,/storage_registration_program_denied/);
+    }finally{
+     await blocker.query('rollback');if(work)await work.catch(()=>{});
+     await blocker.end();await inspector.end();
+    }
+   });
+   // A second unresolved job protects a different object in the same parent.
+   // Its ancestor-only overlap must not become a root-wide recovery fence.
+   const sibling=await ctx.directoryIn(f.target,f.storage,'independent-'+uuid());
+   const siblingJob=await ctx.submitJob(f.target,f.client,ctx.trash(sibling));
+   const siblingEngine=ctx.executor(f.target,f.storage,async request=>{
+    if(request.action==='provider_attempt'){await ctx.cloud(request);throw Error('synthetic second lost attempt acknowledgement');}
+   });
+   assert.equal((await siblingEngine.run(siblingJob.reference)).status,'unreconciled');
+   const siblingOriginal=await ctx.journal(siblingJob);
+   await db.query("update public.clued_audit_receipts set created_at=clock_timestamp()-interval '3 hours' where id=$1",[siblingOriginal.provider_attempt_receipt_id]);
+   await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '3 hours' where id=$1",[siblingOriginal.id]);
+   assert.equal(await scalar('select clued_private.storage_conflict_close_v1($1) v',[siblingOriginal.id]),'conflict');
+   // A genuine previously verified create, whose final receipt temporarily
+   // failed, remains settleable after I9. Its old ancestor match mode must
+   // not be silently invalidated by a new root/parent qualification.
+   const typedJob=await ctx.submitJob(f.target,f.client,{operation:'create',target_kind:'file',
+    destination_path:source.path.replace(/\/[^/]+$/,'')+'/typed-'+uuid()+'.txt',content:'actual typed proof fixture'});
+   let withheld;
+   const typedEngine=ctx.executor(f.target,f.storage,async request=>{
+    if(request.action==='verified_record'){withheld=structuredClone(request);throw Error('synthetic lost typed-record delivery');}
+   });
+   assert.equal((await typedEngine.run(typedJob.reference)).status,'unreconciled');assert.ok(withheld);
+   assert.equal((await ctx.cloud(withheld)).status,'verified');
+   const typedBefore=await ctx.journal(typedJob);assert.ok(typedBefore.verified_result_v2);
+   await db.query(`create sequence public.synthetic_registration_typed_failure_calls;
+    create function public.synthetic_registration_typed_failure() returns trigger language plpgsql as $$begin
+     if new.operation='storage_verified_settle' and new.status='committed' then
+      perform nextval('public.synthetic_registration_typed_failure_calls');raise exception 'synthetic_registration_typed_settle_failure';end if;return new;end$$;
+    create trigger synthetic_registration_typed_failure before update on public.clued_audit_receipts
+     for each row execute function public.synthetic_registration_typed_failure()`);
+   try{
+    await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '3 hours' where id=$1",[typedBefore.id]);
+    assert.equal(await scalar('select clued_private.storage_conflict_close_v1($1) v',[typedBefore.id]),'conflict');
+    assert.equal(await scalar('select is_called v from public.synthetic_registration_typed_failure_calls'),true);
+   }finally{await db.query('drop trigger synthetic_registration_typed_failure on public.clued_audit_receipts;drop function public.synthetic_registration_typed_failure();drop sequence public.synthetic_registration_typed_failure_calls');}
+   assert.equal((await ctx.journal(typedJob)).state,'conflict');
+   const currentRpc=async input=>scalar('select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) v',[issuer,JSON.stringify(input)]);
+   for(const file of f.storage.files.values()){
+    Object.assign(file,{shared:false,permissionIds:['fixture-owner']});
+    file.capabilities={...file.capabilities,canShare:true,canListChildren:true};
+   }
+   // All three Drive versions have advanced. This is a new current
+   // qualification, never a claim that the original before-state survived.
+   f.storage.files.get(f.target.rootId).version='10';f.storage.files.get(f.target.trackId).version='20';
+   f.storage.files.get(source.provider_file_id).version='30';
+   const load=await currentRpc({...job.reference,action:'registration_current_load'});
+   const metadata=createGoogleDriveMetadataApi({registration_details:true,
+    get_credential:async()=>({access_token:ctx.access_token,scope:scopeString('full')}),fetch:f.storage.fetch});
+   const observations=await createGoogleDriveRegistrationRecovery({metadata}).observe(load.registration_plan);
+   const commit={...job.reference,action:'registration_current_commit',base_version:load.base_version,
+    source_receipt_id:load.source_receipt_id,registration_authority:load.registration_authority,
+    registration_plan:load.registration_plan,...observations};
+   const baseline=await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[source.id]);
+   let receiptCount=await scalar('select count(*)::integer v from public.clued_audit_receipts');
+   await t.test('a genuine settleable typed conflict keeps its old ancestor mode until its own result commits',async()=>{
+    await assert.rejects(currentRpc(commit),/storage_current_registration_object_busy/);
+    assert.deepEqual((await ctx.journal(typedJob)).verified_result_v2,typedBefore.verified_result_v2);
+    assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),receiptCount);
+    assert.deepEqual(await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[source.id]),baseline);
+    assert.equal((await ctx.cloud({action:'settle_verified',...typedJob.reference})).status,'committed');
+    assert.equal((await ctx.journal(typedJob)).state,'committed');
+    receiptCount=await scalar('select count(*)::integer v from public.clued_audit_receipts');
+   });
+   for(const [name,mutate,pattern] of [
+    ['missing permission evidence',input=>delete input.second_observation.target.owner_permission_id,/proof_invalid/],
+    ['numeric permission identity',input=>input.second_observation.target.owner_permission_id=123,/proof_invalid/],
+    ['numeric provider version',input=>input.second_observation.target.provider_file_version=30,/proof_invalid/],
+    ['forged digest-shaped ACL',input=>input.second_observation.target.access_digest='c'.repeat(64),/acl_changed/],
+    ['expired observation',input=>{input.first_observation.observed_at=new Date(Date.now()-60000).toISOString();},/proof_changed/],
+    ['changed target second observation',input=>input.second_observation.target.provider_file_version='31',/proof_changed/],
+    ['stale Artifact CAS',input=>input.registration_plan.target.artifact_version++,/registration_conflict/],
+    ['different original source receipt',input=>input.source_receipt_id=uuid(),/registration_conflict/],
+   ])await t.test(name+' rolls back every qualification, permit and receipt',async()=>{
+    const input=structuredClone(commit);mutate(input);await assert.rejects(currentRpc(input),pattern);
+    assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),receiptCount);
+    assert.deepEqual(await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[source.id]),baseline);
+    assert.equal(await scalar('select count(*)::integer v from clued_private.storage_registration_artifact_permits_v1'),0);
+    assert.equal(await scalar('select state v from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[original.id]),'active');
+   });
+   await t.test('revocation after observation is rechecked before any registry commit',async()=>{
+    await db.query('begin');try{
+     await db.query("update clued_private.storage_oauth_apps_v1 set execution_enabled=false where issuer_hash=$1",[issuer]);
+     await assert.rejects(currentRpc(commit),/program_denied/);
+    }finally{await db.query('rollback');}
+    assert.deepEqual(await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[source.id]),baseline);
+   });
+   await t.test('a final Receipt failure rolls back Artifact updates, isolation exit and all transaction permits',async()=>{
+    await db.query(`create function public.synthetic_registration_receipt_failure() returns trigger language plpgsql as $$begin
+     if new.operation='storage_current_registration_reconcile' and new.status='committed' then raise exception 'synthetic_registration_commit_failure';end if;return new;end$$;
+     create trigger synthetic_registration_receipt_failure before update on public.clued_audit_receipts
+      for each row execute function public.synthetic_registration_receipt_failure()`);
+    try{
+     await assert.rejects(currentRpc(commit),/synthetic_registration_commit_failure/);
+     assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),receiptCount);
+     assert.deepEqual(await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[source.id]),baseline);
+     assert.equal(await scalar('select count(*)::integer v from clued_private.storage_registration_artifact_permits_v1'),0);
+     assert.equal(await scalar('select count(*)::integer v from clued_private.storage_current_registration_results_v1'),0);
+     assert.equal(await scalar('select state v from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[original.id]),'active');
+    }finally{await db.query('drop trigger synthetic_registration_receipt_failure on public.clued_audit_receipts;drop function public.synthetic_registration_receipt_failure()');}
+   });
+   for(const mode of ['path','governance','another_artifact'])await t.test('an exact private metadata permit cannot change '+mode,async()=>{
+    await db.query('begin');try{
+     const request={idempotency_key:'synthetic-permit-negative:'+uuid()},pending=await scalar(`select to_jsonb(clued_private.m1_begin_receipt(
+      $1,null,'storage_current_registration_reconcile',$2::jsonb,clued_private.m1_sha256($2::jsonb))) v`,[owner,JSON.stringify(request)]);
+     const changed={...baseline,receipt_id:pending.id,version:baseline.version+1,provider_file_version:'30',
+      provider_access_digest:observations.second_observation.target.access_digest,provider_sharing_digest:observations.second_observation.target.sharing_digest};
+     if(mode==='path')changed.path+='_forged';if(mode==='governance')changed.governance_class='governance';
+     const after=await scalar('select to_jsonb(jsonb_populate_record(null::clued_private.resource_center_artifacts_v1,$1::jsonb)) v',[JSON.stringify(changed)]);
+     await db.query(`insert into clued_private.storage_registration_artifact_permits_v1
+      values(txid_current(),$1,$2,$3,$4,$5,clued_private.m1_sha256($6::jsonb),clued_private.m1_sha256($7::jsonb))`,
+      [source.id,pending.id,original.id,owner,source.profile_id,JSON.stringify(baseline),JSON.stringify(after)]);
+     const target=mode==='another_artifact'?sibling.id:source.id;
+     await assert.rejects(db.query(`update clued_private.resource_center_artifacts_v1 set path=$2,governance_class=$3,
+      provider_file_version=$4,provider_access_digest=$5,provider_sharing_digest=$6,receipt_id=$7,version=version+1 where id=$1`,
+      [target,mode==='another_artifact'?sibling.path:after.path,after.governance_class,after.provider_file_version,
+       after.provider_access_digest,after.provider_sharing_digest,after.receipt_id]),/storage_current_registration_permit_invalid|storage_object_under_review/);
+    }finally{await db.query('rollback');}
+    assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),receiptCount);
+    assert.deepEqual(await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[source.id]),baseline);
+   });
+   await t.test('a separate Receipt atomically qualifies current ACLs and resolves only the original object',async()=>{
+    const result=await currentRpc(commit);
+    assert.equal(result.status,'resolved');assert.equal(result.resolution,'automatically_registered_current_state');
+    assert.notEqual(result.receipt_id,result.source_receipt_id);assert.equal(result.base_version,load.base_version);
+    const updated=await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[source.id]);
+    assert.equal(updated.provider_file_version,'30');assert.ok(updated.provider_access_digest);assert.ok(updated.provider_sharing_digest);
+    assert.equal(updated.version,baseline.version+1);assert.equal(updated.receipt_id,result.receipt_id);
+    for(const field of ['id','path','provider_file_id','state','target_kind','governance_class','delete_authority','source_decision_id'])assert.deepEqual(updated[field],baseline[field],field);
+    const journal=await ctx.journal(job);
+    assert.equal(journal.state,'conflict');assert.equal(journal.receipt_id,load.source_receipt_id);assert.equal(journal.verified_result_v2,null);
+    assert.deepEqual(journal.provider_attempt,original.provider_attempt);assert.equal(journal.provider_attempt_receipt_id,original.provider_attempt_receipt_id);
+    assert.equal(await scalar('select state v from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[original.id]),'resolved');
+    assert.equal(await scalar('select state v from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[siblingOriginal.id]),'active');
+    assert.deepEqual((await ctx.journal(siblingJob)).provider_attempt,siblingOriginal.provider_attempt);
+    assert.equal(await scalar('select status v from public.clued_audit_receipts where id=$1',[result.receipt_id]),'committed');
+    const audit=await scalar('select to_jsonb(r) v from public.clued_audit_receipts r where id=$1',[result.receipt_id]);
+    for(const node of [...load.registration_plan.parents,load.registration_plan.target]){
+     assert.equal(audit.base_versions[node.artifact_id],node.artifact_version);
+     assert.equal(audit.committed_versions[node.artifact_id],node.artifact_version+1);
+     assert.ok(audit.target_refs.some(ref=>ref.id===node.artifact_id&&ref.role==='target'));
+     assert.equal(await scalar('select receipt_id v from clued_private.resource_center_artifacts_v1 where id=$1',[node.artifact_id]),result.receipt_id);
+    }
+    const total=await scalar('select count(*)::integer v from public.clued_audit_receipts');
+    assert.deepEqual(await currentRpc(commit),result);assert.deepEqual(await currentRpc({...job.reference,action:'registration_current_load'}),result);
+    assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),total);
+    assert.equal(await scalar('select count(*)::integer v from clued_private.storage_current_registration_results_v1 where intent_id=$1',[original.id]),1);
+    const oldBefore=baseline,newAfter=updated;
+    assert.equal(await scalar(`select clued_private.storage_registration_artifact_permitted_v1(
+     jsonb_populate_record(null::clued_private.resource_center_artifacts_v1,$1::jsonb),
+     jsonb_populate_record(null::clued_private.resource_center_artifacts_v1,$2::jsonb)) v`,[JSON.stringify(oldBefore),JSON.stringify(newAfter)]),false,
+     'a genuine completed transaction permit cannot be replayed in a later transaction');
+    const projected=await scalar('select clued_private.storage_conflict_public_status_v1(j) v from clued_private.storage_jobs_v1 j where job_id=$1',[job.reference.job_id]);
+    assert.equal(projected.status,'resolved');assert.equal(projected.resolution,'automatically_registered_current_state');
+    assert.equal(projected.receipt_id,result.receipt_id);assert.equal(projected.review_available,false);assert.equal(projected.abandon_available,false);
+    const normal=await scalar('select clued_private.storage_job_status_v1(j) v from clued_private.storage_jobs_v1 j where job_id=$1',[job.reference.job_id]);
+    assert.equal(normal.resolution,'automatically_registered_current_state');assert.notEqual(normal.status,'committed');
+   });
    await t.test('forged GUC is not an external credential and helper is owner-only',async()=>{
     const identity=await scalar("select id v from clued_private.issuer_identities_v1 where kind='storage' and legacy_key=$1",[issuer]);
     for(const role of ['anon','authenticated','service_role','clued_worker_gateway']){
      assert.equal(await scalar("select has_function_privilege($1,'clued_private.storage_registration_program_authority_v1(text,uuid,uuid,uuid)','execute') v",[role]),false);
+     for(const signature of ['clued_private.storage_current_registration_reconcile_v1(text,jsonb)',
+      'clued_private.storage_current_registration_plan_v1(text,uuid,uuid)',
+      'clued_private.storage_registration_artifact_permitted_v1(clued_private.resource_center_artifacts_v1,clued_private.resource_center_artifacts_v1)'])
+      assert.equal(await scalar('select has_function_privilege($1,$2,\'execute\') v',[role,signature]),false);
+     assert.equal(await scalar("select has_table_privilege($1,'clued_private.storage_registration_artifact_permits_v1','insert') v",[role]),false);
     }
     await db.query('begin');try{
      await setWorkerGatewayCaller(db);
@@ -157,6 +350,6 @@ test('registration reconciliation: actual program authority, independent of the 
   }
   const actual=await fs.realpath(directory);assert.equal(path.dirname(actual).toLowerCase(),parent.toLowerCase());
   assert.ok(path.basename(actual).startsWith('kooyumi-registration-db-'));
-  await fs.rm(actual,{recursive:true,force:false});
+  await fs.rm(actual,{recursive:true,force:false,maxRetries:5,retryDelay:100});
  }
 });
