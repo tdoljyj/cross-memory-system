@@ -96,7 +96,7 @@ export async function createStorageGoogleRefresh(config: {
         const root = await metadata("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(String(claimed.root_folder_id)) +
           "?fields=id,parents,mimeType,trashed,capabilities(canAddChildren),isAppAuthorized", tokens.access_token);
         if (root.id !== claimed.root_folder_id || root.mimeType !== "application/vnd.google-apps.folder" || root.trashed !== false ||
-            root.isAppAuthorized !== true || !object(root.capabilities) || root.capabilities.canAddChildren !== true ||
+            (profile !== "full" && root.isAppAuthorized !== true) || !object(root.capabilities) || root.capabilities.canAddChildren !== true ||
             !Array.isArray(root.parents) || root.parents.length !== 1 || root.parents[0] !== claimed.root_parent_id) throw denied();
         const expires = start + Number(tokens.expires_in)*1000, now = clock();
         if (!Number.isFinite(now) || now < start || now >= deadline || expires - now <= 60000) throw denied();
