@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { stopOwnedPostgres } from './model-domain-postgres-lifecycle.fixture.mjs';
 import {DOMAIN_POLICY as P} from '../worker/model-domain-policy.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { GATEWAY_ROLE, CLOSEOUT_MIGRATION, assertGatewayCloseoutBoundary, snapshotCallerCatalog } from './worker-gateway-caller-fixture.mjs';
@@ -353,25 +354,26 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
   } finally {
     if(admin) {try {await admin.end();} catch {}}
     ownProcess??=server.process;
-    let cleanup=false,stopError=null,stopTimer;
+    let cleanup=false;
+    let stopDiagnostic={stage:'ownership',code:'OWNED_DIRECTORY_NOT_VERIFIED',exit_code:ownProcess?.exitCode??null,signal_code:ownProcess?.signalCode??null};
     try {
       await ownedBoundary();
       if(ownProcess) {
-        const exited=()=>typeof ownProcess.exitCode==='number'||typeof ownProcess.signalCode==='string';
-        if(exited())cleanup=true; // Never invoke the SDK's Windows PID kill on an already exited child.
-        else {
-          assert.equal(server.process,ownProcess,'Stop may affect only the retained own ChildProcess');
+        const result=await stopOwnedPostgres({server,child:ownProcess,verifyIdentity:async()=>{
           const ownMarker=JSON.parse(await fs.readFile(path.join(directory,'OwnProcess.json'),'utf8'));
           assert.equal(ownMarker.pid,ownProcess.pid);assert.equal(ownMarker.run_id,runId);assert.equal(ownMarker.database_dir,databaseDir);
           const postmaster=(await fs.readFile(path.join(databaseDir,'postmaster.pid'),'utf8')).split(/\r?\n/)[0];
           assert.equal(Number(postmaster),ownProcess.pid,'The owned datadir must name this exact PostgreSQL child');
-          await Promise.race([server.stop(),new Promise((_,reject)=>{stopTimer=setTimeout(()=>reject(new Error('OWN_POSTGRES_STOP_TIMEOUT')),15000);})]);
-          cleanup=exited();
-        }
-      } else cleanup=!startAttempted&&initialiseSettled;
-    } catch(error) {stopError=error.message;}
+        }});
+        cleanup=result.cleanup;stopDiagnostic=result.diagnostic;
+      } else {
+        cleanup=!startAttempted&&initialiseSettled;
+        stopDiagnostic={stage:'initialise',code:cleanup?'NO_POSTGRES_START_ATTEMPT':'POSTGRES_CHILD_NOT_RETAINED',exit_code:null,signal_code:null};
+      }
+    } catch {
+      // Ownership errors never authorize a stop or deletion, even after exit.
+    }
     finally {
-      clearTimeout(stopTimer);
       for(const [key,value] of Object.entries(tempBefore)) {
         if(value===undefined)delete process.env[key];else process.env[key]=value;
       }
@@ -379,10 +381,12 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
     if(cleanup) {
       const actual=await ownedBoundary();
       await fs.rm(actual,{recursive:true,force:true});
-      console.log(JSON.stringify({fixture_cleanup:'OWN_PROCESS_EXIT_AND_OWN_DIRECTORY_REMOVAL_PROVEN',full_source_positive:'NOT_RUN_FIXED_CANONICAL_OWNER_SOURCES_UNAVAILABLE',actual_production_or_model_effects:0}));
+      console.log(JSON.stringify({fixture_cleanup:'OWN_PROCESS_EXIT_AND_OWN_DIRECTORY_REMOVAL_PROVEN',...stopDiagnostic,full_source_positive:'NOT_RUN_FIXED_CANONICAL_OWNER_SOURCES_UNAVAILABLE',actual_production_or_model_effects:0}));
     } else {
-      await fs.writeFile(path.join(directory,'NO_CLEANUP.json'),JSON.stringify({run_id:runId,pid:ownProcess?.pid??null,database_dir:databaseDir,stop_error:stopError,reason:'Own process exit was not proven; directory preserved'})+'\n');
-      throw new Error('NO_CLEANUP: own PostgreSQL exit was not proven; preserve '+directory);
+      const diagnostic={run_id:runId,pid:ownProcess?.pid??null,database_dir:databaseDir,...stopDiagnostic,reason:'Own process exit and identity were not proven; directory preserved'};
+      console.error(JSON.stringify({fixture_cleanup:'NO_CLEANUP',...diagnostic}));
+      await fs.writeFile(path.join(directory,'NO_CLEANUP.json'),JSON.stringify(diagnostic)+'\n');
+      throw new Error('NO_CLEANUP: '+stopDiagnostic.code+'; own PostgreSQL exit and identity were not proven; preserve '+directory);
     }
   }
 });
