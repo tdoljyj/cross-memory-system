@@ -3,10 +3,12 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { NativeRpc } from "./imprint-client";
 import { VIEW_LABELS, type Locale } from "./imprint-model";
+import type { Json } from "./imprint-model";
 import { bulkCounts, previewBulk, readBulk, writeBulk, type BulkBatch, type BulkPreview, type BulkSelection } from "./imprint-bulk";
 
-export default function ImprintBulkPanel({ rpc, locale, selection, scopeLabel, onChanged, onOpenRecord, owner }: {
+export default function ImprintBulkPanel({ rpc, locale, selection, scopeLabel, onChanged, onOpenRecord, owner, describeSavedScope }: {
   rpc: NativeRpc; locale: Locale; selection: BulkSelection; scopeLabel: string; owner: string; onChanged: () => void; onOpenRecord: (id: string) => void;
+  describeSavedScope: (selection: Json) => string;
 }) {
   const zh = locale === "zh-CN";
   const [preview, setPreview] = useState<BulkPreview | null>(null);
@@ -97,6 +99,7 @@ export default function ImprintBulkPanel({ rpc, locale, selection, scopeLabel, o
     </div>}
     {batch && !batch.available && <p>{zh ? "尚未建立首批计划。预演不会占用批次数量。" : "No saved batch. Preview does not use the batch allowance."}</p>}
     {batch?.available && counts && <div data-bulk-batch-id={batch.batch_id} data-bulk-state={batch.state}>
+      <p>{zh ? "原批次范围：" : "Saved batch scope: "}{describeSavedScope(batch.selection)}{batch.selection.context_id ? (zh ? " · 上下文" : " · Context") : ""}</p>
       <p>{zh ? `同一首批共 ${batch.items.length} 条：待处理 ${counts.pending}，已补标签 ${counts.applied}，冲突未改 ${counts.conflict}，已撤销 ${counts.undone}，撤销冲突 ${counts.undo_conflict}。${batch.state === "running" ? "可继续处理。" : batch.state === "cancelled" ? "已停止后续处理。" : "处理已结束。"}` : `Saved first batch: ${batch.items.length}. Pending ${counts.pending}, applied ${counts.applied}, conflict ${counts.conflict}, undone ${counts.undone}, undo conflict ${counts.undo_conflict}. State: ${batch.state}.`}</p>
       <p>{zh ? "关闭页面或切换范围会暂停；已完成的保存不会丢失。首批最多100个对象，停止、撤销或重开页面不会重新计算额度。" : "Closing the page or switching scope pauses the runner. Saved progress remains. Cancel, Undo and reopening never reset the 100-object allowance."}</p>
       {batch.state === "running" && <><button type="button" disabled={busy} onClick={() => void run("advance")}>{zh ? "继续处理首批" : "Continue batch"}</button>{" "}<button type="button" disabled={busy} onClick={() => void run("cancel")}>{zh ? "停止此批次" : "Stop batch"}</button></>}

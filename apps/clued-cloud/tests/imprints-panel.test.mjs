@@ -990,3 +990,9 @@ test('stopping or changing account during a classification page cannot fetch a f
     if (stop) assert.ok(f.text().includes('已停止预演，没有修改标签'));
   }
 });
+test('restoring the shared batch displays its original scope rather than the current preview scope', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.change('查询范围', 'global'); await f.respond(1, page()); f.click('读取已保存进度');
+  await f.respond(2, bulkBatch({ selection: { scope: 'project:' + PROJECT } }));
+  assert.ok(f.text().includes('预演范围：个人记录')); assert.ok(f.text().includes('原批次范围：Design project'));
+});
