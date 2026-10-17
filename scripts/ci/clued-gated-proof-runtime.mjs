@@ -2,6 +2,7 @@
 // stdout; a candidate cannot assert which workflow file GitHub executed.
 import {workflowBlob,registeredWorkflowSource,rolesForSource,futureWorkflowCatalogue,acceptedFutureWorkflowSource,external2FutureWorkflowCatalogue,acceptedExternal2WorkflowSource,EXTERNAL2_FILES} from './clued-workflow-profile.mjs';
 import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherTransition} from './clued-production-publisher-source.mjs';
+import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationTransition} from './clued-publisher-qualification-source.mjs';
 export const COMPONENT_VERSION = "1.0.2";
 import {applicableCI,qualifiedCI,gateIdentityWitness,checkoutIdentityWitness,DOCUMENTATION_STEPS,QUALITY} from './clued-gated-proof.mjs';
 import {workflowIsGated,workflowFormFindings,gateFindings,workflowJobs,githubJson} from './clued-work-admission.mjs';
@@ -19,7 +20,8 @@ const safePath=name=>typeof name==='string' && name.length>0 && name.length<=409
 
 const SNAPSHOT_FILES=['scripts/ci/clued-gated-proof-profiles.json','scripts/ci/clued-gated-proof-role-specs.json',
   'scripts/ci/clued-work-admission.mjs','scripts/ci/clued-docs-only.py','scripts/ci/test_clued_docs_only.py',
-  'config/merge-admission-policy.json',PUBLISHER_SOURCE_PATH,'scripts/ci/clued-production-publisher-source.mjs'];
+  'config/merge-admission-policy.json',PUBLISHER_SOURCE_PATH,'scripts/ci/clued-production-publisher-source.mjs',
+  PUBLISHER_PR_QUALIFICATION_PATH,'scripts/ci/clued-publisher-qualification-source.mjs'];
 const trustedSourceByteLimit=file=>file===SNAPSHOT_FILES[0]?1048576:524288;
 export function loadProofSnapshot(workspace,tip,workflows) {
   const checkout=execFileSync('git',['rev-parse','HEAD'],{cwd:workspace,encoding:'utf8',maxBuffer:1024}).trim();
@@ -34,7 +36,7 @@ export function loadProofSnapshot(workspace,tip,workflows) {
     if(bytes.length>trustedSourceByteLimit(file) || !Buffer.from(text,'utf8').equals(bytes))throw Error('trusted snapshot file exceeds bounds');
     files[file]=workflowBlob(text);texts[file]=text;
   }
-  return {tip,checkout,files,profiles:JSON.parse(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),publisherSources:JSON.parse(texts[PUBLISHER_SOURCE_PATH]),
+  return {tip,checkout,files,profiles:JSON.parse(texts[SNAPSHOT_FILES[0]]),roleSpecs:JSON.parse(texts[SNAPSHOT_FILES[1]]),publisherSources:JSON.parse(texts[PUBLISHER_SOURCE_PATH]),qualificationSources:JSON.parse(texts[PUBLISHER_PR_QUALIFICATION_PATH]),
     workflows:new Map(workflows)};
 }
 
@@ -114,6 +116,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         if(file===SNAPSHOT_FILES[0] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.profiles))return false;
         if(file===SNAPSHOT_FILES[1] && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.roleSpecs))return false;
         if(file===PUBLISHER_SOURCE_PATH && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.publisherSources))return false;
+        if(file===PUBLISHER_PR_QUALIFICATION_PATH && JSON.stringify(JSON.parse(text))!==JSON.stringify(snapshot.qualificationSources))return false;
       }
       return true;
     };
@@ -125,7 +128,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
       .some(entries=>Array.isArray(entries) && entries.length>0);
     const sourceRead=createImmutableWorkflowSourceReader({read,repository,enabled:()=>cacheEnabled});
     const catalog=await boundWorkflowCatalog({read:sourceRead,repository,tip:snapshot.tip,head,
-      defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,publisherRegistry:snapshot.publisherSources,diff});
+      defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,publisherRegistry:snapshot.publisherSources,qualificationRegistry:snapshot.qualificationSources,diff});
     if(!catalog.passed)return catalog;
     cacheEnabled=catalog.future_installations.length>0 || catalog.external2_applicable===true;
     const sources=new Map();
@@ -147,7 +150,7 @@ async function executionWithinBudget({read,graphRead,readLog,repository,prNumber
         const finalDiff=await boundPullDiff({read,repository,prNumber,head});
         if(!finalDiff.passed || JSON.stringify(finalDiff)!==JSON.stringify(diff))return false;
         const finalCatalog=await boundWorkflowCatalog({read:sourceRead,repository,tip:snapshot.tip,head,
-          defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,publisherRegistry:snapshot.publisherSources,diff:finalDiff});
+          defaultWorkflows:snapshot.workflows,registry:snapshot.profiles,roleSpecs:snapshot.roleSpecs,publisherRegistry:snapshot.publisherSources,qualificationRegistry:snapshot.qualificationSources,diff:finalDiff});
         if(!finalCatalog.passed || JSON.stringify(finalCatalog.default_directory)!==JSON.stringify(catalog.default_directory) ||
           JSON.stringify(finalCatalog.head_directory)!==JSON.stringify(catalog.head_directory))return false;
         for(const {file,run} of runs) {
@@ -367,7 +370,7 @@ export async function boundDocumentationAttempt({read,readLog,source,run,jobs,re
 // Default-branch counted workflows stay in the set even if the PR deletes
 // their gate. New/changed non-CI workflows retain their original admission
 // boundaries; they are not registered as tests merely because they changed.
-export async function boundWorkflowCatalog({read,repository,tip,head,defaultWorkflows,registry,roleSpecs,publisherRegistry,diff}) {
+export async function boundWorkflowCatalog({read,repository,tip,head,defaultWorkflows,registry,roleSpecs,publisherRegistry,qualificationRegistry,diff}) {
   try {
     if(typeof read!=='function' || !REPO.test(repository??'') || !SHA.test(tip??'') || !SHA.test(head??'') ||
       !(defaultWorkflows instanceof Map) || !defaultWorkflows.size || diff?.passed!==true || diff.diffComplete!==true ||
@@ -390,7 +393,7 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     if((futureInstalls.length || futureChanged) && (!sameDirectory(atDefault,await completeWorkflowDirectory({read,repository,commit:tip})) ||
       !sameDirectory(atHead,await completeWorkflowDirectory({read,repository,commit:head}))))
       return unknown('future workflow Git tree/directory incomplete or differs');
-    const publisherTransitions=[];
+    const publisherTransitions=[],qualificationTransitions=[];
     const sources=new Map(),selected={schema:registry.schema,workflows:{}};
     const sourceRegistry={...registry,workflows:{...registry.workflows}},sourceRoles={...roleSpecs,workflows:{...roleSpecs.workflows}};
     for(const [file,blob] of defaultWorkflows) {
@@ -432,6 +435,18 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
         // This Source admission never turns a dispatch into a required PR run.
         continue;
       }
+      if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,file)) {
+        const before=atDefault.has(file)?decodedWorkflow(await read(`/repos/${repository}/contents/${file}?ref=${tip}`),file,atDefault.get(file)):null;
+        const accepted=registeredPublisherPrQualificationTransition(qualificationRegistry,file,text,before,{repository});
+        if(text===null||atDefault.has(file)&&before===null||!accepted.passed||
+          workflowFormFindings(text).length||gateFindings(text,before).length)
+          return unknown('exact nonproduction PR qualification Source/Role/gate missing');
+        qualificationTransitions.push({file,workflow_blob:accepted.profile.workflow_blob,
+          source_sha256:accepted.profile.source_sha256,proof_classification:'qualification_only'});
+        // Expected failure/cancellation are qualification evidence, never
+        // successful required application-CI proofs. Full Source checks remain.
+        continue;
+      }
       if(text===null || workflowFormFindings(text).length || workflowIsGated(text))
         return unknown('non-CI workflow became gated or has ambiguous source');
       if(atDefault.has(file)) {
@@ -450,6 +465,7 @@ export async function boundWorkflowCatalog({read,repository,tip,head,defaultWork
     return {passed:true,state:'qualified',scope:'applicable_workflow_catalogue',workflows:targets.workflows,
       profiles:selected,source_registry:sourceRegistry,source_roles:sourceRoles,
       publisher_transitions:publisherTransitions,
+      qualification_transitions:qualificationTransitions,
       future_installations:futureInstalls.map(entry=>entry.file),
       external2_applicable:[...targets.workflows.keys()].some(file=>Object.hasOwn(EXTERNAL2_FILES,file)),
       default_directory:[...atDefault],head_directory:[...atHead]};

@@ -62,6 +62,27 @@ launcher must bind that exact job and Source before steps. A workflow label or
 job-authored attestation cannot establish isolation or production qualification.
 Until those real qualifications pass, no production runner or Secrets are enabled.
 
+## Nonproduction PR bootstrap
+
+The separate `clued-publisher-qualification-source.mjs` contract registers only
+the fixed Host and Guest qualification workflows. Each has one concrete primary
+role, the original canonical gate, a fixed self-hosted route, bounded timeout,
+no environment or stored Secrets, and a checkout of the exact same-repository
+Owner PR head without persisted credentials. Its only trigger is a PR into main,
+with paths limited to the named qualification sources. Production stays dispatch-only.
+
+Its fixed catalogue starts empty. Full workflow bytes and independently reviewed
+roles must become trusted protected default-branch data before a consumer PR can
+install them. A candidate cannot enroll itself. This does not reuse the seven
+handover registrations or change the PR profile/role raw hashes or capacity.
+
+Both complete catalogue consumers authenticate these sources, but classify them
+as `qualification_only`. Existing required application CI remains required and
+must pass. Expected canary failure and cancellation are separate evidence and
+cannot count as a green application test. Host launch still needs to bind the
+native PR/head, workflow source, run, attempt and job before registration; a
+workflow name, matching label or job-authored result is insufficient.
+
 ## Existing observation history
 
 The exact predecessor at main `80bd559f283b7c009cd37f1fbde700b6d6be41ae` is sealed

@@ -76,6 +76,7 @@ import { createHash, createSign, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import {PUBLISHER_FILES,registeredPublisherTransition} from "./clued-production-publisher-source.mjs";
+import {PUBLISHER_PR_QUALIFICATION_FILES,registeredPublisherPrQualificationTransition} from "./clued-publisher-qualification-source.mjs";
 import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -373,6 +374,17 @@ function trustedPublisherProfiles() {
   }
 }
 
+function trustedPublisherPrQualificationProfiles() {
+  const location = new URL("./clued-publisher-qualification-sources.json", import.meta.url);
+  try {
+    const info=fs.lstatSync(location);
+    if(!info.isFile()||info.isSymbolicLink()||info.size>524288)return null;
+    const bytes=fs.readFileSync(location),text=bytes.toString('utf8');
+    if(bytes.length>524288||!Buffer.from(text,'utf8').equals(bytes))return null;
+    return JSON.parse(text);
+  }catch{return null;}
+}
+
 export function workflowJobs(text) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
   const start = lines.findIndex((line) => /^jobs:\s*(#.*)?$/.test(line));
@@ -585,6 +597,12 @@ export async function workflowFindings(fetchImpl, env, repository, files, headSh
     if (head === null) throw new Error(`${file.filename} is missing at ${headSha}.`);
     const basePath = workflowBasePath(file);
     const base = basePath === null ? null : await fileAt(fetchImpl, env, repository, basePath, baseSha);
+    if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,file.filename)&&
+      (!['added','modified'].includes(file.status)||
+        file.status==='modified'&&basePath!==file.filename||
+        !registeredPublisherPrQualificationTransition(trustedPublisherPrQualificationProfiles(),file.filename,head,base,{repository}).passed)) {
+      gate.push(`workflow_gate:${file.filename}:publisher_PR_qualification_Source_not_registered`);
+    }
     const registeredPublisherTransition = file.filename === PRODUCTION_PUBLISHER_WORKFLOW &&
       registeredPublisherGatedSuccessor(file, head, base, trustedPublisherProfiles());
     for (const finding of gateFindings(head, base, { registeredPublisherTransition })) {

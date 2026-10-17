@@ -26,7 +26,10 @@ const pinned='actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683';
 const snapshotProfile='scripts/ci/clued-gated-proof-profiles.json';
 const publisherPath='scripts/ci/clued-production-publisher-sources.json';
 const emptyPublisherSources={schema:'clued.production-publisher-sources/1',repository,default_branch:'main',workflows:{},roles:{}};
-const publisherFixtureTexts={[publisherPath]:JSON.stringify(emptyPublisherSources),'scripts/ci/clued-production-publisher-source.mjs':'trusted publisher compiler'};
+const qualificationPath='scripts/ci/clued-publisher-qualification-sources.json';
+const emptyQualificationSources={schema:'clued.publisher-pr-qualification-sources/1',repository,default_branch:'main',workflows:{},roles:{}};
+const publisherFixtureTexts={[publisherPath]:JSON.stringify(emptyPublisherSources),'scripts/ci/clued-production-publisher-source.mjs':'trusted publisher compiler',
+  [qualificationPath]:JSON.stringify(emptyQualificationSources),'scripts/ci/clued-publisher-qualification-source.mjs':'trusted PR qualification compiler'};
 const snapshotFixtureFiles={
   [snapshotProfile]:JSON.stringify({schema:'clued.gated-proof-profiles/2',workflows:{}}),
   'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify({schema:'clued.gated-proof-role-specs/2',workflows:{}}),
@@ -130,7 +133,7 @@ function executionWorld({conclusion='success',moveTip=false,moveSource=false,cha
     'scripts/ci/clued-docs-only.py':'trusted classifier',
     'scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
     'config/merge-admission-policy.json':'trusted policy',...publisherFixtureTexts};
-  const snapshot={tip,checkout:tip,profiles,roleSpecs,publisherSources:structuredClone(emptyPublisherSources),workflows:new Map([[file,profile.workflow_blob]]),
+  const snapshot={tip,checkout:tip,profiles,roleSpecs,publisherSources:structuredClone(emptyPublisherSources),qualificationSources:structuredClone(emptyQualificationSources),workflows:new Map([[file,profile.workflow_blob]]),
     files:Object.fromEntries(Object.entries(texts).map(([file,text])=>[file,workflowBlob(text)]))};
   const native={...run,status:'completed',conclusion,pull_requests:[{number:5}]};
   const pr={number:5,state:'open',draft:false,head:{sha:head,repo:{full_name:headRepository}},
@@ -176,7 +179,7 @@ test('shared execution bridge binds native full execution to one trusted snapsho
   assert.equal((await qualifyPrExecution(mismatch)).state,'unknown');
   const publisherMismatch=executionWorld();publisherMismatch.snapshot.publisherSources={...publisherMismatch.snapshot.publisherSources,schema:'caller asserted catalogue'};
   assert.equal((await qualifyPrExecution(publisherMismatch)).state,'unknown','publisher catalogue must match authenticated snapshot bytes');
-  for(const path of [publisherPath,'scripts/ci/clued-production-publisher-source.mjs']) {
+  for(const path of [publisherPath,'scripts/ci/clued-production-publisher-source.mjs',qualificationPath,'scripts/ci/clued-publisher-qualification-source.mjs']) {
     const missing=executionWorld();delete missing.snapshot.files[path];
     assert.equal((await qualifyPrExecution(missing)).state,'unknown',path+': compiler and catalogue identity are required');
   }
@@ -521,7 +524,7 @@ function sevenConsumerExecutionWorld({moveMain=false,sourceRegistries=null}={}) 
     'scripts/ci/clued-gated-proof-role-specs.json':JSON.stringify(roleSpecs),'scripts/ci/clued-work-admission.mjs':'trusted gate',
     'scripts/ci/clued-docs-only.py':'trusted classifier','scripts/ci/test_clued_docs_only.py':'trusted classifier tests',
     'config/merge-admission-policy.json':'trusted policy',...publisherFixtureTexts};
-  const snapshot={tip,checkout:tip,profiles,roleSpecs,publisherSources:structuredClone(emptyPublisherSources),workflows,
+  const snapshot={tip,checkout:tip,profiles,roleSpecs,publisherSources:structuredClone(emptyPublisherSources),qualificationSources:structuredClone(emptyQualificationSources),workflows,
     files:Object.fromEntries(Object.entries(texts).map(([name,text])=>[name,workflowBlob(text)]))};
   const all={...profiles.workflows,...Object.fromEntries(profiles.future_workflows.map(entry=>[entry.file,entry.source_profile]))};
   const changedFiles=[...profiles.future_workflows.map(entry=>entry.file),'scripts/ci/clued-gated-proof-profiles.json',

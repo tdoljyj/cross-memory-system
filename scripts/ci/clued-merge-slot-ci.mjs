@@ -48,6 +48,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import {PUBLISHER_FILES,PUBLISHER_SOURCE_PATH,registeredPublisherSource} from "./clued-production-publisher-source.mjs";
+import {PUBLISHER_PR_QUALIFICATION_FILES,PUBLISHER_PR_QUALIFICATION_PATH,registeredPublisherPrQualificationSource} from "./clued-publisher-qualification-source.mjs";
 import {createNaturalRecorder} from "./merge-admission-source-producer.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,6 +110,14 @@ export function ciWorkflows(workspace, readDir = fs.readdirSync, readFile = fs.r
     const bytes = readFile(path.join(dir, file));
     if (REQUIRED_CHECK_WORKFLOWS.includes(file) || workflowIsGated(bytes.toString("utf8"))) {
       const workflowPath=`.github/workflows/${file}`;
+      if(Object.hasOwn(PUBLISHER_PR_QUALIFICATION_FILES,workflowPath)) {
+        const raw=readFile(path.join(workspace,PUBLISHER_PR_QUALIFICATION_PATH));
+        if(raw.length>524288)throw Error('PR qualification Source registry exceeds bounds');
+        const selected=registeredPublisherPrQualificationSource(JSON.parse(raw.toString('utf8')),workflowPath,bytes.toString('utf8'));
+        if(!selected.passed||gateFindings(bytes.toString('utf8'),bytes.toString('utf8')).length)
+          throw Error('unregistered default PR qualification Source');
+        continue;
+      }
       if(Object.hasOwn(PUBLISHER_FILES,workflowPath)) {
         // Only the exact registered default Source can be excluded from PR
         // proof enumeration. A basename or dispatch trigger is insufficient.
