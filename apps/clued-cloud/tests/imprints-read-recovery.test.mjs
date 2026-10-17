@@ -87,7 +87,8 @@ test("source reads recover but a status0 mutation is never automatically repeate
   const source = await m.readSource(async (name, _args, signal) => {
     assert.equal(name, "clued_imprint_source_v1"); assert.ok(signal);
     if (++sourceCalls === 1) return { data: null, error: { message: "AbortError: fixture response interrupted", code: "20" }, status: 0 };
-    return { data: { status: "available", record_version: 1, content: "Fixture source", evidence: {}, segment: null }, error: null, status: 200 };
+    return { data: { status: "available", complete: true, record_id: record.id, record_version: 1, authoritative: false,
+      current_input_eligible: false, content: "Fixture source", evidence: { id: "22222222-2222-4222-8222-222222222222" }, segment: null }, error: null, status: 200 };
   }, record.id, "22222222-2222-4222-8222-222222222222", false, 1, safeOptions());
   assert.equal(source.available, true); assert.equal(sourceCalls, 2);
   await assert.rejects(m.mutateRecord(async (name, _args, signal) => {

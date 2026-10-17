@@ -338,7 +338,8 @@ test('source locator is not claimed as full text; real saved source body remains
   await f.respond(1, { status: 'ok', available: false, evidence: { id: EVIDENCE, storage_ref: 'https://example.test/source' }, unavailable_reason: 'external_only' });
   assert.ok(f.text().includes('定位信息不等于全文')); assert.ok(!f.text().includes('已保存来源正文'));
   f.click('读取来源: ' + EVIDENCE);
-  await f.respond(2, { status: 'ok', available: true, record_version: 2, evidence: { id: EVIDENCE }, content: 'Original meeting\n<script>not executable</script>', segment: null });
+  await f.respond(2, { status: 'ok', available: true, complete: true, record_id: ID, record_version: 2,
+    authoritative: false, current_input_eligible: false, evidence: { id: EVIDENCE }, content: 'Original meeting\n<script>not executable</script>', segment: null });
   assert.ok(f.text().includes('Original meeting')); assert.equal(f.nodes('script').length, 0);
 });
 
@@ -365,7 +366,8 @@ test('legacy compatibility keeps real identity/version/body and null metadata wi
 test('withdrawn source requires explicit history and stays identified as ineligible history', async t => {
   const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page([record({ source_refs: [EVIDENCE] })]));
   f.click('读取来源: ' + EVIDENCE);
-  const historical = { status: 'ok', available: true, record_version: 2, content: 'WITHDRAWN OLD SOURCE', evidence_status: 'withdrawn',
+  const historical = { status: 'ok', available: true, complete: true, record_id: ID, evidence: { id: EVIDENCE },
+    record_version: 2, content: 'WITHDRAWN OLD SOURCE', evidence_status: 'withdrawn',
     source_semantics: 'historical_evidence', authoritative: false, current_input_eligible: false };
   await f.respond(1, historical); assert.ok(!f.text().includes('WITHDRAWN OLD SOURCE'));
   f.check('包含旧版本及待核对内容', true); await f.respond(2, page([record({ source_refs: [EVIDENCE] })]));
@@ -376,13 +378,165 @@ test('withdrawn source requires explicit history and stays identified as ineligi
 test('English controls and scope/full-text limitations are actually rendered in English', async t => {
   const f = fixture(session('owner'), 'en'); t.after(() => f.unmount()); await f.respond(0, page());
   assert.deepEqual(f.nodes('button').filter(n => n.props.role === 'tab').map(f.text), ['All', 'Tasks', 'Decisions', 'Daily life', 'Work', 'Learning', 'Creation', 'Interests']);
-  assert.ok(f.text().includes('not indexed here')); assert.ok(f.text().includes('Unclassified content'));
+  assert.ok(f.text().includes('saved titles, bodies and readable source text'));
+  assert.ok(f.text().includes('previously unsaved bodies cannot be recovered'));
+  assert.ok(f.text().includes('Unclassified content'));
 });
 
 const developmentRecord = extra => record({ context_id: OTHER, source_kind: 'development', source_semantics: 'development_context',
   canonical_scope: 'project:' + PROJECT, scope: 'project:' + PROJECT, record_type: 'annotation', lifecycle_status: 'ACTIVE',
   record_schema_version: null, authority: 'candidate', qualification: 'candidate', authoritative: false, record_currentness: 'UNKNOWN',
   content: '{"title":"Engineering candidate","proposal":"Try blue"}', type_fields: {}, relations: {}, source_refs: [EVIDENCE], ...extra });
+
+const retainedMatch = (version = 1, extra = {}) => ({
+  id: ID, scope: 'global', context_id: null, source_kind: 'canonical', version, matched_record_version: version,
+  snippet: 'OLD retained body excerpt', updated_at: '2026-10-17T06:00:00Z', record_currentness: 'HISTORY',
+  authoritative: false, current_input_eligible: false, full_body_included: false, ...extra,
+});
+const sourceMatch = (historical = false, extra = {}) => ({
+  evidence_id: EVIDENCE, record_id: ID, record_version: 3, source_record_version: historical ? 1 : 3,
+  historical_record_version: historical ? 1 : null, scope: 'global', context_id: null,
+  snippet: 'SOURCE saved original excerpt', record_updated_at: '2026-10-17T06:00:00Z',
+  source_semantics: historical ? 'historical_evidence' : 'linked_evidence', evidence_status: 'retained',
+  authoritative: false, current_input_eligible: false, full_body_included: false, ...extra,
+});
+const searchable = (revisions = [], sources = [], extra = {}) => record({
+  version: 3, content: 'LATEST body stays separate', authoritative: false, source_semantics: 'canonical_record',
+  matched_revisions: revisions, matched_revision_count: revisions.length, matched_revisions_truncated: false,
+  matched_sources: sources, matched_source_count: sources.length, matched_sources_truncated: false, ...extra,
+});
+const revisionResult = (version = 1, extra = {}) => ({
+  status: 'ok', available: true, complete: true, record_id: ID, record_version: 3, historical_record_version: version,
+  source_kind: 'canonical', scope: 'global', context_id: null, authoritative: false, current_input_eligible: false,
+  record: record({ version, content: 'OLD full retained body ' + version, record_currentness: 'HISTORY',
+    authoritative: false, current_input_eligible: false, updated_at: '2026-10-17T06:00:00Z', source_refs: [EVIDENCE] }),
+  ...extra,
+});
+async function searchedFixture(t, row, contextId) {
+  const f = fixture(session('owner'), 'zh-CN', contextId); t.after(() => f.unmount());
+  await f.respond(0, page());
+  f.check('包含旧版本及待核对内容', true); await f.respond(1, page());
+  f.change('搜索当前视图', 'OLD'); f.submit('搜索'); await f.respond(2, page([row]));
+  assert.equal(f.calls[2].args.p_input.include_history, true); assert.equal(f.calls[2].args.p_input.query, 'OLD');
+  return f;
+}
+
+test('retained Canonical history reads exact old version while the latest complete body remains separate', async t => {
+  const f = await searchedFixture(t, searchable([retainedMatch()]));
+  assert.ok(f.text().includes('LATEST body stays separate')); assert.ok(f.text().includes('OLD retained body excerpt'));
+  assert.ok(!f.text().includes('OLD full retained body')); assert.ok(f.text().includes('历史，非当前'));
+  f.click('读取这个版本的完整正文: 1');
+  assert.equal(f.calls[3].name, 'clued_imprint_revision_read_v1');
+  assert.deepEqual(plain(f.calls[3].args.p_input), { record_id: ID, record_version: 3, historical_record_version: 1, scope: 'global' });
+  await f.respond(3, revisionResult());
+  assert.ok(f.text().includes('OLD full retained body 1')); assert.ok(f.text().includes('LATEST body stays separate'));
+  assert.equal(f.nodes('script').length, 0);
+  f.click('读取来源: ' + EVIDENCE);
+  assert.deepEqual(plain(f.calls[4].args.p_input), { record_id: ID, record_version: 3, historical_record_version: 1,
+    evidence_id: EVIDENCE, include_history: true });
+  await f.respond(4, { status: 'ok', available: true, complete: true, record_id: ID, record_version: 3, source_record_version: 1,
+    historical_record_version: 1, source_semantics: 'historical_evidence', authoritative: false, current_input_eligible: false,
+    evidence_status: 'retained', content: 'SOURCE full old body', evidence: { id: EVIDENCE } });
+  assert.ok(f.text().includes('SOURCE full old body')); assert.ok(f.text().includes('不能作为当前输入'));
+  assert.ok(f.calls.every(call => !/mutate|set|promote/.test(call.name)), 'reading history never writes or promotes it');
+});
+
+test('source-only historical matches request both current-card and selected-source versions', async t => {
+  const f = await searchedFixture(t, searchable([], [sourceMatch(true)]));
+  assert.ok(f.text().includes('来源全文命中')); assert.ok(f.text().includes('历史来源'));
+  assert.ok(!f.nodes('section').some(node => node.props['aria-label'] === '历史版本命中'));
+  f.click('读取来源: ' + EVIDENCE);
+  assert.equal(f.calls[3].args.p_input.record_version, 3); assert.equal(f.calls[3].args.p_input.historical_record_version, 1);
+  await f.respond(3, { status: 'ok', available: false, unavailable_reason: 'stale_record_version' });
+  assert.ok(f.text().includes('对象已有更新')); assert.ok(!f.text().includes('SOURCE full'));
+});
+
+test('complete historical read rejects mismatched identity, scope, version, context or authority', async t => {
+  for (const bad of [
+    { record_version: 2 }, { historical_record_version: 2 }, { record_id: OTHER }, { scope: 'project:' + PROJECT },
+    { context_id: OTHER }, { authoritative: true }, { current_input_eligible: true }, { complete: false },
+    { record: { ...revisionResult().record, id: OTHER } }, { record: { ...revisionResult().record, version: 2 } },
+    { record: { ...revisionResult().record, authoritative: true } },
+  ]) {
+    const f = await searchedFixture(t, searchable([retainedMatch()]));
+    f.click('读取这个版本的完整正文: 1'); await f.respond(3, revisionResult(1, bad));
+    assert.ok(!f.text().includes('OLD full retained body')); assert.ok(f.text().includes('读取结果未知'));
+  }
+});
+
+test('malformed query hits fail as unknown before snippets, hidden counts or a forged namespace render', async t => {
+  for (const bad of [
+    { matched_revisions: [retainedMatch(1, { id: OTHER, snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { source_kind: 'development', snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { context_id: OTHER, snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { version: 3, snippet: 'PRIVATE forged hit' })] },
+    { matched_revisions: [retainedMatch(1, { content: 'PRIVATE forged hit'.repeat(10000) })] },
+    { matched_revisions: [retainedMatch(1, { body: 'PRIVATE forged hit' })] },
+    { matched_revision_count: 999, matched_revisions_truncated: false },
+    { matched_sources: [sourceMatch(true, { record_version: 2, snippet: 'PRIVATE forged hit' })] },
+    { matched_sources: [sourceMatch(true, { historical_record_version: 2, snippet: 'PRIVATE forged hit' })] },
+    { matched_sources: [sourceMatch(true, { current_input_eligible: true, snippet: 'PRIVATE forged hit' })] },
+  ]) {
+    const f = await searchedFixture(t, searchable([retainedMatch()], [], bad));
+    assert.equal(f.nodes('article').length, 0); assert.ok(f.text().includes('读取结果未知'));
+    assert.ok(!f.text().includes('PRIVATE forged hit')); assert.ok(!f.text().includes('999'));
+  }
+});
+
+test('newer historical reads win and late responses cannot repopulate after account or filter changes', async t => {
+  const f = await searchedFixture(t, searchable([retainedMatch(1), retainedMatch(2)]));
+  f.click('读取这个版本的完整正文: 1'); f.click('读取这个版本的完整正文: 2');
+  await f.respond(4, revisionResult(2)); await f.respond(3, revisionResult(1));
+  assert.ok(f.text().includes('OLD full retained body 2')); assert.ok(!f.text().includes('OLD full retained body 1'));
+  f.click('读取这个版本的完整正文: 1'); f.setSession(session('another'));
+  await f.respond(5, revisionResult(1));
+  assert.ok(!f.text().includes('OLD full retained body')); assert.ok(!f.text().includes('LATEST body stays separate'));
+  await f.respond(6, page([searchable([retainedMatch()])]));
+  f.click('读取这个版本的完整正文: 1'); f.check('包含旧版本及待核对内容', false);
+  await f.respond(7, revisionResult()); assert.ok(!f.text().includes('OLD full retained body'));
+  await f.respond(8, page()); assert.equal(f.nodes('article').length, 0);
+});
+
+test('historical full read carries exact context and cannot finish in a replacement directory', async t => {
+  const row = searchable([retainedMatch(1, { scope: 'project:' + PROJECT, context_id: OTHER })], [],
+    { canonical_scope: 'project:' + PROJECT, scope: 'project:' + PROJECT, source_kind: 'canonical', context_id: OTHER });
+  const f = await searchedFixture(t, row, OTHER);
+  f.click('读取这个版本的完整正文: 1');
+  assert.equal(f.calls[3].args.p_input.context_id, OTHER); assert.equal(f.calls[3].args.p_input.scope, 'project:' + PROJECT);
+  f.setDevelopmentContext(PROJECT);
+  await f.respond(3, revisionResult(1, { context_id: OTHER, scope: 'project:' + PROJECT,
+    record: { ...revisionResult().record, scope: 'project:' + PROJECT, canonical_scope: 'project:' + PROJECT } }));
+  assert.ok(!f.text().includes('OLD full retained body')); assert.equal(f.calls[4].args.p_input.context_id, PROJECT);
+});
+
+test('over-limit full reads report unavailable and exact partial counts stay honest', async t => {
+  const row = searchable([retainedMatch()], [], { matched_revision_count: 23, matched_revisions_truncated: true });
+  const f = await searchedFixture(t, row);
+  assert.ok(f.text().includes('已显示 1 个历史命中，共 23 个'));
+  f.click('读取这个版本的完整正文: 1');
+  await f.respond(3, { status: 'ok', available: false, complete: false, unavailable_reason: 'revision_content_exceeds_read_limit' });
+  assert.ok(f.text().includes('超过单次完整读取上限')); assert.ok(!f.text().includes('OLD full retained body'));
+});
+
+test('a non-authoritative history query does not expose the current-task due-date write control', async t => {
+  const f = await searchedFixture(t, searchable([retainedMatch()], [], { record_type: 'task', type_fields: { execution_bucket: 'later' } }));
+  assert.equal(f.nodes('input').filter(node => node.props.type === 'datetime-local').length, 0);
+});
+
+test('source full reads reject wrong identities, incomplete bodies and over-limit UTF8 before rendering', async t => {
+  for (const bad of [
+    { record_id: OTHER }, { evidence: { id: OTHER } }, { evidence: null }, { complete: false }, { complete: undefined },
+    { content: 'PRIVATE invalid source'.repeat(10000) }, { content: '界'.repeat(50000) },
+    { authoritative: true }, { current_input_eligible: true },
+  ]) {
+    const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page([record({ source_refs: [EVIDENCE] })]));
+    f.click('读取来源: ' + EVIDENCE);
+    await f.respond(1, { status: 'ok', available: true, complete: true, record_id: ID, record_version: 2,
+      evidence: { id: EVIDENCE }, authoritative: false, current_input_eligible: false, content: 'PRIVATE invalid source', ...bad });
+    assert.ok(f.text().includes('读取结果未知')); assert.ok(!f.text().includes('PRIVATE invalid source'));
+    assert.ok(!f.text().includes('界界界'));
+  }
+});
 
 test('development mode shares eight views but isolates Native families, context and candidate identity', async t => {
   const f = fixture(session('owner'), 'zh-CN', OTHER); t.after(() => f.unmount());

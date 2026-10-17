@@ -91,7 +91,8 @@ export function sourceKind(record: ImprintRecord): "canonical" | "development" |
   return null;
 }
 export function canEditDue(record: ImprintRecord): boolean {
-  return record.record_type === "task" && record.record_schema_version === 1 && record.lifecycle_status === "active" && record.record_currentness === "CURRENT";
+  return record.record_type === "task" && record.record_schema_version === 1 && record.lifecycle_status === "active"
+    && record.record_currentness === "CURRENT" && record.authoritative !== false;
 }
 // This panel reads typed Records. Event carriers have their own authority
 // contract and are never accepted by applying this Record predicate.
