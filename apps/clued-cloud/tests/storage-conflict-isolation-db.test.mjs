@@ -344,6 +344,24 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
    // to exercise the separately authenticated GET-only settlement path.
    await db.query("update clued_private.storage_connections_v1 set state='reauthorization_required',credential_envelope=null where id=$1",[connection]);
    await db.query("update clued_private.resource_center_mutations_v1 set expires_at=clock_timestamp()-interval '3 hours' where id=$1",[row.id]);
+   const sweepBlocker=server.getPgClient();clients.push(sweepBlocker);await sweepBlocker.connect();
+   for(const key of ['storage-client:'+owner+':'+lineage,'storage-job:'+owner+':'+late.reference.job_id,owner+':'+cloudRoot]){
+    await sweepBlocker.query('begin');
+    try{
+     await sweepBlocker.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[key]);
+     await db.query("set statement_timeout='1500ms'");
+     assert.equal((await db.query('select clued_private.storage_conflict_close_candidate_v1($1) v',[row.id])).rows[0].v,'not_due','a sweep never waits on a new client/job/root lock while retaining previous candidates');
+     assert.equal((await journal(late)).state,'started');
+    }finally{await sweepBlocker.query('rollback');await db.query('reset statement_timeout');}
+   }
+   const beforeBusyReceipts=(await db.query('select count(*)::int n from public.clued_audit_receipts where user_id=$1',[owner])).rows[0].n;
+   await sweepBlocker.query('begin');try{
+    await sweepBlocker.query("select pg_advisory_xact_lock(hashtextextended('storage-object:'||$1,0))",[row.provider_attempt.provider_file_id]);
+    await db.query("set statement_timeout='1500ms'");
+    await assert.rejects(db.query('select clued_private.storage_conflict_close_candidate_v1($1) v',[row.id]),/storage_conflict_candidate_busy/);
+    assert.equal((await journal(late)).state,'started');
+    assert.equal((await db.query('select count(*)::int n from public.clued_audit_receipts where user_id=$1',[owner])).rows[0].n,beforeBusyReceipts,'busy object rolls back the candidate Receipt rather than leaving it pending');
+   }finally{await sweepBlocker.query('rollback');await db.query('reset statement_timeout');}
    const swept=(await db.query('select clued_private.storage_conflict_sweep_v1() v')).rows[0].v;assert.ok(swept);row=await journal(late);assert.equal(row.state,'conflict');
    await db.query("update clued_private.storage_connections_v1 set state='active',credential_envelope=$2 where id=$1",[connection,{contract:'clued.storage-credential/1',key_id:'disposable',nonce:'abcdefghijklmnop',ciphertext:'abcdefghijklmnopqrstuvwxyz'}]);
    const quarantine=(await db.query('select * from clued_private.storage_conflict_isolations_v1 where intent_id=$1',[row.id])).rows[0];assert.equal(quarantine.scope_complete,true);
@@ -748,6 +766,16 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
      assert.equal(row.receipt_id,original.closed.receipt_id);
     }
     assert.doesNotMatch(JSON.stringify(currentList),/credential_envelope|access_token|recovery_reader|provider_attempt/);
+    // Keep a real list transaction open while another session owns job B.
+    // The listing must acquire neither its job lock nor any root lock.
+    const blocker=server.getPgClient();clients.push(blocker);await blocker.connect();
+    await blocker.query('begin');await native.query('begin');
+    try{
+     await blocker.query("select pg_advisory_xact_lock(hashtextextended('storage-job:'||$1||':'||$2,0))",[owner,afterJob.reference.job_id]);
+     await native.query("set local statement_timeout='1500ms'");
+     assert.ok((await listCurrent()).jobs.some(value=>value.job_id===afterJob.reference.job_id),'list does not wait on a recovering predecessor job');
+     assert.equal((await blocker.query("select pg_try_advisory_xact_lock(hashtextextended($1||':'||$2,0)) available",[owner,cloudRoot])).rows[0].available,true,'list holds no execution root lock');
+    }finally{await native.query('rollback');await blocker.query('rollback');}
     const input={...automaticInput(beforeJob),credential_version:2,recovery_reader:descriptor.recovery_reader};
     await assert.rejects(rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{...input,recovery_reader:{...input.recovery_reader,connection_version:input.recovery_reader.connection_version+1}}),/storage_automatic_reconcile_conflict|storage_recovery_reader_changed/);
     for(const fault of ['root','client','credential','subject','client_id','policy']){
@@ -765,6 +793,32 @@ test('A4 I9 conflict isolation: actual PostgreSQL migration and scoped receipts'
       await assert.rejects(db.query('select clued_private.storage_recovery_reader_assert_v1($1,$2::jsonb)',[cloudIssuer,JSON.stringify(input)]),/storage_recovery_denied|storage_recovery_reader_changed/);
      }finally{await db.query('rollback');}
     }
+    const recovering=server.getPgClient(),denying=server.getPgClient();clients.push(recovering,denying);
+    await recovering.connect();await denying.connect();await setWorkerGatewayCaller(recovering);
+    await denying.query('set role authenticated');
+    await denying.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",[owner,JSON.stringify({sub:owner,session_id:session})]);
+    const deny=async(denied,generation)=>(await denying.query('select public.clued_storage_read_access_v1($1::jsonb) v',[JSON.stringify({action:'deny_class',binding_id:approved.binding_id,class:'read',denied,base_generation:generation,idempotency_key:id()})])).rows[0].v;
+    const loadRacing=()=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,{action:'load',...beforeJob.reference},recovering);
+    const waitBlocked=async caller=>{const pid=(await caller.query('select pg_backend_pid() pid')).rows[0].pid;return pid;};
+    const recoveringPid=await waitBlocked(recovering),denyingPid=await waitBlocked(denying);
+    const blocked=async pid=>{for(let n=0;n<200;n++){if((await db.query('select exists(select 1 from pg_locks where pid=$1 and not granted) waiting',[pid])).rows[0].waiting)return;await new Promise(resolve=>setTimeout(resolve,5));}assert.fail('the competing operation did not serialize on its lineage guard');};
+    let pending;
+    await recovering.query('begin');await denying.query('begin');
+    try{
+     assert.equal((await loadRacing()).recovery_reader.connection_id,readerConnection);
+     pending=deny(true,0).then(value=>({value}),error=>({error}));await blocked(denyingPid);
+     await recovering.query('commit');const outcome=await pending;assert.ifError(outcome.error);assert.equal(outcome.value.status,'committed');
+     await denying.query('commit');await assert.rejects(loadRacing(),/storage_recovery_denied/);
+     assert.equal((await deny(false,1)).status,'committed');
+    }finally{await recovering.query('rollback');await denying.query('rollback');await pending;}
+    await denying.query('begin');await recovering.query('begin');
+    try{
+     assert.equal((await deny(true,2)).status,'committed');
+     pending=loadRacing().then(value=>({value}),error=>({error}));await blocked(recoveringPid);
+     assert.equal((await db.query("select pg_try_advisory_xact_lock(hashtextextended($1||':'||$2,0)) available",[owner,cloudRoot])).rows[0].available,true,'a denied waiter has not taken the root before the client guard');
+     await denying.query('commit');const outcome=await pending;assert.match(outcome.error?.message??'',/storage_recovery_denied/);
+    }finally{await denying.query('rollback');await pending;await recovering.query('rollback');}
+    assert.equal((await deny(false,3)).status,'committed');
     const bridge=await createStorageRecoveryReview({client_id:oauthClient,vault:vaultConfig,descriptor,source_receipt_id:beforeJob.closed.receipt_id,fetch:drive,rpc:value=>rpc('clued_storage_scheduled_recovery_v2',cloudIssuer,value)});
     const reconciled=await bridge.reconcile(beforeJob.reference);assert.equal(reconciled.status,'resolved');
     assert.equal((await journal(beforeJob)).state,'conflict','old unknown outcome is retained');

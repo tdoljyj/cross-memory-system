@@ -16,7 +16,7 @@ begin
  or original.provider is distinct from c.provider or original.provider_subject is distinct from c.provider_subject
  or original.oauth_client_id is distinct from c.oauth_client_id then return false;end if;
  begin
-  reader:=clued_private.storage_recovery_reader_v1(p_issuer_identity,j.connection_id,j.job_id,c.id);
+  reader:=clued_private.storage_recovery_reader_snapshot_v1(p_issuer_identity,j.connection_id,j.job_id,c.id);
  exception when insufficient_privilege or invalid_text_representation then return false;
  end;
  return reader->'recovery_reader'->>'connection_id'=c.id::text;

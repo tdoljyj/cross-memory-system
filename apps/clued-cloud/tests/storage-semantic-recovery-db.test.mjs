@@ -307,6 +307,42 @@ test("semantic recovery: actual migration, independent predicates and private bo
      const later = await ctx.submitJob(f.target, f.client, ctx.modify("rename", f.source.path, f.source.path.replace("before.txt", "usable.txt"), refreshed.provider_file_version));
      assert.equal((await ctx.executor(f.target, f.storage, undefined, undefined, { semantic: true }).run(later.reference)).status, "committed");
     });
+    await t.test("semantic before recovery with a replacement connection binds the actual reader into its Receipt and Event", async () => {
+     const f = await interrupted({ i9: true });
+     const originalConnection=f.target.connection,newPolicy=crypto.randomUUID();
+     await db.query('begin');try{
+      await db.query("update clued_private.storage_account_policies_v2 set state='revoked',revoked_at=clock_timestamp(),revocation_receipt_id=$2 where connection_id=$1 and state='active'",[originalConnection,f.target.receipt]);
+      await db.query("update clued_private.storage_connections_v1 set state='revoked',revoked_at=clock_timestamp(),version=version+1,auth_mode='revoked',account_policy_id=null,auth_generation=auth_generation+1 where id=$1",[originalConnection]);
+      await db.query('commit');
+     }catch(error){await db.query('rollback');throw error;}
+     const registration=await ctx.account({action:'register',profile_id:f.target.profile,source_decision_id:decision,idempotency_key:crypto.randomUUID()});
+     assert.equal(registration.status,'committed');const current=registration.target_refs.find(r=>r.role==='primary').id;
+     const vaultConfig={current_key_id:'replacement',keys:{replacement:crypto.randomBytes(32).toString('base64url')}},vault=await createStorageCredentialVault(vaultConfig);
+     const envelope=await vault.seal(JSON.stringify({token_type:'Bearer',access_token:ctx.access_token,
+      scope:'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly',expires_at_ms:Date.now()+3600000}),
+      {owner_id:owner,connection_id:current,provider:'google-drive',provider_subject:ctx.provider_subject,oauth_client_id:ctx.oauth_client_id,credential_version:2});
+     await db.query('begin');try{
+      await db.query("update clued_private.storage_connections_v1 set state='active',provider_subject=$2,oauth_client_id=$3,credential_version=2,credential_envelope=$4 where id=$1",[current,ctx.provider_subject,ctx.oauth_client_id,JSON.stringify(envelope)]);
+      await db.query(`insert into clued_private.storage_account_policies_v2(id,owner_id,connection_id,provider,provider_subject,root_folder_id,profile_id,scope_digest,policy_generation,source_decision_id,decision_version,consent_source,disclosure_version,consent_receipt_id)
+       select $1,c.owner_id,c.id,c.provider,c.provider_subject,p.root_folder_id,p.id,clued_private.storage_policy_scope_digest_v2(c.id),1,c.source_decision_id,c.decision_version,'reviewed_transition','semantic-reader-fixture/1',c.receipt_id
+       from clued_private.storage_connections_v1 c join clued_private.resource_center_profiles_v1 p on p.id=c.profile_id where c.id=$2`,[newPolicy,current]);
+      await db.query("update clued_private.storage_account_policies_v2 set state='active',activation_receipt_id=$2 where id=$1",[newPolicy,registration.receipt_id]);
+      await db.query("update clued_private.storage_connections_v1 set auth_mode='account_policy',account_policy_id=$2,auth_generation=auth_generation+1 where id=$1",[current,newPolicy]);
+      await db.query('commit');
+     }catch(error){await db.query('rollback');throw error;}
+     const issuer=await scalar('select issuer_hash v from clued_private.storage_oauth_apps_v1 where oauth_client_id=$1',[ctx.oauth_client_id]);
+     const descriptor=await scalar('select public.clued_storage_scheduled_recovery_v2($1,$2::jsonb) v',[issuer,JSON.stringify({...f.job.reference,action:'load'})]);
+     assert.equal(descriptor.recovery_reader.connection_id,current);assert.ok(descriptor.semantic_recovery);
+     const calls=[],recovery=await createStorageCloudRecovery({client_id:ctx.oauth_client_id,vault:vaultConfig,fetch:f.storage.fetch,
+      rpc:async()=>{throw Error('wrong recovery route');},verified:{descriptor,rpc:async input=>{calls.push(input);return ctx.cloud(input);}}});
+     const result=await recovery.run(f.job.reference);assert.equal(result.status,'resolved',JSON.stringify({result,cloudErrors}));
+     assert.deepEqual(calls.map(input=>input.action),['semantic_settle']);assert.equal(f.storage.patches,0);
+     const audit=(await db.query(`select r.received_payload_hash=clued_private.m1_sha256(e.change_summary||jsonb_build_object('idempotency_key',r.idempotency_key)) digest_valid,
+      e.change_summary payload from public.clued_audit_receipts r join public.clued_context_events e on e.receipt_id=r.id where r.id=$1`,[result.receipt_id])).rows[0];
+     assert.ok(audit);assert.equal(audit.digest_valid,true);assert.equal(audit.payload.credential_version,2);
+     assert.deepEqual(audit.payload.recovery_reader,descriptor.recovery_reader);assert.equal(audit.payload.job_id,f.job.reference.job_id);
+     assert.equal((await ctx.journal(f.job)).state,'conflict');assert.equal(await scalar('select state v from clued_private.storage_connections_v1 where id=$1',[originalConnection]),'revoked');
+    });
     await t.test("actual content conflict fences only the validated object and releases the running root", async () => {
      const f = await interrupted({ changed: true });const result = await f.recovery.run(f.job.reference);
      assert.equal(result.status, "attention_required", JSON.stringify({ result, cloudErrors }));assert.equal(f.storage.patches, 0);

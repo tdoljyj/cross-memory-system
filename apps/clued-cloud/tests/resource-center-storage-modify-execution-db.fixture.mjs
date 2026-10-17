@@ -236,7 +236,7 @@ export async function testStorageModifyExecution(t, admin, server, user, decisio
 
   try {
     if (options.extra_cases) await options.extra_cases({
-      setup, createFile, directoryIn, cloud, submitJob, modify, executor, journal, artifact,
+      setup, createFile, directoryIn, cloud, submitJob, modify, executor, journal, artifact, account,
       oauth_client_id: oauthClient, owner_id: user, provider_subject: "modify-exec-subject", access_token: "fixture-modify-exec-access",
     });
     if (options.only_extra) return;

@@ -1,6 +1,19 @@
 -- Recovery may use a current read credential of the same Owner, Google
 -- subject, OAuth client and immutable original root. It never revives the
 -- original writer, policy generation or provider execution authorization.
+create function clued_private.storage_recovery_client_guard_v1(p_connection uuid,p_job uuid) returns void
+language plpgsql security definer set search_path='' as $$
+declare j clued_private.storage_jobs_v1;lineage uuid;
+begin
+ select * into j from clued_private.storage_jobs_v1 where connection_id=p_connection and job_id=p_job;
+ lineage:=(j.authority_snapshot_v2->>'registration_lineage')::uuid;
+ if j.owner_id is not null and lineage is not null then
+  perform clued_private.storage_client_guard_v2(j.owner_id,lineage,false);
+ end if;
+end $$;
+revoke all on function clued_private.storage_recovery_client_guard_v1(uuid,uuid)
+ from public,anon,authenticated,service_role,clued_worker_gateway;
+
 create function clued_private.storage_recovery_reader_v1(
  p_issuer_identity text,p_original_connection uuid,p_job uuid,p_selected uuid default null) returns jsonb
 language plpgsql security definer set search_path='' as $$
@@ -9,6 +22,7 @@ declare j clued_private.storage_jobs_v1;original clued_private.storage_connectio
  m clued_private.resource_center_mutations_v1;q clued_private.storage_conflict_isolations_v1;
  policy clued_private.storage_account_policies_v2;root text;lineage uuid;reader jsonb;
 begin
+ perform clued_private.storage_recovery_client_guard_v1(p_original_connection,p_job);
  select * into j from clued_private.storage_jobs_v1 where connection_id=p_original_connection and job_id=p_job;
  if j.job_id is null then raise exception 'storage_recovery_denied' using errcode='42501';end if;
  perform pg_advisory_xact_lock(hashtextextended('storage-job:'||j.owner_id::text||':'||j.job_id::text,0));
@@ -58,6 +72,30 @@ begin
  return jsonb_build_object('recovery_reader',reader,'credential_version',c.credential_version,'credential_envelope',c.credential_envelope);
 end $$;
 revoke all on function clued_private.storage_recovery_reader_v1(text,uuid,uuid,uuid)
+ from public,anon,authenticated,service_role,clued_worker_gateway;
+
+-- Native listing is an MVCC eligibility projection, not an execution/settlement
+-- transaction. It must never keep job A's root lock while inspecting job B.
+-- Actual load and settlement still use the fully locked reader above.
+do $snapshot$
+declare body text;anchor text;expected integer;
+begin
+ body:=pg_get_functiondef('clued_private.storage_recovery_reader_v1(text,uuid,uuid,uuid)'::regprocedure);
+ body:=replace(body,'FUNCTION clued_private.storage_recovery_reader_v1(',
+  'FUNCTION clued_private.storage_recovery_reader_snapshot_v1(');
+ foreach anchor in array array[
+  ' perform clued_private.storage_recovery_client_guard_v1(p_original_connection,p_job);',
+  ' perform pg_advisory_xact_lock(hashtextextended(''storage-job:''||j.owner_id::text||'':''||j.job_id::text,0));',
+  ' perform pg_advisory_xact_lock(hashtextextended(j.owner_id::text||'':''||root,0));',
+  ' perform clued_private.authorization_account_v12(j.owner_id);'] loop
+  if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then raise exception 'storage_reader_snapshot_source_mismatch';end if;
+  body:=replace(body,anchor,'');
+ end loop;
+ anchor:=' for share';expected:=(length(body)-length(replace(body,anchor,'')))/length(anchor);
+ if expected<>3 then raise exception 'storage_reader_snapshot_row_locks_mismatch';end if;
+ body:=replace(body,anchor,'');execute body;
+end $snapshot$;
+revoke all on function clued_private.storage_recovery_reader_snapshot_v1(text,uuid,uuid,uuid)
  from public,anon,authenticated,service_role,clued_worker_gateway;
 
 create function clued_private.storage_recovery_reader_assert_v1(p_issuer_identity text,p_input jsonb) returns void
@@ -169,6 +207,11 @@ begin
  if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then raise exception 'storage_reader_semantic_context_mismatch';end if;
  body:=replace(body,anchor,anchor||$r$
  or coalesce(d->'recovery_reader','null'::jsonb) is distinct from coalesce(i->'recovery_reader','null'::jsonb)$r$);
+ anchor:=$a$ r:=clued_private.m1_begin_receipt(j.owner_id,null,operation,req,clued_private.m1_sha256(req));$a$;
+ if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then raise exception 'storage_reader_semantic_receipt_mismatch';end if;
+ body:=replace(body,anchor,$r$ req:=req||jsonb_build_object('credential_version',d->'credential_version')||
+  case when d ? 'recovery_reader' then jsonb_build_object('recovery_reader',d->'recovery_reader') else '{}'::jsonb end;
+$r$||anchor);
  execute body;
 end $semantic$;
 
@@ -244,5 +287,59 @@ $r$||anchor);
   execute body;
  end loop;
 end $review$;
+
+-- Every externally reachable recovery/verification transaction enters the
+-- original lineage shared guard before any job/root lock. Owner client/read
+-- denies take the matching exclusive guard, so a committed denial cannot be
+-- overtaken by a previously checked but not yet committed recovery result.
+-- A sweep may have processed earlier roots/jobs in the same transaction.
+-- Its candidate never waits for a new client/job/root execution lock: skip a
+-- busy candidate and let the next bounded scan retry it, retaining all truth.
+do $scan_locks$
+declare body text;anchor text;
+begin
+ body:=pg_get_functiondef('clued_private.storage_conflict_close_candidate_v1(uuid)'::regprocedure);
+ anchor:=$a$ if j.job_id is not null then perform pg_advisory_xact_lock(hashtextextended('storage-job:'||m.user_id::text||':'||j.job_id::text,0)); end if;$a$;
+ if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then raise exception 'storage_reader_scan_job_lock_mismatch';end if;
+ body:=replace(body,anchor,$r$ if j.job_id is not null then
+  if j.authority_snapshot_v2->>'registration_lineage' is not null and not pg_try_advisory_xact_lock_shared(
+   hashtextextended('storage-client:'||m.user_id::text||':'||(j.authority_snapshot_v2->>'registration_lineage'),0)) then return 'not_due';end if;
+  if not pg_try_advisory_xact_lock(hashtextextended('storage-job:'||m.user_id::text||':'||j.job_id::text,0)) then return 'not_due';end if;
+ end if;$r$);
+ anchor:=$a$ perform pg_advisory_xact_lock(hashtextextended(m.user_id::text||':'||p.root_folder_id,0));$a$;
+ if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then raise exception 'storage_reader_scan_root_lock_mismatch';end if;
+ body:=replace(body,anchor,$r$ if not pg_try_advisory_xact_lock(hashtextextended(m.user_id::text||':'||p.root_folder_id,0)) then return 'not_due';end if;$r$);
+ anchor:=$a$   perform pg_advisory_xact_lock(hashtextextended('storage-object:'||identity,0));$a$;
+ if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then raise exception 'storage_reader_scan_object_lock_mismatch';end if;
+ body:=replace(body,anchor,$r$   if not pg_try_advisory_xact_lock(hashtextextended('storage-object:'||identity,0)) then
+    -- The candidate Receipt has already begun: throw so the statement/sweep
+    -- subtransaction rolls it back, rather than returning a pending receipt.
+    raise exception 'storage_conflict_candidate_busy' using errcode='55P03';end if;$r$);
+ execute body;
+end $scan_locks$;
+
+do $guards$
+declare target record;body text;at integer;statement text;
+begin
+ for target in select * from (values
+  ('clued_private.storage_conflict_load_v1(text,jsonb)','p_input'),
+  ('clued_private.storage_verified_before_conflict_v1(text,jsonb)','p_input'),
+  ('clued_private.storage_conflict_verified_v1(text,jsonb)','p_input'),
+  ('clued_private.storage_semantic_settle_v1(text,jsonb)','i'),
+  ('clued_private.storage_automatic_reconcile_v1(text,jsonb)','p_input'),
+  ('clued_private.ii_priv_storage_verified_result_v2(text,jsonb)','p_input'),
+  ('clued_private.ii_pub_clued_storage_scheduled_recovery_v2(text,jsonb)','p_input'),
+  ('clued_private.ii_pub_clued_storage_native_recovery_v1(text,jsonb)','p_input'),
+  ('clued_private.ii_pub_clued_storage_cloud_worker_router_v2(text,jsonb)','p_input'),
+  ('public.clued_storage_native_recovery_load_v2(text,jsonb)','p_input')
+ ) signatures(signature,input_name) loop
+  body:=pg_get_functiondef(target.signature::regprocedure);
+  at:=strpos(body,E'\nbegin\n');
+  if at=0 then raise exception 'storage_reader_guard_entry_mismatch: %',target.signature;end if;
+  statement:=format(E' perform clued_private.storage_recovery_client_guard_v1((%I->>''connection_id'')::uuid,(%I->>''job_id'')::uuid);\n',target.input_name,target.input_name);
+  body:=overlay(body placing E'\nbegin\n'||statement from at for length(E'\nbegin\n'));
+  execute body;
+ end loop;
+end $guards$;
 
 notify pgrst,'reload schema';

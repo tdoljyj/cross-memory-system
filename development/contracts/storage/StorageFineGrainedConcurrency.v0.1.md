@@ -460,6 +460,8 @@ I12 的撤销、终止和本地同步效果证明没有被本增量删除或伪�
 
 服务端返回独立 `clued.storage-recovery-reader/1`，包括实际读取连接、连接/凭证版本、授权 generation、policy 身份/generation/scope digest 与 profile version。Worker 只能用该读取连接的真实 vault AAD 解封；原 job 的 `connection_id` 仍是原历史身份。结算事务重新检查同一 reader，发生撤销、换账号/client、root/client/read deny 或版本变化就拒绝，不改写物理效果。
 
+执行与结算入口按原 client lineage shared guard → job → root 顺序进入，Owner client/read deny 使用同一 lineage 的 exclusive guard，不能在撤销已提交后继续提交旧核验结果。多作业 Native 列表仅作无执行锁的当前资格投影；真实 load/settle 重新完整核对。I9 扫描在已经处理其他候选时不等待新的 lineage/job/root/object 执行锁，忙对象留给后续有界扫描，不能以忙或超时伪造结案。对象锁在候选 Receipt 开始后遇忙时抛出受控异常，使整个候选子事务和 pending Receipt 一并回滚，不能返回一个悬空回执。
+
 before 仍经原双 GET、I2/I9、登记与 I11 出口；新 reader 及实际凭证版本写进独立恢复回执。after 仍经过原完整 typed verifier、原 admission/attempt/Receipt/registry 与语义证明链；reader 不能跳过 proof 形状、原 revision 保留或 CAS。实际 reader 记入不可变持久化 proof，之后按原 `settle_verified` 结案。观察表只在首次 INSERT 时记录 reader，不能事后改写不可变观察。
 
 当前连接的原生作业列表可列出同 Owner、同 profile/subject/client 且当前只读资格仍成立的旧连接作业。每行保留原 `connection_id`、job 和 Receipt；单独的 `read_connection_id` 只绑定当前页面上下文。页面继续只轮询状态，原作业的真正冲突取舍仍发送原 connection/job 与原 CAS；页面刷新、换账号、上下文变化或旧版本消失均作废已展示的选择。列表不向页面公开凭证或 reader 内部授权细节，旧授权不因列出而恢复。
