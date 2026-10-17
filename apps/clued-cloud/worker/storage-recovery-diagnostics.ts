@@ -82,8 +82,8 @@ function automaticRecovery(raw: Data): Data {
 export function storageRecoveryResolutionResult(value: unknown, reference: Data): Data {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("storage_recovery_response_invalid");
   const raw = value as Data, uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  const automatic = raw.resolution === "automatically_reconciled_before";
-  if (raw.status !== "resolved" || !["accepted_current_state", "abandoned_registration", "automatically_reconciled_before"].includes(String(raw.resolution)) ||
+  const automatic = ["automatically_reconciled_before", "automatically_registered_current_state"].includes(String(raw.resolution));
+  if (raw.status !== "resolved" || !["accepted_current_state", "abandoned_registration", "automatically_reconciled_before", "automatically_registered_current_state"].includes(String(raw.resolution)) ||
       raw.connection_id !== reference.connection_id || raw.job_id !== reference.job_id || raw.execution_permitted !== false ||
       !uuid.test(String(raw.receipt_id)) || !uuid.test(String(raw.source_receipt_id)) ||
       !Number.isSafeInteger(raw.base_version) || Number(raw.base_version) < 1 ||

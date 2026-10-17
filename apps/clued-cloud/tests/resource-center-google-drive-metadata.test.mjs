@@ -31,6 +31,31 @@ test("semantic reads explicitly request private marker and explicit trash withou
   assert.throws(() => createGoogleDriveMetadataApi({ get_credential: getCredential, semantic_details: "true" }), /semantic_details/);
 });
 
+test("registration observation requests listing/share capabilities and full ACL without inferring access", async () => {
+  const legacy = "id,name,mimeType,parents,version,trashed,size,sha256Checksum,md5Checksum,headRevisionId";
+  for (const authorization of [false, true]) {
+    let fields;
+    const response = { id: "known-folder", ownedByMe: false, capabilities: { canListChildren: false, canShare: false }, permissions: [] };
+    const api = createGoogleDriveMetadataApi({ get_credential: getCredential, registration_details: true,
+      authorization_details: authorization, fetch: async url => {
+        fields = new URL(url).searchParams.get("fields"); return Response.json(response);
+      } });
+    assert.deepEqual(await api.getFile("known-folder"), response, "false or absent capabilities stay facts for the verifier to reject");
+    assert.ok(fields.startsWith(legacy));
+    for (const field of ["shared", "permissionIds", "ownedByMe", "driveId", "inheritedPermissionsDisabled", "canListChildren", "canShare",
+      "explicitlyTrashed", "appProperties", "permissions(id,type,role,domain,allowFileDiscovery,expirationTime,deleted,pendingOwner,view)"])
+      assert.ok(fields.includes(field), field);
+    assert.equal((fields.match(/capabilities\(/g) ?? []).length, 1);
+    assert.equal(fields.includes("canAddChildren"), authorization);
+  }
+  let defaultFields;
+  await createGoogleDriveMetadataApi({ get_credential: getCredential, fetch: async url => {
+    defaultFields = new URL(url).searchParams.get("fields"); return Response.json({ id: "known-file" });
+  } }).getFile("known-file");
+  assert.equal(defaultFields, legacy, "existing metadata callers keep their exact projection");
+  assert.throws(() => createGoogleDriveMetadataApi({ get_credential: getCredential, registration_details: "true" }), /registration_details/);
+});
+
 test("drive.file and unknown grants never treat an empty search as absence", async () => {
   for (const scope of [undefined, "", "https://www.googleapis.com/auth/drive.file",
     "drive.metadata.readonly", "https://www.googleapis.com/auth/drive.metadata.readonly.evil"]) {

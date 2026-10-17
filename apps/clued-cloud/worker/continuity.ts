@@ -989,7 +989,7 @@ export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
           const recovery = await createStorageCloudRecovery({
             client_id: env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "", vault: JSON.parse(env.CLUED_STORAGE_VAULT_KEYS!),
             rpc: recoveryRpc, verified: { descriptor, rpc: verifiedRpc }, absent: { rpc: absentRpc }, report_expiring: true, timeout_ms: 10000,
-            report_diagnostic: reportDiagnostic,
+            report_diagnostic: reportDiagnostic, current_registration: { rpc: recoveryRpc },
           });
           return await recovery.run(reference);
         };
@@ -3552,6 +3552,10 @@ async function handleContinuityRequestInner(
           report_expiring:true, report_diagnostic: reportRecoveryDiagnostic,
           ...(accountDescriptor?.status === "recovery_only" ? {
             verified: { descriptor: accountDescriptor, rpc: verifiedRpc },
+            current_registration: { rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_scheduled_recovery_v2", {
+              method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
+              body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
+            }) as Record<string, unknown> },
             absent: { rpc: async value => await supabaseRequest(env, "/rest/v1/rpc/clued_storage_recovery_absent_v1", {
               method: "POST", redirect: "manual", signal: AbortSignal.timeout(10000),
               body: JSON.stringify({ p_issuer_hash: issuerHash, p_input: value }),
