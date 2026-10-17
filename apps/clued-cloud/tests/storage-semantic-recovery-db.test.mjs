@@ -57,8 +57,12 @@ test("semantic recovery: actual migration, independent predicates and private bo
    assert.equal(await scalar("select clued_private.storage_semantic_state_valid_v1($1::jsonb) v", [JSON.stringify(state)]), true);
    for (const bad of [null, {}, { ...state, explicitly_trashed: null }, { ...state, parent_ids: [] },
      { ...state, parent_ids: ["one", "two"] }, { ...state, marker: {} }, { ...state, sha256: "unproven" },
-     { ...state, explicitly_trashed: true }, { ...state, head_revision_id: null }])
+     { ...state, explicitly_trashed: true }, { ...state, head_revision_id: null }, { ...state, access_digest: "a".repeat(64) }])
     assert.equal(await scalar("select clued_private.storage_semantic_state_valid_v1($1::jsonb) v", [JSON.stringify(bad)]), false);
+   const directory = { ...state, mime_type: "application/vnd.google-apps.folder", head_revision_id: null, sha256: null, access_digest: "a".repeat(64) };
+   assert.equal(await scalar("select clued_private.storage_semantic_state_valid_v1($1::jsonb) v", [JSON.stringify(directory)]), true);
+   for (const access_digest of [null, {}, "unproven", "A".repeat(64), 7])
+    assert.equal(await scalar("select clued_private.storage_semantic_state_valid_v1($1::jsonb) v", [JSON.stringify({ ...directory, access_digest })]), false);
   });
   await t.test("database derives rename/move/replace/trash after predicates, never accepts a caller predicate", async () => {
    for (const operation of ["rename", "move", "replace", "delete"]) {
@@ -405,6 +409,17 @@ test("semantic recovery: actual migration, independent predicates and private bo
    });
   } });
   await testStorageDestructive(t, db, server, owner, decision, { gateway: true, only_extra: true, on_cloud_error: onCloudError, extra_cases: async ctx => {
+   for (const digest of [null, {}, "unproven"]) await t.test("private attempt route atomically rejects missing or invalid directory access evidence: " + JSON.stringify(digest), async () => {
+    const { target, client, storage } = await ctx.setup();const source = await ctx.directoryIn(target, storage, "invalid-access");
+    const job = await ctx.submitJob(target, client, ctx.trash(source));
+    const engine = ctx.executor(target, storage, async request => {
+     if (request.action === "provider_attempt") request.semantic_attempt.evidence.before.access_digest = digest;
+    }, { semantic: true });
+    assert.equal((await engine.run(job.reference)).status, "unreconciled");
+    const row = await ctx.journal(job);assert.equal(row.provider_attempt, null);assert.equal(row.provider_attempt_receipt_id, null);
+    assert.equal(Number(await scalar("select count(*) v from clued_private.storage_semantic_attempts_v1 where intent_id=$1", [row.id])), 0);
+    assert.equal(storage.patches, 0);
+   });
    for (const aclChanged of [false, true]) await t.test("directory before version refresh requires the original access state: " + !aclChanged, async () => {
     const { target, client, storage } = await ctx.setup();const source = await ctx.directoryIn(target, storage, "access-bound");
     assert.equal(source.provider_access_digest, null);assert.equal(source.provider_sharing_digest, null);

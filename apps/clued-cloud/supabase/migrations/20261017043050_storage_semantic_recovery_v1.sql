@@ -21,7 +21,8 @@ language sql immutable set search_path='' as $$
  and (s->'sha256'='null'::jsonb or (jsonb_typeof(s->'sha256')='string' and s->>'sha256'~'^[0-9a-f]{64}$'))
  and case when s->>'mime_type'='application/vnd.google-apps.folder'
  then s->'head_revision_id'='null'::jsonb and s->'sha256'='null'::jsonb
- else jsonb_typeof(s->'head_revision_id')='string' and s->>'head_revision_id'~'^[A-Za-z0-9_-]{1,200}$' end,false)
+  and jsonb_typeof(s->'access_digest')='string' and s->>'access_digest'~'^[0-9a-f]{64}$'
+ else s->'access_digest'='null'::jsonb and jsonb_typeof(s->'head_revision_id')='string' and s->>'head_revision_id'~'^[A-Za-z0-9_-]{1,200}$' end,false)
 $$;
 
 create function clued_private.storage_semantic_text_mime_v1(p_name text) returns text

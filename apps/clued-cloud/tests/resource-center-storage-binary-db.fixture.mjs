@@ -684,9 +684,18 @@ export async function testStorageBinaryUpload(t, admin, server, user, decision) 
     });
 
     await t.test("no live size / sha256 derivation reads mutation.content without a content_ref guard", async () => {
-      // The issuer-protected verified entry now dispatches to two live business
-      // implementations. Check both instead of treating the router as the body.
-      const dispatcher = await issuerBusinessDefinition(admin,"clued_private.storage_verified_result_v2(text,jsonb)");
+      // Follow the exact private semantic wrapper to the existing two business
+      // implementations. Every live layer remains subject to the content guard.
+      let dispatcher = await issuerBusinessDefinition(admin,"clued_private.storage_verified_result_v2(text,jsonb)");
+      const semanticPrevious = "clued_private.storage_semantic_verified_previous_v1(text,jsonb)";
+      if ((await admin.query("select to_regprocedure($1) oid", [semanticPrevious])).rows[0].oid) {
+        assert.match(dispatcher, /clued_private\.storage_semantic_verified_previous_v1\(p_issuer_identity,p_input-'semantic_observation'\)/);
+        assert.doesNotMatch(dispatcher, /j\.mutation->>'content'/, "the semantic wrapper derives no inline-content digest or size");
+        for (const role of ["anon", "authenticated", "service_role", "clued_worker_gateway"]) {
+          assert.equal((await admin.query("select has_function_privilege($1,$2,'execute') permitted", [role, semanticPrevious])).rows[0].permitted, false);
+        }
+        dispatcher = (await admin.query("select pg_get_functiondef($1::regprocedure) body", [semanticPrevious])).rows[0].body;
+      }
       assert.match(dispatcher, /return clued_private\.storage_conflict_verified_v1\(p_issuer_identity,p_input\);/);
       assert.match(dispatcher, /return clued_private\.storage_verified_before_conflict_v1\(p_issuer_identity,p_input\);/);
       assert.doesNotMatch(dispatcher, /j\.mutation->>'content'/, "the router derives no inline-content digest or size");
