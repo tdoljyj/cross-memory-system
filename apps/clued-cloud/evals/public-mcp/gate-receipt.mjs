@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { proxyBootstrapArguments } from "../../../../scripts/runner/clued-runner-job-started.mjs";
 
 export const REQUIRED_CHECKS = Object.freeze([
   "public-mcp-protocol",
@@ -140,8 +142,34 @@ function parseInteger(value, fallback, minimum) {
   return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
 }
 
+export function bootstrapGateProxy({ env = process.env, execArgv = process.execArgv,
+  argv = process.argv, allowedFlags = process.allowedNodeEnvironmentFlags, spawn = spawnSync } = {}) {
+  const args = proxyBootstrapArguments({ env, execArgv, argv, allowedFlags });
+  if (!args) return null;
+  let child;
+  try { child = spawn(process.execPath, args, { env, stdio: "inherit" }); }
+  catch { throw new Error("GATE_PROXY_PROCESS_START_FAILED"); }
+  if (child?.error) throw new Error("GATE_PROXY_PROCESS_START_FAILED");
+  return Number.isInteger(child?.status) ? child.status : 1;
+}
+
+const NETWORK_PHASES = new Set(["CHECKS_READ", "STATUS_WRITE", "VERDICT_ANNOUNCE"]);
+const NETWORK_ERROR_NAMES = new Set(["Error", "TypeError", "TimeoutError", "AbortError"]);
+const NETWORK_ERROR_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ENOTFOUND", "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET", "ABORT_ERR", "CERT_HAS_EXPIRED",
+  "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID"]);
+export async function gateFetch(phase, url, options, fetchImpl = globalThis.fetch) {
+  if (!NETWORK_PHASES.has(phase)) throw new Error("GATE_INVALID_NETWORK_PHASE");
+  try { return await fetchImpl(url, options); }
+  catch (error) {
+    const name = NETWORK_ERROR_NAMES.has(error?.name) ? error.name : "Error";
+    const code = NETWORK_ERROR_CODES.has(error?.cause?.code) ? error.cause.code : "UNKNOWN";
+    throw new Error(`GATE_GITHUB_NETWORK:${phase}:${name}:${code}`);
+  }
+}
+
 async function fetchCheckRuns({ apiUrl, repository, sha, token, requestTimeoutSeconds }) {
-  const response = await fetch(
+  const response = await gateFetch("CHECKS_READ",
     `${apiUrl}/repos/${repository}/commits/${sha}/check-runs?filter=latest&per_page=100`,
     {
       headers: {
@@ -160,7 +188,7 @@ async function fetchCheckRuns({ apiUrl, repository, sha, token, requestTimeoutSe
 }
 
 async function postCommitStatus({ apiUrl, repository, sha, token, requestTimeoutSeconds, status }) {
-  const response = await fetch(`${apiUrl}/repos/${repository}/statuses/${sha}`, {
+  const response = await gateFetch("STATUS_WRITE", `${apiUrl}/repos/${repository}/statuses/${sha}`, {
     method: "POST",
     headers: {
       accept: "application/vnd.github+json",
@@ -176,7 +204,7 @@ async function postCommitStatus({ apiUrl, repository, sha, token, requestTimeout
 }
 
 async function postCheckRun({ apiUrl, repository, token, requestTimeoutSeconds, checkRun }) {
-  const response = await fetch(`${apiUrl}/repos/${repository}/check-runs`, {
+  const response = await gateFetch("VERDICT_ANNOUNCE", `${apiUrl}/repos/${repository}/check-runs`, {
     method: "POST",
     headers: {
       accept: "application/vnd.github+json",
@@ -303,6 +331,15 @@ async function main() {
 }
 
 if (!process.env.NODE_TEST_CONTEXT) {
+  // The hook enables proxy support in its own child; this separate Node
+  // process needs the same setup before main reads credentials or the API.
+  try {
+    const proxyExit = bootstrapGateProxy();
+    if (proxyExit !== null) process.exit(proxyExit);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "GATE_PROXY_BOOTSTRAP_FAILED");
+    process.exit(1);
+  }
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : "GATE_UNKNOWN_ERROR");
     process.exitCode = 1;
