@@ -38,6 +38,45 @@ export function protocolAdmissionView(job,facts,now=Date.now()){
  view.observationSha256=proofDigest(view);return Object.freeze(view);
 }
 
+const FAILURE_REASONS=new Set([
+ 'github_transport_unconfirmed','github_response_invalid','github_credential_unavailable',
+ 'github_http_400','github_http_401','github_http_403','github_http_404','github_http_408','github_http_409','github_http_412','github_http_422','github_http_429','github_http_500','github_http_502','github_http_503','github_http_504',
+ 'invalid_pr_subject','pr_subject_changed','invalid_pr_files','pr_files_changed','incomplete_pr_files','pr_files_page_limit',
+ 'EACCES','EPERM','ENOENT','EINVAL','EBUSY','EIO','ENOSPC',
+ 'BRIDGE_CHALLENGE_EXPIRED','BRIDGE_CHALLENGE_SUBJECT_CHANGED','BRIDGE_CHALLENGE_ACTION_REQUIRED','BRIDGE_CHALLENGE_REQUIRED',
+ 'BRIDGE_PACKET_SHAPE_REQUIRED','BRIDGE_CANONICAL_BYTES_REQUIRED','BRIDGE_JSON_REQUIRED','BRIDGE_UTF8_REQUIRED','BRIDGE_BYTE_BOUND',
+ 'BRIDGE_FORMAL_ADMISSION_SHAPE_REQUIRED','BRIDGE_RESPONSE_EXPIRED','BRIDGE_ISSUE_EXPIRED','BRIDGE_TIME_INVALID',
+ 'FORMAL_MAILBOX_READY_REQUIRED','FORMAL_MAILBOX_PACKET_CHANGED','FORMAL_MAILBOX_CHANGED','FORMAL_MAILBOX_FILE_BOUNDARY',
+ 'FORMAL_CALLBACK_SEQUENCE_CHANGED','FORMAL_CALLBACK_LIMIT','FORMAL_ISSUER_WINDOW_UNCONFIRMED',
+ 'ACTUAL_NATIVE_ADMISSION_REQUIRED','COMPLETE_NATIVE_ADMISSION_VIEW_REQUIRED','ISSUER_ACCEPTANCE_EXPIRED',
+ 'full_admission_claim_changed','full_admission_clock_invalid','full_admission_incomplete','full_admission_mode_unknown',
+ 'full_admission_native_changed','full_admission_native_unsupported','full_admission_not_configured','full_admission_observation_expired',
+ 'full_admission_observer_unknown','full_admission_principal_unknown','full_admission_rejected','full_admission_source_changed',
+ 'full_admission_subject_changed','full_admission_subject_invalid','full_admission_unavailable'
+]);
+const FAILURE_STAGES=new Set(['ISSUER_MAIN','CHALLENGE_READ','VALIDATE','EVALUATE','RESPONSE_WRITE']);
+export function publicIssuerFailure(jobId,error,now=Date.now()){
+ if(typeof jobId!=='string'||!/[a-f0-9]{64}/.test(jobId)||jobId.length!==64||!Number.isSafeInteger(now)||now<0||now>8640000000000000)return null;
+ let reason='FORMAL_BRIDGE_UNCONFIRMED';
+ if(error?.killed===true||error?.code==='ETIMEDOUT')reason='FIXED_ACL_PROBE_TIMEOUT';
+ else if(error?.code===2)reason='FIXED_ACL_PROBE_REFUSED';
+ else if(FAILURE_REASONS.has(error?.code))reason=error.code;
+ else if(FAILURE_REASONS.has(error?.message))reason=error.message;
+ const stage=FAILURE_STAGES.has(error?.issuerFailureStage)?error.issuerFailureStage:'ISSUER_MAIN';
+ return{contract:'clued.independent-ci.issuer-failure/1',kind:'issuer_failure',jobId,stage,reason,observedAt:new Date(now).toISOString(),automaticRetryAllowed:false};
+}
+function persistIssuerFailure(record){
+ if(!record)return false;let fd;
+ try{
+  const file=path.join(INSTALL_ROOT,'formal-spool','outgoing','observations.jsonl'),before=fs.lstatSync(file);
+  check(before.isFile()&&!before.isSymbolicLink()&&before.nlink===1&&before.size<67108864,'ISSUER_AUDIT_BOUND');
+  fd=fs.openSync(file,fs.constants.O_WRONLY|fs.constants.O_APPEND|(fs.constants.O_NOFOLLOW??0));const held=fs.fstatSync(fd);
+  check(held.isFile()&&held.nlink===1&&held.dev===before.dev&&held.ino===before.ino&&held.size===before.size,'ISSUER_AUDIT_UNCONFIRMED');
+  const bytes=Buffer.from(canonical(record)+'\n');check(fs.writeSync(fd,bytes)===bytes.length,'ISSUER_AUDIT_UNCONFIRMED');fs.fsyncSync(fd);
+  const after=fs.lstatSync(file);check(after.isFile()&&!after.isSymbolicLink()&&after.nlink===1&&after.dev===held.dev&&after.ino===held.ino,'ISSUER_AUDIT_UNCONFIRMED');return true;
+ }catch{return false;}finally{if(fd!==undefined)fs.closeSync(fd);}
+}
+
 export async function openWindowsJobIssuer(job,options={}){
   let locked=false,context=null;
   try{
@@ -65,10 +104,13 @@ export async function openWindowsJobIssuer(job,options={}){
     const issuer=Object.freeze({issue,async close(){await closeWindowsContext(context);},async serveNext(){
       assertWindowsContextLive(context);
       check(next<=32,'FORMAL_CALLBACK_LIMIT');const seq=next,name='challenge-'+String(seq).padStart(2,'0');
-      const challenge=validateChallenge(issue,decode(await box.read(name)));
-      check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');const current=await evaluate();
-      const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null):makeResponse(issue,challenge,null,await collect());
-      assertWindowsContextLive(context);await box.write('response-'+String(seq).padStart(2,'0'),encode(response));next++;return{status:'FRESH_FORMAL_CALLBACK_RETURNED',sequence:seq,action:challenge.action,automaticRetryAllowed:false};
+      let failureStage='CHALLENGE_READ';try{
+       const bytes=await box.read(name);failureStage='VALIDATE';const challenge=validateChallenge(issue,decode(bytes));
+       check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');failureStage='EVALUATE';const current=await evaluate();
+       const refs=challenge.action==='admission'?null:await collect();failureStage='VALIDATE';
+       const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null):makeResponse(issue,challenge,null,refs);
+       failureStage='RESPONSE_WRITE';assertWindowsContextLive(context);await box.write('response-'+String(seq).padStart(2,'0'),encode(response));next++;return{status:'FRESH_FORMAL_CALLBACK_RETURNED',sequence:seq,action:challenge.action,automaticRetryAllowed:false};
+      }catch(error){if(error&&typeof error==='object'){try{error.issuerFailureStage=failureStage;}catch{}}throw error;}
     },async consumeResult(){assertWindowsContextLive(context);const raw=await box.read('result');let wrapper;try{wrapper=JSON.parse(raw.toString('utf8'));}catch{fail('SIGNED_BRIDGE_RESULT_JSON_REQUIRED');}
       check(Buffer.from(canonical(wrapper)).equals(raw),'SIGNED_BRIDGE_RESULT_CANONICAL_REQUIRED');const result=verifySignedBridgeResult({issue,wrapper,signers:context.signers});await evaluate();
       return{status:'ACTUAL_SIGNED_EXECUTION_OBSERVED',job:issue.job,envelope:wrapper.envelope,verified:result,checksWritten:false,qualificationIssued:false,automaticRetryAllowed:false};
@@ -80,10 +122,10 @@ export async function openWindowsJobIssuer(job,options={}){
 export function takeActualWindowsIssuer(value){check(actual.has(value),'ACTUAL_WINDOWS_ISSUER_REQUIRED');return value;}
 export async function main(argv=process.argv.slice(2),output=process.stdout){
   if(argv.length!==1||argv[0]!=='--run'){output.write(JSON.stringify({status:'BLOCKED',reason:'FIXED_WINDOWS_BRIDGE_RUN_REQUIRED'})+'\n');return 2;}
-  try{const file=path.join(INSTALL_ROOT,'formal-job.json');await assertProtectedPaths(INSTALL_ROOT,[file]);const opened=await openWindowsJobIssuer(JSON.parse(await readProtected(file)));
-    if(opened.status!=='FORMAL_JOB_ISSUED'){output.write(JSON.stringify(opened)+'\n');return 2;}
+  let job=null;
+  try{const file=path.join(INSTALL_ROOT,'formal-job.json');await assertProtectedPaths(INSTALL_ROOT,[file]);job=JSON.parse(await readProtected(file));const opened=await openWindowsJobIssuer(job);
+    if(opened.status!=='FORMAL_JOB_ISSUED'){const diagnostic=publicIssuerFailure(job?.id,{code:opened.reason});const persisted=persistIssuerFailure(diagnostic);output.write(JSON.stringify({...opened,reason:diagnostic?.reason??'FORMAL_BRIDGE_UNCONFIRMED',failureDiagnosticPersisted:persisted})+'\n');return 2;}
     const result=await takeActualWindowsIssuer(opened.issuer).runUntilResult();output.write(JSON.stringify(result)+'\n');return 0;
-  }catch(e){output.write(JSON.stringify({status:'UNCERTAIN',reason:safe(e),automaticRetryAllowed:false,checksWritten:false})+'\n');return 2;}
+  }catch(e){const diagnostic=publicIssuerFailure(job?.id,e),persisted=persistIssuerFailure(diagnostic);output.write(JSON.stringify({status:'UNCERTAIN',reason:diagnostic?.reason??'FORMAL_BRIDGE_UNCONFIRMED',failureDiagnosticPersisted:persisted,automaticRetryAllowed:false,checksWritten:false})+'\n');return 2;}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href)process.exitCode=await main();
-
