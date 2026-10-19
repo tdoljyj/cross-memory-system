@@ -52,12 +52,28 @@ function verifyContainer(c, config, name, imageId, paths, request) {
     && c.Config.WorkingDir === (scanner ? '/input' : '/scratch'), 'CONTAINER_COMMAND_DRIFT');
   check(h.Tmpfs && Object.keys(h.Tmpfs).length === 1 && h.Tmpfs['/scratch']?.includes('noexec') && h.Tmpfs['/scratch'].includes('uid=65532'), 'CONTAINER_SCRATCH_DRIFT');
 }
+// RepoDigests omit the optional tag; preserve the exact repository and digest.
+function repositoryDigest(reference) {
+  if (typeof reference !== 'string' || /\s/.test(reference)) return null;
+  const match = /^([^,@]+)@(sha256:[a-f0-9]{64})$/.exec(reference);
+  if (!match) return null;
+  let repository = match[1];
+  const colon = repository.lastIndexOf(':');
+  if (colon > repository.lastIndexOf('/')) {
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(repository.slice(colon + 1))) return null;
+    repository = repository.slice(0, colon);
+  }
+  if (!/^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?::[0-9]+(?=\/))?(?:\/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*$/.test(repository)) return null;
+  return repository + '@' + match[2];
+}
 async function inspectEngineAndImage(config, docker) {
   const info = parse(await docker(['info', '--format', '{{json .}}']));
   check(info.OSType === 'linux' && info.DockerRootDir === config.dockerRootDirectory && !/desktop/i.test(info.OperatingSystem ?? '')
     && info.SecurityOptions?.some(v => v.includes('seccomp')), 'NATIVE_ENGINE_UNKNOWN');
   const images = parse(await docker(['image', 'inspect', config.image]));
-  check(images.length === 1 && (images[0].Id === config.image || images[0].RepoDigests?.includes(config.image))
+  const expectedRepoDigest = repositoryDigest(config.image);
+  check(images.length === 1 && (images[0].Id === config.image || expectedRepoDigest !== null
+    && Array.isArray(images[0].RepoDigests) && images[0].RepoDigests.some(value => repositoryDigest(value) === expectedRepoDigest))
     && /^sha256:[a-f0-9]{64}$/.test(images[0].Id) && images[0].Os === 'linux' && !Object.keys(images[0].Config?.Volumes ?? {}).length, 'LOCAL_IMAGE_PIN_UNKNOWN');
   check((images[0].Config?.Env ?? []).every(value => /^(PATH|NODE_VERSION|YARN_VERSION|LANG|LC_ALL|TZ)=/.test(value)), 'IMAGE_ENV_NOT_QUALIFIED');
   return images[0];
