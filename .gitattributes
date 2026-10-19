@@ -61,3 +61,20 @@ work/recovery-root9/stage2a/runtime-function-patch.UNSEALED.sql -text
 work/recovery-root9/stage2c/root9_apply_once.sealed.sql -text
 work/recovery-root9/stage2c/runtime-series-guard.sealed.fragment.sql -text
 scripts/ci/clued-handover-external-source-pins.json -text
+
+# Preserve exact independently reviewed bytes pinned by the formal CI installation.
+scripts/ci/clued-work-admission.mjs -text
+work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs -text
+work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/README.md -text
+work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/formal-roles.example.json -text
+work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/installer-reuse.json -text
+work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/manifest.json -text
+work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/root-continuation.example.json -text
+work/actions-hosted-migration/independent-ci-v1/src/control-install-delta-v2/validation-report.json -text
+work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/publisher.mjs -text
+work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs -text
+work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/closure.mjs -text
+work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs -text
+work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/publisher.mjs -text
+work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/queue-facts.mjs -text
+work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/startup.mjs -text

@@ -1,0 +1,92 @@
+{
+  "contract": "clued.independent-ci.formal-role-material/1",
+  "roles": {
+    "gitleaks": {
+      "containerCommand": {
+        "image": "ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f",
+        "scanner": "gitleaks",
+        "executable": "/usr/bin/gitleaks",
+        "args": [
+          "git",
+          "/repo",
+          "--config",
+          "/repo/.gitleaks.toml",
+          "--gitleaks-ignore-path",
+          "/reviewed.ignore",
+          "--redact",
+          "--exit-code",
+          "1"
+        ],
+        "cwd": "/input"
+      },
+      "hostTools": {
+        "python": {
+          "path": "/usr/bin/python3.12",
+          "sha256": "e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f"
+        }
+      },
+      "timeoutMs": 1200000,
+      "maxOutputBytes": 16777216
+    },
+    "trivy": {
+      "containerCommand": {
+        "image": "ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+        "scanner": "trivy",
+        "executable": "/usr/local/bin/trivy",
+        "args": null,
+        "cwd": "/input"
+      },
+      "formalTrivy": {
+        "profile": "required-trivy-three-scanners/1",
+        "cacheRoot": null,
+        "checksPin": {
+          "repository": "ghcr.io/aquasecurity/trivy-checks:2",
+          "majorVersion": 2,
+          "digest": null,
+          "contentSha256": null
+        }
+      },
+      "timeoutMs": 1500000,
+      "maxOutputBytes": 16777216
+    },
+    "contract-placement": {
+      "command": {
+        "executable": null,
+        "executableSha256": null,
+        "args": [
+          "/control/contract-placement-entry.mjs"
+        ],
+        "cwd": "."
+      },
+      "formalContractPlacement": {
+        "profile": "required-contract-placement/1",
+        "workflowSha256": "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
+        "esbuildVersion": "0.28.1",
+        "tools": {
+          "node": {
+            "path": "/usr/local/bin/node",
+            "sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12"
+          },
+          "python": {
+            "path": "/usr/local/bin/python3.12",
+            "sha256": "837a48d7afd08447fb43e28b282026fadb59368620072e57e01f66d12977e5ce"
+          },
+          "git": {
+            "path": "/usr/bin/git",
+            "sha256": "2540879925a6881e3877ff7e3330746ba3027b04edf16a3a12dccd1644c4f32d"
+          },
+          "esbuildJs": {
+            "path": "/opt/clued-tools/esbuild/bin/esbuild",
+            "sha256": "fe9a7b65a540d8df1a0f59941d52e7c1260c36fed9a2af3dd966f15381b6eb76"
+          },
+          "esbuildBinary": {
+            "path": "/opt/clued-tools/linux-x64/bin/esbuild",
+            "sha256": "0c6588b092a2c291a72bab90659f3c9e0e25e0fe59c9ac12b4dae4d945e5548c"
+          }
+        }
+      },
+      "timeoutMs": 300000,
+      "maxOutputBytes": 16777216
+    }
+  }
+}

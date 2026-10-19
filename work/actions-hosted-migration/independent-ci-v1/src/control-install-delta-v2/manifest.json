@@ -1,0 +1,160 @@
+{
+  "contract": "clued.independent-ci.control-install-delta-source/2",
+  "status": "TWO_STAGE_SOURCE_CANDIDATE_NOT_ACCEPTED_OR_RUN",
+  "effectsAuthorized": false,
+  "runtime84Changed": false,
+  "sourceInstallations": 1,
+  "installOnlyStarts": 0,
+  "activationStarts": 8,
+  "maximumStops": 8,
+  "preInstallCanonicalReceiptRequired": false,
+  "productionCanonicalReceiptRequired": true,
+  "hostRead": false,
+  "hostWrite": false,
+  "files": {
+    "acceptance-metadata.example.json": {
+      "bytes": 205,
+      "sha256": "c49affa2806d520472b86c0a33cf09bf9b968c63866fc15d195551824ff18188"
+    },
+    "deployment-pins.json": {
+      "bytes": 62645,
+      "sha256": "c6a9f2712c91dec1df6ad2dd166a6c8057a6c9239982a64030dc4557f6a5a772"
+    },
+    "formal-roles.example.json": {
+      "bytes": 3030,
+      "sha256": "c6c19eb8e4f855af3b8229920f0faa0d8b6e1b4fa492413b3c696e629098202c"
+    },
+    "installer-reuse.json": {
+      "bytes": 3883,
+      "sha256": "7fc4ed75abea54edbf728623c6482d46347bcde8afb269bf78033a4abbaddb3b"
+    },
+    "prepare-payload.mjs": {
+      "bytes": 18923,
+      "sha256": "258c80e3e5d5325fb85682d631ee68106e39942d7620d1dca20f9a27079d4d58"
+    },
+    "prior-installed.json": {
+      "bytes": 43309,
+      "sha256": "6b86e3abf13b391b6198e0e6770f123e8b85fbd3c5bb755d49f1205e5cd7b6f2"
+    },
+    "public-subject.example.json": {
+      "bytes": 1156,
+      "sha256": "9988ed754c654288524f2278dc3be33650aeb6cb54d9d61fd194b4c93c12c25f"
+    },
+    "README.md": {
+      "bytes": 3623,
+      "sha256": "73f82bdf62f2de96472572fd53aa9add646e21a129956ff08ce56b1b2a229161"
+    },
+    "root-continuation.example.json": {
+      "bytes": 294,
+      "sha256": "fd2727dd0fd64a107b71d938cbb1f241e254872bb4bc0cb27072b829fa86e375"
+    },
+    "runtime-pins.json": {
+      "bytes": 12689,
+      "sha256": "19eeb50c664f6507b2b477a14d4eef65a2bcd6ec8fd4db1bf85d16c723c288ae"
+    },
+    "source-delta.json": {
+      "bytes": 34850,
+      "sha256": "955a1691b5a82da7ecb59cca8387ae6573e645da57c76df58aed816922bf6332"
+    },
+    "test-offline.ps1": {
+      "bytes": 6231,
+      "sha256": "84fe046088cd51c9aa534b6260c1939e64d0562ec416db8a44579459c0417718"
+    },
+    "validation-report.json": {
+      "bytes": 610,
+      "sha256": "5c8563e5cbd9155e9ce337b733da8e2ff72cf65183efb22756c714c9ede6f4f3"
+    },
+    "launcher/FormalPublicBoundary.cs": {
+      "bytes": 33438,
+      "sha256": "40801e7378c3b6f10bc1790214abe97359735c49b08d144dcdd0d943012e39db"
+    },
+    "launcher/FormalSession0.cs": {
+      "bytes": 18296,
+      "sha256": "5c4c405ac9db4e69df118097ff89519387f11801eb89b28db6216aa2ecd59848"
+    },
+    "launcher/ScmPidHandshake.cs": {
+      "bytes": 4382,
+      "sha256": "2c41b05a5cbedd0fa06db0a24f212d464ac0e0fa39ecede29b13635ecc1701ff"
+    },
+    "invoker/ContinuationFiles.cs": {
+      "bytes": 3084,
+      "sha256": "ae4da230faa0af3c0a2b1e9274cb99c09544cf4df2dc18f52d0d1ecb5544d884"
+    },
+    "invoker/continue-fixed.ps1": {
+      "bytes": 15228,
+      "sha256": "9c83e40508fc321bc9eedf65edc3461e90e6ee72368b040932fa74c46b3c83b7"
+    },
+    "invoker/derive-bound-source.ps1": {
+      "bytes": 6256,
+      "sha256": "c21c5a492520904efe63c957a786ac5d8684174af333201ef09f7c5c72b00870"
+    },
+    "invoker/derive-install-only.ps1": {
+      "bytes": 5092,
+      "sha256": "32e57d34ef66102679585ec1d526c41a071b670038e40d535bc0432e67187b69"
+    },
+    "invoker/FixedScm.cs": {
+      "bytes": 16223,
+      "sha256": "a88518da89dfcc987e6e76ce8f6d6abe9aa99151fec8df7c961688ce484462f1"
+    },
+    "invoker/FormalRepairFiles.cs": {
+      "bytes": 3097,
+      "sha256": "816cdcf85f4724c67961cf77aac6648835cd90e5faf04ce9a2faa2720e56e209"
+    },
+    "invoker/host-baseline.ps1": {
+      "bytes": 5976,
+      "sha256": "4a02e78fbc6172c3db026fa1bf57f5879796837076bedc082e97c814240f0f5b"
+    },
+    "invoker/HostFiles.cs": {
+      "bytes": 3539,
+      "sha256": "3c85e5c58385b2a9dd3176a9427fcc0fa61a74a03b9aae6dd169dae702047f8f"
+    },
+    "invoker/invoke-control.ps1": {
+      "bytes": 11311,
+      "sha256": "5bcb5efb6246a1f73000246df8387664a88d03d1aea8c9bebc809755c6123aba"
+    },
+    "invoker/invoke-functions.ps1": {
+      "bytes": 23130,
+      "sha256": "a50406a9db9dff91df110683109d9178cf8b3d0b90dcc3b2457a7a16f27b7f69"
+    },
+    "invoker/invoke-io.ps1": {
+      "bytes": 7730,
+      "sha256": "0269a51f8bfc7e0974d8264907eddedf112159c744f9d954d507f5f301fb9db3"
+    },
+    "invoker/restore-functions.ps1": {
+      "bytes": 1956,
+      "sha256": "0818173e27edd4b92bc10b23df813c245c422fad150dcd8e334e112663b419fa"
+    },
+    "invoker/ScmPidHandshake.cs": {
+      "bytes": 4382,
+      "sha256": "2c41b05a5cbedd0fa06db0a24f212d464ac0e0fa39ecede29b13635ecc1701ff"
+    },
+    "batch/advance-functions.ps1": {
+      "bytes": 7691,
+      "sha256": "0af1e6b0e74ddceada81491a0ded6e655a8eec4499cacc53d7b2d7c66cf36c7a"
+    },
+    "batch/derive-fixed-batch.ps1": {
+      "bytes": 10699,
+      "sha256": "88556b65d8b529a0015b18ce7e9847a232e9dfc135e8b2f39ec906a5b6e9673e"
+    },
+    "batch/FormalStageFiles.cs": {
+      "bytes": 3084,
+      "sha256": "ae4da230faa0af3c0a2b1e9274cb99c09544cf4df2dc18f52d0d1ecb5544d884"
+    },
+    "batch/linux-archive.py": {
+      "bytes": 3846,
+      "sha256": "50d7a93a2a99f59eb87f5eb89aeec348c41af729dfb3b35bece465dd59ddcb75"
+    },
+    "batch/run-batch.ps1": {
+      "bytes": 20667,
+      "sha256": "03f370789512cae3410487e04ce5b7a17e7a8e901bdc7ae891ac0b4632a5da14"
+    },
+    "batch/stages.json": {
+      "bytes": 1830,
+      "sha256": "ef5e84fd0d91c398b3283294c5a080fc483153f95a951c2d93da85e3db14cd8e"
+    },
+    "batch/test-pure.ps1": {
+      "bytes": 4413,
+      "sha256": "bfd1f7999989657adaa1c9b94b31d116a04de8d55ba771a3b7ec0639bb3211a3"
+    }
+  }
+}

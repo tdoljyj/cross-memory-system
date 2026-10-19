@@ -1,0 +1,31 @@
+{
+  "contract": "clued.independent-ci.control-install-public-subject/1",
+  "repository": "tdoljyj/cross-memory-system",
+  "pr": null,
+  "headSha": null,
+  "baseSha": null,
+  "sourceCommit": null,
+  "claimId": "d6f59a5b-f2fe-40a1-a46c-4c7f662b2c87",
+  "fence": 5,
+  "epoch": 1,
+  "claimExpiresAt": null,
+  "createdAt": null,
+  "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+  "hostname": "TURING",
+  "controllerAccount": "clued-control",
+  "ciPrincipalBindingId": "aa4969fb-087c-4c36-b505-11be526ce916",
+  "ciPrincipalRoleRef": "5bc0db09-f0f5-4ba1-94a2-74670321e979",
+  "ciTokenPinSha256": "f32683c7cb3836784116d1fadb52630933a8c9afc309b72e46db5f000202ba3a",
+  "appPublicKeySha256Base64": "+604R1ClkRnLtWjFNJ5HucKWB2Jvpsb9Tsc+9cCVQjo=",
+  "supabaseUrl": "https://ccxsikzwxlolxqlosril.supabase.co",
+  "publishableKey": "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg",
+  "references": {
+    "sourceAcceptanceRef": null,
+    "hostQualificationRef": null,
+    "ownerAuthorizationRef": null,
+    "publisherQualificationRef": null,
+    "ciPrincipalQualificationRef": null,
+    "ownerPackageAcceptanceRef": null,
+    "installationReceiptRef": null
+  }
+}

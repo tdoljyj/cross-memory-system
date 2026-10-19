@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 50
+Contract version: 51
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -257,7 +257,7 @@ Read this section before renewal, continued work across sessions, release, takeo
 
 - Keep time boundaries separate and traceable. `expires_at` is that service claim's lease expiry; `hard_deadline_at` is that claim chain's service limit. Neither is an Owner-imposed Task deadline. An Owner hard deadline or spending limit needs its actual Owner instruction or authoritative policy source, with the applicable Task/scope and current version. Estimates, checkpoints, Agent-written Task text and historical claim metadata cannot create or carry forward that authority by themselves. Re-read the current claim/profile and source when they conflict; record a correction instead of asking the Owner to approve an invented extension.
 
-- A genuine service or Owner limit still binds: do not manufacture progress, renew after the chain cap, reclaim or rename work to evade it, reset spending/CI counts, or widen scope/permissions. On a real refusal, use its existing recovery or grant route, including the Owner's effective auto-approval setting. Ask the Owner only when an unresolved limit or scope/permission decision actually requires them; identify the precise source and remaining work. A queue delay or revised estimate alone is not such a decision.
+- A genuine service or Owner limit still binds: do not manufacture progress, renew a claim past its renewal budget or hard deadline, reset spending/CI counts, widen scope/permissions, or change the Task, rename work or switch Binding to evade a refusal. A normal new claim for the same unfinished Task after its old claim expires follows Appendix A.8; it is not an extension of the old claim. On a real refusal, use its existing recovery or grant route, including the Owner's effective auto-approval setting. Ask the Owner only when an unresolved limit or scope/permission decision actually requires them; identify the precise source and remaining work. A queue delay or revised estimate alone is not such a decision.
 
 - Either way of working is fine: claim for one step and release when that step ends, or keep one claim across turns, steps and sessions and renew it (any session of the same Binding can, with the `claim_id`, `fence` and `lease_version` that `active_work_claims` lists), using the Receipt id of what you just recorded or the new head SHA as `progress_ref`. A claim bound to an open pull request stays live until the pull request merges (see [Appendix A.5](#appendix-a5)).
 
@@ -311,6 +311,8 @@ Read this section before rerunning CI or manually dispatching a heavy workflow.
 Read this section before a new claim or takeover, when rate-limited, when continuing a released claim, or when the Owner runs a Task as a race.
 
 - Starts are rate-limited, not counted per day: each new claim or takeover takes a token from the Task's bucket (8, one back per hour) and the Binding's bucket (30, one back per 15 minutes); renewals and replays take none. A refusal names the short bucket in `limit` (`task_claim_rate` or `binding_claim_rate`) and when the next token arrives in `retry_after`.
+
+- Exhausting a claim's renewal budget stops renewal of that claim, not ordinary claiming of the unfinished Task after that claim expires. Use `clued_work_claim` for the same active Task: the service checks current claims, conflicts and both start-rate buckets. Resume work only after a committed new claim. This is a normal token-consuming start, not the token-free continuation below. Preserve the Task's costs, failures, CI meter and genuine Owner limits. Never mark unfinished work completed to obtain a continuation, or change the Task or Binding to evade a refusal.
 
 - A continuation takes no token: when your Binding released the Task's latest claim as `completed` with an `evidence_ref` not used before in that chain, and claims the same Task again within 15 minutes, the new claim continues it (`continued_from` names the claim it continues), whatever the session. It is not a continuation when the prior claim was `abandoned`, expired, taken over or handed over, when another claim of the Task came in between, or when someone else waited for it (a conflict refusal, a takeover refused as still active, or an Agent message request). A chain keeps its first claim's 24-hour hard deadline. A rate refusal says in `continuation.reason` why the claim did not continue. So when you claim per step, release each finished step as `completed` with that step's own `evidence_ref` and claim the next one within 15 minutes.
 

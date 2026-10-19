@@ -1,0 +1,307 @@
+{
+  "contract": "clued.independent-ci.control-install-runtime-pins/1",
+  "controlManifestSha256": "35e8868078b964b16bc5a1a78c2009a980bae55b969441851d1e1f1947147079",
+  "sourceClosureSha256": "6aa88e3329ff951eafc785abfe3ac477b846db8487320250fc604c1dd67cca70",
+  "runtimeFiles": [
+    {
+      "path": ".github/workflows/gitleaks.yml",
+      "bytes": 5927,
+      "sha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579"
+    },
+    {
+      "path": ".github/workflows/trivy.yml",
+      "bytes": 9461,
+      "sha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d"
+    },
+    {
+      "path": ".gitleaks.toml",
+      "bytes": 135150,
+      "sha256": "a414f9d5011a4f358aa8ae060d53838b121fbd7bcc2ada4fd1382bbde3f7062d"
+    },
+    {
+      "path": "config/merge-admission-policy.json",
+      "bytes": 1971,
+      "sha256": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-source.mjs",
+      "bytes": 43883,
+      "sha256": "83f965131dcffcc0e551b52a26bb4311b6c6486565251d9e483e4b6b266fb33a"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-sources.json",
+      "bytes": 265316,
+      "sha256": "8618e81aa26aa19269a2a2ca3ef6da304bdb00b1e79531828c5b5899fced03a1"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-profiles.json",
+      "bytes": 811444,
+      "sha256": "b98439c82546edcc750e264df58b8b7c328e22e01dc6f662facdacf7e325d256"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-role-specs.json",
+      "bytes": 145552,
+      "sha256": "0493cf57a6c25756f6c57a7a34d026d8bbdeb5a6d2bfd514fe7a5d7a70683e6c"
+    },
+    {
+      "path": "scripts/ci/clued-production-publisher-source.mjs",
+      "bytes": 10281,
+      "sha256": "abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a"
+    },
+    {
+      "path": "scripts/ci/clued-production-publisher-sources.json",
+      "bytes": 126971,
+      "sha256": "e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf"
+    },
+    {
+      "path": "scripts/ci/clued-publisher-qualification-source.mjs",
+      "bytes": 10247,
+      "sha256": "f88a6a7bf1018250407bd754cd3dd5733ee90e068cdc71e2893a0a285c5ff048"
+    },
+    {
+      "path": "scripts/ci/clued-publisher-qualification-sources.json",
+      "bytes": 21779,
+      "sha256": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c"
+    },
+    {
+      "path": "scripts/ci/clued-work-admission.mjs",
+      "bytes": 177342,
+      "sha256": "6942fa7f03ab21282d6005f1a893e610f0a21a11a45bb3c6ad87d0f75fef9b9f"
+    },
+    {
+      "path": "scripts/ci/clued-workflow-profile.mjs",
+      "bytes": 50044,
+      "sha256": "65904668b637a6be526d15de0b75ac4c08a59c9c84b58b3c71d7cae978e99a41"
+    },
+    {
+      "path": "scripts/ci/merge-admission-measurement-history.mjs",
+      "bytes": 10652,
+      "sha256": "f05140eb055ba05650c9e517af04c065b7b1e76ede6bd7b7fa4c8f441fc9624e"
+    },
+    {
+      "path": "scripts/ci/merge-admission-policy.mjs",
+      "bytes": 16881,
+      "sha256": "b3bf3ddb82dd22b61bb1f2e3ca7c10f10b6b4acd8dfbd528ae0e2f557c27c5d3"
+    },
+    {
+      "path": "scripts/ci/merge-admission-source-producer.mjs",
+      "bytes": 39631,
+      "sha256": "67667bf45a008c6580f29a2d90466e8fc96c54c75806d8422a2fc47d985c62a7"
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "bytes": 30242,
+      "sha256": "f0c56394d95bde01631e77e8e23eedf62aad1cd1c422f1e271e295aa000d7a21"
+    },
+    {
+      "path": "scripts/runner/clued-runner-job-started.mjs",
+      "bytes": 38896,
+      "sha256": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs",
+      "bytes": 20303,
+      "sha256": "27e34f9bf9c7242376d746cb04fc8c0e183f53a16fa51d8dcc87dc847107243f"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/protected-files.mjs",
+      "bytes": 5022,
+      "sha256": "4e9c034377528741a48477facfa4541dfedb67468f675b4cdc20e9bb4aad0ccb"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/verify-install-acl.ps1",
+      "bytes": 7520,
+      "sha256": "09d17148e2dd5d7527a0b88b8f2e084cf7627935e9db2f38b3f73add24867966"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs",
+      "bytes": 4001,
+      "sha256": "583b6512174de412842032f56d3172bd7a191ba955641c16c956a943d9be326a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/publisher.mjs",
+      "bytes": 19445,
+      "sha256": "168742155b146578d001cafda75821f53b073ce1c8964f7ee4ebcb25a6509590"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/startup.mjs",
+      "bytes": 909,
+      "sha256": "dbbdbb1d83c13b36d8d68b175be18135dfcb88b4e5aec3fe52c6eb39b44bd242"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs",
+      "bytes": 12056,
+      "sha256": "31567d1c751a4d4a9a58b539a6e0c6b5fc7191dfe242a4c27c91961d07aae070"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
+      "bytes": 10727,
+      "sha256": "df4273b834c6ad9be895bb97240ec510f9bd4f84fc926989d79189e922d065dc"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/closure.mjs",
+      "bytes": 3860,
+      "sha256": "b07314520a4757a4f59c5f8caf9d82b818afe2f01c47e9a7bfb4b96928d9c28a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs",
+      "bytes": 1786,
+      "sha256": "da4c5781fff4e140633d65c29e7633c0c49954d85a9ffdcead23cb519c7c6e6a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/publisher.mjs",
+      "bytes": 27378,
+      "sha256": "aca80e2c691fa1da816d7796bb7da6a6c70a909e28993499e0ca1405038eda79"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/queue-facts.mjs",
+      "bytes": 810,
+      "sha256": "5b158efd811052bea8371c9f349a9932a7164980dd0ed56d5b051183c35c019c"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/startup.mjs",
+      "bytes": 929,
+      "sha256": "b60d7119dc5200a4e242d522c20ad3307b9e3f7ec0a35ab5c874f6e2df5aeb7e"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/proof.mjs",
+      "bytes": 3699,
+      "sha256": "ed5f8800d27eb1ee5666c12983cac6b93ec5a2398a0c4dcf762e55b4a29f976b"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/queue.mjs",
+      "bytes": 18605,
+      "sha256": "63c05f00ce6d1100af631e4387b024fbfed67a606e6d18f2de76eeffe707cf89"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher.mjs",
+      "bytes": 18713,
+      "sha256": "2b3fcda1cd21912be4195386762067c5baae3c6a28cd7bab6a21b2194307d577"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/worker.mjs",
+      "bytes": 24820,
+      "sha256": "67803ba150f0b22af5459af4b83f7910835221caea845a54a46a70d39ec7608c"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/adapter.mjs",
+      "bytes": 13757,
+      "sha256": "5ea16409c95e6bbd133ffdc280752bb120ff3252bc48dbf65ffe513aae616dcd"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/docker-transport.mjs",
+      "bytes": 2300,
+      "sha256": "d1af2b99949aacee374cb6c1e279430bd717ad756210aad3ad885fc420dafd06"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/prepare.mjs",
+      "bytes": 22051,
+      "sha256": "d3698367a9220b5bafc6e9ab5ef8b41a84a63f0823d6838ece88146c3edd5493"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/selftest-shim.mjs",
+      "bytes": 9284,
+      "sha256": "6d4989c91a845239e9aa815f276a6de663cf5cf6a3fa6c2f0e3b47f535357008"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/adapter.mjs",
+      "bytes": 16274,
+      "sha256": "3bc3e4b346d332a3806f13171ea83be9d8d81b5971914fbfbe4ff1b90970b5e1"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/cache.mjs",
+      "bytes": 13742,
+      "sha256": "72fa21849b42bfbd32ef83e42d43a4c0533cd8f61ddfaf2b40a1dc619da33071"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/docker.mjs",
+      "bytes": 12210,
+      "sha256": "88fc02ce19223307ce45d27c63e99d12d5f4ccf3ece1052d00ea9f0637803182"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/linux-launcher.mjs",
+      "bytes": 21518,
+      "sha256": "befed130b3e027219991b8ece8a8630c03ffe18996ba57bec4c7d0863ebaaf5e"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-controller-ports-v1/refs.mjs",
+      "bytes": 5445,
+      "sha256": "ec31352c5e168133c87622c1451d1f383ebf86c282a63d2c0027464f4dd561a8"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/boundary.mjs",
+      "bytes": 13011,
+      "sha256": "d05f94586d1cc4b9c56ed8d4958c690e674eff4121a68a1e56d8875429b1fa8d"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/formal-spool-acl.ps1",
+      "bytes": 9486,
+      "sha256": "f518f00848b44815e7a7ffdcf6416d6906e6cb711b135807f761d9c012b0eb46"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/held-source.mjs",
+      "bytes": 4541,
+      "sha256": "657eb727c7748602fb6259fd20de3dab8ea8abc3be8b784d9fc579ea384d58a9"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/hold-source.ps1",
+      "bytes": 9641,
+      "sha256": "97cb22fbaf16d3c04c2b66aff1296fa1346041c645ea09484fd3a3d1d1f3a397"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/linux-worker.mjs",
+      "bytes": 4385,
+      "sha256": "e300cc729e713c6a9179a8b038dd659b9c02ce970c5f7f9d8b11e6f32cac9acd"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/mailbox.mjs",
+      "bytes": 6504,
+      "sha256": "36811881418d2c60bdbaa5fe934198995fa9fe86f938f72fca439c68f6463b01"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/protocol.mjs",
+      "bytes": 12246,
+      "sha256": "4780aaf92b90134eca58f7cdd9555f6ea668d0d26db25c5a2dc561fb931d9a83"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-public.ps1",
+      "bytes": 12102,
+      "sha256": "2ba36cb6ca94c6fd362cd1d40aa39fa2c7168ab117d4974fb45bcd3d2ea92015"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-record.mjs",
+      "bytes": 6255,
+      "sha256": "39d73bfef3912b41f987af95e856ff39b6ee41854a51ce088f5a4e7ecb8c0218"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/signed-result.mjs",
+      "bytes": 5862,
+      "sha256": "4387c0233095433de36ffcb77f4874b9c53e7d042cf4140872e4edc9e03c2572"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/windows-issuer.mjs",
+      "bytes": 8618,
+      "sha256": "18b09488e444f60df67a04509012112b1ca42caff8dfdf3684f1e19fd768d897"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/qualification.mjs",
+      "bytes": 8606,
+      "sha256": "b3e34250f92f84d29e4e61bc9054fe60ec3668583d3756462ecb6bceaaff3b21"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs",
+      "bytes": 21257,
+      "sha256": "e7c68333abc41867aa5a7850e700385c8058c158ff632f1e86af72cf340ba732"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs",
+      "bytes": 16312,
+      "sha256": "6975c3a8ed855f4cd333c1e2044f3f6789346d29335503d449b19814f9b2eb3f"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs",
+      "bytes": 30010,
+      "sha256": "4b0e1aec07b494cb3639f58d7e02d6d263d723167ae4d5fc44093de9cb1e3ec2"
+    }
+  ]
+}

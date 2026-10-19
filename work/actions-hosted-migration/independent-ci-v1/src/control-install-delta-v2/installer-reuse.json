@@ -1,0 +1,89 @@
+{
+  "contract": "clued.independent-ci.control-install-reuse/1",
+  "effectsAuthorized": false,
+  "sourceOnly": true,
+  "unchangedIdentity": {
+    "appId": 5368905,
+    "installationId": 172706661,
+    "repositoryId": 1334673495,
+    "account": "clued-control",
+    "controllerSid": "S-1-5-21-1173730660-3877291096-655431861-1015",
+    "node": "C:\\Program Files\\nodejs\\node.exe",
+    "nodeSha256": "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32",
+    "appKey": "C:\\ProgramData\\CluedControl\\trusted\\controller-checks-app.pem",
+    "nativeToken": "C:\\ProgramData\\CluedIndependentCI\\secrets\\ci-admission.token"
+  },
+  "reuseUnchanged": [
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/host/formal-fixed-invoke-v1/FixedScm.cs",
+      "sha256": "a88518da89dfcc987e6e76ce8f6d6abe9aa99151fec8df7c961688ce484462f1"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/host/formal-fixed-invoke-v1/ScmPidHandshake.cs",
+      "sha256": "2c41b05a5cbedd0fa06db0a24f212d464ac0e0fa39ecede29b13635ecc1701ff"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/host/formal-fixed-invoke-v1/HostFiles.cs",
+      "sha256": "3c85e5c58385b2a9dd3176a9427fcc0fa61a74a03b9aae6dd169dae702047f8f"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/host/formal-fixed-invoke-v1/host-baseline.ps1",
+      "sha256": "4a02e78fbc6172c3db026fa1bf57f5879796837076bedc082e97c814240f0f5b"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/host/formal-fixed-invoke-v1/restore-functions.ps1",
+      "sha256": "0818173e27edd4b92bc10b23df813c245c422fad150dcd8e334e112663b419fa"
+    }
+  ],
+  "fixedSuccessorRequired": [
+    {
+      "file": "FormalPublicBoundary.cs",
+      "changes": [
+        "four fixed production entries with --run: scanner-issuer/check-publisher/work-admission/control-checks",
+        "control-check-jobs.json two exact original jobs rather than single job",
+        "84 path physical union includes accepted control minimum60 and original scanner extra24",
+        "exact six mappings; full actual claim/deadline remains",
+        "control-specific clean environment direct network; do not inherit fixed old proxy that already failed finite run"
+      ]
+    },
+    {
+      "file": "invoke-functions.ps1 / FormalRepairFiles.cs",
+      "changes": [
+        "new fixed control role and exact pair hash; existing full boundary/principal acceptance checks remain",
+        "new formal leaves CreateNew only when Root actual public readback says absent",
+        "only shared source-manifest.json and two enumerated existing Source leaves may be replaced, with genuine old bytes/FileID/ACL and same-parent backup/stage/readback",
+        "never treat old finite permission as checks publication authority",
+        "retain one Start / max one Stop / PID-ACK / entire Job cleanup / full original service restore and sticky unknown handles"
+      ]
+    }
+  ],
+  "requiredActualPublicBaseline": [
+    "installation.json",
+    "acceptance.json",
+    "formal-service-entry.json",
+    "control-check-jobs.json",
+    "signers.json",
+    "source-manifest.json",
+    "source/scripts/ci/clued-work-admission.mjs",
+    "source/work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs"
+  ],
+  "actualPresenceNotReadByAuthor": true,
+  "existingUnmodifiedInstallerCannotInstallThisDelta": true,
+  "fixedSuccessorImplementedUnder": [
+    "launcher",
+    "invoker",
+    "batch"
+  ],
+  "sourcePhysicalDeployment": 84,
+  "fixedStages": 8,
+  "maximumScmStarts": 8,
+  "maximumScmStops": 8,
+  "linuxWorkers": 3,
+  "sourceInstallations": 1,
+  "newStageMutableLeaves": [
+    "formal-service-entry.json",
+    "formal-job.json",
+    "inbox/job.json",
+    "inbox/result.json"
+  ]
+}
