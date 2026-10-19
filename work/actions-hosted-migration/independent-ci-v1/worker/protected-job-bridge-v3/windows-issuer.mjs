@@ -13,11 +13,31 @@ import {loadWindowsContext,takeAcceptedBridgeContext,assertWindowsContextLive,cl
 import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
 import {makeIssue,makeResponse,validateChallenge,encode,decode,digest} from './protocol.mjs';
 import {verifySignedBridgeResult} from './signed-result.mjs';
+import {validateAdmission as validateGitleaksAdmission} from '../formal-gitleaks-v3/adapter.mjs';
+import {validateAdmission as validateTrivyAdmission} from '../formal-trivy-v3/adapter.mjs';
+import {validateAdmission as validatePlacementAdmission} from '../formal-contract-placement-v1/adapter.mjs';
 const actual=new WeakSet(),fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
 const safe=e=>/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code??e?.message??'')?(e.code??e.message):'FORMAL_BRIDGE_UNCONFIRMED';
 const bindingPin=v=>proofDigest('clued.independent-ci.ci-binding-pin/1\0'+v);
 const fingerprint=v=>createHash('sha256').update(createPublicKey(v).export({format:'der',type:'spki'})).digest('base64');
 const refsData=value=>Object.fromEntries(['contract','repository','complete','observedAt','refs'].map(k=>[k,value[k]]));
+const PROTOCOL_ADMISSION_FIELDS=Object.freeze(['contract','status','admitted','completeAdmission','evaluator','domain','repository','scope','prRef','headSha','baseSha','claimId','fence','epoch','sourceManifestSha256','executionPolicy','guarded','mode','mergeSlot','ownerReview','workflowGateFindings','observedAt','claimExpiresAt','modeProofRef','observationRef','packetSha256','evaluationSha256','observationSha256']);
+// Pure protocol view, not a Native door or an authority brand. Verify the full
+// actual observation (including its original digest and handover gate) before
+// deriving the older protocol's closed data shape. The protocol then applies all
+// of its existing subject/mode/Owner/merge-slot/freshness validations unchanged.
+export function protocolAdmissionView(job,facts,now=Date.now()){
+ const fields=[...PROTOCOL_ADMISSION_FIELDS,'executionHandoverPending','mergeQueueHead'];
+ check(facts&&Object.getPrototypeOf(facts)===Object.prototype&&Object.keys(facts).sort().join('|')===fields.sort().join('|')
+  &&facts.executionHandoverPending===false&&typeof facts.mergeQueueHead==='boolean','COMPLETE_NATIVE_ADMISSION_VIEW_REQUIRED');
+ const validate=job.role==='gitleaks'?validateGitleaksAdmission:job.role==='trivy'?validateTrivyAdmission:job.role==='contract-placement'?validatePlacementAdmission:null;
+ check(validate!==null,'FIXED_ISSUER_ROLE_REQUIRED');validate(job,facts,now);
+ const view=Object.fromEntries(PROTOCOL_ADMISSION_FIELDS.filter(k=>k!=='observationSha256').map(k=>[k,structuredClone(facts[k])]));
+ // This is a digest of a verified derived data view, not a new Native verdict,
+ // signature, Receipt or qualification. No authority or subject field changes.
+ view.observationSha256=proofDigest(view);return Object.freeze(view);
+}
+
 export async function openWindowsJobIssuer(job,options={}){
   let locked=false,context=null;
   try{
@@ -37,7 +57,7 @@ export async function openWindowsJobIssuer(job,options={}){
       tokenProvider:async()=>({githubToken:await github.getInstallationToken(),ciAdmissionToken:token,ciPrincipalBindingId:config.ciPrincipalBindingId,ciPrincipalQualificationRef:config.ciPrincipalQualificationRef}),
       modeProvider:()=>github.readAdmissionMode(),recorderProvider:async()=>({domain:'production',kind:'independent-controller',observedAt:new Date().toISOString(),observationRef:randomUUID(),recorder:{newId:randomUUID,record}})});
     const evaluate=async()=>{assertWindowsContextLive(context);
-      const facts=await full.evaluatePr(job,await github.readChangedPaths(job));assertWindowsContextLive(context);check(facts.status==='ADMITTED',/^full_admission_[a-z_]+$/.test(facts.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED');return facts;};
+      const facts=await full.evaluatePr(job,await github.readChangedPaths(job));assertWindowsContextLive(context);check(facts.status==='ADMITTED',/^full_admission_[a-z_]+$/.test(facts.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED');return protocolAdmissionView(job,facts);};
     const collect=async()=>{assertWindowsContextLive(context);const refs=refsData(await collectCompleteRemoteRefs({job,token:await github.getInstallationToken(),readPullRequest:n=>github.readPullRequest(n),fetchImpl,signal}));assertWindowsContextLive(context);return refs;};
     const first=await evaluate(),refs=job.role==='gitleaks'?await collect():null;
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:accepted.sourceAcceptanceRef,hostQualificationRef:accepted.hostQualificationRef,expiresAt:accepted.expiresAt});
@@ -66,3 +86,4 @@ export async function main(argv=process.argv.slice(2),output=process.stdout){
   }catch(e){output.write(JSON.stringify({status:'UNCERTAIN',reason:safe(e),automaticRetryAllowed:false,checksWritten:false})+'\n');return 2;}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href)process.exitCode=await main();
+
