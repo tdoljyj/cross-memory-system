@@ -64,7 +64,7 @@ try {
   $spool = 'C:\ProgramData\CluedIndependentCI\formal-spool'
   $outgoing=Join-Path $spool 'outgoing';$incoming=Join-Path $spool 'incoming'
   $leaves=@('issue.json','issue.ready.json','result.json','result.ready.json','active.lock','observations.jsonl')
-  foreach($i in 1..32){$n=$i.ToString('00');$leaves+=@('challenge-'+$n+'.json','challenge-'+$n+'.ready.json','response-'+$n+'.json','response-'+$n+'.ready.json')}
+  foreach($i in 1..32){$n=$i.ToString('00');$leaves+=@(('challenge-'+$n+'.json'),('challenge-'+$n+'.ready.json'),('response-'+$n+'.json'),('response-'+$n+'.ready.json'))}
   $controller = $AllowControllerWrite -and -not $RelayReadOutgoing -and $currentSid -ceq $ControllerSid
   $relay = $RelayReadOutgoing -and -not $AllowControllerWrite -and $currentSid -ceq 'S-1-5-21-1173730660-3877291096-655431861-1001'
   if ((-not $controller -and -not $relay) -or $ReadFile -or $protected -ine $spool) { throw 'FIXED_PUBLIC_SPOOL_REQUIRED' }
