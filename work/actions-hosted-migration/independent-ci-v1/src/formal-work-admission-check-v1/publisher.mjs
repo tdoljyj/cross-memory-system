@@ -11,7 +11,7 @@ import {canonical,digest,subjectOf} from '../proof.mjs';
 import {validateJob} from '../queue.mjs';
 import {EffectJournal} from '../effect-journal.mjs';
 import {createGitHubChecksPort} from '../github.mjs';
-import {createFullAdmissionPort} from '../full-admission.mjs';
+import {createFullAdmissionPort,fullAdmissionFailure} from '../full-admission.mjs';
 import {INSTALL_ROOT,APP_KEY_FILE,assertProtectedPaths,readProtected} from '../../runtime/protected-files.mjs';
 import {openHeldSource,takeHeldSource} from '../../worker/protected-job-bridge-v2/held-source.mjs';
 import {validateFormalAcceptance,validateSourcePins,REQUIRED_SOURCE_PATHS as BRIDGE_SOURCE} from '../../worker/protected-job-bridge-v2/boundary.mjs';
@@ -27,12 +27,14 @@ const check=(ok,code)=>{if(!ok)fail(code);};
 const plain=v=>v&&Object.getPrototypeOf(v)===Object.prototype;
 const exact=(v,keys)=>plain(v)&&Object.keys(v).sort().join('|')===[...keys].sort().join('|');
 const safe=e=>/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(e?.code??'')?e.code:'NATIVE_CHECK_UNCONFIRMED';
+const diagnosticOf=e=>fullAdmissionFailure({contract:'clued.independent-ci.full-admission/1',status:'BLOCKED',admitted:false,reason:e?.code,diagnostic:e?.admissionDiagnostic})?.admissionDiagnostic;
 const fresh=(f,now)=>Number.isSafeInteger(now)&&Number.isFinite(Date.parse(f?.observedAt))&&Date.parse(f.observedAt)<=now&&now-Date.parse(f.observedAt)<=30000&&Date.parse(f.claimExpiresAt)>now;
 const freeze=v=>{if(v&&typeof v==='object'){Object.values(v).forEach(freeze);Object.freeze(v);}return v;};
 const fixedJob=job=>{validateJob(job);check(job.repo===REPO&&job.role===ROLE&&job.attempt===1,'FIXED_WORK_ADMISSION_JOB_REQUIRED');return freeze(structuredClone(job));};
 function identity(c,job,externalId){return Number.isSafeInteger(c?.id)&&c.id>0&&c.app?.id===APP_ID&&c.name===CHECK_NAME&&c.head_sha===job.headSha&&c.external_id===externalId;}
 function factsValid(job,packet,facts,domain,now){
  check(packet?.complete===true&&packet.pr===job.pr&&packet.headSha===job.headSha&&packet.baseSha===job.baseSha&&Array.isArray(packet.paths)&&packet.paths.length>0&&packet.paths.length<=3000&&new Set(packet.paths).size===packet.paths.length,'COMPLETE_CURRENT_PATHS_REQUIRED');
+ const rejection=fullAdmissionFailure(facts);if(rejection)throw Object.assign(new Error(rejection.reason),{code:rejection.reason,...(rejection.admissionDiagnostic?{admissionDiagnostic:rejection.admissionDiagnostic}:{})});
  check(facts?.contract==='clued.independent-ci.full-admission/1'&&facts.status==='ADMITTED'&&facts.admitted===true&&facts.completeAdmission===true&&facts.domain===domain&&facts.evaluator==='scripts/ci/clued-work-admission.mjs#evaluate'&&facts.observationOnly!==true&&facts.publicationAuthorized!==false,'ACTUAL_COMPLETE_NATIVE_ADMISSION_REQUIRED');
  check(facts.repository===job.repo&&facts.prRef===`${job.repo}#${job.pr}`&&['headSha','baseSha','claimId','fence','epoch','sourceManifestSha256'].every(k=>facts[k]===job[k])&&facts.packetSha256===digest(packet),'NATIVE_CHECK_SUBJECT_CHANGED');
  check(facts.executionPolicy==='staged'&&facts.guarded===false&&plain(facts.mode)&&['normal','efficiency','frozen'].includes(facts.mode.state)&&['docs','code','protected'].includes(facts.mode.layer)&&plain(facts.mergeSlot)&&(facts.ownerReview===null||plain(facts.ownerReview))&&Array.isArray(facts.workflowGateFindings)&&facts.workflowGateFindings.length===0,'COMPLETE_NATIVE_GATES_REQUIRED');
@@ -57,7 +59,7 @@ function engine({github,journal,admission,assertLive,record,authority,clock=Date
  }
  async function readback(job,externalId,id,conclusion){const matches=await inventory(job,externalId);check(matches.length===1&&matches[0].id===id&&matches[0].status==='completed'&&matches[0].conclusion===conclusion,'NATIVE_CHECK_READBACK_UNCONFIRMED');return matches[0];}
  async function transition(key,phase,next,details){try{return await journal.transition(key,phase,next,details);}catch{return null;}}
- async function revoke({job,key,externalId,known,phase,cause,sideEffects}){
+ async function revoke({job,key,externalId,known,phase,cause,sideEffects,admissionDiagnostic}){
   const revKey=digest({action:'native-work-admission-revoke',effectKey:key,checkRunId:known.id});let revPhase='intent',logged=false;
   try{const matches=await inventory(job,externalId);check(matches.length===1&&matches[0].id===known.id,'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED');}catch{return {status:'UNCERTAIN',reason:'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED',effectKey:key,sideEffects,productionAuthorized:false,automaticRetryAllowed:false};}
   try{
@@ -71,8 +73,8 @@ function engine({github,journal,admission,assertLive,record,authority,clock=Date
    assertLive();sideEffects++;const patched=await github.revokeCheck(known.id,{status:'completed',conclusion:'failure',output:{title:'Work admission authorization changed',summary:`Reconcile Native admission check ${key}; ${cause}. No Native ticket or Receipt is asserted.`}});
    check(identity(patched,job,externalId)&&patched.status==='completed'&&patched.conclusion==='failure','NEGATIVE_COMPENSATION_UNCONFIRMED');await readback(job,externalId,known.id,'failure');
    if(logged)await journal.transition(revKey,'sent','settled',{checkRunId:known.id,conclusion:'failure'});
-   const current=await journal.read(key);check(['sent','uncertain','settled'].includes(current?.state),'NEGATIVE_COMPENSATION_STATE_UNCONFIRMED');await journal.transition(key,current.state,'revoked',{checkRunId:known.id,externalId,reason:cause});
-   record('native_check_revoked',{effectKey:key,checkRunId:known.id,cause});return {status:'REVOKED',effectKey:key,checkRunId:known.id,sideEffects,productionAuthorized:false,automaticRetryAllowed:false};
+   const current=await journal.read(key);check(['sent','uncertain','settled'].includes(current?.state),'NEGATIVE_COMPENSATION_STATE_UNCONFIRMED');await journal.transition(key,current.state,'revoked',{checkRunId:known.id,externalId,reason:cause,...(admissionDiagnostic?{admissionDiagnostic}:{})});
+   record('native_check_revoked',{effectKey:key,checkRunId:known.id,cause});return {status:'REVOKED',reason:cause,...(admissionDiagnostic?{admissionDiagnostic}:{}),effectKey:key,checkRunId:known.id,sideEffects,productionAuthorized:false,automaticRetryAllowed:false};
   }catch{
    if(revPhase==='sent')await transition(revKey,'sent','uncertain',{checkRunId:known.id,reason:'NEGATIVE_COMPENSATION_UNCONFIRMED'});
    if(phase==='sent')await transition(key,'sent','uncertain',{checkRunId:known.id,externalId,reason:'NEGATIVE_COMPENSATION_UNCONFIRMED'});
@@ -80,16 +82,25 @@ function engine({github,journal,admission,assertLive,record,authority,clock=Date
   }
  }
  return Object.freeze({fixture:!production,async publish(input){
-  let job,key,externalId,previous,before;
+  let job,key,externalId,previous,before,journalReadConfirmed=false;
   try{
    job=fixedJob(input);key=digest({action:'native-work-admission-check',subject:subjectOf(job),definition:DEFINITION});externalId=`independent-ci:native-work-admission:${job.id}:f${job.fence}:e${job.epoch}:a${job.attempt}`;
-   previous=await journal.read(key);
+   previous=await journal.read(key);journalReadConfirmed=true;
    if(previous&&previous.state!=='settled')return {status:previous.state==='revoked'?'REVOKED':'RECONCILIATION_REQUIRED',effectKey:key,sideEffects:0,productionAuthorized:false,automaticRetryAllowed:false};
    before=await boundary(job);
    if(previous){await readback(job,externalId,previous.details.checkRunId,'success');return {status:'SETTLED',effectKey:key,checkRunId:previous.details.checkRunId,sideEffects:0,productionAuthorized:production,automaticRetryAllowed:false};}
   }catch(e){
-   if(previous?.state==='settled'&&Number.isSafeInteger(previous.details?.checkRunId)&&previous.details.checkRunId>0)return revoke({job,key,externalId,known:{id:previous.details.checkRunId},phase:'settled',cause:safe(e),sideEffects:0});
-   return {status:'BLOCKED',reason:safe(e),sideEffects:0,productionAuthorized:false,automaticRetryAllowed:false};
+   if(previous?.state==='settled'&&Number.isSafeInteger(previous.details?.checkRunId)&&previous.details.checkRunId>0)return revoke({job,key,externalId,known:{id:previous.details.checkRunId},phase:'settled',cause:safe(e),sideEffects:0,admissionDiagnostic:diagnosticOf(e)});
+   // A validated subject that was confirmed absent gets a durable negative
+   // record even when the first Native boundary refuses. Never POST or replay.
+   if(journalReadConfirmed&&!previous&&job&&key){
+    try{
+     const intent=await journal.begin(key,{subject:subjectOf(job),definition:DEFINITION,externalId,observationKind:'blocked-native-admission-control',diagnosticOnly:true});
+     if(intent.existing)return {status:'RECONCILIATION_REQUIRED',effectKey:key,sideEffects:0,productionAuthorized:false,automaticRetryAllowed:false};
+     await journal.transition(key,'intent','not_sent',{reason:safe(e),externalId,...(diagnosticOf(e)?{admissionDiagnostic:diagnosticOf(e)}:{})});
+    }catch{return {status:'UNCERTAIN',reason:'BLOCKED_DIAGNOSTIC_UNCONFIRMED',effectKey:key,sideEffects:0,productionAuthorized:false,automaticRetryAllowed:false};}
+   }
+   return {status:'BLOCKED',reason:safe(e),...(diagnosticOf(e)?{admissionDiagnostic:diagnosticOf(e)}:{}),sideEffects:0,productionAuthorized:false,automaticRetryAllowed:false};
   }
   let phase='intent',sent=false,known=null,sideEffects=0;
   try{
@@ -106,9 +117,9 @@ function engine({github,journal,admission,assertLive,record,authority,clock=Date
    return {status:'SETTLED',effectKey:key,checkRunId:known.id,nativeObservationBeforeSha256:before.facts.observationSha256,nativeObservationAfterSha256:after.facts.observationSha256,sideEffects,productionAuthorized:production,automaticRetryAllowed:false};
   }catch(e){
    if(sent&&!known){try{const matches=await inventory(job,externalId);if(matches.length===1)known=matches[0];}catch{/* Read-only discovery cannot prove a missing POST did not succeed. */}}
-   if(sent&&known)return revoke({job,key,externalId,known,phase,cause:safe(e),sideEffects});
-   await transition(key,phase,sent?'uncertain':'not_sent',{reason:safe(e),externalId});
-   return {status:sent?'UNCERTAIN':'BLOCKED',effectKey:key,reason:safe(e),sideEffects,productionAuthorized:false,automaticRetryAllowed:false};
+   if(sent&&known)return revoke({job,key,externalId,known,phase,cause:safe(e),sideEffects,admissionDiagnostic:diagnosticOf(e)});
+   await transition(key,phase,sent?'uncertain':'not_sent',{reason:safe(e),externalId,...(diagnosticOf(e)?{admissionDiagnostic:diagnosticOf(e)}:{})});
+   return {status:sent?'UNCERTAIN':'BLOCKED',effectKey:key,reason:safe(e),...(diagnosticOf(e)?{admissionDiagnostic:diagnosticOf(e)}:{}),sideEffects,productionAuthorized:false,automaticRetryAllowed:false};
   }
  }});
 }
@@ -144,3 +155,4 @@ export async function publishInstalledWorkAdmission(options={}){
  }catch(e){return {status:'BLOCKED',reason:safe(e),sideEffects:0,productionAuthorized:false,automaticRetryAllowed:false};}
  finally{if(lease)await lease.close();}
 }
+

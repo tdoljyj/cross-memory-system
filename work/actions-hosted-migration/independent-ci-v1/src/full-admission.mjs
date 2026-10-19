@@ -14,7 +14,43 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const at = value => typeof value === 'string' ? Date.parse(value) : NaN;
 const fresh = (value, now) => Number.isFinite(at(value)) && at(value) <= now && now - at(value) <= 30_000;
-const blocked = reason => Object.freeze({ contract: 'clued.independent-ci.full-admission/1', status: 'BLOCKED', admitted: false, reason });
+const FAILURE_REASONS = new Set(['not_configured','subject_invalid','source_changed','clock_invalid','mode_unknown',
+  'principal_unknown','observer_unknown','subject_changed','claim_changed','observation_expired','rejected',
+  'native_unsupported','native_changed','incomplete','unavailable'].map(value => `full_admission_${value}`));
+const REASON_CODES = new Set(['claim_trailer_missing','claim_not_found','claim_not_current','fence_superseded',
+  'copy_not_adopted','claim_bound_to_other_pr','claim_head_cap_reached','task_ci_head_cap_reached','work_claim_conflict',
+  'path_outside_write_set','paths_outside_write_set','head_budget_exhausted','ci_budget_exhausted','merge_slot_required',
+  'merge_slot_missing','owner_grant_required','owner_grant_missing','owner_grant_revoked','owner_grant_expired',
+  'admission_binding_required','authorization_revoked_or_expired','binding_not_authorized','resource_action_not_authorized',
+  'evaluation_not_completed','workflow_change_not_authorized','workflow_missing_admission_gate','work_claim_execution_epoch_stale']);
+const REASON_PREFIXES = Object.freeze({'changed_files_truncated:':'changed_files_truncated','claim_base_unknown:':'claim_base_unknown',
+  'workflow_gate:':'workflow_gate','policy_file_removed:':'policy_file_removed','policy_file_invalid:':'policy_file_invalid',
+  'protected_change_not_up_to_date:':'protected_change_not_up_to_date','owner_review_required (':'owner_review_required',
+  'owner_review_unavailable:':'owner_review_unavailable','workflow runs unavailable:':'workflow_runs_unavailable'});
+const DIAGNOSTIC_CODES = new Set([...REASON_CODES,...Object.values(REASON_PREFIXES),'unknown_reason']);
+const verdict = value => ['ADMITTED','REJECTED','ERROR','PR_NOT_OPEN','NOT_APPLICABLE'].includes(value) ? value : 'UNKNOWN';
+const ownerKind = value => ['granted','pending','transient','rpc_unavailable','refused'].includes(value) ? value : 'UNKNOWN';
+const reasonCodes = values => [...new Set((Array.isArray(values) ? values.slice(0,64) : []).map(value => {
+  if(REASON_CODES.has(value))return value;
+  return typeof value === 'string' ? Object.entries(REASON_PREFIXES).find(([prefix]) => value.startsWith(prefix))?.[1] ?? 'unknown_reason' : 'unknown_reason';
+}))].sort();
+const rejectionDiagnostic = (outcome,native,extra={}) => ({verdict:verdict(outcome?.verdict),reasonCodes:reasonCodes(outcome?.reasons),
+  nativeVerdict:verdict(native?.verdict),nativeReasonCodes:reasonCodes(native?.reasons),ownerReviewKind:ownerKind(outcome?.owner_review?.kind),
+  workflowGateFindingsPresent:Array.isArray(outcome?.workflow_gate_findings)&&outcome.workflow_gate_findings.length>0,...extra});
+// Diagnostics contain only fixed enums and booleans. No remote text, claim,
+// path, URL, exception message or credential is copied into a public record.
+export function fullAdmissionFailure(facts) {
+  if(facts?.contract!=='clued.independent-ci.full-admission/1'||facts.status!=='BLOCKED'||facts.admitted!==false||!FAILURE_REASONS.has(facts.reason))return null;
+  const d=facts.diagnostic, diagnostic={};
+  if(plain(d)){
+    diagnostic.verdict=verdict(d.verdict);diagnostic.nativeVerdict=verdict(d.nativeVerdict);diagnostic.ownerReviewKind=ownerKind(d.ownerReviewKind);
+    for(const field of ['reasonCodes','nativeReasonCodes'])diagnostic[field]=[...new Set((Array.isArray(d[field])?d[field].slice(0,64):[]).map(value=>DIAGNOSTIC_CODES.has(value)?value:'unknown_reason'))].sort();
+    for(const field of ['workflowGateFindingsPresent','modeFresh','recorderFresh'])if(typeof d[field]==='boolean')diagnostic[field]=d[field];
+    if(['mode','principal','observer','pull_request','claim_reference','evaluate','post_evaluate','post_pull_request','native'].includes(d.phase))diagnostic.phase=d.phase;
+  }
+  return {reason:facts.reason,...(Object.keys(diagnostic).length?{admissionDiagnostic:diagnostic}:{})};
+}
+const blocked = (reason,diagnostic) => Object.freeze({ contract: 'clued.independent-ci.full-admission/1', status: 'BLOCKED', admitted: false, reason,...(diagnostic?{diagnostic}:{}) });
 
 function packetValid(job, packet) {
   return plain(packet) && Object.keys(packet).length === 5 && packet.complete === true && packet.pr === job.pr
@@ -58,6 +94,7 @@ export function createFullAdmissionPort({ protectedConfig, tokenProvider, modePr
     async evaluatePr(job, packet) {
       if (!configured || typeof tokenProvider !== 'function' || typeof recorderProvider !== 'function'
         || typeof fetchImpl !== 'function' || typeof clock !== 'function') return blocked('full_admission_not_configured');
+      let phase='mode';
       try {
         validateJob(job);
         if (job.repo !== config.repository || job.sourceManifestSha256 !== config.sourceManifestSha256 || !packetValid(job, packet)) return blocked('full_admission_subject_invalid');
@@ -71,12 +108,12 @@ export function createFullAdmissionPort({ protectedConfig, tokenProvider, modePr
           || !Number.isSafeInteger(modeReturnedAt) || modeReturnedAt < started
           || !fresh(mode.observedAt, modeReturnedAt) || typeof mode.proofRef !== 'string' || !mode.proofRef
           || (mode.exists && typeof mode.value !== 'string')) return blocked('full_admission_mode_unknown');
-        const credentials = await tokenProvider();
+        phase='principal';const credentials = await tokenProvider();
         if (!plain(credentials) || typeof credentials.githubToken !== 'string' || !credentials.githubToken
           || !/^clued_bnd_[A-Za-z0-9_-]{8,480}$/.test(credentials.ciAdmissionToken ?? '')
           || credentials.ciPrincipalBindingId !== config.ciPrincipalBindingId
           || credentials[principalRefField] !== config[principalRefField]) return blocked('full_admission_principal_unknown');
-        const observation = await recorderProvider({ repository: REPO, jobId: job.id, domain: config.domain });
+        phase='observer';const observation = await recorderProvider({ repository: REPO, jobId: job.id, domain: config.domain });
         const recorderReturnedAt = clock();
         const baseRecorder = observation?.recorder;
         if (observation?.kind !== 'independent-controller' || observation.domain !== config.domain
@@ -88,9 +125,9 @@ export function createFullAdmissionPort({ protectedConfig, tokenProvider, modePr
         const env = { GITHUB_REPOSITORY: REPO, GITHUB_TOKEN: credentials.githubToken,
           CLUED_CONTEXT_READ_TOKEN: credentials.ciAdmissionToken, CLUED_SUPABASE_URL: config.supabaseUrl,
           CLUED_SUPABASE_PUBLISHABLE_KEY: config.publishableKey, [VARIABLE]: mode.exists ? mode.value : '' };
-        const pr = await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`);
+        phase='pull_request';const pr = await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`);
         if (!samePr(pr, job)) return blocked('full_admission_subject_changed');
-        let reference = parseClaimReference(pr.body);
+        phase='claim_reference';let reference = parseClaimReference(pr.body);
         if (!reference) reference = parseClaimReference((await githubJson(fetchImpl, env, `/repos/${REPO}/commits/${job.headSha}`))?.commit?.message);
         if (reference?.claim_id !== job.claimId || reference.scope !== config.scope) return blocked('full_admission_claim_changed');
         let native = null;
@@ -98,20 +135,21 @@ export function createFullAdmissionPort({ protectedConfig, tokenProvider, modePr
           baseRecorder.record(kind, data);
           if (kind === 'claim_verification') native = structuredClone(data.result?.payload);
         } };
-        const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl,
+        phase='evaluate';const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: 'pull_request', fetchImpl,
           workspace: config.workspace, withSummary: false, readPolicyFile: () => config.policyText,
           observation_recorder: recorder, observation_entry: 'independent_pr' });
-        const finished = clock(), prRef = `${REPO}#${job.pr}`;
+        phase='post_evaluate';const finished = clock(), prRef = `${REPO}#${job.pr}`;
         if (!Number.isSafeInteger(finished) || finished < started || !fresh(mode.observedAt, finished)
-          || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired');
-        if (outcome.admitted !== true || outcome.verdict !== 'ADMITTED') return blocked('full_admission_rejected');
+          || !fresh(observation.observedAt, finished)) return blocked('full_admission_observation_expired',rejectionDiagnostic(outcome,native,{modeFresh:fresh(mode.observedAt,finished),recorderFresh:fresh(observation.observedAt,finished)}));
+        if (outcome.admitted !== true || outcome.verdict !== 'ADMITTED') return blocked('full_admission_rejected',rejectionDiagnostic(outcome,native));
+        phase='post_pull_request';
         if (outcome.head_sha !== job.headSha || outcome.base_sha !== job.baseSha || outcome.pr_ref !== prRef
           || outcome.claim_id !== job.claimId || outcome.scope !== config.scope
           || digest([...outcome.changed_paths].sort()) !== digest([...packet.paths].sort())
           || !samePr(await githubJson(fetchImpl, env, `/repos/${REPO}/pulls/${job.pr}`), job)) return blocked('full_admission_subject_changed');
         // Compatibility validation comes from the *actual evaluator's* Native
         // verification, never an asserted marker or a second synthetic verdict.
-        const claim = native?.claim;
+        phase='native';const claim = native?.claim;
         if (native?.status !== 'ok' || native.verdict !== 'ADMITTED' || native.execution_authorized !== true
           || native.execution_policy !== 'staged' || claim?.lease_key_required !== false
           || claim.execution_handover_pending !== false) return blocked('full_admission_native_unsupported');
@@ -136,7 +174,8 @@ export function createFullAdmissionPort({ protectedConfig, tokenProvider, modePr
           claimExpiresAt: claim.expires_at, modeProofRef: mode.proofRef, observationRef: observation.observationRef,
           packetSha256: digest(packet), evaluationSha256: digest(outcome) };
         return Object.freeze({ ...facts, observationSha256: digest(facts) });
-      } catch { return blocked('full_admission_unavailable'); }
+      } catch { return blocked('full_admission_unavailable',{phase}); }
     },
   });
 }
+
