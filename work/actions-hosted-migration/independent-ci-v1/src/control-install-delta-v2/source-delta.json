@@ -490,8 +490,8 @@
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/prepare.mjs",
-      "bytes": 22051,
-      "sha256": "d3698367a9220b5bafc6e9ab5ef8b41a84a63f0823d6838ece88146c3edd5493",
+      "bytes": 26463,
+      "sha256": "a7ae8a72b01d18e69237a4b2b5a48eef7e887544836aea0329407917abe1005e",
       "oldSha256": null,
       "operation": "create-if-absent"
     },

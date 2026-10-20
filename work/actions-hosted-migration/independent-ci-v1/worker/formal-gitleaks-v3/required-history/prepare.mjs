@@ -15,6 +15,15 @@ export const SOURCE_PINS = Object.freeze({
   '.gitleaks.toml': 'a414f9d5011a4f358aa8ae060d53838b121fbd7bcc2ada4fd1382bbde3f7062d',
   '.github/workflows/gitleaks.yml': '168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579',
 });
+// The pinned trusted helper (scripts/ci/reviewed_gitleaks.py parse_records and
+// _ensure_reviewed_commits) reads its reviewed records from the pinned
+// .gitleaks.toml "# clued-reviewed-finding: {json}" lines and requires the
+// commit of every record fingerprint in the scanned repository. The offline
+// self-test cannot fetch them, so preparation packs exactly this pinned set.
+// The set is the sorted, LF-joined (trailing LF) list of distinct commits.
+export const REVIEWED_COMMITS = Object.freeze({ findings: 533, commits: 73,
+  sha256: '859b247feac6a97c9f7ba19898233b02cc680c720c898a457be3b5b182f10e31' });
+const REVIEWED_FINDING_PREFIX = '# clued-reviewed-finding: ', REVIEWED_COUNT_PREFIX = '# clued-reviewed-count: ';
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const completedSelfTests = new WeakMap();
@@ -47,6 +56,29 @@ export function validateRemoteSnapshot(value, job, now = Date.now()) {
     seen.add(ref.name);
   }
   return [...value.refs].sort((a, b) => a.name.localeCompare(b.name));
+}
+// Deterministic extraction of the reviewed commit set from the pinned config
+// bytes; any input the Python and JS line/JSON readings could disagree on fails.
+export function reviewedCommitsFromConfig(bytes, pin = REVIEWED_COMMITS) {
+  let text = null;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { fail('REVIEWED_RECORDS_AMBIGUOUS'); }
+  // Printable ASCII plus LF only: JS split('\n') then equals Python str.splitlines().
+  check(text.endsWith('\n') && !/[^\n\x20-\x7e]/.test(text), 'REVIEWED_RECORDS_AMBIGUOUS');
+  const lines = text.slice(0, -1).split('\n');
+  const counts = lines.filter(line => line.startsWith(REVIEWED_COUNT_PREFIX));
+  const fingerprints = lines.filter(line => line.startsWith(REVIEWED_FINDING_PREFIX)).map(line => {
+    let record = null;
+    try { record = JSON.parse(line.slice(REVIEWED_FINDING_PREFIX.length)); } catch { fail('REVIEWED_RECORDS_AMBIGUOUS'); }
+    check(plain(record) && Object.keys(record).sort().join('|') === 'fingerprint|kinds' && typeof record.fingerprint === 'string'
+      && record.fingerprint.split(':').length === 4 && SHA.test(record.fingerprint.split(':')[0]), 'REVIEWED_RECORDS_AMBIGUOUS');
+    return record.fingerprint;
+  });
+  check(counts.length === 1 && counts[0] === REVIEWED_COUNT_PREFIX + String(fingerprints.length)
+    && new Set(fingerprints).size === fingerprints.length, 'REVIEWED_RECORDS_AMBIGUOUS');
+  const commits = [...new Set(fingerprints.map(fingerprint => fingerprint.slice(0, 40)))].sort();
+  check(fingerprints.length === pin.findings && commits.length === pin.commits
+    && createHashForBytes().update(commits.join('\n') + '\n').digest('hex') === pin.sha256, 'REVIEWED_COMMIT_SET_CHANGED');
+  return Object.freeze(commits);
 }
 function environment(alternate = null) {
   return { PATH: process.platform === 'win32' ? 'C:\\Windows\\System32' : '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C',
@@ -94,7 +126,9 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   const manifest = JSON.parse(sourceManifestBytes), role = manifest.roles?.gitleaks;
   check(manifest.schema === 'independent-ci.sources.v1' && manifest.repo === job.repo && SHA.test(manifest.sourceSha ?? '')
     && role && Array.isArray(role.sourceFiles) && role.containerCommand?.image === IMAGE && role.containerCommand.scanner === 'gitleaks'
-    && role.containerCommand.executable === '/usr/bin/gitleaks' && role.containerCommand.cwd === '/repo'
+    // The registered generic manifest cwd is '/input' (src/worker.mjs); this
+    // profile's own scanner plan still runs at '/repo' (requiredScannerPlan).
+    && role.containerCommand.executable === '/usr/bin/gitleaks' && role.containerCommand.cwd === '/input'
     && canonical(role.containerCommand.args) === canonical(SCAN_ARGS), 'REQUIRED_HISTORY_SOURCE_NOT_REGISTERED');
   const source = await noLinks(trustedSourceDirectory), cache = await noLinks(gitDirectory), git = await noLinks(gitExecutable);
   check(HASH.test(expectedGitSha256 ?? '') && await fileHash(git) === expectedGitSha256, 'PINNED_GIT_CHANGED');
@@ -110,6 +144,11 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
     const file = path.join(source, ...filename.split('/')); await noLinks(file);
     check(await fileHash(file) === hash, 'TRUSTED_REVIEW_SOURCE_CHANGED');
   }
+  // One read: these exact pinned bytes are both parsed and copied to the scanner input.
+  const configBytes = await fsp.readFile(path.join(source, '.gitleaks.toml'));
+  check(createHashForBytes().update(configBytes).digest('hex') === SOURCE_PINS['.gitleaks.toml'], 'TRUSTED_REVIEW_SOURCE_CHANGED');
+  const reviewedCommits = reviewedCommitsFromConfig(configBytes), reviewedInput = reviewedCommits.join('\n') + '\n';
+  const reviewedTypes = reviewedCommits.map(sha => `${sha} commit`).join('\n');
   for (const file of ['shallow', 'info/grafts', 'objects/info/alternates', 'objects/info/http-alternates']) check(!(await exists(path.join(cache, ...file.split('/')))), 'INCOMPLETE_OR_INDIRECT_OBJECT_STORE');
   await noLinks(path.join(cache, 'objects'), true);
   check(!(await fsp.readdir(path.join(cache, 'objects', 'pack'))).some(name => name.endsWith('.promisor')), 'PARTIAL_OBJECT_STORE_REFUSED');
@@ -118,11 +157,16 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   await fsp.mkdir(repository, { mode: 0o755 }); await fsp.mkdir(control, { mode: 0o700 });
   const dotgit = path.join(repository, '.git'); await fsp.mkdir(path.join(dotgit, 'objects', 'pack'), { recursive: true, mode: 0o755 });
   await fsp.mkdir(path.join(dotgit, 'refs'), { mode: 0o755 }); await writeOnce(path.join(dotgit, 'HEAD'), job.headSha + '\n');
-  const alternate = path.join(cache, 'objects'), tips = [...new Set([...refs.map(ref => ref.objectSha), job.headSha])];
+  // Reviewed commits are pack tips only, never refs: the scanned ref set stays
+  // exactly the fresh remote heads/tags plus the detached current head.
+  const alternate = path.join(cache, 'objects'), tips = [...new Set([...refs.map(ref => ref.objectSha), job.headSha, ...reviewedCommits])];
   // A fresh Git directory supplies no source config/hooks/remotes/index/reflogs.
   // The alternate is a Host-only environment value used during packing. It is
   // never written into the prepared repository or mounted in the scanner.
   for (const sha of [job.headSha, job.baseSha]) check((await processGit(git, dotgit, ['cat-file', '-t', sha], { alternate, maxBytes: 4096 })).text.trim() === 'commit', 'HEAD_BASE_COMMIT_MISSING');
+  const reviewedPresent = async withAlternate => (await processGit(git, dotgit, ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
+    { stdin: reviewedInput, alternate: withAlternate, maxBytes: 65536 })).text.trim() === reviewedTypes;
+  check(await reviewedPresent(alternate), 'REVIEWED_COMMIT_NOT_IN_STORE');
   for (const ref of refs) await processGit(git, dotgit, ['check-ref-format', ref.name], { alternate, maxBytes: 4096 });
   const revisions = tips.join('\n') + '\n';
   const objects = (await processGit(git, dotgit, ['rev-list', '--objects', '--no-object-names', '--stdin'], { stdin: revisions, alternate, maxBytes: 128 * 1024 * 1024 })).text.trim().split('\n').filter(Boolean).sort();
@@ -133,11 +177,17 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   check(SHA.test(indexHash), 'PACK_INDEX_UNCONFIRMED');
   await fsp.rename(pack, path.join(path.dirname(pack), `pack-${indexHash}.pack`));
   await fsp.rename(pack.replace(/\.pack$/, '.idx'), path.join(path.dirname(pack), `pack-${indexHash}.idx`));
+  // Without the alternate: every reviewed commit and its whole closure is in the prepared pack.
+  check(await reviewedPresent(null), 'REVIEWED_COMMIT_NOT_PREPARED');
+  const packedObjects = new Set(objects);
+  const reviewedClosure = await processGit(git, dotgit, ['rev-list', '--objects', '--no-object-names', '--stdin'], { stdin: reviewedInput, maxBytes: 128 * 1024 * 1024 })
+    .catch(error => fail(error?.code === 'GIT_PREPARATION_FAILED' ? 'REVIEWED_COMMIT_NOT_PREPARED' : error?.code ?? 'GIT_PREPARATION_FAILED'));
+  check(reviewedClosure.text.trim().split('\n').filter(Boolean).every(object => packedObjects.has(object)), 'REVIEWED_COMMIT_NOT_PREPARED');
   for (const ref of refs) { const file = path.join(dotgit, ...ref.name.split('/')); await fsp.mkdir(path.dirname(file), { recursive: true, mode: 0o755 }); await writeOnce(file, ref.objectSha + '\n'); }
   const actual = (await processGit(git, dotgit, ['for-each-ref', '--format=%(refname) %(objectname)'], { maxBytes: 4 * 1024 * 1024 })).text.trim().split('\n').filter(Boolean).map(line => { const [name, objectSha] = line.split(' '); return { name, objectSha }; }).sort((a, b) => a.name.localeCompare(b.name));
   check(canonical(actual) === canonical(refs), 'EXACT_REMOTE_REF_SET_CHANGED');
   await processGit(git, dotgit, ['fsck', '--full', '--strict', '--no-reflogs'], { maxBytes: 65536 });
-  await writeOnce(path.join(repository, '.gitleaks.toml'), await fsp.readFile(path.join(source, '.gitleaks.toml')));
+  await writeOnce(path.join(repository, '.gitleaks.toml'), configBytes);
   const safeGitConfig = path.join(control, 'git-safe.config');
   await writeOnce(safeGitConfig, '[safe]\n\tdirectory = /repo\n\tdirectory = /test\n', 0o444);
   // Explicitly restore the public read bits after creation; umask077 must not
@@ -146,6 +196,8 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   const prepared = { contract: 'clued.independent-ci.required-gitleaks-input/1', subject: subjectOf(job),
     sourceSha: manifest.sourceSha, sourceManifestSha256: expectedSourceManifestSha256, remoteSnapshotSha256: digest(remoteSnapshot),
     refs, refScope: 'fresh-remote-heads-tags-plus-current-head', headSha: job.headSha, baseSha: job.baseSha,
+    packTipScope: 'refs-plus-current-head-plus-pinned-reviewed-commits', reviewedCommitCount: reviewedCommits.length,
+    reviewedCommitsSha256: REVIEWED_COMMITS.sha256,
     reachableObjectCount: objects.length, reachableObjectsSha256: digest(objects), packedHistorySha256: packed.sha256,
     packedHistoryBytes: packed.bytes, repository, control, safeGitConfig, trustedHelper: path.join(source, 'scripts/ci/reviewed_gitleaks.py'),
     reviewedIgnore: path.join(control, 'reviewed.ignore'), helperSha256: SOURCE_PINS['scripts/ci/reviewed_gitleaks.py'],
