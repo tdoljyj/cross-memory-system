@@ -52,7 +52,10 @@ rule. Existing icon geometry is unchanged.
 
 At preparation time, PR #884 owns the component manifest and generated
 components, Agent Contract and generated contract, and `stage6-contract.test.mjs`.
-The private plugin builder and canonical Skill are content-bound to that manifest.
+The private plugin builder, canonical Skill and capture-guard hook distributions
+are content-bound to that manifest. Their remaining KooYomi runtime prompts,
+including `scripts/hooks/clued_capture_guard.py` and `run_python.sh`, belong to
+the same coordinated update.
 Their coordinated branding/version update must wait for the live claim to release
 the shared files; this branch keeps those packages internally consistent.
 Coordinate this remaining change with PR #884 and Task
