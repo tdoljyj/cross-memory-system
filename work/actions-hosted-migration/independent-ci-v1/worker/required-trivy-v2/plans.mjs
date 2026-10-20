@@ -104,7 +104,7 @@ export function databasePreparationPlan({ stagingDirectory, current, now = Date.
       argv: ['fs', '--download-db-only', '--timeout', '5m', '--cache-dir', '/cache', '--db-repository', repository],
       network: 'host', mounts: [{ source: stagingDirectory, target: '/cache', readOnly: false }],
       user: '65532:65532', rootfsReadOnly: true, capDrop: ['ALL'], noNewPrivileges: true, limits: LIMITS,
-      environment: { HOME: '/scratch', DOCKER_CONFIG: '/nonexistent' }, inheritEnvironment: false }))),
+      environment: { HOME: '/scratch', TMPDIR: '/scratch', DOCKER_CONFIG: '/nonexistent' }, inheritEnvironment: false }))),
     activation: { method: 'immutable-generation-and-current-pointer-cas', before: 'validate real download exit, complete DB bytes/metadata and cleanup',
       onFailure: 'retain previous cache and pointer; unknown/timeout is BLOCKED', expectedCurrentPointerSha256Required: true },
     sourceCandidateOnly: true, actualDownloadObserved: false, formalEligible: false };
@@ -131,7 +131,7 @@ export function checksPreparationPlan({ stagingDirectory, emptyDirectory, checks
       '--scanners', 'misconfig', '--severity', 'HIGH,CRITICAL', '--exit-code', '1', '/empty'],
     network: 'host', user: '65532:65532', rootfsReadOnly: true, capDrop: ['ALL'], noNewPrivileges: true,
     mounts: [{ source: stagingDirectory, target: '/cache', readOnly: false }, { source: emptyDirectory, target: '/empty', readOnly: true }],
-    inheritEnvironment: false, environment: { HOME: '/scratch', DOCKER_CONFIG: '/nonexistent' }, limits: LIMITS, checksPin,
+    inheritEnvironment: false, environment: { HOME: '/scratch', TMPDIR: '/scratch', DOCKER_CONFIG: '/nonexistent' }, limits: LIMITS, checksPin,
     requireBeforeActivation: ['real-exit-and-cleanup', 'empty-directory-really-empty', 'exact-policy-digest-version-and-content-hash'],
     currentCacheUntouched: true, actualDownloadObserved: false, formalEligible: false };
 }
@@ -152,10 +152,13 @@ export function requiredTrivyPlans({ job, preparedRequest, snapshotDirectory, da
     && new Set(inputInventory.paths).size === inputInventory.paths.length
     && inputInventory.paths.every(filename => typeof filename === 'string' && filename && !/[\\:\x00-\x1f]/.test(filename)
       && !filename.startsWith('/') && filename.split('/').every(part => part && part !== '.' && part !== '..')), 'COMPLETE_PREPARED_FILE_INVENTORY_REQUIRED');
-  // Do not silently use --offline-scan or disable Java analysis. A future
-  // archive-bearing input needs the separately prepared Java DB, not a silent
-  // network failure or reduced analysis. This candidate refuses that gap.
-  check(!inputInventory.paths.some(filename => /\.(jar|war|ear|zip)$/i.test(filename)), 'JAVA_ARCHIVE_OFFLINE_DB_ROUTE_NOT_PREPARED');
+  // Do not silently use --offline-scan or disable Java analysis. An input the
+  // Java analyzer would open needs the separately prepared Java DB, not a silent
+  // network failure or reduced analysis. This candidate refuses that gap. The
+  // list is exactly trivy v0.74.0 jar analyzer requiredExtensions (case-insensitive,
+  // pkg/fanal/analyzer/language/java/jar/jar.go), the only javadb.NewClient caller;
+  // a plain .zip is not opened by it and needs no Java DB.
+  check(!inputInventory.paths.some(filename => /\.(jar|war|ear|par)$/i.test(filename)), 'JAVA_ARCHIVE_OFFLINE_DB_ROUTE_NOT_PREPARED');
   check(dbDecision?.status === 'READY' && usableDb(database, now) && dbDecision.db.sha256 === database.sha256, 'REAL_USABLE_OFFLINE_DB_REQUIRED');
   check(dbDecision.fallback === true ? now - time(database.metadata.UpdatedAt) <= 72 * 3600000 : time(database.metadata.NextUpdate) > now, 'OFFLINE_DB_FRESHNESS_CHANGED');
   validateChecksBundle(checksBundle, checksPin, now);
@@ -177,8 +180,8 @@ export function requiredTrivyPlans({ job, preparedRequest, snapshotDirectory, da
 // no observation from this adapter is enrolled for signing or qualification.
 export function scannerCreateArguments(plan, index, request, name) {
   const scan = plan.scanners[index]; check(scan && plan.image === IMAGE, 'FIXED_SCANNER_REQUIRED');
-  return createArguments({ imageDigest: IMAGE, limits: scan.limits }, request, scan, name);
+  return createArguments({ imageDigest: IMAGE, limits: scan.limits, env: ['TMPDIR=/scratch'] }, request, scan, name);
 }
 export function inspectScannerContainer(container, plan, index, request, name, imageId) {
-  return inspectContainer(container, { imageDigest: IMAGE, limits: plan.scanners[index].limits }, request, plan.scanners[index], name, imageId);
+  return inspectContainer(container, { imageDigest: IMAGE, limits: plan.scanners[index].limits, env: ['TMPDIR=/scratch'] }, request, plan.scanners[index], name, imageId);
 }

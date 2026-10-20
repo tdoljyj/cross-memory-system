@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 const HERE=path.dirname(fileURLToPath(import.meta.url));
 const ROOT=path.resolve(HERE,'../../../../..'),P='work/actions-hosted-migration/independent-ci-v1/';
 const CONTROL=path.join(ROOT,P,'src/independent-control-checks-v1');
-const EXPECTED_DEPLOYMENT_PINS='10d38b438d4e154c7e21c8c5e0798c87726e65c94204b301996f42ebae683080';
+const EXPECTED_DEPLOYMENT_PINS='bc29ee5d3c3cc90a2b3fbb2c5ec099ef38c354fefb3da9edcc323f6752d6f916';
 const EXPECTED_CLOSURE='6aa88e3329ff951eafc785abfe3ac477b846db8487320250fc604c1dd67cca70';
 const CHECKS=Object.freeze({'gitleaks':{name:'gitleaks',appId:5368905},'trivy':{name:'trivy',appId:5368905},'work-admission':{name:'kooyumi-work-admission',appId:5368905},'contract-placement':{name:'contract-placement',appId:5368905},'control-admission':{name:'kooyumi-admission-verified',appId:5368905},'control-merge-slot':{name:'kooyumi-merge-slot',appId:5368905}});
 const REFS=['sourceAcceptanceRef','hostQualificationRef','ownerAuthorizationRef','publisherQualificationRef','ciPrincipalQualificationRef','ownerPackageAcceptanceRef','installationReceiptRef'];

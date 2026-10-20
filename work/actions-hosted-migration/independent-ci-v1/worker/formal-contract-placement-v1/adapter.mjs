@@ -65,8 +65,11 @@ async function sealedCandidate(config,job,candidate,destination){
   const meta=path.join(destination,'.git');await fs.mkdir(path.join(meta,'objects','pack'),{recursive:true,mode:0o755});await fs.mkdir(path.join(meta,'refs'),{mode:0o755});
   await fs.writeFile(path.join(meta,'HEAD'),job.headSha+'\n',{flag:'wx',mode:0o444});await fs.writeFile(path.join(meta,'config'),'[core]\nrepositoryformatversion = 0\nfilemode = true\nbare = false\nlogallrefupdates = false\n',{flag:'wx',mode:0o444});
   const pack=await git(config,candidate,['pack-objects','--stdout','--revs'],{stdin:job.headSha+'\n'+job.baseSha+'\n',maxBytes:256*1024*1024});check(pack.length>=32,'PACK_BYTES_REQUIRED');const packfile=path.join(meta,'objects','pack','pack-'+pack.subarray(-20).toString('hex')+'.pack');await fs.writeFile(packfile,pack,{flag:'wx',mode:0o444});
-  await git(config,destination,['index-pack','--strict',packfile]);return{bytes,packSha256:hash(pack)};
+  await git(config,destination,['index-pack','--strict',packfile]);await readableSeal(destination);return{bytes,packSha256:hash(pack)};
 }
+// The fixed container user (65532) must read the sealed snapshot. Like trivy-v3's snapshotTree and
+// gitleaks prepare, set explicit read-only modes so a umask077 worker cannot make /input root-only.
+async function readableSeal(dir){for(const item of await fs.readdir(dir,{withFileTypes:true})){const p=path.join(dir,item.name),s=await fs.lstat(p);check(!s.isSymbolicLink()&&(s.isDirectory()||s.isFile()&&s.nlink===1),'ROOT_SEALED_CANDIDATE_REQUIRED');if(s.isDirectory())await readableSeal(p);else await fs.chmod(p,s.mode&0o111?0o555:0o444);}await fs.chmod(dir,0o555);}
 export function placementPlan(config,accepted,snapshot,requestFile,entryFile){
   validateTools(accepted.tools);return freeze({profile:PROFILE,image:config.image,executable:config.containerNodeExecutable,cwd:'/scratch',args:['/control/contract-placement-entry.mjs'],mounts:[[snapshot,'/input'],[requestFile,'/request/job.json'],[entryFile,'/control/contract-placement-entry.mjs']],limits:LIMITS,network:'none',user:'65532:65532',rootfsReadOnly:true,credentialsMounted:false});
 }

@@ -14,7 +14,7 @@ export const RUNTIME={
   [NODE]:'bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12',
   '/usr/bin/docker':'7ed12b00293d64742419a6601ae97960a367a0ce97c88b06e3278cc0a409557b',
   '/usr/bin/git':'2a8c18fbf43da9f692d75474c72bea9dfd796c260b0f3dfe456376abc3bbd668',
-  [ENTRY]:'4b0e1aec07b494cb3639f58d7e02d6d263d723167ae4d5fc44093de9cb1e3ec2',
+  [ENTRY]:'aeb5719d49a7070258fe93d6a541fa3f26125b53e180f3130d94e57929949ab3',
   '/opt/clued-independent-ci/worker-source.mjs':'67803ba150f0b22af5459af4b83f7910835221caea845a54a46a70d39ec7608c'
 };
 export const SHA=/^[a-f0-9]{64}$/;

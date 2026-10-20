@@ -82,12 +82,12 @@ async function run({ directory, store, head, base, refs, cwd }) {
 test('the pinned .gitleaks.toml yields exactly the pinned reviewed commit set', () => {
   assert.equal(sha256(CONFIG), SOURCE_PINS['.gitleaks.toml']);
   assert.equal(REVIEWED.length, REVIEWED_COMMITS.commits);
-  assert.equal(REVIEWED.length, 73);
+  assert.equal(REVIEWED.length, 100);
   assert.deepEqual([...REVIEWED], [...REVIEWED].sort());
   assert.ok(REVIEWED.every(sha => /^[a-f0-9]{40}$/.test(sha)));
   // Same reading as reviewed_gitleaks.py: every fingerprint commit, distinct.
   const lines = CONFIG.toString('utf8').split('\n').filter(line => line.startsWith('# clued-reviewed-finding: '));
-  assert.equal(lines.length, 533);
+  assert.equal(lines.length, 726);
   assert.deepEqual([...REVIEWED], [...new Set(lines.map(line => JSON.parse(line.slice(26)).fingerprint.split(':', 1)[0]))].sort());
 });
 
@@ -100,8 +100,8 @@ test('reviewed record extraction fails closed on any parse ambiguity or set chan
     original.replace(record, record.replace('{"fingerprint"', '{"extra":1,"fingerprint"')),
     original.replace(record, record.slice(0, -1)),
     original.replace(record, record.replace(/"fingerprint":"([a-f0-9]{40})/, (_, sha) => `"fingerprint":"${sha.slice(0, 12)}`)),
-    original.replace('# clued-reviewed-count: 533\n', '# clued-reviewed-count: 533\n# clued-reviewed-count: 533\n'),
-    original.replace('# clued-reviewed-count: 533', '# clued-reviewed-count: +533'),
+    original.replace('# clued-reviewed-count: 726\n', '# clued-reviewed-count: 726\n# clued-reviewed-count: 726\n'),
+    original.replace('# clued-reviewed-count: 726', '# clued-reviewed-count: +726'),
     original.replace(record + '\n', ''),
     original.replace(record, record + '\n' + record),
     original + 'x\u00e9\n',
@@ -152,7 +152,7 @@ test('reviewed commits unreachable from the refs and head are packed as tips, ne
   git(['--git-dir=' + store, 'index-pack', '--stdin', '--strict'], { input: pack });
   const [head, base] = [REVIEWED[0], REVIEWED[1]];
   const prepared = await run({ directory, store, head, base });
-  assert.equal(prepared.reviewedCommitCount, 73);
+  assert.equal(prepared.reviewedCommitCount, 100);
   assert.equal(prepared.reviewedCommitsSha256, REVIEWED_COMMITS.sha256);
   assert.equal(prepared.refScope, 'fresh-remote-heads-tags-plus-current-head');
   const dotgit = path.join(prepared.repository, '.git');

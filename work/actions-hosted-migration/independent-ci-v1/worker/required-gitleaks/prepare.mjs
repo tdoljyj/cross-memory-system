@@ -11,8 +11,8 @@ import { canonical, digest, subjectOf } from '../../src/proof.mjs';
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': 'f0c56394d95bde01631e77e8e23eedf62aad1cd1c422f1e271e295aa000d7a21',
-  '.gitleaks.toml': 'a414f9d5011a4f358aa8ae060d53838b121fbd7bcc2ada4fd1382bbde3f7062d',
+  'scripts/ci/reviewed_gitleaks.py': '433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9',
+  '.gitleaks.toml': 'cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd',
   '.github/workflows/gitleaks.yml': '168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579',
 });
 const SHA = /^[a-f0-9]{40}$/;

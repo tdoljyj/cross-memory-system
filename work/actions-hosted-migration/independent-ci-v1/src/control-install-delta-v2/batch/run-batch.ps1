@@ -28,7 +28,7 @@ function Assert-SealedStage($Row){
  if((@($pm.files.PSObject.Properties.Name|Sort-Object)-join '|') -cne (($fixed|Sort-Object)-join '|')){throw 'EXACT_STAGE_INPUT_CLOSURE_REQUIRED'}
  foreach($n in $fixed){$r=$pm.files.$n;$b=Read-SealedWork (Join-Path $dir ('inputs/'+$n)) $r.sha256 2MB;if($b.Length -ne $r.bytes){throw 'STAGE_INPUT_SIZE_CHANGED'}}
  $null=Read-SealedWork (Join-Path $dir ('inputs/'+$Row.helper)) $Row.helperSha256 4MB
- if(@($pm.sourceFiles).Count -ne 84 -or (Hash $parts['deployment-pins.json']) -cne '10d38b438d4e154c7e21c8c5e0798c87726e65c94204b301996f42ebae683080'){throw 'FIXED_STAGE_84_SOURCE_REQUIRED'}
+ if(@($pm.sourceFiles).Count -ne 84 -or (Hash $parts['deployment-pins.json']) -cne 'bc29ee5d3c3cc90a2b3fbb2c5ec099ef38c354fefb3da9edcc323f6752d6f916'){throw 'FIXED_STAGE_84_SOURCE_REQUIRED'}
  $pins=$u.GetString($parts['deployment-pins.json'])|ConvertFrom-Json
  foreach($r in $pins.runtimeFiles){$found=@($pm.sourceFiles|Where-Object{$_.path -ceq $r.path -and $_.sha256 -ceq $r.sha256 -and $_.bytes -eq $r.bytes});if($found.Count -ne 1){throw 'STAGE_DEPLOYMENT_CLOSURE_CHANGED'};$b=Read-SealedWork (Join-Path $dir ('inputs/source/'+$r.sha256+'.bin')) $r.sha256;if($b.Length -ne $r.bytes){throw 'STAGE_SOURCE_SIZE_CHANGED'}}
  return $parts

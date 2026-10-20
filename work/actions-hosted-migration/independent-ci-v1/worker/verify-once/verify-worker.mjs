@@ -96,11 +96,15 @@ async function invoke(c,args,{timeoutMs=10000,maxOutputBytes=65536,digestOnly=fa
   });
 }
 function parse(result){if(result.code!==0||result.timedOut||result.overflow||result.error)deny('DOCKER_READ_UNKNOWN');try{return JSON.parse(result.stdout);}catch{deny('DOCKER_JSON_UNKNOWN');}}
+// Exact opt-in environment literals. trivy (fs scans) needs a writable os.TempDir(); with a read-only
+// rootfs that is the /scratch tmpfs. No other value can be requested; absent c.env keeps the fixed argv.
+const EXTRA_ENV=Object.freeze(['TMPDIR=/scratch']);
+function extraEnv(c){const e=c.env??[];if(!Array.isArray(e)||new Set(e).size!==e.length||e.some(v=>!EXTRA_ENV.includes(v)))deny('EXTRA_ENV_REFUSED');return e;}
 export function createArguments(c,r,plan,name){
   const mounts=plan.mounts??[];
   return ['create','--name',name,'--pull=never','--network=none','--ipc=private','--cgroupns=private','--user=65532:65532','--read-only','--cap-drop=ALL',
     '--security-opt=no-new-privileges:true',`--pids-limit=${c.limits.pids}`,`--cpus=${c.limits.cpus}`,`--memory=${c.limits.memoryBytes}`,`--memory-swap=${c.limits.memoryBytes}`,
-    '--restart=no','--log-driver=none','--ulimit=nofile=1024:1024','--env=NODE_OPTIONS=','--env=NODE_PATH=','--env=HOME=/scratch',
+    '--restart=no','--log-driver=none','--ulimit=nofile=1024:1024','--env=NODE_OPTIONS=','--env=NODE_PATH=','--env=HOME=/scratch',...extraEnv(c).map(v=>`--env=${v}`),
     '--tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532',
     ...mounts.flatMap(([src,dst])=>['--mount',`type=bind,src=${src},dst=${dst},readonly,bind-propagation=rprivate`]),
     `--workdir=${plan.cwd}`,'--entrypoint',plan.executable,'--label',`clued.verify.nonce=${r.nonce}`,'--label',`clued.verify.execution=${r.executionId}`,c.imageDigest,...plan.args];
@@ -118,8 +122,8 @@ export function inspectContainer(o,c,r,plan,name,imageId){
     !h.Tmpfs||Object.keys(h.Tmpfs).length!==1||!h.Tmpfs['/scratch']?.includes('noexec')||!h.Tmpfs['/scratch'].includes('uid=65532'))deny('CONTAINER_MOUNT_DRIFT');
   if(canonical(o.Config.Entrypoint)!==canonical([plan.executable])||canonical(o.Config.Cmd)!==canonical(plan.args)||o.Config.WorkingDir!==plan.cwd||
     o.Config.Labels?.['clued.verify.nonce']!==r.nonce||o.Config.Labels?.['clued.verify.execution']!==r.executionId||
-    !(o.Config.Env??[]).every(v=>/^(PATH|NODE_VERSION|YARN_VERSION|LANG|LC_ALL|TZ|NODE_OPTIONS|NODE_PATH|HOME)=/.test(v))||
-    ['NODE_OPTIONS=','NODE_PATH=','HOME=/scratch'].some(expected=>(o.Config.Env??[]).filter(v=>v.split('=')[0]===expected.split('=')[0]).join('')!==expected))deny('CONTAINER_COMMAND_ENV_DRIFT');
+    !(o.Config.Env??[]).every(v=>/^(PATH|NODE_VERSION|YARN_VERSION|LANG|LC_ALL|TZ|NODE_OPTIONS|NODE_PATH|HOME)=/.test(v)||extraEnv(c).includes(v))||
+    ['NODE_OPTIONS=','NODE_PATH=','HOME=/scratch',...extraEnv(c)].some(expected=>(o.Config.Env??[]).filter(v=>v.split('=')[0]===expected.split('=')[0]).join('')!==expected))deny('CONTAINER_COMMAND_ENV_DRIFT');
   return {nonRoot:true,privileged:false,capDropAll:true,noNewPrivileges:true,rootfsReadOnly:true,network:'none',dockerSocketMounted:false,controlPathsMounted:false,credentialsMounted:false};
 }
 

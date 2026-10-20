@@ -93,7 +93,7 @@ export function takeActualRolePolicy(value){check(actual.has(value),'ACTUAL_FIXE
 export function validateCleanupObservation(job,o){
   fixedPolicyPath(job.role);check(o?.domain==='production-observation'&&o.fixture===false&&canonical(o.subject)===canonical(subjectOf(job))&&o.sourceManifestSha256===job.sourceManifestSha256&&o.formalEligible===false&&o.qualificationIssued===false&&o.checksWritten===false,'ACTUAL_ROLE_OBSERVATION_REQUIRED');
   if(job.role==='trivy')check(o.profile==='required-trivy-three-scanners/1'&&o.scans?.length===3&&o.scans.every(s=>s.cleanupConfirmed===true&&s.complete===true)&&o.cleanup?.containersRemoved===true&&o.cleanup.wholeContainerTreesStopped===true&&o.cleanup.snapshotRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');
-  else check(o.profile===(job.role==='gitleaks'?'required-gitleaks-history/1':'required-contract-placement/1')&&(job.role!=='gitleaks'||o.requiredHistoricalExceptions===533)&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');return o;
+  else check(o.profile===(job.role==='gitleaks'?'required-gitleaks-history/1':'required-contract-placement/1')&&(job.role!=='gitleaks'||o.requiredHistoricalExceptions===726)&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_ROLE_CLEANUP_UNCONFIRMED');return o;
 }
 export async function openFixedRoleSession(job){
   const context=takeActualRolePolicy(await loadFixedRolePolicy(job));await protectedPath(path.dirname(SERIAL_LOCK),{directory:true});

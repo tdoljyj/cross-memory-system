@@ -27,7 +27,7 @@ function observationFacts(issue,o){
     check(o.logs&&Object.keys(o.logs).sort().join('|')==='stderr|stdout'&&['stdout','stderr'].every(k=>Object.keys(o.logs[k]??{}).sort().join('|')==='bytes|sha256|truncated'&&/^[a-f0-9]{64}$/.test(o.logs[k].sha256??'')&&Number.isSafeInteger(o.logs[k].bytes)&&o.logs[k].bytes>=0&&o.logs[k].bytes<=16777216&&o.logs[k].truncated===false)&&Object.keys(o.cleanup??{}).sort().join('|')==='complete|containerRemoved|observedAt|wholeContainerTreeStopped'&&Date.parse(o.finishedAt)>=Date.parse(o.startedAt)&&Date.parse(o.cleanup.observedAt)>=Date.parse(o.finishedAt),'ACTUAL_PLACEMENT_TERMINAL_EVIDENCE_REQUIRED');
   }
   let start,end,exit,stdout,stderr;
-  if(gl||placement){check((!gl||o.requiredHistoricalExceptions===533)&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_HISTORY_CLEANUP_REQUIRED');
+  if(gl||placement){check((!gl||o.requiredHistoricalExceptions===726)&&o.cleanup?.complete===true&&o.cleanup.wholeContainerTreeStopped===true&&o.cleanup.containerRemoved===true,'ACTUAL_HISTORY_CLEANUP_REQUIRED');
     start=o.startedAt;end=o.cleanup.observedAt;exit=o.exitCode;stdout=o.logs?.stdout?.sha256;stderr=o.logs?.stderr?.sha256;
   }else{check(o.scans?.length===3&&o.scans.every(s=>s.complete===true&&s.cleanupConfirmed===true&&Number.isInteger(s.exitCode))&&o.cleanup?.containersRemoved===true&&o.cleanup.wholeContainerTreesStopped===true&&o.cleanup.snapshotRemoved===true,'ACTUAL_THREE_SCANNERS_CLEANUP_REQUIRED');
     start=new Date(Math.min(...o.scans.map(s=>Date.parse(s.startedAt)))).toISOString();end=o.cleanup.observedAt;exit=o.scans.find(s=>s.exitCode!==0)?.exitCode??0;

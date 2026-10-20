@@ -12,10 +12,10 @@
   },
   "directExistingDependencies": {
     "worker/qualification.mjs": "b3e34250f92f84d29e4e61bc9054fe60ec3668583d3756462ecb6bceaaff3b21",
-    "worker/formal-fixed-role-policy-v2/policy.mjs": "27b3ddc5e7c1a4a303ded2453a1d659c20d04467e0aeb75af5e68d07fc50870c",
+    "worker/formal-fixed-role-policy-v2/policy.mjs": "215f76a7ce611dc043be044c8ae5ed9a74bd04be8e41f63fd431e9258735dadd",
     "worker/linux-launcher.mjs": "befed130b3e027219991b8ece8a8630c03ffe18996ba57bec4c7d0863ebaaf5e",
-    "worker/required-trivy-v2/plans.mjs": "6975c3a8ed855f4cd333c1e2044f3f6789346d29335503d449b19814f9b2eb3f",
-    "host/linux-verify-config-v2/public-files.mjs": "4555ccf14c2e15f14869cb29bff5e81aa7c20f6715b693c222c1d172683f6608"
+    "worker/required-trivy-v2/plans.mjs": "fcba80dc493509e17d18ad8435d397bf9155abdc7743293b7feba1a1cace0ac2",
+    "host/linux-verify-config-v2/public-files.mjs": "7451eccdfa5d381c652b761b93782dcaf94f3af29e8401bcb4b30c66469d51e9"
   },
   "closureRequirement": "Reuse the accepted existing complete role runtime closure; the direct dependency list alone is not a deployment closure. Installer and reused public-files primitive must also be committed and pinned in installerSourceFiles of the accepted plan.",
   "validation": {

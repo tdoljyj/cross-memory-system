@@ -67,7 +67,11 @@ export function cacheCreateArguments(spec, request, name) {
     && spec.mounts.slice(1).every(mount => mount.target === '/empty' && mount.readOnly === true), 'FIXED_CACHE_PROFILE_REQUIRED');
   const plan = { executable: spec.executable, cwd: '/scratch', args: spec.argv ?? spec.args, mounts: spec.mounts.map(mount => [mount.source, mount.target]) };
   return createArguments({ imageDigest: NATIVE_IMAGE, limits: LIMITS }, request, plan, name).map(value => value === '--network=none' ? '--network=host'
-    : value.startsWith('type=bind,') && value.includes(',dst=/cache,readonly,') ? value.replace(',readonly,', ',') : value);
+    : value.startsWith('type=bind,') && value.includes(',dst=/cache,readonly,') ? value.replace(',readonly,', ',') : value)
+    // trivy writes OCI downloads to os.TempDir(); with a read-only rootfs that must be the /scratch tmpfs.
+    // Large OCI blob downloads over Go's HTTP/2 client were reset mid-stream on the qualified host path;
+    // the cache container uses HTTP/1.1 (exact GODEBUG value, admitted exactly by inspectCache).
+    .flatMap(value => value === '--env=HOME=/scratch' ? [value, '--env=TMPDIR=/scratch', '--env=GODEBUG=http2client=0'] : [value]);
 }
 function inspectCache(container, spec, request, name, imageId) {
   const h = container?.HostConfig, expected = new Map(spec.mounts.map(mount => [mount.target, mount]));
@@ -85,8 +89,8 @@ function inspectCache(container, spec, request, name, imageId) {
   check(canonical(container.Config.Entrypoint) === canonical(['/usr/local/bin/trivy']) && canonical(container.Config.Cmd) === canonical(spec.argv ?? spec.args)
     && container.Config.WorkingDir === '/scratch' && container.Config.Labels?.['clued.verify.nonce'] === request.nonce
     && container.Config.Labels?.['clued.verify.execution'] === request.executionId
-    && (container.Config.Env ?? []).every(value => /^(PATH|NODE_VERSION|YARN_VERSION|LANG|LC_ALL|TZ|NODE_OPTIONS|NODE_PATH|HOME)=/.test(value))
-    && ['NODE_OPTIONS=', 'NODE_PATH=', 'HOME=/scratch'].every(wanted => (container.Config.Env ?? []).filter(value => value.split('=')[0] === wanted.split('=')[0]).join('') === wanted), 'CACHE_COMMAND_ENV_DRIFT');
+    && (container.Config.Env ?? []).every(value => /^(PATH|NODE_VERSION|YARN_VERSION|LANG|LC_ALL|TZ|NODE_OPTIONS|NODE_PATH|HOME|TMPDIR|GODEBUG)=/.test(value))
+    && ['NODE_OPTIONS=', 'NODE_PATH=', 'HOME=/scratch', 'TMPDIR=/scratch', 'GODEBUG=http2client=0'].every(wanted => (container.Config.Env ?? []).filter(value => value.split('=')[0] === wanted.split('=')[0]).join('') === wanted), 'CACHE_COMMAND_ENV_DRIFT');
 }
 export async function runCacheContainer({ spec, docker, dockerRootDirectory, deadline, signal }) {
   const request = executionRequest(deadline), name = 'clued-verify-' + request.nonce;
@@ -121,7 +125,7 @@ export async function runCacheContainer({ spec, docker, dockerRootDirectory, dea
 }
 export async function runFixedScanner({ scan, docker, dockerRootDirectory, deadline, signal }) {
   const request = executionRequest(deadline);
-  const observation = await observeUnsignedContainer({ imageDigest: NATIVE_IMAGE, dockerRootDirectory, limits: scan.limits }, request, scan, docker, { signal });
+  const observation = await observeUnsignedContainer({ imageDigest: NATIVE_IMAGE, dockerRootDirectory, limits: scan.limits, env: ['TMPDIR=/scratch'] }, request, scan, docker, { signal });
   return { scanner: scan.scanner, requestSha256: digest(request), nonce: request.nonce, executionId: request.executionId,
     exitCode: observation.state?.ExitCode ?? null, complete: observation.complete, touched: observation.touched, reason: observation.reason,
     logs: observation.attached?.logs ?? null, containerId: observation.containerId, imageId: observation.imageId,

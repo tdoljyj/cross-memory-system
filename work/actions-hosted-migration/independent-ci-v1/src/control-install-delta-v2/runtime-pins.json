@@ -15,8 +15,8 @@
     },
     {
       "path": ".gitleaks.toml",
-      "bytes": 135150,
-      "sha256": "a414f9d5011a4f358aa8ae060d53838b121fbd7bcc2ada4fd1382bbde3f7062d"
+      "bytes": 186507,
+      "sha256": "cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd"
     },
     {
       "path": "config/merge-admission-policy.json",
@@ -90,8 +90,8 @@
     },
     {
       "path": "scripts/ci/reviewed_gitleaks.py",
-      "bytes": 30242,
-      "sha256": "f0c56394d95bde01631e77e8e23eedf62aad1cd1c422f1e271e295aa000d7a21"
+      "bytes": 32878,
+      "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9"
     },
     {
       "path": "scripts/runner/clued-runner-job-started.mjs",
@@ -196,7 +196,7 @@
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/prepare.mjs",
       "bytes": 22051,
-      "sha256": "d3698367a9220b5bafc6e9ab5ef8b41a84a63f0823d6838ece88146c3edd5493"
+      "sha256": "7e1356a2a1d979ea54faf4348f37e73391d1ef2041b8ea43a75b6f51fe2d931c"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/selftest-shim.mjs",
@@ -291,17 +291,17 @@
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs",
       "bytes": 21257,
-      "sha256": "e7c68333abc41867aa5a7850e700385c8058c158ff632f1e86af72cf340ba732"
+      "sha256": "838e0d5fb229e1a924f2f618abc63971c42cb8edb1dd39cd777d65db1cb77ea3"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs",
-      "bytes": 16312,
-      "sha256": "6975c3a8ed855f4cd333c1e2044f3f6789346d29335503d449b19814f9b2eb3f"
+      "bytes": 16646,
+      "sha256": "fcba80dc493509e17d18ad8435d397bf9155abdc7743293b7feba1a1cace0ac2"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs",
-      "bytes": 30010,
-      "sha256": "4b0e1aec07b494cb3639f58d7e02d6d263d723167ae4d5fc44093de9cb1e3ec2"
+      "bytes": 30507,
+      "sha256": "aeb5719d49a7070258fe93d6a541fa3f26125b53e180f3130d94e57929949ab3"
     }
   ]
 }

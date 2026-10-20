@@ -82,7 +82,7 @@ export function executionSummary(job,prepared,selfTest,plan,o,request,context){
   return deepFreeze({contract:'clued.independent-ci.formal-scanner-observation/1',domain:'production-observation',fixture:false,profile:'required-gitleaks-history/1',
     subject:subjectOf(job),sourceManifestSha256:job.sourceManifestSha256,sourceSha:prepared.sourceSha,nonce:request.nonce,
     requestSha256:digest(request),historyPackSha256:prepared.packedHistorySha256,remoteRefsSha256:prepared.remoteSnapshotSha256,
-    selfTestReportSha256:digest(selfTest),reviewedIgnoreSha256:selfTest.ignore_sha256,requiredHistoricalExceptions:533,
+    selfTestReportSha256:digest(selfTest),reviewedIgnoreSha256:selfTest.ignore_sha256,requiredHistoricalExceptions:726,
     image:IMAGE,nativeImageDigest:MANIFEST_DIGEST,nativeImageRepositoryDigest:NATIVE_IMAGE,nativeImageId:o.imageId,runtimeIdentity:context.runtimeIdentity,hostAcceptanceRef:context.hostAcceptanceRef,sourceAcceptanceRef:context.sourceAcceptanceRef,
     startedAt:o.startedAt,finishedAt:o.finishedAt,conclusion:o.state.ExitCode===0?'success':'failure',exitCode:o.state.ExitCode,
     logs:o.attached.logs,containerId:o.containerId,cleanup:{complete:true,wholeContainerTreeStopped:true,containerRemoved:true,observedAt:o.cleanupObservedAt},

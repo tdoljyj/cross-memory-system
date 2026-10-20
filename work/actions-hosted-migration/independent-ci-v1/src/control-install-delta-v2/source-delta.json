@@ -35,8 +35,8 @@
     },
     {
       "path": ".gitleaks.toml",
-      "bytes": 135150,
-      "sha256": "a414f9d5011a4f358aa8ae060d53838b121fbd7bcc2ada4fd1382bbde3f7062d",
+      "bytes": 186507,
+      "sha256": "cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -140,8 +140,8 @@
     },
     {
       "path": "scripts/ci/reviewed_gitleaks.py",
-      "bytes": 30242,
-      "sha256": "f0c56394d95bde01631e77e8e23eedf62aad1cd1c422f1e271e295aa000d7a21",
+      "bytes": 32878,
+      "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -288,7 +288,7 @@
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/prepare.mjs",
       "bytes": 22051,
-      "sha256": "d3698367a9220b5bafc6e9ab5ef8b41a84a63f0823d6838ece88146c3edd5493",
+      "sha256": "7e1356a2a1d979ea54faf4348f37e73391d1ef2041b8ea43a75b6f51fe2d931c",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -421,21 +421,21 @@
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs",
       "bytes": 21257,
-      "sha256": "e7c68333abc41867aa5a7850e700385c8058c158ff632f1e86af72cf340ba732",
+      "sha256": "838e0d5fb229e1a924f2f618abc63971c42cb8edb1dd39cd777d65db1cb77ea3",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs",
-      "bytes": 16312,
-      "sha256": "6975c3a8ed855f4cd333c1e2044f3f6789346d29335503d449b19814f9b2eb3f",
+      "bytes": 16646,
+      "sha256": "fcba80dc493509e17d18ad8435d397bf9155abdc7743293b7feba1a1cace0ac2",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs",
-      "bytes": 30010,
-      "sha256": "4b0e1aec07b494cb3639f58d7e02d6d263d723167ae4d5fc44093de9cb1e3ec2",
+      "bytes": 30507,
+      "sha256": "aeb5719d49a7070258fe93d6a541fa3f26125b53e180f3130d94e57929949ab3",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -448,8 +448,8 @@
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/adapter.mjs",
-      "bytes": 14783,
-      "sha256": "9dda23c64015c85f8c52407f19f5ddafc4d519103db25f2ee1f63f17e36a2b91",
+      "bytes": 15386,
+      "sha256": "32fe8e9db7c92a57e74e749446c4fc9156455cb7017af662d00bc8ca734321e8",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -463,21 +463,21 @@
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/integration.mjs",
       "bytes": 855,
-      "sha256": "0aa80493dd6268f50b47ab5bb1ccaf47d7cd314cd303635154d3f0d02ee77f13",
+      "sha256": "668c4d15bf442b2e77d88ac4f35c3a633c0828a5604917401ec4814f9e020b2f",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/policy.mjs",
       "bytes": 16505,
-      "sha256": "27b3ddc5e7c1a4a303ded2453a1d659c20d04467e0aeb75af5e68d07fc50870c",
+      "sha256": "215f76a7ce611dc043be044c8ae5ed9a74bd04be8e41f63fd431e9258735dadd",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/adapter.mjs",
       "bytes": 13804,
-      "sha256": "58cf77ca550c2590596209750940cff5f027977f3e2f3d1d9e0a445c92682986",
+      "sha256": "032e2ecb68c01e4916e04b093ea6b3a8a9830afe87a5c30b99e18af323f3df6d",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -490,8 +490,8 @@
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/prepare.mjs",
-      "bytes": 26463,
-      "sha256": "a7ae8a72b01d18e69237a4b2b5a48eef7e887544836aea0329407917abe1005e",
+      "bytes": 26464,
+      "sha256": "01c187b33239122b25ddd206fe70b19b471ab43f0288be4ef1a41fd9aef5f7c1",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -518,8 +518,8 @@
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/docker.mjs",
-      "bytes": 12210,
-      "sha256": "88fc02ce19223307ce45d27c63e99d12d5f4ccf3ece1052d00ea9f0637803182",
+      "bytes": 12738,
+      "sha256": "79ed4b48354618f9c8b48c3561f993da6091fa5997d814b49ea410072d20415a",
       "oldSha256": null,
       "operation": "create-if-absent"
     },
@@ -596,7 +596,7 @@
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/signed-result.mjs",
       "bytes": 8843,
-      "sha256": "666699f77b5456d8d5050356394606bedf5c5f4eae219fecae2592bf997caae2",
+      "sha256": "7392bd9b9af395d2e39cf10c5e4d41e7ecb690f9c1628f92210a3dbaec5acc38",
       "oldSha256": null,
       "operation": "create-if-absent"
     },

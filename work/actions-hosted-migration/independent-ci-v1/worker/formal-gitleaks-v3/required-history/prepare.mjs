@@ -11,8 +11,8 @@ import { canonical, digest, subjectOf } from '../../../src/proof.mjs';
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
 export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
-  'scripts/ci/reviewed_gitleaks.py': 'f0c56394d95bde01631e77e8e23eedf62aad1cd1c422f1e271e295aa000d7a21',
-  '.gitleaks.toml': 'a414f9d5011a4f358aa8ae060d53838b121fbd7bcc2ada4fd1382bbde3f7062d',
+  'scripts/ci/reviewed_gitleaks.py': '433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9',
+  '.gitleaks.toml': 'cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd',
   '.github/workflows/gitleaks.yml': '168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579',
 });
 // The pinned trusted helper (scripts/ci/reviewed_gitleaks.py parse_records and
@@ -21,8 +21,8 @@ export const SOURCE_PINS = Object.freeze({
 // commit of every record fingerprint in the scanned repository. The offline
 // self-test cannot fetch them, so preparation packs exactly this pinned set.
 // The set is the sorted, LF-joined (trailing LF) list of distinct commits.
-export const REVIEWED_COMMITS = Object.freeze({ findings: 533, commits: 73,
-  sha256: '859b247feac6a97c9f7ba19898233b02cc680c720c898a457be3b5b182f10e31' });
+export const REVIEWED_COMMITS = Object.freeze({ findings: 726, commits: 100,
+  sha256: 'fcb2cc04ee35e01fbfc4bfc3dc9b0bb0ba78a6c4083ab5e17433c549450d59bb' });
 const REVIEWED_FINDING_PREFIX = '# clued-reviewed-finding: ', REVIEWED_COUNT_PREFIX = '# clued-reviewed-count: ';
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -226,7 +226,7 @@ export async function requiredScannerPlan(prepared, selfTestReport) {
     scanResultNotYetObserved: true, formalEligible: false });
 }
 function validateSelfTestReport(selfTestReport) {
-  check(selfTestReport?.exact_historical_fingerprints === 533 && selfTestReport.default_rules_unchanged === true
+  check(selfTestReport?.exact_historical_fingerprints === 726 && selfTestReport.default_rules_unchanged === true
     && selfTestReport.global_fingerprints === 0 && HASH.test(selfTestReport.ignore_sha256 ?? '')
     && selfTestReport.regression?.baseline_detection === true && selfTestReport.regression.exact_history_only === true
     && selfTestReport.regression.new_commit_detection === true && selfTestReport.regression.different_path_detection === true
