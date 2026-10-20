@@ -20,7 +20,7 @@ jobs:
   admission-gate:
     name: admission-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       actions: read
       checks: read
@@ -41,9 +41,13 @@ jobs:
           node-version: 24.19.0
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
+      # Owner Decision 22b0e0ed: admit on the independent CI's own App 5368905 kooyumi-work-admission
+      # check for this exact head, polled for at most 10 minutes; never on another App's check.
       - id: gate
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission
+          CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
   trivy-trusted-self-hosted:

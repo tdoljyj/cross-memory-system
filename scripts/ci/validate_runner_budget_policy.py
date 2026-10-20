@@ -352,21 +352,21 @@ OWNER_DECISION_HOSTED_JOBS = {
     "contract-placement.yml": {
         "control_sha256": "89586bc8349ceb12ee357f853433de003f96a5b29f6e607e8bfd8318dd6102c1",
         "jobs": {
-            "admission-gate": "bb0a267038e5ace56f76296bcc08f83fb6b53305d26cca73e3f7068c46ae7595",
+            "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
             "contract-placement": "d907c113aac0ae77d33295d7ddac8d66ac08257722c2921752ba182335a66912"
         }
     },
     "gitleaks.yml": {
         "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
         "jobs": {
-            "admission-gate": "bb0a267038e5ace56f76296bcc08f83fb6b53305d26cca73e3f7068c46ae7595",
+            "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
             "gitleaks-trusted-self-hosted": "061e7afbadb2ea7980ded71f4f75cfc49735a065bcab77ec15fa917f488f498d"
         }
     },
     "trivy.yml": {
         "control_sha256": "57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9",
         "jobs": {
-            "admission-gate": "bb0a267038e5ace56f76296bcc08f83fb6b53305d26cca73e3f7068c46ae7595",
+            "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
             "trivy-trusted-self-hosted": "39b84c60f2d734c7b1c17ec42bc0c7e56e1b6813f95ac05e7ba964a62b53a780"
         }
     }

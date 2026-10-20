@@ -17,9 +17,12 @@
   - 不按日期判断月初。每个 head 上托管 job 都会照常排队；分钟恢复后，第一个新 head 上的真实托管运行就会被用上；分钟用完时，几秒钟内就会被拒绝，随即回到本地。
   - 托管运行的结论只决定“转发还是本地执行”，不会让检查变弱。
 - **合并位。** merge slot 报告器和合并执行器每次都读取规则集实际要求的检查名和 integration 来计数，不写死 `5368905`。托管执行者（App `15368`）的失败不退还合并位；只有规则集来源（今天是 `5368905`）的最终失败才退还。托管运行还在进行时，报告器照样报 running，合并位照常保活。
-- **当前限制。**
-  - 转发阶段属于 Source v2（PR-A）。装好并由 Owner 打开之前，六项都由本地正式角色产出。
-  - 三个 `admission-gate` 目前等待 App `5164952` 的 `kooyumi-admission-verified`，而发布它的 `clued-work-admission.yml` 已停用。这一点解决之前，托管重型 job 会被跳过。检查照样走本地，不会变弱，只是用不上免费分钟。
+- **托管 `admission-gate` 认独立 CI 自己的准入。** 三个 gate 跑 trusted base 上的 `clued-work-admission.mjs --mode gate`，带 `CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission`，只读权限（含 `checks: read`）：
+  - 每约 30 秒查一次这个 PR head 上 App `5368905` 的 `kooyumi-work-admission`，最多等 10 分钟（job 上限 15 分钟）。常驻执行器看到触发后先跑第 1 段发布这项检查，再等托管结果。
+  - 只认 App `5368905`、`head_sha` 等于 PR head、conclusion success、`external_id` 是独立 CI 的 native-work-admission 格式的那一条（同 App 里 id 最大的一条）；摘要里写的是别的 PR 也不认。其他 App 的同名检查一律不认。认可后照常核对 claim 的执行 epoch。
+  - 等不到、被拒或不绑定这个 PR，gate 就不放行，托管重型 job 跳过，检查走本地。重跑（attempt > 1）一律不放行，要推新 commit。
+  - 灾备时 TURING 不在线，`5368905` 的准入不会出现；同一个 gate 也认 Owner 重新启用的 `clued-work-admission.yml` 在本事件里发布的 App `5164952` `kooyumi-admission-verified`（原有规则，绑定 PR 和本事件的准入 run）。哪一个先落定就按哪一个判。
+- **当前限制。** 转发阶段属于 Source v2（PR-A）。装好并由 Owner 打开之前，六项都由本地正式角色产出。
 - **后备的字节绑定。** 独立 CI 的正式角色固定的是已安装副本里的工作流字节（自托管版本：`gitleaks.yml` `168aebaf…`、`trivy.yml` `cea2fd77…`、`contract-placement.yml` `762f1b13…`）。已安装的包继续使用安装时的副本。从包含托管执行者版本的 `main` 重新构建包之前，必须先重新固定这些字节，否则会以 `ORIGINAL_*_WORKFLOW_DRIFT` 拒绝。
 
 ## 失败、重试与归档
@@ -53,6 +56,6 @@
    | `kooyumi-merge-slot` | `clued-admission`，App `5164952` |
 
    每一项都必须钉 integration，绝不能留空成“任意来源”：那样任何工作流都能发一个同名的通过检查，门禁被悄悄关掉。其余规则（strict、空的 bypass 列表）不变。
-4. **Owner 重新启用 `clued-work-admission.yml`**。它发布 `kooyumi-work-admission`，以及 App `5164952` 的 `kooyumi-admission-verified` 和 `kooyumi-merge-slot`；三个 `admission-gate` 也要等它的结果才放行托管重型 job。
+4. **Owner 重新启用 `clued-work-admission.yml`**。它发布 `kooyumi-work-admission`，以及 App `5164952` 的 `kooyumi-admission-verified` 和 `kooyumi-merge-slot`；TURING 不在线时，三个 `admission-gate` 靠它的 `kooyumi-admission-verified` 放行托管重型 job。
 5. 切换的那一刻，在另一个来源下已经变绿的 PR 会失去绿灯，要在新事件上重新出检查（检查挂在 head 上）。规则集回读确认后再继续合并。
 6. **恢复**：TURING 恢复后，Owner 把六项改回原来的六个名字并钉回 App `5368905`，再停用 `clued-work-admission.yml`（按 `bc6fdad1`，它的托管 job 名就是 `kooyumi-work-admission`），回读规则集确认。同样，切换前后的绿灯不能互相继承。

@@ -293,6 +293,11 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                     else:
                         self.assertEqual(names, {"admission-gate"})
                         self.assertNotIn("id-token", block)
+                        # The hosted gate admits on App 5368905's own admission check, bounded wait.
+                        self.assertIn("          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission\n", block)
+                        self.assertIn('          CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"\n', block)
+                        self.assertIn("    timeout-minutes: 15\n", block)
+                        self.assertIn("      checks: read\n", block)
         texts = {p.name: p.read_text(encoding="utf-8") for p in policy.WORKFLOW_DIR.glob("*.yml")}
         # Every branch of a dynamic name counts, and so does a job ID without a name.
         for file, old, new in [
