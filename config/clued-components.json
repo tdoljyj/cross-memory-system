@@ -35,13 +35,13 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "50",
+      "version": "51",
       "description": "Clued Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
         "agent-contract.md"
       ],
-      "content_sha256": "7cc8c46b4d1abf8ef7b8757a1938b724594e09907cad998e3698e90f0965897c",
+      "content_sha256": "43963968e2fd28d411a7c970aeb27334511a9f685af10e82243192bbd46d9018",
       "version_marker": {
         "file": "agent-contract.md",
         "pattern": "Contract version: {version}"

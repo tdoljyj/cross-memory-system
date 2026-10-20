@@ -1,0 +1,16 @@
+{
+  "contract": "clued.independent-ci.control-two-stage-offline-validation/1",
+  "status": "PASS_SOURCE_ONLY",
+  "pureCSharpAssertions": 47,
+  "pureBatchAssertions": 38,
+  "unchangedPrimitiveFiles": 6,
+  "deploymentSourceHashes": 84,
+  "runtime84Changed": false,
+  "hostRead": false,
+  "hostWrite": false,
+  "productionEntryCalled": false,
+  "installationReceiptCreated": false,
+  "boundPayloadCreated": false,
+  "boundExecutableCreated": false,
+  "knownLimit": "Real references, disabled install, actual150path readback, Canonical receipt and enabled batch are not executed by these tests."
+}

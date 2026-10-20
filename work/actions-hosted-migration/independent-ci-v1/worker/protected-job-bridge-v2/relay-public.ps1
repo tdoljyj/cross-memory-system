@@ -1,0 +1,114 @@
+param(
+  [Parameter(Mandatory=$true)][ValidateSet('SendIssue','SendResponse','ReceiveChallenge','ReceiveResult')][string]$Mode,
+  [ValidateRange(0,32)][int]$Sequence=0,
+  [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedBundleSha256
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference='Stop'
+# Public bytes only. This entry never starts a worker or grants an admission.
+$FixedSource='C:\Users\17531\AppData\Local\Temp\codex-actions-hosted-stagec-20261018\work\actions-hosted-migration\independent-ci-v1\worker\protected-job-bridge-v2'
+$LinuxEntry='/opt/clued-independent-ci/source/work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-record.mjs'
+$Spool='C:\ProgramData\CluedIndependentCI\formal-spool'
+$Max=1048576;$Held=New-Object 'System.Collections.Generic.List[System.IDisposable]'
+$proc=$null;$started=$false;$terminal=$false;$code=2
+$result=[ordered]@{contract='clued.independent-ci.formal-public-relay-receipt/1';status='BLOCKED';mode=$Mode;sequence=$Sequence;bundleSha256=$ExpectedBundleSha256;processId=$null;exitCode=$null;terminalConfirmed=$false;automaticRetryAllowed=$false;taskStarted=$false;qualificationIssued=$false;failureCode=$null;childError=$null;record=$null}
+Add-Type -TypeDefinition @'
+using System; using System.IO; using System.Text; using System.Threading.Tasks;
+using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
+public static class CluedFormalRelayIO {
+ [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
+ static extern SafeFileHandle CreateFileW(string p,uint a,uint s,IntPtr x,uint c,uint f,IntPtr t);
+ public static SafeFileHandle Hold(string p) {
+   var h=CreateFileW(p,0x20000,3,IntPtr.Zero,3,0x02200000,IntPtr.Zero);
+   if(h.IsInvalid) throw new IOException("PUBLIC_PARENT_LOCK_REQUIRED"); return h;
+ }
+ public static async Task<string> Read(TextReader r,int maximum) {
+   var s=new StringBuilder();var b=new char[4096];bool over=false;
+   for(;;){int n=await r.ReadAsync(b,0,b.Length);if(n==0){if(over)throw new IOException("PUBLIC_OUTPUT_BOUND");return s.ToString();}
+     if(s.Length+n>maximum)over=true;if(!over)s.Append(b,0,n);}
+ }
+}
+'@ | Out-Null
+function Hash-Bytes([byte[]]$b){$h=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($h.ComputeHash($b))).Replace('-','').ToLowerInvariant()}finally{$h.Dispose()}}
+function Hold-Parents([string]$Path){
+  $paths=New-Object 'System.Collections.Generic.List[string]';$p=[IO.Path]::GetFullPath($Path)
+  while($p){$paths.Insert(0,$p);$p=[IO.Path]::GetDirectoryName($p.TrimEnd('\'))}
+  foreach($p in $paths){$h=[CluedFormalRelayIO]::Hold($p);$Held.Add($h);$i=Get-Item -LiteralPath $p -Force;if(-not $i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'PUBLIC_PARENT_BOUNDARY_REQUIRED'}}
+}
+function Read-Public([string]$Path,[int]$Limit){
+  $f=New-Object IO.FileStream($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);$Held.Add($f)
+  $i=Get-Item -LiteralPath $Path -Force;if($i.PSIsContainer -or ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $f.Length -lt 1 -or $f.Length -gt $Limit){throw 'PUBLIC_INPUT_BOUNDARY_REQUIRED'}
+  $b=New-Object byte[] ([int]$f.Length);$o=0;while($o -lt $b.Length){$n=$f.Read($b,$o,$b.Length-$o);if($n -le 0){throw 'PUBLIC_INPUT_TRUNCATED'};$o+=$n};return ,$b
+}
+function Json-Public([byte[]]$b){return (New-Object Text.UTF8Encoding($false,$true)).GetString($b)|ConvertFrom-Json}
+function New-Public([string]$Path,[byte[]]$Bytes){$h=New-Object IO.FileStream($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$h.Write($Bytes,0,$Bytes.Length);$h.Flush($true)}finally{$h.Dispose()}}
+function Check-Spool([string]$Target){
+  # Separate metadata-only helper, pinned and locked above. Never reads bytes.
+  & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File (Join-Path $FixedSource 'formal-spool-acl.ps1') -LiteralTarget $Target -ProtectedRoot $Spool -RelayReadOutgoing
+  if($LASTEXITCODE -ne 0){throw 'FORMAL_SPOOL_ACL_REFUSED'}
+}
+function Safe-ChildError([string]$Text){
+  if($Text.Length -lt 1 -or $Text.Length -gt 4096){return $null}
+  try{$v=$Text|ConvertFrom-Json}catch{return $null}
+  if((@($v.PSObject.Properties.Name|Sort-Object)-join '|') -cne 'qualificationIssued|reason|stage|status|taskStarted' -or $v.status -cne 'BLOCKED' -or $v.taskStarted -ne $false -or $v.qualificationIssued -ne $false){return $null}
+  $stages=@('OPERATION','CONTEXT','STDIN','TRANSPORT','PACKET','BINDING','RECORD','COMPLETE')
+  $reasons=@('FIXED_FORMAL_RELAY_OPERATION_REQUIRED','FIXED_FORMAL_RELAY_SEQUENCE_REQUIRED','FORMAL_RELAY_BYTES_BOUND','FORMAL_RELAY_TRANSPORT_BOUND','FORMAL_RELAY_TRANSPORT_JSON','FORMAL_RELAY_TRANSPORT_CHANGED','FORMAL_RELAY_FILE_BOUND','FORMAL_RELAY_FILE_CHANGED','FORMAL_RELAY_READY_CHANGED','FORMAL_RELAY_STDIN_TIMEOUT','FORMAL_RELAY_ISSUER_CONTEXT_CHANGED','FORMAL_RELAY_SEQUENCE_CHANGED','FORMAL_RELAY_UNCONFIRMED','ENOENT','EEXIST','EACCES','EPERM','ENOTDIR','EISDIR','ELOOP','ENOSPC','EDQUOT','EROFS','EIO','EBUSY','EMFILE','ENFILE','ENAMETOOLONG','EINVAL','EINTR','EPIPE')
+  if(-not($stages -ccontains $v.stage) -or -not($reasons -ccontains $v.reason)){return $null}
+  return [pscustomobject][ordered]@{status='BLOCKED';reason=$v.reason;stage=$v.stage;taskStarted=$false;qualificationIssued=$false}
+}
+try{
+  if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-21-1173730660-3877291096-655431861-1001' -or $env:COMPUTERNAME -ine 'TURING'){throw 'FIXED_OWNER_ENDPOINT_REQUIRED'}
+  if([IO.Path]::GetFullPath($PSScriptRoot) -cne $FixedSource){throw 'FIXED_SOURCE_LOCATION_REQUIRED'}
+  $sequenced=$Mode -ceq 'SendResponse' -or $Mode -ceq 'ReceiveChallenge'
+  if(($sequenced -and $Sequence -eq 0) -or (-not $sequenced -and $Sequence -ne 0)){throw 'FIXED_RELAY_SEQUENCE_REQUIRED'}
+  Hold-Parents $FixedSource
+  $mb=Read-Public (Join-Path $FixedSource 'manifest.json') 65536
+  if((Hash-Bytes $mb) -cne $ExpectedBundleSha256){throw 'ACCEPTED_BUNDLE_CHANGED'}
+  $m=Json-Public $mb
+  $names=@('boundary.mjs','protocol.mjs','mailbox.mjs','windows-issuer.mjs','linux-worker.mjs','signed-result.mjs','relay-record.mjs','relay-public.ps1','formal-spool-acl.ps1','held-source.mjs','hold-source.ps1')
+  if($m.contract -cne 'clued.independent-ci.protected-job-bridge-source/2' -or (@($m.runtimeFiles.PSObject.Properties.Name|Sort-Object)-join '|') -cne (($names|Sort-Object)-join '|')){throw 'EXACT_BRIDGE_SOURCE_REQUIRED'}
+  foreach($name in $names){$b=Read-Public (Join-Path $FixedSource $name) $Max;if($b.Length -ne $m.runtimeFiles.$name.bytes -or (Hash-Bytes $b) -cne $m.runtimeFiles.$name.sha256){throw 'ACCEPTED_SOURCE_CHANGED'}}
+  Hold-Parents $Spool;Hold-Parents (Join-Path $Spool 'outgoing');Hold-Parents (Join-Path $Spool 'incoming');Check-Spool $Spool;Check-Spool (Join-Path $Spool 'outgoing');Check-Spool (Join-Path $Spool 'incoming')
+  $send=$Mode.StartsWith('Send');$suffix=$Sequence.ToString('00')
+  $name=switch($Mode){'SendIssue'{'issue'}'SendResponse'{'response-'+$suffix}'ReceiveChallenge'{'challenge-'+$suffix}'ReceiveResult'{'result'}}
+  $operation=switch($Mode){'SendIssue'{'--import-issue'}'SendResponse'{'--import-response '+$Sequence}'ReceiveChallenge'{'--export-challenge '+$Sequence}'ReceiveResult'{'--export-result'}}
+  $inputText='';$raw=$null
+  if($send){
+    $file=Join-Path (Join-Path $Spool 'outgoing') ($name+'.json');$ready=Join-Path (Join-Path $Spool 'outgoing') ($name+'.ready.json')
+    Check-Spool $file;Check-Spool $ready;$raw=Read-Public $file $Max;$r=Json-Public (Read-Public $ready 4096)
+    if((@($r.PSObject.Properties.Name|Sort-Object)-join '|') -cne 'bytes|contract|sha256' -or $r.contract -cne 'clued.independent-ci.complete-public-file/1' -or $r.bytes -ne $raw.Length -or $r.sha256 -cne (Hash-Bytes $raw)){throw 'PUBLIC_READY_CHANGED'}
+    $inputText=@{bytes=$raw.Length;sha256=(Hash-Bytes $raw);base64=[Convert]::ToBase64String($raw)}|ConvertTo-Json -Compress
+  }else{foreach($leaf in @($name+'.json',$name+'.ready.json')){if(Test-Path -LiteralPath (Join-Path (Join-Path $Spool 'incoming') $leaf)){throw 'EXISTING_RECORD_PRESERVED_NO_RETRY'}}}
+  $utf8=New-Object Text.UTF8Encoding($false,$true);$ib=$utf8.GetBytes($inputText);if($ib.Length -gt 1399000){throw 'PUBLIC_STDIN_BOUND'}
+  $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName='C:\Windows\System32\wsl.exe'
+  $psi.Arguments='--distribution Ubuntu-24.04 --user root --exec /usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /opt/actions-runner/externals/node24/bin/node '+$LinuxEntry+' '+$operation
+  $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.EnvironmentVariables.Clear()
+  foreach($p in @(@('SystemRoot','C:\Windows'),@('WINDIR','C:\Windows'),@('PATH','C:\Windows\System32;C:\Windows'),@('USERPROFILE','C:\Users\17531'),@('LOCALAPPDATA','C:\Users\17531\AppData\Local'))){$psi.EnvironmentVariables[$p[0]]=$p[1]}
+  $proc=New-Object Diagnostics.Process;$proc.StartInfo=$psi;$previous=[Console]::InputEncoding
+  try{[Console]::InputEncoding=$utf8;if(-not $proc.Start()){throw 'PUBLIC_START_UNCONFIRMED'};$started=$true;$result.processId=$proc.Id}finally{[Console]::InputEncoding=$previous}
+  $ot=[CluedFormalRelayIO]::Read($proc.StandardOutput,1399000);$et=[CluedFormalRelayIO]::Read($proc.StandardError,4096)
+  $stdin=$proc.StandardInput.BaseStream;$wt=$stdin.WriteAsync($ib,0,$ib.Length);if(-not $wt.Wait(5000)){throw 'PUBLIC_STDIN_UNCERTAIN_NO_RETRY'};[void]($wt.GetAwaiter().GetResult());$stdin.Dispose()
+  if(-not $proc.WaitForExit(30000)){throw 'PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED'}
+  $proc.WaitForExit();$terminal=$true;$result.exitCode=$proc.ExitCode
+  if(-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($ot,$et),5000)){throw 'PUBLIC_OUTPUT_UNCONFIRMED_NO_RETRY'}
+  $stdout=$ot.GetAwaiter().GetResult();$stderr=$et.GetAwaiter().GetResult()
+  if($stderr.Length -gt 0){$result.childError=Safe-ChildError $stderr;throw 'PUBLIC_CHILD_REFUSED_NO_RETRY'}
+  if($proc.ExitCode -ne 0){throw 'PUBLIC_CHILD_EXIT_REFUSED_NO_RETRY'}
+  $v=$stdout|ConvertFrom-Json
+  if($send){if($v.status -cne 'FORMAL_PUBLIC_RECORD_IMPORTED' -or $v.bytes -ne $raw.Length -or $v.sha256 -cne (Hash-Bytes $raw) -or $v.taskStarted -ne $false -or $v.qualificationIssued -ne $false){throw 'PUBLIC_IMPORT_UNCONFIRMED_NO_RETRY'}}
+  else{
+    if((@($v.PSObject.Properties.Name|Sort-Object)-join '|') -cne 'base64|bytes|sha256' -or $v.bytes -lt 1 -or $v.bytes -gt $Max -or $v.sha256 -cnotmatch '^[a-f0-9]{64}$'){throw 'PUBLIC_RECORD_TRANSPORT_BOUND'}
+    $raw=[Convert]::FromBase64String($v.base64);if([Convert]::ToBase64String($raw) -cne $v.base64 -or $raw.Length -ne $v.bytes -or (Hash-Bytes $raw) -cne $v.sha256){throw 'PUBLIC_RECORD_BYTES_CHANGED'}
+    # Complete data is fsynced first. Only a create-new ready marker publishes
+    # it to the controller. An incomplete attempt is preserved, never retried.
+    $dir=Join-Path $Spool 'incoming';New-Public (Join-Path $dir ($name+'.json')) $raw
+    $marker='{"bytes":'+$raw.Length+',"contract":"clued.independent-ci.complete-public-file/1","sha256":"'+(Hash-Bytes $raw)+'"}'
+    New-Public (Join-Path $dir ($name+'.ready.json')) ($utf8.GetBytes($marker))
+  }
+  $result.record=[ordered]@{name=$name;bytes=$raw.Length;sha256=(Hash-Bytes $raw)};$result.status='PUBLIC_RECORD_TRANSFERRED';$code=0
+}catch{$id=$_.FullyQualifiedErrorId.Split(',')[0];$result.failureCode=if($id -cmatch '^[A-Z][A-Z0-9_]{1,79}$'){$id}else{'PUBLIC_TRANSFER_UNCONFIRMED'}}
+finally{
+  if($started -and -not $terminal){$result.status='UNCERTAIN_LOCKS_RETAINED_NO_RETRY';[Console]::Error.WriteLine('PUBLIC_TERMINAL_UNCONFIRMED_LOCKS_RETAINED');while(-not $terminal){try{if($proc.WaitForExit(1000)){$terminal=$true;$result.exitCode=$proc.ExitCode}}catch{Start-Sleep -Milliseconds 1000}}}
+  $result.terminalConfirmed=$terminal;foreach($h in $Held){$h.Dispose()};if($null -ne $proc){$proc.Dispose()};$result|ConvertTo-Json -Depth 8
+}
+exit $code
