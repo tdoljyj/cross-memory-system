@@ -15,24 +15,13 @@
   "annotationTitle": "clued-hosted-relay-v1",
   "iatSkewSeconds": 60,
   "requireCheckRunIdClaim": false,
-  "forbiddenChangePrefixes": [".github/"],
-  "forbiddenChangePaths": [".gitattributes"],
+  "forbiddenChangePrefixes": [
+    ".github/"
+  ],
+  "forbiddenChangePaths": [
+    ".gitattributes"
+  ],
   "roles": {
-    "contract-placement": {
-      "checkName": "contract-placement",
-      "hostedCheckName": "contract-placement-hosted-executor",
-      "workflowPath": ".github/workflows/contract-placement.yml",
-      "runsOn": "ubuntu-latest",
-      "closure": [
-        ".gitattributes",
-        ".github/actions/ci-temporary-storage/action.yml",
-        ".github/actions/ci-temporary-storage/setup.mjs",
-        ".github/actions/ci-temporary-storage/setup.py",
-        ".github/workflows/contract-placement.yml",
-        "scripts/ci/check_contract_placement.py"
-      ],
-      "mustNotExist": []
-    },
     "gitleaks": {
       "checkName": "gitleaks",
       "hostedCheckName": "gitleaks-hosted-executor",

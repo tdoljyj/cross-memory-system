@@ -22,7 +22,9 @@ export const SHAPES = JSON.parse(fs.readFileSync(path.join(HERE, 'github-shapes.
 export const CLAIMS_TEMPLATE = JSON.parse(fs.readFileSync(path.join(HERE, 'oidc-claims.template.json'), 'utf8'));
 export const REPO = 'tdoljyj/cross-memory-system', REPO_ID = 1334673495, OWNER_ID = 52366662;
 export const PR = 7, HEAD_REF = 'feature/relay-fixture';
-export const ROLES = Object.freeze(['contract-placement', 'gitleaks', 'trivy']);
+// Relayable roles; contract-placement is a heavy role that is never relayed.
+export const ROLES = Object.freeze(['gitleaks', 'trivy']);
+export const HEAVY = Object.freeze(['contract-placement', 'gitleaks', 'trivy']);
 const sha1 = text => createHash('sha1').update(text).digest('hex');
 export const B = sha1('fixture main tip'), H = sha1('fixture head'), M0 = sha1('fixture merge'), OTHER = sha1('fixture other');
 export const CLAIM = '6081c581-1fa5-4492-a4a4-dbdfe931c915', BINDING = '11111111-2222-4333-8444-555555555555';
@@ -113,8 +115,7 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
     return `${input}.${createSign('RSA-SHA256').update(input).sign(key).toString('base64url')}`;
   }
   function claimsFor(role, run, overrides = {}) {
-    const entry = registry.roles[role];
-    const workflowRef = `${REPO}/${entry.workflowPath}@refs/pull/${PR}/merge`;
+    const workflowRef = `${REPO}/${registry.roles[role]?.workflowPath ?? `.github/workflows/${role}.yml`}@refs/pull/${PR}/merge`;
     const iat = Math.floor(Date.parse(run.completed_at) / 1000) - 20;
     const fill = value => (typeof value === 'string' ? value.replaceAll('@PR@', String(PR)).replaceAll('@HEAD_REF@', HEAD_REF)
       .replaceAll('@MERGE_SHA@', M0).replaceAll('@WORKFLOW_REF@', workflowRef).replaceAll('@RUN_ID@', String(run.runId))
@@ -126,7 +127,7 @@ export function createWorld({ now = Date.parse('2026-10-21T06:00:00Z') } = {}) {
   function addHostedRun(role, { status = 'completed', conclusion = 'success', claims = {}, token = null, annotations = null, runId = null,
     startedAt = iso(state.now - 15 * 60_000), completedAt = iso(state.now - 10 * 60_000), name = null, appId = 15368, headSha = H } = {}) {
     const id = state.nextId++, rid = runId ?? 39_000_000_000 + id;
-    const run = { id, runId: rid, name: name ?? registry.roles[role].hostedCheckName, head_sha: headSha, status,
+    const run = { id, runId: rid, name: name ?? registry.roles[role]?.hostedCheckName ?? `${role}-hosted-executor`, head_sha: headSha, status,
       conclusion: status === 'completed' ? conclusion : null, started_at: startedAt, completed_at: status === 'completed' ? completedAt : null,
       details_url: `https://github.com/${REPO}/actions/runs/${rid}/job/${id}`, external_id: `fixture-${id}`,
       app: { id: appId }, output: { annotations_count: 0 } };

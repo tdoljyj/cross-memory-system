@@ -17,7 +17,13 @@ export const REQUIRED_CHECK_NAMES = Object.freeze(['gitleaks', 'trivy', 'kooyumi
   'kooyumi-admission-verified', 'kooyumi-merge-slot', 'contract-placement']);
 // Only these roles can be relayed, each to its own required check name. The
 // three kooyumi checks are always produced locally (design §3.1).
-export const RELAYABLE_ROLES = Object.freeze({ gitleaks: 'gitleaks', trivy: 'trivy', 'contract-placement': 'contract-placement' });
+// contract-placement is never relayed (coordinator decision under Owner
+// delegation, 2026-10-21): its hosted job runs PR code while it holds
+// id-token: write, so a PR could fake success and mint a relay-audience token.
+export const RELAYABLE_ROLES = Object.freeze({ gitleaks: 'gitleaks', trivy: 'trivy' });
+// Heavy formal roles a relay stage may be asked about; any of them that is not
+// relayable is always LOCAL_REQUIRED.
+export const HEAVY_ROLES = Object.freeze(['contract-placement', 'gitleaks', 'trivy']);
 
 const SHA1 = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -66,8 +72,8 @@ function common(value, code) {
     && value.forbiddenChangePrefixes.every(prefix => typeof prefix === 'string' && prefix.endsWith('/') && safeRepoPath(prefix.slice(0, -1))), code, 'forbiddenChangePrefixes');
   insist(sortedUnique(value.forbiddenChangePaths) && value.forbiddenChangePaths.includes('.gitattributes')
     && value.forbiddenChangePaths.every(safeRepoPath), code, 'forbiddenChangePaths');
-  insist(plain(value.roles) && Object.keys(value.roles).length > 0
-    && Object.keys(value.roles).every(role => Object.hasOwn(RELAYABLE_ROLES, role)), code, 'roles');
+  insist(plain(value.roles) && Object.keys(value.roles).length > 0, code, 'roles');
+  for (const role of Object.keys(value.roles)) insist(Object.hasOwn(RELAYABLE_ROLES, role), 'RELAY_REGISTRY_ROLE_NOT_RELAYABLE', role);
 }
 
 function names(roles, code) {

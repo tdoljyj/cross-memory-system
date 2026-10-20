@@ -14,7 +14,7 @@
 // NOT_PROCESSED, and the executor burns the head and HALTs (PR886 §6.3).
 import { digest } from '../proof.mjs';
 import { attestHead, validateHostedEnvelope } from './attest.mjs';
-import { isValidatedRegistry, registryDigestOf, relayFail } from './registry.mjs';
+import { HEAVY_ROLES, RELAYABLE_ROLES, isValidatedRegistry, registryDigestOf, relayFail } from './registry.mjs';
 
 export const RELAY_STAGE_CONTRACT = 'clued.independent-ci.hosted-relay-stage/1';
 export const RELAY_CODES = Object.freeze({
@@ -24,7 +24,9 @@ export const RELAY_CODES = Object.freeze({
   STAGE_NOT_CONFIGURED: 'RELAY_STAGE_NOT_CONFIGURED',
 });
 // LOCAL_REQUIRED reasons, all RELAY_NOT_ATTESTED_* (design S21 allow-list).
-export const LOCAL_REASONS = Object.freeze(['RELAY_NOT_ATTESTED_BILLING_REFUSED', 'RELAY_NOT_ATTESTED_HOSTED_NOT_SUCCESS',
+// RELAY_ROLE_NOT_RELAYABLE: a heavy role that is never relayed (contract-placement), or one
+// absent from the installed registry; it is always local, whatever the hosted run did.
+export const LOCAL_REASONS = Object.freeze(['RELAY_ROLE_NOT_RELAYABLE', 'RELAY_NOT_ATTESTED_BILLING_REFUSED', 'RELAY_NOT_ATTESTED_HOSTED_NOT_SUCCESS',
   'RELAY_NOT_ATTESTED_PENDING', 'RELAY_NOT_ATTESTED_ABSENT', 'RELAY_NOT_ATTESTED_NOT_ELIGIBLE', 'RELAY_NOT_ATTESTED_ATTESTATION_FAILED',
   'RELAY_NOT_ATTESTED_OBSERVATION_UNCONFIRMED', 'RELAY_NOT_ATTESTED_NOT_CONFIRMED', 'RELAY_NOT_ATTESTED_NOT_ADMITTED']);
 const SHA1 = /^[a-f0-9]{40}$/;
@@ -88,7 +90,7 @@ function validInput(registry, input) {
     && Number.isSafeInteger(subject.fence) && subject.fence > 0 && Number.isSafeInteger(subject.epoch) && subject.epoch > 0
     && SHA256.test(subject.sourceManifestSha256 ?? '') && Number.isSafeInteger(attempt) && attempt > 0 && attempt <= 9
     && Array.isArray(roles) && roles.length > 0 && new Set(roles).size === roles.length
-    && roles.every(role => typeof role === 'string' && Object.hasOwn(registry.roles, role));
+    && roles.every(role => typeof role === 'string' && HEAVY_ROLES.includes(role));
 }
 
 // run({ subject, attempt, roles }) -> stage result (see RELAY_STAGE_CONTRACT below).
@@ -113,15 +115,21 @@ export function createHostedRelayStage({ registry, verifier, publisher } = {}) {
       const local = (role, reason, detail, verdict, fields = {}) => row(role, 'LOCAL_REQUIRED', { ...fields, reason, detail, verdict,
         receipt: reason === 'RELAY_NOT_ATTESTED_BILLING_REFUSED' ? 'relay-billing-refused' : 'relay-local-fallback' });
 
-      let first;
-      try { first = await verifier.attest({ subject, roles }); }
-      catch (error) {
-        // Nothing was written: every candidate stays local.
-        return finish({ ...head, status: 'COMPLETE', code: null, sideEffects: 0,
-          roles: roles.map(role => local(role, 'RELAY_NOT_ATTESTED_OBSERVATION_UNCONFIRMED', detailOf(error), null)) });
+      // Only registered relayable roles are observed; the rest are local without any read.
+      const relayable = roles.filter(role => Object.hasOwn(RELAYABLE_ROLES, role) && Object.hasOwn(registry.roles, role));
+      const never = role => local(role, 'RELAY_ROLE_NOT_RELAYABLE', Object.hasOwn(RELAYABLE_ROLES, role) ? 'not_registered' : 'never_relayed', null);
+      let first = { verdicts: {} };
+      if (relayable.length) {
+        try { first = await verifier.attest({ subject, roles: relayable }); }
+        catch (error) {
+          // Nothing was written: every candidate stays local.
+          return finish({ ...head, status: 'COMPLETE', code: null, sideEffects: 0,
+            roles: roles.map(role => relayable.includes(role) ? local(role, 'RELAY_NOT_ATTESTED_OBSERVATION_UNCONFIRMED', detailOf(error), null) : never(role)) });
+        }
       }
       const rows = []; let sideEffects = 0, halt = null;
       for (const role of roles) {
+        if (!relayable.includes(role)) { rows.push(never(role)); continue; }
         if (halt) { rows.push(row(role, 'NOT_PROCESSED')); continue; }
         const verdict = first.verdicts[role];
         if (verdict?.verdict !== 'ATTESTED_SUCCESS') {

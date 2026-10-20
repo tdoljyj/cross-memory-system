@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { buildRegistry, gitBlobSha1, gitObjectReader, main, scanWorkflow, serializeRegistry } from '../src/hosted-relay-v1/build-registry.mjs';
 import { registryDigestOf, validateRegistry, validateSpec } from '../src/hosted-relay-v1/registry.mjs';
 import { B, REPO_FILES, SPEC, fixtureRegistry, memoryReader } from './fixtures/hosted-relay/world.mjs';
@@ -15,6 +16,7 @@ const clone = value => structuredClone(value);
 const build = (files = REPO_FILES, spec = SPEC, modes = {}) => buildRegistry({ spec, reader: memoryReader(files, { modes }), commit: B, domain: 'fixture' });
 const refused = (fn, code, label = code) => assert.throws(fn, error => error.code === code, label);
 const GITLEAKS = '.github/workflows/gitleaks.yml';
+const HOSTED_LINE = `${REPO_FILES[GITLEAKS].split('\n').find(line => line.includes("&& 'gitleaks-hosted-executor' ||"))}\n`;
 const workflowWith = (from, to, file = GITLEAKS) => {
   assert.ok(REPO_FILES[file].includes(from), `fixture lacks ${from}`);
   return { ...REPO_FILES, [file]: REPO_FILES[file].replace(from, to) };
@@ -26,12 +28,14 @@ test('the committed spec validates and derives a deterministic fixture registry'
   assert.equal(serializeRegistry(first), serializeRegistry(second));
   assert.equal(first.domain, 'fixture');
   assert.equal(first.sourceCommit, B);
-  const expected = { gitleaks: ['gitleaks-hosted-executor', 25], trivy: ['trivy-hosted-executor', 25], 'contract-placement': ['contract-placement-hosted-executor', 15] };
+  // PR-B layout: job id `<role>-trusted-self-hosted`, closed expression name.
+  const expected = { gitleaks: ['gitleaks-hosted-executor', 25], trivy: ['trivy-hosted-executor', 25] };
+  assert.deepEqual(Object.keys(first.roles).sort(), Object.keys(expected));
   for (const [role, [job, minutes]] of Object.entries(expected)) {
     const entry = first.roles[role];
     assert.equal(entry.checkName, role);
     assert.equal(entry.hostedCheckName, job);
-    assert.equal(entry.hostedJobId, job);
+    assert.equal(entry.hostedJobId, `${role}-trusted-self-hosted`);
     assert.equal(entry.hostedJobTimeoutMinutes, minutes);
     assert.equal(entry.workflowBlob, gitBlobSha1(Buffer.from(REPO_FILES[entry.workflowPath])));
     for (const item of entry.closure) assert.equal(item.blob, gitBlobSha1(Buffer.from(REPO_FILES[item.path])));
@@ -64,6 +68,12 @@ test('a real git commit and the in-memory reader derive identical pins; the CLI 
   assert.equal(main(['--repo', dir, '--commit', commit, '--domain', 'fixture', '--out', out], sink), 0);
   assert.equal(fs.readFileSync(out, 'utf8'), serializeRegistry(real));
   assert.equal(main(['--repo', dir, '--commit', commit, '--domain', 'fixture', '--out', out], sink), 2); // never overwrites
+  fs.writeFileSync(out, 'stale');
+  assert.equal(main(['--repo', dir, '--commit', commit, '--domain', 'fixture', '--out', out, '--replace'], sink), 0); // one-command rebuild
+  assert.equal(fs.readFileSync(out, 'utf8'), serializeRegistry(real));
+  assert.equal(JSON.parse(lines.at(-1)).sourceCommit, commit);
+  assert.deepEqual(fs.readdirSync(dir).filter(name => name.endsWith('.tmp')), []);
+  assert.equal(main(['--repo', dir, '--commit', commit, '--replace'], sink), 2);
   assert.equal(main(['--repo', dir, '--commit', '--upload-pack=x', '--domain', 'fixture'], sink), 2);
   assert.match(lines.at(-1), /RELAY_REGISTRY_COMMIT_INVALID/);
   assert.equal(main(['--repo', dir], sink), 2);
@@ -84,7 +94,13 @@ test('a hosted job name equal to a required check name is refused (Owner Decisio
   const wrongRequired = clone(SPEC); wrongRequired.roles.gitleaks.checkName = 'trivy';
   refused(() => validateSpec(wrongRequired), 'RELAY_REGISTRY_SPEC_INVALID');
   const kooyumi = clone(SPEC); kooyumi.roles['kooyumi-merge-slot'] = clone(SPEC.roles.gitleaks);
-  refused(() => validateSpec(kooyumi), 'RELAY_REGISTRY_SPEC_INVALID');
+  refused(() => validateSpec(kooyumi), 'RELAY_REGISTRY_ROLE_NOT_RELAYABLE');
+  // contract-placement runs PR code while it holds id-token: write: never relayed.
+  const placement = clone(SPEC); placement.roles['contract-placement'] = { checkName: 'contract-placement', hostedCheckName: 'contract-placement-hosted-executor',
+    workflowPath: '.github/workflows/contract-placement.yml', runsOn: 'ubuntu-latest', closure: ['.github/workflows/contract-placement.yml'], mustNotExist: [] };
+  refused(() => validateSpec(placement), 'RELAY_REGISTRY_ROLE_NOT_RELAYABLE');
+  const placementRegistry = clone(build()); placementRegistry.roles['contract-placement'] = clone(placementRegistry.roles.trivy);
+  refused(() => validateRegistry(placementRegistry), 'RELAY_REGISTRY_ROLE_NOT_RELAYABLE');
 });
 
 test('closure pins come only from regular blobs present at the commit; forbidden paths must be absent', () => {
@@ -107,8 +123,16 @@ test('closure pins come only from regular blobs present at the commit; forbidden
 
 test('the workflow scan refuses a commit whose hosted job could mint an identity it should not', () => {
   const cases = [
-    ['expression hosted name', workflowWith('    name: gitleaks-hosted-executor\n', "    name: ${{ 'gitleaks-hosted-executor' }}\n")],
-    ['a job that can carry the required name', workflowWith('    name: admission-gate\n', "    name: ${{ github.event_name == 'push' && 'gitleaks' || 'admission-gate' }}\n")],
+    ['open expression hosted name', workflowWith(HOSTED_LINE, '    name: ${{ github.head_ref }}\n')],
+    ['bare literal expression', workflowWith(HOSTED_LINE, "    name: ${{ 'gitleaks-hosted-executor' }}\n")],
+    ['condition not enclosed', workflowWith(HOSTED_LINE, "    name: ${{ (a) || github.head_ref && 'gitleaks-hosted-executor' || 'x' }}\n")],
+    ['nested expression', workflowWith(HOSTED_LINE, "    name: ${{ (a == ${{ b }}) && 'gitleaks-hosted-executor' || 'x' }}\n")],
+    ['unbalanced condition', workflowWith(HOSTED_LINE, "    name: ${{ (a) || (b && 'gitleaks-hosted-executor' || 'x' }}\n")],
+    ['hosted alternative is the required name', workflowWith("|| 'gitleaks-hosted-executor-skipped' }}", "|| 'gitleaks' }}")],
+    ['hosted alternative is another required name', workflowWith("|| 'gitleaks-hosted-executor-skipped' }}", "|| 'kooyumi-merge-slot' }}")],
+    ['literal hosted name equal to the required name', workflowWith(HOSTED_LINE, '    name: gitleaks\n')],
+    ['a job that can carry the required name', workflowWith('    name: admission-gate\n', "    name: ${{ (github.event_name == 'push') && 'gitleaks' || 'admission-gate' }}\n")],
+    ['a job id that is the required name', workflowWith('  admission-gate:\n    name: admission-gate\n', '  gitleaks:\n')],
     ['a second job with the hosted name', workflowWith('    name: admission-gate\n', '    name: gitleaks-hosted-executor\n')],
     ['id-token on another job', workflowWith('      pull-requests: read\n', '      pull-requests: read\n      id-token: write\n')],
     ['top-level id-token', workflowWith('permissions:\n  contents: read\n', 'permissions:\n  contents: read\n  id-token: write\n')],
@@ -125,7 +149,10 @@ test('the workflow scan refuses a commit whose hosted job could mint an identity
   for (const [label, files] of cases) refused(() => build(files), 'RELAY_REGISTRY_WORKFLOW_REFUSED', label);
   // Flow-style job permissions are read the same way.
   const flow = workflowWith('    permissions:\n      contents: read\n      id-token: write\n', '    permissions: {contents: read, id-token: write}\n');
-  assert.deepEqual(scanWorkflow(Buffer.from(flow[GITLEAKS]), SPEC.roles.gitleaks), { hostedJobId: 'gitleaks-hosted-executor', hostedJobTimeoutMinutes: 25 });
+  assert.deepEqual(scanWorkflow(Buffer.from(flow[GITLEAKS]), SPEC.roles.gitleaks), { hostedJobId: 'gitleaks-trusted-self-hosted', hostedJobTimeoutMinutes: 25 });
+  // A literal hosted name (as the never-relayed placement job uses) is read as well.
+  const literal = workflowWith(HOSTED_LINE, '    name: gitleaks-hosted-executor\n');
+  assert.equal(scanWorkflow(Buffer.from(literal[GITLEAKS]), SPEC.roles.gitleaks).hostedJobId, 'gitleaks-trusted-self-hosted');
 });
 
 test('a registry is refused when tampered, mis-domained or not validated', () => {
@@ -143,4 +170,23 @@ test('a registry is refused when tampered, mis-domained or not validated', () =>
   refused(() => validateRegistry(clone(registry), { domain: 'production' }), 'RELAY_REGISTRY_DOMAIN_MISMATCH');
   refused(() => registryDigestOf(clone(registry)), 'RELAY_REGISTRY_NOT_VALIDATED');
   assert.equal(registryDigestOf(fixtureRegistry()), registryDigestOf(fixtureRegistry()));
+});
+
+// The committed production registry (S15) is exactly what build-registry
+// derives from its recorded frozen PR-B commit, whenever that commit is present.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(HERE, '../../../..');
+const COMMITTED = path.join(HERE, '../src/hosted-relay-v1/registry.json');
+test('the committed production registry validates and rebuilds byte-identically from its PR-B commit', async t => {
+  const bytes = fs.readFileSync(COMMITTED, 'utf8');
+  const registry = validateRegistry(JSON.parse(bytes), { domain: 'production' });
+  assert.deepEqual(Object.keys(registry.roles).sort(), ['gitleaks', 'trivy']);
+  for (const [role, entry] of Object.entries(registry.roles)) {
+    assert.equal(entry.checkName, role);
+    assert.equal(entry.hostedCheckName, `${role}-hosted-executor`);
+  }
+  assert.equal(bytes, serializeRegistry(JSON.parse(bytes)));
+  const present = GIT && spawnSync(GIT, ['-C', ROOT, 'cat-file', '-e', `${registry.sourceCommit}^{commit}`], { windowsHide: true }).status === 0;
+  if (!present) { t.skip(`source commit ${registry.sourceCommit} not in the local object store`); return; }
+  assert.equal(serializeRegistry(buildRegistry({ spec: SPEC, reader: gitObjectReader(ROOT, { git: GIT }), commit: registry.sourceCommit })), bytes);
 });

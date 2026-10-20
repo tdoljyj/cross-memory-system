@@ -1,6 +1,10 @@
 // Derive registry.json deterministically from one commit (design S15).
 //
-//   node build-registry.mjs --repo <git dir> --commit <rev> [--spec <spec.json>] [--domain production|fixture] [--out <file>]
+//   node build-registry.mjs --repo <git dir> --commit <rev> [--spec <spec.json>] [--domain production|fixture] [--out <file> [--replace]]
+//
+// Production rebuild from the newest frozen PR-B commit (one command):
+//   node work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/build-registry.mjs --repo . \
+//     --commit <PR-B commit> --out work/actions-hosted-migration/independent-ci-v1/src/hosted-relay-v1/registry.json --replace
 //
 // Every pin (workflow blob, closure blobs, hosted job id, job timeout) is read
 // from the commit with `git ls-tree` / `git cat-file`; nothing is hand-written.
@@ -66,11 +70,33 @@ export function gitObjectReader(repoDir, { git = 'git' } = {}) {
 export const gitBlobSha1 = bytes => createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
+// The check-run names a job can carry: a literal name, or the two literals of
+// `${{ (<condition>) && '<A>' || '<B>' }}`. The outer parentheses must enclose
+// the whole condition (quoted literals skipped), so `(c) && 'A'` is 'A' or a
+// falsy value and the expression is always A or B. Anything else is null.
+export function possibleNames(raw) {
+  const unquoted = /^'([^']*)'$/.exec(raw) ?? /^"([^"\\]*)"$/.exec(raw);
+  if (!raw.includes('${{')) return unquoted ? [unquoted[1]] : /^[A-Za-z0-9][A-Za-z0-9 _.()-]*$/.test(raw) ? [raw] : null;
+  const form = /^\$\{\{\s*(\(.*\))\s*&&\s*'([^']+)'\s*\|\|\s*'([^']+)'\s*\}\}$/.exec(raw);
+  if (!form) return null;
+  const condition = form[1];
+  let depth = 0;
+  for (let index = 0; index < condition.length; index++) {
+    const char = condition[index];
+    if (char === "'") { const close = condition.indexOf("'", index + 1); if (close < 0) return null; index = close; continue; }
+    if (char === '{' || char === '}') return null;
+    if (char === '(') depth++;
+    if (char === ')') { depth--; if (depth < 0 || (depth === 0 && index !== condition.length - 1)) return null; }
+  }
+  return depth === 0 ? [form[2], form[3]] : null;
+}
+
 // A strict line scan of the registered workflow. It refuses anything it cannot
-// read unambiguously: tabs, CR, flow-style jobs, an expression job name, a
-// second job that could carry the hosted name, a hosted or required check name
-// on any other job, id-token on any other job, a missing or non-final
-// identity step.
+// read unambiguously: tabs, CR, flow-style jobs, a job name that is neither a
+// literal nor the closed form `${{ (<condition>) && '<A>' || '<B>' }}` (whose
+// value is always A or B), a required check name among any job's possible
+// names, the hosted name on a second job, id-token on any other job, a missing,
+// conditional or non-final identity step, and a step allowed to fail.
 export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, runsOn }) {
   const code = 'RELAY_REGISTRY_WORKFLOW_REFUSED';
   let text;
@@ -106,17 +132,16 @@ export function scanWorkflow(bytes, { workflowPath, checkName, hostedCheckName, 
     const declared = field(job, 'name');
     insist(declared.length <= 1, code, `${workflowPath}:${job.id}.name`);
     const raw = declared.length ? declared[0] : job.id;
-    const literal = !raw.includes('${{') && !raw.includes('|') && !raw.includes('>') ? unquote(raw) : null;
-    const mentions = name => raw === name || raw.includes(`'${name}'`) || raw.includes(`"${name}"`) || literal === name;
-    if (literal === hostedCheckName) { hosted.push(job); continue; }
-    insist(!mentions(hostedCheckName), code, `${workflowPath}:${job.id}.hosted-name-elsewhere`);
-    // A hosted job that can carry a required check name blocks merges (bc6fdad1).
-    for (const required of REQUIRED_CHECK_NAMES) insist(!mentions(required), code, `${workflowPath}:${job.id}.required-name:${required}`);
+    const names = possibleNames(raw);
+    insist(names, code, `${workflowPath}:${job.id}.name-not-closed`);
+    // A job that can carry a required check name blocks merges (bc6fdad1).
+    for (const required of REQUIRED_CHECK_NAMES) insist(!names.includes(required), code, `${workflowPath}:${job.id}.required-name:${required}`);
+    if (names.includes(hostedCheckName)) { hosted.push(job); continue; }
     insist(!job.lines.some(line => /id-token\s*:/.test(line)), code, `${workflowPath}:${job.id}.id-token`);
   }
+  // The hosted name on two jobs would make E5's newest run ambiguous.
   insist(hosted.length === 1, code, `${workflowPath}:hosted-job-count`);
   const [job] = hosted;
-  insist(job.id !== checkName, code, `${workflowPath}:hosted-job-id-is-required-name`);
   insist(field(job, 'runs-on').length === 1 && unquote(field(job, 'runs-on')[0]) === runsOn, code, `${workflowPath}:runs-on`);
   const timeout = field(job, 'timeout-minutes');
   insist(timeout.length === 1 && /^[1-9][0-9]{0,2}$/.test(timeout[0]), code, `${workflowPath}:timeout-minutes`);
@@ -196,21 +221,31 @@ export function serializeRegistry(registry) {
 }
 
 export function main(argv = process.argv.slice(2), output = process.stdout) {
+  const usage = 'usage: build-registry.mjs --repo <dir> --commit <rev> [--spec <file>] [--domain production|fixture] [--out <file> [--replace]]\n';
   const options = {};
-  for (let index = 0; index < argv.length; index += 2) {
-    const [flag, value] = [argv[index], argv[index + 1]];
-    if (!['--repo', '--commit', '--spec', '--domain', '--out'].includes(flag) || value === undefined || Object.hasOwn(options, flag)) {
-      output.write('usage: build-registry.mjs --repo <dir> --commit <rev> [--spec <file>] [--domain production|fixture] [--out <file>]\n');
-      return 2;
-    }
+  for (let index = 0; index < argv.length; index++) {
+    const flag = argv[index];
+    if (flag === '--replace' && !Object.hasOwn(options, flag)) { options[flag] = true; continue; }
+    const value = argv[++index];
+    if (!['--repo', '--commit', '--spec', '--domain', '--out'].includes(flag) || value === undefined || Object.hasOwn(options, flag)) { output.write(usage); return 2; }
     options[flag] = value;
   }
-  if (!options['--repo'] || !options['--commit']) { output.write('--repo and --commit are required\n'); return 2; }
+  if (!options['--repo'] || !options['--commit'] || (options['--replace'] && !options['--out'])) { output.write(usage); return 2; }
   try {
     const spec = JSON.parse(fs.readFileSync(options['--spec'] ?? path.join(HERE, 'registry.spec.json'), 'utf8'));
     const registry = buildRegistry({ spec, reader: gitObjectReader(options['--repo']), commit: options['--commit'], domain: options['--domain'] ?? 'production' });
     const bytes = serializeRegistry(registry);
-    if (options['--out']) fs.writeFileSync(options['--out'], bytes, { flag: 'wx' }); else output.write(bytes);
+    if (!options['--out']) { output.write(bytes); return 0; }
+    if (!options['--replace']) fs.writeFileSync(options['--out'], bytes, { flag: 'wx' });
+    else {
+      // Rebuild in place from another frozen commit: the old file is replaced only
+      // by a complete, validated registry (temporary file, then rename).
+      const temporary = `${options['--out']}.${process.pid}.tmp`;
+      try { fs.writeFileSync(temporary, bytes, { flag: 'wx' }); fs.renameSync(temporary, options['--out']); }
+      finally { fs.rmSync(temporary, { force: true }); }
+    }
+    output.write(`${JSON.stringify({ status: 'BUILT', sourceCommit: registry.sourceCommit, domain: registry.domain,
+      registrySha256: digest(registry), roles: Object.keys(registry.roles) })}\n`);
     return 0;
   } catch (error) {
     output.write(`${JSON.stringify({ status: 'REFUSED', code: error?.code ?? 'RELAY_REGISTRY_BUILD_FAILED', detail: error?.detail ?? null })}\n`);
