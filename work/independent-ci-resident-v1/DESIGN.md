@@ -1,0 +1,638 @@
+# TURING 独立 CI 常驻执行机制 · 设计与草稿 v0.5（未安装）
+
+- 日期：2026-10-20（UTC）
+- KooYomi：项目 0597aa60；本工作 Task `79c32815`；Owner 决定 Decision `0d84ddbb`（四项选择）；父 Task `253d0382`。
+- 修订历史：
+  - v0.2：按第一次独立复审（FAIL：1 个 BLOCKER、7 个 MAJOR）逐项修正；
+  - v0.3：按复核（FAIL：BLOCKER 清零，M1、M6、M7 还有残留）再修；
+  - v0.4：按第三轮复核（FAIL：残留全部关闭，但修正本身引入 2 个 MAJOR，另有 1 个旧的代理 MAJOR）再修；
+  - v0.5：按第四轮复核（FAIL：代理 MAJOR 只修了一半，隔离与 HALT 不是崩溃一致的）再修。
+
+  第五轮复核 **PASS**（没有剩余的 BLOCKER 或 MAJOR）。五轮对照见 §13.3–§13.7。
+- 依据（只读）：
+  - PR884 head 041eaadf 的 `work/actions-hosted-migration/independent-ci-v1/`。下文 `CI/` 指这个目录，`CID/` 指 `CI/src/control-install-delta-v2/`。
+  - b24 的实际脚本：`%TEMP%\ccs-f14-b24\`、`b24\`、`ws-prep-b24\`、`lis-f11\`、`ar-b19\`。
+  - 同组设计笔记：`ci-claim-decoupling-design.md`（claim 解耦）、`parallel-linux-roles-design.md`（并行）。
+- 没碰的东西：`C:\ProgramData`、`/opt`、`/etc`、`/var/lib/clued-independent-ci`、`Temp\ci884-retry`、claim 842cf499 及其 write_set、任何服务，也没运行 WSL。草稿只在 `work/independent-ci-resident-v1/` 下新建文件。
+
+---
+
+## 0. 结论
+
+1. **能做到每批 0 次 UAC、0 次 root，而且整体比现在更安全。** 今天每批要点 UAC，根本原因不在安全需要，而在两件事：
+   - 每批的绑定包由 Agent 在用户可写的 `%TEMP%` 里手工生成；
+   - 执行它的是 Owner 的完整管理员令牌。
+
+   UAC 是唯一能拦住“被改过的包以管理员身份运行”的环节（§1.3）。常驻后：
+   - 每批的包由已安装的可信代码从“已安装 Source + 只当数据的触发记录”确定性导出；
+   - 执行身份降为最小权限的虚拟服务账户；
+   - 唯一能改 runner 服务配置的，是一个只会做一件事的 SYSTEM 交换代理（§8.2）。
+2. **Owner 的授权换成了三层，都无法从普通用户会话伪造**（Decision `0d84ddbb` 第 1 项）：
+   - **安装时那一次 UAC**：钉住确切的 Source、常驻层和策略，这就是对这个 Source 的常设授权；换 Source 仍要 Owner 接受并重装。
+   - **每批第 1 段的 KooYomi 实时准入**：claim、fence、write_set、head 上限；改到受保护路径还要对确切 head 的 `repo.protected_change` Grant，这个 Grant 只能来自 Owner 登录的页面或 Owner 的自动批准开关。
+   - **急停**：任何人都能暂停，只有 Owner 能恢复；Owner 也可以在 KooYomi 撤销 ci-admission Binding，所有批次立即 fail closed。
+3. **常驻有一个硬前提：claim 不能再钉在安装配置里。** 所以常驻和同组的 claim 解耦（A-strict）要合成**一个 Source v2**（§7）。
+4. **人工步骤**（§12）：
+   - 每批：0 次 UAC，0 次 root，0 次 5 分钟内写文件；
+   - 干净失败：自动归档后继续；
+   - 未知失败：HALT，Owner 用 UAC 发一个复位请求，由服务自己完成归档和解锁；
+   - Source 变更：Owner 接受后，1 次 UAC 加 1 次 root。
+5. **草稿状态**：
+   - 测试结果：
+     - Node 单元测试 **53/53** 通过；
+     - Python 测试 **9/9** 通过；
+     - 离线演练 **20/20** 通过；
+     - 4 个 PowerShell 脚本语法检查 0 错，3 个 shell 脚本 `bash -n` 通过；
+     - 两个 C# 服务宿主用系统 csc 编译通过（编译到 scratch，没安装）。
+   - 主机演练（§13.2 P2）还没开始，所以可安装性、ACL 掩码和 unit 加固都还没在真机上证明。
+
+---
+
+## 1. 现状：每批要人做什么，为什么
+
+### 1.1 一批的人工步骤（b24 的实际做法）
+
+| # | 步骤 | 谁做 | 权限 | 依据 |
+|---|---|---|---|---|
+| R | rNN 修复安装：换 Source 叶子、重绑 8 个配置；归档上一批的助手 exe 和 `.bak`，否则下一批 CreateNew 冲突 | Agent 生成，Owner 运行 | **UAC** | `ccs-f14/derive-f14.py`、`repair-claim-config.ps1:99-131` |
+| L | Linux 重绑或重装：claim、Source、工具链哈希一变就要 | Agent 生成，root 运行 | **root** | `lis-f11/RUN-ORDER.md` |
+| B | 生成绑定包：每批复制上一批脚本，改字面量，重钉哈希，然后非作者复审 | Agent | 无 | `ccs-f14-b24/derive-b24.py` |
+| W | ws-prep：Windows 非提权打 bundle，Linux root 建工作区 | Agent、root | **root** | `ws-prep-b24/` |
+| U | 启动 launch-activation-bNN | Owner | **UAC** | `launch-activation-b24.ps1:32` |
+| 8 | 第 8 段：5 分钟内续租 claim 并写 `native-queue-ready.json` | Agent | 无 | `CID/batch/run-batch.ps1:80` |
+| F | 失败：UAC 停批次、UAC 盘点、root 盘点、`wsl --shutdown`、root 归档 Linux、UAC 归档 Windows | Owner、root | **2×UAC + root + WSL 重启** | `ar-b19/` |
+
+### 1.2 为什么要提权
+
+- **Windows**：所有特权步骤都以 Owner 账户（…-1001）的提权令牌运行。`FixedScm.cs:34` 写死要求 TURING、SID …-1001 和 Administrator。提权要做的事有：
+  - 换 runner 服务 `actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-02` 的 ImagePath，再换回来（`FixedScm.cs:121-127`）；
+  - 启动、停止这个服务；
+  - 建 `Global\` 互斥量和事件；
+  - 写 ProgramData 里受保护的 Public 文件（`invoke-io.ps1:17-33`）。
+
+  runner 服务本身以非管理员 `.\clued-control`（…-1015）在 Session 0 运行。App 私钥和 ci-admission token 只由它的 node 子进程读取。
+- **Linux**：每一步都是 Windows 用 `wsl.exe --user root` 单独拉起的。`wsl --user root` 只需要 Owner SID，不需要 Windows 管理员（`relay-public.ps1:60`）。
+
+### 1.3 UAC 今天真正在防什么
+
+提权后的 `run-batch.ps1` 从 `%TEMP%\bNN\...` 读取并执行脚本，而且只校验它自己的哈希（`run-batch.ps1:55`）。能写用户目录的进程，只要在 UAC 之前换掉文件，就能拿到管理员执行。今天挡住它的只有“点之前看一眼哈希”。
+
+常驻设计从结构上去掉这个风险：代码只从管理员专用目录加载，用户目录里的东西只当数据。
+
+---
+
+## 2. 目标与不变量（逐条对照见 §13）
+
+- **I1 可信源码变更**仍需 Owner 接受并重装（UAC + root）。执行器每批开始前重算已安装 Source 与常驻层每个文件的哈希，有漂移就 HALT。
+- **I2 每个作业最多执行一次**，绑定确切的 head、base 和 Source；claim 和 fence 在批次内不变：
+  - 现有的作业身份、effect journal、bridge 防重放全部保留，而且 **effect journal 永远不会被归档走**（§6.4）；
+  - 新增按 **head** 烧号：同一 (repo, head, Source, attempt) 一旦开始，不论 base、PR 号还是 claim 怎么变，永不再开始。
+- **I3 fail closed，不自动重试**：
+  - 执行器自己从不重跑；
+  - 未准入的评估要有新的触发记录，受冷却期和独立的每日上限约束；
+  - 未知失败锁住 HALT。
+- **I4 PR 代码只当数据**：gitleaks、trivy、ws-prep 不执行 PR 内容。现有 contract-placement 会在加固容器里运行 PR 的测试（§14 R1），本设计不扩大这个范围。
+- **I5 不读秘密**：常驻服务、交换代理、companion、三个 unit 都不读 App 私钥和 ci-admission token。结果签名密钥仍只由现有 worker 在签结果时读取。
+- **I6 不新增付费**：全部在 TURING 本机运行。
+
+---
+
+## 3. 总体架构
+
+### 3.1 主体与权限
+
+| 主体 | 身份 / 会话 | 能做 | 不能做 |
+|---|---|---|---|
+| **Owner（安装者）** | Owner SID 提权，UAC | 安装、升级、卸载；向 `owner\` 目录写复位或恢复请求 | 每批不再出现；复位时也不移动任何文件 |
+| **CluedCIResident 常驻执行器**（新） | `NT SERVICE\CluedCIResident` 虚拟账户，Session 0，非管理员 | 读已安装 Source；写自己的 state、work、outbox；向交换代理提请求；经 Source v2 的句柄工具归档 formal-spool | 对 runner 服务**没有任何权限**；读秘密；加载用户目录里的代码；联网 |
+| **CluedCISwapBroker 交换代理**（新） | LocalSystem | 只做一件事：把 runner 的二进制路径在“原始”和“已安装、哈希在白名单里的通用助手”之间切换，带 nonce 启动一次，等它停止，再换回 | 改账户、启动类型、依赖、DACL；运行白名单以外的东西；杀进程 |
+| **clued-control**（现有，不变） | `.\clued-control`，Session 0 | 跑阶段助手、读秘密，对 GitHub 和 KooYomi 做所有实时核验和发布 | — |
+| **companion 伴随进程**（新） | Owner 本人的登录会话，计划任务，**不提权** | WSL 保活；用 Owner 自己的 git 凭据打 bundle；用现有 `relay-public.ps1` 搬运 bridge 记录；`systemctl start` 三个固定 unit；轮询 PR 生成触发记录 | 任何授权判断；任意命令（只有固定 argv）；写执行器的 state 和 owner 目录 |
+| **Linux unit**（新） | WSL 内 root，systemd oneshot 模板，带沙箱加固 | worker（不变的 `linux-worker.mjs`）、ws-prep、归档；各自用 root 实测前提 | 由 PR 内容驱动执行代码 |
+
+### 3.2 数据通道（全部 create-only，格式精确；`src/mailbox.mjs`、`src/inbox.mjs`）
+
+```
+Agent / companion 轮询器 ──写──▶ resident\inbox\            触发记录 {repo, pr, headSha, baseSha}（只是数据）
+任何 Owner 会话进程     ──写──▶ resident\requests\          暂停请求（只能停）
+提权的 Owner（UAC）     ──写──▶ resident\owner\             复位或恢复请求（只有 Administrators 能建文件）
+常驻执行器              ──写──▶ resident\mailbox\requests\  给 companion 的固定种类请求
+companion               ──写──▶ resident\mailbox\responses\ 回答 + 心跳（不可信，只用于分类）
+常驻执行器              ──写──▶ resident\broker\requests\   给交换代理的请求 {stage, nonce, deadline}
+交换代理                ──写──▶ resident\broker\responses\  交换结果
+常驻执行器              ──写──▶ resident\outbox\<batchId>\descriptor.json  公开批次描述（companion 和 Linux unit 只读）
+常驻执行器              ──写──▶ resident\state\             账本、head 烧号、HALT/PAUSE、哈希链回执（Owner 只读）
+```
+
+### 3.3 威胁模型（复审 M5 之后补充）
+
+- **要防的**：Owner 用户会话里的任意进程，包括 Agent 和被利用的工具。它们必须做不到：
+  - 拿到 Windows 管理员或 SYSTEM；
+  - 读到 App 私钥或 ci-admission token；
+  - 让常驻服务或交换代理在它们的目录之外写、删、改名；
+  - 绕过某个门禁；
+  - 让一个已开始过的 head 再次执行；
+  - 伪造 Owner 的授权（复位、恢复、Grant）。
+- **已接受的边界**（resident constraint 4fedfc84）：Owner、root、chase 是受信管理员。WSL root 能从 Owner 用户会话直接拿到（`wsl -u root`），所以 Linux 侧的一切事实，包括现有 worker 的结果签名，最多和 Owner 用户会话一样可信。本设计在这一层只保证两点：
+  - 事实是 root 工具实测出来的，不是假设的；测不出来就当作失败（fail closed）；
+  - companion 只原样转交 root 工具的输出，自己不产生证明值。
+
+  后果：恶意的 Owner 用户会话可以谎报 Linux 静止。谎报的最坏结果是在 Linux 不干净时继续往下走，而下一批 ws-prep 的 root 预检会拒绝。这和今天的接受边界一致，不是新开的口子。
+
+---
+
+## 4. Owner 授权从 UAC 换成了什么
+
+### 4.1 三层授权
+
+1. **安装时**：Owner 在 UAC 下运行 `install-resident.ps1 -Apply -ExpectedPlanSha256 <审过的计划>`。
+   - 钉住的内容：
+     - Source 清单；
+     - 常驻层清单；
+     - `policy.json`：仓库、只对 main、六项检查、执行和评估两套限速、串行、禁止自动重试；
+     - 两个服务宿主的哈希；
+     - 交换代理的助手白名单。
+   - 策略文件哈希写进服务启动参数，只有管理员能改。
+   - KooYomi 里的接受 Decision 是 Agent 写的记录，单凭它证明不了 Owner 本人在场，所以接受仍然落在安装这一次 UAC 上。
+   - `policy.validUntil` 可选：为空表示直到 Source 变更或卸载；设了就是复核期限，到期 HALT。
+2. **每批**：第 1 段由 clued-control 用 ci-admission Binding 做完整的 Native 准入，和今天、和 GitHub 托管路径相同：
+   - PR 是 open 的，head 和 base 正确；
+   - claim 是 ACTIVE，fence 和 epoch 一致，不需要 lease_key，没有在交接中；
+   - write_set 覆盖所有改动；
+   - Task 的 CI 计量没超；
+   - 受保护路径要有 `repo.protected_change` Grant，资源为 `repo:<owner>/<name>/<head>`。
+
+   Grant 只能来自 Owner 登录的 KooYomi 页面，或 Owner 的自动批准开关（`20261013023000_owner_auto_approve_persistent_switch.sql`，main 上默认开启）。之后每段的 issue、每次回调、每次发布都照旧实时复验（A-strict）。
+3. **急停、恢复与复位**：
+
+   | 动作 | 谁能做 | 怎么做 |
+   |---|---|---|
+   | 暂停 | 任何 Owner 会话进程 | 往 `requests\` 写暂停请求；批次之间生效，从不中断正在跑的段 |
+   | 恢复 | 只有提权的 Owner | `rearm-resident.ps1 -Request Resume -ExpectedPausedSha256 <审过的>`。脚本用纯 PowerShell 往 `owner\` 写一个带时间和 nonce 的请求，不启动任何其他程序；服务按比较交换执行 |
+   | 复位（未知失败后） | 只有提权的 Owner | `rearm-resident.ps1 -Request Rearm -ExpectedHaltSha256 <审过的> -Reason …`，写法同上。服务实测两端静止，对**每一个还没归档的未知失败批次**只改名归档，再按比较交换清除 HALT |
+   | 远程急停 | Owner | KooYomi 页面撤销 ci-admission Binding；重新启用要换 token（UAC） |
+   | 卸载 | Owner | UAC |
+
+   `owner\` 的授权来自目录 ACL：只有 Administrators 能建文件，服务只能读。每个请求都点名 Owner 审过的那份 HALT 或 PAUSE 的确切字节，过期或重放的请求比较交换失败。
+
+   服务把已处理过的请求同时按文件名和字节摘要记下：
+   - 按文件名记：旧请求在计数之前就被跳过，所以永远挤不掉新请求；
+   - 按摘要记：同一份请求换个名字也不会处理两次。
+
+   请求自带时间和 nonce，所以被拒后再发一次（哪怕理由相同）就是一个新请求。
+
+### 4.2 谁能触发，怎样防伪造
+
+触发记录只说“请看看 PR n 的 head h（base b）”。写 inbox 的是 Owner 会话里的进程。
+
+| 攻击者能做的事 | 结果 |
+|---|---|
+| 写任意触发记录 | 格式精确、键不对就拒、每个 ≤1KB；只接受策略里的仓库；不携带路径、命令、claim 或包。最坏结果：对真实且已准入的 head 跑 CI（本来就会跑）；对未准入的 head 浪费一次约 45 秒的评估，受冷却期、单 head 每日上限和全局评估上限约束，**不占用执行额度** |
+| 大量灌入 | 每次只读 N 个；按 (pr, head, base) 合并；先进先出；评估和执行各有每日上限 |
+| 换 base 或 PR 号重放已执行的 head | 按 head 烧号，直接忽略（`HEAD_ALREADY_EXECUTED_NO_RETRY`） |
+| 伪造 GitHub 或 KooYomi 事实、Owner Grant、扫描结果 | 做不到：clued-control 通过 TLS、用 App 私钥和 ci-admission token 实时获取；Grant 只来自 Owner 页面；结果有 Ed25519 签名 |
+| 往 `owner\` 写复位或恢复请求 | 做不到：只有 Administrators 能建文件。写进 `requests\` 的恢复请求会被忽略（演练第 15 步） |
+| 改已安装的代码或策略 | 做不到：目录只有管理员能写，每批重算哈希 |
+| 在 spool 里放 junction 或硬链接，诱导归档移动别的文件 | 归档只碰精确白名单里的记录名，不递归；拒绝链接和多重硬链接；改名前后都核实父目录。主机上由 Source v2 基于句柄的工具执行，而且**从不提权运行**（§6.4，复审 X1） |
+| 冒充 companion 乱答 | 见 §3.3：只能谎报 Linux 静止，后果被 root 预检挡住 |
+| 让批次反复失败，以 HALT 拒绝服务 | 能做到，但方向是安全的 |
+
+### 4.3 为什么不用 GitHub 审批
+
+Agent 在这台机器上用的就是 Owner 的 GitHub 身份（resident constraint 22c20e14 的禁止条款），GitHub 上的批准证明不了是 Owner 本人。KooYomi 的 Owner Grant 只能来自 Owner 登录的页面（合同 §6.6）。
+
+### 4.4 为什么没选每批 Grant（Decision `0d84ddbb` 第 1 项）
+
+它需要服务端迁移、新的门禁 RPC 和生产发布；而且自动批准开着时，它退化成“多一条审计记录”。需要时可以作为附加层，接在第 1 段之后。
+
+---
+
+## 5. 一批的流程
+
+```
+companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ inbox 里的触发记录
+执行器 tick（空闲每 15 秒一次）：
+  崩溃恢复（每 tick 都做，HALT 时也做）：未终结的条目（包括“目录已建、记录没写”的） → FAILED_UNKNOWN、烧掉 head、HALT
+  处理 owner\ 里的复位 / 恢复请求
+  HALT? → 停；处理暂停请求；处于 PAUSED → 停
+  取最早的触发记录；预检（不联网、不读秘密）：
+      head 是否已烧、冷却期、执行和评估上限、validUntil、Source 哈希、companion 心跳
+  预留（00-reserved）→ 导出批次（Source v2 确定性导出）→ 写公开描述符
+  companion 打 bundle（只用 Owner 的读凭据，不发布任何东西）
+      失败 → 收尾 → 释放成 NOT_EXECUTED
+  第 1 段 Native 准入（经交换代理，以 clued-control 身份运行）
+      未准入 → 收尾 → 释放成 NOT_EXECUTED
+      其他失败 → 烧掉 head
+  10-started + head 烧号
+  companion 启动 clued-ci-wsprep@<batchId>（root 预检、fsck --strict、建工作区）
+  第 2 到 8 段：
+      第 4、6 段之前，两端先做角色间归档（只移协议记录，和今天 run-batch.ps1:81 的语义一致）
+      Linux 段：companion 泵 issue → worker unit → challenge/response → result（逻辑同 run-batch.ps1:86-89）
+      第 8 段：控制助手自己轮询 Native 合并队列，直到 claim 成为队首或超出窗口（§10.2）
+  收尾：两端只改名归档最后一个角色的协议记录 → 90-terminal COMPLETED → 回执
+```
+
+---
+
+## 6. 一次性、锁、失败、归档、HALT 与复位
+
+### 6.1 一次性
+
+- **账本**（`src/ledger.mjs`）：
+  - `state\ledger\<key>\` 下依次是 `00-reserved`、`10-started`、`90-terminal`，每个文件 CreateNew，从不改写；
+  - `key` 由 repo、PR、head、base、Source、attempt 算出。
+- **按 head 烧号**：`10-started` 之前先 CreateNew `state\ledger-heads\<headKey>.json`；`headKey` 只由 repo、head、Source、attempt 算出。第 1 段的任何失败（未准入除外），以及所有未知失败，也会烧掉 head。
+- **原有防护全部保留**：作业身份、effect journal（`not_sent`、`uncertain`、`revoked` 都是终态）、bridge 的 issueId、nonce、30 秒窗口、签名结果。effect journal（`<64hex>.json`、`observations.jsonl`）不在归档白名单里，所以跨批次仍在原处，“只发布一次”跨批次成立（演练第 19 步）。
+- **attempt 默认是 1**。attempt 2 只能由 Owner 单独发起（§15 D3）。
+
+### 6.2 锁
+
+- **执行器单实例锁**（`src/instance-lock.mjs`）：
+  - 目录原子创建，持有者每 tick 刷新一次存活记录；
+  - pid 已不在：锁改名保留，交给崩溃恢复判断；
+  - pid 还在而且存活记录新鲜：拒绝启动；
+  - pid 还在但存活记录过期（pid 复用或挂起）：拒绝启动，交给 Owner 查看；
+  - 服务停止从不杀进程：宿主只写 `STOP-REQUESTED`，执行器在批次之间退出。
+- **串行**：`maxConcurrent` 只能是 1；交换代理有自己的全局互斥量；Linux `formal-role.lock` 不变；Linux guard 要求同时只有一个 clued-ci unit 活动。
+- **companion**：有子进程超时未退时进入 busy，不接新请求，也不发心跳。
+
+### 6.3 失败分类（`src/classify.mjs`，白名单，Decision `0d84ddbb` 第 4 项）
+
+清理证明在**失败发生时从两端现取**（`executor.proofFor`），不沿用阶段的自报，也不默认为真：
+
+- **Windows（引擎）**：
+  - `sc.exe` 回读：原始二进制、Manual、STOPPED、pid 0、账户仍是 clued-control；
+  - 阶段自己的进程树事实；
+  - 本服务没有仍在运行的子进程。
+- **Linux（root 工具，原样转交）**：
+  - 所有 clued-ci unit 都是 inactive；
+  - 每个 unit 的 cgroup `cgroup.events` 为 `populated 0`。只认 cgroup v2，读不到就算不静止；
+  - 带 nonce 标签的容器（`docker ps -a`）全部是 exited 或 dead；
+  - 没有进程的命令行包含 worker 或 run 目录。
+
+分类结果：
+
+- **NOT_ADMITTED**：只在第 1 段，并且 Windows 证明齐全。释放键，不烧 head。
+- **CLEAN**：白名单里的失败码，并且两端证明都齐全。两端只改名归档，记 FAILED_CLEAN，烧掉 head，继续处理别的 PR。
+- **UNKNOWN**：其余全部。记 FAILED_UNKNOWN，烧掉 head，写 HALT，不动现场。
+
+### 6.4 归档（只改名，不删除；复审 X1）
+
+- **只碰白名单**：bridge 定义的记录对，加上 `outgoing/active.lock`：
+  - Windows 侧：`incoming` 下是 result 和 challenge-NN，`outgoing` 下是 issue、response-NN、active.lock；
+  - Linux 侧是镜像。
+
+  不遍历目录，所以 `incoming\` 下植入的 junction 永远不会被跟进；每个叶子必须是单链接的普通文件，大小有上限；改名前后都核实两个父目录是真目录、真实路径没被重定向，并重算哈希（`src/archive.mjs`；植入 junction、硬链接、父目录被替换三种情况都有测试）。
+- **Windows formal-spool 在主机上**由 Source v2 的 `resident-v2/archive-windows-spool.ps1` 执行。它沿用现有已审的 `VerifyInstallFiles.HoldMetadata/ExactPath` 句柄做法（`advance-functions.ps1:41-51`），持有父目录句柄，所以目录无法被替换。`archive.mjs` 是这份白名单的参考实现和离线实现。**归档代码从不以提权身份运行**：复位时提权的那一步只写一个请求文件。
+- **Linux**（`clued-ci-archive@<batchId>_<reason>`）：
+  - root 先自己证明静止；
+  - `between-roles-N` 只移协议记录；其他原因还会移 `formal-role.lock`、所有 `runs/*`、本批工作区和 ws-prep 目录；
+  - 移动用 `renameat2(RENAME_NOREPLACE)`；
+  - 每个实例名对应一个 create-only 的状态文件，同一实例跑第二次直接拒绝。
+- **目录名**：失败用 `failed-<key12>-<reason>-<12hex>`，收尾和角色间用 `archive-…`，都必须是新目录。
+
+### 6.5 HALT 与复位
+
+- HALT 只升不降。
+- 复位由**服务自己执行**：
+  1. Owner 先不提权地查看。`rearm-resident.ps1` 不带参数时拒绝在提权状态下运行，所以它启动的 node 从不持有管理员令牌。能看到 HALT 内容和哈希、该批次账本、回执链头。
+  2. 然后提权写复位请求，纯 PowerShell，不启动其他程序。
+  3. 服务实测两端静止，对**所有还没归档的 FAILED_UNKNOWN 条目**逐一归档（不论 HALT 来自某个阶段、崩溃恢复还是循环异常），每个都标记 `95-archived`；然后按比较交换清除 HALT。HALT 文件改名进 `state\halts\`，旁边记下谁、何时、为什么。
+
+  可以重复执行：
+  - Windows 工具第二次运行找不到东西可移；
+  - Linux 同一实例第二次运行直接返回上次的已核实结果（复核 M6d）。
+
+  静止证明不成立，或摘要过期，复位被拒绝并留下回执（演练第 11 步）。
+- 账本条目的**内容**无法读取（写到一半、不是合法 JSON、类型不对、多了硬链接）时，标为 UNREADABLE。其他 I/O 错误（文件被占用、权限、磁盘）视为暂时性错误，直接抛出，下一 tick 重试，所以绝不会因为暂时性错误隔离一个正常的条目。恢复时：
+  - 能关闭就关闭；
+  - 关不掉就原样移到 `ledger-quarantine\`。移动之前，先用还能解析的预留记录把 head 烧掉。
+
+  被隔离的条目仍在复位的视野内：它的现场归档之前，HALT 清不掉（`REARM_REQUIRES_QUARANTINE_ARCHIVED`）。
+
+  恢复本身失败时，先锁 HALT，仍处理 Owner 的请求。HALT 写不进去的话，这一 tick 也不会执行任何候选（复核 M6e，第三轮复核 MAJOR 2）。
+- **崩溃一致性**（第四轮复核 N1）：
+  - 先锁 HALT，再写任何终态或隔离记录（恢复路径和未知失败路径都是如此）；
+  - 隔离时先写标记，再移动目录；
+  - 复位的视野包括每一个隔离目录和每一个标记：缺了一半、内容损坏的都算“未归档”，批次 id 用这次隔离自己的 nonce 生成一个唯一替身；
+  - **持续闸门**：只要还有一个未归档的未知失败或隔离现场，执行器就保持 HALT（HALT.json 丢了会重新锁上），`clearHalt` 也会拒绝；
+  - HALT.json 本身损坏时仍算 HALT，摘要按原始字节计算，Owner 可以照常复位。
+- 复位归档用固定原因 `rearm-unknown-failure`（隔离条目用 `rearm-quarantine`），不从失败码推导。只有恰好是 `between-roles-4` 或 `between-roles-6` 才是“只移协议记录”，其他原因一律归档整个批次现场（第三轮复核 MAJOR 1）。
+- 复位不会重跑出事的 head。
+- 崩溃恢复每个 tick 都先做，所以 HALT 时遗留的未终结条目会被先关掉，复位不会被卡住（复审 M6）。
+- 回执链每次追加都从最后一个文件重新取链头，其他进程追加也不会让链分叉或卡住。
+
+---
+
+## 7. 对现有 Source 的必要改动（Source v2）
+
+下列改动都在 `CI/` 里，属于 claim 842cf499 的 write_set，所以首次运行结束、那个 claim 释放之前不能动。建议与 claim 解耦 A-strict 合成一个版本。
+
+| 编号 | 改动 | 位置 | 原因 |
+|---|---|---|---|
+| S1 | **交换代理取代“提权 Owner 改服务配置”**：`FixedScm` 的换二进制、启动一次、还原，移进 `CluedCISwapBroker`（草稿 `windows/SwapBroker.cs`）。常驻账户对 runner 服务零权限；PID 握手在代理与助手之间完成 | `FixedScm.cs`、`ScmPidHandshake.cs`、`invoke-control.ps1` | 复审 M2：把改配置权委派给常驻账户就等于 SYSTEM |
+| S2 | 互斥量和事件的 DACL 改为代理 SID（SYSTEM）和常驻 SID | `FixedScm.cs:36-51`、`ScmPidHandshake.cs:17-34` | 同上 |
+| S3 | Public 文件的精确 ACL 模型加入常驻 SID；ProgramData ACL 迁移工具 `resident-v2/migrate-acl.ps1`（安装时调用） | `invoke-io.ps1:17-33`、`formal-spool-acl.ps1` | 常驻账户要写 spool 和 state |
+| S4 | 参数化导出 `resident-v2/derive-batch.mjs`：把 derive-bNN、bind、glue、prepare-payload、derive-fixed-batch 收进可复审的代码；输入只有已安装 Source、安装记录和触发记录 | `CID/prepare-payload.mjs`、`derive-fixed-batch.ps1` | 去掉手工生成和每批复审 |
+| S5 | 接受窗口不再 ≤24h、≤claim 截止，改为跟安装走（或用 `validUntil`） | `prepare-payload.mjs:45`、`invoke-functions.ps1:41-46`、`FormalPublicBoundary.cs:121`、`run-batch.ps1:79` | 否则每天都要 UAC |
+| S6 | claim 解耦 A-strict：作业身份去掉 claim，实时解析，批次内不变；Linux 角色策略和 qualification 去掉 currentClaim | 同组设计 §5 | 换 claim 不再重装 |
+| S7 | bridge 泵移到 companion，协议和记录不变 | `run-batch.ps1:86-89` → `src/companion.mjs` | 服务账户看不到 WSL |
+| S8 | 第 8 段：控制助手内部轮询 Native 合并队列，上限为 min(合并位 45 分钟, claim, 接受)；删掉 5 分钟 marker | `run-batch.ps1:80`、`independent-control-checks-v1/startup.mjs`、`stages.json` | §10.2 |
+| S9 | ws-prep 参数化：`resident-v2/prepare-workspaces.py --batch <id>` 读公开描述符，按内容重算作业 id；`build-bundle.ps1 -BatchId` | `ws-prep-b24/` | 每批不再生成脚本 |
+| S10 | Linux worker 的 node 路径与 qualification 的 `nodeExecutable` 对齐 | `run-batch.ps1:87`、`qualification.mjs:72` | Linux 调研发现两者不一致 |
+| S11 | stage fact 带稳定的 `failure_code`，补齐 classify 白名单 | `invoke-control.ps1:55-73` | 区分干净与未知 |
+| S12 | **通用助手**：8 个阶段助手不再每批用编译期常量 `ExpectedConfigSha256` 重编译，改为一次安装、哈希进交换代理白名单。代理请求带 `configSha256`，作为第二个启动参数传给助手，由助手自己核对公开输入；助手只从 `source\<sha>` 加载代码 | `derive-fixed-batch.ps1:29-32`、`FormalPublicBoundary.cs:34` | S1 的前提；去掉每批 rNN 归档助手 |
+| S13 | **effect journal 搬离 spool**：搬到 `state\effects`（或保持原位但写进归档白名单的排除说明），任何归档都不得移动它 | `formal-work-admission-check-v1/publisher.mjs:150`、`independent-control-checks-v1/publisher.mjs` | 复审 M4：“只发布一次”要跨批次成立 |
+| S14 | **基于句柄的 spool 归档工具** `resident-v2/archive-windows-spool.ps1`：白名单与 `src/archive.mjs` 一致，复用 `Archive-WindowsProtocol` 的句柄原语，支持 `between-roles-N`、`success-close` 和失败原因 | `advance-functions.ps1:41-51` | 复审 X1 |
+
+---
+
+## 8. Windows：服务账户与权限边界
+
+### 8.1 常驻服务
+
+- `CluedCIResident`，账户 `NT SERVICE\CluedCIResident`（`S-1-5-80-` 加服务名的 SHA-1），SID 类型 unrestricted。
+- 延迟自动启动。失败后每天最多重启一次（`failureflag 1`，非崩溃的失败也会触发），目的是让崩溃恢复把 HALT 落盘，不是重试批次。
+- 服务自身的 DACL：只有 SYSTEM 和 Administrators 能控制。
+- 宿主 `ResidentServiceHost.cs`：启动前校验 node 和入口文件的哈希；环境变量清空，只留固定几项，不继承句柄；停止时只写 `STOP-REQUESTED`，从不杀执行器。
+
+### 8.2 交换代理
+
+- `CluedCISwapBroker`，LocalSystem，自动启动。
+- 每个请求的处理：
+  1. 只接受 `{contract, stage, nonce, deadline, configSha256}` 这 5 个字段；截止时间距现在不足 2 分钟的请求直接拒绝，也不切换。
+     **每个请求最多执行一次，崩溃和重启也不例外**：
+     - 动手前先以“只能新建”的方式写一个 `responses\<id>.taken` 领取标记；
+     - 有领取标记、没有回复的请求（切换被打断），只答复 `BROKER_REQUEST_INTERRUPTED_NOT_REPEATED`；
+     - 代理这个进程启动之前就已存在的请求，只答复 `BROKER_REQUEST_PREDATES_START`。
+
+     所以重启之后，代理绝不会把同一阶段再启动一次（第四轮复核 MAJOR 3）；
+  2. 助手路径由阶段号推出，不取自请求；
+  3. 助手哈希必须在 `config\helpers-allow-list.json` 里，白名单哈希写在代理的启动参数中；
+  4. 换之前确认 runner 是原始二进制、Manual、STOPPED、账户 clued-control；
+  5. `ChangeServiceConfigW` 只传二进制路径，其余参数全部是 `SERVICE_NO_CHANGE` 或 null，所以账户、密码、启动类型改不了；
+  6. 带 nonce 启动一次，等它停止；
+  7. 只有停止了才换回原始二进制，没停止的不动，如实报告。
+  8. 每轮循环都检查一次：如果 runner 停在某个已安装的助手二进制上（比如崩溃发生在“停止”和“还原”之间，或者助手过了截止时间后才停），就把原始二进制换回去。还在运行的助手不碰，账户等其他配置也不改。
+- 被攻破的常驻账户最多只能“启动已审的助手跑自己的作业输入”，到不了 SYSTEM，也不能以 clued-control 身份运行任意代码。
+
+### 8.3 目录 ACL
+
+所有者都是 Administrators，DACL 受保护；掩码要在测试机上再核一遍。
+
+| 目录 | 常驻 SID | Owner | clued-control |
+|---|---|---|---|
+| `resident\`、`bin`、`config`、`install`、`resident\<sha>`、`runtime` | 读、执行 | 读、执行 | — |
+| `owner` | 读 | 读（只有提权的 Owner 能建文件） | — |
+| `source\<sha>` | 读、执行 | 读、执行 | 读、执行 |
+| `helpers` | 读、执行 | — | 读、执行 |
+| `state`、`work`、`outbox` | 修改 | 只读 | `work` 可读、执行 |
+| `broker\requests` | 修改 | — | — |
+| `broker\responses` | 只读（代理是 SYSTEM，自己写） | — | — |
+| `inbox`、`requests` | 修改 | 只能新建文件 | — |
+| `mailbox\requests` | 修改 | 只读 | — |
+| `mailbox\responses` | 只读 | 修改（回答 + 心跳） | — |
+
+- 安装记录在 `install\`，常驻 SID 只读，所以常驻账户篡改不了卸载时要用到的东西。
+- runner 服务**完全不修改**：安装和卸载都要求它的 SDDL 与安装时记录的一字不差。
+
+### 8.4 companion 计划任务
+
+- `\Clued\CluedCIResidentCompanion`：主体 Owner，Interactive，RunLevel Limited（不提权），AtLogOn 触发；任务 DACL 只让 SYSTEM 和 Admins 修改。
+- 限制：只在 Owner 登录时运行，锁屏也算登录。重启后没有登录，执行器只推迟、不执行。
+
+### 8.5 提权脚本只从已安装副本运行，并且不把令牌交给用户环境（复核 M1）
+
+- **运行位置**：verify、rearm、uninstall 会先检查 `$PSCommandPath` 位于 `resident\resident\<sha>\windows\` 下（管理员专用），否则拒绝。调用方式统一为 `powershell.exe -NoProfile -NonInteractive -File <已安装副本>`。
+- **模块路径**：每个提权脚本开头把 `$env:PSModulePath` 重置为系统模块目录，`ScheduledTasks` 按全路径导入，用户模块目录不会参与自动加载。
+- **不把管理员令牌交给 node**：
+  - 提权的复位或恢复不启动 node；
+  - verify 需要 node 校验回执链时，用清空后的固定环境启动，所以 `NODE_OPTIONS` 之类的用户变量不起作用；
+  - inspect 只在不提权时运行。
+- **编译**：install 在管理员专用的 `bin\` 里运行 csc，带 `/noconfig`，所有引用都写全路径。
+- **安装脚本自身**：install 只运行一次，必须从 Owner 在提权窗口里核过哈希的副本运行（计划会打印 `installScriptSha256`，那是脚本自报的值，Owner 要用 `Get-FileHash` 独立核对）。
+
+---
+
+## 9. Linux：systemd unit
+
+- **为什么用 systemd**（Decision `0d84ddbb` 第 3 项）：
+  - 每个作业有独立的 cgroup，cgroup v2 的 `cgroup.events` 一项就能证明整棵子树的进程都已退出，不再需要重启内核；
+  - oneshot 模板不常驻 root 进程；
+  - 日志进 journald。
+- **三个模板**（`linux/systemd/`）：`clued-ci-worker@<jobId>`、`clued-ci-wsprep@<batchId>`、`clued-ci-archive@<batchId>_<reason>`。共同约束：
+  - 不 enable，只由 companion 显式 start；
+  - `TimeoutStartSec=infinity`、`Restart=no`、`SendSIGKILL=no`：systemd 从不因超时杀作业；
+  - docker 依赖用 `Wants=` 而不是 `Requires=`，docker 重启不会把停止信号传给作业；
+  - 每个 unit 的 `ExecStartPre` 都是 guard：
+    - 按安装路径校验所有钉住的文件：工具本身、unit 文件，以及 unit 实际执行的外部入口（node、`linux-worker.mjs`、`prepare-workspaces.py`）；
+    - 校验实例名；worker 的实例名必须等于 `incoming/issue.json` 里的作业；
+    - 同一时刻只允许一个 clued-ci unit 活动。
+- **加固**：`NoNewPrivileges`、`ProtectSystem=strict`、`ReadWritePaths=/var/lib/clued-independent-ci`、`PrivateTmp`、`PrivateDevices`、`ProtectKernel*`、`RestrictAddressFamilies=AF_UNIX`、`IPAddressDeny=any`、最小 CapabilityBoundingSet。`PrivateTmp`、`ProtectHome` 可能影响 docker CLI 的配置或挂载，每一项都要在 P2 演练里确认。
+- **启用 systemd 与 cgroup v2**：
+  - `/etc/wsl.conf` 没有 `[boot] systemd=true` 时：先把原文件复制为 `wsl.conf.before-resident-<UTC>`，再原子替换。已有 `[boot]` 段但没有 systemd 时，脚本拒绝，由 Owner 手动编辑，不自动合并段落。
+  - 替换后需要 Owner 做一次 `wsl --shutdown`，再用保存的计划运行 `--continue-after-boot`。
+  - 要求 cgroup v2，没有就拒绝（§15 D6）；要求 `docker.service`（§15 D4）。
+- **WSL 保活**：companion 维持一个 `wsl --exec /bin/sleep infinity`。
+
+---
+
+## 10. ws-prep 与第 8 段
+
+### 10.1 ws-prep
+
+1. 执行器在导出时写公开描述符 `outbox\<batchId>\descriptor.json`。
+2. companion 在第 1 段**之前**用 Owner 的 git 凭据运行 `build-bundle.ps1 -BatchId`，规则同今天：只用 https、关闭 hooks、refs 等于 ls-remote、main 等于 base、按 SHA 取已审查提交。
+3. 第 1 段准入之后写 `10-started`。
+4. companion 启动 `clued-ci-wsprep@<batchId>`，由 root：按内容重算作业 id、核对已安装 Source 和角色策略、密封 bundle（ls-remote 时间不超过 2 小时）、`fsck --full --strict`、只允许 100644 和 100755 的 blob、建 root:root 0700 工作区。
+
+全程不执行 PR 内容。
+
+### 10.2 第 8 段
+
+- 今天：5 分钟内要写 ready marker，而 marker 只做格式检查，不是授权；真正的核验是控制发布者实时读合并队列（`queue-facts.mjs:2-7`）。
+- Source v2（S8）：删掉 marker；控制助手每 30 秒用 ci-admission Binding 只读核一次：该 claim 是队首、合并位没过期、tip 等于 base。满足就发布一次；到窗口上限仍不满足，就以 `RESIDENT_QUEUE_HEAD_NOT_REACHED` 干净失败。
+- claim 持有者只需按合同 A.6 让就绪的 PR 留在合并队列里，续租由机制自治（resident constraint a8ff16a7）。
+
+---
+
+## 11. 审计回执
+
+- **本地哈希链**（`src/receipts.mjs`）：每条记下上一条字节的 SHA-256，删除、改序、改字都会被发现。每次追加都重新取链头。凡涉及某个触发或请求文件的回执，都记下当时读到的那份字节的 SHA-256，所以之后改动归档副本能被查出来。
+- **安装和卸载回执**：在 `install\`，只有管理员能写。复位与恢复由服务写回执（`owner-request` 或 `owner-request-refused`）。
+- **KooYomi**：执行器、代理和 companion 都没有 KooYomi 写凭据，这是刻意的，不新增秘密。由 Agent 按合同 §3 把关键事件写成 Note，引用回执链头哈希（observed）。
+
+---
+
+## 12. 安装、校验、卸载，以及人工步骤对照
+
+| 动作 | 命令 | 权限 |
+|---|---|---|
+| 打包 | `node tools/build-package.mjs --out … --policy … --companion … --node … --source-root/--source-files/--helpers-dir/--linux-external-pins …`（来自 Source v2） | 普通 |
+| Windows 预检 | `install-resident.ps1 -PackageRoot … -ExpectedPackageManifestSha256 … -OwnerSid … -ControllerSid …`（只读，打印计划及其哈希） | 普通 |
+| Windows 安装 | 同上，加 `-Apply -ExpectedPlanSha256 <复审过的>` | **UAC 1 次** |
+| Linux 安装 | `install-resident-linux.sh --plan` 之后 `--apply <sha>`；需要启用 systemd 时，再 `wsl --shutdown`，然后 `--continue-after-boot <sha>` | **root 1 次**，可能加 1 次 WSL 重启 |
+| 校验 | 已安装副本的 `verify-resident.ps1`、`verify-resident-linux.sh`（只读） | 提权才能看服务 DACL |
+| 卸载 | 已安装副本的 `uninstall-resident.ps1`：先计划，再 `-Apply`；`uninstall-resident-linux.sh` 同理。要求没有未终结批次、执行器进程已不在；删两个服务和任务；runner 保持原样；**整个目录改名保留** | UAC + root |
+
+| | 今天每批 | 常驻后每批 |
+|---|---|---|
+| UAC | 启动 1 次，rNN 通常再 1 次 | 0 |
+| root | ws-prep 1 次，换 claim 时 Linux 重绑 | 0 |
+| 5 分钟内写 queue-ready | 1 次 | 0 |
+| 每批脚本生成与复审 | 多份 | 0（复审移到 Source v2 一次） |
+| 干净失败 | 2×UAC + root + WSL 重启 | 0 |
+| 未知失败 | 2×UAC + root + WSL 重启 | UAC 1 次，只写复位请求 |
+
+---
+
+## 13. 测试、演练与复审
+
+### 13.1 已运行（离线，没碰主机）
+
+- `node --test test/*.test.mjs`：**53/53**。覆盖：
+  - 账本：一次性、按 head 烧号（base 或 PR 变了也烧）、未完成条目；
+  - HALT 比较交换、崩溃恢复（HALT 时也做）、Owner 复位与恢复请求（过期摘要、没有静止证明都拒绝）、伪造的恢复请求被忽略；
+  - 回执：防篡改，其他进程追加也不分叉；
+  - 归档：白名单、junction、硬链接、父目录重定向、effect journal 留在原处；
+  - 先打 bundle 再跑第 1 段；第 1 段的其他失败也烧号；
+  - 清理证明现取（Linux 忙、Windows 有子进程，都 HALT）；
+  - 评估和执行分开限速；
+  - 邮箱格式、companion 的固定 argv、泵的顺序、心跳位置；
+  - 轮询器、sc 回读解析（含账户）、单实例锁的存活记录、打包（目标路径白名单、Linux 安装路径、外部入口）。
+- `python -I -B -m unittest discover -s test -p "test_*.py"`：**9/9**，覆盖 Linux 工具：实例名、unit 静止、`cgroup.events` 与容器状态都 fail closed、角色间归档只移协议记录、不在名单的名字和多链接文件、改名前后哈希。
+- `node drill/offline-drill.mjs`：**20/20**。
+- 4 个 PowerShell 脚本语法检查 0 错；3 个 shell 脚本 `bash -n` 通过；`ResidentServiceHost.cs` 和 `SwapBroker.cs` 编译通过（输出在 scratch）。这些都只证明语法正确，没有在主机上执行。
+
+### 13.2 还要做的验证（按顺序，每步前 Owner 都有一次 go/no-go）
+
+- **P1**：实现 Source v2（S1–S14）及其 Source 内单元测试。在新分支上做，用新的 claim，等 842cf499 释放后开始。
+- **P2**：主机隔离演练。演练名包括 `CluedCIResidentRehearsal`、`CluedCISwapBrokerRehearsal`，以及专门的哑 runner 服务 `CluedCIRehearsalRunner`。要验证的点：
+  - 代理只改二进制路径、账户不变；
+  - 常驻账户对哑 runner 没有任何权限；
+  - ACL 掩码；
+  - Linux unit 名加 `-rehearsal` 后缀，使用独立的 state 根；
+  - cgroup v2 和每一项加固；
+  - 真实容器跑三角色。
+
+  不碰正式 runner、正式 spool 或正式凭据。
+- **P3**：独立复审 Source v2、安装计划和 ACL。
+- **P4**：Owner 接受 Source v2，然后 Windows 安装（UAC）、Linux 安装（root），再只读校验。
+- **P5**：第一个常驻批次选一个低风险 PR，观察整条回执链。
+
+### 13.3 v0.1 的独立复审（FAIL）与 v0.2 的修正
+
+| 发现 | 修正 |
+|---|---|
+| **X1** 归档按路径遍历、改名 Owner 可写的目录树，可被 junction 利用；复位时还以提权身份运行 | 只碰精确白名单，不递归；拒绝链接和多链接文件；核实父目录。主机上换成基于句柄的 Source v2 工具（S14）。复位只写请求，归档由服务以受限身份完成 |
+| **M1** install 在哈希之后又重读清单；`target` 没有校验；提权脚本从用户目录运行 | 清单只读一次，哈希和解析用同一缓冲区；每个文件读一次、比对、写同一份字节；`target` 白名单；提权脚本只从已安装副本运行 |
+| **M2** 把改配置权委派给常驻账户等于 SYSTEM | 常驻账户对 runner 零权限；交换代理只改二进制路径，只用白名单里的助手（S1、S12） |
+| **M3** 主线一动，失败的 head 就换个键自动重跑；换 PR 号也一样 | 按 (repo, head, Source, attempt) 烧号 |
+| **M4** 第 1 段已发布检查后，bundle 失败却被当作“未执行”释放；effect journal 被收尾归档走 | 先打 bundle 再跑第 1 段；第 1 段除未准入外的失败都烧号；effect journal 不在白名单里（S13） |
+| **M5** 清理证明不完整：Linux 半边来自 companion 自报；Windows 独占阶段写死为 true；cgroup 判断 fail open；docker 只看 running | 失败时现取两端证明；`cgroup.events` 加 cgroup v2，读不到就不静止；`docker ps -a` 要求全部 exited 或 dead；补上威胁模型（§3.3） |
+| **M6** 卡死：循环异常留下未终结条目，HALT 时又跳过恢复；其他进程追加回执会让链头过期 | 每 tick 先恢复（含未完成条目）；复位由服务执行；回执每次追加都重取链头 |
+| **M7** 多处接线缺失：心跳路径不可写、没写描述符、Linux 钉的是包内路径、缺角色间归档、复位和校验的路径写错、Linux 续装时重算计划 | 心跳移到 `responses\`；导出时写描述符；Linux 清单按安装路径并包含外部入口；第 4、6 段之前做角色间归档；复位改为请求文件；校验路径修正；续装用保存的计划 |
+| MINOR | 有界读取（一个句柄，不留检查与读取之间的空隙）；回执记字节哈希；安装记录放进管理员专用目录；`Wants=`；每个归档实例一个状态文件；卸载核对执行器进程；`failureflag`；锁的存活记录；`wsl.conf` 保留原件、不合并段落；`COMPUTERNAME` |
+
+---
+
+## 14. 风险与残余问题
+
+- **R1 contract-placement 会在容器里运行 PR 的测试和构建**（`container-entry.mjs:33-70`）。这是现状，隔离只有容器：uid 65532、无网络、只读、cap-drop ALL、不挂密钥。本设计不扩大它，但对这个角色，“PR 代码只当数据”并不成立。
+- **R2 Linux 用同一把 Ed25519 密钥签 qualification 和结果**，任何 root 进程都能读到。常驻前后一样。可以后续拆成两把。
+- **R3 磁盘增长**：只改名、不删除，工作区副本会一直累积。需要 Owner 定保留规则（§15 D5）。
+- **R4 companion 依赖 Owner 登录。** 没有登录时只推迟，不会出错。
+- **R5 常驻 SID 被攻破**：能让代理启动已审的助手跑任意作业输入，助手里的 node 代码照样做实时准入；还能拒绝服务。拿不到 SYSTEM，也不能以 clued-control 身份运行任意代码。交换代理本身是 SYSTEM 级的新攻击面：它的输入只有 5 个字段，助手路径由阶段号推出，按阶段名精确比对白名单，只返回固定错误码。
+- **R6 trivy 缓存的 `prepare.lock`**，在不确定结局下会留下（`cache.mjs:156`），复审时确认 Linux 归档是否要把它纳入。
+- **R7 ACL 掩码与 SDDL 规范形式**：P2 时确认。
+- **R8 时钟**：bridge 的 30 秒窗口跨 Windows 和 WSL 两个时钟。常驻后 VM 不再冷启动，风险变小，但没有消除。
+- **R9 先进先出按文件名排序**：触发记录的文件名由生产者定，可以抢到队头；后果被评估上限约束。冷却中的 head 不会挡住后面的 PR。
+- **R10 提权 .NET 进程继承 Owner 的环境变量**（例如 `COR_ENABLE_PROFILING`）：今天每批的 UAC 启动就有这个问题，常驻后只剩安装、升级、卸载、复位、恢复这几次提权。本设计对自己启动的子进程清空了环境，对 PowerShell 本身清理了模块路径；`powershell.exe` 自己的进程环境挡不住，这是现有 Windows 行为。
+- **R11 归档后的触发副本仍归 Owner 所有**：Owner 仍可改动或删除它们，回执里记的字节摘要能发现改动，但挡不住。另外，“中等完整性的进程能否给只读文件建硬链接”要在 P2 确认；能建的话，账本条目会被标为 UNREADABLE 并隔离（M6e 已覆盖）。
+
+---
+
+### 13.4 复核（v0.2 → v0.3，FAIL：BLOCKER 已清零，3 个 MAJOR 有残留）
+
+| 发现 | 修正 |
+|---|---|
+| **M1 残留**：提权的 rearm、verify 用继承的用户环境启动 node（`NODE_OPTIONS` 可导致提权）；`ScheduledTasks` 按用户 PSModulePath 自动加载；csc 从当前目录解析引用 | 提权的请求写入改用纯 PowerShell；inspect 只在不提权时运行；verify 用清空的环境启动 node；PSModulePath 重置，模块按全路径导入；csc 在 `bin\` 里运行，带 `/noconfig` 和全路径引用；新增 R10 |
+| **M6a**：`owner\` 只增不减，处理过 8 个之后再也读不到新请求 | 已处理的请求按文件名跳过，跳过发生在计数之前（测试：12 个过期请求之后，第 13 个仍被执行） |
+| **M6b**：同样理由的重试被静默丢弃 | 请求带时间和 nonce；重复的摘要会写 `owner-request-duplicate` 回执 |
+| **M6c**：崩溃或循环异常导致的 HALT 不带 key，复位什么都没归档 | 复位归档所有还没归档的 FAILED_UNKNOWN 条目，并标记 `95-archived`（测试断言两端归档确实执行了） |
+| **M6d**：Linux 归档实例无法重试 | 同一实例再运行，返回上次的已核实结果 |
+| **M6e**：`recover()` 抛异常就挡住所有 Owner 请求 | 无法读取的条目标为 UNREADABLE，关不掉就隔离；恢复失败时先锁 HALT，仍处理 Owner 请求 |
+| **M7 新增**：`RegisterTaskDefinition` 用了标志 1（只校验） | 改为 6（`TASK_CREATE_OR_UPDATE`），并回读主体和运行级别 |
+| 次要 | 代理请求增加 `configSha256`，白名单按阶段名精确匹配，只返回固定错误码；目录创建时就带最终 ACL；`--continue-after-boot` 核对已安装清单与保存的计划；阶段证明里出现的字段必须为 true；冷却中的 head 不挡队列 |
+
+### 13.5 第三轮复核（v0.3 → v0.4，FAIL：上轮残留全部关闭，但修正引入 2 个 MAJOR，另有 1 个旧 MAJOR）
+
+| 发现 | 修正 |
+|---|---|
+| **MAJOR 1** 复位用失败码当归档原因；失败码以 `between-roles` 开头时，Linux 只移协议记录，留下 `formal-role.lock`、`runs/` 和工作区，却报告已核实 | 复位归档原因固定为 `rearm-unknown-failure` 或 `rearm-quarantine`；Linux 工具和 `archive.mjs` 只把恰好 `between-roles-[46]` 当作协议范围（Node 和 Python 测试都覆盖） |
+| **MAJOR 2** 隔离绕过烧号和“复位必须先归档”；任何 I/O 错误都会让条目变成 UNREADABLE | 只有内容错误才算 UNREADABLE；隔离前先烧 head；隔离条目在归档前挡住 `clearHalt`；复位会归档隔离条目的现场（找不到批次描述符时不动工作区）；测试确认隔离后同一 head 不会再跑 |
+| **MAJOR 3** 过期的代理请求仍会执行，并把 runner 留在助手二进制上 | 截止时间不足 2 分钟或已过期的请求直接拒绝；每轮循环把“停在已安装助手上”的 runner 换回原始二进制 |
+| 次要 | Owner 请求读取失败 3 次才作废这个文件名；恢复失败且 HALT 写不进时不执行候选；计数器遇到损坏记录时按“已计入”处理，不会卡住；`inspect` 显示 HALT 涉及的全部 key、待归档项和隔离项；计划任务回读要求主体 SID 与 Owner 完全一致；`earlier_result` 不再泄漏文件句柄 |
+
+### 13.6 第四轮复核（v0.4 → v0.5，FAIL：MAJOR 3 只修了一半，新增 N1）
+
+| 发现 | 修正 |
+|---|---|
+| **MAJOR 3**（未关闭）：重启后代理先于常驻服务启动，还会处理切换中断的请求，把同一阶段的助手再启动一次；普通用户就能重启机器 | 动手前先写只能新建的领取标记；有标记没回复的请求，以及代理启动前就存在的请求，一律只答复、不执行（C# 编译通过；行为要在 P2 演练里确认） |
+| **N1**：隔离和 HALT 不是崩溃一致的；标记文件损坏时复位会卡住 | 先锁 HALT 再写终态；先写标记再移动；复位的视野包括每个目录和每个标记，损坏的也算；新增持续闸门；`clearHalt` 同时要求两类现场都已归档；损坏的 HALT.json 也能复位（新增 3 个测试） |
+| 次要 | 隔离的替身批次 id 改用隔离自己的 nonce（保证唯一）；`unexecutedSince` 遇到损坏记录不再抛异常 |
+
+### 13.7 第五轮复核（v0.5，PASS）与剩余次要项
+
+结论：MAJOR 3 和 N1 都已关闭，没有新的 BLOCKER 或 MAJOR。复审代理确认：
+
+- 领取标记只有代理能写；
+- 创建时间的判断只会往安全的方向出错；
+- 新增的检查不会让 HALT 永远清不掉。
+
+PASS 之后又修了三个次要项。这三处只经过测试验证（53/53），没有再复审：
+
+- 损坏的 PAUSED.json 按 HALT 的规则处理，新增 1 个测试；
+- Linux 工具的 `intent`、`receipt` 和状态文件写完后 fsync；
+- `.taken` 写穿到磁盘。
+
+留到 P2 主机演练时处理的次要项（都朝安全方向失败）：
+
+- 最后一条回执写坏时服务起不来；
+- `ledger-quarantine` 里出现意外的名字时会被忽略（目前只有常驻服务会写这个目录）；
+- 有人持有 state 文件不放时，可以反复制造孤立的隔离标记（只是拒绝服务）；
+- Windows 的“没有残留进程”证明只看本进程的子进程：服务异常退出时，超时的子进程会成为孤儿；
+- 交换代理、`recover()` 的 HALT 顺序、Linux 缺描述符时的复位分支都还没有离线测试。
+
+## 15. 需要 Owner 决定的事
+
+- **D1 是否按本设计进入 Source v2 实现（P1）**，以及是否把本草稿提交为 PR（只含 `work/independent-ci-resident-v1/` 新文件）。
+- **D2 `validUntil`**：为空（直到 Source 变更或卸载），还是设复核期限（比如 30 天）。
+- **D3 同一 head 的 attempt 2**：要不要提供“Owner 用 UAC 为某个确切 head 开第 2 次执行”的动作。不提供的话，只有新的 head 才能再跑；换 base 或换 PR 号都不算。
+- **D4 Docker 由 systemd 管理**：如果 dockerd 不是 `docker.service`，怎样迁移。
+- **D5 工作区保留规则**（R3）。
+- **D6 cgroup v2**：WSL 如果默认是 v1 或混合模式，是否接受在 `.wslconfig` 加 `kernelCommandLine = cgroup_no_v1=all`（会影响整个 WSL）。
+- **D7 交换代理**：新增一个只做一件事的 SYSTEM 服务。这是对 Decision `0d84ddbb` 第 2 项的细化：常驻账户本身对 runner 服务不再有任何权限，改配置权集中到代理。需要 Owner 确认接受。
+
+---
+
+## 附录 A：草稿文件
+
+| 文件 | 作用 |
+|---|---|
+| `src/canonical.mjs`、`store.mjs` | 规范 JSON、哈希、CreateNew、有界读取、只改名 |
+| `src/ledger.mjs` | 账本、按 head 烧号、未执行释放、HALT/PAUSE 比较交换 |
+| `src/receipts.mjs` | 哈希链回执 |
+| `src/trigger.mjs`、`inbox.mjs` | 触发记录格式、有界收件箱、Owner 请求目录 |
+| `src/classify.mjs` | 失败分类白名单 |
+| `src/policy.mjs` | 安装策略 |
+| `src/executor.mjs` | 常驻状态机 |
+| `src/archive.mjs` | 协议记录白名单归档（参考实现与离线实现） |
+| `src/mailbox.mjs`、`companion.mjs`、`poller.mjs`、`runner.mjs` | companion 协议、泵、轮询、不杀进程的运行器 |
+| `src/service-ports.mjs`、`engine-windows.mjs`、`service-main.mjs`、`companion-main.mjs`、`instance-lock.mjs` | 真实端口与入口（引擎依赖 Source v2，缺了就 `SOURCE_V2_REQUIRED`） |
+| `windows/install-resident.ps1`、`verify-resident.ps1`、`uninstall-resident.ps1`、`rearm-resident.ps1` | 安装、校验、卸载、复位与恢复请求 |
+| `windows/ResidentServiceHost.cs`、`SwapBroker.cs` | 两个服务宿主 |
+| `linux/systemd/*.service`、`linux/bin/clued-ci-resident-linux`、`linux/*-resident-linux.sh` | Linux 三个 unit、root 工具、安装、校验、卸载 |
+| `tools/rearm-tool.mjs`、`verify-receipts.mjs`、`build-package.mjs` | 查看与请求、回执校验、打包 |
+| `config/*.example.json` | 策略与 companion 配置样例 |
+| `test/*.test.mjs`、`test/test_linux_tool.py`、`drill/offline-drill.mjs` | 测试与离线演练 |
