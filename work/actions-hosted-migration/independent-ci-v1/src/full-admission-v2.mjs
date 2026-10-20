@@ -15,7 +15,7 @@ import { validateJobV2, claimGeneration, sameClaimGeneration } from './job-v2.mj
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
 import { evaluate, githubJson, parseClaimReference } from '../../../../scripts/ci/clued-work-admission.mjs';
 
-export const FULL_ADMISSION_CONTRACT_V2 = 'clued.independent-ci.full-admission/2';
+import { FULL_ADMISSION_CONTRACT_V2 } from './admission-facts-v2.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
 const ENGINE = 'scripts/ci/clued-work-admission.mjs#evaluate';
 const VARIABLE = 'CLUED_MERGE_ADMISSION_STATE';
@@ -194,20 +194,4 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
   });
 }
 
-// Shared validation of admitted v2 facts for every consumer (publishers, bridge, adapters).
-export const ADMISSION_FIELDS_V2 = Object.freeze(['contract', 'status', 'admitted', 'completeAdmission', 'evaluator', 'domain', 'repository', 'scope',
-  'prRef', 'headSha', 'baseSha', 'jobId', 'role', 'attempt', 'claimId', 'fence', 'epoch', 'observedClaim', 'batchClaimBound', 'sourceManifestSha256',
-  'executionPolicy', 'guarded', 'executionHandoverPending', 'mergeQueueHead', 'mode', 'mergeSlot', 'ownerReview', 'workflowGateFindings', 'observedAt',
-  'claimExpiresAt', 'modeProofRef', 'observationRef', 'packetSha256', 'evaluationSha256', 'observationSha256']);
-export function admittedFactsMatchJobV2(facts, job, now, { batchClaim = null } = {}) {
-  if (!plain(facts) || facts.contract !== FULL_ADMISSION_CONTRACT_V2 || facts.status !== 'ADMITTED' || facts.admitted !== true || facts.completeAdmission !== true
-    || facts.evaluator !== ENGINE || facts.repository !== job.repo || facts.prRef !== `${job.repo}#${job.pr}` || facts.headSha !== job.headSha
-    || facts.baseSha !== job.baseSha || facts.jobId !== job.id || facts.role !== job.role || facts.attempt !== job.attempt
-    || facts.sourceManifestSha256 !== job.sourceManifestSha256 || facts.executionPolicy !== 'staged' || facts.guarded !== false
-    || facts.executionHandoverPending !== false || !plain(facts.observedClaim) || facts.observedClaim.claimId !== facts.claimId
-    || facts.observedClaim.fence !== facts.fence || facts.observedClaim.epoch !== facts.epoch || facts.observedClaim.expiresAt !== facts.claimExpiresAt
-    || !Number.isSafeInteger(now) || !(at(facts.observedAt) <= now) || now - at(facts.observedAt) > 30_000 || !(at(facts.claimExpiresAt) > now)) return false;
-  if (batchClaim && !sameClaimGeneration(facts.observedClaim, batchClaim)) return false;
-  const { observationSha256, ...body } = facts;
-  return sha.test(observationSha256 ?? '') && digest(body) === observationSha256;
-}
+export { FULL_ADMISSION_CONTRACT_V2, ADMISSION_FIELDS_V2, admittedFactsMatchJobV2 } from './admission-facts-v2.mjs';

@@ -8,7 +8,8 @@ import { canonical } from '../src/proof.mjs';
 import { assembleRecord, RECORD_INPUTS_CONTRACT } from '../src/resident-v2/prepare-record.mjs';
 import { ENTRY_V2 } from '../src/resident-v2/layout.mjs';
 import { RESULT_CONTRACT_V2, ENVELOPE_CONTRACT_V2 } from '../src/proof-v2.mjs';
-import { subjectOfV2 } from '../src/job-v2.mjs';
+import { subjectOfV2, claimGeneration } from '../src/job-v2.mjs';
+import { digest } from '../src/proof.mjs';
 
 export const hex = n => randomBytes(n).toString('hex');
 export const sha = s => createHash('sha256').update(s).digest('hex');
@@ -61,10 +62,10 @@ export function recordInputs(overrides = {}, refs = null, signer = signerKeys())
 
 export function sourceFiles(paths = SOURCE_PATHS) { return [...paths].sort().map(p => ({ path: p, sha256: hex(32), bytes: 10 })); }
 
-export function fixtureRecord(overrides = {}) {
+export function fixtureRecord(overrides = {}, { paths = SOURCE_PATHS } = {}) {
   const signer = signerKeys();
   const inputs = recordInputs(overrides, null, signer);
-  const { files, recordManifest } = assembleRecord(inputs, sourceFiles());
+  const { files, recordManifest } = assembleRecord(inputs, sourceFiles([...new Set([...SOURCE_PATHS, ...paths])]));
   return { inputs, files, recordManifest, signer, docs: Object.fromEntries(Object.entries(files).map(([n, t]) => [n, Buffer.from(t)])) };
 }
 
@@ -83,4 +84,16 @@ export function signResult(job, signer, { conclusion = 'success', finishedAt = N
     conclusion, exitCode: conclusion === 'success' ? 0 : 1, stdoutSha256: hex(32), stderrSha256: hex(32), artifactsSha256: hex(32) };
   const signature = sign(null, Buffer.from(canonical(payload)), signer.privateKey).toString('base64url');
   return { contract: ENVELOPE_CONTRACT_V2, keyId: 'fixture-key', signature, payload };
+}
+
+// A complete admitted v2 observation for `job` under the observed claim (shape of full-admission-v2 facts).
+export function admittedFacts(job, observed, packet, { domain = 'production', mergeQueueHead = false, slotUntil = Date.now() + 3600_000, batchClaim = null, observedAt = Date.now() } = {}) {
+  const facts = { contract: 'clued.independent-ci.full-admission/2', status: 'ADMITTED', admitted: true, completeAdmission: true, evaluator: 'scripts/ci/clued-work-admission.mjs#evaluate',
+    domain, repository: job.repo, scope: 'project:00000000-0000-4000-8000-000000000000', prRef: `${job.repo}#${job.pr}`, headSha: job.headSha, baseSha: job.baseSha, jobId: job.id, role: job.role, attempt: job.attempt,
+    claimId: observed.claimId, fence: observed.fence, epoch: observed.epoch, observedClaim: { ...observed }, batchClaimBound: batchClaim ? claimGeneration(batchClaim) : null,
+    sourceManifestSha256: job.sourceManifestSha256, executionPolicy: 'staged', guarded: false, executionHandoverPending: false, mergeQueueHead,
+    mode: { state: 'normal', layer: 'code', policyVersion: 1 }, mergeSlot: { state: 'held', ref: `merge:${job.repo}:main`, tip: job.baseSha, until: iso(slotUntil) },
+    ownerReview: null, workflowGateFindings: [], observedAt: iso(observedAt), claimExpiresAt: observed.expiresAt, modeProofRef: 'mode', observationRef: 'obs',
+    packetSha256: digest(packet), evaluationSha256: digest('evaluation') };
+  return { ...facts, observationSha256: digest(facts) };
 }
