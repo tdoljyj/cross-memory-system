@@ -1,0 +1,36 @@
+# Resident independent CI: per-batch workspace preparation (today's prepare-bNN-workspaces.py,
+# parameterised in Source v2). DRAFT. Instance = the batch id (16 hex + "-" + 12 hex).
+# Input: the public batch descriptor written by the service and the bundle built by the companion
+# with the Owner's own git credential; both are untrusted data here. The script re-derives every job
+# id from content, checks the installed Source and role policies, verifies the bundle (fsck --strict,
+# exact refs, only 100644/100755 blobs, hooks off) and creates root:root 0700 workspaces.
+# PR content is never executed by this unit.
+[Unit]
+Description=Clued independent CI workspace preparation %i
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStartPre=/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux guard --unit wsprep --instance %i
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/python3.12 -I /opt/clued-independent-ci/source-first-formal-v1/work/actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-workspaces.py --batch %i
+TimeoutStartSec=infinity
+Restart=no
+KillMode=control-group
+SendSIGKILL=no
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clued-independent-ci
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+StandardOutput=journal
+StandardError=journal
