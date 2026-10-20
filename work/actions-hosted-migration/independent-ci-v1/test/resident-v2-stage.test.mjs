@@ -92,9 +92,14 @@ test('invoke-stage: a changed package, a missing broker answer, a running helper
   assert.equal((await run(f, 2, fakeBroker(f, { answer: false }))).failure_code, 'BROKER_RESPONSE_UNCONFIRMED');
   assert.equal((await run(f, 2, fakeBroker(f, { response: { ok: false, code: 'BROKER_HELPER_NOT_STOPPED_IN_TIME', stoppedInTime: false, restored: false } }))).failure_code, 'STAGE_HELPER_NOT_STOPPED_IN_TIME');
   assert.equal((await run(f, 2, fakeBroker(f, { response: { ok: false, code: 'BROKER_ORIGINAL_NOT_RESTORED', restored: false } }))).failure_code, 'STAGE_ORIGINAL_NOT_RESTORED');
-  const busy = await run(f, 2, fakeBroker(f, { writeReceipt: false, outcome: null, response: { ok: false, code: 'BROKER_BUSY', started: false, startCallIssued: false, helperPid: null, stoppedInTime: false } }));
+  // Refused before any start, runner re-read as original: clean, nothing ran.
+  const refused = await run(f, 2, fakeBroker(f, { writeReceipt: false, outcome: null, response: { ok: false, code: 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', started: false, startCallIssued: false, helperPid: null, stoppedInTime: false } }));
+  assert.equal(refused.failure_code, 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED');
+  assert.ok(refused.tree_cleanup_confirmed && refused.original_binary_restored);
+  // Another tool held the mutation mutex: the runner state is unknown to the broker.
+  const busy = await run(f, 2, fakeBroker(f, { writeReceipt: false, outcome: null, response: { ok: false, code: 'BROKER_BUSY', started: false, startCallIssued: false, helperPid: null, stoppedInTime: false, restored: false, accountUnchanged: false, stableBefore: false, stableAfter: false } }));
   assert.equal(busy.failure_code, 'BROKER_BUSY');
-  assert.ok(busy.tree_cleanup_confirmed && busy.original_binary_restored);
+  assert.equal(busy.original_binary_restored, false);
 });
 
 test('invoke-stage: helper preflight refusal, tree unknown, unbound outcome and a not-admitted stage 1', async t => {
