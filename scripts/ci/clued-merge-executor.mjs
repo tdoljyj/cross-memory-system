@@ -32,7 +32,8 @@ import {
 } from "./clued-work-admission.mjs";
 import { cleanupManagedAutoMerge,managedAutoMerge,executorToken,appRequest } from "./clued-managed-auto-merge.mjs";
 export {executorToken,managedAutoMerge,EXECUTOR_PERMISSIONS} from "./clued-managed-auto-merge.mjs";
-import { HOLDERS_RPC, ciStateOf, ciWorkflows,requiredBarrier,matchesOperationPR } from "./clued-merge-slot-ci.mjs";
+import { HOLDERS_RPC, INDEPENDENT_CI_APP_ID, ciStateOf, ciWorkflows, independentCheckBindsPullRequest, requiredBarrier, requiredChecksOf,
+  matchesOperationPR } from "./clued-merge-slot-ci.mjs";
 import { effectiveRules, parseModeLabel, resolveMode } from "./merge-admission-policy.mjs";
 import { createExecutionQualifier } from "./clued-gated-proof-runtime.mjs";
 
@@ -65,21 +66,63 @@ export async function optInCovers(fetchImpl, env, repository, optedSha, headSha,
   return changed.every((file) => file && !fromTip.has(file.filename) && !(file.previous_filename && fromTip.has(file.previous_filename)));
 }
 
-async function admissionOf(fetchImpl, env, repository, headSha, prNumber) {
-  const [newest] = await appChecksOnHead(fetchImpl, env, repository, headSha, VERIFIED_CHECK);
-  if (!newest || !checkNamesPullRequest(newest, prNumber) || newest.status !== "completed" || newest.conclusion !== "success" || !newest.app || Number(newest.app.id) !== ADMISSION_APP_ID) {
-    return { admitted: false, mode: null };
+// Design A2: the admission check of every source the branch rules require
+// (required, from requiredChecksOf) must admit this head. The clued-admission
+// App's check (5164952) names its pull request and carries the mode label in
+// its title. The independent CI's check (5368905) binds by head and its
+// external_id format and carries no label: its mode comes from the live
+// admission evaluation instead (live: true). Any other publisher never admits.
+async function admissionOf(fetchImpl, env, repository, headSha, prNumber, required) {
+  const refused = { admitted: false, mode: null, live: false };
+  const sources = (Array.isArray(required) ? required : []).filter((row) => row.name === VERIFIED_CHECK).map((row) => row.app_id);
+  if (!sources.length) return refused;
+  let mode = null, live = false;
+  for (const appId of sources) {
+    let newest;
+    if (appId === ADMISSION_APP_ID) {
+      [newest] = await appChecksOnHead(fetchImpl, env, repository, headSha, VERIFIED_CHECK);
+    } else {
+      newest = (await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${headSha}/check-runs?check_name=${VERIFIED_CHECK}&filter=all`, "check_runs"))
+        .filter((check) => check && check.name === VERIFIED_CHECK && check.head_sha === headSha && check.app &&
+          (appId === null || Number(check.app.id) === appId))
+        .sort((a, b) => Number(b.id) - Number(a.id))[0];
+    }
+    if (!newest || newest.status !== "completed" || newest.conclusion !== "success" || !newest.app) return refused;
+    const app = Number(newest.app.id);
+    if (app === ADMISSION_APP_ID) {
+      if (!checkNamesPullRequest(newest, prNumber)) return refused;
+      mode ??= parseModeLabel(newest.output && newest.output.title);
+    } else if (app === INDEPENDENT_CI_APP_ID) {
+      if (!independentCheckBindsPullRequest(newest, { headSha, prNumber, repository })) return refused;
+      live = true;
+    } else return refused;
   }
-  return { admitted: true, mode: parseModeLabel(newest.output && newest.output.title) };
+  return { admitted: true, mode, live: live && !mode };
+}
+
+// The live admission evaluation's mode for an independent CI admission check.
+async function liveAdmissionModeOf({ env, fetchImpl, workspace, readPolicyFile, pr }) {
+  try {
+    const outcome = await evaluate({ env, event: { pull_request: pr }, eventName: "pull_request_target", fetchImpl, workspace,
+      withSummary: false, readPolicyFile });
+    const mode = outcome && outcome.admission_mode;
+    if (outcome?.admitted !== true || outcome.head_sha !== pr.head.sha || !mode || typeof mode.state !== "string" ||
+      typeof mode.layer !== "string" || !Number.isInteger(mode.rules?.reruns_per_head)) return null;
+    return { state: mode.state, layer: mode.layer, reruns_per_head: mode.rules.reruns_per_head };
+  } catch { return null; }
 }
 
 // What to do for one head pull request, without doing it.
-export async function planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy, state, qualifyExecution }) {
+export async function planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy, state, qualifyExecution,
+  required, admissionMode }) {
   if (pr.auto_merge && !managedAutoMerge(pr)) return {action:'none',reason:'manual auto-merge is not managed by this executor'};
   const managed = managedAutoMerge(pr);
   const stop = reason => ({ action: managed ? 'disable_auto_merge' : 'none', reason });
   if (state === 'frozen') return stop('auto-merge is forbidden in frozen state');
-  const admission = await admissionOf(fetchImpl, env, repository, pr.head.sha, pr.number);
+  const branchChecks = required ?? await requiredChecksOf(fetchImpl, env, repository, pr.base.repo.default_branch);
+  let admission = await admissionOf(fetchImpl, env, repository, pr.head.sha, pr.number, branchChecks);
+  if (admission.admitted && admission.live)
+    admission = { ...admission, mode: typeof admissionMode === "function" ? await admissionMode(pr) : null };
   const layer = admission.mode ? admission.mode.layer : null;
   const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${pr.head.sha}`);
   if (Number(compare && compare.behind_by) > 0) {
@@ -102,7 +145,7 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
   // The executor's own state wins over the title's: a switch to frozen applies at once.
   const rules = effectiveRules(policy, state, layer);
   if (rules.auto_merge !== "allowed") return stop(`auto-merge is ${rules.auto_merge} in ${state} for the ${layer} layer`);
-  const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution });
+  const seen = await ciStateOf(fetchImpl, env, repository, pr.head.sha, workflows, since, { pr, qualifyExecution, required: branchChecks });
   if (seen.state === "failed" || seen.state === "running") return stop(`CI ${seen.state}: ${seen.reason}`);
   // The final barrier forbids any active PR run, including uncounted runs.
   // Only a complete observation can take this early wait; other idle states
@@ -161,10 +204,13 @@ export async function currentOperationAuthority({env,fetchImpl,workspace,readPol
       (outcome.admission_mode.rules?.merge_slot==='advise' && outcome.merge_slot?.state==='not_required' && outcome.merge_slot.observed==='held');
     if(action!=='update_branch' && !held)return {valid:false};
     if(action==='update_branch' && outcome.admission_mode.layer==='protected')return {valid:false};
-    const freshAdmission=await admissionOf(fetchImpl,env,repository,current.head.sha,current.number);
-    if(!freshAdmission.admitted || !freshAdmission.mode || freshAdmission.mode.state!==mode.state ||
+    const required=await requiredChecksOf(fetchImpl,env,repository,current.base.ref);
+    const freshAdmission=await admissionOf(fetchImpl,env,repository,current.head.sha,current.number,required);
+    // An independent CI admission check carries no mode label; the live
+    // evaluation just above is its mode, already bound to this head and state.
+    if(!freshAdmission.admitted || (!freshAdmission.live && (!freshAdmission.mode || freshAdmission.mode.state!==mode.state ||
       freshAdmission.mode.layer!==outcome.admission_mode.layer ||
-      freshAdmission.mode.reruns_per_head!==outcome.admission_mode.rules.reruns_per_head)return {valid:false};
+      freshAdmission.mode.reruns_per_head!==outcome.admission_mode.rules.reruns_per_head)))return {valid:false};
     const final=await githubJson(fetchImpl,env,`/repos/${repository}/pulls/${pr.number}`);
     const finalBranch=await githubJson(fetchImpl,env,`/repos/${repository}/branches/${encodeURIComponent(current.base.ref)}`);
     if(final?.number!==current.number || final.state!=='open' || final.draft!==false || final.head?.sha!==current.head.sha ||
@@ -175,7 +221,7 @@ export async function currentOperationAuthority({env,fetchImpl,workspace,readPol
 }
 
 async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.readFileSync, now = () => Date.now(),
-  qualifyExecution, authorizeOperation = currentOperationAuthority }) {
+  qualifyExecution, authorizeOperation = currentOperationAuthority, admissionMode }) {
   const repository = env.GITHUB_REPOSITORY;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   const result = { state: mode.state, heads: [], actions: [], notices: [], errors: [] };
@@ -229,11 +275,19 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
   }
   const workflows = ciWorkflows(workspace);
   const qualify = qualifyExecution ?? createExecutionQualifier({env,fetchImpl,workspace,workflows});
+  // Design A2: the branch rules decide which checks and sources count. They
+  // are read once for planning (an unreadable read fails every head's plan,
+  // so a managed request is turned off), and again by every final barrier,
+  // pre-operation plan and authority check.
+  let rulesRead = null;
+  const branchRules = () => (rulesRead ??= requiredChecksOf(fetchImpl, env, repository, defaultBranch));
+  const liveMode = admissionMode ?? (pr => liveAdmissionModeOf({ env, fetchImpl, workspace, readPolicyFile, pr }));
   const plans = [];
   for (const { pr, since, progress_ref, scope, orphaned } of heads) {
     try {
       let plan=orphaned?{action:'disable_auto_merge',reason:'managed auto-merge no longer holds a live FIFO slot'}:
-        await planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy: mode.policy, state: mode.state,qualifyExecution:qualify });
+        await planFor({ env, fetchImpl, repository, pr, tip, since, progress_ref, workflows, policy: mode.policy, state: mode.state,qualifyExecution:qualify,
+          required: await branchRules(), admissionMode: liveMode });
       if(managedAutoMerge(pr) && plan.action==='none') {
         const authority=await authorizeOperation({env,fetchImpl,workspace,readPolicyFile,repository,pr,tip,scope,action:'merge_pull_request'});
         if(authority?.valid!==true)plan={action:'disable_auto_merge',reason:'managed request lost current permission, withdrawal or FIFO eligibility'};
@@ -273,7 +327,7 @@ async function runExecutorCore({ env, fetchImpl, workspace, readPolicyFile = fs.
         result.actions.push({...entry,action:'none',reason:'current permission, withdrawal, policy or FIFO gate refused the operation'});continue;
       }
       const final=await planFor({env,fetchImpl,repository,pr:authority.pr,tip,since:plan.since,progress_ref:authority.progress_ref,
-        workflows,policy:authority.mode.policy,state:authority.mode.state,qualifyExecution:qualify});
+        workflows,policy:authority.mode.policy,state:authority.mode.state,qualifyExecution:qualify,admissionMode:liveMode});
       if(final.action!==plan.action || (plan.run && (final.run?.id!==plan.run.id || final.run.run_attempt!==plan.run.run_attempt))) {
         result.actions.push({...entry,action:'none',reason:'execution or opt-in eligibility changed before the operation'});continue;
       }
