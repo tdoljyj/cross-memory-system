@@ -1,4 +1,4 @@
-# TURING 独立 CI 常驻执行机制 · 设计与草稿 v0.5（未安装）
+# TURING 独立 CI 常驻执行机制 · 设计与草稿 v0.6（Source v2 已离线实现，未安装）
 
 - 日期：2026-10-20（UTC）
 - KooYomi：项目 0597aa60；本工作 Task `79c32815`；Owner 决定 Decision `0d84ddbb`（四项选择）；父 Task `253d0382`。
@@ -6,7 +6,8 @@
   - v0.2：按第一次独立复审（FAIL：1 个 BLOCKER、7 个 MAJOR）逐项修正；
   - v0.3：按复核（FAIL：BLOCKER 清零，M1、M6、M7 还有残留）再修；
   - v0.4：按第三轮复核（FAIL：残留全部关闭，但修正本身引入 2 个 MAJOR，另有 1 个旧的代理 MAJOR）再修；
-  - v0.5：按第四轮复核（FAIL：代理 MAJOR 只修了一半，隔离与 HALT 不是崩溃一致的）再修。
+  - v0.5：按第四轮复核（FAIL：代理 MAJOR 只修了一半，隔离与 HALT 不是崩溃一致的）再修；
+  - v0.6（2026-10-21）：P1 完成，Source v2（S1–S14）在分支 `claude/pr-a-s-core-20261021` 上离线实现并测试（§7.1）；按 Owner Decision `1b5d3687` 加入自动 attempt 2（§7.2）和 50 GB 归档提醒（§7.3），D2–D7 随之关闭（§15）。主机上还什么都没装，主机验证见 §13.2 P2。
 
   第五轮复核 **PASS**（没有剩余的 BLOCKER 或 MAJOR）。五轮对照见 §13.3–§13.7。
 - 依据（只读）：
@@ -37,14 +38,10 @@
    - 干净失败：自动归档后继续；
    - 未知失败：HALT，Owner 用 UAC 发一个复位请求，由服务自己完成归档和解锁；
    - Source 变更：Owner 接受后，1 次 UAC 加 1 次 root。
-5. **草稿状态**：
-   - 测试结果：
-     - Node 单元测试 **53/53** 通过；
-     - Python 测试 **9/9** 通过；
-     - 离线演练 **20/20** 通过；
-     - 4 个 PowerShell 脚本语法检查 0 错，3 个 shell 脚本 `bash -n` 通过；
-     - 两个 C# 服务宿主用系统 csc 编译通过（编译到 scratch，没安装）。
-   - 主机演练（§13.2 P2）还没开始，所以可安装性、ACL 掩码和 unit 加固都还没在真机上证明。
+5. **草稿状态**（v0.6，详见 §13.1）：
+   - 常驻层：Node 单元测试 **67/67**、Python **11/11**、离线演练 **23/23**；
+   - Source v2（`CI/`）：Node **84 通过 + 1 跳过**（原有 44+1 全部保留）、Python **6/6**、PowerShell 离线用例 **34 个**（归档 13、ACL 迁移 11、bundle 10）、C# 纯逻辑 **78 条断言**（通用助手和交换代理用系统 csc 编译到 scratch）；
+   - 主机演练（§13.2 P2）还没开始，所以可安装性、ACL 掩码、unit 加固和真实的 SCM/WSL/Docker 路径都还没在真机上证明。
 
 ---
 
@@ -225,11 +222,14 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
       其他失败 → 烧掉 head
   10-started + head 烧号
   companion 启动 clued-ci-wsprep@<batchId>（root 预检、fsck --strict、建工作区）
-  第 2 到 8 段：
+  第 2 到 8 段（每段：node invoke-stage.mjs → 交换代理 → 通用助手 → 一个阶段事实，S1/S11/S12）：
+      第 2 段之前，companion 运行 build-bundle.ps1 -CheckRefs：bundle 之后有推送 → 干净的暂时性失败（§7.2）
       第 4、6 段之前，两端先做角色间归档（只移协议记录，和今天 run-batch.ps1:81 的语义一致）
       Linux 段：companion 泵 issue → worker unit → challenge/response → result（逻辑同 run-batch.ps1:86-89）
       第 8 段：控制助手自己轮询 Native 合并队列，直到 claim 成为队首或超出窗口（§10.2）
   收尾：两端只改名归档最后一个角色的协议记录 → 90-terminal COMPLETED → 回执
+  干净失败且满足 §7.2（暂时性码、第 1 或 2 段、attempt 1）→ 记下 attempt 2 意图；延迟到期后它先于新触发运行
+  批次之间：最多每小时量一次归档大小，超过 50 GB 写提醒回执（§7.3）
 ```
 
 ---
@@ -243,7 +243,7 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
   - `key` 由 repo、PR、head、base、Source、attempt 算出。
 - **按 head 烧号**：`10-started` 之前先 CreateNew `state\ledger-heads\<headKey>.json`；`headKey` 只由 repo、head、Source、attempt 算出。第 1 段的任何失败（未准入除外），以及所有未知失败，也会烧掉 head。
 - **原有防护全部保留**：作业身份、effect journal（`not_sent`、`uncertain`、`revoked` 都是终态）、bridge 的 issueId、nonce、30 秒窗口、签名结果。effect journal（`<64hex>.json`、`observations.jsonl`）不在归档白名单里，所以跨批次仍在原处，“只发布一次”跨批次成立（演练第 19 步）。
-- **attempt 默认是 1**。attempt 2 只能由 Owner 单独发起（§15 D3）。
+- **attempt 默认是 1**。attempt 2 只有一种来源：§7.2 的自动 attempt 2（Owner Decision `1b5d3687`），每个 head 最多一次，没有 attempt 3。attempt 是作业身份、批次键和 head 键的一部分，所以 attempt 2 的作业 id 与 attempt 1 的完全不同；attempt 1 已结算的作业 id 永远不会再跑。
 
 ### 6.2 锁
 
@@ -273,8 +273,19 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 分类结果：
 
 - **NOT_ADMITTED**：只在第 1 段，并且 Windows 证明齐全。释放键，不烧 head。
-- **CLEAN**：白名单里的失败码，并且两端证明都齐全。两端只改名归档，记 FAILED_CLEAN，烧掉 head，继续处理别的 PR。
+- **CLEAN**：白名单里的失败码，并且两端证明都齐全。两端只改名归档，记 FAILED_CLEAN，烧掉 head，继续处理别的 PR。其中“干净的暂时性”码（`TRANSIENT_CODES`）在满足 §7.2 的条件时排一次 attempt 2。
 - **UNKNOWN**：其余全部。记 FAILED_UNKNOWN，烧掉 head，写 HALT，不动现场。
+
+Source v2（S11）之后，阶段的失败码来自已安装 Source 的稳定目录 `CI/src/resident-v2/stage-fact.mjs`：交换代理的回复（SYSTEM）、通用助手的原生回执（clued-control）和 node 入口的结局记录（clued-control，回执里有它的哈希）三者合成一个码。常驻层的 `classify.mjs` 逐项镜像这份目录，测试保证两边完全一致（`test/attempts.test.mjs`）：
+
+| 类别 | 码 |
+|---|---|
+| 未准入（只在第 1 段） | `NATIVE_NOT_ADMITTED`、`OWNER_REVIEW_REQUIRED`、`PROTECTED_CHANGE_NOT_UP_TO_DATE`、`PATHS_OUTSIDE_WRITE_SET`、`CLAIM_NOT_CURRENT`、`TASK_CI_HEAD_CAP_REACHED`、`CLAIM_HEAD_CAP_REACHED`、`CI_BUDGET_EXHAUSTED`、`WORKFLOW_CHANGE_NOT_AUTHORIZED`、`PR_NOT_OPEN_OR_CHANGED` |
+| 干净、暂时性 | `NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`、`BRIDGE_TRANSPORT_TIMEOUT`、`REMOTE_REFS_CHANGED_SINCE_BUNDLE`、`ARCHIVE_PRECONDITION_NOT_MET` |
+| 干净、终局 | `STAGE_PACKAGE_REFUSED`、`STAGE_INPUT_RESULT_MISSING`、`BROKER_RUNNER_NOT_ORIGINAL_STOPPED`、`BROKER_REQUEST_EXPIRED`、`BROKER_REQUEST_REFUSED`、`STAGE_HELPER_PREFLIGHT_REFUSED`、`STAGE_CHILD_REFUSED`、`STAGE_CHILD_TIMEOUT`、`RESIDENT_QUEUE_HEAD_NOT_REACHED`、`BATCH_CLAIM_CHANGED`、`NATIVE_POLICY_UNSUPPORTED`、`PUBLICATION_BLOCKED`、`PUBLICATION_REVOKED`、`EVIDENCE_REFUSED`、`WORKSPACE_PREPARATION_REFUSED` |
+| 永远未知 | `BROKER_RESPONSE_UNCONFIRMED`、`STAGE_HELPER_NOT_STOPPED_IN_TIME`、`STAGE_ORIGINAL_NOT_RESTORED`、`BROKER_CONFIGURATION_CONFLICT`、`NATIVE_RECEIPT_UNCONFIRMED`、`STAGE_CHILD_TREE_UNCONFIRMED`、`STAGE_OUTCOME_MISSING`、`PUBLICATION_UNCERTAIN`、`RECONCILIATION_REQUIRED`、`EVIDENCE_IDENTITY_CONFLICT`、`ADMISSION_CONFIGURATION_REFUSED`、`BROKER_UNCONFIRMED`、`BROKER_BUSY` |
+
+`BROKER_BUSY` 是未知：另一个控制工具持有变更互斥量，这是 Owner 必须看到的意外并发。结局记录缺失、或者回执与结局对不上，一律 `STAGE_OUTCOME_MISSING`。
 
 ### 6.4 归档（只改名，不删除；复审 X1）
 
@@ -288,7 +299,8 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
   - root 先自己证明静止；
   - `between-roles-N` 只移协议记录；其他原因还会移 `formal-role.lock`、所有 `runs/*`、本批工作区和 ws-prep 目录；
   - 移动用 `renameat2(RENAME_NOREPLACE)`；
-  - 每个实例名对应一个 create-only 的状态文件，同一实例跑第二次直接拒绝。
+  - 每个实例名对应一个 create-only 的状态文件，同一实例跑第二次直接返回上次的结果；
+  - Source v2（S14，教训 b22/b28）：目标是归档目录里的**扁平名字**（`incoming-<叶子>`、`outgoing-<叶子>`、`run-<名字>`、`workspace-<作业 id>`、`ws-prep-<批次>`、`formal-role.lock`），不再建 `runs/`、`workspaces/` 子目录（`runs/` 前缀把 b28 弄坏过）；“完成型”范围（`between-roles-N`、`success-close`）遇到未知叶子、半对记录或还被持有的 `formal-role.lock` 时一个都不移，原样留给失败路径；失败范围照原样归档并报告留在原处的东西；目录树移动前清点、移动后核对；中途失败写持久的 partial 状态（`verified: false`），不会是“没有状态”。
 - **目录名**：失败用 `failed-<key12>-<reason>-<12hex>`，收尾和角色间用 `archive-…`，都必须是新目录。
 
 ### 6.5 HALT 与复位
@@ -326,7 +338,7 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 
 ## 7. 对现有 Source 的必要改动（Source v2）
 
-下列改动都在 `CI/` 里，属于 claim 842cf499 的 write_set，所以首次运行结束、那个 claim 释放之前不能动。建议与 claim 解耦 A-strict 合成一个版本。
+下列改动都在 `CI/` 里。v0.5 时它们属于 claim 842cf499 的 write_set；v0.6 已在新分支上、用新的 claim 实现（§7.1）。与 claim 解耦 A-strict 合成了一个版本。
 
 | 编号 | 改动 | 位置 | 原因 |
 |---|---|---|---|
@@ -344,6 +356,66 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 | S12 | **通用助手**：8 个阶段助手不再每批用编译期常量 `ExpectedConfigSha256` 重编译，改为一次安装、哈希进交换代理白名单。代理请求带 `configSha256`，作为第二个启动参数传给助手，由助手自己核对公开输入；助手只从 `source\<sha>` 加载代码 | `derive-fixed-batch.ps1:29-32`、`FormalPublicBoundary.cs:34` | S1 的前提；去掉每批 rNN 归档助手 |
 | S13 | **effect journal 搬离 spool**：搬到 `state\effects`（或保持原位但写进归档白名单的排除说明），任何归档都不得移动它 | `formal-work-admission-check-v1/publisher.mjs:150`、`independent-control-checks-v1/publisher.mjs` | 复审 M4：“只发布一次”要跨批次成立 |
 | S14 | **基于句柄的 spool 归档工具** `resident-v2/archive-windows-spool.ps1`：白名单与 `src/archive.mjs` 一致，复用 `Archive-WindowsProtocol` 的句柄原语，支持 `between-roles-N`、`success-close` 和失败原因 | `advance-functions.ps1:41-51` | 复审 X1 |
+
+### 7.1 S1–S14 的实现（P1，离线完成，分支 `claude/pr-a-s-core-20261021`）
+
+`CI/` 下的路径省略前缀；`R/` 指 `work/independent-ci-resident-v1/`。v1 的文件一个都没改，v2 全部是新文件（`staged-check-publisher-v2.mjs` 是 `staged-check-publisher.mjs` 的副本加上列出的改动，两者可以按 diff 对齐）。
+
+| 编号 | 变成了什么 | 位置 |
+|---|---|---|
+| S1 | SYSTEM 交换代理：请求只有 5 个字段（`swap-broker-request/2`），助手路径固定、哈希钉在 `config\broker.json`（`swap-broker-config/1`，哈希是代理的第二个启动参数）；领取标记、早于启动的请求不执行、停在助手上的 runner 换回原始二进制；忙时不碰任何状态 | `R/windows/SwapBroker.cs`、`src/resident-v2/windows/ResidentScmV2.cs`、`ScmPidHandshakeV2.cs`、`src/resident-v2/broker-protocol.mjs` |
+| S2 | PID ACK 事件归 SYSTEM；代理沿用 v1 的变更互斥量（同名、同 DACL：SY、BA、Owner），所以和 v1 控制工具互斥。常驻账户从不打开互斥量或事件，所以不需要给它 ACE（这一点与 v0.5 的表述不同） | 同上 |
+| S3 | ACL 模型 `acl-model.json` 只追加 ACE（spool 本层 `0x1200a5`，incoming/outgoing 本层 `0x1200e1` 加文件只读 `0x120089`），新建 `state\v2\*`；`migrate-acl.ps1` 只写 DACL、CAS、可重复；bridge v4 的 `formal-spool-acl.ps1` 只放行这些精确掩码；b22 的 ACL 判据（文件 id、所有者、排序后的允许 ACE 集合不变）移植进归档工具 | `src/resident-v2/acl-model.json`、`migrate-acl.ps1`、`worker/protected-job-bridge-v4/formal-spool-acl.ps1` |
+| S4 | 确定性导出：输入只有已安装的免 claim 安装记录和触发主体，输出 8 个密封阶段包（计划、作业、阶段行、工作清单），同输入同字节；`source-closure.json` 是算出来的 Source 闭包（有测试重算） | `src/resident-v2/derive-batch.mjs`、`prepare-record.mjs`、`record.mjs`、`stage-package.mjs`、`source-closure.mjs` |
+| S5 | 安装记录不带 claim、PR 或作业；`validUntil` 为空表示直到 Source 变更或卸载；没有 24 小时或 claim 截止上限；Linux qualification v2 的 `expiresAt` 也可以为空（绑定到 Source） | `prepare-record.mjs`、`record.mjs`、`worker/qualification-v2.mjs` |
+| S6 | 作业契约 `job/2`：id = sha256(["clued.independent-ci.job/2", repo, pr, head, base, sourceManifestSha256, role, attempt])，没有 claim；完整准入 `full-admission/2` 从 PR trailer 实时解析 claim；第 1 段以“只能新建”的方式记下批次 claim 代次（claimId、fence、epoch），之后每个阶段、每次 bridge 回调都必须是同一代次（续租只改 `expires_at`，算同一代次）；Linux 角色策略 v3 和 qualification v2 没有 currentClaim | `src/job-v2.mjs`、`full-admission-v2.mjs`、`admission-facts-v2.mjs`、`batch-claim-v2.mjs`、`worker/formal-fixed-role-policy-v3/`、`formal-gitleaks-v4/`、`formal-trivy-v4/`、`formal-contract-placement-v2/`、`worker-v2.mjs` |
+| S7 | bridge v4：协议 `/2`、签名结果 `/2`、新增干净的 `blocked` 记录（Linux 在准备之前干净结束时发出，Windows 发行方据此干净结束，不再等到截止）；发行方是一个 v2 阶段入口；relay 从已安装的 `resident\source\<sha>` 副本运行；companion 先收 challenge、再收 result、再收 blocked | `worker/protected-job-bridge-v4/*`、`R/src/companion.mjs` |
+| S8 | 控制助手每 30 秒只读核一次合并队列，窗口 = min(合并位 45 分钟, claim, validUntil, 阶段上限减 7 分钟)，满足就发一对检查，否则 `RESIDENT_QUEUE_HEAD_NOT_REACHED`，什么都不发 | `src/independent-control-checks-v2/` |
+| S9 | `prepare-workspaces.py --batch <id>` 读公开描述符 `/2`，按内容重算作业 id，核对已安装 Source 和角色策略 v3；`build-bundle.ps1 -BatchId` 打 bundle，`-CheckRefs` 是第 2 段前的“bundle 之后没有推送”闸门 | `src/resident-v2/prepare-workspaces.py`、`build-bundle.ps1`、`R/src/engine-windows.mjs` |
+| S10 | 一个 Node：worker unit、relay、自检和角色策略都用 `/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node`，策略 v3 要求 `nodeExecutable` 等于它 | `worker/qualification-v2.mjs`、`protected-job-bridge-v4/relay-public.ps1`、`R/linux/systemd/clued-ci-worker@.service` |
+| S11 | 稳定的失败码目录（§6.3），由代理回复、原生回执和入口结局合成 | `src/resident-v2/stage-fact.mjs`、`invoke-stage.mjs`、`stage-inputs.mjs`、`R/src/classify.mjs` |
+| S12 | 一个通用助手 `controller-formal-generic-v2.exe`，安装时用已安装的 Source 编译一次，哈希钉进 `broker.json`；参数是 (nonce, configSha256)，助手自己核对阶段目录里的公开输入，只从 `resident\source\<ciSourceManifestSha256>` 加载代码；入口写结局记录，回执带它的哈希 | `src/resident-v2/windows/FormalPublicBoundaryV2.cs`、`FormalSession0V2.cs`、`entry-runtime.mjs`、`held-record.mjs`、`hold-record.ps1`、`R/windows/install-resident.ps1` |
+| S13 | effect journal 和观测日志搬到 `state\v2\effects-scan`、`effects-work-admission`、`effects-control`，批次 claim 在 `state\v2\batch-claims`，都不在任何归档白名单里 | `src/resident-v2/layout.mjs`、三个 v2 发布者 |
+| S14 | 基于句柄的 Windows spool 归档（扁平名字、完成型范围的拒绝、失败范围原样归档、带回执的归档目录）；Linux 工具同样改为扁平名字（§6.4） | `src/resident-v2/archive-windows-spool.ps1`、`R/linux/bin/clued-ci-resident-linux` |
+
+两个 Source 清单哈希不要混：
+
+- `sourceManifestSha256`（常驻策略）是**已安装文件清单** `source-installed-manifest.json` 的哈希，用于完整性校验和批次键；
+- `ciSourceManifestSha256`（策略 `/2` 新增）是**安装记录的** `source-manifest.json` 的哈希，是每个作业的 `sourceManifestSha256`，也是已安装 Source 的目录名 `resident\source\<它>`（通用助手只从这里加载代码）。
+
+### 7.2 自动 attempt 2（Owner Decision `1b5d3687`）
+
+同一 head 的 attempt 2 自动发生一次，必须同时满足（`R/src/attempts.mjs`）：
+
+1. attempt 1 以 **FAILED_CLEAN** 结束：两端清理证明齐全，现场已归档；
+2. 失败码是**白名单里的干净暂时性码**：网络或传输超时、GitHub 5xx 或暂不可用、Native 准入暂不可用、bundle 之后有推送（`REMOTE_REFS_CHANGED_SINCE_BUNDLE`）、归档前提暂未满足；
+3. **还没有角色发布过**：失败的是第 1 段（工作准入；它自己的检查按 attempt 区分，attempt 2 用新的作业 id 重新证明）、第 2 段（第一个扫描执行），或二者之间的工作区准备。从第 3 段起扫描或控制角色已经（或可能已经）发布，永远不重试；
+4. 策略 `automaticAttempt2.enabled` 为 true；等待 `delayMs`（默认 10 分钟）之后，仍然要过同样的预检（冷却、上限、validUntil、Source 哈希、companion 心跳）。
+
+永远不重试：UNKNOWN（任何 HALT）、可能已有的发布、证据身份冲突、闸门拒绝（未准入、claim 变了、扫描发现问题、准入被拒）、attempt 2 本身。账本在 `ledger-attempt2\<attempt1 键>.json` 以“只能新建”的方式记下意图，所以每个 attempt 1 最多一次；attempt 2 有自己的批次键和 head 键，预留它就算消费了意图。这是对执行器的唯一一处必要改动（`executor.mjs`：失败路径排程、`tick` 里先跑到期的 attempt 2）。
+
+“bundle 之后有推送”在两处被发现，都在任何东西运行之前：第 2 段前 companion 的 `build-bundle.ps1 -CheckRefs`；以及 gitleaks 适配器在建 run 目录之前核对所有新鲜的 ref tip、head、base 都已在工作区对象库里（`refsInStore`，失败就是干净的 `BLOCKED`，经 bridge 的 `blocked` 记录回到 Windows）。
+
+### 7.3 归档保留提醒（50 GB）
+
+归档只改名、从不删除。服务在批次之间最多每小时量一次：Windows spool 的 `archive-*`、`failed-*` 目录、常驻层自己的 `work\` 和 `bundles\`，以及 companion 转来的 Linux spool 归档大小（`clued-ci-resident-linux archive-usage`）。合计达到策略 `retention.reminderBytes`（50 GB）时，每天最多写一条 `archive-retention-reminder` 回执（`deletesAnything: false`），由 Owner 决定移走或删除什么（`R/src/retention.mjs`）。读不到的部分会让测量标为不完整，但只会让提醒更容易发出，不会相反。
+
+### 7.4 留给中继集成（S19–S22）的接口与未完成项
+
+v0.6 只实现 S1–S14。中继集成要调用的接口（都已存在、有测试）：
+
+- **阶段 R / 常驻执行器**：`engine.runStage(batch, stage)` → `{ok, code, proof, factsSha256}`；底层是 `node CI/src/resident-v2/invoke-stage.mjs --batch-dir --stage --work-manifest-sha256 --batch-key`（输出阶段事实 `/2`，退出码 0 或 41），失败码全在 §6.3 的目录里；新增的阶段要在 `STAGES_V2`（`layout.mjs`）、代理的 `StageMilliseconds`（`SwapBroker.cs`）、`FormalPublicBoundaryV2.cs` 的阶段表和常驻策略的 `stageRunMilliseconds` 里同时登记，并给 `ENTRY_V2` 加入口、给 `stage-fact.mjs` 加码、让 `classify.mjs` 镜像（测试会拦住不一致）；
+- **hosted-wait**：等待只读，模式同 S8（`independent-control-checks-v2/publisher.mjs` 的 `waitForQueueHead`：轮询、窗口、`RESIDENT_QUEUE_HEAD_NOT_REACHED`）；
+- **companion 提示**：新请求种类要加进 `mailbox.mjs` 的 `KINDS` 和 `REQUEST_FIELDS`（精确字段），`companion.mjs#handle` 只执行固定 argv，回复只经 `validateResponse` 的固定字段（v0.6 新增了 `usage`）；
+- **classify / policy / receipts**：新码进 `stage-fact.mjs` 再镜像到 `classify.mjs`；策略 `/2` 的字段是精确集合（`exactKeys`），加字段要同时改 `policy.mjs`、`config/policy.example.json` 和 `test/helpers.mjs`；回执类型是自由的 `receipts.append(type, body)`；
+- **代理白名单**：v0.6 只有一个助手，名字固定 `controller-formal-generic-v2.exe`，哈希在 `broker.json`；再加助手要扩展 `broker.json` 的 `helper` 字段和 `SwapBroker.LoadConfig` 的精确检查。
+
+没有做的（不在 S1–S14 内，或需要中继步骤一起定）：
+
+- `scripts/ci/clued-work-admission.mjs` 的合并闸门仍通过 `independent-control-checks-v1/consumer.mjs` 读 **v1** 控制检查；v2 控制对（外部 id `independent-ci:control:<角色>:v2:…`，journal 在 `state\v2\effects-control`）需要一个 v2 消费者并接进评估器；
+- `staged-check-publisher-v2.mjs` 是 v1 文件的副本（v1 归另一项工作），合并时要按 diff 对齐；
+- A2 的 guarded claim（`lease_key_required`）仍然拒绝，没有放开；
+- Linux 侧 Source v2 的安装（`/opt/clued-independent-ci/source-v2`、`roles-v3/*.json`、`formal-source-manifest-v2.json`、qualification v2 的签发）是主机安装步骤，`install-resident-linux.sh` 还没有这部分。
 
 ---
 
@@ -367,8 +439,8 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
      - 代理这个进程启动之前就已存在的请求，只答复 `BROKER_REQUEST_PREDATES_START`。
 
      所以重启之后，代理绝不会把同一阶段再启动一次（第四轮复核 MAJOR 3）；
-  2. 助手路径由阶段号推出，不取自请求；
-  3. 助手哈希必须在 `config\helpers-allow-list.json` 里，白名单哈希写在代理的启动参数中；
+  2. 助手路径固定为 `helpers\controller-formal-generic-v2.exe`（S12：一个通用助手），不取自请求；
+  3. 助手哈希必须等于 `config\broker.json` 里钉住的值，这个文件的哈希写在代理的启动参数中；它还钉住 Owner SID、原始二进制和 runner 的稳定配置摘要（安装时用刚编译的代理只读求出）；
   4. 换之前确认 runner 是原始二进制、Manual、STOPPED、账户 clued-control；
   5. `ChangeServiceConfigW` 只传二进制路径，其余参数全部是 `SERVICE_NO_CHANGE` 或 null，所以账户、密码、启动类型改不了；
   6. 带 nonce 启动一次，等它停止；
@@ -386,6 +458,10 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 | `owner` | 读 | 读（只有提权的 Owner 能建文件） | — |
 | `source\<sha>` | 读、执行 | 读、执行 | 读、执行 |
 | `helpers` | 读、执行 | — | 读、执行 |
+| `record`（免 claim 安装记录） | 读、执行 | 读、执行 | 读、执行 |
+| `stage`（每段的密封输入） | 修改 | — | 读、执行 |
+| `bundles`（companion 打的 bundle） | 读、执行 | 修改 | — |
+| `state\v2\*`（S13，ACL 迁移新建） | `receipts` 只读 | — | 修改 |
 | `state`、`work`、`outbox` | 修改 | 只读 | `work` 可读、执行 |
 | `broker\requests` | 修改 | — | — |
 | `broker\responses` | 只读（代理是 SYSTEM，自己写） | — | — |
@@ -468,7 +544,8 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 
 | 动作 | 命令 | 权限 |
 |---|---|---|
-| 打包 | `node tools/build-package.mjs --out … --policy … --companion … --node … --source-root/--source-files/--helpers-dir/--linux-external-pins …`（来自 Source v2） | 普通 |
+| 安装记录 | `node CI/src/resident-v2/prepare-record.mjs --inputs … --source-root <checkout> --closure CI/src/resident-v2/source-closure.json --out …`（每次 Source 接受做一次） | 普通 |
+| 打包 | `node tools/build-package.mjs --out … --policy … --companion … --node … --record <上一步输出> --source-root <checkout> --source-files <闭包里的路径> --linux-external-pins …` | 普通 |
 | Windows 预检 | `install-resident.ps1 -PackageRoot … -ExpectedPackageManifestSha256 … -OwnerSid … -ControllerSid …`（只读，打印计划及其哈希） | 普通 |
 | Windows 安装 | 同上，加 `-Apply -ExpectedPlanSha256 <复审过的>` | **UAC 1 次** |
 | Linux 安装 | `install-resident-linux.sh --plan` 之后 `--apply <sha>`；需要启用 systemd 时，再 `wsl --shutdown`，然后 `--continue-after-boot <sha>` | **root 1 次**，可能加 1 次 WSL 重启 |
@@ -490,6 +567,13 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 
 ### 13.1 已运行（离线，没碰主机）
 
+v0.6（2026-10-21，Source v2 实现之后）：
+
+- 常驻层：`node --test test/*.test.mjs` **67/67**（新增 attempt 2、目录镜像、引擎 v2、companion v2、保留提醒、打包 v3）；`python -I -B -m unittest discover -s test -p "test_*.py"` **11/11**（扁平名字、完成型范围拒绝、树核对、partial 状态、archive-usage）；`node drill/offline-drill.mjs` **23/23**（新增 3 步：bundle 之后推送 → attempt 2 → 完成；第 3 段之后的同类失败不重试）。
+- Source v2：`node --test CI/test/*.test.mjs CI/worker/image-identity.test.mjs` **84 通过 + 1 跳过**（原有 44+1 不变；新增合约、阶段、准入、发布者、bridge v4、闭包）；`python -I -B -m unittest discover -s test -p "test_*.py"`（在 `CI/` 下）**6/6**；`windows/test-archive-windows-spool.ps1` 13 例、`test-migrate-acl.ps1` 11 例、`test-build-bundle.ps1` 10 例，都只在 `%TEMP%` 的夹具里运行；`test-pure-v2.ps1` 编译通用助手和测试宿主（scratch）并跑 **78 条**断言；`SwapBroker.cs` 连同 `ResidentScmV2.cs`、`ScmPidHandshakeV2.cs` 编译通过；所有新增和改动的 PowerShell 脚本语法检查 0 错。
+
+v0.5 时的记录：
+
 - `node --test test/*.test.mjs`：**53/53**。覆盖：
   - 账本：一次性、按 head 烧号（base 或 PR 变了也烧）、未完成条目；
   - HALT 比较交换、崩溃恢复（HALT 时也做）、Owner 复位与恢复请求（过期摘要、没有静止证明都拒绝）、伪造的恢复请求被忽略；
@@ -506,7 +590,16 @@ companion 轮询（每 5 分钟，用 Owner 的 gh 登录）或 Agent ──▶ 
 
 ### 13.2 还要做的验证（按顺序，每步前 Owner 都有一次 go/no-go）
 
-- **P1**：实现 Source v2（S1–S14）及其 Source 内单元测试。在新分支上做，用新的 claim，等 842cf499 释放后开始。
+- **P1**：实现 Source v2（S1–S14）及其 Source 内单元测试。**v0.6 已离线完成**（§7.1、§13.1）。
+- **P2 必须在主机上证明、离线证明不了的东西**（Source v2 之后的清单）：
+  - 交换代理以 SYSTEM 真实切换、启动一次、还原；`--stable-digest` 在提权安装时的读取；与 v1 互斥量的真实互斥；PID ACK 事件；`BROKER_BUSY` 时不碰状态；
+  - 通用助手在 Session 0 以 clued-control 启动 node 入口、写回执、进程树清理；`hold-record.ps1` 的句柄租约；
+  - ACL：迁移工具真实写入的掩码（含 SDDL 规范形式）、常驻 SID 能做而且只能做的事、`formal-spool-acl.ps1` v4 对迁移后 ACL 的放行；b22 判据在真实 spool 上；
+  - 四个入口对真实 GitHub 和 Native：批次 claim 记录、续租、队列等待、检查发布与回读、证据冲突撤销；
+  - Linux：角色策略 v3 与 qualification v2 的签发（需要用 Linux 结果密钥对新的 v2 载荷签名，这是安装步骤）、`/opt/clued-independent-ci/source-v2` 与 `formal-source-manifest-v2.json`、三个 v4/v2 适配器在 root 和 Docker 下运行、`refsInStore`、`blocked` 记录、`releaseClean`；
+  - relay v4 从 `resident\source\<sha>` 运行、bundle 清单哈希、challenge 优先的泵顺序；
+  - Linux 工具的扁平归档在真实目录上、`ROLE_LOCK_HELD_PRESERVED` 与 partial 状态、`archive-usage`；
+  - 安装脚本：record、stage、bundles 目录、助手编译、`broker.json`、ACL 迁移的调用。
 - **P2**：主机隔离演练。演练名包括 `CluedCIResidentRehearsal`、`CluedCISwapBrokerRehearsal`，以及专门的哑 runner 服务 `CluedCIRehearsalRunner`。要验证的点：
   - 代理只改二进制路径、账户不变；
   - 常驻账户对哑 runner 没有任何权限；
@@ -607,12 +700,12 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 ## 15. 需要 Owner 决定的事
 
 - **D1 是否按本设计进入 Source v2 实现（P1）**，以及是否把本草稿提交为 PR（只含 `work/independent-ci-resident-v1/` 新文件）。
-- **D2 `validUntil`**：为空（直到 Source 变更或卸载），还是设复核期限（比如 30 天）。
-- **D3 同一 head 的 attempt 2**：要不要提供“Owner 用 UAC 为某个确切 head 开第 2 次执行”的动作。不提供的话，只有新的 head 才能再跑；换 base 或换 PR 号都不算。
-- **D4 Docker 由 systemd 管理**：如果 dockerd 不是 `docker.service`，怎样迁移。
-- **D5 工作区保留规则**（R3）。
-- **D6 cgroup v2**：WSL 如果默认是 v1 或混合模式，是否接受在 `.wslconfig` 加 `kernelCommandLine = cgroup_no_v1=all`（会影响整个 WSL）。
-- **D7 交换代理**：新增一个只做一件事的 SYSTEM 服务。这是对 Decision `0d84ddbb` 第 2 项的细化：常驻账户本身对 runner 服务不再有任何权限，改配置权集中到代理。需要 Owner 确认接受。
+- **D2 `validUntil`**：**已决定**（Decision `1b5d3687`）：为空，直到 Source 变更或卸载。
+- **D3 同一 head 的 attempt 2**：**已决定**（Decision `1b5d3687`）：自动 attempt 2 一次，只针对白名单里的干净暂时性失败、而且还没有角色发布过（§7.2）。
+- **D4 Docker 由 systemd 管理**：**已确认**主机上已是 `docker.service`，不需要迁移代码。
+- **D5 工作区保留规则**（R3）：**已决定**：只改名、从不删除；超过 50 GB 写提醒回执（§7.3）。
+- **D6 cgroup v2**：**已确认**主机上 WSL 已启用 systemd 和 cgroup v2，不需要迁移代码。
+- **D7 交换代理**：**已接受**（Decision `1b5d3687`）`CluedCISwapBroker`。
 
 ---
 
@@ -636,3 +729,5 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
 | `tools/rearm-tool.mjs`、`verify-receipts.mjs`、`build-package.mjs` | 查看与请求、回执校验、打包 |
 | `config/*.example.json` | 策略与 companion 配置样例 |
 | `test/*.test.mjs`、`test/test_linux_tool.py`、`drill/offline-drill.mjs` | 测试与离线演练 |
+| `src/attempts.mjs`、`src/retention.mjs` | v0.6：自动 attempt 2 的判定（§7.2）、50 GB 归档提醒（§7.3） |
+| `CI/src/resident-v2/*`、`CI/src/*-v2.mjs`、`CI/src/formal-work-admission-check-v2/`、`CI/src/independent-control-checks-v2/`、`CI/runtime/one-shot-v2.mjs`、`CI/worker/*-v2|v3|v4/`、`CI/worker/protected-job-bridge-v4/` | v0.6：Source v2 本体（§7.1） |
