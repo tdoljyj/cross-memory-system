@@ -1,0 +1,852 @@
+{
+  "contract": "clued.independent-ci.control-install-source-delta/1",
+  "hostRead": false,
+  "basis": "retained public installed77 source acceptance and installed-finite-activation-v1/installed-pins.json; actual destination presence/metadata still requires Root readback",
+  "oldSourceBundleSha256": "29a11d73196fed27b7e1ebc7bd3b346a870e4f1530ad73e6a3eb09c6eb3e7ac0",
+  "sharedManifest": {
+    "path": "source-manifest.json",
+    "bytes": 737,
+    "sha256": "9940b950fc33183b9cbfdcf0a75cb9d2b31c7b826d3960967c4a3a918c4dc5e7"
+  },
+  "counts": {
+    "old": 77,
+    "controlMinimum": 60,
+    "physicalUnion": 84,
+    "sameSelected": 22,
+    "replaced": 2,
+    "new": 60,
+    "unselectedOldPreserved": 53,
+    "allOtherOldSourceUnchanged": 75
+  },
+  "sourceFiles": [
+    {
+      "path": ".github/workflows/gitleaks.yml",
+      "bytes": 5927,
+      "sha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
+      "oldSha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
+      "operation": "retain"
+    },
+    {
+      "path": ".github/workflows/trivy.yml",
+      "bytes": 9461,
+      "sha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
+      "oldSha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
+      "operation": "retain"
+    },
+    {
+      "path": ".gitleaks.toml",
+      "bytes": 186507,
+      "sha256": "cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "config/merge-admission-policy.json",
+      "bytes": 1971,
+      "sha256": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7",
+      "oldSha256": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-source.mjs",
+      "bytes": 43883,
+      "sha256": "83f965131dcffcc0e551b52a26bb4311b6c6486565251d9e483e4b6b266fb33a",
+      "oldSha256": "83f965131dcffcc0e551b52a26bb4311b6c6486565251d9e483e4b6b266fb33a",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-sources.json",
+      "bytes": 265316,
+      "sha256": "8618e81aa26aa19269a2a2ca3ef6da304bdb00b1e79531828c5b5899fced03a1",
+      "oldSha256": "8618e81aa26aa19269a2a2ca3ef6da304bdb00b1e79531828c5b5899fced03a1",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-profiles.json",
+      "bytes": 811444,
+      "sha256": "b98439c82546edcc750e264df58b8b7c328e22e01dc6f662facdacf7e325d256",
+      "oldSha256": "b98439c82546edcc750e264df58b8b7c328e22e01dc6f662facdacf7e325d256",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-role-specs.json",
+      "bytes": 145552,
+      "sha256": "0493cf57a6c25756f6c57a7a34d026d8bbdeb5a6d2bfd514fe7a5d7a70683e6c",
+      "oldSha256": "0493cf57a6c25756f6c57a7a34d026d8bbdeb5a6d2bfd514fe7a5d7a70683e6c",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-production-publisher-source.mjs",
+      "bytes": 10281,
+      "sha256": "abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a",
+      "oldSha256": "abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-production-publisher-sources.json",
+      "bytes": 126971,
+      "sha256": "e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf",
+      "oldSha256": "e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-publisher-qualification-source.mjs",
+      "bytes": 10247,
+      "sha256": "f88a6a7bf1018250407bd754cd3dd5733ee90e068cdc71e2893a0a285c5ff048",
+      "oldSha256": "f88a6a7bf1018250407bd754cd3dd5733ee90e068cdc71e2893a0a285c5ff048",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-publisher-qualification-sources.json",
+      "bytes": 21779,
+      "sha256": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c",
+      "oldSha256": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/clued-work-admission.mjs",
+      "bytes": 177342,
+      "sha256": "6942fa7f03ab21282d6005f1a893e610f0a21a11a45bb3c6ad87d0f75fef9b9f",
+      "oldSha256": "cf971662bc80865321338b0cdc1a81cec0ab079068ec1bb38a2c4ecee20a80f5",
+      "operation": "replace-fixed-source"
+    },
+    {
+      "path": "scripts/ci/clued-workflow-profile.mjs",
+      "bytes": 50044,
+      "sha256": "65904668b637a6be526d15de0b75ac4c08a59c9c84b58b3c71d7cae978e99a41",
+      "oldSha256": "65904668b637a6be526d15de0b75ac4c08a59c9c84b58b3c71d7cae978e99a41",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/merge-admission-measurement-history.mjs",
+      "bytes": 10652,
+      "sha256": "f05140eb055ba05650c9e517af04c065b7b1e76ede6bd7b7fa4c8f441fc9624e",
+      "oldSha256": "f05140eb055ba05650c9e517af04c065b7b1e76ede6bd7b7fa4c8f441fc9624e",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/merge-admission-policy.mjs",
+      "bytes": 16881,
+      "sha256": "b3bf3ddb82dd22b61bb1f2e3ca7c10f10b6b4acd8dfbd528ae0e2f557c27c5d3",
+      "oldSha256": "b3bf3ddb82dd22b61bb1f2e3ca7c10f10b6b4acd8dfbd528ae0e2f557c27c5d3",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/merge-admission-source-producer.mjs",
+      "bytes": 39631,
+      "sha256": "67667bf45a008c6580f29a2d90466e8fc96c54c75806d8422a2fc47d985c62a7",
+      "oldSha256": "67667bf45a008c6580f29a2d90466e8fc96c54c75806d8422a2fc47d985c62a7",
+      "operation": "retain"
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "bytes": 32878,
+      "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "scripts/runner/clued-runner-job-started.mjs",
+      "bytes": 38896,
+      "sha256": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
+      "oldSha256": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
+      "operation": "retain"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs",
+      "bytes": 20547,
+      "sha256": "25530d8939a17618f3c7ec18987ceb840192e17a223963433c0f9ea83e1c0c06",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/protected-files.mjs",
+      "bytes": 5022,
+      "sha256": "4e9c034377528741a48477facfa4541dfedb67468f675b4cdc20e9bb4aad0ccb",
+      "oldSha256": "4e9c034377528741a48477facfa4541dfedb67468f675b4cdc20e9bb4aad0ccb",
+      "operation": "retain"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/verify-install-acl.ps1",
+      "bytes": 7520,
+      "sha256": "09d17148e2dd5d7527a0b88b8f2e084cf7627935e9db2f38b3f73add24867966",
+      "oldSha256": "09d17148e2dd5d7527a0b88b8f2e084cf7627935e9db2f38b3f73add24867966",
+      "operation": "retain"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs",
+      "bytes": 4001,
+      "sha256": "583b6512174de412842032f56d3172bd7a191ba955641c16c956a943d9be326a",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/publisher.mjs",
+      "bytes": 19445,
+      "sha256": "168742155b146578d001cafda75821f53b073ce1c8964f7ee4ebcb25a6509590",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/startup.mjs",
+      "bytes": 909,
+      "sha256": "dbbdbb1d83c13b36d8d68b175be18135dfcb88b4e5aec3fe52c6eb39b44bd242",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs",
+      "bytes": 12056,
+      "sha256": "31567d1c751a4d4a9a58b539a6e0c6b5fc7191dfe242a4c27c91961d07aae070",
+      "oldSha256": "ecdc5b56a50e3c399145561e5837bdef5b12e7cdb1a2c8c87a846ef200d8dfba",
+      "operation": "replace-fixed-source"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
+      "bytes": 10727,
+      "sha256": "df4273b834c6ad9be895bb97240ec510f9bd4f84fc926989d79189e922d065dc",
+      "oldSha256": "df4273b834c6ad9be895bb97240ec510f9bd4f84fc926989d79189e922d065dc",
+      "operation": "retain"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/closure.mjs",
+      "bytes": 3860,
+      "sha256": "b07314520a4757a4f59c5f8caf9d82b818afe2f01c47e9a7bfb4b96928d9c28a",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs",
+      "bytes": 1786,
+      "sha256": "da4c5781fff4e140633d65c29e7633c0c49954d85a9ffdcead23cb519c7c6e6a",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/publisher.mjs",
+      "bytes": 27378,
+      "sha256": "aca80e2c691fa1da816d7796bb7da6a6c70a909e28993499e0ca1405038eda79",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/queue-facts.mjs",
+      "bytes": 810,
+      "sha256": "5b158efd811052bea8371c9f349a9932a7164980dd0ed56d5b051183c35c019c",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/startup.mjs",
+      "bytes": 929,
+      "sha256": "b60d7119dc5200a4e242d522c20ad3307b9e3f7ec0a35ab5c874f6e2df5aeb7e",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/proof.mjs",
+      "bytes": 3699,
+      "sha256": "ed5f8800d27eb1ee5666c12983cac6b93ec5a2398a0c4dcf762e55b4a29f976b",
+      "oldSha256": "ed5f8800d27eb1ee5666c12983cac6b93ec5a2398a0c4dcf762e55b4a29f976b",
+      "operation": "retain"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/queue.mjs",
+      "bytes": 18605,
+      "sha256": "63c05f00ce6d1100af631e4387b024fbfed67a606e6d18f2de76eeffe707cf89",
+      "oldSha256": "63c05f00ce6d1100af631e4387b024fbfed67a606e6d18f2de76eeffe707cf89",
+      "operation": "retain"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher.mjs",
+      "bytes": 18713,
+      "sha256": "2b3fcda1cd21912be4195386762067c5baae3c6a28cd7bab6a21b2194307d577",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/worker.mjs",
+      "bytes": 24820,
+      "sha256": "67803ba150f0b22af5459af4b83f7910835221caea845a54a46a70d39ec7608c",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/adapter.mjs",
+      "bytes": 13757,
+      "sha256": "5ea16409c95e6bbd133ffdc280752bb120ff3252bc48dbf65ffe513aae616dcd",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/docker-transport.mjs",
+      "bytes": 2300,
+      "sha256": "d1af2b99949aacee374cb6c1e279430bd717ad756210aad3ad885fc420dafd06",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/prepare.mjs",
+      "bytes": 22051,
+      "sha256": "7e1356a2a1d979ea54faf4348f37e73391d1ef2041b8ea43a75b6f51fe2d931c",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/selftest-shim.mjs",
+      "bytes": 9284,
+      "sha256": "6d4989c91a845239e9aa815f276a6de663cf5cf6a3fa6c2f0e3b47f535357008",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/adapter.mjs",
+      "bytes": 16274,
+      "sha256": "3bc3e4b346d332a3806f13171ea83be9d8d81b5971914fbfbe4ff1b90970b5e1",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/cache.mjs",
+      "bytes": 13742,
+      "sha256": "72fa21849b42bfbd32ef83e42d43a4c0533cd8f61ddfaf2b40a1dc619da33071",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/docker.mjs",
+      "bytes": 12210,
+      "sha256": "88fc02ce19223307ce45d27c63e99d12d5f4ccf3ece1052d00ea9f0637803182",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/linux-launcher.mjs",
+      "bytes": 21518,
+      "sha256": "befed130b3e027219991b8ece8a8630c03ffe18996ba57bec4c7d0863ebaaf5e",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-controller-ports-v1/refs.mjs",
+      "bytes": 5445,
+      "sha256": "ec31352c5e168133c87622c1451d1f383ebf86c282a63d2c0027464f4dd561a8",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/boundary.mjs",
+      "bytes": 13011,
+      "sha256": "d05f94586d1cc4b9c56ed8d4958c690e674eff4121a68a1e56d8875429b1fa8d",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/formal-spool-acl.ps1",
+      "bytes": 9486,
+      "sha256": "f518f00848b44815e7a7ffdcf6416d6906e6cb711b135807f761d9c012b0eb46",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/held-source.mjs",
+      "bytes": 4541,
+      "sha256": "657eb727c7748602fb6259fd20de3dab8ea8abc3be8b784d9fc579ea384d58a9",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/hold-source.ps1",
+      "bytes": 9641,
+      "sha256": "97cb22fbaf16d3c04c2b66aff1296fa1346041c645ea09484fd3a3d1d1f3a397",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/linux-worker.mjs",
+      "bytes": 4385,
+      "sha256": "e300cc729e713c6a9179a8b038dd659b9c02ce970c5f7f9d8b11e6f32cac9acd",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/mailbox.mjs",
+      "bytes": 6504,
+      "sha256": "36811881418d2c60bdbaa5fe934198995fa9fe86f938f72fca439c68f6463b01",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/protocol.mjs",
+      "bytes": 12246,
+      "sha256": "4780aaf92b90134eca58f7cdd9555f6ea668d0d26db25c5a2dc561fb931d9a83",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-public.ps1",
+      "bytes": 12102,
+      "sha256": "2ba36cb6ca94c6fd362cd1d40aa39fa2c7168ab117d4974fb45bcd3d2ea92015",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-record.mjs",
+      "bytes": 6255,
+      "sha256": "39d73bfef3912b41f987af95e856ff39b6ee41854a51ce088f5a4e7ecb8c0218",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/signed-result.mjs",
+      "bytes": 5862,
+      "sha256": "4387c0233095433de36ffcb77f4874b9c53e7d042cf4140872e4edc9e03c2572",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/windows-issuer.mjs",
+      "bytes": 8618,
+      "sha256": "18b09488e444f60df67a04509012112b1ca42caff8dfdf3684f1e19fd768d897",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/qualification.mjs",
+      "bytes": 8606,
+      "sha256": "b3e34250f92f84d29e4e61bc9054fe60ec3668583d3756462ecb6bceaaff3b21",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs",
+      "bytes": 21257,
+      "sha256": "838e0d5fb229e1a924f2f618abc63971c42cb8edb1dd39cd777d65db1cb77ea3",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs",
+      "bytes": 16646,
+      "sha256": "fcba80dc493509e17d18ad8435d397bf9155abdc7743293b7feba1a1cace0ac2",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs",
+      "bytes": 30507,
+      "sha256": "aeb5719d49a7070258fe93d6a541fa3f26125b53e180f3130d94e57929949ab3",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": ".github/workflows/contract-placement.yml",
+      "bytes": 5129,
+      "sha256": "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
+      "oldSha256": "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
+      "operation": "retain"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/adapter.mjs",
+      "bytes": 15386,
+      "sha256": "32fe8e9db7c92a57e74e749446c4fc9156455cb7017af662d00bc8ca734321e8",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/container-entry.mjs",
+      "bytes": 7371,
+      "sha256": "65b9ac9cf984301e0dbeeb941b7471730b19b8ac3576b57b444b1a6dd3eb426e",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/integration.mjs",
+      "bytes": 855,
+      "sha256": "668c4d15bf442b2e77d88ac4f35c3a633c0828a5604917401ec4814f9e020b2f",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/policy.mjs",
+      "bytes": 16505,
+      "sha256": "215f76a7ce611dc043be044c8ae5ed9a74bd04be8e41f63fd431e9258735dadd",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/adapter.mjs",
+      "bytes": 13804,
+      "sha256": "032e2ecb68c01e4916e04b093ea6b3a8a9830afe87a5c30b99e18af323f3df6d",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/docker-transport.mjs",
+      "bytes": 2300,
+      "sha256": "d1af2b99949aacee374cb6c1e279430bd717ad756210aad3ad885fc420dafd06",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/prepare.mjs",
+      "bytes": 26464,
+      "sha256": "01c187b33239122b25ddd206fe70b19b471ab43f0288be4ef1a41fd9aef5f7c1",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/selftest-shim.mjs",
+      "bytes": 9284,
+      "sha256": "6d4989c91a845239e9aa815f276a6de663cf5cf6a3fa6c2f0e3b47f535357008",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/adapter.mjs",
+      "bytes": 16318,
+      "sha256": "b1c5041298cc51528e87d71cb9ea2fc5ea2bda03aaf3d977f0c11d803a570c6a",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/cache.mjs",
+      "bytes": 13742,
+      "sha256": "72fa21849b42bfbd32ef83e42d43a4c0533cd8f61ddfaf2b40a1dc619da33071",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/docker.mjs",
+      "bytes": 12738,
+      "sha256": "79ed4b48354618f9c8b48c3561f993da6091fa5997d814b49ea410072d20415a",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/boundary.mjs",
+      "bytes": 13840,
+      "sha256": "6129b10c8909e51acbf47a572529c748d20dcddbef588335ae858c4eacd9c9d6",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/formal-spool-acl.ps1",
+      "bytes": 9486,
+      "sha256": "f518f00848b44815e7a7ffdcf6416d6906e6cb711b135807f761d9c012b0eb46",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/held-source.mjs",
+      "bytes": 4541,
+      "sha256": "657eb727c7748602fb6259fd20de3dab8ea8abc3be8b784d9fc579ea384d58a9",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/hold-source.ps1",
+      "bytes": 9641,
+      "sha256": "97cb22fbaf16d3c04c2b66aff1296fa1346041c645ea09484fd3a3d1d1f3a397",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/issue-job.mjs",
+      "bytes": 2033,
+      "sha256": "0646977c04a5ba8dcc72df13a89d8684d2cf898149df1965db25410d0896386a",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/linux-worker.mjs",
+      "bytes": 4866,
+      "sha256": "36e3d36b7bf406aafbab0ce83593d549c923e1cbbb1d4ab129491124f7231434",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/mailbox.mjs",
+      "bytes": 6504,
+      "sha256": "36811881418d2c60bdbaa5fe934198995fa9fe86f938f72fca439c68f6463b01",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/protocol.mjs",
+      "bytes": 12422,
+      "sha256": "44237b6c8db7d0cea2db663aa7b77ee9e6715a1f3620af80961759e64c187a23",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-public.ps1",
+      "bytes": 12118,
+      "sha256": "3ff4a414966416fcf6a65d209699babab79ec68286f03432abe2b7e17f434ad1",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-record.mjs",
+      "bytes": 6450,
+      "sha256": "df56d2c25a8e3077ebe08ce9203701c5b8eec36ee38989ada17f5910acf8f3b6",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/signed-result.mjs",
+      "bytes": 8843,
+      "sha256": "7392bd9b9af395d2e39cf10c5e4d41e7ecb690f9c1628f92210a3dbaec5acc38",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/windows-issuer.mjs",
+      "bytes": 8618,
+      "sha256": "18b09488e444f60df67a04509012112b1ca42caff8dfdf3684f1e19fd768d897",
+      "oldSha256": null,
+      "operation": "create-if-absent"
+    }
+  ],
+  "unselectedOldSourceMustRemain": [
+    {
+      "path": ".github/workflows/active-doc-links.yml",
+      "sha256": "7f5dce87816ce519ee72ab1093955319f5ec224cc600a0e2f4743bf02c3ac2a4"
+    },
+    {
+      "path": ".github/workflows/clued-capture-guard.yml",
+      "sha256": "5ffca57e143036fcd891805d2fa51eb02f5447c75b4f4ade6476012324b6924a"
+    },
+    {
+      "path": ".github/workflows/clued-ci-health.yml",
+      "sha256": "960aa651f60ca035fa070d03a477b0edee54052f82df4b35b008aa5b772cdd07"
+    },
+    {
+      "path": ".github/workflows/clued-ci-runner-heartbeat.yml",
+      "sha256": "bf85111d1c417f2d6c3ece67ec397d9bde58d06a1ed00e91e95ec2f7353a76ea"
+    },
+    {
+      "path": ".github/workflows/clued-ci-usage-report.yml",
+      "sha256": "b439bd0dbc48bd6bc365f77a5a82ea18b47dfd3167c03519c1b302c497873c3f"
+    },
+    {
+      "path": ".github/workflows/clued-cloud-node22-install.yml",
+      "sha256": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97"
+    },
+    {
+      "path": ".github/workflows/clued-cloud-production-release.yml",
+      "sha256": "d836a95e37ba35581ebc41bdf8a4f6d517beeeec433803cff90c833224270d46"
+    },
+    {
+      "path": ".github/workflows/clued-cloud-quality-gate.yml",
+      "sha256": "dd05c39a6dee035a500d4ba56c5d49a7f5f784ddfa7aa2f2032493d7d809739d"
+    },
+    {
+      "path": ".github/workflows/clued-components.yml",
+      "sha256": "e652630eb5048a28eccfb02aa272ff5cfcb2267932272ba0e2a6705b06e53b49"
+    },
+    {
+      "path": ".github/workflows/clued-connection-authorization.yml",
+      "sha256": "0de704b484c993d5a9d9759d4c17d1644e2035d9e71172b0259ad2b3c3519ba9"
+    },
+    {
+      "path": ".github/workflows/clued-currentness-post-deploy-attestation.yml",
+      "sha256": "fb24d919e6213d4751307a9beacddf48f77fa139c9577b236e30a522c0490003"
+    },
+    {
+      "path": ".github/workflows/clued-g4-database.yml",
+      "sha256": "4e274f8709e1b638d26659fd17138eb7b8b435104ed1b79bbeffe545456676a0"
+    },
+    {
+      "path": ".github/workflows/clued-handover-disposable-idle.yml",
+      "sha256": "f72524c1b5ab32a762aec59007bf85dc0ae1ddb9a9e74f38e768dbf712faaa0e"
+    },
+    {
+      "path": ".github/workflows/clued-handover-external-qualification.yml",
+      "sha256": "4f59187f16e4d2808a7816ac9f0c72efcbc7b9ebf2524902c8f08ace65063d19"
+    },
+    {
+      "path": ".github/workflows/clued-information-flow-prod-e2e.yml",
+      "sha256": "1adc9215caf3d62c3b46fbcf7018558c7a21631202dc99941dc789b4a22deaba"
+    },
+    {
+      "path": ".github/workflows/clued-integration-runtime-config.yml",
+      "sha256": "33d77f8df2456521da18e9ef2724d9a90ca8eefcdebfdba988395bf1c5f88050"
+    },
+    {
+      "path": ".github/workflows/clued-integration-runtime-nightly.yml",
+      "sha256": "a9f72034accb3c199f207ec942339dd97f04dfdca925394400b356158e8ff1d2"
+    },
+    {
+      "path": ".github/workflows/clued-merge-executor.yml",
+      "sha256": "deb70de1c176d25af057a728b3d2fb94cd3ba6a9ca183c4bd242cab3db212835"
+    },
+    {
+      "path": ".github/workflows/clued-merge-slot-ci.yml",
+      "sha256": "5b733df448c656f0a9a1cf98e95a33f44169d17f76b1b4d454014c4d2139baf1"
+    },
+    {
+      "path": ".github/workflows/clued-release-tags.yml",
+      "sha256": "069b2c1d2a692e769234942c2d192079e0a2ed4fd03d084567b664c828c04a55"
+    },
+    {
+      "path": ".github/workflows/clued-storage-executor-window.yml",
+      "sha256": "27ec893da5185096b710ae1ac9ee33578f5355d2087ea72c5d9dfc922b03e4dc"
+    },
+    {
+      "path": ".github/workflows/clued-storage-read-config.yml",
+      "sha256": "0f75dee942dc529a83dcdb3daae05c704683e1dca1add1e682e31cc5991d4a67"
+    },
+    {
+      "path": ".github/workflows/clued-work-admission-dispatch.yml",
+      "sha256": "c070ee8e042885f100fecae791438cf6d7e6f88189c66e8f65c6b6dbf1a475be"
+    },
+    {
+      "path": ".github/workflows/clued-work-admission-reverify.yml",
+      "sha256": "8cf7dc0817360c962391ab22c41a7451ee9a01ad0e5833d0f2fbb45152cae560"
+    },
+    {
+      "path": ".github/workflows/clued-work-admission.yml",
+      "sha256": "ced258f8f7001f1e730305464974bbcbe97dd5502b5b51250be3d84dc58a3155"
+    },
+    {
+      "path": ".github/workflows/clued-work-claim-handover-revoke.yml",
+      "sha256": "f11742735cd0fe2af5e2b2e00384f0aba3c2833546f62b6607ae930ae71b4911"
+    },
+    {
+      "path": ".github/workflows/clued-work-handover-qualification-company-linux-01.yml",
+      "sha256": "3738f8f610b776c6ad26ece82e90de848008cf5365a141fd378d009a0d1a4c4b"
+    },
+    {
+      "path": ".github/workflows/clued-work-handover-qualification-company-linux-02.yml",
+      "sha256": "7c5b46dd52e318cc2a745057f325be4e53498b5760df5c371087669c363139c4"
+    },
+    {
+      "path": ".github/workflows/clued-work-handover-qualification-company-linux-03.yml",
+      "sha256": "0109e57b59e94faf8c152fe0f861541eaa974d5bf783280a5d3b777b98335159"
+    },
+    {
+      "path": ".github/workflows/clued-work-handover-qualification-company-linux-04.yml",
+      "sha256": "e3b35b4d7e0ab3dd2f2491d85bc61f4d2196d7774780d300d5be07a5910c0629"
+    },
+    {
+      "path": ".github/workflows/clued-work-handover-qualification-company-win-01.yml",
+      "sha256": "dec104e90e576d22229d9a320168f91c677f2c82611494f1b2c4f14fcbf53780"
+    },
+    {
+      "path": ".github/workflows/clued-work-handover-qualification-home-linux-01.yml",
+      "sha256": "610590b365426a594ce10f732accc1e2fea86c79183c32a8e5b617057e8de3e1"
+    },
+    {
+      "path": ".github/workflows/clued-work-handover-qualification-home-win-01.yml",
+      "sha256": "695deb0d77646b22adc842d1aace94a9aa7edeb01e9ad47e72b4dd3866b51ca8"
+    },
+    {
+      "path": ".github/workflows/design-refs.yml",
+      "sha256": "b07f5d4a484392692ede099c18a7e8777e28df7eab51715e7dd54fec17e82800"
+    },
+    {
+      "path": ".github/workflows/information-flow-e2e.yml",
+      "sha256": "dfbe58c1edf4caacda109dfdf39b19fc66526bcb503ea10992472f8e9c086e1c"
+    },
+    {
+      "path": ".github/workflows/memory-publication-gate.yml",
+      "sha256": "6aa417be2389d3f0195ab6540bab27b336fa3287a9c3586daa564bdd9c3db207"
+    },
+    {
+      "path": ".github/workflows/model-program-m0.yml",
+      "sha256": "bc96ac9d43bdfdf8c6add9d6193319d14c3f4f9045aec34da7a072e81cf64873"
+    },
+    {
+      "path": ".github/workflows/model-program-m1-entry.yml",
+      "sha256": "292ad955d30b61e7c26751396255761986816829aa6291b762d2bbbc2011fe3f"
+    },
+    {
+      "path": ".github/workflows/model-program-m1-harness.yml",
+      "sha256": "dddf57a98e78ce8f16ecff1e177a7a39600dc3db2fc49fe32de77f09f3998399"
+    },
+    {
+      "path": ".github/workflows/model-program-m1-package.yml",
+      "sha256": "f33730bb86a84ec99465b14549b36f0526e7d6814bda196ce98afe92b74bd818"
+    },
+    {
+      "path": ".github/workflows/model-program-m2-scoped-consumer.yml",
+      "sha256": "9df7e67f93fbc13c2abd8211f31c5a848384e06b0c55e7762939861df2870c24"
+    },
+    {
+      "path": ".github/workflows/mps03-native-agent.yml",
+      "sha256": "501dd2e429cea4beeeca8bf2293c60bc62d6f91579fff480ebc553c016e21b32"
+    },
+    {
+      "path": ".github/workflows/multitrack-governance-projection.yml",
+      "sha256": "216fed619d310d4ee266acb63ba97a8e42e279a8653d46a32a40734fff32a5df"
+    },
+    {
+      "path": ".github/workflows/node-profile-policy.yml",
+      "sha256": "c0e14909f0530ca4f710bc85a72777917605c2dfc006e083100598c4d1c554c1"
+    },
+    {
+      "path": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "sha256": "51a972e99792ab4d219711b8b86a3c0aa794286598bdb5452144875886c76b32"
+    },
+    {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "sha256": "63ba535d691f613bdbd0ad496e331dd0adc28d6ecbfd101a5fe970b31bb19dd7"
+    },
+    {
+      "path": ".github/workflows/public-mcp-behavior.yml",
+      "sha256": "644d79d52f4b3e376300461f8260f25715bfa254ed75b990bbb279f0f7cedc38"
+    },
+    {
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "sha256": "61e8b15588e3c1d39586b71020ab7fee97fd8665c0f7867f056610b4570c5f00"
+    },
+    {
+      "path": ".github/workflows/public-mcp-protocol.yml",
+      "sha256": "17fb876b9ef5b0f169b4601eb633381a677b9c9b02b5e23678ddba1a794daca9"
+    },
+    {
+      "path": ".github/workflows/runner-budget-policy.yml",
+      "sha256": "dda08be0e13d271d495a625d0ad25d4c60646ccc805bcc0542056b1c46fc778d"
+    },
+    {
+      "path": "apps/clued-cloud/app/supabase-public-config.ts",
+      "sha256": "f6517407ee13879fd2dccd36c718278fb9dbe6291caf61237202699aa38ab3a4"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/verify-once.mjs",
+      "sha256": "5ecb7c20cc7189b16db4c7dba306d629e1b01ea7ca770addd80c884cbc55e330"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/verify-spool-acl.ps1",
+      "sha256": "09d2cab0ba81a16ed77ba51ba60b411cedac8a8d45041f8dce2c0b6d87ad65e8"
+    }
+  ],
+  "finiteLeavesPreserved": [
+    {
+      "path": "verify-once.json",
+      "bytes": 1882,
+      "sha256": "05a400387345511c2d724f1926e9b16efc75f5f0a98d5e7cae946c73b604baa7"
+    },
+    {
+      "path": "verify-once-acceptance.json",
+      "bytes": 13641,
+      "sha256": "ceb07ea99d9b0ec06f47ea2f200d58a9d519a4d14ab6201cd05a18173ca2a092"
+    },
+    {
+      "path": "verify-service-entry.json",
+      "bytes": 1032,
+      "sha256": "0c0530abee2073380d33156a042ba72df47af01d57c2c54c54da5be4c9042a81"
+    },
+    {
+      "path": "verify-once-job.json",
+      "bytes": 568,
+      "sha256": "1148f773481cace81adbad44987dea0a85fed03c50937385e0fdbecbd295b5b8"
+    },
+    {
+      "path": "controller-verify-once-ack-v1.exe",
+      "bytes": 41472,
+      "sha256": "2c0435131e08e778343f01bb5354c27b00152e3e662c21e03a4e4a7be210ffd9"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 name: contract-placement
 
-# Task af536fcc; ComponentVersioning.v0.2 §2.4. Always a real hosted conclusion.
+# Work-only candidate, NOT REGISTERED / NOT INSTALLED.
+# Same complete placement checks on the existing trusted Linux CI pool; no hosted fallback.
+# Candidate PR code never runs on the controller secret-bearing principal.
 on:
   pull_request:
   push:
@@ -14,18 +16,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  admission-gate:
+    name: admission-gate
+    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+      automation_self_hosted: ${{ steps.gate.outputs.automation_self_hosted }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - id: gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
   contract-placement:
     name: contract-placement
-    runs-on: ubuntu-latest
+    needs: admission-gate
+    if: needs.admission-gate.outputs.admitted == 'true'
+    runs-on: ["self-hosted","Linux","X64","clued","pool-general","trust-internal"]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))
         with:
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
+      - name: Require a qualified ordinary CI subject before candidate execution
+        env:
+          CLUED_AUTOMATION_SELF_HOSTED: ${{ needs.admission-gate.outputs.automation_self_hosted }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          const e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
+          const own=process.env.GITHUB_REPOSITORY==='tdoljyj/cross-memory-system' && e.repository?.full_name===process.env.GITHUB_REPOSITORY;
+          const trustedPush=process.env.GITHUB_EVENT_NAME==='push' && process.env.GITHUB_REF==='refs/heads/main';
+          const trustedPr=process.env.GITHUB_EVENT_NAME==='pull_request' && e.pull_request?.base?.ref==='main' && e.pull_request?.head?.repo?.full_name===process.env.GITHUB_REPOSITORY && (process.env.GITHUB_ACTOR===process.env.GITHUB_REPOSITORY_OWNER || process.env.CLUED_AUTOMATION_SELF_HOSTED==='true');
+          if(!own || (!trustedPush && !trustedPr)){console.error('contract-placement: subject is not qualified for the persistent internal CI pool');process.exit(1);}
+          NODE
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
       - name: Placement and renderer fixtures

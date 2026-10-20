@@ -1,4 +1,5 @@
 import base64
+import collections
 import copy
 import hashlib
 import importlib.util
@@ -60,7 +61,7 @@ class ReviewedArtifactDigestTests(unittest.TestCase):
     def test_exact_record_count_and_artifact_reason(self):
         records = reviewed.parse_records(self.config)
         exact = [r for r in records if ':' + reviewed.REVIEW_DOCUMENT_PATH + ':' in r['fingerprint']]
-        self.assertEqual(len(records), 533)
+        self.assertEqual(len(records), 726)
         legacy_digest = hashlib.sha256(json.dumps(records[:484], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(legacy_digest, 'b10a7c8542f886ccce1daec04057ad5a5873ef9d75eae1643ccc879289b39172')
         prior_digest = hashlib.sha256(json.dumps(records[:491], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
@@ -146,7 +147,7 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
     def test_changed_registry_count_is_rejected(self):
         row = next(line for line in self.config.splitlines() if line.startswith(reviewed.PREFIX)
                    and reviewed.FINAL_EVIDENCE_COMMIT in line)
-        for changed in [self.config.replace('# clued-reviewed-count: 533', '# clued-reviewed-count: 532'),
+        for changed in [self.config.replace('# clued-reviewed-count: 726', '# clued-reviewed-count: 725'),
                         self.config.replace(row + '\n', '', 1), self.config + row + '\n']:
             with self.subTest():
                 with self.assertRaisesRegex(ValueError, 'Reviewed finding count changed'):
@@ -235,6 +236,56 @@ class FinalEvidenceArtifactDigestTests(unittest.TestCase):
         with self.targeted_bad_blob(reviewed.FINAL_SOURCE_PATH):
             with self.assertRaisesRegex(ValueError, 'differs from immutable artifact'):
                 self.verify(reviewed.FINAL_ENVELOPE_PATH, 192)
+
+
+class ExactPathFindingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.config = (ROOT / '.gitleaks.toml').read_text(encoding='utf-8')
+        cls.rows = {path: next(line for line in cls.config.splitlines()
+                               if line.startswith(reviewed.PREFIX) and f':{path}:' in line)
+                    for path in reviewed.EXACT_PATH_FINDINGS}
+
+    def test_exact_paths_are_admitted_only_at_their_pinned_identity(self):
+        records = reviewed.parse_records(self.config)
+        exact = {r['fingerprint']: r['kinds'] for r in records
+                 if r['fingerprint'].split(':')[1] in reviewed.EXACT_PATH_FINDINGS}
+        self.assertEqual(len(exact), 10)
+        for path, locations in reviewed.EXACT_PATH_FINDINGS.items():
+            for (commit, line), kind in locations.items():
+                self.assertEqual(exact[f'{commit}:{path}:generic-api-key:{line}'], [kind])
+
+    def test_exact_path_identity_changes_are_rejected(self):
+        for path, row in self.rows.items():
+            (commit, line), kind = next(iter(reviewed.EXACT_PATH_FINDINGS[path].items()))
+            for substitute in [row.replace(commit, '0' * 40),
+                               row.replace(f':generic-api-key:{line}"', f':generic-api-key:{line + 1}"'),
+                               row.replace(f'"kinds":["{kind}"]', '"kinds":["GA_RECORD_ID"]')]:
+                with self.subTest(path=path, substitute=substitute):
+                    with self.assertRaisesRegex(ValueError, 'Exact path exception identity changed'):
+                        reviewed.parse_records(self.config.replace(row, substitute, 1))
+
+    def test_exact_paths_are_not_prefixes(self):
+        for path, row in self.rows.items():
+            for other in [path + '.other', path.rsplit('/', 1)[0] + '/other' + Path(path).suffix]:
+                with self.subTest(path=path, other=other):
+                    with self.assertRaisesRegex(ValueError, 'Non-exact finding location'):
+                        reviewed.parse_records(self.config.replace(row, row.replace(path, other), 1))
+
+    def test_missing_exact_identity_cannot_borrow_another_allowed_location(self):
+        path, row = next(iter(self.rows.items()))
+        substitute = row.replace(path, 'apps/clued-cloud/tests/other.txt')
+        with self.assertRaisesRegex(ValueError, 'Exact path exception set changed'):
+            reviewed.parse_records(self.config.replace(row, substitute, 1))
+
+    def test_new_exact_kinds_are_fixed_reasons(self):
+        records = reviewed.parse_records(self.config)
+        kinds = collections.Counter(kind for record in records for kind in record['kinds'])
+        self.assertEqual(kinds['PUBLIC_KEY_FINGERPRINT'], 18)
+        self.assertEqual(kinds['OAUTH_CLIENT_ID'], 2)
+        row = next(line for line in self.config.splitlines() if '"kinds":["OAUTH_CLIENT_ID"]' in line)
+        with self.assertRaisesRegex(ValueError, 'Unreviewed reason'):
+            reviewed.parse_records(self.config.replace(row, row.replace('OAUTH_CLIENT_ID', 'OAUTH_CLIENT_SECRET'), 1))
 
 
 class PatchGitObjectMetadataTests(unittest.TestCase):

@@ -1,0 +1,32 @@
+{
+  "contract": "clued.independent-ci.linux-formal-install-source/1",
+  "status": "SOURCE_CANDIDATE_NOT_INSTALLED",
+  "defaultEnabled": false,
+  "hostExecuted": false,
+  "qualificationIssued": false,
+  "checksWritten": false,
+  "files": {
+    "install.mjs": "2e9c496ac7ebd37c2ee00a39774e36aa29b21b8f87f0dc18f561ef6f900f6c04",
+    "selftest.mjs": "ec26c5d24e390777d58960902aeef1a1f226fd4e95292fd0dcf06265ee0e6b41",
+    "README.md": "4f2ab3bf9da43724bb1c52238819b8b0496721c61286fa8f84f3354a6e3e3511"
+  },
+  "directExistingDependencies": {
+    "worker/qualification.mjs": "b3e34250f92f84d29e4e61bc9054fe60ec3668583d3756462ecb6bceaaff3b21",
+    "worker/formal-fixed-role-policy-v2/policy.mjs": "215f76a7ce611dc043be044c8ae5ed9a74bd04be8e41f63fd431e9258735dadd",
+    "worker/linux-launcher.mjs": "befed130b3e027219991b8ece8a8630c03ffe18996ba57bec4c7d0863ebaaf5e",
+    "worker/required-trivy-v2/plans.mjs": "fcba80dc493509e17d18ad8435d397bf9155abdc7743293b7feba1a1cace0ac2",
+    "host/linux-verify-config-v2/public-files.mjs": "7451eccdfa5d381c652b761b93782dcaf94f3af29e8401bcb4b30c66469d51e9"
+  },
+  "closureRequirement": "Reuse the accepted existing complete role runtime closure; the direct dependency list alone is not a deployment closure. Installer and reused public-files primitive must also be committed and pinned in installerSourceFiles of the accepted plan.",
+  "validation": {
+    "syntaxCheck": "PASS",
+    "sourceFixtureGuards": 9,
+    "actualLinuxInstall": false,
+    "actualRoleReadiness": false,
+    "actualQualification": false
+  },
+  "effects": {
+    "whenExplicitlyAcceptedAndInvoked": "Create-new fixed manifest, three signed-qualification input files, three role policies, intent and receipt; existing protected roles directory may be reused or created if absent; original Git/engine/image/readiness reads only.",
+    "never": ["issue or sign qualification", "read private key bytes", "start service", "create or start containers", "pull images", "download cache", "write GitHub Checks", "merge", "release", "replace existing targets", "automatic retry"]
+  }
+}

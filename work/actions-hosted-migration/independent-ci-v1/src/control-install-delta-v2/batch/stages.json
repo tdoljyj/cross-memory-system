@@ -1,0 +1,75 @@
+{
+  "contract": "clued.independent-ci.fixed-six-check-stages/1",
+  "stages": [
+    {
+      "number": 1,
+      "name": "native-work-admission",
+      "entryRole": "work-admission",
+      "jobRole": "work-admission",
+      "runMilliseconds": 900000,
+      "linuxWorker": false
+    },
+    {
+      "number": 2,
+      "name": "gitleaks-execution",
+      "entryRole": "scanner-issuer",
+      "jobRole": "gitleaks",
+      "runMilliseconds": 2700000,
+      "linuxWorker": true
+    },
+    {
+      "number": 3,
+      "name": "gitleaks-publication",
+      "entryRole": "check-publisher",
+      "jobRole": "gitleaks",
+      "runMilliseconds": 900000,
+      "linuxWorker": false
+    },
+    {
+      "number": 4,
+      "name": "trivy-execution",
+      "entryRole": "scanner-issuer",
+      "jobRole": "trivy",
+      "runMilliseconds": 1800000,
+      "linuxWorker": true
+    },
+    {
+      "number": 5,
+      "name": "trivy-publication",
+      "entryRole": "check-publisher",
+      "jobRole": "trivy",
+      "runMilliseconds": 900000,
+      "linuxWorker": false
+    },
+    {
+      "number": 6,
+      "name": "placement-execution",
+      "entryRole": "scanner-issuer",
+      "jobRole": "contract-placement",
+      "runMilliseconds": 600000,
+      "linuxWorker": true
+    },
+    {
+      "number": 7,
+      "name": "placement-publication",
+      "entryRole": "check-publisher",
+      "jobRole": "contract-placement",
+      "runMilliseconds": 900000,
+      "linuxWorker": false
+    },
+    {
+      "number": 8,
+      "name": "native-control-pair",
+      "entryRole": "control-checks",
+      "jobRole": "control-admission",
+      "runMilliseconds": 900000,
+      "linuxWorker": false
+    }
+  ],
+  "starts": 8,
+  "maximumStops": 8,
+  "linuxWorkers": 3,
+  "nodeMaximumMilliseconds": 9600000,
+  "automaticRetryAllowed": false,
+  "sourceInstallations": 1
+}

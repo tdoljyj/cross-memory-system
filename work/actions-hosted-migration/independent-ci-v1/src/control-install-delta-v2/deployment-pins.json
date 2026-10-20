@@ -1,0 +1,1019 @@
+{
+  "contract": "clued.independent-ci.six-check-deployment-source/1",
+  "controlMinimum": 60,
+  "scannerMinimum": 58,
+  "physicalUnion": 84,
+  "unchangedScannerAdditions": 24,
+  "runtimeFiles": [
+    {
+      "path": ".github/workflows/gitleaks.yml",
+      "bytes": 5927,
+      "sha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579"
+    },
+    {
+      "path": ".github/workflows/trivy.yml",
+      "bytes": 9461,
+      "sha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d"
+    },
+    {
+      "path": ".gitleaks.toml",
+      "bytes": 186507,
+      "sha256": "cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd"
+    },
+    {
+      "path": "config/merge-admission-policy.json",
+      "bytes": 1971,
+      "sha256": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-source.mjs",
+      "bytes": 43883,
+      "sha256": "83f965131dcffcc0e551b52a26bb4311b6c6486565251d9e483e4b6b266fb33a"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-sources.json",
+      "bytes": 265316,
+      "sha256": "8618e81aa26aa19269a2a2ca3ef6da304bdb00b1e79531828c5b5899fced03a1"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-profiles.json",
+      "bytes": 811444,
+      "sha256": "b98439c82546edcc750e264df58b8b7c328e22e01dc6f662facdacf7e325d256"
+    },
+    {
+      "path": "scripts/ci/clued-gated-proof-role-specs.json",
+      "bytes": 145552,
+      "sha256": "0493cf57a6c25756f6c57a7a34d026d8bbdeb5a6d2bfd514fe7a5d7a70683e6c"
+    },
+    {
+      "path": "scripts/ci/clued-production-publisher-source.mjs",
+      "bytes": 10281,
+      "sha256": "abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a"
+    },
+    {
+      "path": "scripts/ci/clued-production-publisher-sources.json",
+      "bytes": 126971,
+      "sha256": "e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf"
+    },
+    {
+      "path": "scripts/ci/clued-publisher-qualification-source.mjs",
+      "bytes": 10247,
+      "sha256": "f88a6a7bf1018250407bd754cd3dd5733ee90e068cdc71e2893a0a285c5ff048"
+    },
+    {
+      "path": "scripts/ci/clued-publisher-qualification-sources.json",
+      "bytes": 21779,
+      "sha256": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c"
+    },
+    {
+      "path": "scripts/ci/clued-work-admission.mjs",
+      "bytes": 177342,
+      "sha256": "6942fa7f03ab21282d6005f1a893e610f0a21a11a45bb3c6ad87d0f75fef9b9f"
+    },
+    {
+      "path": "scripts/ci/clued-workflow-profile.mjs",
+      "bytes": 50044,
+      "sha256": "65904668b637a6be526d15de0b75ac4c08a59c9c84b58b3c71d7cae978e99a41"
+    },
+    {
+      "path": "scripts/ci/merge-admission-measurement-history.mjs",
+      "bytes": 10652,
+      "sha256": "f05140eb055ba05650c9e517af04c065b7b1e76ede6bd7b7fa4c8f441fc9624e"
+    },
+    {
+      "path": "scripts/ci/merge-admission-policy.mjs",
+      "bytes": 16881,
+      "sha256": "b3bf3ddb82dd22b61bb1f2e3ca7c10f10b6b4acd8dfbd528ae0e2f557c27c5d3"
+    },
+    {
+      "path": "scripts/ci/merge-admission-source-producer.mjs",
+      "bytes": 39631,
+      "sha256": "67667bf45a008c6580f29a2d90466e8fc96c54c75806d8422a2fc47d985c62a7"
+    },
+    {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "bytes": 32878,
+      "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9"
+    },
+    {
+      "path": "scripts/runner/clued-runner-job-started.mjs",
+      "bytes": 38896,
+      "sha256": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs",
+      "bytes": 20547,
+      "sha256": "25530d8939a17618f3c7ec18987ceb840192e17a223963433c0f9ea83e1c0c06"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/protected-files.mjs",
+      "bytes": 5022,
+      "sha256": "4e9c034377528741a48477facfa4541dfedb67468f675b4cdc20e9bb4aad0ccb"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/verify-install-acl.ps1",
+      "bytes": 7520,
+      "sha256": "09d17148e2dd5d7527a0b88b8f2e084cf7627935e9db2f38b3f73add24867966"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs",
+      "bytes": 4001,
+      "sha256": "583b6512174de412842032f56d3172bd7a191ba955641c16c956a943d9be326a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/publisher.mjs",
+      "bytes": 19445,
+      "sha256": "168742155b146578d001cafda75821f53b073ce1c8964f7ee4ebcb25a6509590"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/startup.mjs",
+      "bytes": 909,
+      "sha256": "dbbdbb1d83c13b36d8d68b175be18135dfcb88b4e5aec3fe52c6eb39b44bd242"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs",
+      "bytes": 12056,
+      "sha256": "31567d1c751a4d4a9a58b539a6e0c6b5fc7191dfe242a4c27c91961d07aae070"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
+      "bytes": 10727,
+      "sha256": "df4273b834c6ad9be895bb97240ec510f9bd4f84fc926989d79189e922d065dc"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/closure.mjs",
+      "bytes": 3860,
+      "sha256": "b07314520a4757a4f59c5f8caf9d82b818afe2f01c47e9a7bfb4b96928d9c28a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs",
+      "bytes": 1786,
+      "sha256": "da4c5781fff4e140633d65c29e7633c0c49954d85a9ffdcead23cb519c7c6e6a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/publisher.mjs",
+      "bytes": 27378,
+      "sha256": "aca80e2c691fa1da816d7796bb7da6a6c70a909e28993499e0ca1405038eda79"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/queue-facts.mjs",
+      "bytes": 810,
+      "sha256": "5b158efd811052bea8371c9f349a9932a7164980dd0ed56d5b051183c35c019c"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/startup.mjs",
+      "bytes": 929,
+      "sha256": "b60d7119dc5200a4e242d522c20ad3307b9e3f7ec0a35ab5c874f6e2df5aeb7e"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/proof.mjs",
+      "bytes": 3699,
+      "sha256": "ed5f8800d27eb1ee5666c12983cac6b93ec5a2398a0c4dcf762e55b4a29f976b"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/queue.mjs",
+      "bytes": 18605,
+      "sha256": "63c05f00ce6d1100af631e4387b024fbfed67a606e6d18f2de76eeffe707cf89"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher.mjs",
+      "bytes": 18713,
+      "sha256": "2b3fcda1cd21912be4195386762067c5baae3c6a28cd7bab6a21b2194307d577"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/worker.mjs",
+      "bytes": 24820,
+      "sha256": "67803ba150f0b22af5459af4b83f7910835221caea845a54a46a70d39ec7608c"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/adapter.mjs",
+      "bytes": 13757,
+      "sha256": "5ea16409c95e6bbd133ffdc280752bb120ff3252bc48dbf65ffe513aae616dcd"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/docker-transport.mjs",
+      "bytes": 2300,
+      "sha256": "d1af2b99949aacee374cb6c1e279430bd717ad756210aad3ad885fc420dafd06"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/prepare.mjs",
+      "bytes": 22051,
+      "sha256": "7e1356a2a1d979ea54faf4348f37e73391d1ef2041b8ea43a75b6f51fe2d931c"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/selftest-shim.mjs",
+      "bytes": 9284,
+      "sha256": "6d4989c91a845239e9aa815f276a6de663cf5cf6a3fa6c2f0e3b47f535357008"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/adapter.mjs",
+      "bytes": 16274,
+      "sha256": "3bc3e4b346d332a3806f13171ea83be9d8d81b5971914fbfbe4ff1b90970b5e1"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/cache.mjs",
+      "bytes": 13742,
+      "sha256": "72fa21849b42bfbd32ef83e42d43a4c0533cd8f61ddfaf2b40a1dc619da33071"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/docker.mjs",
+      "bytes": 12210,
+      "sha256": "88fc02ce19223307ce45d27c63e99d12d5f4ccf3ece1052d00ea9f0637803182"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/linux-launcher.mjs",
+      "bytes": 21518,
+      "sha256": "befed130b3e027219991b8ece8a8630c03ffe18996ba57bec4c7d0863ebaaf5e"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-controller-ports-v1/refs.mjs",
+      "bytes": 5445,
+      "sha256": "ec31352c5e168133c87622c1451d1f383ebf86c282a63d2c0027464f4dd561a8"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/boundary.mjs",
+      "bytes": 13011,
+      "sha256": "d05f94586d1cc4b9c56ed8d4958c690e674eff4121a68a1e56d8875429b1fa8d"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/formal-spool-acl.ps1",
+      "bytes": 9486,
+      "sha256": "f518f00848b44815e7a7ffdcf6416d6906e6cb711b135807f761d9c012b0eb46"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/held-source.mjs",
+      "bytes": 4541,
+      "sha256": "657eb727c7748602fb6259fd20de3dab8ea8abc3be8b784d9fc579ea384d58a9"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/hold-source.ps1",
+      "bytes": 9641,
+      "sha256": "97cb22fbaf16d3c04c2b66aff1296fa1346041c645ea09484fd3a3d1d1f3a397"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/linux-worker.mjs",
+      "bytes": 4385,
+      "sha256": "e300cc729e713c6a9179a8b038dd659b9c02ce970c5f7f9d8b11e6f32cac9acd"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/mailbox.mjs",
+      "bytes": 6504,
+      "sha256": "36811881418d2c60bdbaa5fe934198995fa9fe86f938f72fca439c68f6463b01"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/protocol.mjs",
+      "bytes": 12246,
+      "sha256": "4780aaf92b90134eca58f7cdd9555f6ea668d0d26db25c5a2dc561fb931d9a83"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-public.ps1",
+      "bytes": 12102,
+      "sha256": "2ba36cb6ca94c6fd362cd1d40aa39fa2c7168ab117d4974fb45bcd3d2ea92015"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-record.mjs",
+      "bytes": 6255,
+      "sha256": "39d73bfef3912b41f987af95e856ff39b6ee41854a51ce088f5a4e7ecb8c0218"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/signed-result.mjs",
+      "bytes": 5862,
+      "sha256": "4387c0233095433de36ffcb77f4874b9c53e7d042cf4140872e4edc9e03c2572"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/windows-issuer.mjs",
+      "bytes": 8618,
+      "sha256": "18b09488e444f60df67a04509012112b1ca42caff8dfdf3684f1e19fd768d897"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/qualification.mjs",
+      "bytes": 8606,
+      "sha256": "b3e34250f92f84d29e4e61bc9054fe60ec3668583d3756462ecb6bceaaff3b21"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs",
+      "bytes": 21257,
+      "sha256": "838e0d5fb229e1a924f2f618abc63971c42cb8edb1dd39cd777d65db1cb77ea3"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs",
+      "bytes": 16646,
+      "sha256": "fcba80dc493509e17d18ad8435d397bf9155abdc7743293b7feba1a1cace0ac2"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs",
+      "bytes": 30507,
+      "sha256": "aeb5719d49a7070258fe93d6a541fa3f26125b53e180f3130d94e57929949ab3"
+    },
+    {
+      "path": ".github/workflows/contract-placement.yml",
+      "bytes": 5129,
+      "sha256": "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/adapter.mjs",
+      "bytes": 15386,
+      "sha256": "32fe8e9db7c92a57e74e749446c4fc9156455cb7017af662d00bc8ca734321e8"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/container-entry.mjs",
+      "bytes": 7371,
+      "sha256": "65b9ac9cf984301e0dbeeb941b7471730b19b8ac3576b57b444b1a6dd3eb426e"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/integration.mjs",
+      "bytes": 855,
+      "sha256": "668c4d15bf442b2e77d88ac4f35c3a633c0828a5604917401ec4814f9e020b2f"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/policy.mjs",
+      "bytes": 16505,
+      "sha256": "215f76a7ce611dc043be044c8ae5ed9a74bd04be8e41f63fd431e9258735dadd"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/adapter.mjs",
+      "bytes": 13804,
+      "sha256": "032e2ecb68c01e4916e04b093ea6b3a8a9830afe87a5c30b99e18af323f3df6d"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/docker-transport.mjs",
+      "bytes": 2300,
+      "sha256": "d1af2b99949aacee374cb6c1e279430bd717ad756210aad3ad885fc420dafd06"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/prepare.mjs",
+      "bytes": 26464,
+      "sha256": "01c187b33239122b25ddd206fe70b19b471ab43f0288be4ef1a41fd9aef5f7c1"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/selftest-shim.mjs",
+      "bytes": 9284,
+      "sha256": "6d4989c91a845239e9aa815f276a6de663cf5cf6a3fa6c2f0e3b47f535357008"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/adapter.mjs",
+      "bytes": 16318,
+      "sha256": "b1c5041298cc51528e87d71cb9ea2fc5ea2bda03aaf3d977f0c11d803a570c6a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/cache.mjs",
+      "bytes": 13742,
+      "sha256": "72fa21849b42bfbd32ef83e42d43a4c0533cd8f61ddfaf2b40a1dc619da33071"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/docker.mjs",
+      "bytes": 12738,
+      "sha256": "79ed4b48354618f9c8b48c3561f993da6091fa5997d814b49ea410072d20415a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/boundary.mjs",
+      "bytes": 13840,
+      "sha256": "6129b10c8909e51acbf47a572529c748d20dcddbef588335ae858c4eacd9c9d6"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/formal-spool-acl.ps1",
+      "bytes": 9486,
+      "sha256": "f518f00848b44815e7a7ffdcf6416d6906e6cb711b135807f761d9c012b0eb46"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/held-source.mjs",
+      "bytes": 4541,
+      "sha256": "657eb727c7748602fb6259fd20de3dab8ea8abc3be8b784d9fc579ea384d58a9"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/hold-source.ps1",
+      "bytes": 9641,
+      "sha256": "97cb22fbaf16d3c04c2b66aff1296fa1346041c645ea09484fd3a3d1d1f3a397"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/issue-job.mjs",
+      "bytes": 2033,
+      "sha256": "0646977c04a5ba8dcc72df13a89d8684d2cf898149df1965db25410d0896386a"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/linux-worker.mjs",
+      "bytes": 4866,
+      "sha256": "36e3d36b7bf406aafbab0ce83593d549c923e1cbbb1d4ab129491124f7231434"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/mailbox.mjs",
+      "bytes": 6504,
+      "sha256": "36811881418d2c60bdbaa5fe934198995fa9fe86f938f72fca439c68f6463b01"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/protocol.mjs",
+      "bytes": 12422,
+      "sha256": "44237b6c8db7d0cea2db663aa7b77ee9e6715a1f3620af80961759e64c187a23"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-public.ps1",
+      "bytes": 12118,
+      "sha256": "3ff4a414966416fcf6a65d209699babab79ec68286f03432abe2b7e17f434ad1"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-record.mjs",
+      "bytes": 6450,
+      "sha256": "df56d2c25a8e3077ebe08ce9203701c5b8eec36ee38989ada17f5910acf8f3b6"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/signed-result.mjs",
+      "bytes": 8843,
+      "sha256": "7392bd9b9af395d2e39cf10c5e4d41e7ecb690f9c1628f92210a3dbaec5acc38"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/windows-issuer.mjs",
+      "bytes": 8618,
+      "sha256": "18b09488e444f60df67a04509012112b1ca42caff8dfdf3684f1e19fd768d897"
+    }
+  ],
+  "sources": {
+    ".github/workflows/gitleaks.yml": {
+      "path": ".github/workflows/gitleaks.yml",
+      "bytes": 5927,
+      "sha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\.github\\workflows\\gitleaks.yml",
+      "basis": "control-reviewed60"
+    },
+    ".github/workflows/trivy.yml": {
+      "path": ".github/workflows/trivy.yml",
+      "bytes": 9461,
+      "sha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\.github\\workflows\\trivy.yml",
+      "basis": "control-reviewed60"
+    },
+    ".gitleaks.toml": {
+      "path": ".gitleaks.toml",
+      "bytes": 186507,
+      "sha256": "cf631812810d997f42496af561f44930b51087737f146c4a7541c5dbc0a994cd",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\.gitleaks.toml",
+      "basis": "control-reviewed60"
+    },
+    "config/merge-admission-policy.json": {
+      "path": "config/merge-admission-policy.json",
+      "bytes": 1971,
+      "sha256": "76dd3694e2de8216cabcf21f4f04fc7fe364534b49438a042921b065c5de92d7",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\config\\merge-admission-policy.json",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-control-workflow-source.mjs": {
+      "path": "scripts/ci/clued-control-workflow-source.mjs",
+      "bytes": 43883,
+      "sha256": "83f965131dcffcc0e551b52a26bb4311b6c6486565251d9e483e4b6b266fb33a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\scripts\\ci\\clued-control-workflow-source.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-control-workflow-sources.json": {
+      "path": "scripts/ci/clued-control-workflow-sources.json",
+      "bytes": 265316,
+      "sha256": "8618e81aa26aa19269a2a2ca3ef6da304bdb00b1e79531828c5b5899fced03a1",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\scripts\\ci\\clued-control-workflow-sources.json",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-gated-proof-profiles.json": {
+      "path": "scripts/ci/clued-gated-proof-profiles.json",
+      "bytes": 811444,
+      "sha256": "b98439c82546edcc750e264df58b8b7c328e22e01dc6f662facdacf7e325d256",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\scripts\\ci\\clued-gated-proof-profiles.json",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-gated-proof-role-specs.json": {
+      "path": "scripts/ci/clued-gated-proof-role-specs.json",
+      "bytes": 145552,
+      "sha256": "0493cf57a6c25756f6c57a7a34d026d8bbdeb5a6d2bfd514fe7a5d7a70683e6c",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\scripts\\ci\\clued-gated-proof-role-specs.json",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-production-publisher-source.mjs": {
+      "path": "scripts/ci/clued-production-publisher-source.mjs",
+      "bytes": 10281,
+      "sha256": "abbd23c15357fc190ab60cedd98770e47e821dbcc5a0ba83c2fa4f5e3f09081a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\clued-production-publisher-source.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-production-publisher-sources.json": {
+      "path": "scripts/ci/clued-production-publisher-sources.json",
+      "bytes": 126971,
+      "sha256": "e1eea0d0e0580294a92e2a66988ef996ced6c4584d67431222c68c7437a291cf",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\clued-production-publisher-sources.json",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-publisher-qualification-source.mjs": {
+      "path": "scripts/ci/clued-publisher-qualification-source.mjs",
+      "bytes": 10247,
+      "sha256": "f88a6a7bf1018250407bd754cd3dd5733ee90e068cdc71e2893a0a285c5ff048",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\clued-publisher-qualification-source.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-publisher-qualification-sources.json": {
+      "path": "scripts/ci/clued-publisher-qualification-sources.json",
+      "bytes": 21779,
+      "sha256": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\clued-publisher-qualification-sources.json",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-work-admission.mjs": {
+      "path": "scripts/ci/clued-work-admission.mjs",
+      "bytes": 177342,
+      "sha256": "6942fa7f03ab21282d6005f1a893e610f0a21a11a45bb3c6ad87d0f75fef9b9f",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\overlay\\scripts\\ci\\clued-work-admission.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/clued-workflow-profile.mjs": {
+      "path": "scripts/ci/clued-workflow-profile.mjs",
+      "bytes": 50044,
+      "sha256": "65904668b637a6be526d15de0b75ac4c08a59c9c84b58b3c71d7cae978e99a41",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\clued-workflow-profile.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/merge-admission-measurement-history.mjs": {
+      "path": "scripts/ci/merge-admission-measurement-history.mjs",
+      "bytes": 10652,
+      "sha256": "f05140eb055ba05650c9e517af04c065b7b1e76ede6bd7b7fa4c8f441fc9624e",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\merge-admission-measurement-history.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/merge-admission-policy.mjs": {
+      "path": "scripts/ci/merge-admission-policy.mjs",
+      "bytes": 16881,
+      "sha256": "b3bf3ddb82dd22b61bb1f2e3ca7c10f10b6b4acd8dfbd528ae0e2f557c27c5d3",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\merge-admission-policy.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/merge-admission-source-producer.mjs": {
+      "path": "scripts/ci/merge-admission-source-producer.mjs",
+      "bytes": 39631,
+      "sha256": "67667bf45a008c6580f29a2d90466e8fc96c54c75806d8422a2fc47d985c62a7",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\merge-admission-source-producer.mjs",
+      "basis": "control-reviewed60"
+    },
+    "scripts/ci/reviewed_gitleaks.py": {
+      "path": "scripts/ci/reviewed_gitleaks.py",
+      "bytes": 32878,
+      "sha256": "433b24137a7d3430990b69e61c0b4ebcd9dad47d770c5df62d6e1fef28b7f7a9",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\ci\\reviewed_gitleaks.py",
+      "basis": "control-reviewed60"
+    },
+    "scripts/runner/clued-runner-job-started.mjs": {
+      "path": "scripts/runner/clued-runner-job-started.mjs",
+      "bytes": 38896,
+      "sha256": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\host\\formal-source-material-20261019\\repository\\scripts\\runner\\clued-runner-job-started.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs",
+      "bytes": 20547,
+      "sha256": "25530d8939a17618f3c7ec18987ceb840192e17a223963433c0f9ea83e1c0c06",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\overlay\\work\\actions-hosted-migration\\independent-ci-v1\\runtime\\one-shot.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/runtime/protected-files.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/protected-files.mjs",
+      "bytes": 5022,
+      "sha256": "4e9c034377528741a48477facfa4541dfedb67468f675b4cdc20e9bb4aad0ccb",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\runtime\\protected-files.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/runtime/verify-install-acl.ps1": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/runtime/verify-install-acl.ps1",
+      "bytes": 7520,
+      "sha256": "09d17148e2dd5d7527a0b88b8f2e084cf7627935e9db2f38b3f73add24867966",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\runtime\\verify-install-acl.ps1",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs",
+      "bytes": 4001,
+      "sha256": "583b6512174de412842032f56d3172bd7a191ba955641c16c956a943d9be326a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\effect-journal.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/publisher.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/publisher.mjs",
+      "bytes": 19445,
+      "sha256": "168742155b146578d001cafda75821f53b073ce1c8964f7ee4ebcb25a6509590",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\overlay\\work\\actions-hosted-migration\\independent-ci-v1\\src\\formal-work-admission-check-v1\\publisher.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/startup.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v1/startup.mjs",
+      "bytes": 909,
+      "sha256": "dbbdbb1d83c13b36d8d68b175be18135dfcb88b4e5aec3fe52c6eb39b44bd242",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\formal-work-admission-check-v1\\startup.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/full-admission.mjs",
+      "bytes": 12056,
+      "sha256": "31567d1c751a4d4a9a58b539a6e0c6b5fc7191dfe242a4c27c91961d07aae070",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\overlay\\work\\actions-hosted-migration\\independent-ci-v1\\src\\full-admission.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/github.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/github.mjs",
+      "bytes": 10727,
+      "sha256": "df4273b834c6ad9be895bb97240ec510f9bd4f84fc926989d79189e922d065dc",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\github.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/closure.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/closure.mjs",
+      "bytes": 3860,
+      "sha256": "b07314520a4757a4f59c5f8caf9d82b818afe2f01c47e9a7bfb4b96928d9c28a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\closure.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/consumer.mjs",
+      "bytes": 1786,
+      "sha256": "da4c5781fff4e140633d65c29e7633c0c49954d85a9ffdcead23cb519c7c6e6a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\consumer.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/publisher.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/publisher.mjs",
+      "bytes": 27378,
+      "sha256": "aca80e2c691fa1da816d7796bb7da6a6c70a909e28993499e0ca1405038eda79",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\publisher.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/queue-facts.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/queue-facts.mjs",
+      "bytes": 810,
+      "sha256": "5b158efd811052bea8371c9f349a9932a7164980dd0ed56d5b051183c35c019c",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\queue-facts.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/startup.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v1/startup.mjs",
+      "bytes": 929,
+      "sha256": "b60d7119dc5200a4e242d522c20ad3307b9e3f7ec0a35ab5c874f6e2df5aeb7e",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\startup.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/proof.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/proof.mjs",
+      "bytes": 3699,
+      "sha256": "ed5f8800d27eb1ee5666c12983cac6b93ec5a2398a0c4dcf762e55b4a29f976b",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\proof.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/queue.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/queue.mjs",
+      "bytes": 18605,
+      "sha256": "63c05f00ce6d1100af631e4387b024fbfed67a606e6d18f2de76eeffe707cf89",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\queue.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/staged-check-publisher.mjs",
+      "bytes": 18713,
+      "sha256": "2b3fcda1cd21912be4195386762067c5baae3c6a28cd7bab6a21b2194307d577",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\staged-check-publisher.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/src/worker.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/src/worker.mjs",
+      "bytes": 24820,
+      "sha256": "67803ba150f0b22af5459af4b83f7910835221caea845a54a46a70d39ec7608c",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\worker.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/adapter.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/adapter.mjs",
+      "bytes": 13757,
+      "sha256": "5ea16409c95e6bbd133ffdc280752bb120ff3252bc48dbf65ffe513aae616dcd",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v2\\adapter.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/docker-transport.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/docker-transport.mjs",
+      "bytes": 2300,
+      "sha256": "d1af2b99949aacee374cb6c1e279430bd717ad756210aad3ad885fc420dafd06",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v2\\docker-transport.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/prepare.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/prepare.mjs",
+      "bytes": 22051,
+      "sha256": "7e1356a2a1d979ea54faf4348f37e73391d1ef2041b8ea43a75b6f51fe2d931c",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v2\\required-history\\prepare.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/selftest-shim.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v2/required-history/selftest-shim.mjs",
+      "bytes": 9284,
+      "sha256": "6d4989c91a845239e9aa815f276a6de663cf5cf6a3fa6c2f0e3b47f535357008",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v2\\required-history\\selftest-shim.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/adapter.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/adapter.mjs",
+      "bytes": 16274,
+      "sha256": "3bc3e4b346d332a3806f13171ea83be9d8d81b5971914fbfbe4ff1b90970b5e1",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-trivy-v2\\adapter.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/cache.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/cache.mjs",
+      "bytes": 13742,
+      "sha256": "72fa21849b42bfbd32ef83e42d43a4c0533cd8f61ddfaf2b40a1dc619da33071",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-trivy-v2\\cache.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/docker.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v2/docker.mjs",
+      "bytes": 12210,
+      "sha256": "88fc02ce19223307ce45d27c63e99d12d5f4ccf3ece1052d00ea9f0637803182",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-trivy-v2\\docker.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/linux-launcher.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/linux-launcher.mjs",
+      "bytes": 21518,
+      "sha256": "befed130b3e027219991b8ece8a8630c03ffe18996ba57bec4c7d0863ebaaf5e",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\linux-launcher.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-controller-ports-v1/refs.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-controller-ports-v1/refs.mjs",
+      "bytes": 5445,
+      "sha256": "ec31352c5e168133c87622c1451d1f383ebf86c282a63d2c0027464f4dd561a8",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-controller-ports-v1\\refs.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/boundary.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/boundary.mjs",
+      "bytes": 13011,
+      "sha256": "d05f94586d1cc4b9c56ed8d4958c690e674eff4121a68a1e56d8875429b1fa8d",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\boundary.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/formal-spool-acl.ps1": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/formal-spool-acl.ps1",
+      "bytes": 9486,
+      "sha256": "f518f00848b44815e7a7ffdcf6416d6906e6cb711b135807f761d9c012b0eb46",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\formal-spool-acl.ps1",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/held-source.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/held-source.mjs",
+      "bytes": 4541,
+      "sha256": "657eb727c7748602fb6259fd20de3dab8ea8abc3be8b784d9fc579ea384d58a9",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\held-source.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/hold-source.ps1": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/hold-source.ps1",
+      "bytes": 9641,
+      "sha256": "97cb22fbaf16d3c04c2b66aff1296fa1346041c645ea09484fd3a3d1d1f3a397",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\hold-source.ps1",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/linux-worker.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/linux-worker.mjs",
+      "bytes": 4385,
+      "sha256": "e300cc729e713c6a9179a8b038dd659b9c02ce970c5f7f9d8b11e6f32cac9acd",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\linux-worker.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/mailbox.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/mailbox.mjs",
+      "bytes": 6504,
+      "sha256": "36811881418d2c60bdbaa5fe934198995fa9fe86f938f72fca439c68f6463b01",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\mailbox.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/protocol.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/protocol.mjs",
+      "bytes": 12246,
+      "sha256": "4780aaf92b90134eca58f7cdd9555f6ea668d0d26db25c5a2dc561fb931d9a83",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\protocol.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-public.ps1": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-public.ps1",
+      "bytes": 12102,
+      "sha256": "2ba36cb6ca94c6fd362cd1d40aa39fa2c7168ab117d4974fb45bcd3d2ea92015",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\relay-public.ps1",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-record.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/relay-record.mjs",
+      "bytes": 6255,
+      "sha256": "39d73bfef3912b41f987af95e856ff39b6ee41854a51ce088f5a4e7ecb8c0218",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\relay-record.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/signed-result.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/signed-result.mjs",
+      "bytes": 5862,
+      "sha256": "4387c0233095433de36ffcb77f4874b9c53e7d042cf4140872e4edc9e03c2572",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\signed-result.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/windows-issuer.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v2/windows-issuer.mjs",
+      "bytes": 8618,
+      "sha256": "18b09488e444f60df67a04509012112b1ca42caff8dfdf3684f1e19fd768d897",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v2\\windows-issuer.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/qualification.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/qualification.mjs",
+      "bytes": 8606,
+      "sha256": "b3e34250f92f84d29e4e61bc9054fe60ec3668583d3756462ecb6bceaaff3b21",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\qualification.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-gitleaks/prepare.mjs",
+      "bytes": 21257,
+      "sha256": "838e0d5fb229e1a924f2f618abc63971c42cb8edb1dd39cd777d65db1cb77ea3",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\required-gitleaks\\prepare.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/required-trivy-v2/plans.mjs",
+      "bytes": 16646,
+      "sha256": "fcba80dc493509e17d18ad8435d397bf9155abdc7743293b7feba1a1cace0ac2",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\required-trivy-v2\\plans.mjs",
+      "basis": "control-reviewed60"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/verify-once/verify-worker.mjs",
+      "bytes": 30507,
+      "sha256": "aeb5719d49a7070258fe93d6a541fa3f26125b53e180f3130d94e57929949ab3",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\verify-once\\verify-worker.mjs",
+      "basis": "control-reviewed60"
+    },
+    ".github/workflows/contract-placement.yml": {
+      "path": ".github/workflows/contract-placement.yml",
+      "bytes": 5129,
+      "sha256": "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\.github\\workflows\\contract-placement.yml",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/adapter.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/adapter.mjs",
+      "bytes": 15386,
+      "sha256": "32fe8e9db7c92a57e74e749446c4fc9156455cb7017af662d00bc8ca734321e8",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-contract-placement-v1\\adapter.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/container-entry.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-contract-placement-v1/container-entry.mjs",
+      "bytes": 7371,
+      "sha256": "65b9ac9cf984301e0dbeeb941b7471730b19b8ac3576b57b444b1a6dd3eb426e",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-contract-placement-v1\\container-entry.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/integration.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/integration.mjs",
+      "bytes": 855,
+      "sha256": "668c4d15bf442b2e77d88ac4f35c3a633c0828a5604917401ec4814f9e020b2f",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-fixed-role-policy-v2\\integration.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/policy.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-fixed-role-policy-v2/policy.mjs",
+      "bytes": 16505,
+      "sha256": "215f76a7ce611dc043be044c8ae5ed9a74bd04be8e41f63fd431e9258735dadd",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-fixed-role-policy-v2\\policy.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/adapter.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/adapter.mjs",
+      "bytes": 13804,
+      "sha256": "032e2ecb68c01e4916e04b093ea6b3a8a9830afe87a5c30b99e18af323f3df6d",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v3\\adapter.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/docker-transport.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/docker-transport.mjs",
+      "bytes": 2300,
+      "sha256": "d1af2b99949aacee374cb6c1e279430bd717ad756210aad3ad885fc420dafd06",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v3\\docker-transport.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/prepare.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/prepare.mjs",
+      "bytes": 26464,
+      "sha256": "01c187b33239122b25ddd206fe70b19b471ab43f0288be4ef1a41fd9aef5f7c1",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v3\\required-history\\prepare.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/selftest-shim.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v3/required-history/selftest-shim.mjs",
+      "bytes": 9284,
+      "sha256": "6d4989c91a845239e9aa815f276a6de663cf5cf6a3fa6c2f0e3b47f535357008",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-gitleaks-v3\\required-history\\selftest-shim.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/adapter.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/adapter.mjs",
+      "bytes": 16318,
+      "sha256": "b1c5041298cc51528e87d71cb9ea2fc5ea2bda03aaf3d977f0c11d803a570c6a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-trivy-v3\\adapter.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/cache.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/cache.mjs",
+      "bytes": 13742,
+      "sha256": "72fa21849b42bfbd32ef83e42d43a4c0533cd8f61ddfaf2b40a1dc619da33071",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-trivy-v3\\cache.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/docker.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/formal-trivy-v3/docker.mjs",
+      "bytes": 12738,
+      "sha256": "79ed4b48354618f9c8b48c3561f993da6091fa5997d814b49ea410072d20415a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\formal-trivy-v3\\docker.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/boundary.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/boundary.mjs",
+      "bytes": 13840,
+      "sha256": "6129b10c8909e51acbf47a572529c748d20dcddbef588335ae858c4eacd9c9d6",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\boundary.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/formal-spool-acl.ps1": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/formal-spool-acl.ps1",
+      "bytes": 9486,
+      "sha256": "f518f00848b44815e7a7ffdcf6416d6906e6cb711b135807f761d9c012b0eb46",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\formal-spool-acl.ps1",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/held-source.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/held-source.mjs",
+      "bytes": 4541,
+      "sha256": "657eb727c7748602fb6259fd20de3dab8ea8abc3be8b784d9fc579ea384d58a9",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\held-source.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/hold-source.ps1": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/hold-source.ps1",
+      "bytes": 9641,
+      "sha256": "97cb22fbaf16d3c04c2b66aff1296fa1346041c645ea09484fd3a3d1d1f3a397",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\hold-source.ps1",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/issue-job.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/issue-job.mjs",
+      "bytes": 2033,
+      "sha256": "0646977c04a5ba8dcc72df13a89d8684d2cf898149df1965db25410d0896386a",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\issue-job.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/linux-worker.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/linux-worker.mjs",
+      "bytes": 4866,
+      "sha256": "36e3d36b7bf406aafbab0ce83593d549c923e1cbbb1d4ab129491124f7231434",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\linux-worker.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/mailbox.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/mailbox.mjs",
+      "bytes": 6504,
+      "sha256": "36811881418d2c60bdbaa5fe934198995fa9fe86f938f72fca439c68f6463b01",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\mailbox.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/protocol.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/protocol.mjs",
+      "bytes": 12422,
+      "sha256": "44237b6c8db7d0cea2db663aa7b77ee9e6715a1f3620af80961759e64c187a23",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\protocol.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-public.ps1": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-public.ps1",
+      "bytes": 12118,
+      "sha256": "3ff4a414966416fcf6a65d209699babab79ec68286f03432abe2b7e17f434ad1",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\relay-public.ps1",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-record.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/relay-record.mjs",
+      "bytes": 6450,
+      "sha256": "df56d2c25a8e3077ebe08ce9203701c5b8eec36ee38989ada17f5910acf8f3b6",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\relay-record.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/signed-result.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/signed-result.mjs",
+      "bytes": 8843,
+      "sha256": "7392bd9b9af395d2e39cf10c5e4d41e7ecb690f9c1628f92210a3dbaec5acc38",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\signed-result.mjs",
+      "basis": "unchanged-formal-scanner58"
+    },
+    "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/windows-issuer.mjs": {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v3/windows-issuer.mjs",
+      "bytes": 8618,
+      "sha256": "18b09488e444f60df67a04509012112b1ca42caff8dfdf3684f1e19fd768d897",
+      "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\worker\\protected-job-bridge-v3\\windows-issuer.mjs",
+      "basis": "unchanged-formal-scanner58"
+    }
+  }
+}
