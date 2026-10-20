@@ -224,6 +224,25 @@ test('a connect-phase PATCH failure is sent again after the read-back shows it n
   assert.equal(fake.calls[runKey], 1);
 });
 
+test('a token refresh needed by a write read-back stays inside the retry budget', async () => {
+  const mintKey = `POST /app/installations/${INSTALLATION_ID}/access_tokens`;
+  const lost = state => { state.now += 6_000; state.checks.push(ours({ id: 321 })); return reset(); };
+  const fake = github({ faults: { [postKey]: [lost] } });
+  const port = fake.port();
+  await port.getInstallationToken();
+  fake.state.now += 3_600_000 - 65_000; // 65 s left: still valid for the POST, not for its read-back
+  assert.equal((await port.createCheck(publication)).id, 321);
+  assert.equal(fake.calls[mintKey], 2);
+  assert.equal(fake.calls[postKey], 1);
+  const slow = github({ faults: { [postKey]: [lost], [mintKey]: [null, state => { state.now += 5_000; }] } });
+  const late = slow.port();
+  await late.getInstallationToken();
+  slow.state.now += 3_600_000 - 65_000;
+  await assert.rejects(late.createCheck(publication), { code: 'github_transport_unconfirmed' });
+  assert.equal(slow.calls[postKey], 1);
+  assert.equal(slow.calls['GET /installation/repositories'], 1); // the late refresh is cut off by the budget
+});
+
 // Real undici failures over loopback: api.github.com is mapped to a local server.
 async function loopback(t, route) {
   const counts = {}, server = http.createServer((req, res) => {

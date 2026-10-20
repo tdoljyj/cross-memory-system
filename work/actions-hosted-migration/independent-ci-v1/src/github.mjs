@@ -110,26 +110,27 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       throw failure;
     } finally { reservation.ms = Math.max(0, clock() - opened); }
   }
-  async function credential() {
+  // `until` (a write read-back) also bounds a token refresh it needs.
+  async function credential(until = null) {
     if (token && Date.parse(token.expires_at) > clock() + 60_000) return token.token;
     let appJwt;
     try { appJwt = jwt(appId, await privateKeyProvider(), clock()); }
     catch { fail('github_credential_unavailable'); }
-    const app = await request('https://api.github.com/app', 'GET', appJwt);
+    const app = await request('https://api.github.com/app', 'GET', appJwt, undefined, { until });
     if (app.id !== appId) fail('unexpected_app_identity');
     const requested = { checks: 'write', contents: 'read', pull_requests: 'read',
       ...(includeModeRead ? { actions_variables: 'read', environments: 'read' } : {}) };
     // Minting changes no repository state; a token whose reply was lost is never
     // seen or used and expires by itself, so this exchange repeats like a read.
     const minted = await request(`https://api.github.com/app/installations/${installationId}/access_tokens`, 'POST', appJwt,
-      { repository_ids: [repositoryId], permissions: requested }, { repeatable: true });
+      { repository_ids: [repositoryId], permissions: requested }, { repeatable: true, until });
     const permissions = minted.permissions;
     const allowed = { ...requested, metadata: 'read' };
     if (!minted.token || !Number.isFinite(Date.parse(minted.expires_at))
       || Date.parse(minted.expires_at) <= clock() || Date.parse(minted.expires_at) > clock() + 3_660_000
       || !permissions || Object.entries(permissions).some(([name, value]) => allowed[name] !== value)
       || !Object.keys(requested).every(name => permissions[name] === allowed[name])) fail('unexpected_installation_token_scope');
-    const repos = await request('https://api.github.com/installation/repositories?per_page=100', 'GET', minted.token);
+    const repos = await request('https://api.github.com/installation/repositories?per_page=100', 'GET', minted.token, undefined, { until });
     if (repos.total_count !== 1 || repos.repositories?.length !== 1 || repos.repositories[0].id !== repositoryId
       || repos.repositories[0].full_name !== repository) fail('unexpected_repository_scope');
     token = minted;
@@ -137,7 +138,7 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
   }
   async function scoped(route, method = 'GET', body, options) {
     if (!route.startsWith('/') || route.includes('..')) fail('invalid_github_route');
-    return request(`${root}${route}`, method, await credential(), body, options);
+    return request(`${root}${route}`, method, await credential(options?.until ?? null), body, options);
   }
   function exactPr(pr, job) {
     return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha
