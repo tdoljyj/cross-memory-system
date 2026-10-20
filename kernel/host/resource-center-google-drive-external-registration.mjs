@@ -82,7 +82,10 @@ export function createGoogleDriveExternalRegistrationObserver({ metadata, clock 
         if (raw.parents[0] !== plan.root_parent_id || raw.name !== plan.managed_root.split('/').at(-1)) fail('ROOT_CHANGED');
         path = plan.managed_root;
       } else {
-        const parent = await read(raw.parents[0]);
+        // A registered item may have been moved into a newly created folder.
+        // Resolve that exact parent chain now; each new link must terminate at
+        // this focus directory and is adopted parent-first in the same batch.
+        const parent = await read(raw.parents[0], true);
         if (parent.target_kind !== 'directory') fail('PARENT_INVALID');
         path = parent.path + '/' + raw.name;
         if (path.length > 1000) fail('PATH_INVALID');
@@ -90,8 +93,8 @@ export function createGoogleDriveExternalRegistrationObserver({ metadata, clock 
         if (registered && (registered.governance_class !== 'ordinary' ||
             registered.path.slice(plan.managed_root.length + 1).indexOf('/') < 0) && path !== registered.path) fail('GOVERNANCE_CHANGED');
         if (registered && !selectedIds.has(id) && path !== registered.path) fail('ANCESTOR_CHANGED');
-        if (!registered && (parent.provider_file_id !== plan.focus_file_id || parent.provider_file_id === plan.root_folder_id ||
-            registry.get(parent.provider_file_id)?.governance_class !== 'ordinary' || parent.access_digest !== access)) fail('ADOPTION_DENIED');
+        if (!registered && (parent.provider_file_id !== plan.focus_file_id && registry.has(parent.provider_file_id) ||
+            parent.provider_file_id === plan.root_folder_id || parent.access_digest !== access)) fail('ADOPTION_DENIED');
       }
       const node = { provider_file_id: id, provider_file_version: raw.version, parent_id: raw.parents[0], name: raw.name,
         target_kind: kind, path, mime_type: raw.mimeType, access_digest: access, sharing_digest: sharing,
@@ -140,7 +143,8 @@ export function createGoogleDriveExternalRegistrationObserver({ metadata, clock 
     await prime(newIds);
     for (const id of newIds) await read(id, true);
     return { nodes: [...observed.values()].sort((a, b) => a.provider_file_id < b.provider_file_id ? -1 : 1),
-      selected_ids: selected.map(row => row.provider_file_id).sort(), new_ids: newIds.sort() };
+      selected_ids: selected.map(row => row.provider_file_id).sort(),
+      new_ids: [...observed.keys()].filter(id => !registry.has(id)).sort() };
   }
   return Object.freeze({ async observe(plan, { signal } = {}) {
     const pinned = structuredClone(plan), started = clock();

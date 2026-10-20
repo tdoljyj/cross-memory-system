@@ -27,6 +27,8 @@ the resource-center main entry, which the Owner separately deferred.
   provider version without overwriting file contents.
 - An unregistered ordinary child of a currently registered ordinary folder is
   automatically adopted under the existing full Drive scope and modify grant.
+  A registered file moved into new nested parents within the scanned folder
+  brings that verified parent chain into the same parent-first transaction.
   Root/track creation and governance registration retain their existing paths.
 - Shared/access-changed, missing, trashed, ambiguous, revoked, isolated or
   out-of-root objects do not get silently adopted or reauthorized. The program
@@ -45,6 +47,13 @@ root, registry and Decision versions. A browser/Agent cannot supply an owner,
 path, privilege or an authenticated program identity. Program calls use the
 existing authenticated issuer and database-gateway boundary.
 
+Before observing, the existing demand-renewal service checks the typed
+`external_registration` operation against current consent and the exact folder.
+It can renew an expiring credential only under the existing renewal delegation;
+an Off renewal switch never triggers a token exchange. The scan reloads its
+plan and current credential version afterwards. OAuth renewal uses its existing
+POST token exchange; registration observations themselves remain GET-only.
+
 The observer has GET-only Drive access. For each bounded plan it independently
 reads exact IDs, complete parent namespaces, ownership and permissions twice.
 Paths are derived from observed parent IDs and names back to the pinned root.
@@ -59,6 +68,15 @@ versions in one transaction with a new Event/Receipt. A failed receipt rolls
 back every change. Replays return only their original result and do not repeat
 updates; obsolete observations never restore revoked state or overwrite newer
 registry updates. An unchanged scan creates no registration mutation.
+
+Active-path uniqueness uses a deferrable, initially immediate exclusion
+constraint with the PostgreSQL `btree_gist` extension (UUID/text equality).
+The batch defers it only while applying path changes and checks it again before
+the Event/Receipt. Thus a swap of two names succeeds atomically; actual duplicate
+paths roll the whole batch back. Existing writers retain immediate checks. A
+separate ordinary partial B-tree index preserves path lookup access. The existing
+active provider-ID uniqueness and table row shape are unchanged. Deployment
+requires the extension; it is available on the target Supabase database.
 
 The existing scheduled invocation reserves at most two directories, with a
 five-minute minimum revisit interval. Each observation covers at most 256

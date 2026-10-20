@@ -48,6 +48,24 @@ test('external content edit and move resolve through the registered parent ident
   const row = (await f.observe()).first_observation.nodes.find(n => n.provider_file_id === 'file');
   assert.equal(row.path, 'G:/资料中心/20_产品/其他/新名称.txt'); assert.equal(row.content_identity.head_revision_id, 'revision9');
 });
+test('a registered file moved into new nested parents adopts its parent chain in the same observation', async () => {
+  const f = fixture(); f.plan.focus_file_id = 'nested';
+  f.files.set('new-parent', f.make('new-parent', '新文件夹', 'nested'));
+  f.files.set('new-child', f.make('new-child', '新子文件夹', 'new-parent'));
+  f.files.get('file').parents = ['new-child'];
+  const observed = (await f.observe()).first_observation;
+  assert.deepEqual(observed.new_ids, ['new-child', 'new-parent']);
+  assert.equal(observed.nodes.find(n => n.provider_file_id === 'file').path,
+    'G:/资料中心/20_产品/20_探索产出/候选/新文件夹/新子文件夹/logo.txt');
+  f.files.get('new-parent').shared = true;
+  await assert.rejects(f.observe(), /ACCESS_CHANGED/);
+});
+test('new parent adoption cannot escape through an unrelated registered directory', async () => {
+  const f = fixture(); f.plan.focus_file_id = 'nested';
+  f.files.set('new-parent', f.make('new-parent', '新文件夹', 'other'));
+  f.files.get('file').parents = ['new-parent'];
+  await assert.rejects(f.observe(), /ADOPTION_DENIED/);
+});
 
 test('a folder with 112 files uses bounded parallel metadata reads and includes every item', async () => {
   const f = fixture(); let active = 0, peak = 0;
@@ -63,7 +81,7 @@ test('a folder with 112 files uses bounded parallel metadata reads and includes 
 });
 for (const [name, mutate, reason] of [
   ['duplicate name', f => f.files.set('duplicate', f.make('duplicate', '20_探索产出', 'track')), 'NAME_AMBIGUOUS'],
-  ['move outside root', f => f.files.get('focus').parents = ['outside'], 'PARENT_UNREGISTERED'],
+  ['move outside root', f => f.files.get('focus').parents = ['outside'], 'IDENTITY_INVALID'],
   ['sharing change', f => f.files.get('focus').shared = true, 'ACCESS_CHANGED'],
   ['ownership change', f => f.files.get('focus').ownedByMe = false, 'ACCESS_CHANGED'],
   ['shortcut', f => { f.plan.focus_file_id = 'nested'; f.files.get('file').mimeType = 'application/vnd.google-apps.shortcut'; }, 'IDENTITY_INVALID'],

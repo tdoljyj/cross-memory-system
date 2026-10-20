@@ -71,11 +71,25 @@ test('external registration: real migration, Native opt-in and program commit',{
    try{
     const rpc=async input=>(await gateway.query('select public.clued_storage_access_digest_backfill_v1($1,$2::jsonb) v',[issuer,JSON.stringify(input)])).rows[0].v;
     const reference={connection_id:f.target.connection,artifact_id:source.id};
+    const prepare=async request=>(await gateway.query('select public.clued_storage_refresh_worker_v1($1,$2::jsonb) v',
+     [issuer,JSON.stringify({action:'prepare_credential',connection_id:f.target.connection,caller_kind:'maintenance',request})])).rows[0].v;
+    const renewalRequest={operation:'external_registration',artifact_id:source.id};
     await assert.rejects(rpc({action:'external_load',...reference}),/registration_denied/);
+    await assert.rejects(prepare(renewalRequest),/registration_denied/);
     const enableInput={action:'external_set',connection_id:f.target.connection,enabled:true,
      base_version:0,disclosure_version:'clued.storage-external-registration-disclosure/1',idempotency_key:uuid()};
     const enabled=await ownerRpc('clued_storage_write_access_v1',enableInput);
     assert.equal(enabled.enabled,true);
+    await t.test('typed renewal preflight requires current opt-in and the exact ordinary directory',async()=>{
+     const prepared=await prepare(renewalRequest);
+     assert.equal(prepared.contract,'clued.storage-demand-preflight/1');
+     assert.equal(prepared.connection_id,f.target.connection);
+     await assert.rejects(prepare({...renewalRequest,artifact_id:uuid()}),/demand_denied/);
+     await assert.rejects(prepare({...renewalRequest,path:'untrusted'}),/demand_denied/);
+     const rootId=await scalar(`select a.id v from clued_private.resource_center_artifacts_v1 a
+      join clued_private.resource_center_profiles_v1 p on p.id=a.profile_id where a.profile_id=$1 and a.provider_file_id=p.root_folder_id`,[f.target.profile]);
+     await assert.rejects(prepare({...renewalRequest,artifact_id:rootId}),/demand_denied/);
+    });
     await t.test('Native policy lost-reply replay returns the original version and does not retoggle',async()=>{
      assert.deepEqual(await ownerRpc('clued_storage_write_access_v1',enableInput),enabled);
      assert.equal((await ownerRpc('clued_storage_write_access_v1',{...enableInput,enabled:false})).status,'rejected');
@@ -103,7 +117,7 @@ test('external registration: real migration, Native opt-in and program commit',{
      assert.deepEqual(await ctx.artifactById(source.id),baseline);
      assert.deepEqual(await ctx.artifactById(child.id),baselineChild);
     };
-    for(const fault of ['missing-field','different-read','incomplete-subtree','outside-root','ancestor-access'])await t.test(fault+' cannot mutate a registry',async()=>{
+    for(const fault of ['missing-field','different-read','incomplete-subtree','outside-root','ancestor-access','existing-id-forgery'])await t.test(fault+' cannot mutate a registry',async()=>{
      const bad=structuredClone(input),one=bad.observation.first_observation;
      if(fault==='missing-field')delete one.nodes.find(n=>n.provider_file_id===source.provider_file_id).path;
      if(fault==='incomplete-subtree'){
@@ -112,6 +126,7 @@ test('external registration: real migration, Native opt-in and program commit',{
      }
      if(fault==='outside-root')one.nodes.find(n=>n.provider_file_id===source.provider_file_id).path='outside/new-name';
      if(fault==='ancestor-access')one.nodes.find(n=>n.provider_file_id===load.plan.root_folder_id).sharing_digest='a'.repeat(64);
+     if(fault==='existing-id-forgery')one.new_ids.push(load.plan.root_folder_id);
      if(fault!=='different-read')bad.observation.second_observation=structuredClone(one);
      else bad.observation.second_observation.nodes[0].provider_file_version='999';
      await assert.rejects(rpc(bad),/registration_/);await unchanged();
@@ -181,11 +196,52 @@ test('external registration: real migration, Native opt-in and program commit',{
      const updated=await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where id=$1',[newRow.id]);
      assert.equal(updated.provider_file_version,'2');assert.equal(updated.version,newRow.version+1);
     });
+    await t.test('two registered files may exchange paths atomically while real collisions still roll back',async()=>{
+     const secondId='second-'+uuid(),second={...newFile,id:secondId,name:'second.txt',version:'1'};
+     f.storage.files.set(secondId,second);
+     const initial=await rpc({action:'external_load',...reference});
+     await rpc({action:'external_commit',connection_id:f.target.connection,attempt_id:initial.attempt_id,
+      observation:await createGoogleDriveExternalRegistrationObserver({metadata}).observe(initial.plan)});
+     const secondRow=await ctx.artifactById(await scalar('select id v from clued_private.resource_center_artifacts_v1 where profile_id=$1 and provider_file_id=$2',[f.target.profile,secondId]));
+     const firstRow=await ctx.artifactById(newRow.id);
+     await assert.rejects(db.query('update clued_private.resource_center_artifacts_v1 set path=$2 where id=$1',[newRow.id,secondRow.path]),/exclusion constraint/);
+     const current=await rpc({action:'external_load',...reference});
+     [newFile.name,second.name]=[second.name,newFile.name];newFile.version='3';second.version='2';
+     const observed=await createGoogleDriveExternalRegistrationObserver({metadata}).observe(current.plan);
+     const bad=structuredClone(observed),first=bad.first_observation.nodes.find(n=>n.provider_file_id===newId),other=bad.first_observation.nodes.find(n=>n.provider_file_id===secondId);
+     other.path=first.path;other.name=first.name;bad.second_observation=structuredClone(bad.first_observation);
+     const count=await scalar('select count(*)::integer v from public.clued_audit_receipts');
+     await assert.rejects(rpc({action:'external_commit',connection_id:f.target.connection,attempt_id:current.attempt_id,observation:bad}),/exclusion constraint/);
+     assert.deepEqual(await ctx.artifactById(newRow.id),firstRow);assert.deepEqual(await ctx.artifactById(secondRow.id),secondRow);
+     assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),count);
+     const swapped=await rpc({action:'external_commit',connection_id:f.target.connection,attempt_id:current.attempt_id,observation:observed});
+     assert.equal(swapped.changed,2);
+     assert.equal((await ctx.artifactById(newRow.id)).path,secondRow.path);
+     assert.equal((await ctx.artifactById(secondRow.id)).path,firstRow.path);
+     assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),count+1);
+    });
+    await t.test('a move into a newly created parent chain registers parents and the same file together',async()=>{
+     const parentId='parent-'+uuid(),nestedId='nested-'+uuid();
+     for(const [id,name,parent] of [[parentId,'新父目录',source.provider_file_id],[nestedId,'新子目录',parentId]])
+      f.storage.files.set(id,{...f.storage.directory(id,name,parent),shared:false,permissionIds:['fixture-owner'],capabilities:{canListChildren:true}});
+     newFile.parents=[nestedId];newFile.version='4';
+     const current=await rpc({action:'external_load',...reference});
+     const observed=await createGoogleDriveExternalRegistrationObserver({metadata}).observe(current.plan);
+     assert.deepEqual(new Set(observed.first_observation.new_ids),new Set([parentId,nestedId]));
+     const result=await rpc({action:'external_commit',connection_id:f.target.connection,attempt_id:current.attempt_id,observation:observed});
+     assert.equal(result.changed,3);
+     assert.equal((await ctx.artifactById(newRow.id)).path,(await ctx.artifactById(source.id)).path+'/新父目录/新子目录/'+newFile.name);
+     for(const id of [parentId,nestedId]){
+      const row=await scalar('select to_jsonb(a) v from clued_private.resource_center_artifacts_v1 a where profile_id=$1 and provider_file_id=$2',[f.target.profile,id]);
+      assert.equal(row.source_decision_id,source.source_decision_id);assert.equal(row.delete_authority,false);
+     }
+    });
     const revokedAttempt=await rpc({action:'external_load',...reference});
     const revokedObservation=await createGoogleDriveExternalRegistrationObserver({metadata}).observe(revokedAttempt.plan);
     await ownerRpc('clued_storage_write_access_v1',{action:'external_set',connection_id:f.target.connection,enabled:false,
      base_version:enabled.version,disclosure_version:'clued.storage-external-registration-disclosure/1',idempotency_key:uuid()});
     await assert.rejects(rpc({action:'external_load',...reference}),/registration_denied/);
+    await assert.rejects(prepare(renewalRequest),/registration_denied/);
     await assert.rejects(rpc({action:'external_commit',connection_id:f.target.connection,attempt_id:revokedAttempt.attempt_id,observation:revokedObservation}),/registration_denied/);
     assert.equal(f.storage.patches,0);assert.equal(f.storage.deletes,0);
    }finally{await gateway.end();}

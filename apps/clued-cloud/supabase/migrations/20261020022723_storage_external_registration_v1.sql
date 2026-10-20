@@ -1,6 +1,19 @@
 -- Candidate successor: StorageExternalRegistration.v0.1. No Drive writes.
 -- Native opt-in and program calls retain the existing Native/Worker RPCs,
 -- authenticated issuer resolver and gateway grants. No new public RPC.
+-- Preserve active-path uniqueness while permitting atomic path permutations.
+-- It is immediate for every existing writer; only this reconciler defers it,
+-- and explicitly rechecks it before the Event/Receipt can commit.
+create extension if not exists btree_gist with schema extensions;
+do $paths$
+declare ns text;
+begin
+ select n.nspname into strict ns from pg_extension e join pg_namespace n on n.oid=e.extnamespace where e.extname='btree_gist';
+ execute format('alter table clued_private.resource_center_artifacts_v1 add constraint resource_center_artifacts_v1_path_active_excl
+  exclude using gist (profile_id %I.gist_uuid_ops with =,path %I.gist_text_ops with =) where (state=''active'') deferrable initially immediate',ns,ns);
+end $paths$;
+drop index clued_private.resource_center_artifacts_v1_path_active_uidx;
+create index resource_center_artifacts_v1_path_active_idx on clued_private.resource_center_artifacts_v1(profile_id,path) where state='active';
 create table clued_private.storage_external_registration_policy_v1 (
  connection_id uuid primary key references clued_private.storage_connections_v1(id),
  owner_id uuid not null references auth.users(id), enabled boolean not null,
@@ -216,6 +229,9 @@ begin
   where jsonb_typeof(x) is distinct from 'string' or (x#>>'{}') !~ '^[A-Za-z0-9_-]{1,160}$')
  or (select count(distinct n->>'provider_file_id') from jsonb_array_elements(nodes) n)<>jsonb_array_length(nodes) then
   raise exception 'storage_external_registration_observation_invalid' using errcode='22023';end if;
+ if exists(select 1 from jsonb_array_elements_text(observation->'first_observation'->'new_ids') id
+  where exists(select 1 from jsonb_array_elements(plan->'registry') x where x->>'provider_file_id'=id)) then
+  raise exception 'storage_external_registration_observation_invalid' using errcode='22023';end if;
  -- Lock only this profile's exact observed rows, in deterministic ID order.
  perform 1 from clued_private.resource_center_artifacts_v1 x where x.user_id=c.owner_id and x.profile_id=p.id
  and exists(select 1 from jsonb_array_elements(nodes) n where n->>'provider_file_id'=x.provider_file_id) order by x.id for update;
@@ -247,7 +263,8 @@ begin
    or not starts_with(item->>'path',p.managed_root||'/') then raise exception 'storage_external_registration_denied' using errcode='42501';end if;
   end if;
   if oldrow is null then
-   if item->>'parent_id'<>focus.provider_file_id or not(observation->'first_observation'->'new_ids' ? (item->>'provider_file_id'))
+   if (item->>'parent_id'<>focus.provider_file_id and not(observation->'first_observation'->'new_ids' ? (item->>'parent_id')))
+   or not(observation->'first_observation'->'new_ids' ? (item->>'provider_file_id'))
    or item->>'access_digest'<>parentnode->>'access_digest' or focus.governance_class<>'ordinary' then raise exception 'storage_external_registration_denied' using errcode='42501';end if;
   elsif selected ? (item->>'provider_file_id') then
    if oldrow->>'governance_class'<>'ordinary' or not(oldrow->>'path'=focus.path or starts_with(oldrow->>'path',focus.path||'/'))
@@ -287,6 +304,7 @@ begin
  req:=jsonb_build_object('idempotency_key','storage-external-registration:'||attempt.id,'attempt_id',attempt.id,'observation',observation);
  r:=clued_private.m1_begin_receipt(c.owner_id,null,'storage_external_registration',req,clued_private.m1_sha256(req));
  if r.status<>'pending' then raise exception 'storage_external_registration_conflict' using errcode='40001';end if;
+ set constraints clued_private.resource_center_artifacts_v1_path_active_excl deferred;
  for item in select value from jsonb_array_elements(nodes) order by length(value->>'path'),value->>'path' loop
   select * into a from clued_private.resource_center_artifacts_v1 where user_id=c.owner_id and profile_id=p.id and provider_file_id=item->>'provider_file_id';
   if a.id is not null and not(selected ? a.provider_file_id) then continue;end if;
@@ -304,6 +322,7 @@ begin
   end if;
   changed:=changed+1; refs:=refs||jsonb_build_array(jsonb_build_object('kind','system','role','target','id',a.id)); versions:=versions||jsonb_build_object(a.id::text,a.version);
  end loop;
+ set constraints clued_private.resource_center_artifacts_v1_path_active_excl immediate;
  refs:=jsonb_build_array(jsonb_build_object('kind','system','role','primary','id',c.id))||refs;
  ev:=clued_private.m1_append_event_row(c.owner_id,null,r.id,r.canonical_version,'extension:storage:external_registered',refs,'project:'||p.project_id,null,
   jsonb_build_object('attempt_id',attempt.id,'changed',changed,'drive_write',false),req->>'idempotency_key',r.request_sha256,'success','audit_only','{}','[]',null);
@@ -332,3 +351,25 @@ $p$);
  return clued_private.storage_external_registration_call_v1(p_issuer_identity,p_input);end if;
 $p$);
 end $route$;
+
+-- Reuse the established demand-renewal boundary with its own typed operation.
+-- Recheck consent and the exact current artifact before any renewal proof;
+-- neither a connection ID nor a generic maintenance label grants authority.
+do $renewal$
+declare body text; anchor text:=$a$    if p_request->>'operation'='access_digest' then$a$;
+begin
+ body:=pg_get_functiondef('clued_private.storage_demand_authorize_v1(text,uuid,text,text,uuid,jsonb)'::regprocedure);
+ if (length(body)-length(replace(body,anchor,'')))/length(anchor)<>1 then raise exception 'external_registration_demand_source_changed';end if;
+ execute replace(body,anchor,$p$    if p_request->>'operation'='external_registration' then
+      if p_request-array['operation','artifact_id']<>'{}'::jsonb
+        or coalesce(p_request->>'artifact_id','') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+        raise exception 'storage_demand_denied' using errcode='42501';end if;
+      perform clued_private.storage_external_registration_authority_v1(identity,c.id);
+      if not exists(select 1 from clued_private.resource_center_artifacts_v1 a
+        join clued_private.resource_center_profiles_v1 p on p.id=a.profile_id and p.user_id=a.user_id
+        where a.id=(p_request->>'artifact_id')::uuid and a.profile_id=c.profile_id and a.user_id=c.owner_id
+        and a.state='active' and a.target_kind='directory' and a.governance_class='ordinary' and a.path<>p.managed_root
+        and clued_private.resource_center_path_current_v1(c.owner_id,p.project_id,p.id,p.managed_root,a.path)) then
+        raise exception 'storage_demand_denied' using errcode='42501';end if;
+    elsif p_request->>'operation'='access_digest' then$p$);
+end $renewal$;
