@@ -936,6 +936,77 @@
               ]
             }
           }
+        ],
+        "f1536392bea4f0c14a5cfa36c05cfd9ed71d7ecb": [
+          {
+            "job_id": "contract-placement",
+            "definition_sha256": "4c43c0a4cd2be56e3058ce5bcfac251fada664a4303d8a225cca56dad10b5cc5",
+            "definition": {
+              "name": "contract-placement-hosted-executor",
+              "needs": "admission-gate",
+              "if": "needs.admission-gate.outputs.admitted == 'true'",
+              "runs-on": "ubuntu-latest",
+              "timeout-minutes": 5,
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "if": "(github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))",
+                  "with": {
+                    "persist-credentials": false,
+                    "fetch-depth": 0
+                  }
+                },
+                {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
+                  "name": "Require a qualified ordinary CI subject before candidate execution",
+                  "env": {
+                    "CLUED_AUTOMATION_SELF_HOSTED": "${{ needs.admission-gate.outputs.automation_self_hosted }}"
+                  },
+                  "run": "node --input-type=module - <<'NODE'\nimport fs from 'node:fs';\nconst e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));\nconst own=process.env.GITHUB_REPOSITORY==='tdoljyj/cross-memory-system' && e.repository?.full_name===process.env.GITHUB_REPOSITORY;\nconst trustedPush=process.env.GITHUB_EVENT_NAME==='push' && process.env.GITHUB_REF==='refs/heads/main';\nconst trustedPr=process.env.GITHUB_EVENT_NAME==='pull_request' && e.pull_request?.base?.ref==='main' && e.pull_request?.head?.repo?.full_name===process.env.GITHUB_REPOSITORY && (process.env.GITHUB_ACTOR===process.env.GITHUB_REPOSITORY_OWNER || process.env.CLUED_AUTOMATION_SELF_HOSTED==='true');\nif(!own || (!trustedPush && !trustedPr)){console.error('contract-placement: subject is not qualified for the persistent internal CI pool');process.exit(1);}\nNODE\n"
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Placement and renderer fixtures",
+                  "run": "python3 -m unittest scripts/ci/test_check_contract_placement.py -v\nnode --test apps/clued-cloud/tests/agent-contract-bootstrap.test.mjs\n"
+                },
+                {
+                  "name": "Build actual public bootstrap without the application dependency tree",
+                  "env": {
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1\nnode \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\\n  --bundle --platform=node --format=esm --external:js-tiktoken/* \\\n  --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"\n"
+                },
+                {
+                  "name": "Render all actual and synthetic contract parts",
+                  "run": "node apps/clued-cloud/scripts/render-agent-contract-budget.mjs --worker-module \"$RUNNER_TEMP/contract-bootstrap.mjs\" --output \"$RUNNER_TEMP/contract-responses.json\""
+                },
+                {
+                  "name": "Enforce placement and one-time production gate",
+                  "env": {
+                    "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}",
+                    "CANDIDATE": "${{ github.sha }}"
+                  },
+                  "run": "python3 scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\""
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
+                }
+              ]
+            }
+          }
         ]
       }
     },
@@ -1109,6 +1180,52 @@
                 {
                   "name": "Scan complete history with Gitleaks 8.30.1",
                   "run": "docker run --rm \\\n  -v \"$PWD:/repo\" \\\n  -v \"$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro\" \\\n  ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \\\n  git /repo --config /repo/.gitleaks.toml \\\n  --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n"
+                }
+              ]
+            }
+          }
+        ],
+        "bc6a730637f3656ac56da6667a9669d378211b86": [
+          {
+            "job_id": "gitleaks-trusted-self-hosted",
+            "definition_sha256": "9ed6a563c8f69a5bb7de5cebd796a6a503c10f6cc94a41e33538976ac3c2d46f",
+            "definition": {
+              "needs": "admission-gate",
+              "timeout-minutes": 25,
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks-hosted-executor' || 'gitleaks-hosted-executor-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": "ubuntu-latest",
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "fetch-depth": 0,
+                    "persist-credentials": true
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Drop refs of deleted branches and of other PRs' earlier runs",
+                  "run": "git remote prune origin\ngit for-each-ref --format='%(refname)' refs/remotes/pull |\n  while read -r ref; do git update-ref -d \"$ref\"; done\n"
+                },
+                {
+                  "name": "Validate exact historical exceptions and detection regressions",
+                  "run": "python3 scripts/ci/reviewed_gitleaks.py \\\n  --config .gitleaks.toml \\\n  --output \"$RUNNER_TEMP/clued-reviewed.ignore\" \\\n  --self-test\n"
+                },
+                {
+                  "name": "Scan complete history with Gitleaks 8.30.1",
+                  "run": "docker run --rm \\\n  -v \"$PWD:/repo\" \\\n  -v \"$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro\" \\\n  ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \\\n  git /repo --config /repo/.gitleaks.toml \\\n  --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1\n"
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
                 }
               ]
             }
@@ -1890,6 +2007,64 @@
                 {
                   "name": "Misconfiguration (HIGH/CRITICAL)",
                   "run": "docker run --rm -v \"$PWD:/repo\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo\n"
+                }
+              ]
+            }
+          }
+        ],
+        "7b94413801ef226826a307c20a094c8a04ae0126": [
+          {
+            "job_id": "trivy-trusted-self-hosted",
+            "definition_sha256": "8650e9103bf5c7c222d124ab18675003787d9cc97b5e6b2a57651db56d53b631",
+            "definition": {
+              "needs": "admission-gate",
+              "name": "${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'trivy-hosted-executor' || 'trivy-hosted-executor-skipped' }}",
+              "if": "needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))",
+              "runs-on": "ubuntu-latest",
+              "timeout-minutes": 25,
+              "permissions": {
+                "contents": "read",
+                "id-token": "write"
+              },
+              "steps": [
+                {
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false
+                  }
+                },
+                {
+                  "name": "Configure job temporary storage",
+                  "uses": "./.github/actions/ci-temporary-storage"
+                },
+                {
+                  "name": "Prepare persistent Trivy cache",
+                  "run": "TRIVY_CACHE_DIR=\"${XDG_CACHE_HOME:-$HOME/.cache}/clued-trivy\"\nmkdir -p \"$TRIVY_CACHE_DIR\"\necho \"TRIVY_CACHE_DIR=$TRIVY_CACHE_DIR\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
+                  "name": "Download vulnerability database through runner network",
+                  "timeout-minutes": 22,
+                  "env": {
+                    "TRIVY_IMAGE": "ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+                    "TRIVY_DB_FALLBACK_MAX_AGE_HOURS": "72"
+                  },
+                  "run": "# Only the pinned scanner and its cache use the runner network. No\n# checkout or Docker socket is mounted during this download. A host\n# loopback proxy is otherwise unreachable from the container bridge.\ndb_dir=\"$TRIVY_CACHE_DIR/db\"\nmetadata_epoch() {\n  value=\"$(sed -n \"s/.*\\\"$1\\\" *: *\\\"\\([^\\\"]*\\)\\\".*/\\1/p\" \"$db_dir/metadata.json\" 2>/dev/null | head -n 1)\"\n  if [ -n \"$value\" ]; then date -u -d \"$value\" +%s 2>/dev/null || true; fi\n}\nnow=\"$(date -u +%s)\"\nnext_update=\"$(metadata_epoch NextUpdate)\"\nif [ -f \"$db_dir/trivy.db\" ] && [ -n \"$next_update\" ] && [ \"$now\" -lt \"$next_update\" ]; then\n  echo \"Cached vulnerability database is current; no download needed.\"\n  exit 0\nfi\n\n# Trivy deletes the cached metadata before it downloads, so a failed\n# in-place download destroys the last good database. Download into a\n# per-run staging cache and swap it in only after success. The cache\n# is root-owned by the container, so file operations run in it too.\nstaging=\"trivy-db-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\"\nin_cache() {\n  docker run --rm --network none --entrypoint sh \\\n    -v \"$TRIVY_CACHE_DIR:/cache\" \"$TRIVY_IMAGE\" -ec \"$1\" sh \"$staging\"\n}\n# Also drop staging caches abandoned by cancelled runs.\ncleanup_staging() {\n  in_cache 'rm -rf \"/cache/$1\"\n    find /cache -maxdepth 1 -name \"trivy-db-staging-*\" -mmin +120 -exec rm -rf {} \\;' || true\n}\ntrap cleanup_staging EXIT\n\ndownloaded=false\nfor repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do\n  for attempt in 1 2; do\n  if docker run --rm --network host \\\n    -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \\\n    -e http_proxy -e https_proxy -e no_proxy \\\n    -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n    \"$TRIVY_IMAGE\" \\\n    fs --download-db-only --timeout 5m --cache-dir \"/root/.cache/trivy/$staging\" --db-repository \"$repository\"; then\n    downloaded=true\n    break 2\n  fi\n  sleep \"$attempt\"\n  done\ndone\nif [ \"$downloaded\" = true ]; then\n  in_cache 'rm -rf /cache/db.previous\n    if [ -d /cache/db ]; then mv /cache/db /cache/db.previous; fi\n    mv \"/cache/$1/db\" /cache/db\n    rm -rf /cache/db.previous'\n  exit 0\nfi\n\nupdated_at=\"$(metadata_epoch UpdatedAt)\"\nif [ -f \"$db_dir/trivy.db\" ] && [ -n \"$updated_at\" ]; then\n  age_hours=$(( (now - updated_at) / 3600 ))\n  if [ \"$age_hours\" -le \"$TRIVY_DB_FALLBACK_MAX_AGE_HOURS\" ]; then\n    echo \"::warning title=Trivy DB download failed::Using the cached vulnerability database built ${age_hours}h ago (limit ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h).\"\n    exit 0\n  fi\n  echo \"::error title=Trivy DB download failed::Cached vulnerability database is ${age_hours}h old, over the ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h fallback limit.\"\nelse\n  echo \"::error title=Trivy DB download failed::No usable cached vulnerability database.\"\nfi\nexit 1\n"
+                },
+                {
+                  "name": "Vulnerabilities (HIGH/CRITICAL)",
+                  "run": "# The previous step prepared the database; never re-download here.\ndocker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo\n"
+                },
+                {
+                  "name": "Secrets",
+                  "run": "docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --scanners secret --exit-code 1 /repo\n"
+                },
+                {
+                  "name": "Misconfiguration (HIGH/CRITICAL)",
+                  "run": "docker run --rm -v \"$PWD:/repo\" -v \"$TRIVY_CACHE_DIR:/root/.cache/trivy\" \\\n  ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \\\n  fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo\n"
+                },
+                {
+                  "name": "Emit relay identity",
+                  "run": "set -eu\njwt=\"$(curl -fsS --max-time 30 -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n  \"$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1\" \\\n  | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"value\"])')\"\necho \"::notice title=clued-hosted-relay-v1::$jwt\"\n"
                 }
               ]
             }

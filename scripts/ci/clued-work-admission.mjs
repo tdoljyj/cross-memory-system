@@ -349,6 +349,11 @@ export const GATE_JOB_SHA256 = new Set([
   // Stage C: the same trusted-base gate exports the independently observed
   // main-refresh route. Register these exact bytes before consumer rollout.
   "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+  // Owner Decisions 325717a6 and 22b0e0ed: the same Stage C gate on
+  // ubuntu-latest, for the gitleaks, trivy and contract-placement hosted
+  // executors on free minutes ($0 Actions budget cap). Only runs-on differs.
+  // Registered here (PR-A) before the workflows change (PR-B).
+  "61fe4d5f7a18365e27a7ee7211acf9babb3e28177b4dfdd8e31224b074411740",
 ]);
 const WORKFLOW_FILE = /^\.github\/workflows\/[^/]+\.ya?ml$/;
 export const PRODUCTION_PUBLISHER_WORKFLOW = ".github/workflows/clued-cloud-production-release.yml";
@@ -356,10 +361,14 @@ export const PLACEMENT_WORKFLOW = ".github/workflows/contract-placement.yml";
 const PLACEMENT_PREDECESSOR_BLOB = "90c632e917de5c84a3d8fb49e634f624703139cd";
 // Prior local candidate only; never represented as a published main generation.
 const PLACEMENT_DRAFT_V1_BLOB = "606e2179c957c1537320a71673a2c572cf1a037d";
-const PLACEMENT_SUCCESSOR_BLOB = "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a";
-const PLACEMENT_SUCCESSOR_SHA256 = "762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd";
-const PLACEMENT_ROLE_SHA256 = "2901b0b053e4064b557bbd958e48c4c07aab8bc42dff6fb501b9f94ab8da7377";
-const PLACEMENT_GATE_SHA256 = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
+// The self-hosted successor now on main. Owner Decisions 325717a6, 22b0e0ed
+// and bc6fdad1 replace it with the exact PR-B hosted executor
+// (contract-placement-hosted-executor, relay identity step, same checks).
+const PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB = "54ee2f11cc0f52d7cd9c0f6a63b75da8ef3e2b3a";
+const PLACEMENT_SUCCESSOR_BLOB = "f1536392bea4f0c14a5cfa36c05cfd9ed71d7ecb";
+const PLACEMENT_SUCCESSOR_SHA256 = "9f5d9d7e053d952037cdf7b18f1b460de0d279ad997b9e96f77d9ebd53598461";
+const PLACEMENT_ROLE_SHA256 = "4c43c0a4cd2be56e3058ce5bcfac251fada664a4303d8a225cca56dad10b5cc5";
+const PLACEMENT_GATE_SHA256 = "61fe4d5f7a18365e27a7ee7211acf9babb3e28177b4dfdd8e31224b074411740";
 
 // Only this independently reviewed Source/FullRole can cross the old ungated
 // boundary. Keep checking later gated edits: a retained gate cannot authorize
@@ -371,7 +380,7 @@ export function registeredPlacementSuccessor({file,headText,baseText,profiles,ro
       file.previous_filename && file.previous_filename!==PLACEMENT_WORKFLOW ||
       typeof baseText!=="string" || typeof headText!=="string")return no("placement exact modified path/base required");
     const baseBlob=workflowBlob(baseText),headBlob=workflowBlob(headText);
-    if(![PLACEMENT_PREDECESSOR_BLOB,PLACEMENT_DRAFT_V1_BLOB,PLACEMENT_SUCCESSOR_BLOB].includes(baseBlob) ||
+    if(![PLACEMENT_PREDECESSOR_BLOB,PLACEMENT_DRAFT_V1_BLOB,PLACEMENT_SELF_HOSTED_SUCCESSOR_BLOB,PLACEMENT_SUCCESSOR_BLOB].includes(baseBlob) ||
       headBlob!==PLACEMENT_SUCCESSOR_BLOB || sha256Hex(headText)!==PLACEMENT_SUCCESSOR_SHA256)
       return no("placement exact predecessor/successor bytes required");
     const before=registeredWorkflowSource(profiles,PLACEMENT_WORKFLOW,baseBlob),
@@ -445,35 +454,27 @@ const BOOTSTRAP_ORDINARY_SOURCES=Object.freeze([
   },
   {
     "file": ".github/workflows/gitleaks.yml",
-    "predecessor_blob": "cbe2f69ddabb49cd91cd26664a88d47859696fa5",
-    "candidate_blob": "74043d68d20dbee9f9404a66f0a02d3285fea0aa",
-    "candidate_sha256": "168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
-    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "predecessor_blob": "74043d68d20dbee9f9404a66f0a02d3285fea0aa",
+    "candidate_blob": "bc6a730637f3656ac56da6667a9669d378211b86",
+    "candidate_sha256": "5db21dac377078d47b0a51a3f89e8bc3f8f93538fe95c3a2e2a4674e9475d960",
+    "gate_sha256": "61fe4d5f7a18365e27a7ee7211acf9babb3e28177b4dfdd8e31224b074411740",
     "roles": [
       {
         "job_id": "gitleaks-trusted-self-hosted",
-        "definition_sha256": "900524a57416a36bf8627d9fb65dc98bf1cf726db9dd4828196ea4c3dc0b0672"
-      },
-      {
-        "job_id": "gitleaks-untrusted-hosted",
-        "definition_sha256": "72e630fef3abc4acac7fd9280a7a2bd1c70b409570bef1833f7471907619c135"
+        "definition_sha256": "9ed6a563c8f69a5bb7de5cebd796a6a503c10f6cc94a41e33538976ac3c2d46f"
       }
     ]
   },
   {
     "file": ".github/workflows/trivy.yml",
-    "predecessor_blob": "024f88452142c2e01daec1e201caa64704f2c3bc",
-    "candidate_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
-    "candidate_sha256": "cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
-    "gate_sha256": "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb",
+    "predecessor_blob": "f7f8d075d1a0f314a7c5eb295e459599288d538c",
+    "candidate_blob": "7b94413801ef226826a307c20a094c8a04ae0126",
+    "candidate_sha256": "a70bb74e30eb888c4b798cae916de4508cbe07369dc6253d96408494f89b5c0c",
+    "gate_sha256": "61fe4d5f7a18365e27a7ee7211acf9babb3e28177b4dfdd8e31224b074411740",
     "roles": [
       {
         "job_id": "trivy-trusted-self-hosted",
-        "definition_sha256": "be50edb275909634522fa8cdcaffcf59e5c17bfeaf7edc96afa91b7d479c09f9"
-      },
-      {
-        "job_id": "trivy-untrusted-hosted",
-        "definition_sha256": "d349c2c0d00afa00b7b9cb09e461940e3e016840108c9e1e07ee3aad9d9742cd"
+        "definition_sha256": "8650e9103bf5c7c222d124ab18675003787d9cc97b5e6b2a57651db56d53b631"
       }
     ]
   },

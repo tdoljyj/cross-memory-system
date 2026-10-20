@@ -1082,6 +1082,20 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
 const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
+// Owner Decisions 325717a6 and 22b0e0ed: the same Stage C gate on ubuntu-latest (PR-B).
+const HOSTED_SOURCE_PROOF_GATE_DIGEST = "61fe4d5f7a18365e27a7ee7211acf9babb3e28177b4dfdd8e31224b074411740";
+// The frozen PR-B bytes (hosted executors): file -> [main's self-hosted Source, PR-B Source] sha256.
+const HOSTED_EXECUTOR_SOURCES = {
+  ".github/workflows/gitleaks.yml": ["168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
+    "5db21dac377078d47b0a51a3f89e8bc3f8f93538fe95c3a2e2a4674e9475d960"],
+  ".github/workflows/trivy.yml": ["cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
+    "a70bb74e30eb888c4b798cae916de4508cbe07369dc6253d96408494f89b5c0c"],
+  ".github/workflows/contract-placement.yml": ["762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
+    "9f5d9d7e053d952037cdf7b18f1b460de0d279ad997b9e96f77d9ebd53598461"],
+};
+const HOSTED_EXECUTOR_NAMES = { ".github/workflows/gitleaks.yml": "gitleaks-hosted-executor",
+  ".github/workflows/trivy.yml": "trivy-hosted-executor", ".github/workflows/contract-placement.yml": "contract-placement-hosted-executor" };
+const REQUIRED_CHECK_NAMES = ["gitleaks", "trivy", "kooyumi-work-admission", "kooyumi-admission-verified", "kooyumi-merge-slot", "contract-placement"];
 
 // The ungated attack cases exercise the exact registered predecessor, not the
 // newly gated working-tree Trivy workflow.
@@ -1162,6 +1176,85 @@ test("publisher transition: caller workspace or API profiles never select the tr
   assert.equal(calls.length,2);
 });
 
+// Owner Decisions 325717a6, 22b0e0ed and bc6fdad1 (A1): this trusted main
+// registers the exact PR-B hosted executor Sources as successors of the
+// self-hosted ones on main, through the existing exact ordinary/placement
+// registrations. Both Sources come from the registry, so this holds before
+// and after PR-B lands.
+function hostedExecutorPair() {
+  const profiles = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/ci/clued-gated-proof-profiles.json"), "utf8"));
+  const texts = {};
+  for (const [file, [before, after]] of Object.entries(HOSTED_EXECUTOR_SOURCES)) {
+    const record = profiles.workflows[file];
+    const source = (digest) => [record, ...record.accepted_sources].filter((entry) => entry.source_sha256 === digest);
+    assert.equal(source(before).length, 1, `${file}: main's Source is registered once`);
+    assert.equal(source(after).length, 1, `${file}: the PR-B Source is registered once`);
+    texts[file] = { base: source(before)[0].source_yaml, head: source(after)[0].source_yaml, profile: source(after)[0] };
+  }
+  return texts;
+}
+const hostedExecutorFindings = (texts, heads, extra = []) => workflowFindings(async (url) => {
+  const [, file, ref] = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+  const text = ref === HEAD ? heads[file] : texts[file].base;
+  return new Response(JSON.stringify({ content: Buffer.from(text).toString("base64"), encoding: "base64" }), { status: 200 });
+}, {}, "o/r", [...Object.keys(heads).map((filename) => ({ filename, status: "modified" })), ...extra], HEAD, BASE);
+
+test("gate guard (A1): the exact PR-B hosted executor Sources are registered successors of main's self-hosted ones", async () => {
+  const texts = hostedExecutorPair();
+  for (const [file, { base, head, profile }] of Object.entries(texts)) {
+    assert.ok([base, head].map(sha256Hex).includes(sha256Hex(fs.readFileSync(path.join(ROOT, file), "utf8"))),
+      `${file}: the working tree is one of the pair`);
+    assert.ok(workflowJobs(base).some((job) => job.name === "admission-gate" && !jobIsHosted(job)), file);
+    assert.ok(workflowJobs(head).every((job) => jobIsHosted(job)), file);
+    assert.equal(sha256Hex(workflowJobs(head).find((job) => job.name === "admission-gate").lines.join("\n")), HOSTED_SOURCE_PROOF_GATE_DIGEST, file);
+    // Owner Decision bc6fdad1: no hosted job carries a required check name.
+    assert.deepEqual(profile.routes.map((route) => [route.name, route.self_hosted]), [[HOSTED_EXECUTOR_NAMES[file], false]], file);
+    for (const name of REQUIRED_CHECK_NAMES) {
+      assert.doesNotMatch(head, new RegExp(`^ {4}name: ${name}$`, "m"), file);
+      assert.ok(!head.includes(`'${name}' ||`) && !head.includes(`|| '${name}' }}`), `${file}: ${name} in a dynamic name branch`);
+    }
+    // The relay identity step is registered as a required step after every scan.
+    const steps = Object.keys(profile.routes[0].required_steps);
+    assert.equal(steps.at(-1), "Emit relay identity", file);
+    assert.match(head, /^ {4}permissions:\n {6}contents: read\n {6}id-token: write\n {4}steps:$/m, file);
+    assert.match(head, /audience=clued-hosted-relay-v1/, file);
+  }
+  const heads = Object.fromEntries(Object.entries(texts).map(([file, { head }]) => [file, head]));
+  assert.deepEqual(await hostedExecutorFindings(texts, heads), { gate: [], owner: [] });
+  // The PR-B change set also carries the budget validator, docs and tests.
+  assert.deepEqual((await hostedExecutorFindings(texts, heads, [{ filename: "scripts/ci/validate_runner_budget_policy.py", status: "modified" },
+    { filename: "docs/maintenance/independent-ci.md", status: "added" }])).gate, []);
+});
+
+test("gate guard (A1): any other byte of a hosted executor Source is refused, and main's bytes stay valid", async () => {
+  const texts = hostedExecutorPair();
+  const heads = Object.fromEntries(Object.entries(texts).map(([file, { head }]) => [file, head]));
+  const mutations = {
+    ".github/workflows/gitleaks.yml": [["timeout-minutes: 10", "timeout-minutes: 9"],
+      ["'gitleaks-hosted-executor' ||", "'gitleaks' ||"], ["      id-token: write\n", ""],
+      ["audience=clued-hosted-relay-v1", "audience=sts.amazonaws.com"], ["--redact --exit-code 1", "--redact --exit-code 0"]],
+    ".github/workflows/trivy.yml": [["timeout-minutes: 10", "timeout-minutes: 9"],
+      ["|| 'trivy-hosted-executor-skipped' }}", "|| 'trivy-skipped' }}"], ["      - name: Emit relay identity\n", "      - name: Emit relay identity\n        if: always()\n"]],
+    ".github/workflows/contract-placement.yml": [["timeout-minutes: 10", "timeout-minutes: 9"],
+      ["    name: contract-placement-hosted-executor\n", "    name: contract-placement\n"], ["      contents: read\n      id-token: write\n", "      contents: write\n      id-token: write\n"]],
+  };
+  for (const [file, list] of Object.entries(mutations)) {
+    for (const [from, to] of list) {
+      const changed = { ...heads, [file]: heads[file].replace(from, to) };
+      assert.notEqual(changed[file], heads[file], `${file}: ${from}`);
+      const { gate } = await hostedExecutorFindings(texts, changed);
+      assert.ok(gate.some((finding) => finding.startsWith(`workflow_gate:${file}:`) && finding.endsWith("_Source_not_registered")),
+        `${file}: ${from} -> ${JSON.stringify(gate)}`);
+    }
+  }
+  // main's current self-hosted bytes keep their registered gate.
+  for (const { base } of Object.values(texts)) assert.deepEqual(gateFindings(base, base), []);
+  // An unchanged head (a PR that does not touch these workflows) needs no transition at all.
+  const unchanged = await workflowFindings(async () => { throw new Error("no workflow read expected"); }, {}, "o/r",
+    [{ filename: "README.md", status: "modified" }], HEAD, BASE);
+  assert.deepEqual(unchanged, { gate: [], owner: [] });
+});
+
 test("gate guard: every gated workflow on this branch passes and uses a listed gate job", () => {
   // No pinned list (see "gate job digest"); the workflow this file reads below must stay gated.
   assert.ok(GATED_FILES.includes("clued-g4-database.yml"));
@@ -1187,7 +1280,8 @@ test("gate guard: the exact PR-read version is registered before workflow rollou
   const legacyDigest = "41e789754b90dcb27c8297bf83169194b7aaab2659d909859ddd8618d0fa07c4";
   const prReadDigest = "4136409cf9440c3e8755ed03014cd3c39f90a169f4f8a2ce3d83af2e4a0111cd";
   const noEnforceDigest = "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc";
-  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST], "only the five exact gate versions");
+  assert.deepEqual([...GATE_JOB_SHA256], [legacyDigest, prReadDigest, noEnforceDigest, TEMPORARY_GATE_DIGEST, SOURCE_PROOF_GATE_DIGEST,
+    HOSTED_SOURCE_PROOF_GATE_DIGEST], "only the six exact gate versions");
   // Merge Admission step 6 dropped this line from the gate; the two older
   // versions below still carry it.
   const token = "          GITHUB_TOKEN: ${{ github.token }}\n";
@@ -1255,7 +1349,15 @@ test("gate guard (Merge Admission step 6): every gated workflow's gate no longer
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
     if (NEWLY_GATED_FILES.includes(name)) {
-      assert.equal(sha256Hex(gateJob.lines.join("\n")), SOURCE_PROOF_GATE_DIGEST, name);
+      // Owner Decision 325717a6 (PR-B): the Stage C gate, moved to ubuntu-latest; only runs-on differs.
+      const text = gateJob.lines.join("\n");
+      const hosted = text.replace("\n    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]\n",
+        "\n    runs-on: ubuntu-latest\n");
+      const selfHosted = hosted.replace("\n    runs-on: ubuntu-latest\n",
+        "\n    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]\n");
+      assert.ok([SOURCE_PROOF_GATE_DIGEST, HOSTED_SOURCE_PROOF_GATE_DIGEST].includes(sha256Hex(text)), name);
+      assert.equal(sha256Hex(hosted), HOSTED_SOURCE_PROOF_GATE_DIGEST, name);
+      assert.equal(sha256Hex(selfHosted), SOURCE_PROOF_GATE_DIGEST, name);
     } else {
       assert.equal(sha256Hex(workflowJobs(withoutTemporaryGateBootstrap(current)).find(job => job.name === "admission-gate").lines.join("\n")), "37620beee0357ddf3b46f145e170ea7819db0fbbaded1156d656b9bbfbf2e7dc", name);
     }
