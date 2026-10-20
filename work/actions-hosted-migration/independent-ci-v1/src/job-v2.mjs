@@ -72,6 +72,11 @@ export function validateObservedClaim(c) {
 // One claim generation: same claim id, fence and epoch. A renewal changes only expiresAt and is the
 // same generation; a takeover, continuation, handover or re-claim is a new generation.
 export const claimGeneration = c => ({ claimId: c.claimId, fence: c.fence, epoch: c.epoch });
+export function validateClaimGeneration(c) {
+  if (!plain(c) || !UUID.test(c.claimId ?? '') || !positive(c.fence) || !positive(c.epoch)
+    || Object.keys(c).some(k => !OBSERVED_CLAIM_FIELDS.includes(k))) fail('invalid_claim_generation');
+  return claimGeneration(c);
+}
 export const sameClaimGeneration = (a, b) => !!a && !!b && a.claimId === b.claimId && a.fence === b.fence && a.epoch === b.epoch;
 
 // ---- publication identities ----
@@ -88,10 +93,10 @@ export function scanExternalIdV2(job) { validateJobV2(job); return `independent-
 export function admissionEffectKeyV2(action, job, claim, definition) {
   validateJobV2(job);
   if (!['native-work-admission-check/2', 'independent-control-check/2'].includes(action)) fail('invalid_effect_action');
-  return digest({ action, subject: subjectOfV2(job), claim: claimGeneration(validateObservedClaim(claim)), definition });
+  return digest({ action, subject: subjectOfV2(job), claim: validateClaimGeneration(claim), definition });
 }
 export function admissionExternalIdV2(prefix, job, claim) {
-  validateJobV2(job); validateObservedClaim(claim);
+  validateJobV2(job); validateClaimGeneration(claim);
   if (!['independent-ci:native-work-admission', `independent-ci:control:${job.role}`].includes(prefix)) fail('invalid_external_prefix');
   return `${prefix}:v2:${job.id}:a${job.attempt}:c${claim.claimId.slice(0, 8)}:f${claim.fence}:e${claim.epoch}`;
 }

@@ -53,7 +53,7 @@ export function recordInputs(overrides = {}, refs = null, signer = signerKeys())
     controllerAccount: 'clued-control', appId: 5368905, installationId: 172706661, repositoryId: 1334673495, appKeyId: 4918220,
     ciPrincipalBindingId: randomUUID(), ciPrincipalRoleRef: randomUUID(), ciTokenPinSha256: hex(32), appPublicKeySha256Base64: Buffer.from(randomBytes(32)).toString('base64'),
     supabaseUrl: 'https://fixtureproject.supabase.co', publishableKey: 'sb_publishable_fixture', controllerNodeSha256: hex(32), references,
-    owner: { ownerDecisionRef: randomUUID(), ownerReceiptRef: randomUUID(), acceptedAt: iso(NOW - 3600_000), validUntil: null },
+    owner: { ownerDecisionRef: randomUUID(), ownerReceiptRef: randomUUID(), acceptedAt: '2026-01-01T00:00:00.000Z', validUntil: null },
     formalRoles: roles(),
     signers: { signers: [{ domain: 'production', keyId: 'fixture-key', publicKeyPem: signer.publicKeyPem, runtimeId: 'fixture-runtime', qualificationRef: references.hostQualificationRef, sourceAcceptanceRef: references.sourceAcceptanceRef }] },
     ...overrides };
@@ -78,8 +78,8 @@ export function subject(o = {}) {
   return { repo: 'tdoljyj/cross-memory-system', pr: 888, headSha: HEAD, baseSha: BASE, sourceManifestSha256: 'e'.repeat(64), attempt: 1, createdAt: iso(NOW - 60_000), ...o };
 }
 
-export function signResult(job, signer, { conclusion = 'success', finishedAt = NOW - 1000, startedAt = NOW - 5000 } = {}) {
-  const payload = { contract: RESULT_CONTRACT_V2, domain: 'production', runtimeId: 'fixture-runtime', subject: subjectOfV2(job), startedAt: iso(startedAt), finishedAt: iso(finishedAt),
+export function signResult(job, signer, { conclusion = 'success', finishedAt = NOW - 1000, startedAt = NOW - 5000, domain = 'production' } = {}) {
+  const payload = { contract: RESULT_CONTRACT_V2, domain, runtimeId: 'fixture-runtime', subject: subjectOfV2(job), startedAt: iso(startedAt), finishedAt: iso(finishedAt),
     conclusion, exitCode: conclusion === 'success' ? 0 : 1, stdoutSha256: hex(32), stderrSha256: hex(32), artifactsSha256: hex(32) };
   const signature = sign(null, Buffer.from(canonical(payload)), signer.privateKey).toString('base64url');
   return { contract: ENVELOPE_CONTRACT_V2, keyId: 'fixture-key', signature, payload };
