@@ -1,0 +1,147 @@
+// Stable stage facts and failure codes (DESIGN S11). Every way a stage can end maps to ONE stable
+// upper-case code; the resident's classify.mjs allow-lists them (a code that is not listed there is
+// UNKNOWN and HALTs). Inputs are the broker response (SYSTEM), the generic helper's native receipt
+// (clued-control) and the node entry's outcome record (clued-control, bound to the receipt by hash).
+// Pure.
+import { canonical } from '../proof.mjs';
+import { hash } from './prepare-record.mjs';
+import { HEX64, OUTCOME_CONTRACT } from './layout.mjs';
+
+export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
+export const NATIVE_RECEIPT_CONTRACT_V2 = 'clued.independent-ci.windows-formal-entry-receipt/2';
+export const SUCCESS_STATE = 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION';
+
+// ---- catalogue (mirrored, and cross-checked by a test, in independent-ci-resident-v1/src/classify.mjs) ----
+// Stage 1 only: Native said no. Nothing was published, nothing executed.
+export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_REVIEW_REQUIRED', 'PROTECTED_CHANGE_NOT_UP_TO_DATE', 'PATHS_OUTSIDE_WRITE_SET',
+  'CLAIM_NOT_CURRENT', 'TASK_CI_HEAD_CAP_REACHED', 'CLAIM_HEAD_CAP_REACHED', 'CI_BUDGET_EXHAUSTED', 'WORKFLOW_CHANGE_NOT_AUTHORIZED', 'PR_NOT_OPEN_OR_CHANGED']);
+// Clean transient: an outside, passing condition (network, GitHub 5xx, a push between bundle and
+// scan, a precondition not yet met). Eligible for the one automatic attempt 2 when nothing was
+// published (Owner decision 1b5d3687; the resident decides eligibility, see attempts.mjs).
+export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', 'BROKER_BUSY']);
+// Clean, but final for this head and attempt (never retried automatically).
+export const CLEAN_FINAL_CODES = Object.freeze(['STAGE_PACKAGE_REFUSED', 'STAGE_INPUT_RESULT_MISSING', 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED', 'BROKER_REQUEST_EXPIRED',
+  'BROKER_REQUEST_REFUSED', 'STAGE_HELPER_PREFLIGHT_REFUSED', 'STAGE_CHILD_REFUSED', 'STAGE_CHILD_TIMEOUT', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', 'BATCH_CLAIM_CHANGED',
+  'NATIVE_POLICY_UNSUPPORTED', 'PUBLICATION_BLOCKED', 'PUBLICATION_REVOKED', 'EVIDENCE_REFUSED', 'WORKSPACE_PREPARATION_REFUSED']);
+// Never clean: something may still run, or a publication may exist unsettled, or an identity conflicts.
+export const UNKNOWN_CODES = Object.freeze(['BROKER_RESPONSE_UNCONFIRMED', 'STAGE_HELPER_NOT_STOPPED_IN_TIME', 'STAGE_ORIGINAL_NOT_RESTORED',
+  'BROKER_CONFIGURATION_CONFLICT', 'NATIVE_RECEIPT_UNCONFIRMED', 'STAGE_CHILD_TREE_UNCONFIRMED', 'STAGE_OUTCOME_MISSING', 'PUBLICATION_UNCERTAIN',
+  'RECONCILIATION_REQUIRED', 'EVIDENCE_IDENTITY_CONFLICT', 'ADMISSION_CONFIGURATION_REFUSED', 'BROKER_UNCONFIRMED']);
+
+const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+const DIAG = Object.freeze({ owner_review_required: 'OWNER_REVIEW_REQUIRED', owner_review_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE',
+  owner_grant_required: 'OWNER_REVIEW_REQUIRED', owner_grant_missing: 'OWNER_REVIEW_REQUIRED', owner_grant_revoked: 'OWNER_REVIEW_REQUIRED', owner_grant_expired: 'OWNER_REVIEW_REQUIRED',
+  protected_change_not_up_to_date: 'PROTECTED_CHANGE_NOT_UP_TO_DATE', path_outside_write_set: 'PATHS_OUTSIDE_WRITE_SET', paths_outside_write_set: 'PATHS_OUTSIDE_WRITE_SET',
+  claim_trailer_missing: 'CLAIM_NOT_CURRENT', claim_not_found: 'CLAIM_NOT_CURRENT', claim_not_current: 'CLAIM_NOT_CURRENT', fence_superseded: 'CLAIM_NOT_CURRENT',
+  claim_bound_to_other_pr: 'CLAIM_NOT_CURRENT', work_claim_execution_epoch_stale: 'CLAIM_NOT_CURRENT', task_ci_head_cap_reached: 'TASK_CI_HEAD_CAP_REACHED',
+  claim_head_cap_reached: 'CLAIM_HEAD_CAP_REACHED', ci_budget_exhausted: 'CI_BUDGET_EXHAUSTED', head_budget_exhausted: 'CI_BUDGET_EXHAUSTED',
+  workflow_change_not_authorized: 'WORKFLOW_CHANGE_NOT_AUTHORIZED', workflow_runs_unavailable: 'NATIVE_ADMISSION_UNAVAILABLE' });
+const TRANSPORT_REASONS = new Set(['full_admission_unavailable', 'full_admission_mode_unknown', 'full_admission_observer_unknown', 'full_admission_observation_expired',
+  'NATIVE_ADMISSION_UNAVAILABLE', 'github_transient_unavailable', 'GITHUB_TRANSIENT_UNAVAILABLE', 'publication_observation_unconfirmed', 'NATIVE_CHECK_UNCONFIRMED',
+  'COMPLETE_CHECK_INVENTORY_REQUIRED', 'REMOTE_REFS_UNAVAILABLE']);
+const BRIDGE_TIMEOUTS = new Set(['BRIDGE_RESULT_DEADLINE', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'ACTUAL_ISSUE_NOT_PUBLISHED', 'ISSUE_TRANSFER_UNCONFIRMED',
+  'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED', 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED', 'BRIDGE_CALLBACK_DEADLINE']);
+const CONFIG_REASONS = new Set(['full_admission_not_configured', 'full_admission_subject_invalid', 'full_admission_source_changed', 'full_admission_clock_invalid',
+  'full_admission_principal_unknown', 'full_admission_incomplete']);
+
+// Native diagnostic -> the one not-admitted code (first match in a fixed priority order).
+export function notAdmittedCode(diagnostic) {
+  const codes = Array.isArray(diagnostic?.reasonCodes) ? [...diagnostic.reasonCodes, ...(diagnostic.nativeReasonCodes ?? [])] : [];
+  for (const c of ['owner_review_required', 'owner_grant_required', 'owner_grant_missing', 'owner_grant_revoked', 'owner_grant_expired', 'protected_change_not_up_to_date',
+    'path_outside_write_set', 'paths_outside_write_set', 'claim_trailer_missing', 'claim_not_found', 'claim_not_current', 'fence_superseded', 'claim_bound_to_other_pr',
+    'work_claim_execution_epoch_stale', 'task_ci_head_cap_reached', 'claim_head_cap_reached', 'ci_budget_exhausted', 'head_budget_exhausted',
+    'workflow_change_not_authorized', 'workflow_runs_unavailable', 'owner_review_unavailable']) if (codes.includes(c)) return DIAG[c];
+  return 'NATIVE_NOT_ADMITTED';
+}
+
+// Entry outcome -> stable code. stageNumber matters only for "claim changed" (stage 1: never admitted;
+// later: the batch claim moved under a running batch).
+export function outcomeFailureCode(outcome, stageNumber) {
+  if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
+  if (outcome.status === 'UNCERTAIN') return 'PUBLICATION_UNCERTAIN';
+  if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
+  if (outcome.status === 'REVOKED') return 'PUBLICATION_REVOKED';
+  if (outcome.status !== 'BLOCKED') return 'PUBLICATION_UNCERTAIN';
+  if (outcome.sideEffects !== 0 || outcome.mayHavePublished !== false) return 'PUBLICATION_UNCERTAIN';
+  const r = outcome.reason;
+  if (r === 'evidence_identity_conflict' || r === 'EVIDENCE_IDENTITY_CONFLICT') return 'EVIDENCE_IDENTITY_CONFLICT';
+  if (r === 'RESIDENT_QUEUE_HEAD_NOT_REACHED') return 'RESIDENT_QUEUE_HEAD_NOT_REACHED';
+  if (r === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE') return 'REMOTE_REFS_CHANGED_SINCE_BUNDLE';
+  if (BRIDGE_TIMEOUTS.has(r)) return 'BRIDGE_TRANSPORT_TIMEOUT';
+  if (TRANSPORT_REASONS.has(r)) return r.startsWith('full_admission_') || r === 'NATIVE_ADMISSION_UNAVAILABLE' ? 'NATIVE_ADMISSION_UNAVAILABLE' : 'GITHUB_TRANSIENT_UNAVAILABLE';
+  if (CONFIG_REASONS.has(r)) return 'ADMISSION_CONFIGURATION_REFUSED';
+  if (r === 'full_admission_rejected') return stageNumber === 1 ? notAdmittedCode(outcome.diagnostic) : 'BATCH_CLAIM_CHANGED';
+  if (r === 'full_admission_claim_missing' || r === 'full_admission_native_changed') return stageNumber === 1 ? 'CLAIM_NOT_CURRENT' : 'BATCH_CLAIM_CHANGED';
+  if (r === 'full_admission_claim_changed' || r === 'BATCH_CLAIM_CHANGED' || r === 'BATCH_CLAIM_MISSING') return stageNumber === 1 ? 'CLAIM_NOT_CURRENT' : 'BATCH_CLAIM_CHANGED';
+  if (r === 'full_admission_subject_changed') return 'PR_NOT_OPEN_OR_CHANGED';
+  if (r === 'full_admission_native_unsupported' || r === 'native_policy_changed') return 'NATIVE_POLICY_UNSUPPORTED';
+  if (r === 'execution_proof_refused') return 'EVIDENCE_REFUSED';
+  return stageNumber === 1 || stageNumber === 2 || stageNumber === 4 || stageNumber === 6 ? 'STAGE_CHILD_REFUSED' : 'PUBLICATION_BLOCKED';
+}
+
+const BOOLS = ['stdout_captured', 'private_bytes_read_by_helper', 'host_qualification', 'ci_principal_qualification', 'tree_cleanup_confirmed', 'root_exit_confirmed', 'timed_out', 'stop_requested'];
+// Mirror of v1 invoke-functions.ps1#Read-FormalNativeReceipt, for the v2 receipt.
+export function validateNativeReceiptV2(n, { nonce, plan, planSha256, controllerSid, helperPid }) {
+  if (!plain(n) || n.contract !== NATIVE_RECEIPT_CONTRACT_V2 || n.nonce !== nonce || !BOOLS.every(k => typeof n[k] === 'boolean')) return { ok: false, code: 'NATIVE_RECEIPT_UNCONFIRMED' };
+  if (n.actual_sid !== controllerSid || n.session_id !== 0 || n.service_pid !== helperPid || n.entry_role !== plan.entryRole || n.stage !== plan.stage
+    || n.entry_sha256 !== plan.entrySha256 || n.config_sha256 !== planSha256 || n.acceptance_sha256 !== plan.acceptanceSha256
+    || n.source_manifest_sha256 !== plan.sourceManifestSha256 || n.stdout_captured || n.private_bytes_read_by_helper || n.host_qualification || n.ci_principal_qualification
+    || !(n.outcome_sha256 === null || HEX64.test(n.outcome_sha256 ?? ''))) return { ok: false, code: 'NATIVE_RECEIPT_UNCONFIRMED' };
+  const treeZero = n.tree_cleanup_confirmed === true && n.root_exit_confirmed === true && n.tree_active_processes === 0 && n.tree_cleanup_failure_code === null;
+  if (!treeZero) return { ok: false, code: 'STAGE_CHILD_TREE_UNCONFIRMED', treeZero: false };
+  const completed = n.state === 'FIXED_CHILD_COMPLETED' && n.failure_code === null && n.node_exit_code === 0 && !n.timed_out && !n.stop_requested;
+  return { ok: completed, code: completed ? null : n.timed_out ? 'STAGE_CHILD_TIMEOUT' : null, treeZero: true };
+}
+
+export function validateOutcome(o, { nonce, plan }) {
+  if (!plain(o) || o.contract !== OUTCOME_CONTRACT || o.nonce !== nonce || o.stage !== plan.stage || o.entryRole !== plan.entryRole
+    || typeof o.status !== 'string' || !(o.reason === null || typeof o.reason === 'string') || !Number.isSafeInteger(o.sideEffects) || o.sideEffects < 0
+    || typeof o.mayHavePublished !== 'boolean') return null;
+  return o;
+}
+
+// The one stage fact the resident engine parses (engine-windows.mjs#parseStageFact keeps v1 names).
+export function buildStageFact({ stage, nonce, plan, planSha256, workManifestSha256, broker, receipt, receiptBytes, outcome, outcomeBytes, controllerSid, preflightCode = null }) {
+  const fact = { contract: STAGE_FACT_CONTRACT, stage, nonce, manifest_sha256: workManifestSha256, state: 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED',
+    failure_code: null, scm_start_call_issued: false, original_binary_restored: false, complete_original_readback: false, configuration_conflict_detected: false,
+    tree_cleanup_confirmed: false, tree_active_processes: null, root_exit_confirmed: false, native_receipt_sha256: null, outcome: null };
+  const done = code => ({ ...fact, failure_code: code });
+  if (preflightCode) {
+    // Nothing was requested from the broker: no service change, no child; the original is untouched.
+    return { ...done(preflightCode), original_binary_restored: true, complete_original_readback: true, tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true };
+  }
+  if (!broker) return done('BROKER_RESPONSE_UNCONFIRMED');
+  Object.assign(fact, { scm_start_call_issued: broker.startCallIssued, original_binary_restored: broker.restored, complete_original_readback: broker.restored && broker.stableAfter && broker.accountUnchanged,
+    configuration_conflict_detected: broker.configurationConflict });
+  if (broker.configurationConflict) return done('BROKER_CONFIGURATION_CONFLICT');
+  if (!broker.startCallIssued) {
+    // Refused before any start: the runner stayed on its original binary (the broker re-read it).
+    const code = broker.code === 'BROKER_BUSY' ? 'BROKER_BUSY' : broker.code === 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED' ? 'BROKER_RUNNER_NOT_ORIGINAL_STOPPED'
+      : broker.code === 'BROKER_REQUEST_EXPIRED' ? 'BROKER_REQUEST_EXPIRED' : broker.code === 'BROKER_UNCONFIRMED' ? 'BROKER_UNCONFIRMED' : 'BROKER_REQUEST_REFUSED';
+    return { ...done(code), tree_cleanup_confirmed: broker.restored, tree_active_processes: broker.restored ? 0 : null, root_exit_confirmed: broker.restored };
+  }
+  if (!broker.stoppedInTime) return done('STAGE_HELPER_NOT_STOPPED_IN_TIME');
+  if (!broker.restored || !broker.stableAfter || !broker.accountUnchanged) return done('STAGE_ORIGINAL_NOT_RESTORED');
+  if (!receipt) {
+    // The helper stopped without a receipt: its preflight refused before any child (FormalSession0V2
+    // writes a receipt only once its boundary validated). No child means a zero tree.
+    return { ...done(broker.started && broker.helperPid ? 'STAGE_HELPER_PREFLIGHT_REFUSED' : 'NATIVE_RECEIPT_UNCONFIRMED'),
+      tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true };
+  }
+  const n = validateNativeReceiptV2(receipt, { nonce, plan, planSha256, controllerSid, helperPid: broker.helperPid });
+  fact.native_receipt_sha256 = hash(receiptBytes);
+  if (n.treeZero) Object.assign(fact, { tree_cleanup_confirmed: true, tree_active_processes: 0, root_exit_confirmed: true });
+  if (!n.treeZero) return done(n.code);
+  const boundOutcome = receipt.outcome_sha256 && outcomeBytes && hash(outcomeBytes) === receipt.outcome_sha256 ? validateOutcome(outcome, { nonce, plan }) : null;
+  fact.outcome = boundOutcome ? { status: boundOutcome.status, reason: boundOutcome.reason, sideEffects: boundOutcome.sideEffects, mayHavePublished: boundOutcome.mayHavePublished } : null;
+  if (n.ok) {
+    if (!boundOutcome || !['SETTLED', 'ISSUED_RESULT_RECEIVED'].includes(boundOutcome.status)) return done('STAGE_OUTCOME_MISSING');
+    return { ...fact, state: 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION' };
+  }
+  if (n.code === 'STAGE_CHILD_TIMEOUT') return done(boundOutcome ? outcomeFailureCode(boundOutcome, plan.stage) : 'STAGE_CHILD_TIMEOUT');
+  return done(outcomeFailureCode(boundOutcome, plan.stage));
+}
+
+export const ALL_STAGE_CODES = Object.freeze([...new Set([...NOT_ADMITTED_CODES, ...TRANSIENT_CODES, ...CLEAN_FINAL_CODES, ...UNKNOWN_CODES])]);
+export const factDigest = fact => hash(canonical(fact));
