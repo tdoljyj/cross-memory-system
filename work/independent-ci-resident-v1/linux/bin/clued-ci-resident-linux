@@ -8,6 +8,7 @@ Sub-commands (all print one JSON object; exit 0 only on success):
   quiescence --batch <batchId>                         read-only proof, relayed verbatim by the companion
   archive --instance <batchId>_<reason>                rename-only archive (archive unit only)
   archive-status --instance <batchId>_<reason>         the receipt of exactly that archive run
+  archive-usage                                        bytes kept by earlier archives (50 GB reminder)
 
 Threat model: WSL root is reachable from the Owner's own user session (wsl -u root), so these facts
 are as trustworthy as the Owner/root boundary accepted in constraint 4fedfc84, no more. What this tool
@@ -23,6 +24,19 @@ Archive scopes: "between-roles-N" moves only the protocol records (the existing 
 semantics); every other reason moves the protocol records, formal-role.lock, all run directories,
 this batch's workspaces and its ws-prep directory. Moves use renameat2(RENAME_NOREPLACE); nothing
 is deleted.
+
+Source v2 (DESIGN S14, lessons b22/b28), mirroring resident-v2/archive-windows-spool.ps1:
+  - destinations are FLAT names directly inside the archive directory (incoming-<leaf>,
+    outgoing-<leaf>, run-<name>, workspace-<jobId>, ws-prep-<batchId>, formal-role.lock): no nested
+    runs/ or workspaces/ directory is ever created (the runs/ prefix broke b28);
+  - completed scopes (between-roles-N, success-close) refuse, moving nothing, when the spool holds an
+    unknown leaf, a half record pair, or a still-held formal-role.lock: the role did not end the way a
+    completed stage ends, so the scene is preserved for the failure path;
+  - failure scopes archive what they find and report what was left in place;
+  - every parent is a real directory (root-owned and not group/other-writable on the host), every moved
+    directory tree is inventoried before and verified after the move, and every source is gone after;
+  - a failure part-way leaves a durable partial status (verified false), never a missing one;
+  - archive-usage reports the bytes kept by earlier archives (the resident's 50 GB reminder).
 """
 import ctypes
 import hashlib
@@ -49,9 +63,10 @@ SEQ = [f'{i:02d}' for i in range(1, 33)]
 # Linux view of the bridge records (mirror of the Windows view in src/archive.mjs).
 LINUX_PROTOCOL = {
     'incoming': [f'{n}{s}' for n in ['issue'] + [f'response-{q}' for q in SEQ] for s in ('.json', '.ready.json')],
-    'outgoing': [f'{n}{s}' for n in ['result'] + [f'challenge-{q}' for q in SEQ] for s in ('.json', '.ready.json')] + ['active.lock'],
+    'outgoing': [f'{n}{s}' for n in ['result', 'blocked'] + [f'challenge-{q}' for q in SEQ] for s in ('.json', '.ready.json')] + ['active.lock'],
 }
 MAX_LEAF = 1 << 20
+MAX_TREE = 1_000_000
 
 
 class Refused(Exception):
@@ -118,15 +133,45 @@ def containers_quiet(ps_lines):
     return all(s in ('exited', 'dead') for s in states), states
 
 
-def _leaf(root, rel, target):
+def _protected_dir(path):
+    """A real directory (no link); on the host also root-owned and not group/other-writable."""
+    need(os.path.lexists(path) and not os.path.islink(path) and os.path.isdir(path), 'ARCHIVE_PARENT_REDIRECTED')
+    if sys.platform.startswith('linux') and os.geteuid() == 0:
+        st = os.lstat(path)
+        need(st.st_uid == 0 and not (st.st_mode & 0o022), 'ARCHIVE_PARENT_UNPROTECTED')
+
+
+def tree_inventory(path):
+    """Digest of (relative path, type, inode, size, mtime) of a whole tree, links not followed."""
+    h, n = hashlib.sha256(), 0
+    for base, dirs, files in os.walk(path, followlinks=False):
+        dirs.sort()
+        for name in sorted(dirs + files):
+            full = os.path.join(base, name)
+            st = os.lstat(full)
+            kind = 'l' if os.path.islink(full) else 'd' if os.path.isdir(full) else 'f'
+            h.update(f'{os.path.relpath(full, path)}\0{kind}\0{st.st_ino}\0{st.st_size}\0{st.st_mtime_ns}\n'.encode())
+            n += 1
+            need(n <= MAX_TREE, 'ARCHIVE_TREE_BOUND')
+    return h.hexdigest()
+
+
+def _leaf(root, rel, target, flat):
     full = os.path.join(root, rel)
     st = os.lstat(full)
     need(not os.path.islink(full), 'ARCHIVE_LINK_REFUSED')
     is_dir = os.path.isdir(full)
     if not is_dir:
         need(st.st_nlink == 1 and st.st_size <= MAX_LEAF, 'ARCHIVE_LEAF_SHAPE_REFUSED')
-    return {'from': rel, 'to': f'{target}/{rel}', 'isDir': is_dir, 'ino': st.st_ino, 'mtimeNs': st.st_mtime_ns,
-            'sha256': None if is_dir else sha256_file(full)}
+    need(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,200}', flat) is not None, 'ARCHIVE_FLAT_NAME_REFUSED')
+    return {'from': rel, 'to': f'{target}/{flat}', 'isDir': is_dir, 'ino': st.st_ino, 'mtimeNs': st.st_mtime_ns,
+            'sha256': None if is_dir else sha256_file(full), 'tree': tree_inventory(full) if is_dir else None}
+
+
+def half_pairs(names):
+    """Record names whose .json / .ready.json partner is missing."""
+    bases = {n[:-len('.ready.json')] if n.endswith('.ready.json') else n[:-len('.json')] for n in names if n.endswith('.json')}
+    return sorted(b for b in bases if (f'{b}.json' in names) != (f'{b}.ready.json' in names))
 
 
 def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
@@ -135,31 +180,49 @@ def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
     # Only the two exact between-role reasons are protocol-only; any other reason (including any
     # failure-derived text) archives the whole batch scene (third review, MAJOR 1).
     protocol_only = re.fullmatch(r'between-roles-[46]', reason) is not None
-    prefix = 'archive' if reason == 'success-close' or protocol_only else 'failed'
+    completed = protocol_only or reason == 'success-close'
+    prefix = 'archive' if completed else 'failed'
     target = f'formal-spool/{prefix}-{batch_id[:12]}-{reason}-{nonce_hex}'
-    moves = []
+    _protected_dir(root)
+    _protected_dir(os.path.join(root, 'formal-spool'))
+    moves, unknown, halves = [], [], []
     for sub, names in LINUX_PROTOCOL.items():
         d = os.path.join(root, 'formal-spool', sub)
-        need(not os.path.islink(d), 'SPOOL_PARENT_REDIRECTED')
-        if os.path.isdir(d):
-            for name in names:
-                if os.path.lexists(os.path.join(d, name)):
-                    moves.append(_leaf(root, f'formal-spool/{sub}/{name}', target))
+        if not os.path.lexists(d):
+            continue
+        _protected_dir(d)
+        present = sorted(os.listdir(d))
+        unknown += [f'{sub}/{n}' for n in present if n not in names]
+        halves += [f'{sub}/{b}' for b in half_pairs([n for n in present if n in names])]
+        for name in names:
+            if os.path.lexists(os.path.join(d, name)):
+                moves.append(_leaf(root, f'formal-spool/{sub}/{name}', target, f'{sub}-{name}'))
+    role_lock = os.path.lexists(os.path.join(root, 'formal-role.lock'))
+    if completed:
+        # A completed stage leaves no unknown leaf, no half pair and no held role slot (b22/b28).
+        need(not unknown, 'UNKNOWN_SPOOL_LEAF_PRESERVED')
+        need(not halves, 'HALF_PROTOCOL_PAIR_PRESERVED')
+        need(not role_lock, 'ROLE_LOCK_HELD_PRESERVED')
     if not protocol_only:
-        if os.path.lexists(os.path.join(root, 'formal-role.lock')):
-            moves.append(_leaf(root, 'formal-role.lock', target))
+        if role_lock:
+            moves.append(_leaf(root, 'formal-role.lock', target, 'formal-role.lock'))
         runs = os.path.join(root, 'runs')
-        need(not os.path.islink(runs), 'RUNS_REDIRECTED')
-        if os.path.isdir(runs):
+        if os.path.lexists(runs):
+            _protected_dir(runs)
             for name in sorted(os.listdir(runs)):
-                moves.append(_leaf(root, f'runs/{name}', target))
+                moves.append(_leaf(root, f'runs/{name}', target, f'run-{name}'))
+        if os.path.lexists(os.path.join(root, 'workspaces')):
+            _protected_dir(os.path.join(root, 'workspaces'))
         for j in sorted(job_ids):
             if os.path.lexists(os.path.join(root, 'workspaces', j)):
-                moves.append(_leaf(root, f'workspaces/{j}', target))
+                moves.append(_leaf(root, f'workspaces/{j}', target, f'workspace-{j}'))
         if os.path.lexists(os.path.join(root, f'ws-prep-{batch_id}')):
-            moves.append(_leaf(root, f'ws-prep-{batch_id}', target))
-    return {'contract': 'clued.independent-ci.resident-linux-archive/1', 'batchId': batch_id, 'reason': reason,
-            'scope': 'protocol' if protocol_only else 'batch', 'target': target, 'moves': moves, 'deletesAnything': False}
+            moves.append(_leaf(root, f'ws-prep-{batch_id}', target, f'ws-prep-{batch_id}'))
+    flats = [m['to'] for m in moves]
+    need(len(set(flats)) == len(flats), 'ARCHIVE_FLAT_NAME_COLLISION')
+    return {'contract': 'clued.independent-ci.resident-linux-archive/2', 'batchId': batch_id, 'reason': reason,
+            'scope': 'protocol' if protocol_only else 'batch', 'completed': completed, 'target': target, 'moves': moves,
+            'remainderLeftInPlace': unknown, 'halfPairs': halves, 'deletesAnything': False}
 
 
 def earlier_result(done_path):
@@ -170,7 +233,7 @@ def earlier_result(done_path):
     need(not os.path.islink(done_path), 'ARCHIVE_STATUS_LINK_REFUSED')
     with open(done_path) as f:
         earlier = json.load(f)
-    return {**{k: earlier[k] for k in ('verified', 'moved', 'deleted', 'directory', 'scope') if k in earlier}, 'replayed': True}
+    return {**{k: earlier[k] for k in ('verified', 'moved', 'deleted', 'directory', 'scope', 'partial', 'code') if k in earlier}, 'replayed': True}
 
 
 def rename_noreplace(src, dst):
@@ -184,29 +247,64 @@ def rename_noreplace(src, dst):
         os.rename(src, dst)
 
 
+def _durable_new(path, value):
+    with open(path, 'x') as f:
+        json.dump(value, f, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+
+
 def apply_archive(root, plan, rename=rename_noreplace):
     target = os.path.join(root, plan['target'])
     os.mkdir(target, 0o700)
-    with open(os.path.join(target, 'intent.json'), 'x') as f:
-        json.dump(plan, f, sort_keys=True)
-        f.flush()
-        os.fsync(f.fileno())
+    _durable_new(os.path.join(target, 'intent.json'), plan)
     moved = 0
-    for m in plan['moves']:
-        src, dst = os.path.join(root, m['from']), os.path.join(root, m['to'])
-        st = os.lstat(src)
-        need(not os.path.islink(src) and st.st_ino == m['ino'] and st.st_mtime_ns == m['mtimeNs'], 'ARCHIVE_LEAF_CHANGED_BEFORE_MOVE')
-        os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
-        rename(src, dst)
-        st2 = os.lstat(dst)
-        need(st2.st_ino == m['ino'] and (m['sha256'] is None or sha256_file(dst) == m['sha256']), 'ARCHIVE_LEAF_CHANGED_AFTER_MOVE')
-        moved += 1
-    result = {'verified': True, 'moved': moved, 'deleted': 0, 'directory': os.path.basename(plan['target']), 'scope': plan['scope']}
-    with open(os.path.join(target, 'receipt.json'), 'x') as f:
-        json.dump(result, f, sort_keys=True)
-        f.flush()
-        os.fsync(f.fileno())
+    try:
+        for m in plan['moves']:
+            src, dst = os.path.join(root, m['from']), os.path.join(root, m['to'])
+            need(os.path.dirname(dst) == target, 'ARCHIVE_FLAT_NAME_REFUSED')  # never a nested destination (b28)
+            st = os.lstat(src)
+            need(not os.path.islink(src) and st.st_ino == m['ino'] and st.st_mtime_ns == m['mtimeNs'], 'ARCHIVE_LEAF_CHANGED_BEFORE_MOVE')
+            if m['isDir']:
+                need(tree_inventory(src) == m['tree'], 'ARCHIVE_TREE_CHANGED_BEFORE_MOVE')
+            rename(src, dst)
+            moved += 1
+            st2 = os.lstat(dst)
+            need(st2.st_ino == m['ino'] and (m['sha256'] is None or sha256_file(dst) == m['sha256']), 'ARCHIVE_LEAF_CHANGED_AFTER_MOVE')
+            if m['isDir']:
+                need(tree_inventory(dst) == m['tree'], 'ARCHIVE_TREE_CHANGED_AFTER_MOVE')
+        # Postconditions: every source is gone; a completed scope leaves no known record behind.
+        need(all(not os.path.lexists(os.path.join(root, m['from'])) for m in plan['moves']), 'ARCHIVE_SOURCE_STILL_PRESENT')
+        if plan['completed']:
+            for sub, names in LINUX_PROTOCOL.items():
+                d = os.path.join(root, 'formal-spool', sub)
+                need(not os.path.isdir(d) or not any(n in names for n in os.listdir(d)), 'ARCHIVE_POSTCONDITION_UNCONFIRMED')
+    except Refused as e:
+        # Part-way: durable partial status, so the failure is visible and never mistaken for "not run".
+        _durable_new(os.path.join(target, 'partial.json'), {'verified': False, 'moved': moved, 'code': e.code})
+        raise Refused(e.code) from None
+    result = {'verified': True, 'moved': moved, 'deleted': 0, 'directory': os.path.basename(plan['target']), 'scope': plan['scope'],
+              'remainderLeftInPlace': plan['remainderLeftInPlace'], 'halfPairs': plan['halfPairs']}
+    _durable_new(os.path.join(target, 'receipt.json'), result)
     return result
+
+
+def archive_usage(root):
+    """Bytes kept by earlier archives in the Linux spool (archive-* and failed-*); links not followed."""
+    spool = os.path.join(root, 'formal-spool')
+    total, dirs, n = 0, 0, 0
+    if os.path.isdir(spool) and not os.path.islink(spool):
+        for name in sorted(os.listdir(spool)):
+            full = os.path.join(spool, name)
+            if not re.fullmatch(r'(archive|failed)-[0-9A-Za-z-]+', name) or os.path.islink(full) or not os.path.isdir(full):
+                continue
+            dirs += 1
+            for base, ds, fs in os.walk(full, followlinks=False):
+                for f in fs:
+                    n += 1
+                    need(n <= 10 * MAX_TREE, 'ARCHIVE_USAGE_BOUND')
+                    total += os.lstat(os.path.join(base, f)).st_size
+    return {'contract': 'clued.independent-ci.linux-archive-usage/1', 'bytes': total, 'directories': dirs}
 
 
 def verify_pins(manifest):
@@ -315,16 +413,19 @@ def main(argv):
         else:
             job_ids = descriptor(parsed['batchId'])['linuxJobIds']
         plan = plan_archive(STATE, parsed['batchId'], parsed['reason'], job_ids, secrets.token_hex(6))
-        result = apply_archive(STATE, plan)
-        with open(f'{status_dir}/{inst}.json', 'x') as f:  # one status per instance, create-only, durable
-            json.dump({**result, 'quiescence': q}, f, sort_keys=True)
-            f.flush()
-            os.fsync(f.fileno())
+        try:
+            result = apply_archive(STATE, plan)
+        except Refused as e:  # one status per instance, create-only, durable: partial is never "missing"
+            _durable_new(f'{status_dir}/{inst}.json', {'verified': False, 'partial': True, 'code': e.code, 'directory': os.path.basename(plan['target']), 'quiescence': q})
+            raise
+        _durable_new(f'{status_dir}/{inst}.json', {**result, 'quiescence': q})
         return result
     if cmd == 'archive-status':
         inst = args.get('--instance', '')
         parse_instance('archive', inst)
         return json.load(open(f'{RESIDENT_STATE}/archive-status/{inst}.json'))
+    if cmd == 'archive-usage':
+        return archive_usage(STATE)
     raise Refused('COMMAND_REFUSED')
 
 

@@ -1,9 +1,21 @@
 // Installed resident policy. Written once by the Owner's elevated install (UAC) into an
 // admin-only file whose SHA-256 is pinned in the service configuration; the executor refuses to
 // run on any other bytes. Everything a batch may do is bounded here; nothing per batch widens it.
+//
+// Contract /2 (Source v2, Owner decision 1b5d3687):
+//   - ciSourceManifestSha256: the CI Source manifest of the install record (record source-manifest.json),
+//     which names the installed Source directory resident\source\<it> that the generic helper loads code
+//     from and is the sourceManifestSha256 of every job; sourceManifestSha256 stays the installed-files
+//     manifest (integrity, batch key);
+//   - automaticAttempt2: the one automatic attempt 2 for an allow-listed clean transient failure before any
+//     role was published (attempts.mjs); `enabled` and the delay before it are the only knobs;
+//   - retention: the archive size at which a reminder receipt is written (50 GB; archives are rename-only
+//     and never deleted by the resident), and how often it is measured;
+//   - validUntil null = valid until the Source changes or the resident is uninstalled.
 import { HEX64, REPO, UUID, check, exactKeys } from './canonical.mjs';
 
-export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/1';
+export const POLICY_CONTRACT = 'clued.independent-ci.resident-policy/2';
+export const REMINDER_BYTES_DEFAULT = 50 * 1024 ** 3;
 
 // The fixed eight stages of the six-check batch (stages.json of the installed Source).
 export const FIXED_STAGES = Object.freeze([
@@ -22,11 +34,11 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const int = (v, lo, hi) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 
 export function validatePolicy(p) {
-  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'companion', 'stageRunMilliseconds', 'linux', 'automaticRetryAllowed'], 'POLICY_KEYS_INVALID');
+  exactKeys(p, ['contract', 'repo', 'baseBranch', 'sourceManifestSha256', 'ciSourceManifestSha256', 'residentManifestSha256', 'ownerAcceptance', 'validUntil', 'limits', 'companion', 'stageRunMilliseconds', 'linux', 'automaticAttempt2', 'retention'], 'POLICY_KEYS_INVALID');
   check(p.contract === POLICY_CONTRACT, 'POLICY_CONTRACT_INVALID');
   check(REPO.test(p.repo), 'POLICY_REPO_INVALID');
   check(p.baseBranch === 'main', 'POLICY_BASE_BRANCH_FIXED_MAIN');
-  check(HEX64.test(p.sourceManifestSha256) && HEX64.test(p.residentManifestSha256), 'POLICY_SOURCE_PIN_INVALID');
+  check(HEX64.test(p.sourceManifestSha256) && HEX64.test(p.ciSourceManifestSha256) && HEX64.test(p.residentManifestSha256), 'POLICY_SOURCE_PIN_INVALID');
   exactKeys(p.ownerAcceptance, ['decisionRef', 'installReceiptRef'], 'POLICY_ACCEPTANCE_KEYS_INVALID');
   check(UUID.test(p.ownerAcceptance.decisionRef), 'POLICY_ACCEPTANCE_DECISION_INVALID');
   check(p.ownerAcceptance.installReceiptRef === null || UUID.test(p.ownerAcceptance.installReceiptRef), 'POLICY_INSTALL_RECEIPT_INVALID');
@@ -48,7 +60,11 @@ export function validatePolicy(p) {
   check(p.linux.distribution === 'Ubuntu-24.04', 'POLICY_DISTRIBUTION_FIXED');
   check(p.linux.workerUnit === 'clued-ci-worker@.service' && p.linux.wsprepUnit === 'clued-ci-wsprep@.service'
     && p.linux.archiveUnit === 'clued-ci-archive@.service', 'POLICY_UNIT_NAMES_FIXED');
-  check(p.automaticRetryAllowed === false, 'POLICY_AUTOMATIC_RETRY_FORBIDDEN');
+  // No general automatic retry: only the one bounded attempt 2 of attempts.mjs exists.
+  exactKeys(p.automaticAttempt2, ['enabled', 'delayMs'], 'POLICY_ATTEMPT2_KEYS_INVALID');
+  check(typeof p.automaticAttempt2.enabled === 'boolean' && int(p.automaticAttempt2.delayMs, 60_000, 3_600_000), 'POLICY_ATTEMPT2_INVALID');
+  exactKeys(p.retention, ['reminderBytes', 'checkEveryMs'], 'POLICY_RETENTION_KEYS_INVALID');
+  check(int(p.retention.reminderBytes, 1024 ** 3, 1024 ** 4) && int(p.retention.checkEveryMs, 60_000, 86_400_000), 'POLICY_RETENTION_INVALID');
   return Object.freeze({ ...p, stages: FIXED_STAGES.map((s, i) => ({ ...s, runMilliseconds: p.stageRunMilliseconds[i] })) });
 }
 

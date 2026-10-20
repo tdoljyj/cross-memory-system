@@ -18,6 +18,7 @@ import { installedIntegrity, mailboxCompanion } from './service-ports.mjs';
 import { WindowsEngine } from './engine-windows.mjs';
 import { acquireInstanceLock, processAlive } from './instance-lock.mjs';
 import { readBounded } from './store.mjs';
+import { RetentionWatch, measureWindows } from './retention.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -39,10 +40,13 @@ export async function main(argv = process.argv.slice(2)) {
   const owner = await OwnerInbox.open(path.join(root, 'owner'), path.join(state, 'owner-seen'));
   const mailbox = await Mailbox.open(path.join(root, 'mailbox'), clock);
   const runner = new Runner();
+  // Source v2: the installed CI Source lives under the CI Source manifest hash of the install record (the
+  // directory the generic helper loads code from); its installed-files manifest (A) pins every byte.
+  const sourceRoot = path.join(root, 'source', policy.ciSourceManifestSha256);
   const engine = new WindowsEngine({
     run: (a, o) => runner.run(a, o), busy: () => runner.busy, companionMailbox: mailbox, sleep, clock,
     paths: {
-      sourceRoot: path.join(root, 'source', policy.sourceManifestSha256),
+      sourceRoot,
       workRoot: path.join(root, 'work'),
       outboxRoot: path.join(root, 'outbox'),
       nodeExe: path.join(root, 'runtime', 'node.exe'),
@@ -50,14 +54,17 @@ export async function main(argv = process.argv.slice(2)) {
       scExe: 'C:\\Windows\\System32\\sc.exe',
     },
   });
+  const companion = mailboxCompanion(mailbox, sleep);
   const exec = new ResidentExecutor({
-    policy, ledger, receipts, inbox, requests, owner, engine, clock,
-    companion: mailboxCompanion(mailbox, sleep),
+    policy, ledger, receipts, inbox, requests, owner, engine, clock, companion,
     sourceIntegrity: installedIntegrity({
-      sourceRoot: path.join(root, 'source', policy.sourceManifestSha256), sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
+      sourceRoot, sourceManifest: path.join(root, 'config', 'source-installed-manifest.json'),
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),
     }),
   });
+  const retention = new RetentionWatch({ policy, receipts, clock,
+    measureWindows: () => measureWindows({ spool: path.join(path.dirname(root), 'formal-spool'), work: path.join(root, 'work'), bundles: path.join(root, 'bundles') }),
+    measureLinux: () => companion.archiveUsage() });
   await receipts.append('service-start', { policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
   for (;;) {
@@ -77,6 +84,8 @@ export async function main(argv = process.argv.slice(2)) {
       try { await ledger.halt('RESIDENT_LOOP_EXCEPTION', { message: String(error?.code ?? 'unknown') }); } catch { /* keep exiting */ }
       return 3;
     }
+    // Between batches only (tick is synchronous): the 50 GB archive reminder, measured at most hourly.
+    if (['IDLE', 'DEFERRED', 'PAUSED'].includes(result.state)) { try { await retention.maybeCheck(); } catch { /* a reminder is advisory */ } }
     if (values.once) return 0;
     await sleep(['IDLE', 'DEFERRED', 'HALTED', 'PAUSED'].includes(result.state) ? 15_000 : 2_000);
   }

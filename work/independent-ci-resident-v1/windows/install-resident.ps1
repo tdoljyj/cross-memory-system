@@ -47,7 +47,13 @@ $RunnerService = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-home-win-0
 $OriginalBinary = '"C:\ProgramData\CluedControl\runner\bin\RunnerService.exe"'
 $Sc = 'C:\Windows\System32\sc.exe'
 $Csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$TargetShape = '^(?:(?:resident|source)\\[0-9a-f]{64}(?:\\[A-Za-z0-9_.@-]+)+|(?:config|runtime|bin|helpers)\\[A-Za-z0-9_.@-]+)$'
+$TargetShape = '^(?:(?:resident|source)\\[0-9a-f]{64}(?:\\[A-Za-z0-9_.@-]+)+|(?:config|runtime|bin|helpers|record)\\[A-Za-z0-9_.@-]+)$'
+# Source v2 (DESIGN S5, S12): the claim-free install record goes to record\ (admin-only; read by the
+# resident's derivation and by the generic helper as clued-control), the CI Source to
+# source\<ciSourceManifestSha256>\ (the directory the generic helper loads code from), and the ONE generic
+# helper is compiled here from that installed Source and pinned in config\broker.json.
+$GenericHelper = 'controller-formal-generic-v2.exe'
+$SourceV2Windows = 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'
 
 function Sha256Bytes([byte[]]$b) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($b))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Sha256Text([string]$t) { Sha256Bytes ([Text.Encoding]::UTF8.GetBytes($t)) }
@@ -87,7 +93,10 @@ function Get-AclPlan([string]$res) {
     'install'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"                 # install records: only admins write
     'owner'             = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"                 # Owner requests: only the elevated Owner (BA) creates
     'source'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)(A;OICI;$rx;;;$ControllerSid)"
-    'helpers'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)"           # installed generic helpers (broker allow-list)
+    'helpers'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)"           # the installed generic helper (broker config pin)
+    'record'            = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$ControllerSid)(A;OICI;$rx;;;$OwnerSid)"   # claim-free install record: only admins write
+    'stage'             = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$ControllerSid)"           # sealed per-stage inputs (resident writes, helper reads)
+    'bundles'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$mod;;;$OwnerSid)"               # companion bundles (Owner's git credential), read by ws-prep
     'resident'          = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'runtime'           = "$base(A;OICI;$rx;;;$res)(A;OICI;$rx;;;$OwnerSid)"
     'state'             = "$base(A;OICI;$mod;;;$res)(A;OICI;$rx;;;$OwnerSid)"
@@ -114,8 +123,9 @@ function Build-Plan {
     if ($f.path -match '(^|[\\/])\.\.([\\/]|$)' -or [IO.Path]::IsPathRooted($f.path)) { throw 'PACKAGE_SOURCE_PATH_REFUSED' }
   }
   $find = { param($t) @($pkg.files | Where-Object { $_.target -ceq $t })[0].sha256 }
+  if ($pkg.contract -cne 'clued.independent-ci.resident-package/3' -or $pkg.ciSourceManifestSha256 -cnotmatch '^[0-9a-f]{64}$' -or (& $find 'record\source-manifest.json') -cne $pkg.ciSourceManifestSha256) { throw 'SOURCE_V2_RECORD_PACKAGE_REQUIRED' }
   [ordered]@{
-    contract = 'clued.independent-ci.resident-install-plan/2'
+    contract = 'clued.independent-ci.resident-install-plan/3'
     root = $Root; rootExists = (Test-Path -LiteralPath $Root)
     servicesExist = [bool](Get-Service -Name $ServiceName, $BrokerName -ErrorAction SilentlyContinue)
     residentSid = $res; ownerSid = $OwnerSid; controllerSid = $ControllerSid
@@ -123,7 +133,9 @@ function Build-Plan {
     packageManifestSha256 = $ExpectedPackageManifestSha256
     sourceManifestSha256 = $pkg.sourceManifestSha256; residentManifestSha256 = $pkg.residentManifestSha256
     policySha256 = (& $find 'config\policy.json'); companionConfigSha256 = (& $find 'config\companion.json')
-    nodeSha256 = (& $find 'runtime\node.exe'); helpersAllowListSha256 = (& $find 'config\helpers-allow-list.json')
+    nodeSha256 = (& $find 'runtime\node.exe')
+    ciSourceManifestSha256 = $pkg.ciSourceManifestSha256; bridgeManifestSha256 = $pkg.bridgeManifestSha256
+    recordSourceManifestSha256 = (& $find 'record\source-manifest.json'); genericHelper = $GenericHelper
     files = @($pkg.files).Count
     acl = Get-AclPlan $res
     runnerBefore = Read-RunnerState
@@ -182,20 +194,41 @@ Step 'package-copy' {
     Write-New $to $bytes
   }
 }
-# 3. Compile the two service hosts once with the in-box compiler and pin them.
+# 3. Compile the two service hosts and the ONE generic helper once with the in-box compiler and pin them.
+#    The broker and the helper include the installed Source v2 C# files (S1, S2, S12), never a copy
+#    from the package directory.
 Step 'service-hosts' {
   # csc runs from the admin-only bin directory with full reference paths, so nothing is resolved
   # from the caller's current directory (review M1).
   $fw = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\'
+  $v2 = Join-Path $Root ('source\' + $plan.ciSourceManifestSha256 + '\' + $SourceV2Windows)
   Push-Location (Join-Path $Root 'bin')
   try {
-  foreach ($pair in @(@('ResidentServiceHost', @("/reference:$($fw)System.dll", "/reference:$($fw)System.ServiceProcess.dll")), @('SwapBroker', @("/reference:$($fw)System.dll", "/reference:$($fw)System.ServiceProcess.dll", "/reference:$($fw)System.Web.Extensions.dll")))) {
+  foreach ($pair in @(@('ResidentServiceHost', @("/reference:$($fw)System.dll", "/reference:$($fw)System.ServiceProcess.dll"), @()),
+                      @('SwapBroker', @("/reference:$($fw)System.dll", "/reference:$($fw)System.Core.dll", "/reference:$($fw)System.ServiceProcess.dll", "/reference:$($fw)System.Web.Extensions.dll"),
+                        @((Join-Path $v2 'ResidentScmV2.cs'), (Join-Path $v2 'ScmPidHandshakeV2.cs'))))) {
     $exe = Join-Path $Root ('bin\' + $pair[0] + '.exe')
-    & $Csc /nologo /noconfig /target:exe /optimize+ ("/out:" + $exe) $pair[1] (Join-Path $Root ('bin\' + $pair[0] + '.cs')) | Out-Null
+    & $Csc /nologo /noconfig /target:exe /optimize+ ("/out:" + $exe) $pair[1] (Join-Path $Root ('bin\' + $pair[0] + '.cs')) $pair[2] | Out-Null
     if ($LASTEXITCODE -ne 0) { throw ('SERVICE_HOST_COMPILE_FAILED:' + $pair[0]) }
     $script:receipt[($pair[0] + 'Sha256')] = Sha256File $exe
   }
+  $helper = Join-Path $Root ('helpers\' + $GenericHelper)
+  & $Csc /nologo /noconfig /target:winexe /platform:x64 /optimize+ /main:CluedWindowsFormalEntryV2 "/reference:$($fw)System.dll" "/reference:$($fw)System.Core.dll" "/reference:$($fw)System.Web.Extensions.dll" ("/out:" + $helper) (Join-Path $v2 'FormalPublicBoundaryV2.cs') (Join-Path $v2 'FormalSession0V2.cs') (Join-Path $v2 'ScmPidHandshakeV2.cs') | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'GENERIC_HELPER_COMPILE_FAILED' }
+  $script:receipt.genericHelperSha256 = Sha256File $helper
   } finally { Pop-Location }
+}
+# 3b. Broker configuration: the Owner SID of the v1 mutation mutex, the original binary, the runner's
+#     stable configuration digest (read-only, with the just-compiled broker) and the helper pin. Written
+#     once, CreateNew; its SHA-256 is the broker's second command-line argument.
+Step 'broker-config' {
+  $stable = (& (Join-Path $Root 'bin\SwapBroker.exe') --stable-digest $OwnerSid | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $stable -cnotmatch '^[0-9a-f]{64}$') { throw 'RUNNER_STABLE_DIGEST_UNCONFIRMED' }
+  if ((Read-RunnerState).sddl -cne $r.sddl) { throw 'RUNNER_SDDL_CHANGED_DURING_INSTALL' }
+  $json = '{"contract":"clued.independent-ci.swap-broker-config/1","helper":{"name":"' + $GenericHelper + '","sha256":"' + $script:receipt.genericHelperSha256 + '"},"originalBinary":' + ($OriginalBinary | ConvertTo-Json -Compress) + ',"ownerSid":"' + $OwnerSid + '","stableDigest":"' + $stable + '"}'
+  $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($json)
+  Write-New (Join-Path $Root 'config\broker.json') $bytes
+  $script:receipt.brokerConfigSha256 = Sha256Bytes $bytes; $script:receipt.runnerStableDigest = $stable
 }
 # 4. The resident service (virtual account, Session 0, no right on the runner service) and the
 #    broker (LocalSystem, binary-path-only swaps between the original and allow-listed helpers).
@@ -209,7 +242,7 @@ Step 'services' {
   & $Sc failure $ServiceName reset= 86400 actions= restart/60000// | Out-Null
   & $Sc failureflag $ServiceName 1 | Out-Null
   & $Sc sdset $ServiceName $plan.services.resident.sddl | Out-Null
-  $bbin = '"' + (Join-Path $Root 'bin\SwapBroker.exe') + '" "' + $Root + '" "' + (Join-Path $Root 'helpers') + '" ' + $plan.helpersAllowListSha256
+  $bbin = '"' + (Join-Path $Root 'bin\SwapBroker.exe') + '" "' + $Root + '" ' + $script:receipt.brokerConfigSha256
   & $Sc create $BrokerName binPath= $bbin start= auto type= own | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'BROKER_SERVICE_CREATE_FAILED' }
   & $Sc sdset $BrokerName $plan.services.broker.sddl | Out-Null
@@ -217,7 +250,7 @@ Step 'services' {
 # 5. Source v2's own reviewed ACL migration of the one-shot install (formal-spool, state) so the
 #    resident SID can do what the elevated Owner did per batch. Fixed args, installed copy only.
 Step 'source-v2-acl' {
-  $tool = Join-Path $Root ('source\' + $plan.sourceManifestSha256 + '\work\actions-hosted-migration\independent-ci-v1\src\resident-v2\migrate-acl.ps1')
+  $tool = Join-Path $Root ('source\' + $plan.ciSourceManifestSha256 + '\work\actions-hosted-migration\independent-ci-v1\src\resident-v2\migrate-acl.ps1')
   if (-not (Test-Path -LiteralPath $tool)) { throw 'SOURCE_V2_REQUIRED' }
   $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $OwnerSid -ControllerSid $ControllerSid | Out-String
   if ($LASTEXITCODE -ne 0) { throw 'SOURCE_V2_ACL_MIGRATION_REFUSED' }

@@ -5,7 +5,8 @@ import path from 'node:path';
 import { HEX64, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 
 // Timeouts are upper bounds for one companion action; no answer by then is never success.
-const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'prepare-workspaces': 25 * 60_000, 'archive-linux': 6 * 60_000, 'linux-quiescence': 2 * 60_000 };
+const TIMEOUTS = { 'build-bundle': 35 * 60_000, 'prepare-workspaces': 25 * 60_000, 'archive-linux': 6 * 60_000, 'linux-quiescence': 2 * 60_000, 'check-refs': 6 * 60_000, 'archive-usage': 3 * 60_000 };
+const NO_BATCH = '0000000000000000-000000000000';
 
 export function mailboxCompanion(mailbox, sleep) {
   const ask = async (kind, fields) => mailbox.await(await mailbox.send(kind, fields, TIMEOUTS[kind]), sleep);
@@ -24,6 +25,15 @@ export function mailboxCompanion(mailbox, sleep) {
       const id = batch?.batchId ?? '0000000000000000-000000000000';
       const r = await ask('linux-quiescence', { batchId: id });
       return { linuxUnitsInactive: r?.ok === true && r.proof?.linuxUnitsInactive === true, containersZero: r?.ok === true && r.proof?.containersZero === true };
+    },
+    // Source v2: refs still the bundle's (stage 2 gate) and the Linux archive size (retention).
+    async checkRefs(batch) {
+      const r = await ask('check-refs', { batchId: batch.batchId });
+      return { ok: r?.ok === true, code: r?.ok === true ? null : (r?.code ?? 'REMOTE_REFS_UNAVAILABLE') };
+    },
+    async archiveUsage() {
+      const r = await ask('archive-usage', { batchId: NO_BATCH });
+      return r?.ok === true && r.usage ? { ok: true, ...r.usage } : { ok: false };
     },
     async archiveLinux(batch, reason) {
       const r = await ask('archive-linux', { batchId: batch.batchId, reason });

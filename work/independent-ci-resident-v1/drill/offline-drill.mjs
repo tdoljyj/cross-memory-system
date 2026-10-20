@@ -34,13 +34,13 @@ await fs.writeFile(path.join(winSpool, 'outgoing', `${'e'.repeat(64)}.json`), '{
 let now = Date.parse('2026-10-21T00:00:00Z');
 const clock = () => now;
 const policy = validatePolicy({
-  contract: 'clued.independent-ci.resident-policy/1', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, residentManifestSha256: RESIDENT,
+  contract: 'clued.independent-ci.resident-policy/2', repo: REPO, baseBranch: 'main', sourceManifestSha256: SOURCE, ciSourceManifestSha256: '9'.repeat(64), residentManifestSha256: RESIDENT,
   ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null }, validUntil: null,
   limits: { maxBatchesPer24h: 12, maxEvaluationsPer24h: 24, maxConcurrent: 1, inboxMaxFiles: 16, unexecutedCooldownMs: 600_000, unexecutedMaxPer24h: 3, stageMarginMs: 180_000 },
   companion: { userSid: OWNER, heartbeatMaxAgeMs: 60_000 },
   stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000],
   linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
-  automaticRetryAllowed: false,
+  automaticAttempt2: { enabled: true, delayMs: 600_000 }, retention: { reminderBytes: 50 * 1024 ** 3, checkEveryMs: 3_600_000 },
 });
 
 // Script: PR number -> { stage number -> result }. Each Linux stage leaves one issue/result exchange.
@@ -67,7 +67,7 @@ const engine = {
     now += 60_000;
     if ([4, 6].includes(stage.number)) { await archive(winSpool, batch.key, `between-roles-${stage.number}`); await archive(linSpool, batch.key, `between-roles-${stage.number}`, LINUX); }
     if ([2, 4, 6].includes(stage.number)) await exchange();
-    const r = script.get(this.current.subject.pr)?.[stage.number];
+    const r = script.get(`${this.current.subject.pr}:${this.current.subject.attempt}`)?.[stage.number] ?? script.get(this.current.subject.pr)?.[stage.number];
     if (r?.leaveLinuxBusy) linuxBusy = true;
     return r ?? { ok: true, factsSha256: '8'.repeat(64) };
   },
@@ -139,6 +139,12 @@ await step('PR 904 is still never re-run automatically', async () => { await dro
 await step('anyone may pause', async () => { await drop({ contract: PAUSE_CONTRACT, reason: 'drill pause' }, 'requests'); await drop(trigger(906)); return exec.tick(); }, r => r.state === 'PAUSED');
 await step('a resume dropped in the user-writable requests dir is ignored', async () => { await drop(resumeRequest({ expectedPausedSha256: (await ledger.paused()).sha256, by: OWNER }), 'requests'); return exec.tick(); }, r => r.state === 'PAUSED');
 await step('only the Owner resume request continues', async () => { await writeOwnerRequest(path.join(root, 'owner'), resumeRequest({ expectedPausedSha256: (await ledger.paused()).sha256, by: OWNER }), clock); return exec.tick(); }, r => r.state === 'COMPLETED');
+// Owner decision 1b5d3687: one automatic attempt 2 for a clean transient failure before any role published.
+script.set('907:1', { 2: { ok: false, code: 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', proof: WINDOWS_CLEAN } });
+await step('PR 907: a push between bundle and scan fails stage 2 cleanly and schedules attempt 2', async () => { await drop(trigger(907)); return exec.tick(); }, r => r.state === 'FAILED_CLEAN' && /^[0-9a-f]{64}$/.test(r.attempt2 ?? ''));
+await step('attempt 2 waits for its delay, then runs all eight stages once', async () => { const early = await exec.tick(); now += 600_000; const r = await exec.tick(); return { ...r, early: early.state }; }, r => r.early === 'IDLE' && r.state === 'COMPLETED');
+script.set(908, { 3: { ok: false, code: 'GITHUB_TRANSIENT_UNAVAILABLE', proof: WINDOWS_CLEAN } });
+await step('PR 908: the same transient after a role published (stage 3) is final, no attempt 2', async () => { await drop(trigger(908)); const r = await exec.tick(); now += 600_000; const again = await exec.tick(); return { ...r, again: again.state }; }, r => r.state === 'FAILED_CLEAN' && !r.attempt2 && r.again === 'IDLE');
 const head1 = await receipts.verify();
 await step('receipt chain intact', async () => ({ state: `seq ${head1.seq}` }), () => head1.seq > 30);
 const files = (await fs.readdir(path.join(state, 'receipts'))).sort();

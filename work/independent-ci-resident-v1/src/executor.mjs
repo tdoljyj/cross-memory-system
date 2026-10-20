@@ -14,7 +14,9 @@
 // bundle failure or a stage-1 "not admitted" releases the reservation instead of burning the head.
 //
 // Failure handling (Owner Decision 0d84ddbb item 4): a failure with a complete cleanup proof is
-// archived (rename only) and the executor moves on; the head is never re-run automatically.
+// archived (rename only) and the executor moves on; the head is never re-run automatically, with ONE
+// exception (Owner Decision 1b5d3687, attempts.mjs): an allow-listed clean transient failure before any
+// role was published schedules attempt 2 of the same head once (its own batch and head key).
 // Anything else latches HALT and leaves the scene untouched until the Owner's re-arm, which the
 // service itself carries out (the elevated Owner step only writes a request; it never moves files).
 import path from 'node:path';
@@ -22,6 +24,7 @@ import { batchKey, headKey } from './ledger.mjs';
 import { archiveReason, classifyFailure } from './classify.mjs';
 import { coalesce, parseTrigger } from './trigger.mjs';
 import { batchBudgetMs } from './policy.mjs';
+import { attempt2Decision, attempt2Subject } from './attempts.mjs';
 import { CODE, HEX64, ResidentError, check, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
@@ -210,6 +213,9 @@ export class ResidentExecutor {
     }
     await this.takePauseRequests();
     if (await this.ledger.paused()) return { state: 'PAUSED' };
+    // A due attempt 2 goes before new triggers (it is the same head, already reserved once).
+    const due = (await this.ledger.pendingAttempts2()).find(a => a.notBefore <= this.clock());
+    if (due) return this.runAttempt2(due);
     const candidates = await this.nextCandidates();
     if (candidates.length === 0) return { state: 'IDLE' };
     let last;
@@ -280,7 +286,27 @@ export class ResidentExecutor {
     await this.ledger.reserve(key, subject);
     await this.receipt('batch-reserved', { key, headKey: hk, subject, bytesSha256 });
     await this.disposeAll(names, 'processed');
+    return this.driveReserved(key, subject);
+  }
 
+  // The scheduled attempt 2: same pre-checks under its own keys; the intent is closed if they refuse it
+  // for good, kept when they only defer it.
+  async runAttempt2({ key1, key2, subject }) {
+    const hk = headKey(subject);
+    const pre = await this.precheck(key2, hk);
+    if (pre.ignore) {
+      await this.ledger.closeAttempt2(key1, { failureCode: pre.ignore });
+      await this.receipt('attempt2-ignored', { key: key2, attempt1: key1, failureCode: pre.ignore });
+      return { state: 'IGNORED', key: key2, reason: pre.ignore };
+    }
+    if (pre.halt) { await this.haltWith(pre.halt, { key: key2 }); return { state: 'HALTED', key: key2, failureCode: pre.halt }; }
+    if (pre.defer) return { state: 'DEFERRED', key: key2, reason: pre.defer };
+    await this.ledger.reserve(key2, subject);
+    await this.receipt('batch-reserved', { key: key2, headKey: hk, subject, attempt1: key1 });
+    return this.driveReserved(key2, subject);
+  }
+
+  async driveReserved(key, subject) {
     let batch = null;
     let outcome;
     try {
@@ -368,6 +394,14 @@ export class ResidentExecutor {
         check(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED');
         await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode: failure.code, basis, stage: failure.stageNumber, batchId: batch?.batchId ?? null, windows: windows.directory, linux: linux.directory });
         await this.receipt('batch-terminal', { key, outcome: 'FAILED_CLEAN', failureCode: failure.code });
+        const subject = (await this.ledger.state(key)).reserved?.subject;
+        const decision = attempt2Decision({ policy: this.policy, subject, outcome: 'FAILED_CLEAN', failure });
+        if (decision.eligible) {
+          const key2 = await this.ledger.scheduleAttempt2(key, attempt2Subject(subject), { failureCode: failure.code, stage: failure.stageNumber },
+            this.clock() + this.policy.automaticAttempt2.delayMs);
+          await this.receipt('attempt2-scheduled', { key, attempt2: key2, failureCode: failure.code, stage: failure.stageNumber });
+          return { state: 'FAILED_CLEAN', key, failureCode: failure.code, attempt2: key2 };
+        }
         return { state: 'FAILED_CLEAN', key, failureCode: failure.code };
       }
       return await this.unknown(key, failure.code, basis, batch);
