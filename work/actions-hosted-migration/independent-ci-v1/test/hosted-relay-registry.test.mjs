@@ -1,0 +1,146 @@
+// Hosted relay registry (S15): deterministic derivation from one commit, the
+// Owner Decision bc6fdad1 name rule, closure pins and the workflow refusals.
+// Offline: an in-memory reader, plus a throwaway local git repository.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { buildRegistry, gitBlobSha1, gitObjectReader, main, scanWorkflow, serializeRegistry } from '../src/hosted-relay-v1/build-registry.mjs';
+import { registryDigestOf, validateRegistry, validateSpec } from '../src/hosted-relay-v1/registry.mjs';
+import { B, REPO_FILES, SPEC, fixtureRegistry, memoryReader } from './fixtures/hosted-relay/world.mjs';
+
+const clone = value => structuredClone(value);
+const build = (files = REPO_FILES, spec = SPEC, modes = {}) => buildRegistry({ spec, reader: memoryReader(files, { modes }), commit: B, domain: 'fixture' });
+const refused = (fn, code, label = code) => assert.throws(fn, error => error.code === code, label);
+const GITLEAKS = '.github/workflows/gitleaks.yml';
+const workflowWith = (from, to, file = GITLEAKS) => {
+  assert.ok(REPO_FILES[file].includes(from), `fixture lacks ${from}`);
+  return { ...REPO_FILES, [file]: REPO_FILES[file].replace(from, to) };
+};
+
+test('the committed spec validates and derives a deterministic fixture registry', () => {
+  validateSpec(clone(SPEC));
+  const first = build(), second = build();
+  assert.equal(serializeRegistry(first), serializeRegistry(second));
+  assert.equal(first.domain, 'fixture');
+  assert.equal(first.sourceCommit, B);
+  const expected = { gitleaks: ['gitleaks-hosted-executor', 25], trivy: ['trivy-hosted-executor', 25], 'contract-placement': ['contract-placement-hosted-executor', 15] };
+  for (const [role, [job, minutes]] of Object.entries(expected)) {
+    const entry = first.roles[role];
+    assert.equal(entry.checkName, role);
+    assert.equal(entry.hostedCheckName, job);
+    assert.equal(entry.hostedJobId, job);
+    assert.equal(entry.hostedJobTimeoutMinutes, minutes);
+    assert.equal(entry.workflowBlob, gitBlobSha1(Buffer.from(REPO_FILES[entry.workflowPath])));
+    for (const item of entry.closure) assert.equal(item.blob, gitBlobSha1(Buffer.from(REPO_FILES[item.path])));
+  }
+  const frozen = validateRegistry(first, { domain: 'fixture' });
+  assert.match(registryDigestOf(frozen), /^[a-f0-9]{64}$/);
+  assert.ok(Object.isFrozen(frozen.roles.gitleaks.closure[0]));
+});
+
+const GIT = (() => { const probe = spawnSync('git', ['--version'], { windowsHide: true }); return probe.status === 0 ? 'git' : null; })();
+
+test('a real git commit and the in-memory reader derive identical pins; the CLI writes the same bytes once', { skip: GIT ? false : 'git unavailable' }, async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-relay-registry-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
+    GIT_AUTHOR_NAME: 'fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' };
+  const git = (...args) => { const r = spawnSync(GIT, ['-C', dir, ...args], { env, windowsHide: true }); assert.equal(r.status, 0, String(r.stderr)); return String(r.stdout).trim(); };
+  git('init', '-q', '-b', 'main'); git('config', 'core.autocrlf', 'false');
+  for (const [file, content] of Object.entries(REPO_FILES)) {
+    fs.mkdirSync(path.join(dir, path.dirname(file)), { recursive: true });
+    fs.writeFileSync(path.join(dir, file), content);
+  }
+  git('add', '-A'); git('commit', '-q', '-m', 'fixture');
+  const commit = git('rev-parse', 'HEAD');
+  const real = buildRegistry({ spec: SPEC, reader: gitObjectReader(dir, { git: GIT }), commit: 'HEAD', domain: 'fixture' });
+  assert.equal(real.sourceCommit, commit);
+  assert.deepEqual(real.roles, build().roles);
+  const out = path.join(dir, 'registry.json'), lines = [];
+  const sink = { write: text => lines.push(text) };
+  assert.equal(main(['--repo', dir, '--commit', commit, '--domain', 'fixture', '--out', out], sink), 0);
+  assert.equal(fs.readFileSync(out, 'utf8'), serializeRegistry(real));
+  assert.equal(main(['--repo', dir, '--commit', commit, '--domain', 'fixture', '--out', out], sink), 2); // never overwrites
+  assert.equal(main(['--repo', dir, '--commit', '--upload-pack=x', '--domain', 'fixture'], sink), 2);
+  assert.match(lines.at(-1), /RELAY_REGISTRY_COMMIT_INVALID/);
+  assert.equal(main(['--repo', dir], sink), 2);
+});
+
+test('a hosted job name equal to a required check name is refused (Owner Decision bc6fdad1)', () => {
+  const equal = clone(SPEC); equal.roles.gitleaks.hostedCheckName = 'gitleaks';
+  refused(() => validateSpec(equal), 'RELAY_REGISTRY_CHECK_NAMES_EQUAL');
+  refused(() => build(REPO_FILES, equal), 'RELAY_REGISTRY_CHECK_NAMES_EQUAL');
+  for (const name of ['trivy', 'kooyumi-merge-slot', 'kooyumi-work-admission']) {
+    const other = clone(SPEC); other.roles.gitleaks.hostedCheckName = name;
+    refused(() => validateSpec(other), 'RELAY_REGISTRY_HOSTED_NAME_IS_REQUIRED');
+  }
+  const registry = clone(build()); registry.roles.trivy.hostedCheckName = 'trivy';
+  refused(() => validateRegistry(registry), 'RELAY_REGISTRY_CHECK_NAMES_EQUAL');
+  const duplicate = clone(SPEC); duplicate.roles.trivy.hostedCheckName = 'gitleaks-hosted-executor';
+  refused(() => validateSpec(duplicate), 'RELAY_REGISTRY_SPEC_INVALID');
+  const wrongRequired = clone(SPEC); wrongRequired.roles.gitleaks.checkName = 'trivy';
+  refused(() => validateSpec(wrongRequired), 'RELAY_REGISTRY_SPEC_INVALID');
+  const kooyumi = clone(SPEC); kooyumi.roles['kooyumi-merge-slot'] = clone(SPEC.roles.gitleaks);
+  refused(() => validateSpec(kooyumi), 'RELAY_REGISTRY_SPEC_INVALID');
+});
+
+test('closure pins come only from regular blobs present at the commit; forbidden paths must be absent', () => {
+  const { ['.gitleaksignore']: _removed, ...missing } = REPO_FILES;
+  refused(() => build(missing), 'RELAY_REGISTRY_CLOSURE_MISSING');
+  refused(() => build(REPO_FILES, SPEC, { 'scripts/ci/reviewed_gitleaks.py': '120000' }), 'RELAY_REGISTRY_CLOSURE_NOT_REGULAR');
+  refused(() => build(REPO_FILES, SPEC, { '.gitleaks.toml': '160000' }), 'RELAY_REGISTRY_CLOSURE_NOT_REGULAR');
+  refused(() => build({ ...REPO_FILES, '.trivyignore': 'CVE-0000-0000\n' }), 'RELAY_REGISTRY_FORBIDDEN_PATH_PRESENT');
+  const through = clone(SPEC); through.roles.trivy.mustNotExist = ['.trivyignore', 'src/app.js/inner'];
+  refused(() => build(REPO_FILES, through), 'RELAY_REGISTRY_FORBIDDEN_PATH_PRESENT');
+  const noWorkflow = clone(SPEC); noWorkflow.roles.gitleaks.closure = noWorkflow.roles.gitleaks.closure.filter(file => file !== GITLEAKS);
+  refused(() => validateSpec(noWorkflow), 'RELAY_REGISTRY_SPEC_INVALID');
+  const unsorted = clone(SPEC); unsorted.roles.gitleaks.closure.reverse();
+  refused(() => validateSpec(unsorted), 'RELAY_REGISTRY_SPEC_INVALID');
+  const escape = clone(SPEC); escape.roles.trivy.mustNotExist = ['../outside'];
+  refused(() => validateSpec(escape), 'RELAY_REGISTRY_SPEC_INVALID');
+  const noGithubRule = clone(SPEC); noGithubRule.forbiddenChangePrefixes = ['docs/'];
+  refused(() => validateSpec(noGithubRule), 'RELAY_REGISTRY_SPEC_INVALID');
+});
+
+test('the workflow scan refuses a commit whose hosted job could mint an identity it should not', () => {
+  const cases = [
+    ['expression hosted name', workflowWith('    name: gitleaks-hosted-executor\n', "    name: ${{ 'gitleaks-hosted-executor' }}\n")],
+    ['a job that can carry the required name', workflowWith('    name: admission-gate\n', "    name: ${{ github.event_name == 'push' && 'gitleaks' || 'admission-gate' }}\n")],
+    ['a second job with the hosted name', workflowWith('    name: admission-gate\n', '    name: gitleaks-hosted-executor\n')],
+    ['id-token on another job', workflowWith('      pull-requests: read\n', '      pull-requests: read\n      id-token: write\n')],
+    ['top-level id-token', workflowWith('permissions:\n  contents: read\n', 'permissions:\n  contents: read\n  id-token: write\n')],
+    ['identity step not last', { ...REPO_FILES, [GITLEAKS]: `${REPO_FILES[GITLEAKS]}      - name: After identity\n        run: echo late\n` }],
+    ['a step allowed to fail', workflowWith('      - name: Scan complete history\n', '      - name: Scan complete history\n        continue-on-error: true\n')],
+    ['extra job permission', workflowWith('      contents: read\n      id-token: write\n', '      actions: read\n      contents: read\n      id-token: write\n')],
+    ['pull_request_target', workflowWith('  pull_request:\n', '  pull_request_target:\n')],
+    ['self-hosted runner', workflowWith('    runs-on: ubuntu-latest\n    timeout-minutes: 25\n', '    runs-on: [self-hosted, Linux]\n    timeout-minutes: 25\n')],
+    ['no timeout', workflowWith('    timeout-minutes: 25\n', '')],
+    ['tab', workflowWith('      - name: Scan complete history\n', '      - name: Scan complete history\t\n')],
+    ['conditional identity step', workflowWith('      - name: Emit relay identity\n', '      - name: Emit relay identity\n        if: always()\n')],
+    ['token minted earlier', workflowWith('      - name: Scan complete history\n', '      - name: Scan complete history\n        env:\n          T: $ACTIONS_ID_TOKEN_REQUEST_TOKEN\n')],
+  ];
+  for (const [label, files] of cases) refused(() => build(files), 'RELAY_REGISTRY_WORKFLOW_REFUSED', label);
+  // Flow-style job permissions are read the same way.
+  const flow = workflowWith('    permissions:\n      contents: read\n      id-token: write\n', '    permissions: {contents: read, id-token: write}\n');
+  assert.deepEqual(scanWorkflow(Buffer.from(flow[GITLEAKS]), SPEC.roles.gitleaks), { hostedJobId: 'gitleaks-hosted-executor', hostedJobTimeoutMinutes: 25 });
+});
+
+test('a registry is refused when tampered, mis-domained or not validated', () => {
+  const registry = build();
+  const tampered = clone(registry); tampered.roles.gitleaks.closure[0].blob = 'f'.repeat(40);
+  refused(() => validateRegistry(tampered), 'RELAY_REGISTRY_INVALID');
+  const reordered = clone(registry); reordered.roles.gitleaks.closure.reverse();
+  refused(() => validateRegistry(reordered), 'RELAY_REGISTRY_INVALID');
+  const extra = clone(registry); extra.note = 'x';
+  refused(() => validateRegistry(extra), 'RELAY_REGISTRY_INVALID');
+  const otherApp = clone(registry); otherApp.publisherAppId = 5164952;
+  refused(() => validateRegistry(otherApp), 'RELAY_REGISTRY_INVALID');
+  const otherAudience = clone(registry); otherAudience.audience = 'sts.amazonaws.com';
+  refused(() => validateRegistry(otherAudience), 'RELAY_REGISTRY_INVALID');
+  refused(() => validateRegistry(clone(registry), { domain: 'production' }), 'RELAY_REGISTRY_DOMAIN_MISMATCH');
+  refused(() => registryDigestOf(clone(registry)), 'RELAY_REGISTRY_NOT_VALIDATED');
+  assert.equal(registryDigestOf(fixtureRegistry()), registryDigestOf(fixtureRegistry()));
+});
