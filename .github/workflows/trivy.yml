@@ -1,5 +1,9 @@
 name: trivy
 
+# Owner Decisions 325717a6, 22b0e0ed and bc6fdad1: the scans run on a GitHub-hosted runner with free
+# minutes under the $0 Actions budget cap as an executor only. Its job name is not a required check
+# name; App 5368905 publishes the required trivy check after it verifies this run's relay identity,
+# and otherwise runs its formal local role.
 on:
   pull_request:
   push:
@@ -15,7 +19,7 @@ concurrency:
 jobs:
   admission-gate:
     name: admission-gate
-    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: read
@@ -44,11 +48,14 @@ jobs:
 
   trivy-trusted-self-hosted:
     needs: admission-gate
-    name: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'trivy' || 'trivy-self-hosted-skipped' }}
+    name: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'trivy-hosted-executor' || 'trivy-hosted-executor-skipped' }}
     if: >-
       needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
-    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -151,31 +158,10 @@ jobs:
           docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
             fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
-
-  trivy-untrusted-hosted:
-    needs: admission-gate
-    name: ${{ false && 'trivy' || 'trivy-hosted-skipped' }}
-    if: >-
-      needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Configure job temporary storage
-        uses: ./.github/actions/ci-temporary-storage
-      - name: Vulnerabilities (HIGH/CRITICAL)
+      - name: Emit relay identity
         run: |
-          docker run --rm -v "$PWD:/repo" \
-            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --db-repository ghcr.io/aquasecurity/trivy-db:2 --db-repository mirror.gcr.io/aquasec/trivy-db:2 --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
-      - name: Secrets
-        run: |
-          docker run --rm -v "$PWD:/repo" \
-            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --scanners secret --exit-code 1 /repo
-      - name: Misconfiguration (HIGH/CRITICAL)
-        run: |
-          docker run --rm -v "$PWD:/repo" \
-            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
+          set -eu
+          jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::notice title=clued-hosted-relay-v1::$jwt"

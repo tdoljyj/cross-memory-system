@@ -113,7 +113,8 @@ test("the CI workflows are gitleaks, trivy and the gated workflows of this branc
     assert.equal(registeredPublisherSource(publisherCatalogue,file,text).passed,true,'an exact registered dispatch Source is required');
     return false;
   });
-  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...prGated, ...REQUIRED_CHECK_WORKFLOWS].map((name) => `.github/workflows/${name}`).sort());
+  // The three required-check workflows are gated too; each is counted once.
+  assert.deepEqual([...WORKFLOWS.keys()].sort(), [...new Set([...prGated, ...REQUIRED_CHECK_WORKFLOWS])].map((name) => `.github/workflows/${name}`).sort());
 });
 
 test("the workflow is triggered by every CI workflow's completion, runs default-branch code and is hosted", () => {
@@ -226,11 +227,16 @@ test("ciStateOf: failed wins, then running (default-branch workflows only), then
 test("contract-placement is an always-run hosted required check, and failures return the merge slot", async () => {
   assert.ok(CI_REQUIRED_CHECKS.some(({ name, app_id }) => name === "contract-placement" && app_id === 15368));
   const text = fs.readFileSync(path.join(ROOT, ".github/workflows/contract-placement.yml"), "utf8");
-  assert.match(text, /^ {4}name: contract-placement$/m);
-  assert.match(text, /^ {4}runs-on: ubuntu-latest$/m);
-  assert.doesNotMatch(text, /^\s*(?:if|needs|paths|paths-ignore):/m);
+  // Owner Decision bc6fdad1: the hosted executor never carries the required check's name.
+  assert.match(text, /^ {4}name: contract-placement-hosted-executor$/m);
+  assert.doesNotMatch(text, /^ {4}name: contract-placement$/m);
+  // Owner Decision 325717a6: the gate and the executor run on a hosted runner, on every pull request.
+  assert.equal(text.match(/^ {4}runs-on: /gm).length, 2);
+  assert.equal(text.match(/^ {4}runs-on: ubuntu-latest$/gm).length, 2);
+  assert.doesNotMatch(text, /^\s*(?:paths|paths-ignore):/m);
+  assert.match(text, /^ {4}needs: admission-gate$/m);
   assert.deepEqual(workflowFormFindings(text), []);
-  assert.deepEqual(gateFindings(text, null), []);
+  assert.deepEqual(gateFindings(text, text), []);
   const fetch = fakeFetch({ ...allGreen(), ...checksRoute(HEAD, {
     "contract-placement": [check("contract-placement", { conclusion: "failure" })],
   }) });

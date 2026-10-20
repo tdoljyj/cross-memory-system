@@ -1,5 +1,9 @@
 name: gitleaks
 
+# Owner Decisions 325717a6, 22b0e0ed and bc6fdad1: the scan runs on a GitHub-hosted runner with free
+# minutes under the $0 Actions budget cap as an executor only. Its job name is not a required check
+# name; App 5368905 publishes the required gitleaks check after it verifies this run's relay identity,
+# and otherwise runs its formal local role.
 on:
   pull_request:
   push:
@@ -15,7 +19,7 @@ concurrency:
 jobs:
   admission-gate:
     name: admission-gate
-    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: read
@@ -45,49 +49,13 @@ jobs:
   gitleaks-trusted-self-hosted:
     needs: admission-gate
     timeout-minutes: 25
-    name: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks' || 'gitleaks-self-hosted-skipped' }}
+    name: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true'))) && 'gitleaks-hosted-executor' || 'gitleaks-hosted-executor-skipped' }}
     if: >-
       needs.admission-gate.outputs.admitted == 'true' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
-    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-      # Self-hosted workspaces persist between runs. Checkout neither prunes
-      # remote-tracking refs of deleted branches nor removes the PR merge refs
-      # (refs/remotes/pull/*) that earlier runs of other PRs left behind, so
-      # closed or superseded history stayed in the scan. Scan exactly the
-      # remote's branches and tags plus this run's checked-out HEAD.
-      - name: Configure job temporary storage
-        uses: ./.github/actions/ci-temporary-storage
-      - name: Drop refs of deleted branches and of other PRs' earlier runs
-        run: |
-          git remote prune origin
-          git for-each-ref --format='%(refname)' refs/remotes/pull |
-            while read -r ref; do git update-ref -d "$ref"; done
-      - name: Validate exact historical exceptions and detection regressions
-        run: |
-          python3 scripts/ci/reviewed_gitleaks.py \
-            --config .gitleaks.toml \
-            --output "$RUNNER_TEMP/clued-reviewed.ignore" \
-            --self-test
-      - name: Scan complete history with Gitleaks 8.30.1
-        run: |
-          docker run --rm \
-            -v "$PWD:/repo" \
-            -v "$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro" \
-            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
-            git /repo --config /repo/.gitleaks.toml \
-            --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1
-
-  gitleaks-untrusted-hosted:
-    needs: admission-gate
-    timeout-minutes: 25
-    name: ${{ false && 'gitleaks' || 'gitleaks-hosted-skipped' }}
-    if: >-
-      needs.admission-gate.outputs.admitted == 'true' && (false && ((github.event_name == 'pull_request' && needs.admission-gate.outputs.automation_self_hosted != 'true' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor != github.repository_owner))))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -119,3 +87,10 @@ jobs:
             ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             git /repo --config /repo/.gitleaks.toml \
             --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1
+      - name: Emit relay identity
+        run: |
+          set -eu
+          jwt="$(curl -fsS --max-time 30 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=clued-hosted-relay-v1" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::notice title=clued-hosted-relay-v1::$jwt"
