@@ -133,7 +133,7 @@ declare op text:=p_input->>'action'; app clued_private.storage_oauth_apps_v1; au
  a clued_private.resource_center_artifacts_v1; parent clued_private.resource_center_artifacts_v1;
  attempt clued_private.storage_external_registration_attempt_v1; observation jsonb; nodes jsonb; selected jsonb; fresh jsonb;
  item jsonb; oldrow jsonb; parentnode jsonb; r public.clued_audit_receipts; req jsonb; refs jsonb:='[]'; bases jsonb:='{}'; versions jsonb:='{}';
- ev text; v_result jsonb; resources text[]:='{}'; changed integer:=0; saved_hash text;
+ ev text; v_result jsonb; resources text[]:='{}'; changed integer:=0; saved_hash text; prior_lock_timeout text;
 begin
  perform clued_private.issuer_credential_generation_v1(p_identity,'storage');
  select * into app from clued_private.storage_oauth_apps_v1 where issuer_hash=p_identity and revoked_at is null;
@@ -285,6 +285,14 @@ begin
    if oldrow is not null then resources:=resources||('storage:'||c.id||'/'||substr(oldrow->>'path',length(p.managed_root)+2));end if;
   end if;
  end loop;
+ -- Claim creation, expansion and handover use this same ordered lock pair.
+ -- Hold it through settlement so a new claim cannot enter after the check.
+ -- Storage already holds root/authority locks; a bounded wait aborts this
+ -- transaction rather than retaining them behind a competing source writer.
+ prior_lock_timeout:=current_setting('lock_timeout');
+ perform set_config('lock_timeout','250ms',true);
+ perform clued_private.work_claim_lock(c.owner_id);
+ perform set_config('lock_timeout',prior_lock_timeout,true);
  if jsonb_array_length(clued_private.work_claim_conflicts(c.owner_id,null,resources,'{}',null))>0 then raise exception 'work_claim_conflict' using errcode='42501';end if;
  -- Every selected/new ID must be observed exactly once; every direct child
  -- that was registered at plan time is included, even when moved elsewhere.

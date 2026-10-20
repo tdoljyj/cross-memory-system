@@ -68,6 +68,9 @@ versions in one transaction with a new Event/Receipt. A failed receipt rolls
 back every change. Replays return only their original result and do not repeat
 updates; obsolete observations never restore revoked state or overwrite newer
 registry updates. An unchanged scan creates no registration mutation.
+The conflict check holds the existing ordered work-claim locks through the
+transaction, so a new or expanded claim cannot slip between check and update.
+Lock contention is bounded to 250 ms and aborts the batch for a later retry.
 
 Active-path uniqueness uses a deferrable, initially immediate exclusion
 constraint with the PostgreSQL `btree_gist` extension (UUID/text equality).

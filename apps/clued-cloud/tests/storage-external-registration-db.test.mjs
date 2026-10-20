@@ -164,6 +164,35 @@ test('external registration: real migration, Native opt-in and program commit',{
       assert.equal(await scalar('select count(*)::integer v from public.clued_audit_receipts'),count);}
      finally{await db.query('drop trigger synthetic_external_receipt_failure on public.clued_audit_receipts;drop function public.synthetic_external_receipt_failure()');}
     });
+    await t.test('registration serializes with concurrent claim creation and expansion through settlement',async()=>{
+     const token=crypto.createHash('sha256').update(uuid()).digest('hex'),task=uuid();
+     await db.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','concurrent editor',$2,array['context:read','context:write'],array['*'])`,[owner,token]);
+     await db.query(`insert into public.clued_memories(id,user_id,title,content,scope,record_type,status,record_schema_version,lifecycle_status,
+      canonical_scope,type_fields,relations,source_refs,authority,confidence_reason) values($1,$2,'Synthetic concurrent editor','fixture','global','task','active',1,'active',
+      'global','{"execution_bucket":"next"}','{}','{}','observed','fixture')`,[task,owner]);
+     const claimInput={scope:'global',task_id:task,write_set:[`storage:${f.target.connection}/unrelated/**`],
+      holder_session_ref:'synthetic-external-concurrency',idempotency_key:uuid()};
+     const claim=await scalar('select public.clued_work_claim_v1($1,$2::jsonb) v',[token,JSON.stringify(claimInput)]);
+     assert.equal(claim.status,'committed',JSON.stringify(claim));
+     try{
+      await db.query('begin');
+      try{
+       await db.query('select clued_private.work_claim_lock($1)',[owner]);
+       await assert.rejects(rpc(input),e=>e.code==='55P03');await unchanged();
+      }finally{await db.query('rollback');}
+      await gateway.query('begin');
+      try{
+       assert.equal((await rpc(input)).status,'committed');
+       await db.query("set lock_timeout='75ms'");
+       const path=`storage:${f.target.connection}/${source.path.slice(load.plan.managed_root.length+1)}/**`;
+       await assert.rejects(db.query('select public.clued_work_claim_v1($1,$2::jsonb)',[token,JSON.stringify({...claimInput,write_set:[path],idempotency_key:uuid()})]),e=>e.code==='55P03');
+       await assert.rejects(db.query('select public.clued_work_renew_v1($1,$2::jsonb)',[token,JSON.stringify({scope:'global',claim_id:claim.claim.claim_id,
+        fence:claim.claim.fence,lease_version:claim.claim.lease_version,lease_key:claim.lease_key,write_set:[path],progress_ref:uuid(),idempotency_key:uuid()})]),e=>e.code==='55P03');
+      }finally{await db.query("set lock_timeout='0'");await gateway.query('rollback');}
+      await unchanged();
+     }finally{await db.query('delete from clued_private.work_claims_v1 where claim_id=$1',[claim.claim.claim_id]);}
+    });
     const result=await rpc(input);assert.equal(result.status,'committed',JSON.stringify(result));assert.equal(result.changed,2);
     assert.equal((await ctx.artifactById(source.id)).path,source.path.replace('old-name','new-name'));
     assert.equal((await ctx.artifactById(child.id)).path,child.path.replace('old-name','new-name'));
