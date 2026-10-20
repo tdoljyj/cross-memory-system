@@ -19,6 +19,7 @@ import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } f
 import { createPdfExtractorCheckGate, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
 import { runStorageQueuedSweepScheduled } from "./storage-queued-dispatch";
 import { runStorageAccessDigestBackfillScheduled } from "./storage-access-digest-backfill";
+import { runStorageExternalRegistrationScheduled } from "./storage-external-registration";
 import { routeStorageOrigin, routeWebOrigin } from "./web-origin-routing.mjs";
 import { selectOAuthOrigin, OAuthOriginConfigurationError } from "./oauth-origin.mjs";
 
@@ -138,6 +139,11 @@ const worker = {
     }));
     ctx.waitUntil(runStorageStagingScheduled(env).then(result => {
       if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_staging_sweep_unavailable" }));
+    }));
+    ctx.waitUntil(runStorageExternalRegistrationScheduled(env).then(result => {
+      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_external_registration_unavailable" }));
+      else if (result.status === "ok" && (result.changed || result.skipped))
+        console.warn(JSON.stringify({ event: "storage_external_registration", changed: result.changed, skipped: result.skipped }));
     }));
     ctx.waitUntil(runStorageOnboardScheduled(env).then(result => {
       if (result.status === "unavailable" && env.CLUED_STORAGE_ONBOARD_V1 === "true")
