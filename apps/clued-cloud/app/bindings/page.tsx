@@ -21,7 +21,7 @@ type Json = Record<string, unknown>;
 type Pending = { confirmation_token: string; view_digest: string; view: Json };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能管理专用 Binding。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能管理专用 Binding。",
   confirmation_token_session_id_required: "当前登录缺少会话信息，请退出后重新登录。",
   binding_role_scope_missing: "这个 Binding 缺少该用途需要的权限（CI 准入要 context:read，发布门口要 context:write）。",
   binding_role_binding_invalid: "这个 Binding 已撤销或不属于当前账号。",
@@ -131,13 +131,13 @@ export default function BindingRolesPage() {
   const view = pending?.view ?? null;
   const others = view && Array.isArray(view.others) ? view.others.filter(object) : [];
   return <main className="context-page owner-confirm">
-    <header><Link href="/">KooYomi</Link> <Link href="/grants">我的授权</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/grants">我的授权</Link></header>
     <h1>专用 Binding</h1>
     <p className="context-muted">把 GitHub 上 CI 准入用的 Binding、生产发布用的 Binding 标出来。标出之后，只有它们能做对应的事，其他 Agent 的 Binding 都不行。标出的 Binding 撤销或过期后，这件事谁都做不了，直到你在这里给新的 Binding 标上，或者取消它。从没标出过的用途，保持原来的行为。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后管理专用 Binding。</p> : <>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后管理专用 Binding。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       {view && <section aria-label="确认更改" className="owner-note"><h2>确认更改</h2>
-        <p className="context-muted">以下内容由 KooYomi 生成。</p>
+        <p className="context-muted">以下内容由 BeamingFace 生成。</p>
         <dl>
           <dt>Binding</dt><dd>{String(view.agent_name ?? "")}（{String(view.vendor ?? "")}）</dd>
           <dt>权限</dt><dd>{list(view.scopes).join("、")}</dd>

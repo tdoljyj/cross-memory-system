@@ -13,7 +13,7 @@ type Json = Record<string, unknown>;
 type Setting = { enabled: boolean; version: number; isDefault: boolean; updatedAt: string | null };
 const object = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 const MESSAGES: Record<string, string> = {
-  direct_human_session_required: "需要你本人直接登录 KooYomi，授权给应用的登录不能切换这个开关。",
+  direct_human_session_required: "需要你本人直接登录 BeamingFace，授权给应用的登录不能切换这个开关。",
   independent_review_setting_session_required: "当前登录缺少会话信息，请退出后重新登录。",
   independent_review_setting_version_conflict: "开关在你打开页面后被改过，已显示最新状态，请确认后再切换。",
 };
@@ -104,12 +104,12 @@ export default function IndependentReviewPage() {
   }
 
   return <main className="context-page owner-confirm">
-    <header><Link href="/">KooYomi</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims">谁在做哪个任务</Link></header>
+    <header><Link href="/">BeamingFace</Link> <Link href="/grants">我的授权</Link> <Link href="/work-claims">谁在做哪个任务</Link></header>
     <h1>独立审核自动授权</h1>
     <p className="context-muted">默认打开。Agent 可以在你已授权的工作范围内直接安排独立审核、收集结论和复审，不用每次来问你是否允许。</p>
     <p className="context-muted">审核者须独立、只读，并遵守任务已有的范围、预算和先给你确认等要求。审核通过本身不批准修改、合并、部署或发布。</p>
-    <p className="context-muted">关闭后，后续审核需要该任务的明确许可。已完成的结论会保留；这个设置不会撤销已经启动的审核。只有你本人登录 KooYomi 才能切换，Agent 改不了。</p>
-    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 KooYomi</Link> 后管理独立审核。</p> : <>
+    <p className="context-muted">关闭后，后续审核需要该任务的明确许可。已完成的结论会保留；这个设置不会撤销已经启动的审核。只有你本人登录 BeamingFace 才能切换，Agent 改不了。</p>
+    {!ready ? <p role="status">正在读取登录状态…</p> : !session ? <p><Link href="/">登录 BeamingFace</Link> 后管理独立审核。</p> : <>
       <p className="context-muted">已登录 {session.user.email || session.user.id}</p>
       <section aria-label="开关" className="owner-note">
         {setting === null ? <p role="status">{working ? "正在读取…" : "暂未读到开关状态。"}</p> : <>

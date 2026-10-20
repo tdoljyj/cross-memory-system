@@ -1,10 +1,10 @@
-# KooYomi plugin for Claude Code (private trial)
+# BeamingFace plugin for Claude Code (private trial)
 
 Private trial, not published (Task `67c97003`, plugin line S3). It carries:
 
-- the KooYomi Skill (`skills/clued`), invoked as `/clued:clued` or picked up by its description;
-- the KooYomi capture guard as a Stop hook: when the agent is about to stop with an
-  Owner decision, a merged PR or a KooYomi write that has no record or checkpoint after
+- the BeamingFace Skill (`skills/clued`), invoked as `/clued:clued` or picked up by its description;
+- the BeamingFace capture guard as a Stop hook: when the agent is about to stop with an
+  Owner decision, a merged PR or a BeamingFace write that has no record or checkpoint after
   it, the stop is blocked once with the reason (agent contract §3 and §5).
 
 It adds no MCP server. Use the authorized connector you already added on claude.ai; it shows
