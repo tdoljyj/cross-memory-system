@@ -55,6 +55,10 @@ import {
   appJwt,
   GATE_JOB_SHA256,
   GATE_WAIT_SECONDS,
+  INDEPENDENT_GATE_SOURCE,
+  INDEPENDENT_GATE_WAIT_SECONDS,
+  INDEPENDENT_GATE_POLL_SECONDS,
+  independentAdmissionCheck,
   checkNamesPullRequest,
   SAME_EVENT_MS,
   gateFindings,
@@ -1082,16 +1086,28 @@ const GATED_FILES = fs.readdirSync(path.join(ROOT, ".github", "workflows")).filt
 const NEWLY_GATED_FILES = ["contract-placement.yml", "gitleaks.yml", "trivy.yml"];
 const LEGACY_TEMPLATE_FILES = GATED_FILES.filter((name) => !NEWLY_GATED_FILES.includes(name));
 const SOURCE_PROOF_GATE_DIGEST = "542e34a7c9c11bb713ff3db7e1b57e681e091e6716b29c9a016a86429a590bcb";
-// Owner Decisions 325717a6 and 22b0e0ed: the same Stage C gate on ubuntu-latest (PR-B).
-const HOSTED_SOURCE_PROOF_GATE_DIGEST = "61fe4d5f7a18365e27a7ee7211acf9babb3e28177b4dfdd8e31224b074411740";
+// Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
+// the independent CI's own admission with a bounded wait (hostedGateOf below).
+const HOSTED_SOURCE_PROOF_GATE_DIGEST = "3f48159e97624c9dd17f6d3e3ae626bc145c69124e4f7e3fbe4de20474d0dfe9";
+// Exactly the PR-B change of the self-hosted Stage C gate: runner, timeout and the independent source.
+const SELF_HOSTED_GATE_ROUTE = "\n    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]\n    timeout-minutes: 10\n";
+const HOSTED_GATE_ROUTE = "\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n";
+const SELF_HOSTED_GATE_STEP = "      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n        run:";
+const HOSTED_GATE_STEP = "      # Owner Decision 22b0e0ed: admit on the independent CI's own App 5368905 kooyumi-work-admission\n" +
+  "      # check for this exact head, polled for at most 10 minutes; never on another App's check.\n" +
+  "      - id: gate\n        env:\n          GITHUB_TOKEN: ${{ github.token }}\n" +
+  "          CLUED_ADMISSION_GATE_SOURCE: independent-ci-native-work-admission\n" +
+  "          CLUED_ADMISSION_GATE_WAIT_SECONDS: \"600\"\n        run:";
+const hostedGateOf = (text) => text.replace(SELF_HOSTED_GATE_ROUTE, HOSTED_GATE_ROUTE).replace(SELF_HOSTED_GATE_STEP, HOSTED_GATE_STEP);
+const selfHostedGateOf = (text) => text.replace(HOSTED_GATE_ROUTE, SELF_HOSTED_GATE_ROUTE).replace(HOSTED_GATE_STEP, SELF_HOSTED_GATE_STEP);
 // The frozen PR-B bytes (hosted executors): file -> [main's self-hosted Source, PR-B Source] sha256.
 const HOSTED_EXECUTOR_SOURCES = {
   ".github/workflows/gitleaks.yml": ["168aebaf047a7c1b1e96d874f5b79500854175e809a373f236ab1079cff2d579",
-    "5db21dac377078d47b0a51a3f89e8bc3f8f93538fe95c3a2e2a4674e9475d960"],
+    "25730c680b853b39704a7da2b32afe547a4cecb8a4e315c84c6e31c042e4bb25"],
   ".github/workflows/trivy.yml": ["cea2fd770663e65f554719903da90aaf4b8aae4a52bf52098d3d258340e2727d",
-    "a70bb74e30eb888c4b798cae916de4508cbe07369dc6253d96408494f89b5c0c"],
+    "3e21335aa0cfdc0dbb4855b1ca993c009df6ca830207e3a0b235871a26d77bd7"],
   ".github/workflows/contract-placement.yml": ["762f1b1346a699068660e46648a665d25873a396fc0d2186ef8f44a844625ffd",
-    "9f5d9d7e053d952037cdf7b18f1b460de0d279ad997b9e96f77d9ebd53598461"],
+    "fc3743fc1edd158d9ef22c5331dc65f46e017fdc5e33ca792b777c5e26b64d8a"],
 };
 const HOSTED_EXECUTOR_NAMES = { ".github/workflows/gitleaks.yml": "gitleaks-hosted-executor",
   ".github/workflows/trivy.yml": "trivy-hosted-executor", ".github/workflows/contract-placement.yml": "contract-placement-hosted-executor" };
@@ -1230,12 +1246,12 @@ test("gate guard (A1): any other byte of a hosted executor Source is refused, an
   const texts = hostedExecutorPair();
   const heads = Object.fromEntries(Object.entries(texts).map(([file, { head }]) => [file, head]));
   const mutations = {
-    ".github/workflows/gitleaks.yml": [["timeout-minutes: 10", "timeout-minutes: 9"],
+    ".github/workflows/gitleaks.yml": [["timeout-minutes: 15", "timeout-minutes: 14"],
       ["'gitleaks-hosted-executor' ||", "'gitleaks' ||"], ["      id-token: write\n", ""],
       ["audience=clued-hosted-relay-v1", "audience=sts.amazonaws.com"], ["--redact --exit-code 1", "--redact --exit-code 0"]],
-    ".github/workflows/trivy.yml": [["timeout-minutes: 10", "timeout-minutes: 9"],
+    ".github/workflows/trivy.yml": [["timeout-minutes: 15", "timeout-minutes: 14"],
       ["|| 'trivy-hosted-executor-skipped' }}", "|| 'trivy-skipped' }}"], ["      - name: Emit relay identity\n", "      - name: Emit relay identity\n        if: always()\n"]],
-    ".github/workflows/contract-placement.yml": [["timeout-minutes: 10", "timeout-minutes: 9"],
+    ".github/workflows/contract-placement.yml": [["timeout-minutes: 15", "timeout-minutes: 14"],
       ["    name: contract-placement-hosted-executor\n", "    name: contract-placement\n"], ["      contents: read\n      id-token: write\n", "      contents: write\n      id-token: write\n"]],
   };
   for (const [file, list] of Object.entries(mutations)) {
@@ -1349,12 +1365,10 @@ test("gate guard (Merge Admission step 6): every gated workflow's gate no longer
     const gateJob = workflowJobs(current).find((job) => job.name === "admission-gate");
     assert.ok(!gateJob.lines.some((line) => /_ENFORCE\b/.test(line)), `${name}: the gate reads no retired switch`);
     if (NEWLY_GATED_FILES.includes(name)) {
-      // Owner Decision 325717a6 (PR-B): the Stage C gate, moved to ubuntu-latest; only runs-on differs.
+      // Owner Decisions 325717a6 and 22b0e0ed (PR-B): the Stage C gate on ubuntu-latest that admits on
+      // the independent CI's own admission; exactly runner, timeout and gate source differ.
       const text = gateJob.lines.join("\n");
-      const hosted = text.replace("\n    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]\n",
-        "\n    runs-on: ubuntu-latest\n");
-      const selfHosted = hosted.replace("\n    runs-on: ubuntu-latest\n",
-        "\n    runs-on: [ self-hosted, Linux, X64, clued, pool-general, trust-internal ]\n");
+      const hosted = hostedGateOf(text), selfHosted = selfHostedGateOf(hosted);
       assert.ok([SOURCE_PROOF_GATE_DIGEST, HOSTED_SOURCE_PROOF_GATE_DIGEST].includes(sha256Hex(text)), name);
       assert.equal(sha256Hex(hosted), HOSTED_SOURCE_PROOF_GATE_DIGEST, name);
       assert.equal(sha256Hex(selfHosted), SOURCE_PROOF_GATE_DIGEST, name);
@@ -2515,4 +2529,97 @@ test("evaluate (Owner Decision a0d93cd0): a head that only merged main keeps the
   assert.equal(result.outcome.owner_review.kind, "transient");
   assert.match(result.outcome.reasons[0], /^owner_review_unavailable:transient/);
   assert.deepEqual(result.asked, [APPROVED]);
+});
+
+// --- PR-B hosted executor gate: the independent CI's own admission (Owner Decision 22b0e0ed).
+const NATIVE_ID = `independent-ci:native-work-admission:${"3".repeat(64)}:f9:e1:a1`;
+const nativeCheck = (overrides = {}) => ({ id: 50, name: "kooyumi-work-admission", head_sha: HEAD, status: "completed", conclusion: "success",
+  external_id: NATIVE_ID, app: { id: 5368905 },
+  output: { title: "Work claim and complete Native admission verified", summary: `Independent Native control check for o/r#452; observation sha256 ${"5".repeat(64)}.` },
+  ...overrides });
+const independentEvent = () => {
+  const value = withClaim();
+  value.pull_request.base.repo = { full_name: "o/r", default_branch: "main" };
+  return value;
+};
+async function independentGate(checks, { envOverrides = {}, script = {}, eventValue = independentEvent() } = {}) {
+  const { fetchImpl, calls } = fakeFetch({ ...SELF_RUN, [CHECKS]: typeof checks === "function" ? checks : { body: { check_runs: checks } }, ...script });
+  const slept = [];
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, ...envOverrides }), event: eventValue,
+    eventName: "pull_request", fetchImpl, sleep: async (ms) => { slept.push(ms); } });
+  return { outcome, calls, slept };
+}
+
+test("independent gate: App 5368905's bound kooyumi-work-admission success for the exact head admits at once", async () => {
+  assert.deepEqual([INDEPENDENT_GATE_SOURCE, INDEPENDENT_GATE_WAIT_SECONDS, INDEPENDENT_GATE_POLL_SECONDS],
+    ["independent-ci-native-work-admission", 600, 30]);
+  const { outcome, calls, slept } = await independentGate([nativeCheck()]);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source, outcome.automation_self_hosted, outcome.enforced, slept],
+    [true, "ADMITTED", INDEPENDENT_GATE_SOURCE, false, true, []]);
+  assert.deepEqual([outcome.head_sha, outcome.base_sha, outcome.pr_ref], [HEAD, BASE, "o/r#452"]);
+  assert.ok(calls.some((call) => call.url.includes("/check-runs?check_name=kooyumi-work-admission&filter=all")));
+  assert.ok(calls.every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
+  // The newest of App 5368905 decides: a later success over a failure admits, a later failure refuses.
+  assert.equal((await independentGate([nativeCheck({ id: 40, conclusion: "failure" }), nativeCheck({ id: 51 })])).outcome.admitted, true);
+  const refused = (await independentGate([nativeCheck({ id: 40 }), nativeCheck({ id: 51, conclusion: "failure" })])).outcome;
+  assert.deepEqual([refused.admitted, refused.verdict], [false, "REJECTED"]);
+  assert.match(refused.reasons[0], /concluded failure/);
+});
+
+test("independent gate: same-name checks of other Apps, other heads, unbound ids or summaries never admit", async () => {
+  for (const [label, list, verdict] of [
+    ["GitHub Actions", [nativeCheck({ app: { id: 15368 } })], "ADMISSION_PENDING"],
+    ["clued-admission App", [nativeCheck({ app: { id: 5164952 } })], "ADMISSION_PENDING"],
+    ["another App", [nativeCheck({ app: { id: 999 } })], "ADMISSION_PENDING"],
+    ["another head", [nativeCheck({ head_sha: BASE })], "ADMISSION_PENDING"],
+    ["an admission-run id", [nativeCheck({ external_id: "pr:452:run:77" })], "REJECTED"],
+    ["a staged id", [nativeCheck({ external_id: `independent-ci:staged:${"4".repeat(64)}:f9:e1:a1` })], "REJECTED"],
+    ["a control id", [nativeCheck({ external_id: `independent-ci:control:control-admission:${"1".repeat(64)}:f9:e1:a1` })], "REJECTED"],
+    ["another pull request", [nativeCheck({ output: { summary: "Independent Native control check for o/r#453; x" } })], "REJECTED"],
+    ["no pull request", [nativeCheck({ output: { summary: "Independent Native control check" } })], "REJECTED"],
+    ["still running", [nativeCheck({ status: "in_progress", conclusion: null })], "ADMISSION_PENDING"],
+  ]) {
+    const { outcome } = await independentGate(list, { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, verdict], label);
+  }
+  // Not into the default branch, a stale execution epoch or a re-run: refused.
+  const other = independentEvent(); other.pull_request.base.ref = "release";
+  assert.equal((await independentGate([nativeCheck()], { eventValue: other })).outcome.verdict, "REJECTED");
+  const stale = await independentGate([nativeCheck()], { script: { [VERIFY]: { body: { status: "ok", guard_required: true, epoch_current: false } } } });
+  assert.deepEqual([stale.outcome.admitted, stale.outcome.reasons], [false, ["work_claim_execution_epoch_stale"]]);
+  const rerun = await independentGate([nativeCheck()], { envOverrides: { GITHUB_RUN_ATTEMPT: "2" },
+    script: { [PULL]: { body: { state: "open", head: { sha: HEAD }, base: { ref: "main" } } } } });
+  assert.deepEqual([rerun.outcome.admitted, rerun.outcome.verdict], [false, "RERUN_REFUSED"]);
+  // An unknown source fails the gate instead of falling back.
+  await assert.rejects(() => gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: "any" }), event: independentEvent(), eventName: "pull_request",
+    fetchImpl: fakeFetch(SELF_RUN).fetchImpl, sleep: async () => {} }), /unknown admission gate source/);
+});
+
+test("independent gate: polls about every 30 seconds for at most 10 minutes, then skips the executor", async () => {
+  let reads = 0;
+  const late = (call) => {
+    if (!call.url.includes("check_name=kooyumi-work-admission")) return { body: { check_runs: [] } };
+    reads += 1;
+    return { body: { check_runs: reads < 4 ? [] : [nativeCheck()] } };
+  };
+  let result = await independentGate(late);
+  assert.deepEqual([result.outcome.admitted, result.slept], [true, [30000, 30000, 30000]]);
+  result = await independentGate([]);
+  assert.deepEqual([result.outcome.admitted, result.outcome.verdict], [false, "ADMISSION_PENDING"]);
+  assert.equal(result.slept.length, 20);
+  assert.equal(result.slept.reduce((sum, ms) => sum + ms, 0), 600000);
+  assert.match(result.outcome.reasons[0], /kooyumi-work-admission of App 5368905 for #452 .* has posted no check after 600s/);
+  // A longer configured wait is capped; the default gate keeps its own 180-second limit.
+  result = await independentGate([], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "3600" } });
+  assert.equal(result.slept.reduce((sum, ms) => sum + ms, 0), 600000);
+  // independentAdmissionCheck needs checks: read.
+  const forbidden = fakeFetch({ [CHECKS]: { status: 403, body: {} } });
+  await assert.rejects(() => independentAdmissionCheck(forbidden.fetchImpl, env(), "o/r", HEAD, 452), /needs `checks: read`/);
+});
+
+test("independent gate: under the Owner's disaster-recovery switch the clued-admission App check of this event still decides", async () => {
+  const { outcome } = await independentGate([appCheckRun()]);
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", undefined]);
+  const failed = (await independentGate([appCheckRun({ conclusion: "failure" })])).outcome;
+  assert.deepEqual([failed.admitted, failed.verdict], [false, "REJECTED"]);
 });

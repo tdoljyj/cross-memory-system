@@ -937,7 +937,7 @@
             }
           }
         ],
-        "f1536392bea4f0c14a5cfa36c05cfd9ed71d7ecb": [
+        "06f23a2baee59716315551d11f160d0a4d6d511c": [
           {
             "job_id": "contract-placement",
             "definition_sha256": "4c43c0a4cd2be56e3058ce5bcfac251fada664a4303d8a225cca56dad10b5cc5",
@@ -1185,7 +1185,7 @@
             }
           }
         ],
-        "bc6a730637f3656ac56da6667a9669d378211b86": [
+        "824724305fadbabf9931b2f84c20c85889d76eb5": [
           {
             "job_id": "gitleaks-trusted-self-hosted",
             "definition_sha256": "9ed6a563c8f69a5bb7de5cebd796a6a503c10f6cc94a41e33538976ac3c2d46f",
@@ -2012,7 +2012,7 @@
             }
           }
         ],
-        "7b94413801ef226826a307c20a094c8a04ae0126": [
+        "a9c9a97e30f3c3120969504537c030d9e8aed0ea": [
           {
             "job_id": "trivy-trusted-self-hosted",
             "definition_sha256": "8650e9103bf5c7c222d124ab18675003787d9cc97b5e6b2a57651db56d53b631",
