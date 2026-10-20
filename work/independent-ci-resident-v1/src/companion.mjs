@@ -5,8 +5,8 @@
 //
 // It is a transport, never an authority:
 //   - it executes only fixed argv arrays built here from validated ids (no shell, no free text);
-//   - the bridge records it moves are hashed/signed and re-validated by both ends (relay-public.ps1,
-//     relay-record.mjs, windows-issuer.mjs, linux-worker.mjs — unchanged);
+//   - the bridge records it moves are hashed/signed and re-validated by both ends (Source v2:
+//     protected-job-bridge-v4 relay-public.ps1, relay-record.mjs, windows-issuer.mjs, linux-worker.mjs);
 //   - every Linux unit it starts re-checks its own preconditions as root;
 //   - its answers to the service only steer classification, and a false "clean" can at worst make
 //     the next batch fail at its own root preflight (DoS), never run something unsafe.
@@ -36,12 +36,14 @@ export function argv(cfg) {
     startNoBlock: (template, instance) => wsl('/usr/bin/systemctl', 'start', '--no-block', unit(template, instance)),
     activeState: (template, instance) => wsl('/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', unit(template, instance)),
     linuxTool: (sub, id) => { check(['quiescence'].includes(sub) && BATCH_ID.test(id), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, sub, '--batch', id); },
+    archiveUsage: () => wsl(cfg.linuxTool, 'archive-usage'),
     archiveStatus: instance => { check(/^[0-9a-f]{16}-[0-9a-f]{12}_[a-z0-9][a-z0-9-]{0,39}$/.test(instance), 'COMPANION_TOOL_ARGS_INVALID'); return wsl(cfg.linuxTool, 'archive-status', '--instance', instance); },
     relay: (mode, seq) => {
-      check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
+      check(['SendIssue', 'ReceiveChallenge', 'SendResponse', 'ReceiveResult', 'ReceiveBlocked'].includes(mode) && Number.isSafeInteger(seq) && seq >= 0 && seq <= 32, 'COMPANION_RELAY_ARGS_INVALID');
       return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.relayScript, '-Mode', mode, '-Sequence', String(seq), '-ExpectedBundleSha256', cfg.bridgeManifestSha256];
     },
     bundle: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id]; },
+    checkRefs: id => { check(BATCH_ID.test(id), 'COMPANION_BUNDLE_ARGS_INVALID'); return [cfg.powershellExe, '-NoProfile', '-NonInteractive', '-File', cfg.bundleScript, '-BatchId', id, '-CheckRefs']; },
     keepalive: () => [cfg.wslExe, '--distribution', cfg.distribution, '--exec', '/bin/sleep', 'infinity'],
   };
 }
@@ -82,6 +84,19 @@ export class Companion {
         return { ok: verified, code: verified ? null : 'LINUX_ARCHIVE_UNCONFIRMED', verified, directory: verified ? v.directory : null };
       }
       case 'relay-stage': return this.pump(request);
+      // Source v2 S9 / lesson b29: before the first scanner stage, the refs must still be the bundle's.
+      case 'check-refs': {
+        const r = await this.run(this.a.checkRefs(request.batchId), { timeoutMs: 5 * 60_000 });
+        const v = json(r.stdout);
+        if (r.code === 0 && v?.status === 'REMOTE_REFS_UNCHANGED') return { ok: true, code: null };
+        return { ok: false, code: v?.status === 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'REMOTE_REFS_UNAVAILABLE' };
+      }
+      case 'archive-usage': {
+        const r = await this.run(this.a.archiveUsage(), { timeoutMs: 2 * 60_000 });
+        const v = r.code === 0 ? json(r.stdout) : null;
+        const ok = v?.contract === 'clued.independent-ci.linux-archive-usage/1' && Number.isSafeInteger(v.bytes) && v.bytes >= 0 && Number.isSafeInteger(v.directories) && v.directories >= 0;
+        return ok ? { ok: true, usage: { bytes: v.bytes, directories: v.directories } } : { ok: false, code: 'LINUX_ARCHIVE_USAGE_UNCONFIRMED' };
+      }
       // Verbatim root-tool facts; the companion never synthesises a proof value itself.
       case 'linux-quiescence': return { ok: true, proof: await this.quiescence(request.batchId) };
       default: return { ok: false, code: 'COMPANION_REQUEST_KIND_REFUSED' };
@@ -111,14 +126,18 @@ export class Companion {
       let sequence = 1;
       for (;;) {
         check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
-        if (await this.relay('ReceiveResult', 0)) break;
+        // Challenge first: a callback has a 30 s deadline, the result does not hurry (Source v2 order).
         if (sequence <= 32 && await this.relay('ReceiveChallenge', sequence)) {
           const responseDeadline = this.clock() + 30_000;
           const name = `response-${String(sequence).padStart(2, '0')}`;
           while (!(await ready(name))) { check(this.clock() < responseDeadline, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED'); await this.sleep(100); }
           check(await this.relay('SendResponse', sequence), 'NATIVE_CALLBACK_TRANSFER_UNCONFIRMED');
           sequence += 1;
+          continue;
         }
+        if (await this.relay('ReceiveResult', 0)) break;
+        // The worker's clean refusal before any preparation (bridge v4 'blocked'): the issuer ends cleanly.
+        if (await this.relay('ReceiveBlocked', 0)) break;
         await this.sleep(100);
       }
       const until = this.clock() + 30_000;
@@ -143,7 +162,7 @@ export class Companion {
       if (this.clock() >= Date.parse(request.deadline)) { await this.mailbox.respond(request, { ok: false, code: 'COMPANION_REQUEST_EXPIRED' }); continue; }
       let answer;
       try { answer = await this.handle(request); } catch { answer = { ok: false, code: 'COMPANION_HANDLER_UNCONFIRMED' }; }
-      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null });
+      await this.mailbox.respond(request, { ok: answer.ok === true, code: answer.ok ? null : (answer.code ?? 'COMPANION_HANDLER_UNCONFIRMED'), proof: answer.proof ?? null, directory: answer.directory ?? null, verified: answer.verified ?? null, usage: answer.usage ?? null });
     }
   }
 }

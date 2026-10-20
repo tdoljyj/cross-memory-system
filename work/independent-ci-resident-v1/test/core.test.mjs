@@ -213,11 +213,15 @@ test('classification is an allow-list and needs the complete cleanup proof', () 
   assert.equal(archiveReason('FORMAL_BRIDGE_STAGE_DEADLINE'), 'formal-bridge-stage-deadline');
 });
 
-test('policy refuses retries, concurrency and drifted shapes', () => {
+test('policy refuses general retries, concurrency and drifted shapes; attempt 2 and retention are bounded', () => {
   const p = validatePolicy(rawPolicy());
   assert.equal(p.stages.length, 8);
   assert.equal(batchBudgetMs(p), [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000].reduce((a, b) => a + b, 0) + 8 * 180000);
-  assert.throws(() => validatePolicy(rawPolicy({ automaticRetryAllowed: true })), { code: 'POLICY_AUTOMATIC_RETRY_FORBIDDEN' });
+  assert.throws(() => validatePolicy(rawPolicy({ automaticRetryAllowed: true })), { code: 'POLICY_KEYS_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ automaticAttempt2: { enabled: true, delayMs: 1000 } })), { code: 'POLICY_ATTEMPT2_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ automaticAttempt2: { enabled: true, delayMs: 600_000, maxAttempts: 3 } })), { code: 'POLICY_ATTEMPT2_KEYS_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ retention: { reminderBytes: 1, checkEveryMs: 3_600_000 } })), { code: 'POLICY_RETENTION_INVALID' });
+  assert.throws(() => validatePolicy(rawPolicy({ ciSourceManifestSha256: 'x' })), { code: 'POLICY_SOURCE_PIN_INVALID' });
   assert.throws(() => validatePolicy(rawPolicy({ limits: { ...rawPolicy().limits, maxConcurrent: 2 } })), { code: 'POLICY_SERIAL_EXECUTION_REQUIRED' });
   assert.throws(() => validatePolicy(rawPolicy({ baseBranch: 'dev' })), { code: 'POLICY_BASE_BRANCH_FIXED_MAIN' });
   assert.throws(() => validatePolicy({ ...rawPolicy(), extra: 1 }), { code: 'POLICY_KEYS_INVALID' });

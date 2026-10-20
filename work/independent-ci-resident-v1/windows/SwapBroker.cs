@@ -203,7 +203,13 @@ public sealed class SwapBroker : ServiceBase
         }
     }
 
-    public static void Main(string[] args) { Run(new SwapBroker(args)); }
+    // "--stable-digest <ownerSid>": install-time, read-only (see ResidentScmV2.InstallTimeStableDigest); the
+    // elevated install pins the printed digest into configroker.json. Any other argv is the service.
+    public static void Main(string[] args)
+    {
+        if (args.Length == 2 && args[0] == "--stable-digest") { Console.Out.WriteLine(ResidentScmV2.InstallTimeStableDigest(args[1])); return; }
+        Run(new SwapBroker(args));
+    }
 }
 
 sealed class BrokerRefusal : Exception { public readonly string Code; public BrokerRefusal(string code) : base(code) { Code = code; } }

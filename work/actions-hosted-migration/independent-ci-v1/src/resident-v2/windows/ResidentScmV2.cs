@@ -101,9 +101,17 @@ public static class ResidentScmV2 {
  static IntPtr Service(uint access,out IntPtr manager){manager=OpenSCManager(null,null,1);if(manager==IntPtr.Zero)Fail("SCM_OPEN_FAILED");IntPtr h=OpenService(manager,Name,access);if(h==IntPtr.Zero){CloseServiceHandle(manager);manager=IntPtr.Zero;Fail("FIXED_SERVICE_OPEN_FAILED");}return h;}
  static Status State(IntPtr h){Status s;uint n;if(!QueryServiceStatusEx(h,0,out s,(uint)Marshal.SizeOf(typeof(Status)),out n))Fail("SERVICE_STATUS_QUERY_FAILED");return s;}
  public static Status ReadStatus(){return State(HeldService(false));}
- public static Snapshot ReadSnapshot(){try{return ReadSnapshotCore();}catch{conflict=true;throw;}}
- static Snapshot ReadSnapshotCore(){
-  IntPtr h=HeldService(false),b=IntPtr.Zero,f=IntPtr.Zero,flag=IntPtr.Zero,triggers=IntPtr.Zero;
+ public static Snapshot ReadSnapshot(){try{return ReadSnapshotCore(HeldService(false));}catch{conflict=true;throw;}}
+ // Install-time, read-only: the stable digest the Owner's elevated install pins into broker.json. It opens
+ // the runner service with query rights only (no mutex, no SYSTEM identity, no effect); the broker later
+ // re-reads the same digest under its own session before every swap, so a wrong pin only refuses swaps.
+ public static string InstallTimeStableDigest(string ownerSid){
+  if(ownerSid==null||!System.Text.RegularExpressions.Regex.IsMatch(ownerSid,@"^S-1-5-21-\d+-\d+-\d+-\d+$"))Fail("OWNER_SID_REQUIRED");OwnerSid=ownerSid;
+  IntPtr manager;IntPtr h=Service(1|4|0x20000u,out manager);
+  try{return ReadSnapshotCore(h).StableDigest;}finally{CloseServiceHandle(h);CloseServiceHandle(manager);}
+ }
+ static Snapshot ReadSnapshotCore(IntPtr h){
+  IntPtr b=IntPtr.Zero,f=IntPtr.Zero,flag=IntPtr.Zero,triggers=IntPtr.Zero;
   try{int n;b=Buffer(h,0,true,out n);if(n<Marshal.SizeOf(typeof(Config)))Fail("SCM_BASE_CONFIG_SIZE_REFUSED");var c=(Config)Marshal.PtrToStructure(b,typeof(Config));var o=new Snapshot();o.ServiceSecurityDigest=ServiceSecurity(h);
    o.Binary=Text(c.Binary,b,n,false);o.Account=Text(c.Account,b,n,false);o.Type=c.Type;o.Start=c.Start;o.Error=c.Error;o.Status=State(h);
    string stable=c.Type+"|"+c.Start+"|"+c.Error+"|"+c.Tag+"|"+o.Account+"|"+Hash(Text(c.Group,b,n,false))+"|"+Hash(Text(c.Dependencies,b,n,true))+"|"+Hash(Text(c.Display,b,n,false));

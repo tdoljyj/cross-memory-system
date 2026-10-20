@@ -12,15 +12,17 @@ import { ResidentExecutor } from '../src/executor.mjs';
 
 export const SOURCE = 'a'.repeat(64);
 export const RESIDENT = 'b'.repeat(64);
+export const CI_SOURCE = 'e'.repeat(64);
 export const HEAD = '1'.repeat(40);
 export const BASE = '2'.repeat(40);
 
 export function rawPolicy(overrides = {}) {
   return {
-    contract: 'clued.independent-ci.resident-policy/1',
+    contract: 'clued.independent-ci.resident-policy/2',
     repo: 'tdoljyj/cross-memory-system',
     baseBranch: 'main',
     sourceManifestSha256: SOURCE,
+    ciSourceManifestSha256: CI_SOURCE,
     residentManifestSha256: RESIDENT,
     ownerAcceptance: { decisionRef: '0d84ddbb-ec1f-49c3-bbd0-953f72d53584', installReceiptRef: null },
     validUntil: null,
@@ -28,7 +30,8 @@ export function rawPolicy(overrides = {}) {
     companion: { userSid: 'S-1-5-21-1-2-3-1001', heartbeatMaxAgeMs: 60_000 },
     stageRunMilliseconds: [900000, 2700000, 900000, 1800000, 900000, 600000, 900000, 2700000],
     linux: { distribution: 'Ubuntu-24.04', workerUnit: 'clued-ci-worker@.service', wsprepUnit: 'clued-ci-wsprep@.service', archiveUnit: 'clued-ci-archive@.service' },
-    automaticRetryAllowed: false,
+    automaticAttempt2: { enabled: true, delayMs: 600_000 },
+    retention: { reminderBytes: 50 * 1024 ** 3, checkEveryMs: 3_600_000 },
     ...overrides,
   };
 }

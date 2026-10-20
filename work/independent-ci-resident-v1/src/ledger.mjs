@@ -6,8 +6,9 @@
 //
 // Execution is burned per HEAD, not per key: 10-started also creates heads/<headKey>.json, where
 // headKey covers only (repo, head, Source, attempt). A head that started once is never started again,
-// whatever base, PR number or claim a later trigger names; attempt 2+ exists only through an Owner
-// action. A reservation that ended before 10-started ran no scanner and published no success (the
+// whatever base, PR number or claim a later trigger names. Attempt 2 exists only as the one automatic
+// attempt of attempts.mjs (Owner decision 1b5d3687), recorded create-only in ledger-attempt2/ (at most
+// one per attempt-1 key, and only after that key ended FAILED_CLEAN); there is no attempt 3. A reservation that ended before 10-started ran no scanner and published no success (the
 // bundle failed, or stage 1 did not admit); it is closed with NOT_EXECUTED and moved, not deleted,
 // into ledger-unexecuted/ so a later trigger may ask again under the cool-down and the daily caps.
 import fs from 'node:fs/promises';
@@ -52,12 +53,13 @@ export class Ledger {
     this.heads = path.join(root, 'ledger-heads');
     this.unexecuted = path.join(root, 'ledger-unexecuted');
     this.halts = path.join(root, 'halts');
+    this.attempts2 = path.join(root, 'ledger-attempt2');
   }
 
   static async open(root, clock = Date.now) {
     const ledger = new Ledger(root, clock);
     await ensureDir(root);
-    for (const d of [ledger.batches, ledger.heads, ledger.unexecuted, ledger.halts]) await ensureDir(d);
+    for (const d of [ledger.batches, ledger.heads, ledger.unexecuted, ledger.halts, ledger.attempts2]) await ensureDir(d);
     return ledger;
   }
 
@@ -268,6 +270,40 @@ export class Ledger {
       } catch (error) { if (!contentError(error)) throw error; n += 1; }
     }
     return n;
+  }
+
+  // ---- the one automatic attempt 2 (attempts.mjs) ----
+  // Create-only intent next to the ledger: written after attempt 1's FAILED_CLEAN terminal, consumed by
+  // reserving attempt 2's own key (a different batch key and head key: the attempt is part of both).
+  async scheduleAttempt2(key1, subject2, facts, notBeforeMs) {
+    const s = await this.state(key1);
+    check(s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.reserved?.subject?.attempt === 1, 'ATTEMPT2_REQUIRES_CLEAN_ATTEMPT1_TERMINAL');
+    const first = s.reserved.subject;
+    check(subject2.attempt === 2 && ['repo', 'pr', 'headSha', 'baseSha', 'sourceManifestSha256'].every(k => subject2[k] === first[k]), 'ATTEMPT2_SUBJECT_CHANGED');
+    const key2 = batchKey(subject2);
+    await writeNew(path.join(this.attempts2, `${key1}.json`), { contract: 'clued.independent-ci.resident-attempt2/1', key1, key2, subject: subject2,
+      notBefore: new Date(notBeforeMs).toISOString(), facts, at: isoNow(this.clock), automaticRetryAllowed: false });
+    return key2;
+  }
+
+  // Intents whose attempt 2 has not been reserved and not been closed, oldest first.
+  async pendingAttempts2() {
+    const out = [];
+    for (const name of (await fs.readdir(this.attempts2)).sort()) {
+      const m = /^([0-9a-f]{64})\.json$/.exec(name);
+      if (!m || await exists(path.join(this.attempts2, `${m[1]}.closed.json`))) continue;
+      let v;
+      try { v = (await readJson(path.join(this.attempts2, name))).value; } catch (error) { if (!contentError(error)) throw error; continue; }
+      if (v.key1 !== m[1] || !HEX64.test(v.key2 ?? '') || batchKey(v.subject) !== v.key2) continue;
+      if ((await this.state(v.key2)).state !== 'ABSENT') continue;
+      out.push({ key1: v.key1, key2: v.key2, subject: v.subject, notBefore: Date.parse(v.notBefore) });
+    }
+    return out.sort((a, b) => a.notBefore - b.notBefore);
+  }
+
+  async closeAttempt2(key1, facts) {
+    check(HEX64.test(key1), 'BATCH_KEY_INVALID');
+    await writeNew(path.join(this.attempts2, `${key1}.closed.json`), { key1, facts, at: isoNow(this.clock) });
   }
 
   // HALT: any process may raise it (failing safe); only the Owner re-arm path clears it.

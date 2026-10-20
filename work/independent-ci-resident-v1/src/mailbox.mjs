@@ -15,7 +15,7 @@ export const HEARTBEAT_CONTRACT = 'clued.independent-ci.resident-companion-heart
 export const BATCH_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const REASON = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const ARCHIVE_DIR = /^(failed|archive)-[0-9a-z-]{1,120}$/;
-export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence']);
+export const KINDS = Object.freeze(['build-bundle', 'prepare-workspaces', 'relay-stage', 'archive-linux', 'linux-quiescence', 'check-refs', 'archive-usage']);
 
 // Exact request shapes per kind; nothing else (no path, argv, env or script) can be carried.
 const REQUEST_FIELDS = {
@@ -24,6 +24,9 @@ const REQUEST_FIELDS = {
   'relay-stage': ['batchId', 'stage', 'jobId'],
   'archive-linux': ['batchId', 'reason'],
   'linux-quiescence': ['batchId'],
+  // Source v2: the "no push since the bundle" gate before stage 2, and the Linux archive size (retention).
+  'check-refs': ['batchId'],
+  'archive-usage': ['batchId'],
 };
 
 export function validateRequest(v) {
@@ -39,12 +42,13 @@ export function validateRequest(v) {
 
 const PROOF_KEYS = ['linuxUnitsInactive', 'containersZero'];
 export function validateResponse(v, request) {
-  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
+  exactKeys(v, ['contract', 'requestId', 'kind', 'ok', 'code', 'proof', 'directory', 'verified', 'usage', 'observedAt'], 'MAILBOX_RESPONSE_KEYS_REFUSED');
   check(v.contract === RESPONSE_CONTRACT && v.requestId === request.requestId && v.kind === request.kind, 'MAILBOX_RESPONSE_IDENTITY_REFUSED');
   check(typeof v.ok === 'boolean' && (v.code === null || (typeof v.code === 'string' && CODE.test(v.code))), 'MAILBOX_RESPONSE_STATUS_REFUSED');
   check(v.proof === null || (exactKeys(v.proof, PROOF_KEYS, 'MAILBOX_RESPONSE_PROOF_REFUSED'), PROOF_KEYS.every(k => typeof v.proof[k] === 'boolean')), 'MAILBOX_RESPONSE_PROOF_REFUSED');
   check(v.directory === null || (typeof v.directory === 'string' && ARCHIVE_DIR.test(v.directory)), 'MAILBOX_RESPONSE_DIRECTORY_REFUSED');
   check(v.verified === null || typeof v.verified === 'boolean', 'MAILBOX_RESPONSE_VERIFIED_REFUSED');
+  check(v.usage === null || (exactKeys(v.usage, ['bytes', 'directories'], 'MAILBOX_RESPONSE_USAGE_REFUSED'), Number.isSafeInteger(v.usage.bytes) && v.usage.bytes >= 0 && Number.isSafeInteger(v.usage.directories) && v.usage.directories >= 0), 'MAILBOX_RESPONSE_USAGE_REFUSED');
   return v;
 }
 
@@ -112,7 +116,7 @@ export class Mailbox {
   }
 
   async respond(request, fields) {
-    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, observedAt: isoNow(this.clock), ...fields }, request);
+    const response = validateResponse({ contract: RESPONSE_CONTRACT, requestId: request.requestId, kind: request.kind, ok: false, code: null, proof: null, directory: null, verified: null, usage: null, observedAt: isoNow(this.clock), ...fields }, request);
     await writeNew(path.join(this.responses, `${request.requestId}.json`), response);
     return response;
   }

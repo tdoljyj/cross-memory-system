@@ -14,7 +14,7 @@ User=root
 Group=root
 UMask=0077
 ExecStartPre=/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux guard --unit wsprep --instance %i
-ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/python3.12 -I /opt/clued-independent-ci/source-first-formal-v1/work/actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-workspaces.py --batch %i
+ExecStart=/usr/bin/env -i PATH=/usr/bin:/bin HOME=/root LANG=C LC_ALL=C /usr/bin/python3.12 -I /opt/clued-independent-ci/source-v2/work/actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-workspaces.py --batch %i
 TimeoutStartSec=infinity
 Restart=no
 KillMode=control-group
