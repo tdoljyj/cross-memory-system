@@ -42,8 +42,12 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
   validateSubject(subject, now);
   check(HEX64.test(batchKey) && batchKey === residentBatchKey(subject), 'RESIDENT_BATCH_KEY_MISMATCH');
   check(BATCH_ID.test(batchId) && batchId.startsWith(batchKey.slice(0, 16)), 'RESIDENT_BATCH_ID_REFUSED');
-  const record = validateRecordV2(recordDocs, { now, required: Object.values(ENTRY_V2) });
+  const record = validateRecordV2(recordDocs, { now, required: [...Object.values(ENTRY_V2), '.gitleaks.toml'] });
   const ci = record.config.sourceManifestSha256;
+  // For the public descriptor: the bundle's reviewed set comes from the INSTALLED Source commit's
+  // .gitleaks.toml (hash-pinned here), never from the PR head (b29 lesson).
+  const sourceCommit = record.manifest.sourceSha;
+  const gitleaksTomlSha256 = record.pins.get('.gitleaks.toml');
   const jobs = batchJobsV2({ repo: subject.repo, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, sourceManifestSha256: ci, createdAt: subject.createdAt, attempt: subject.attempt });
   const out = {};
   const rows = [];
@@ -64,11 +68,11 @@ export function deriveBatch({ recordDocs, subject, batchKey, batchId, now = Date
     rows.push({ number: s.number, name: s.name, entryRole: s.entryRole, jobId: stageJobs[0].id, jobIds: stage.jobIds, workManifestSha256: hash(wm),
       planSha256: hash(files['formal-service-entry.json']), directory: dir, runMilliseconds: s.runMilliseconds, linuxWorker: s.linuxWorker });
   }
-  const batch = { contract: BATCH_CONTRACT, batchKey, batchId, subject, ciSourceManifestSha256: ci, recordHashes: record.hashes,
+  const batch = { contract: BATCH_CONTRACT, batchKey, batchId, subject, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, recordHashes: record.hashes,
     jobs: Object.fromEntries(Object.entries(jobs).map(([r, j]) => [r, j.id])), stages: rows, automaticRetryAllowed: false, claimBound: false };
   out['batch.json'] = canonical(batch);
   const packageSha256 = hash(canonical({ batch: hash(out['batch.json']), stages: rows.map(r => r.workManifestSha256) }));
-  return { files: out, result: { status: 'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256: ci, stages: rows } };
+  return { files: out, result: { status: 'RESIDENT_BATCH_DERIVED', batchKey, batchId, packageSha256, ciSourceManifestSha256: ci, sourceCommit, gitleaksTomlSha256, stages: rows } };
 }
 
 export function readRecordDocs(dir) {
