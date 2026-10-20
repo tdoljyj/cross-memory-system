@@ -92,7 +92,9 @@ async function acceptedInstallation(root, config, now) {
   if (digest(acceptanceBytes) !== config.acceptanceSha256) stop('accepted_installation_changed');
   if (accepted.contract !== 'clued.independent-ci.accepted-installation/1' || accepted.domain !== 'production'
     || accepted.accepted !== true || accepted.configSha256 !== installationConfigPin(config) || accepted.repository !== REPO
-    || accepted.hostname !== os.hostname() || accepted.platform !== process.platform || accepted.arch !== process.arch
+    // Windows reports the DNS host name (e.g. "Turing") while the accepted record
+    // carries the NetBIOS form ("TURING"); compare like bridge boundary.mjs:90.
+    || !/^[A-Za-z0-9-]+$/.test(accepted.hostname ?? '') || accepted.hostname.toLowerCase() !== os.hostname().toLowerCase() || accepted.platform !== process.platform || accepted.arch !== process.arch
     || accepted.controllerAccount !== os.userInfo().username || accepted.workerCannotReadController !== true
     || !(Date.parse(accepted.expiresAt) > now) || !(Date.parse(accepted.acceptedAt) <= now)
     || !INSTALL_REFS.every(ref => typeof accepted[ref] === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(accepted[ref]))

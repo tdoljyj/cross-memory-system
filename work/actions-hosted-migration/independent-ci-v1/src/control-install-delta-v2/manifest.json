@@ -18,7 +18,7 @@
     },
     "deployment-pins.json": {
       "bytes": 62645,
-      "sha256": "bc29ee5d3c3cc90a2b3fbb2c5ec099ef38c354fefb3da9edcc323f6752d6f916"
+      "sha256": "d7479e72cd2a05b231aaad707cb5268b5e56ab1608f8c216c9be1b8ae30b00a2"
     },
     "formal-roles.example.json": {
       "bytes": 3030,
@@ -30,7 +30,7 @@
     },
     "prepare-payload.mjs": {
       "bytes": 18923,
-      "sha256": "07130b3328b94049bd791c9d990c8b505580a79ff4bd8004444f16f9c98dc535"
+      "sha256": "49cebe58e1d61b2fea12423b72c0ffb11229db164bd005c7e546286204cd1721"
     },
     "prior-installed.json": {
       "bytes": 43309,
@@ -50,11 +50,11 @@
     },
     "runtime-pins.json": {
       "bytes": 12689,
-      "sha256": "302ffcbb4168ac2448fec2edaa68036b6f11b4015254f19b8205bc23c2fcedcf"
+      "sha256": "527a44e379617d7a5f4d8facd613fe47841d58a3929310769cf5bf5a5c22dfe1"
     },
     "source-delta.json": {
       "bytes": 34850,
-      "sha256": "73ed342c3aaf26c9247be0a685889d63b830827a7619de61878074209f13df2a"
+      "sha256": "0070c465e1b254caa11ef086b55568afe73a1460f1c3a806e136684753ec741a"
     },
     "test-offline.ps1": {
       "bytes": 6231,
@@ -146,7 +146,7 @@
     },
     "batch/run-batch.ps1": {
       "bytes": 20667,
-      "sha256": "1b289373abae4f5c4eea3748f338b10d85373bcbbff8bf459b7b9e91ba3e4987"
+      "sha256": "6fac996147d6a6bf8a7eb737f673025cf856b5f684950b68298542d607f344c5"
     },
     "batch/stages.json": {
       "bytes": 1830,

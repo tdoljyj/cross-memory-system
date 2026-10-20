@@ -102,8 +102,8 @@
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs",
-      "bytes": 20303,
-      "sha256": "27e34f9bf9c7242376d746cb04fc8c0e183f53a16fa51d8dcc87dc847107243f"
+      "bytes": 20547,
+      "sha256": "25530d8939a17618f3c7ec18987ceb840192e17a223963433c0f9ea83e1c0c06"
     },
     {
       "path": "work/actions-hosted-migration/independent-ci-v1/runtime/protected-files.mjs",
@@ -562,8 +562,8 @@
     },
     "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs": {
       "path": "work/actions-hosted-migration/independent-ci-v1/runtime/one-shot.mjs",
-      "bytes": 20303,
-      "sha256": "27e34f9bf9c7242376d746cb04fc8c0e183f53a16fa51d8dcc87dc847107243f",
+      "bytes": 20547,
+      "sha256": "25530d8939a17618f3c7ec18987ceb840192e17a223963433c0f9ea83e1c0c06",
       "source": "C:\\Users\\17531\\AppData\\Local\\Temp\\codex-actions-hosted-stagec-20261018\\work\\actions-hosted-migration\\independent-ci-v1\\src\\independent-control-checks-v1\\overlay\\work\\actions-hosted-migration\\independent-ci-v1\\runtime\\one-shot.mjs",
       "basis": "control-reviewed60"
     },
