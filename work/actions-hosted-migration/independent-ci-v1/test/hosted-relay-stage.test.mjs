@@ -11,7 +11,7 @@ import { createHostedRelayStage } from '../src/hosted-relay-v1/stage.mjs';
 import { createStagedCheckPublisher } from '../src/staged-check-publisher.mjs';
 import { digest } from '../src/proof.mjs';
 import { validateRegistry } from '../src/hosted-relay-v1/registry.mjs';
-import { H, OTHER, REPO, ROLES, createWorld, published } from './fixtures/hosted-relay/world.mjs';
+import { H, HEAVY, OTHER, REPO, ROLES, createWorld, published } from './fixtures/hosted-relay/world.mjs';
 
 async function journalFor(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-relay-stage-'));
@@ -22,17 +22,21 @@ const run = (stage, w, roles = [...ROLES], attempt = 1) => stage.run({ subject: 
 const outcomes = result => Object.fromEntries(result.roles.map(row => [row.role, row.reason ? `${row.outcome}:${row.reason}` : row.outcome]));
 const mutexOf = (w, role, attempt = 1) => ({ repo: REPO, headSha: H, role, checkName: role, appId: 5368905, attempt });
 
-test('three attested roles are relayed once by 5368905 under the required names', async t => {
+test('attested roles are relayed once by 5368905 under the required names; contract-placement is never relayed', async t => {
   const w = createWorld(); const runs = w.allHosted();
+  // A successful placement run with an otherwise valid identity changes nothing.
+  w.addHostedRun('contract-placement');
   const journal = await journalFor(t);
   const { stage } = w.stage(journal);
-  const result = await run(stage, w);
+  const result = await run(stage, w, [...HEAVY]);
   assert.equal(result.status, 'COMPLETE'); assert.equal(result.code, null);
-  assert.deepEqual(outcomes(result), { 'contract-placement': 'RELAYED', gitleaks: 'RELAYED', trivy: 'RELAYED' });
-  assert.equal(result.sideEffects, 3);
+  assert.deepEqual(outcomes(result), { 'contract-placement': 'LOCAL_REQUIRED:RELAY_ROLE_NOT_RELAYABLE', gitleaks: 'RELAYED', trivy: 'RELAYED' });
+  const placement = result.roles.find(row => row.role === 'contract-placement');
+  assert.deepEqual([placement.detail, placement.receipt, placement.effectKey], ['never_relayed', 'relay-local-fallback', null]);
+  assert.equal(result.sideEffects, 2);
   const checks = published(w.state);
   assert.deepEqual(checks.map(c => c.name).sort(), [...ROLES]);
-  for (const row of result.roles) {
+  for (const row of result.roles.filter(item => item.outcome === 'RELAYED')) {
     const check = checks.find(c => c.id === row.checkRunId);
     assert.equal(check.name, row.role); // the required name, never the hosted job name
     assert.equal(check.conclusion, 'success');
@@ -56,8 +60,8 @@ test('a second stage run for the same head re-reads and never publishes again', 
   const second = await run(w.stage(journal).stage, w);
   assert.deepEqual(outcomes(second), outcomes(first));
   assert.equal(second.sideEffects, 0);
-  assert.equal(published(w.state).length, 3);
-  assert.equal(w.state.calls.createCheck, 3);
+  assert.equal(published(w.state).length, ROLES.length);
+  assert.equal(w.state.calls.createCheck, ROLES.length);
 });
 
 test('E9: a fresh Native admission refusal leaves every role local and writes nothing', async t => {
@@ -76,29 +80,36 @@ test('E9: a fresh Native admission refusal leaves every role local and writes no
   assert.equal(local.status, 'SETTLED');
 });
 
-test('a mixed head: relayed, billing-refused and pending roles in one stage', async t => {
+test('a mixed head: relayed, billing-refused, never-relayed and pending roles', async t => {
   const w = createWorld();
   w.addHostedRun('gitleaks');
   w.addHostedRun('trivy', { name: 'admission-gate', conclusion: 'failure', annotations: [{ annotation_level: 'failure', title: '', path: '.github',
     message: 'The job was not started because recent account payments have failed or your spending limit needs to be increased.' }] });
   w.addHostedRun('trivy', { conclusion: 'skipped' });
-  w.addHostedRun('contract-placement', { status: 'in_progress' });
-  const result = await run(w.stage(await journalFor(t)).stage, w);
-  assert.deepEqual(outcomes(result), { 'contract-placement': 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_PENDING', gitleaks: 'RELAYED',
+  const result = await run(w.stage(await journalFor(t)).stage, w, [...HEAVY]);
+  assert.deepEqual(outcomes(result), { 'contract-placement': 'LOCAL_REQUIRED:RELAY_ROLE_NOT_RELAYABLE', gitleaks: 'RELAYED',
     trivy: 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_BILLING_REFUSED' });
   const rows = Object.fromEntries(result.roles.map(row => [row.role, row]));
   assert.equal(rows.trivy.receipt, 'relay-billing-refused');
   assert.equal(rows['contract-placement'].receipt, 'relay-local-fallback');
-  assert.equal(rows['contract-placement'].detail, 'E5_HOSTED_IN_PROGRESS');
   assert.equal(published(w.state).length, 1);
+  const pending = createWorld(); pending.addHostedRun('trivy', { status: 'in_progress' });
+  const waiting = await run(pending.stage(await journalFor(t)).stage, pending, ['trivy']);
+  assert.deepEqual(outcomes(waiting), { trivy: 'LOCAL_REQUIRED:RELAY_NOT_ATTESTED_PENDING' });
+  assert.equal(waiting.roles[0].detail, 'E5_HOSTED_IN_PROGRESS');
+  // Only placement asked for: nothing is read from GitHub at all.
+  const only = createWorld();
+  const placementOnly = await run(only.stage(await journalFor(t)).stage, only, ['contract-placement']);
+  assert.deepEqual(outcomes(placementOnly), { 'contract-placement': 'LOCAL_REQUIRED:RELAY_ROLE_NOT_RELAYABLE' });
+  assert.deepEqual(only.state.calls, {});
 });
 
 test('an unconfirmed POST is RELAY_PUBLICATION_UNCERTAIN: HALT, later roles untouched, the role locked against local', async t => {
   const w = createWorld(); w.allHosted(); w.state.faults.createCheck = 'lost-no-write';
   const journal = await journalFor(t);
-  const result = await run(w.stage(journal).stage, w, ['gitleaks', 'trivy', 'contract-placement']);
+  const result = await run(w.stage(journal).stage, w, ['gitleaks', 'contract-placement', 'trivy']);
   assert.equal(result.status, 'HALT'); assert.equal(result.code, 'RELAY_PUBLICATION_UNCERTAIN');
-  assert.deepEqual(outcomes(result), { gitleaks: 'HALT:RELAY_PUBLICATION_UNCERTAIN', trivy: 'NOT_PROCESSED', 'contract-placement': 'NOT_PROCESSED' });
+  assert.deepEqual(outcomes(result), { gitleaks: 'HALT:RELAY_PUBLICATION_UNCERTAIN', 'contract-placement': 'LOCAL_REQUIRED:RELAY_ROLE_NOT_RELAYABLE', trivy: 'NOT_PROCESSED' });
   assert.equal(w.state.calls.createCheck, 1);
   assert.equal((await journal.read(result.roles[0].effectKey)).state, 'uncertain');
   delete w.state.faults.createCheck;

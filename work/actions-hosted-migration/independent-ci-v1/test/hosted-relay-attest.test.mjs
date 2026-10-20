@@ -60,11 +60,12 @@ test('E3: a PR that changes CI files, .gitattributes or a role closure falls bac
     [['.github/workflows/gitleaks-shadow.yml', 'src/app.js'], all('NOT_ELIGIBLE:E3_CI_PATH_CHANGED')],
     [['.github/actions/ci-temporary-storage/setup.mjs'], all('NOT_ELIGIBLE:E3_CI_PATH_CHANGED')],
     [['.gitattributes', 'src/app.js'], all('NOT_ELIGIBLE:E3_PROTECTED_PATH_CHANGED')],
-    [['.gitleaks.toml'], { 'contract-placement': 'ATTESTED_SUCCESS', gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
-    [['.gitleaksignore'], { 'contract-placement': 'ATTESTED_SUCCESS', gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
-    [['scripts/ci/reviewed_gitleaks.py'], { 'contract-placement': 'ATTESTED_SUCCESS', gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
-    [['.trivyignore'], { 'contract-placement': 'ATTESTED_SUCCESS', gitleaks: 'ATTESTED_SUCCESS', trivy: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED' }],
-    [['scripts/ci/check_contract_placement.py'], { 'contract-placement': 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', gitleaks: 'ATTESTED_SUCCESS', trivy: 'ATTESTED_SUCCESS' }],
+    [['.gitleaks.toml'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    [['.gitleaksignore'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    [['scripts/ci/reviewed_gitleaks.py'], { gitleaks: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED', trivy: 'ATTESTED_SUCCESS' }],
+    [['.trivyignore'], { gitleaks: 'ATTESTED_SUCCESS', trivy: 'NOT_ELIGIBLE:E3_CLOSURE_PATH_CHANGED' }],
+    // Placement files are outside every relay closure, and placement itself is never relayed.
+    [['scripts/ci/check_contract_placement.py'], { gitleaks: 'ATTESTED_SUCCESS', trivy: 'ATTESTED_SUCCESS' }],
   ];
   for (const [paths, expected] of cases) {
     const w = createWorld(); w.allHosted(); w.state.changedPaths = paths;
@@ -77,11 +78,11 @@ test('E3: a PR that changes CI files, .gitattributes or a role closure falls bac
 test('E4: CI files on H that differ from the registry, links and forbidden files fall back', async () => {
   let w = createWorld(); w.allHosted();
   w.state.headFiles['.gitleaks.toml'] = '# main changed without re-registration\n'; w.rebuild();
-  assert.deepEqual(await verdicts(w), { 'contract-placement': 'ATTESTED_SUCCESS', gitleaks: 'NOT_ELIGIBLE:E4_CLOSURE_MISMATCH', trivy: 'ATTESTED_SUCCESS' });
+  assert.deepEqual(await verdicts(w), { gitleaks: 'NOT_ELIGIBLE:E4_CLOSURE_MISMATCH', trivy: 'ATTESTED_SUCCESS' });
   w = createWorld(); w.allHosted(); w.state.headModes['scripts/ci/reviewed_gitleaks.py'] = '120000'; w.rebuild();
   assert.equal((await verdicts(w)).gitleaks, 'NOT_ELIGIBLE:E4_CLOSURE_MISMATCH');
   w = createWorld(); w.allHosted(); w.state.headFiles['.trivyignore'] = 'CVE-2026-0001\n'; w.rebuild();
-  assert.deepEqual(await verdicts(w), { 'contract-placement': 'ATTESTED_SUCCESS', gitleaks: 'ATTESTED_SUCCESS', trivy: 'NOT_ELIGIBLE:E4_FORBIDDEN_PATH_PRESENT' });
+  assert.deepEqual(await verdicts(w), { gitleaks: 'ATTESTED_SUCCESS', trivy: 'NOT_ELIGIBLE:E4_FORBIDDEN_PATH_PRESENT' });
   w = createWorld(); w.allHosted(); w.state.headFiles['.github/workflows/trivy.yml'] += '# drift\n'; w.rebuild();
   assert.equal((await verdicts(w)).trivy, 'NOT_ELIGIBLE:E4_CLOSURE_MISMATCH');
 });
@@ -89,8 +90,10 @@ test('E4: CI files on H that differ from the registry, links and forbidden files
 test('E5: absent, pending, failed, skipped, superseded and foreign runs are not attested', async () => {
   let w = createWorld();
   assert.deepEqual(await verdicts(w), all('ABSENT:E5_NO_HOSTED_RUN'));
-  w = createWorld(); w.addHostedRun('gitleaks', { status: 'queued' }); w.addHostedRun('trivy', { status: 'in_progress' }); w.addHostedRun('contract-placement', { conclusion: 'failure' });
-  assert.deepEqual(await verdicts(w), { 'contract-placement': 'HOSTED_NOT_SUCCESS:E5_HOSTED_FAILURE', gitleaks: 'PENDING:E5_HOSTED_QUEUED', trivy: 'PENDING:E5_HOSTED_IN_PROGRESS' });
+  w = createWorld(); w.addHostedRun('gitleaks', { status: 'queued' }); w.addHostedRun('trivy', { status: 'in_progress' });
+  assert.deepEqual(await verdicts(w), { gitleaks: 'PENDING:E5_HOSTED_QUEUED', trivy: 'PENDING:E5_HOSTED_IN_PROGRESS' });
+  w = createWorld(); w.addHostedRun('trivy', { conclusion: 'failure' });
+  assert.equal((await verdicts(w)).trivy, 'HOSTED_NOT_SUCCESS:E5_HOSTED_FAILURE');
   w = createWorld(); w.allHosted(); w.addHostedRun('gitleaks', { conclusion: 'failure' }); // a newer re-run failed
   assert.equal((await verdicts(w)).gitleaks, 'HOSTED_NOT_SUCCESS:E5_HOSTED_FAILURE');
   w = createWorld(); w.allHosted(); w.addHostedRun('gitleaks', { conclusion: 'cancelled' });
@@ -117,7 +120,7 @@ test('BILLING_REFUSED is a classification only: a changed billing text still fal
   assert.deepEqual(await verdicts(w), all('HOSTED_NOT_SUCCESS:E5_HOSTED_SKIPPED'));
   // Minutes ran out mid-PR: the role that finished is still relayed.
   w = createWorld(); w.addHostedRun('gitleaks'); billingGate(w);
-  assert.deepEqual(await verdicts(w), { 'contract-placement': 'BILLING_REFUSED:E5_BILLING_REFUSED', gitleaks: 'ATTESTED_SUCCESS', trivy: 'BILLING_REFUSED:E5_BILLING_REFUSED' });
+  assert.deepEqual(await verdicts(w), { gitleaks: 'ATTESTED_SUCCESS', trivy: 'BILLING_REFUSED:E5_BILLING_REFUSED' });
   assert.equal(isBillingRefusal({ level: SHAPES.billingRefusedAnnotation.annotation_level, message: SHAPES.billingRefusedAnnotation.message }), true);
 });
 
