@@ -1,6 +1,6 @@
 # Clued Agent Contract
 
-Contract version: 51
+Contract version: 52
 
 This file is the single normative source for how any Agent, on any Host, uses Clued. The Clued service serves it at `/clued-agent.md`; the `clued` Skill, repository `AGENTS.md` files and the MCP server instructions point here instead of restating it. Host- or repository-specific procedures may add steps; they never relax this contract. A working Binding or scope is required for every protected call but is never, by itself, a reason to read or write.
 
@@ -202,7 +202,11 @@ Claim work before you spend on it. When the service offers `clued_work_claim`, a
   - `holder_client`: your client as people know it (`Claude Code`, `Codex`, `ChatGPT`, `claude.ai`);
   - `holder_session_title`: your session's title as the Owner sees it in your client;
   - `holder_session_ref`: your client's own session id (Claude Code `session_01…`, a Codex session id), not a name you invent; leave it out when you cannot get it.
-  When your Host lets you set your own session title, make it match `holder_session_title` and include the label. Keep the returned `claim_id`, `fence` and `lease_version`.
+  Read this exact Host session's current title through an authorized Host tool before a claim, takeover or renewal, and send it verbatim as `holder_session_title`. A readable title must be supplied; never substitute `holder_label` or skip a supported title read.
+
+  If the title remains unavailable after checking the Host's actual exposed capabilities and read results, leave `holder_session_title` blank (omit the optional field) and record the reason in Clued metadata. Use only investigated and verified reasons: for example, report that this session has no exposed title-reading interface only after checking that fact. If the cause is unknown, label it unknown and include the relevant facts already verified, including any causes actually ruled out; do not present an unverified possibility as the reason. Use a dedicated reason field when the schema provides one; otherwise append a concise reason and verification summary to `holder_label`, retaining the truthful work and machine identity. Never put a label or failure explanation in `holder_session_title`.
+
+  Client and machine information belong only in Clued holder metadata. `holder_label` is independent of `holder_session_title` and need not match or appear in it. Claiming, taking over, renewing or reporting identity never requires or authorizes renaming the Host conversation, appending identity suffixes or restoring an older title. Preserve the Host's normal naming behavior and the Owner's chosen title. An explicitly requested rename uses the authorized Host mechanism and is verified before reporting success. Keep the returned `claim_id`, `fence` and `lease_version`.
 
 - A `write_set` entry is a repository path or glob, or a typed resource `kind:value`: `storage:<connection_id>/<path under the registered root>` for Clued storage, `repo:<owner>/<name>/<path>` for a named repository, `record:<canonical id>` for a record. Entries cannot contain whitespace; cover a name with spaces by a glob (`storage:<connection_id>/20_P/**`).
 
