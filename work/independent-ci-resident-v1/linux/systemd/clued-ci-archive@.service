@@ -1,0 +1,47 @@
+# Resident independent CI: rename-only archive of the Linux side of one batch. DRAFT.
+# Instance = "<batchId>_<reason>" (reason: lower-case code, e.g. formal-bridge-stage-deadline or
+# success-close). The tool proves quiescence itself before moving anything: every clued-ci unit is
+# inactive and its cgroup is empty, no container carrying the bridge nonce label is running, and no
+# process names the worker or a run directory. This replaces today's "kernel booted after the last
+# write" proof, which needed `wsl --shutdown`. Nothing is deleted; renames use RENAME_NOREPLACE.
+[Unit]
+Description=Clued independent CI Linux archive %i
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStartPre=/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux guard --unit archive --instance %i
+ExecStart=/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux archive --instance %i
+TimeoutStartSec=infinity
+Restart=no
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clued-independent-ci
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Review MINOR-7: root keeps only the file capabilities it needs to rename and hash the batch scene
+# (some leaves may belong to the container user) (no CAP_SYS_ADMIN, CAP_NET_*, CAP_SYS_PTRACE, ...); syscalls limited to the system-service
+# set; no new namespaces. Each item is confirmed in the P2 rehearsal (WSL kernel seccomp + systemd).
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @module @reboot @swap @clock @cpu-emulation @obsolete @raw-io
+SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
+RestrictNamespaces=yes
+RestrictRealtime=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,483 @@
+#!/usr/bin/python3.12 -I
+"""Resident independent CI, Linux side (DRAFT). Installed root:root 0755 as
+/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux and pinned, with every file it
+guards, in /opt/clued-independent-ci/resident-v1/manifest.json (installedPath + sha256).
+
+Sub-commands (all print one JSON object; exit 0 only on success):
+  guard --unit worker|wsprep|archive --instance <id>   ExecStartPre of the three template units
+  quiescence --batch <batchId>                         read-only proof, relayed verbatim by the companion
+  archive --instance <batchId>_<reason>                rename-only archive (archive unit only)
+  archive-status --instance <batchId>_<reason>         the receipt of exactly that archive run
+  archive-usage                                        bytes kept by earlier archives (50 GB reminder)
+
+Threat model: WSL root is reachable from the Owner's own user session (wsl -u root), so these facts
+are as trustworthy as the Owner/root boundary accepted in constraint 4fedfc84, no more. What this tool
+guarantees is that facts are measured, not assumed, and fail closed when they cannot be measured.
+
+Quiescence (replaces the "kernel booted after the last write" proof that needed wsl --shutdown):
+every clued-ci-*@ unit other than the caller is inactive/failed and its cgroup reports
+"populated 0" in cgroup.events (cgroup v2 only; unreadable = not quiescent); every container carrying
+the bridge nonce label is exited or dead (docker ps -a; created/running/paused/restarting = not
+quiescent); no process command line names the worker or a run directory.
+
+Archive scopes: "between-roles-N" moves only the protocol records (the existing linux-archive.py
+semantics); every other reason moves the protocol records, formal-role.lock, all run directories,
+this batch's workspaces and its ws-prep directory. Moves use renameat2(RENAME_NOREPLACE); nothing
+is deleted.
+
+Source v2 (DESIGN S14, lessons b22/b28), mirroring resident-v2/archive-windows-spool.ps1:
+  - destinations are FLAT names directly inside the archive directory (incoming-<leaf>,
+    outgoing-<leaf>, run-<name>, workspace-<jobId>, ws-prep-<batchId>, formal-role.lock): no nested
+    runs/ or workspaces/ directory is ever created (the runs/ prefix broke b28);
+  - completed scopes (between-roles-N, success-close) refuse, moving nothing, when the spool holds an
+    unknown leaf, a half record pair, or a still-held formal-role.lock: the role did not end the way a
+    completed stage ends, so the scene is preserved for the failure path;
+  - failure scopes archive what they find and report what was left in place;
+  - every parent is a real directory (root-owned and not group/other-writable on the host), every moved
+    directory tree is inventoried before and verified after the move, and every source is gone after;
+  - a failure part-way leaves a durable partial status (verified false), never a missing one;
+  - archive-usage reports the bytes kept by earlier archives (the resident's 50 GB reminder).
+"""
+import ctypes
+import hashlib
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+
+STATE = '/var/lib/clued-independent-ci'
+SPOOL = f'{STATE}/formal-spool'
+RESIDENT_STATE = f'{STATE}/resident'
+OPT = '/opt/clued-independent-ci/resident-v1'
+DESCRIPTORS = '/mnt/c/ProgramData/CluedIndependentCI/resident/outbox'
+BATCH_ID = re.compile(r'^[0-9a-f]{16}-[0-9a-f]{12}$')
+JOB_ID = re.compile(r'^[0-9a-f]{64}$')
+REASON = re.compile(r'^[a-z0-9][a-z0-9-]{0,39}$')
+UNIT = re.compile(r'^(clued-ci-(?:worker|wsprep|archive)@[0-9a-z_-]{1,120}\.service)\s+\S+\s+(\S+)\s+(\S+)')
+SYSTEMCTL = '/usr/bin/systemctl'
+DOCKER = '/usr/bin/docker'
+ENV = {'PATH': '/usr/bin:/bin', 'LANG': 'C', 'LC_ALL': 'C'}
+SEQ = [f'{i:02d}' for i in range(1, 33)]
+# Linux view of the bridge records (mirror of the Windows view in src/archive.mjs).
+LINUX_PROTOCOL = {
+    'incoming': [f'{n}{s}' for n in ['issue'] + [f'response-{q}' for q in SEQ] for s in ('.json', '.ready.json')],
+    'outgoing': [f'{n}{s}' for n in ['result', 'blocked'] + [f'challenge-{q}' for q in SEQ] for s in ('.json', '.ready.json')] + ['active.lock'],
+}
+MAX_LEAF = 1 << 20
+MAX_TREE = 1_000_000
+
+
+class Refused(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def need(cond, code):
+    if not cond:
+        raise Refused(code)
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def run(argv, timeout=30):
+    r = subprocess.run(argv, env=ENV, capture_output=True, text=True, timeout=timeout, check=False)
+    return r.returncode, r.stdout
+
+
+# ---------- pure helpers (unit-tested on any OS) ----------
+
+def parse_instance(unit, instance):
+    if unit == 'worker':
+        need(JOB_ID.fullmatch(instance), 'WORKER_INSTANCE_REFUSED')
+        return {'jobId': instance}
+    if unit == 'wsprep':
+        need(BATCH_ID.fullmatch(instance), 'WSPREP_INSTANCE_REFUSED')
+        return {'batchId': instance}
+    if unit == 'archive':
+        batch, sep, reason = instance.partition('_')
+        need(sep == '_' and BATCH_ID.fullmatch(batch) and REASON.fullmatch(reason), 'ARCHIVE_INSTANCE_REFUSED')
+        return {'batchId': batch, 'reason': reason}
+    raise Refused('UNIT_REFUSED')
+
+
+def other_units_quiet(list_units_output, self_unit):
+    """Names of clued-ci units other than the caller that are not inactive/failed."""
+    busy = []
+    for line in list_units_output.splitlines():
+        m = UNIT.match(line.strip())
+        if m and m.group(1) != self_unit and m.group(2) not in ('inactive', 'failed'):
+            busy.append(m.group(1))
+    return busy
+
+
+def cgroup_unpopulated(events_text):
+    """cgroup v2 cgroup.events covers the whole subtree: populated 0 means no process anywhere below."""
+    if events_text is None:
+        return False  # unreadable = not proven
+    values = dict(line.split(' ', 1) for line in events_text.strip().splitlines() if ' ' in line)
+    return values.get('populated') == '0'
+
+
+def containers_quiet(ps_lines):
+    """docker ps -a --format '{{.ID}} {{.State}}' for the nonce label: all must be exited or dead."""
+    states = [line.split()[1] for line in ps_lines if len(line.split()) >= 2]
+    return all(s in ('exited', 'dead') for s in states), states
+
+
+def _protected_dir(path):
+    """A real directory (no link); on the host also root-owned and not group/other-writable."""
+    need(os.path.lexists(path) and not os.path.islink(path) and os.path.isdir(path), 'ARCHIVE_PARENT_REDIRECTED')
+    if sys.platform.startswith('linux') and os.geteuid() == 0:
+        st = os.lstat(path)
+        need(st.st_uid == 0 and not (st.st_mode & 0o022), 'ARCHIVE_PARENT_UNPROTECTED')
+
+
+def tree_inventory(path):
+    """Digest of (relative path, type, inode, size, mtime) of a whole tree, links not followed."""
+    h, n = hashlib.sha256(), 0
+    for base, dirs, files in os.walk(path, followlinks=False):
+        dirs.sort()
+        for name in sorted(dirs + files):
+            full = os.path.join(base, name)
+            st = os.lstat(full)
+            kind = 'l' if os.path.islink(full) else 'd' if os.path.isdir(full) else 'f'
+            h.update(f'{os.path.relpath(full, path)}\0{kind}\0{st.st_ino}\0{st.st_size}\0{st.st_mtime_ns}\n'.encode())
+            n += 1
+            need(n <= MAX_TREE, 'ARCHIVE_TREE_BOUND')
+    return h.hexdigest()
+
+
+def _leaf(root, rel, target, flat):
+    full = os.path.join(root, rel)
+    st = os.lstat(full)
+    need(not os.path.islink(full), 'ARCHIVE_LINK_REFUSED')
+    is_dir = os.path.isdir(full)
+    if not is_dir:
+        need(st.st_nlink == 1 and st.st_size <= MAX_LEAF, 'ARCHIVE_LEAF_SHAPE_REFUSED')
+    need(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,200}', flat) is not None, 'ARCHIVE_FLAT_NAME_REFUSED')
+    return {'from': rel, 'to': f'{target}/{flat}', 'isDir': is_dir, 'ino': st.st_ino, 'mtimeNs': st.st_mtime_ns,
+            'sha256': None if is_dir else sha256_file(full), 'tree': tree_inventory(full) if is_dir else None}
+
+
+def half_pairs(names):
+    """Record names whose .json / .ready.json partner is missing."""
+    bases = {n[:-len('.ready.json')] if n.endswith('.ready.json') else n[:-len('.json')] for n in names if n.endswith('.json')}
+    return sorted(b for b in bases if (f'{b}.json' in names) != (f'{b}.ready.json' in names))
+
+
+def plan_archive(root, batch_id, reason, job_ids, nonce_hex):
+    need(BATCH_ID.fullmatch(batch_id) and REASON.fullmatch(reason) and re.fullmatch(r'[0-9a-f]{12}', nonce_hex), 'ARCHIVE_PLAN_REFUSED')
+    need(all(JOB_ID.fullmatch(j) for j in job_ids), 'ARCHIVE_JOB_IDS_REFUSED')
+    # Only the two exact between-role reasons are protocol-only; any other reason (including any
+    # failure-derived text) archives the whole batch scene (third review, MAJOR 1).
+    protocol_only = re.fullmatch(r'between-roles-[46]', reason) is not None
+    completed = protocol_only or reason == 'success-close'
+    prefix = 'archive' if completed else 'failed'
+    target = f'formal-spool/{prefix}-{batch_id[:12]}-{reason}-{nonce_hex}'
+    _protected_dir(root)
+    _protected_dir(os.path.join(root, 'formal-spool'))
+    moves, unknown, halves = [], [], []
+    for sub, names in LINUX_PROTOCOL.items():
+        d = os.path.join(root, 'formal-spool', sub)
+        if not os.path.lexists(d):
+            continue
+        _protected_dir(d)
+        present = sorted(os.listdir(d))
+        unknown += [f'{sub}/{n}' for n in present if n not in names]
+        halves += [f'{sub}/{b}' for b in half_pairs([n for n in present if n in names])]
+        for name in names:
+            if os.path.lexists(os.path.join(d, name)):
+                moves.append(_leaf(root, f'formal-spool/{sub}/{name}', target, f'{sub}-{name}'))
+    role_lock = os.path.lexists(os.path.join(root, 'formal-role.lock'))
+    if completed:
+        # A completed stage leaves no unknown leaf, no half pair and no held role slot (b22/b28).
+        need(not unknown, 'UNKNOWN_SPOOL_LEAF_PRESERVED')
+        need(not halves, 'HALF_PROTOCOL_PAIR_PRESERVED')
+        need(not role_lock, 'ROLE_LOCK_HELD_PRESERVED')
+    if not protocol_only:
+        if role_lock:
+            moves.append(_leaf(root, 'formal-role.lock', target, 'formal-role.lock'))
+        runs = os.path.join(root, 'runs')
+        if os.path.lexists(runs):
+            _protected_dir(runs)
+            for name in sorted(os.listdir(runs)):
+                moves.append(_leaf(root, f'runs/{name}', target, f'run-{name}'))
+        if os.path.lexists(os.path.join(root, 'workspaces')):
+            _protected_dir(os.path.join(root, 'workspaces'))
+        for j in sorted(job_ids):
+            if os.path.lexists(os.path.join(root, 'workspaces', j)):
+                moves.append(_leaf(root, f'workspaces/{j}', target, f'workspace-{j}'))
+        if os.path.lexists(os.path.join(root, f'ws-prep-{batch_id}')):
+            moves.append(_leaf(root, f'ws-prep-{batch_id}', target, f'ws-prep-{batch_id}'))
+    flats = [m['to'] for m in moves]
+    need(len(set(flats)) == len(flats), 'ARCHIVE_FLAT_NAME_COLLISION')
+    return {'contract': 'clued.independent-ci.resident-linux-archive/2', 'batchId': batch_id, 'reason': reason,
+            'scope': 'protocol' if protocol_only else 'batch', 'completed': completed, 'target': target, 'moves': moves,
+            'remainderLeftInPlace': unknown, 'halfPairs': halves, 'deletesAnything': False}
+
+
+def earlier_result(done_path):
+    """A repeated archive instance (for example a re-arm retried after a lost answer) returns the
+    verified result of the run that already happened, instead of refusing (review M6d)."""
+    if not os.path.lexists(done_path):
+        return None
+    need(not os.path.islink(done_path), 'ARCHIVE_STATUS_LINK_REFUSED')
+    with open(done_path) as f:
+        earlier = json.load(f)
+    return {**{k: earlier[k] for k in ('verified', 'moved', 'deleted', 'directory', 'scope', 'partial', 'code') if k in earlier}, 'replayed': True}
+
+
+def rename_noreplace(src, dst):
+    if sys.platform.startswith('linux'):
+        libc = ctypes.CDLL('libc.so.6', use_errno=True)
+        AT_FDCWD, RENAME_NOREPLACE = -100, 1
+        if libc.renameat2(AT_FDCWD, src.encode(), AT_FDCWD, dst.encode(), RENAME_NOREPLACE) != 0:
+            raise Refused('ARCHIVE_RENAME_REFUSED')
+    else:  # offline tests on other systems
+        need(not os.path.lexists(dst), 'ARCHIVE_RENAME_REFUSED')
+        os.rename(src, dst)
+
+
+def _durable_new(path, value):
+    with open(path, 'x') as f:
+        json.dump(value, f, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def apply_archive(root, plan, rename=rename_noreplace):
+    target = os.path.join(root, plan['target'])
+    os.mkdir(target, 0o700)
+    _durable_new(os.path.join(target, 'intent.json'), plan)
+    moved = 0
+    try:
+        for m in plan['moves']:
+            src, dst = os.path.join(root, m['from']), os.path.join(root, m['to'])
+            need(os.path.dirname(dst) == target, 'ARCHIVE_FLAT_NAME_REFUSED')  # never a nested destination (b28)
+            st = os.lstat(src)
+            need(not os.path.islink(src) and st.st_ino == m['ino'] and st.st_mtime_ns == m['mtimeNs'], 'ARCHIVE_LEAF_CHANGED_BEFORE_MOVE')
+            if m['isDir']:
+                need(tree_inventory(src) == m['tree'], 'ARCHIVE_TREE_CHANGED_BEFORE_MOVE')
+            rename(src, dst)
+            moved += 1
+            st2 = os.lstat(dst)
+            need(st2.st_ino == m['ino'] and (m['sha256'] is None or sha256_file(dst) == m['sha256']), 'ARCHIVE_LEAF_CHANGED_AFTER_MOVE')
+            if m['isDir']:
+                need(tree_inventory(dst) == m['tree'], 'ARCHIVE_TREE_CHANGED_AFTER_MOVE')
+        # Postconditions: every source is gone; a completed scope leaves no known record behind.
+        need(all(not os.path.lexists(os.path.join(root, m['from'])) for m in plan['moves']), 'ARCHIVE_SOURCE_STILL_PRESENT')
+        if plan['completed']:
+            for sub, names in LINUX_PROTOCOL.items():
+                d = os.path.join(root, 'formal-spool', sub)
+                need(not os.path.isdir(d) or not any(n in names for n in os.listdir(d)), 'ARCHIVE_POSTCONDITION_UNCONFIRMED')
+    except Refused as e:
+        # Part-way: durable partial status, so the failure is visible and never mistaken for "not run".
+        _durable_new(os.path.join(target, 'partial.json'), {'verified': False, 'moved': moved, 'code': e.code})
+        raise Refused(e.code) from None
+    result = {'verified': True, 'moved': moved, 'deleted': 0, 'directory': os.path.basename(plan['target']), 'scope': plan['scope'],
+              'remainderLeftInPlace': plan['remainderLeftInPlace'], 'halfPairs': plan['halfPairs']}
+    _durable_new(os.path.join(target, 'receipt.json'), result)
+    return result
+
+
+def archive_usage(root):
+    """Bytes kept by earlier archives in the Linux spool (archive-* and failed-*); links not followed."""
+    spool = os.path.join(root, 'formal-spool')
+    total, dirs, n = 0, 0, 0
+    if os.path.isdir(spool) and not os.path.islink(spool):
+        for name in sorted(os.listdir(spool)):
+            full = os.path.join(spool, name)
+            if not re.fullmatch(r'(archive|failed)-[0-9A-Za-z-]+', name) or os.path.islink(full) or not os.path.isdir(full):
+                continue
+            dirs += 1
+            for base, ds, fs in os.walk(full, followlinks=False):
+                for f in fs:
+                    n += 1
+                    need(n <= 10 * MAX_TREE, 'ARCHIVE_USAGE_BOUND')
+                    total += os.lstat(os.path.join(base, f)).st_size
+    return {'contract': 'clued.independent-ci.linux-archive-usage/1', 'bytes': total, 'directories': dirs}
+
+
+def verify_pins(manifest):
+    """Every pinned file at its installed path: this tool, the unit files, and the external entry
+    points the units run (node, linux-worker.mjs, prepare-workspaces.py) from the installed Source."""
+    for f in manifest['files']:
+        need(os.path.isabs(f['installedPath']) and '..' not in f['installedPath'].split('/'), 'RESIDENT_LINUX_MANIFEST_REFUSED')
+        need(sha256_file(f['installedPath']) == f['sha256'], 'RESIDENT_LINUX_PIN_CHANGED')
+
+
+# ---------- host commands (Linux, root) ----------
+
+def unit_name(kind, instance):
+    return f'clued-ci-{kind}@{instance}.service'
+
+
+def list_units():
+    code, out = run([SYSTEMCTL, 'list-units', '--all', '--plain', '--no-legend', 'clued-ci-*@*.service'])
+    need(code == 0, 'SYSTEMCTL_LIST_UNCONFIRMED')
+    return out
+
+
+def cgroup_events(unit):
+    code, out = run([SYSTEMCTL, 'show', '--property=ControlGroup', '--value', unit])
+    if code != 0:
+        return None
+    cg = out.strip()
+    if not cg:
+        return 'populated 0\n'  # systemd reports no control group for a unit with no processes
+    try:
+        with open(f'/sys/fs/cgroup{cg}/cgroup.events') as f:
+            return f.read()
+    except OSError:
+        return 'populated 0\n' if not os.path.exists(f'/sys/fs/cgroup{cg}') else None
+
+
+def nonce_containers():
+    code, out = run([DOCKER, 'ps', '--all', '--filter', 'label=clued.verify.nonce', '--format', '{{.ID}} {{.State}}'], timeout=60)
+    need(code == 0, 'DOCKER_READ_UNCONFIRMED')
+    return [l for l in out.splitlines() if l.strip()]
+
+
+def worker_processes():
+    hits = []
+    for pid in filter(str.isdigit, os.listdir('/proc')):
+        try:
+            cmd = open(f'/proc/{pid}/cmdline', 'rb').read().replace(b'\0', b' ')
+        except OSError:
+            continue
+        if b'linux-worker.mjs' in cmd or b'/var/lib/clued-independent-ci/runs/' in cmd:
+            hits.append(int(pid))
+    return hits
+
+
+def quiescence(self_unit=None):
+    need(os.path.exists('/sys/fs/cgroup/cgroup.controllers'), 'CGROUP_V2_REQUIRED')
+    out = list_units()
+    busy = other_units_quiet(out, self_unit)
+    names = [m.group(1) for m in (UNIT.match(l.strip()) for l in out.splitlines()) if m and m.group(1) != self_unit]
+    unpopulated = all(cgroup_unpopulated(cgroup_events(n)) for n in names)
+    quiet, states = containers_quiet(nonce_containers())
+    procs = worker_processes()
+    return {'linuxUnitsInactive': not busy and unpopulated and not procs, 'containersZero': quiet,
+            'details': {'busyUnits': busy, 'cgroupsUnpopulated': unpopulated, 'containerStates': states, 'workerProcesses': procs}}
+
+
+JOB_CONTRACT_V2 = 'clued.independent-ci.job/2'
+LINUX_ROLES = ('gitleaks', 'trivy', 'contract-placement')
+HEX40 = re.compile(r'^[0-9a-f]{40}$')
+HEX64 = re.compile(r'^[0-9a-f]{64}$')
+
+
+def job_id_v2(d, role):
+    """Same formula as job-v2.mjs#jobIdV2 and prepare-workspaces.py#job_id_v2 (a test keeps them equal)."""
+    ident = [JOB_CONTRACT_V2, d['repo'], d['pr'], d['headSha'], d['baseSha'], d['ciSourceManifestSha256'], role, d['attempt']]
+    return hashlib.sha256(json.dumps(ident, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).hexdigest()
+
+
+def descriptor_job_ids(raw, batch_id):
+    """Review MINOR-8: the job ids whose workspaces an archive may move are re-derived from the descriptor's
+    CONTENT (as prepare-workspaces.py does), never taken from its linuxJobIds list; a list that disagrees with
+    the content refuses the archive. Pure."""
+    need(isinstance(raw, bytes) and 0 < len(raw) <= 65536, 'DESCRIPTOR_REFUSED')
+    try:
+        d = json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        raise Refused('DESCRIPTOR_REFUSED')
+    need(isinstance(d, dict) and d.get('contract') == 'clued.independent-ci.resident-batch-descriptor/2' and d.get('batchId') == batch_id, 'DESCRIPTOR_REFUSED')
+    need(d.get('repo') == 'tdoljyj/cross-memory-system' and isinstance(d.get('pr'), int) and not isinstance(d.get('pr'), bool) and d['pr'] > 0, 'DESCRIPTOR_REFUSED')
+    need(all(isinstance(d.get(k), str) and HEX40.fullmatch(d[k]) for k in ('headSha', 'baseSha')), 'DESCRIPTOR_REFUSED')
+    need(isinstance(d.get('ciSourceManifestSha256'), str) and HEX64.fullmatch(d['ciSourceManifestSha256']) and d.get('attempt') in (1, 2) and not isinstance(d.get('attempt'), bool), 'DESCRIPTOR_REFUSED')
+    need(isinstance(d.get('batchKey'), str) and HEX64.fullmatch(d['batchKey']) and d['batchKey'][:16] == batch_id[:16], 'DESCRIPTOR_REFUSED')
+    derived = [job_id_v2(d, role) for role in LINUX_ROLES]
+    need(d.get('linuxJobIds') == derived, 'EXACT_CONTENT_JOB_ID_REQUIRED')
+    return derived
+
+
+def read_descriptor_bytes(batch_id):
+    """One no-follow handle: the descriptor itself may not be a link, and its size bound is taken from the
+    handle that is read (no lstat-then-open gap)."""
+    path = f'{DESCRIPTORS}/{batch_id}/descriptor.json'
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_CLOEXEC', 0))
+    try:
+        st = os.fstat(fd)
+        need(stat_regular(st) and 0 < st.st_size <= 65536, 'DESCRIPTOR_REFUSED')
+        raw = os.read(fd, 65537)
+        need(len(raw) == st.st_size, 'DESCRIPTOR_REFUSED')
+        return raw
+    finally:
+        os.close(fd)
+
+
+def stat_regular(st):
+    import stat as _stat
+    return _stat.S_ISREG(st.st_mode)
+
+
+def main(argv):
+    need(os.geteuid() == 0, 'ROOT_REQUIRED')
+    cmd = argv[0] if argv else ''
+    args = dict(zip(argv[1::2], argv[2::2]))
+    if cmd == 'guard':
+        unit, inst = args.get('--unit'), args.get('--instance', '')
+        parsed = parse_instance(unit, inst)
+        verify_pins(json.load(open(f'{OPT}/manifest.json')))
+        need(not other_units_quiet(list_units(), unit_name(unit, inst)), 'ANOTHER_CLUED_CI_UNIT_ACTIVE')
+        if unit == 'worker':
+            issue = json.load(open(f'{SPOOL}/incoming/issue.json'))
+            need(issue.get('job', {}).get('id') == parsed['jobId'], 'WORKER_INSTANCE_NOT_THE_ISSUED_JOB')
+        return {'status': 'GUARD_PASSED', 'unit': unit}
+    if cmd == 'quiescence':
+        need(BATCH_ID.fullmatch(args.get('--batch', '')), 'BATCH_REFUSED')
+        return quiescence()
+    if cmd == 'archive':
+        inst = args.get('--instance', '')
+        parsed = parse_instance('archive', inst)
+        status_dir = f'{RESIDENT_STATE}/archive-status'
+        os.makedirs(status_dir, mode=0o700, exist_ok=True)
+        earlier = earlier_result(f'{status_dir}/{inst}.json')
+        if earlier is not None:  # the same archive already ran: report it again, move nothing
+            return earlier
+        q = quiescence(self_unit=unit_name('archive', inst))
+        need(q['linuxUnitsInactive'] and q['containersZero'], 'ARCHIVE_REQUIRES_QUIESCENCE')
+        # A re-arm of a quarantined entry may not know the batch's descriptor; then workspaces are
+        # left in place (only an identical job id could collide with them, and that head is burned).
+        if parsed['reason'].startswith('rearm-') and not os.path.lexists(f"{DESCRIPTORS}/{parsed['batchId']}/descriptor.json"):
+            job_ids = []
+        else:
+            job_ids = descriptor_job_ids(read_descriptor_bytes(parsed['batchId']), parsed['batchId'])
+        plan = plan_archive(STATE, parsed['batchId'], parsed['reason'], job_ids, secrets.token_hex(6))
+        try:
+            result = apply_archive(STATE, plan)
+        except Refused as e:  # one status per instance, create-only, durable: partial is never "missing"
+            _durable_new(f'{status_dir}/{inst}.json', {'verified': False, 'partial': True, 'code': e.code, 'directory': os.path.basename(plan['target']), 'quiescence': q})
+            raise
+        _durable_new(f'{status_dir}/{inst}.json', {**result, 'quiescence': q})
+        return result
+    if cmd == 'archive-status':
+        inst = args.get('--instance', '')
+        parse_instance('archive', inst)
+        return json.load(open(f'{RESIDENT_STATE}/archive-status/{inst}.json'))
+    if cmd == 'archive-usage':
+        return archive_usage(STATE)
+    raise Refused('COMMAND_REFUSED')
+
+
+if __name__ == '__main__':
+    try:
+        print(json.dumps(main(sys.argv[1:]), sort_keys=True))
+        sys.exit(0)
+    except Refused as e:
+        print(json.dumps({'status': 'REFUSED', 'code': e.code}))
+        sys.exit(1)
+    except (OSError, ValueError, KeyError) as e:
+        print(json.dumps({'status': 'REFUSED', 'code': 'LINUX_TOOL_UNCONFIRMED', 'kind': type(e).__name__}))
+        sys.exit(1)

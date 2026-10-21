@@ -169,17 +169,19 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     }
     fail('mode_inventory_page_limit');
   }
-  async function inventory(headSha, until = null) {
+  async function inventory(headSha, until = null, checkName = null) {
     if (!sha.test(headSha)) fail('invalid_head');
+    const named = checkName === null ? '' : `check_name=${encodeURIComponent(checkName)}&`;
     const checks = []; let expected = null;
     for (let page = 1; page <= maxPages; page++) {
-      const reply = await scoped(`/commits/${headSha}/check-runs?filter=all&per_page=100&page=${page}`, 'GET', undefined, { until });
+      const reply = await scoped(`/commits/${headSha}/check-runs?${named}filter=all&per_page=100&page=${page}`, 'GET', undefined, { until });
       if (!Number.isSafeInteger(reply.total_count) || reply.total_count < 0 || !Array.isArray(reply.check_runs)
         || reply.check_runs.length > 100 || (expected !== null && expected !== reply.total_count)) fail('checks_pagination_changed');
       expected = reply.total_count; checks.push(...reply.check_runs);
       if (checks.length === expected) {
         if (new Set(checks.map(check => check.id)).size !== checks.length
-          || checks.some(check => !positive(check.id) || check.head_sha !== headSha)) fail('invalid_check_set');
+          || checks.some(check => !positive(check.id) || check.head_sha !== headSha
+            || (checkName !== null && check.name !== checkName))) fail('invalid_check_set');
         return { complete: true, checks };
       }
       if (checks.length > expected || reply.check_runs.length < 100) fail('incomplete_checks');
@@ -229,6 +231,68 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: [...paths].sort() };
     },
     async readChecks(headSha) { return inventory(headSha); },
+    // Hosted relay reads (design S16/S17): GET only, same fixed origin, same
+    // installation token and permission set. Replies are normalized and checked.
+    async readBranchHead(name) {
+      if (typeof name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(name)) fail('invalid_branch');
+      const body = await scoped(`/branches/${name}`);
+      if (body?.name !== name || !sha.test(body.commit?.sha ?? '')) fail('invalid_branch_reply');
+      return { name, sha: body.commit.sha };
+    },
+    async readCompare(baseSha, headSha) {
+      if (!sha.test(baseSha) || !sha.test(headSha)) fail('invalid_compare');
+      // The three-dot form is the API's own syntax; both ends are exact SHAs.
+      const body = await request(`${root}/compare/${baseSha}...${headSha}?per_page=1`, 'GET', await credential());
+      if (!['ahead', 'behind', 'diverged', 'identical'].includes(body?.status) || !Number.isSafeInteger(body.ahead_by) || body.ahead_by < 0
+        || !Number.isSafeInteger(body.behind_by) || body.behind_by < 0 || body.base_commit?.sha !== baseSha
+        || !sha.test(body.merge_base_commit?.sha ?? '')) fail('invalid_compare_reply');
+      return { baseSha, headSha, status: body.status, aheadBy: body.ahead_by, behindBy: body.behind_by, mergeBaseSha: body.merge_base_commit.sha };
+    },
+    async readGitCommit(commitSha) {
+      if (!sha.test(commitSha)) fail('invalid_commit');
+      const body = await scoped(`/git/commits/${commitSha}`);
+      if (body?.sha !== commitSha || !sha.test(body.tree?.sha ?? '') || !Array.isArray(body.parents) || body.parents.length > 16
+        || body.parents.some(parent => !sha.test(parent?.sha ?? ''))) fail('invalid_commit_reply');
+      return { sha: commitSha, tree: body.tree.sha, parents: body.parents.map(parent => parent.sha) };
+    },
+    // One directory level; a truncated listing is refused, never guessed.
+    async readGitTree(treeSha) {
+      if (!sha.test(treeSha)) fail('invalid_tree');
+      const body = await scoped(`/git/trees/${treeSha}`);
+      if (body?.sha !== treeSha || body.truncated !== false || !Array.isArray(body.tree) || body.tree.length > 100_000) fail('invalid_tree_reply');
+      const names = new Set();
+      const entries = body.tree.map(entry => {
+        if (typeof entry?.path !== 'string' || !entry.path || entry.path.includes('/') || entry.path.includes('\0') || names.has(entry.path)
+          || !/^[0-7]{6}$/.test(entry.mode ?? '') || !['blob', 'tree', 'commit'].includes(entry.type) || !sha.test(entry.sha ?? '')) fail('invalid_tree_reply');
+        names.add(entry.path);
+        return { name: entry.path, mode: entry.mode, type: entry.type, sha: entry.sha };
+      });
+      return { sha: treeSha, entries };
+    },
+    async readCheckRunsByName(headSha, name) {
+      if (typeof name !== 'string' || !name || name.length > 100 || /[\x00-\x1f]/.test(name)) fail('invalid_check_name');
+      return inventory(headSha, null, name);
+    },
+    // Complete annotation list of one check run, checked against the
+    // annotations_count the caller read from that check run.
+    async readCheckRunAnnotations(id, expectedCount) {
+      if (!positive(id) || !Number.isSafeInteger(expectedCount) || expectedCount < 0 || expectedCount > 100 * maxPages) fail('invalid_annotation_request');
+      const annotations = [];
+      for (let page = 1; page <= maxPages; page++) {
+        if (page > 1 && annotations.length === expectedCount) break;
+        const list = await scoped(`/check-runs/${id}/annotations?per_page=100&page=${page}`);
+        if (!Array.isArray(list) || list.length > 100) fail('invalid_annotations_reply');
+        for (const item of list) {
+          if (!['notice', 'warning', 'failure'].includes(item?.annotation_level) || typeof item.message !== 'string' || item.message.length > 65_536
+            || !(item.title === null || item.title === undefined || typeof item.title === 'string') || typeof item.path !== 'string') fail('invalid_annotations_reply');
+          annotations.push({ level: item.annotation_level, title: item.title ?? '', message: item.message, path: item.path });
+        }
+        if (annotations.length > expectedCount) fail('annotations_changed');
+        if (list.length < 100) break;
+      }
+      if (annotations.length !== expectedCount) fail('incomplete_annotations');
+      return { complete: true, checkRunId: id, annotations };
+    },
     async createCheck(body) {
       if (!body || !sha.test(body.head_sha) || body.status !== 'completed'
         || !['success', 'failure'].includes(body.conclusion) || typeof body.name !== 'string'
