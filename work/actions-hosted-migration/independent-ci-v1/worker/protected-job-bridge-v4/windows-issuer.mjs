@@ -5,6 +5,8 @@
 //   - inputs come from the sealed stage directory and the held claim-free record (runEntry);
 //   - every admission (issue and each callback) is evaluated under the BATCH claim generation that
 //     stage 1 recorded (A-strict, batch-claim-v2.mjs); a moved claim fails closed;
+//   - a transient admission refusal (stale, or unavailable: a GitHub or KooYomi call threw) is evaluated
+//     again within its window; in a callback round one that outlasts it is late, never UNCERTAIN;
 //   - the stage ends with an outcome record (S11): ISSUED_RESULT_RECEIVED, a clean BLOCKED with zero side
 //     effects (nothing issued, or the Linux worker's clean 'blocked' record), or UNCERTAIN after an issue
 //     without a verified result (the Linux side may still run: UNKNOWN for the resident).
@@ -21,7 +23,12 @@ import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
 import {CALLBACK_WINDOW_MS,makeIssue,makeResponse,validateChallenge,validateBlocked,encode,decode,digest} from './protocol.mjs';
 import {verifySignedBridgeResult} from './signed-result.mjs';
 export const ISSUER_SUCCESS='ISSUED_RESULT_RECEIVED';
-const STALE_ADMISSION='full_admission_observation_expired';
+const STALE_ADMISSION='full_admission_observation_expired',UNAVAILABLE_ADMISSION='full_admission_unavailable';
+// Transient admission refusals, where no gate said no: the wait before each new complete evaluation, indexed by the
+// evaluations already made. Stale (a slow host outran the 30 s freshness bound): again at once, three evaluations at
+// most. Unavailable (a GitHub or KooYomi call threw, full-admission-v2.mjs): after 1, 2 and 4 s, four at most (PR #894
+// stage 6, 2026-10-21: one failed call in a callback round ended UNCERTAIN and HALTed the resident).
+const RETRY_WAITS_MS=new Map([[STALE_ADMISSION,[0,0]],[UNAVAILABLE_ADMISSION,[1000,2000,4000]]]);
 const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
 // Linux clean-blocked codes that keep their meaning (transient, see stage-fact.mjs); any other clean
 // refusal before preparation is final for this attempt.
@@ -42,22 +49,25 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
   try{
     check(Number.isSafeInteger(stageDeadline)&&stageDeadline>clock(),'FORMAL_ISSUER_WINDOW_UNCONFIRMED');
     await box.lock();
-    // One complete admission. An evaluation that outlived its own 30 s freshness bound (a slow host, not a
-    // refusal: full_admission_observation_expired) is evaluated again, in full, at most three times and only
-    // before `until`; any other refusal fails at once. Only a fresh complete ADMITTED is ever used.
-    const admitted=async(until=Infinity)=>{
+    // One complete admission. A transient refusal (RETRY_WAITS_MS) is evaluated again, in full, after its wait and
+    // only while that wait ends before `until`; any other refusal fails at once. Only a fresh complete ADMITTED is
+    // ever used. The first admission gets the same retries within the stage window: nothing is issued yet.
+    const admitted=async until=>{
       for(let attempt=1;;attempt++){
         assertWindowsContextLive(context);const facts=await evaluate();assertWindowsContextLive(context);
         if(facts?.status==='ADMITTED')return facts;
         const reason=/^full_admission_[a-z_]+$/.test(facts?.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED';
-        if(reason!==STALE_ADMISSION||attempt>=3||clock()>=until)fail(reason);
+        const wait=RETRY_WAITS_MS.get(reason)?.[attempt-1];
+        if(wait===undefined||clock()+wait>=until)fail(reason);
+        if(wait)await sleep(wait);
       }
     };
-    const first=await admitted(),refs=job.role==='gitleaks'?await refsStep(collect):null;
+    const first=await admitted(stageDeadline),refs=job.role==='gitleaks'?await refsStep(collect):null;
     const until=Math.min(stageDeadline,context.accepted.validUntil===null?Infinity:Date.parse(context.accepted.validUntil));
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:new Date(until).toISOString(),now:clock()});
     assertWindowsContextLive(context);sideEffects=1;await box.write('issue',encode(issue));
-    // late: the deadline of the round this issuer could not answer in time (null = still answering). Past it
+    // late: the deadline of the round this issuer did not answer (null = still answering): out of time, or a
+    // transient admission refusal outlasted its retries. Past it
     // the Linux worker accepts no response and ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE),
     // so answer nothing more and wait for that record instead of failing UNCERTAIN on an expired challenge (PR #889
     // stage 2 attempt 2, 2026-10-21): two more windows at most, since the companion waits one window for a response
@@ -75,8 +85,9 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
         return goLate(challenge);
       }
       check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');
+      // A transient refusal that outlasts this round's retries answers nothing: late, as above.
       let current;
-      try{current=await admitted(Date.parse(challenge.deadline));}catch(e){if(e?.code===STALE_ADMISSION)return goLate(challenge);throw e;}
+      try{current=await admitted(Date.parse(challenge.deadline));}catch(e){if(RETRY_WAITS_MS.has(e?.code))return goLate(challenge);throw e;}
       const fresh=challenge.action==='admission'?null:await refsStep(collect);
       const now=clock();if(now>=Date.parse(challenge.deadline))return goLate(challenge);
       const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null,{now}):makeResponse(issue,challenge,null,fresh,{now});

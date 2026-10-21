@@ -247,6 +247,102 @@ test('issuer: a callback admission still stale after three evaluations is late, 
   await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
 });
 
+// full_admission_unavailable: a GitHub or KooYomi call threw inside the admission (PR #894 stage 6, 2026-10-21).
+const UNAVAILABLE = Object.freeze({ status: 'BLOCKED', reason: 'full_admission_unavailable' });
+// Records the issuer's backoff waits (1 s and more; its polling sleeps 100 ms). Unless `real`, a wait lasts 20 ms.
+const backoffSleep = (waits, { real = false } = {}) => ms => {
+  if (ms >= 1000) waits.push(ms);
+  return new Promise(r => setTimeout(r, ms >= 1000 && !real ? 20 : ms));
+};
+const waitUntil = async (done, ms = 8000) => { for (const end = Date.now() + ms; !done() && Date.now() < end;) await new Promise(r => setTimeout(r, 20)); };
+
+test('issuer: an unavailable admission is evaluated again after a short backoff; the fresh ADMITTED answers (callback and final admission)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  const f = issuerFixture(t), given = [], waits = [];
+  const plan = ['admitted', 'unavailable', 'admitted', 'unavailable', 'admitted']; // issue, callback x2, final x2
+  const evaluate = async () => { const v = plan[given.length] === 'unavailable' ? UNAVAILABLE : facts(f.job, f.c); given.push(v); return v; };
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    const response = decode(await waitFor(path.join(root, 'outgoing', 'response-01.json')));
+    assert.equal(response.admission.observationSha256, given[2].observationSha256, 'the answer is the evaluation after the retry');
+    assert.notEqual(response.admission.observationSha256, given[0].observationSha256);
+    await put(root, 'result', Buffer.from(canonical(signedWrapper(issue, trivyObservation(f.job), f.signer))));
+  })();
+  const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits), stageDeadline: Date.now() + 20_000 });
+  await linux;
+  assert.deepEqual([r.status, r.sideEffects, given.length, waits], [ISSUER_SUCCESS, 1, 5, [1000, 1000]]);
+});
+
+test('issuer: a callback admission unavailable until the round deadline answers nothing; the worker\'s clean blocked record ends the stage (no UNCERTAIN)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  let n = 0;
+  const f = issuerFixture(t), waits = [];
+  const evaluate = async () => (++n === 1 ? facts(f.job, f.c) : UNAVAILABLE);
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    const deadline = Date.now() + 2500;
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1, { deadline: iso(deadline) })));
+    await new Promise(r => setTimeout(r, deadline + 300 - Date.now()));
+    await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
+  })();
+  // Real waits: the 1 s one ends inside the round, the 2 s one would end past its deadline and is not taken.
+  const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits, { real: true }), stageDeadline: Date.now() + 20_000 });
+  await linux;
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits], ['BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 0, 3, [1000]]);
+  await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
+});
+
+test('issuer: a callback admission still unavailable after four evaluations (waits 1, 2, 4 s) is late, with time left in the round', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  let n = 0;
+  const f = issuerFixture(t), waits = [];
+  const evaluate = async () => (++n === 1 ? facts(f.job, f.c) : UNAVAILABLE);
+  const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+  const linux = (async () => {
+    const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json')));
+    await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1)));
+    await waitUntil(() => n >= 5);
+    await put(root, 'blocked', encode(makeBlocked(issue, 'BRIDGE_CALLBACK_DEADLINE')));
+  })();
+  const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits), stageDeadline: Date.now() + 20_000 });
+  await linux;
+  assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits], ['BLOCKED', 'BRIDGE_CALLBACK_DEADLINE', 0, 5, [1000, 2000, 4000]]);
+  await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
+});
+
+test('issuer: a refusal is final at once, also right after an unavailable evaluation (UNCERTAIN after the issue, as before)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  for (const refusal of [{ status: 'BLOCKED', reason: 'full_admission_rejected' }, { status: 'BLOCKED', reason: 'full_admission_claim_changed' }, { status: 'BLOCKED' }]) {
+    let n = 0;
+    const f = issuerFixture(t), waits = [];
+    const evaluate = async () => (++n === 1 ? facts(f.job, f.c) : n === 2 ? UNAVAILABLE : refusal);
+    const root = await spool(t), box = await createFixtureMailbox(root, 'windows');
+    const linux = (async () => { const issue = decode(await waitFor(path.join(root, 'outgoing', 'issue.json'))); await put(root, 'challenge-01', encode(makeChallenge(issue, 'admission', 1))); })();
+    const r = await runIssuer({ context: f.context, evaluate, collect: async () => null, box, sleep: backoffSleep(waits), stageDeadline: Date.now() + 10_000 });
+    await linux;
+    assert.deepEqual([r.status, r.reason, r.sideEffects, n, waits], ['UNCERTAIN', refusal.reason ?? 'ACTUAL_NATIVE_ADMISSION_REQUIRED', 1, 3, [1000]]);
+    await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'response-01.json')), { code: 'ENOENT' });
+  }
+});
+
+test('issuer: the first admission retries an unavailable evaluation within the stage window; still unavailable, nothing is issued (clean BLOCKED)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
+  let n = 0;
+  const a = issuerFixture(t), waitsA = [], rootA = await spool(t);
+  const linux = (async () => { const issue = decode(await waitFor(path.join(rootA, 'outgoing', 'issue.json'))); await put(rootA, 'blocked', encode(makeBlocked(issue, 'REMOTE_REFS_CHANGED_SINCE_BUNDLE'))); })();
+  const rA = await runIssuer({ context: a.context, evaluate: async () => (++n === 1 ? UNAVAILABLE : facts(a.job, a.c)), collect: async () => null,
+    box: await createFixtureMailbox(rootA, 'windows'), sleep: backoffSleep(waitsA), stageDeadline: Date.now() + 20_000 });
+  await linux;
+  assert.deepEqual([rA.status, rA.reason, rA.sideEffects, n, waitsA], ['BLOCKED', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 0, 2, [1000]], 'issued after one retry');
+
+  for (const [window, evaluations, expected] of [[20_000, 4, [1000, 2000, 4000]], [1500, 2, [1000]]]) {
+    let m = 0;
+    const b = issuerFixture(t), waits = [], root = await spool(t);
+    const r = await runIssuer({ context: b.context, evaluate: async () => { m += 1; return UNAVAILABLE; }, collect: async () => null,
+      box: await createFixtureMailbox(root, 'windows'), sleep: backoffSleep(waits), stageDeadline: Date.now() + window });
+    assert.deepEqual([r.status, r.reason, r.sideEffects, m, waits], ['BLOCKED', 'full_admission_unavailable', 0, evaluations, expected], `stage window ${window} ms`);
+    await assert.rejects(fs.lstat(path.join(root, 'outgoing', 'issue.json')), { code: 'ENOENT' });
+  }
+});
+
 test('issuer: a challenge relayed only after its deadline is late (no admission, no response, no UNCERTAIN)', { skip: process.platform !== 'win32' && 'Windows issuer context' }, async t => {
   let n = 0;
   const f = issuerFixture(t);
