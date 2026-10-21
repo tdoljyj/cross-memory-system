@@ -139,12 +139,13 @@ export class Companion {
   // After a failed callback round (the issuer was late, or the worker gave up before the response arrived)
   // the Linux worker ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE) while the Windows issuer
   // still waits for a record. Hand exactly that record over, once, so the issuer ends BLOCKED now instead of
-  // UNCERTAIN at its own deadline. Never a result, never a retry of the record that failed.
+  // UNCERTAIN at its own deadline. Never a result; a refused ReceiveBlocked is never tried again. Without a
+  // listing the relay itself is the probe (false = not there yet).
   async handOverBlocked(deadline) {
     const until = Math.min(deadline, this.clock() + CALLBACK_WINDOW_MS + 30_000);
     while (this.clock() < until) {
       const names = await this.linuxReady();
-      if (names?.has('blocked.ready.json')) { try { return await this.relay('ReceiveBlocked', 0); } catch { return false; } }
+      if (names === null || names.has('blocked.ready.json')) { try { if (await this.relay('ReceiveBlocked', 0)) return true; } catch { return false; } }
       await this.sleep(1000);
     }
     return false;
@@ -163,12 +164,16 @@ export class Companion {
       check(await this.relay('SendIssue', 0), 'ISSUE_TRANSFER_UNCONFIRMED');
       const start = await this.run(this.a.startNoBlock('clued-ci-worker', request.jobId), { timeoutMs: 30_000 });
       check(start.code === 0, 'LINUX_WORKER_START_UNCONFIRMED');
-      let sequence = 1, blockedTried = false;
+      let sequence = 1, blockedRefused = false;
+      // A refused ReceiveBlocked is remembered (never tried twice); one that only found nothing is not.
+      const receiveBlocked = async () => { try { return await this.relay('ReceiveBlocked', 0); } catch (e) { blockedRefused = true; throw e; } };
       try {
         for (;;) {
           check(this.clock() < deadline, 'FORMAL_BRIDGE_STAGE_DEADLINE');
           const names = await this.linuxReady();
-          // Challenge first: a callback has a 30 s deadline, the result does not hurry (Source v2 order).
+          // The worker's clean refusal (bridge v4 'blocked') means it has ended: it goes before a stale challenge.
+          if (names?.has('blocked.ready.json') && await receiveBlocked()) break;
+          // Then a challenge: a callback has a deadline (CALLBACK_WINDOW_MS), the result does not hurry.
           if (sequence <= 32 && listed(names, `challenge-${String(sequence).padStart(2, '0')}`) && await this.relay('ReceiveChallenge', sequence)) {
             const responseDeadline = this.clock() + CALLBACK_WINDOW_MS;
             const name = `response-${String(sequence).padStart(2, '0')}`;
@@ -178,12 +183,12 @@ export class Companion {
             continue;
           }
           if (listed(names, 'result') && await this.relay('ReceiveResult', 0)) break;
-          // The worker's clean refusal before any preparation (bridge v4 'blocked'): the issuer ends cleanly.
-          if (listed(names, 'blocked')) { blockedTried = true; if (await this.relay('ReceiveBlocked', 0)) break; }
-          await this.sleep(names === null ? 100 : 250);
+          if (names === null && await receiveBlocked()) break;
+          // A listing every second is ample against a 120 s round and keeps the wsl.exe launches low.
+          await this.sleep(names === null ? 100 : 1000);
         }
       } catch (error) {
-        if (!blockedTried) await this.handOverBlocked(deadline);
+        if (!blockedRefused) await this.handOverBlocked(deadline);
         throw error;
       }
       const until = this.clock() + 30_000;

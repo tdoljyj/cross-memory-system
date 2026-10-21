@@ -18,9 +18,10 @@ import {STATE_V2,stageByNumber} from '../../src/resident-v2/layout.mjs';
 import {runEntry,controllerPrincipal,controllerPorts,observationLog} from '../../src/resident-v2/entry-runtime.mjs';
 import {createWindowsContext,takeAcceptedBridgeContext,assertWindowsContextLive,closeWindowsContext} from './boundary.mjs';
 import {openAcceptedMailbox,takeActualMailbox} from './mailbox.mjs';
-import {makeIssue,makeResponse,validateChallenge,validateBlocked,encode,decode,digest} from './protocol.mjs';
+import {CALLBACK_WINDOW_MS,makeIssue,makeResponse,validateChallenge,validateBlocked,encode,decode,digest} from './protocol.mjs';
 import {verifySignedBridgeResult} from './signed-result.mjs';
 export const ISSUER_SUCCESS='ISSUED_RESULT_RECEIVED';
+const STALE_ADMISSION='full_admission_observation_expired';
 const fail=code=>{throw Object.assign(new Error(code),{code});},check=(v,c)=>{if(!v)fail(c);};
 // Linux clean-blocked codes that keep their meaning (transient, see stage-fact.mjs); any other clean
 // refusal before preparation is final for this attempt.
@@ -41,21 +42,42 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
   try{
     check(Number.isSafeInteger(stageDeadline)&&stageDeadline>clock(),'FORMAL_ISSUER_WINDOW_UNCONFIRMED');
     await box.lock();
-    const admitted=async()=>{assertWindowsContextLive(context);const facts=await evaluate();assertWindowsContextLive(context);
-      check(facts?.status==='ADMITTED',/^full_admission_[a-z_]+$/.test(facts?.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED');return facts;};
+    // One complete admission. An evaluation that outlived its own 30 s freshness bound (a slow host, not a
+    // refusal: full_admission_observation_expired) is evaluated again, in full, at most three times and only
+    // before `until`; any other refusal fails at once. Only a fresh complete ADMITTED is ever used.
+    const admitted=async(until=Infinity)=>{
+      for(let attempt=1;;attempt++){
+        assertWindowsContextLive(context);const facts=await evaluate();assertWindowsContextLive(context);
+        if(facts?.status==='ADMITTED')return facts;
+        const reason=/^full_admission_[a-z_]+$/.test(facts?.reason??'')?facts.reason:'ACTUAL_NATIVE_ADMISSION_REQUIRED';
+        if(reason!==STALE_ADMISSION||attempt>=3||clock()>=until)fail(reason);
+      }
+    };
     const first=await admitted(),refs=job.role==='gitleaks'?await refsStep(collect):null;
     const until=Math.min(stageDeadline,context.accepted.validUntil===null?Infinity:Date.parse(context.accepted.validUntil));
     const issue=makeIssue(job,first,refs,{sourceAcceptanceRef:context.sourceAcceptanceRef,hostQualificationRef:context.hostQualificationRef,expiresAt:new Date(until).toISOString(),now:clock()});
     assertWindowsContextLive(context);sideEffects=1;await box.write('issue',encode(issue));
-    let next=1,late=false;
+    // late: the deadline of the round this issuer could not answer in time (null = still answering). Past it
+    // the Linux worker accepts no response and ends with its clean 'blocked' record (BRIDGE_CALLBACK_DEADLINE),
+    // so answer nothing more and wait for that record, one more window at most, instead of failing UNCERTAIN on
+    // an expired challenge (PR #889 stage 2 attempt 2, 2026-10-21). A worker that ends without it stays UNCERTAIN.
+    let next=1,late=null;
+    const goLate=challenge=>{late=Date.parse(challenge.deadline);return false;};
     const serveNext=async()=>{
       check(next<=32,'FORMAL_CALLBACK_LIMIT');const seq=next,name='challenge-'+String(seq).padStart(2,'0');
-      const challenge=validateChallenge(issue,decode(await box.read(name)),clock());check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');
-      const current=await admitted(),fresh=challenge.action==='admission'?null:await refsStep(collect);
-      // Past the round's deadline the Linux worker no longer accepts a response: it ends with its clean
-      // 'blocked' record (BRIDGE_CALLBACK_DEADLINE). Answer nothing more and wait for that record, instead
-      // of failing UNCERTAIN on an expired challenge (PR #889 stage 2 attempt 2, 2026-10-21).
-      const now=clock();if(now>=Date.parse(challenge.deadline)){late=true;return false;}
+      const raw=decode(await box.read(name));let challenge;
+      try{challenge=validateChallenge(issue,raw,clock());}
+      catch(e){
+        // Relayed only after its deadline: late, when it was a valid challenge until then; anything else fails.
+        if(e?.code!=='BRIDGE_CHALLENGE_EXPIRED'||!(Date.parse(raw?.deadline)<=clock()))throw e;
+        challenge=validateChallenge(issue,raw,Date.parse(raw.deadline)-1);check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');
+        return goLate(challenge);
+      }
+      check(challenge.sequence===seq,'FORMAL_CALLBACK_SEQUENCE_CHANGED');
+      let current;
+      try{current=await admitted(Date.parse(challenge.deadline));}catch(e){if(e?.code===STALE_ADMISSION)return goLate(challenge);throw e;}
+      const fresh=challenge.action==='admission'?null:await refsStep(collect);
+      const now=clock();if(now>=Date.parse(challenge.deadline))return goLate(challenge);
       const response=challenge.action==='admission'?makeResponse(issue,challenge,current,null,{now}):makeResponse(issue,challenge,null,fresh,{now});
       assertWindowsContextLive(context);await box.write('response-'+String(seq).padStart(2,'0'),encode(response));next++;return true;
     };
@@ -64,13 +86,14 @@ export async function runIssuer({context,evaluate,collect,box,clock=Date.now,sle
       let raw=null;try{raw=await box.read('result');}catch(e){if(e.code!=='ENOENT')throw e;}
       if(raw){let wrapper;try{wrapper=JSON.parse(raw.toString('utf8'));}catch{fail('SIGNED_BRIDGE_RESULT_JSON_REQUIRED');}
         check(Buffer.from(canonical(wrapper)).equals(raw),'SIGNED_BRIDGE_RESULT_CANONICAL_REQUIRED');
-        verifySignedBridgeResult({issue,wrapper,signers:context.signers,now:clock()});await admitted();
+        verifySignedBridgeResult({issue,wrapper,signers:context.signers,now:clock()});await admitted(Date.parse(issue.expiresAt));
         return{status:ISSUER_SUCCESS,reason:null,sideEffects,issueSha256:digest(issue),resultSha256:proofDigest(wrapper)};}
       let blocked=null;try{blocked=await box.read('blocked');}catch(e){if(e.code!=='ENOENT')throw e;}
       if(blocked){const b=validateBlocked(issue,decode(blocked),clock());
         // The Linux side ended before preparing anything: nothing ran, nothing was published.
         return{status:'BLOCKED',reason:blockedReason(b.reason),sideEffects:0,issueSha256:digest(issue)};}
-      if(!late){try{await serveNext();}catch(e){if(e.code!=='ENOENT')throw e;}}
+      if(late===null){try{await serveNext();}catch(e){if(e.code!=='ENOENT')throw e;}}
+      else check(clock()<late+CALLBACK_WINDOW_MS,'BRIDGE_LATE_BLOCKED_UNCONFIRMED');
       await sleep(100);
     }
     fail('BRIDGE_RESULT_DEADLINE');

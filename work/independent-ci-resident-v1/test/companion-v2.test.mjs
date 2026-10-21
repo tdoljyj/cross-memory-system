@@ -106,7 +106,7 @@ test('a refused late response: the worker blocked record is handed to the issuer
   assert.equal(f.h.log.some(a => a.includes('stop') || a.includes('kill')), false);
 });
 
-test('a late issuer (no response in 30 s) also hands over the blocked record; nothing listed means no hand-over', async t => {
+test('a late issuer (no response within the callback window) also hands over the blocked record; nothing listed means no hand-over', async t => {
   for (const workerBlocks of [true, false]) {
     let late = false;
     const f = await companionWith(t, a => {
@@ -162,6 +162,54 @@ test('a refused ReceiveBlocked is never tried a second time', async t => {
   const r = await f.mailbox.poll(req);
   assert.deepEqual([r.ok, r.code], [false, 'RELAY_REFUSED_NO_RETRY']);
   assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveBlocked']);
+});
+
+test('a listed blocked record goes before a listed challenge: the worker has ended', async t => {
+  const f = await companionWith(t, a => {
+    const m = mode(a);
+    if (m === 'SendIssue' || m === 'ReceiveBlocked') return transferred;
+    if (m === 'ReceiveChallenge') return transferred;
+    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: 'challenge-01.ready.json\nblocked.ready.json\n' };
+    return worker(a);
+  });
+  const req = await f.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  await f.c.step();
+  assert.equal((await f.mailbox.poll(req)).ok, true);
+  assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveBlocked']);
+});
+
+test('the companion waits for a response exactly one callback window, then hands the blocked record over', async t => {
+  let f, late = false, challengeAt = null, handOverAt = null;
+  f = await companionWith(t, a => {
+    const m = mode(a);
+    if (m === 'SendIssue') return transferred;
+    if (m === 'ReceiveChallenge') { challengeAt = f.c.clock(); return transferred; }
+    if (m === 'ReceiveBlocked') { handOverAt = f.c.clock(); return transferred; }
+    if (a.includes('/usr/bin/ls')) return { code: 0, stdout: `challenge-01.ready.json\n${late ? 'blocked.ready.json\n' : ''}` };
+    return worker(a);
+  }, async p => { if (p.endsWith('issue.ready.json')) return true; late = true; return false; });
+  const req = await f.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  await f.c.step();
+  assert.deepEqual([(await f.mailbox.poll(req)).code], ['ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED']);
+  const waited = handOverAt - challengeAt;
+  assert.ok(waited >= CALLBACK_WINDOW_MS && waited < CALLBACK_WINDOW_MS + 2000, `waited ${waited} ms`);
+});
+
+test('a blind ReceiveBlocked that found nothing (listing failed) does not cancel the later hand-over', async t => {
+  let lists = 0, late = false, challenges = 0, blockeds = 0;
+  const f = await companionWith(t, a => {
+    const m = mode(a);
+    if (m === 'SendIssue') return transferred;
+    if (m === 'ReceiveResult') return absent;
+    if (m === 'ReceiveChallenge') return ++challenges === 1 ? absent : transferred;
+    if (m === 'ReceiveBlocked') return ++blockeds === 1 ? absent : transferred;
+    if (a.includes('/usr/bin/ls')) return ++lists === 1 ? { code: 2, stdout: '' } : { code: 0, stdout: `challenge-01.ready.json\n${late ? 'blocked.ready.json\n' : ''}` };
+    return worker(a);
+  }, async p => { if (p.endsWith('issue.ready.json')) return true; late = true; return false; });
+  const req = await f.mailbox.send('relay-stage', { batchId: BATCH, stage: 2, jobId: JOB }, 45 * 60_000);
+  await f.c.step();
+  assert.equal((await f.mailbox.poll(req)).code, 'ACTUAL_NATIVE_CALLBACK_NOT_PUBLISHED');
+  assert.deepEqual(f.h.log.map(mode).filter(Boolean), ['SendIssue', 'ReceiveChallenge', 'ReceiveResult', 'ReceiveBlocked', 'ReceiveChallenge', 'ReceiveBlocked']);
 });
 
 test('archive-usage carries the root tool numbers through the mailbox to the service port', async t => {
