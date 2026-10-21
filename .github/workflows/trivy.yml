@@ -66,9 +66,10 @@ jobs:
           persist-credentials: false
       - name: Configure job temporary storage
         uses: ./.github/actions/ci-temporary-storage
-      # As the local workspace preparation (prepare-workspaces.py tree_modes_regular): only regular
-      # blobs (100644/100755). A symlink (120000), submodule (160000) or any other tree entry could
-      # point a scanner outside the checkout; such a tree is never scanned here, only locally.
+      # The local role's input refusals: only regular blobs (prepare-workspaces.py tree_modes_regular),
+      # no path with a backslash, colon or control character, at most 100000 paths (formal-trivy-v4
+      # snapshotTree), and no Java archive, which needs a Java DB the local role does not prepare
+      # (required-trivy-v3/plans.mjs). Such a tree is never scanned here, only locally.
       - name: Refuse symlinks, submodules and other non-regular tree entries
         run: |
           set -eu
@@ -77,123 +78,124 @@ jobs:
             echo "::error title=trivy-hosted-executor::the tree has a symlink, submodule or other non-regular entry"
             exit 1
           fi
-      - name: Prepare persistent Trivy cache
-        run: |
-          TRIVY_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/clued-trivy"
-          mkdir -p "$TRIVY_CACHE_DIR"
-          echo "TRIVY_CACHE_DIR=$TRIVY_CACHE_DIR" >> "$GITHUB_ENV"
-      - name: Download vulnerability database through runner network
-        timeout-minutes: 22
-        env:
-          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
-          # When every download attempt fails, a cached database built within
-          # this many hours is still used, with a warning. Older or missing
-          # databases fail the job as before.
-          TRIVY_DB_FALLBACK_MAX_AGE_HOURS: "72"
-        run: |
-          # Only the pinned scanner and its cache use the runner network. No
-          # checkout or Docker socket is mounted during this download. A host
-          # loopback proxy is otherwise unreachable from the container bridge.
-          db_dir="$TRIVY_CACHE_DIR/db"
-          metadata_epoch() {
-            value="$(sed -n "s/.*\"$1\" *: *\"\([^\"]*\)\".*/\1/p" "$db_dir/metadata.json" 2>/dev/null | head -n 1)"
-            if [ -n "$value" ]; then date -u -d "$value" +%s 2>/dev/null || true; fi
-          }
-          now="$(date -u +%s)"
-          next_update="$(metadata_epoch NextUpdate)"
-          if [ -f "$db_dir/trivy.db" ] && [ -n "$next_update" ] && [ "$now" -lt "$next_update" ]; then
-            echo "Cached vulnerability database is current; no download needed."
-            exit 0
+          git ls-files -z > "$RUNNER_TEMP/clued-trivy-paths"
+          if grep -qzE '[\\:[:cntrl:]]|.{4096,}' "$RUNNER_TEMP/clued-trivy-paths"; then
+            echo "::error title=trivy-hosted-executor::a path has a backslash, colon or control character, or is too long"
+            exit 1
           fi
-
-          # Trivy deletes the cached metadata before it downloads, so a failed
-          # in-place download destroys the last good database. Download into a
-          # per-run staging cache and swap it in only after success. The cache
-          # is root-owned by the container, so file operations run in it too.
-          staging="trivy-db-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          in_cache() {
-            docker run --rm --network none --entrypoint sh \
-              -v "$TRIVY_CACHE_DIR:/cache" "$TRIVY_IMAGE" -ec "$1" sh "$staging"
-          }
-          # Also drop staging caches abandoned by cancelled runs.
-          cleanup_staging() {
-            in_cache 'rm -rf "/cache/$1"
-              find /cache -maxdepth 1 -name "trivy-db-staging-*" -mmin +120 -exec rm -rf {} \;' || true
-          }
-          trap cleanup_staging EXIT
-
-          downloaded=false
-          for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do
-            for attempt in 1 2; do
-            if docker run --rm --network host \
-              -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \
-              -e http_proxy -e https_proxy -e no_proxy \
-              -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
-              "$TRIVY_IMAGE" \
-              fs --download-db-only --timeout 5m --cache-dir "/root/.cache/trivy/$staging" --db-repository "$repository"; then
-              downloaded=true
-              break 2
-            fi
-            sleep "$attempt"
-            done
-          done
-          if [ "$downloaded" = true ]; then
-            in_cache 'rm -rf /cache/db.previous
-              if [ -d /cache/db ]; then mv /cache/db /cache/db.previous; fi
-              mv "/cache/$1/db" /cache/db
-              rm -rf /cache/db.previous'
-            exit 0
+          if grep -qziE '\.(jar|war|ear|par)$' "$RUNNER_TEMP/clued-trivy-paths"; then
+            echo "::error title=trivy-hosted-executor::a Java archive needs the Java DB the local role does not prepare"
+            exit 1
           fi
-
-          updated_at="$(metadata_epoch UpdatedAt)"
-          if [ -f "$db_dir/trivy.db" ] && [ -n "$updated_at" ]; then
-            age_hours=$(( (now - updated_at) / 3600 ))
-            if [ "$age_hours" -le "$TRIVY_DB_FALLBACK_MAX_AGE_HOURS" ]; then
-              echo "::warning title=Trivy DB download failed::Using the cached vulnerability database built ${age_hours}h ago (limit ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h)."
-              exit 0
-            fi
-            echo "::error title=Trivy DB download failed::Cached vulnerability database is ${age_hours}h old, over the ${TRIVY_DB_FALLBACK_MAX_AGE_HOURS}h fallback limit."
-          else
-            echo "::error title=Trivy DB download failed::No usable cached vulnerability database."
-          fi
-          exit 1
-      - name: Vulnerabilities (HIGH/CRITICAL)
+          test "$(tr -cd '\0' < "$RUNNER_TEMP/clued-trivy-paths" | wc -c)" -le 100000
+      # The local role scans a copy of the checked-out tree without .git (formal-trivy-v4 snapshotTree).
+      - name: Snapshot the tree for the scanners
         run: |
-          # The previous step prepared the database; never re-download here.
-          docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
-            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
-      - name: Secrets
-        run: |
-          docker run --rm -v "$PWD:/repo" -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
-            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --scanners secret --exit-code 1 /repo
-      # The local role's checks generation (required-trivy-v3/plans.mjs checksPreparationPlan and
-      # validateChecksBundle): the trivy-checks bundle by its installed digest, never the mutable
-      # trivy-checks:2 tag, prepared into a fresh cache-only directory with nothing of the checkout
-      # mounted; a different digest, major version or a custom build fails the job.
-      - name: Prepare the pinned misconfiguration checks bundle
+          set -eu
+          snap="$RUNNER_TEMP/clued-trivy-snapshot"
+          mkdir "$snap"
+          git ls-files -z | tar --null --no-recursion -T - -cf - | tar -xf - -C "$snap"
+          chmod -R a+rX "$snap"
+      # Cache preparation exactly as the local role (required-trivy-v3/plans.mjs databasePreparationPlan
+      # and checksPreparationPlan, formal-trivy-v3/docker.mjs cacheCreateArguments): the only networked
+      # containers, each with one fresh cache-only mount and nothing of the checkout. The vulnerability
+      # DB comes from the same repositories in the same order (two attempts each) and must be current;
+      # the checks bundle comes by the installed generation's digest, never the mutable trivy-checks:2
+      # tag. A different digest, version or a stale DB fails the job.
+      - name: Prepare the vulnerability DB and the pinned checks bundle
+        timeout-minutes: 10
         env:
           TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
           CHECKS_DIGEST: sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b
         run: |
           set -eu
+          docker pull --quiet "$TRIVY_IMAGE" > /dev/null
+          cache_run() {
+            docker run --rm --pull=never --network=host --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+              --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+              --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
+              --env=TMPDIR=/scratch --env=GODEBUG=http2client=0 \
+              --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 "$@"
+          }
+          read_back() {
+            docker run --rm --pull=never --network=none --user=65532:65532 --read-only --cap-drop=ALL \
+              --security-opt=no-new-privileges:true --mount "type=bind,src=$1,dst=/cache,readonly" --entrypoint "$2" "$TRIVY_IMAGE" "$3"
+          }
+          db=""
+          n=0
+          for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do
+            for attempt in 1 2; do
+              n=$((n + 1)); stage="$RUNNER_TEMP/clued-trivy-db-$n"
+              mkdir -m 0777 "$stage"
+              if cache_run --mount "type=bind,src=$stage,dst=/cache,bind-propagation=rprivate" --workdir=/scratch \
+                --entrypoint /usr/local/bin/trivy "$TRIVY_IMAGE" \
+                fs --download-db-only --timeout 5m --cache-dir /cache --db-repository "$repository"; then
+                db="$stage"; break 2
+              fi
+            done
+          done
+          test -n "$db"
+          read_back "$db" /bin/cat /cache/db/metadata.json | python3 -I -B -c 'import json,sys,time; m=json.load(sys.stdin); now=time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()); u, n = m["UpdatedAt"], m["NextUpdate"]; sys.exit(0 if m.get("Version") == 2 and u.endswith("Z") and n.endswith("Z") and u[:19] <= now < n[:19] else 1)'
           checks="$RUNNER_TEMP/clued-trivy-checks"; empty="$RUNNER_TEMP/clued-trivy-empty"
-          mkdir "$checks" "$empty"
-          docker run --rm -v "$checks:/cache" -v "$empty:/empty:ro" "$TRIVY_IMAGE" \
+          mkdir -m 0777 "$checks"
+          mkdir "$empty"
+          cache_run --mount "type=bind,src=$checks,dst=/cache,bind-propagation=rprivate" \
+            --mount "type=bind,src=$empty,dst=/empty,readonly,bind-propagation=rprivate" --workdir=/scratch \
+            --entrypoint /usr/local/bin/trivy "$TRIVY_IMAGE" \
             fs --cache-dir /cache --checks-bundle-repository "ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST" \
             --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /empty
-          python3 -I -B -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(0 if m.get("Digest")==sys.argv[2] and m.get("MajorVersion")==2 and m.get("CustomBuild") is not True else 1)' \
-            "$checks/policy/metadata.json" "$CHECKS_DIGEST"
-          test -n "$(find "$checks/policy/content" -name '*.rego' -print -quit)"
-      # The scan reads only that prepared bundle (no network, --skip-check-update), as the local role.
-      - name: Misconfiguration (HIGH/CRITICAL)
+          read_back "$checks" /bin/cat /cache/policy/metadata.json | python3 -I -B -c 'import json,sys; m=json.load(sys.stdin); sys.exit(0 if m.get("Digest") == sys.argv[1] and m.get("MajorVersion") == 2 and m.get("CustomBuild") is not True else 1)' "$CHECKS_DIGEST"
+          read_back "$checks" /bin/ls -R /cache/policy/content | grep -q '\.rego$'
+          echo "CLUED_TRIVY_DB=$db/db" >> "$GITHUB_ENV"
+          echo "CLUED_TRIVY_POLICY=$checks/policy" >> "$GITHUB_ENV"
+      # The three scanners exactly as the local role (required-trivy-v3/plans.mjs requiredTrivyPlans,
+      # verify-worker.mjs createArguments): no network, read-only root and mounts, uid 65532, cwd
+      # /scratch, the prepared DB and checks only, no update of either, five minutes each.
+      - name: Vulnerabilities (HIGH/CRITICAL)
+        timeout-minutes: 5
         run: |
-          docker run --rm --network=none --tmpfs /scratch:rw,nosuid,nodev,noexec,size=536870912 \
-            -v "$PWD:/repo:ro" -v "$RUNNER_TEMP/clued-trivy-checks/policy:/scratch/policy:ro" \
+          set -eu
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
+            --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
+            --workdir=/scratch --entrypoint /usr/local/bin/trivy \
             ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
-            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --skip-check-update --scanners misconfig --severity HIGH,CRITICAL \
-            --exit-code 1 --cache-dir /scratch --skip-version-check --disable-telemetry /repo
+            fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
+      - name: Secrets
+        timeout-minutes: 5
+        run: |
+          set -eu
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
+            --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
+            --workdir=/scratch --entrypoint /usr/local/bin/trivy \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --scanners secret --exit-code 1 \
+            --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
+      - name: Misconfiguration (HIGH/CRITICAL)
+        timeout-minutes: 5
+        run: |
+          set -eu
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+            --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
+            --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
+            --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
+            --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
+            --workdir=/scratch --entrypoint /usr/local/bin/trivy \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 \
+            --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo
       - name: Emit relay identity
         run: |
           set -eu

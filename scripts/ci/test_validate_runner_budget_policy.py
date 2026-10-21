@@ -308,10 +308,27 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
                             # The installed checks generation by digest; the mutable tag never downloads.
                             self.assertIn("CHECKS_DIGEST: sha256:b0e12d009b01dcc8ca2ebbc199b9caf3922491978d21c17b61c1d7f6dc75220b\n", block)
                             self.assertIn('--checks-bundle-repository "ghcr.io/aquasecurity/trivy-checks@$CHECKS_DIGEST"', block)
-                            for line in block.splitlines():
-                                if "trivy-checks:2" in line and not line.lstrip().startswith("#"):
-                                    self.assertIn("--skip-check-update", line)
-                            self.assertIn("docker run --rm --network=none --tmpfs /scratch", block)
+                            self.assertIn("grep -qziE '\\.(jar|war|ear|par)$'", block)
+                            # Every scan mirrors the local role's container: offline, read-only, uid
+                            # 65532, cwd /scratch, a read-only snapshot, prepared DB and checks only.
+                            steps = {chunk.split("\n", 1)[0]: chunk for chunk in block.split("      - name: ")[1:]}
+                            code = "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
+                            self.assertNotIn("$PWD", code)
+                            self.assertNotIn("TRIVY_CACHE_DIR", code)
+                            for scan, args in [
+                                ("Vulnerabilities (HIGH/CRITICAL)", "fs --skip-db-update --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1"),
+                                ("Secrets", "fs --scanners secret --exit-code 1"),
+                                ("Misconfiguration (HIGH/CRITICAL)", "fs --checks-bundle-repository ghcr.io/aquasecurity/trivy-checks:2 --scanners misconfig --severity HIGH,CRITICAL --exit-code 1"),
+                            ]:
+                                step = " ".join(steps[scan].replace("\\\n", " ").split())
+                                with self.subTest(scan=scan):
+                                    for flag in ["--network=none", "--read-only", "--user=65532:65532", "--workdir=/scratch",
+                                                 "dst=/repo,readonly", "dst=/scratch/db,readonly", "dst=/scratch/policy,readonly",
+                                                 args + " --cache-dir /scratch --skip-check-update --skip-version-check --disable-telemetry /repo"]:
+                                        self.assertIn(flag, step)
+                            prepare = steps["Prepare the vulnerability DB and the pinned checks bundle"]
+                            self.assertIn("for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do", prepare)
+                            self.assertNotIn("$GITHUB_WORKSPACE", prepare)
                     else:
                         self.assertEqual(names, {"admission-gate"})
                         self.assertNotIn("id-token", block)

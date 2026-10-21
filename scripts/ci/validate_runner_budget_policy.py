@@ -360,14 +360,14 @@ OWNER_DECISION_HOSTED_JOBS = {
         "control_sha256": "f775a27a4bf06fcff10caf74239c90bd6191fb58e59fcfb67f7141430a35e64b",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "gitleaks-trusted-self-hosted": "4ce3ee4f0c4e549d4711722d984db9a00cb8222b29749380683e61617c845f69"
+            "gitleaks-trusted-self-hosted": "00f570724819f6a0846b38896237ccbbe29a86a533a68f9a4d6e011f83aa2308"
         }
     },
     "trivy.yml": {
         "control_sha256": "57f4d26e932037446cc510595b1ba72b819b9b045a4310a589becd2b1686c6f9",
         "jobs": {
             "admission-gate": "52b78b693b432e996505e18a415bb66bc937f0cd04ae69abf336c868d38591d2",
-            "trivy-trusted-self-hosted": "5e4f72166a20d0f20919b960f45459d8669d22ac3a3e756e6af3de70e62eee75"
+            "trivy-trusted-self-hosted": "0c7235dc3844aee04caff4e15d82df37fb2f178791c657d46cae9b60323e1878"
         }
     }
 }

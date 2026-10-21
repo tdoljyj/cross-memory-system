@@ -98,10 +98,12 @@ jobs:
               "https://github.com/$GITHUB_REPOSITORY" "$@"
           }
           fetch '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
-          fetch "$HEAD_SHA" $(cat "$control/reviewed-commits")
+          fetch "$HEAD_SHA" "$GITHUB_SHA" $(cat "$control/reviewed-commits")
           rm -f "$repo/.git/FETCH_HEAD"
           git -C "$repo" -c core.logAllRefUpdates=false update-ref --no-deref HEAD "$HEAD_SHA"
           test "$(git -C "$repo" cat-file -t "$HEAD_SHA")" = commit
+          # The scanned head is the second parent of the merge commit this run belongs to.
+          test "$GITHUB_EVENT_NAME" != pull_request || test "$(git -C "$repo" rev-parse --verify --quiet "$GITHUB_SHA^2")" = "$HEAD_SHA"
           test -z "$BASE_SHA" || test "$(git -C "$repo" rev-parse --verify --quiet refs/heads/main)" = "$BASE_SHA"
           test "$(git -C "$repo" cat-file --batch-check='%(objecttype)' < "$control/reviewed-commits" | sort -u)" = commit
           test -z "$(git -C "$repo" for-each-ref --format='%(refname)' | grep -Ev '^refs/(heads|tags)/' || true)"
